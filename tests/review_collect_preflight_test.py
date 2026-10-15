@@ -52,7 +52,7 @@ def _ceiling_for(repo, monkeypatch, room: int) -> None:
         "diff", "origin/main...HEAD", cwd=str(repo),
     ).encode())
     ceiling = diff_size + review.budget.TEMPLATE_OVERHEAD_BYTES + room
-    monkeypatch.setattr(review.collect, "collection_budget_bytes", lambda *_: ceiling)
+    monkeypatch.setattr(review.collect, "collection_budget_bytes", lambda *_a, **_k: ceiling)
 
 
 class TestSparseFileShedding:
@@ -431,7 +431,7 @@ class TestCollectPreflightData:
             "diff", "origin/main...HEAD", cwd=str(repo),
         ).encode())
         ceiling = diff_size + review.budget.TEMPLATE_OVERHEAD_BYTES + 1000
-        monkeypatch.setattr(review.collect, "collection_budget_bytes", lambda *_: ceiling)
+        monkeypatch.setattr(review.collect, "collection_budget_bytes", lambda *_a, **_k: ceiling)
         with contextlib.redirect_stdout(io.StringIO()):
             data = review.collect.collect_preflight_data(job)
         assert "CLAUDE.md" in data.file_contents

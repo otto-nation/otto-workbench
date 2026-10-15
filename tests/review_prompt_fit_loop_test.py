@@ -55,7 +55,7 @@ class TestVerifyPrompt:
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "0")
         result = verify_prompt(
             "x" * 200, model=TEST_MODEL, phase=Phase.SCOUT,
-            backend=None, budget_bytes=50,
+            backend=None, budget_bytes=50, cwd=".",
         )
         assert not result.ok
         assert result.byte_overshoot > 0
@@ -67,7 +67,7 @@ class TestVerifyPrompt:
         with patch("review.prompt.count_tokens", return_value=None):
             result = verify_prompt(
                 "hello", model=TEST_MODEL, phase=Phase.SCOUT,
-                backend=None, budget_bytes=10_000,
+                backend=None, budget_bytes=10_000, cwd=".",
             )
         assert result.ok
         assert result.token_verified is False
@@ -79,7 +79,7 @@ class TestVerifyPrompt:
         with patch("review.prompt.count_tokens", return_value=10_000_000):
             result = verify_prompt(
                 "hello", model=TEST_MODEL, phase=Phase.SCOUT,
-                backend=None, budget_bytes=10_000,
+                backend=None, budget_bytes=10_000, cwd=".",
             )
         assert result.token_verified is True
         assert result.token_overshoot > 0

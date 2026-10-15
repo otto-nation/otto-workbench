@@ -674,7 +674,7 @@ def log_prompt_size(
         # record needs the window the budget actually used — a 0 beside a
         # nonzero `budget_bytes` reads as a bug rather than as that path.
         "budget_model": model,
-        "budget_window_tokens": model_window_tokens(model),
+        "budget_window_tokens": model_window_tokens(model, cwd=job.wt_path),
     }
     # `is not None`, not truthiness: a dataclass without `__bool__` is always
     # truthy, so the shorter form would read as a check it is not.

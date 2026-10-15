@@ -26,6 +26,7 @@ import os
 from collections.abc import Iterable
 from pathlib import Path
 
+import agent.pi_binary
 import core.proc
 import core.timeouts
 from agent.phases import origin_of
@@ -126,15 +127,19 @@ def unserved_message(
 
 
 def not_served_message(
-    model: str, stderr: str, provider: str | None = None,
+    model: str, stderr: str, provider: str | None = None, *, pi: str,
 ) -> str | None:
-    """An override hint when Pi's stderr says the model is unknown, else None."""
+    """An override hint when Pi's stderr says the model is unknown, else None.
+
+    ``pi`` is the binary that wrote *stderr*, so the closest ids it suggests
+    come from the same catalogue that refused the model.
+    """
     if not stderr:
         return None
     lowered = stderr.lower()
     if 'model "' not in lowered and "no models match pattern" not in lowered:
         return None
-    return unserved_message(model, listed_models(provider), provider)
+    return unserved_message(model, listed_models(provider, pi=pi), provider)
 
 
 def default_provider() -> str:
@@ -153,34 +158,54 @@ def effective_provider(explicit: str | None) -> str:
 
 
 @functools.cache
-def catalogue_text() -> str:
-    """Stdout of ``pi --list-models``, or empty when the catalogue cannot be read.
+def catalogue_text(pi: str) -> str:
+    """Stdout of ``<pi> --list-models``, or empty when the catalogue cannot be read.
+
+    ``pi`` is the binary `agent.pi_binary.resolve` chose, so the catalogue a
+    model is checked against is the one the spawn will run with — two pi
+    versions serve different model sets. This is the one place the workbench
+    lists models; the review budget reads its context windows from here too.
 
     The empty string is a skip, not an empty provider: a missing or unreadable
     ``pi`` must not refuse a model this process cannot check. The result is
-    cached for the life of the process, so a transient miss (``pi`` briefly not
-    on ``PATH`` at startup) skips validation for every later call here too,
-    even once ``pi`` becomes reachable again. Budget lookups
-    use the same listing via ``listing_rows``; they fetch through their own
-    wrapper so a test can stub one without the other.
+    cached per binary for the life of the process, so a transient miss skips
+    validation for every later call with that binary too.
     """
     try:
         result = core.proc.run(
-            ["pi", "--list-models"], timeout=core.timeouts.LOCAL,
+            [pi, "--list-models"], timeout=core.timeouts.LOCAL,
         )
     except OSError:
+        # Not just FileNotFoundError: a `pi` present on disk but not executable
+        # raises PermissionError, and that must skip the same way.
         return ""
     if not result.ok:
         return ""
     return result.stdout
 
 
-def listed_models(provider: str | None) -> frozenset[str]:
-    """Ids Pi lists under *provider* right now. Empty when the catalogue is unread."""
-    return parse_listed_ids(catalogue_text(), effective_provider(provider))
+def catalogue_for(cwd: str | Path) -> str:
+    """The catalogue of the pi that would run in *cwd*, or empty when none can be chosen.
+
+    For lookups that are optional, such as the review budget. A pi that cannot
+    be chosen is not reported here: the spawn that needs it raises
+    `PiUnresolvable` with the reason, where a run can record it.
+    """
+    try:
+        binary = agent.pi_binary.resolve(cwd)
+    except agent.pi_binary.PiUnresolvable:
+        return ""
+    return catalogue_text(binary.path)
 
 
-def require_listed_model(model: str | None, provider: str | None = None) -> None:
+def listed_models(provider: str | None, *, pi: str) -> frozenset[str]:
+    """Ids *pi* lists under *provider* right now. Empty when the catalogue is unread."""
+    return parse_listed_ids(catalogue_text(pi), effective_provider(provider))
+
+
+def require_listed_model(
+    model: str | None, provider: str | None = None, *, pi: str,
+) -> None:
     """Raise ``ModelNotServed`` when *model* is absent from a readable catalogue.
 
     An empty catalogue is skipped rather than treated as "nothing is served":
@@ -189,7 +214,7 @@ def require_listed_model(model: str | None, provider: str | None = None) -> None
     """
     if not model:
         return
-    listed = listed_models(provider)
+    listed = listed_models(provider, pi=pi)
     if not listed:
         # The catalogue could not be read, not that this provider serves
         # nothing. Refusing here would turn an optional lookup into a hard

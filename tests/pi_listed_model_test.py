@@ -11,8 +11,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_pi
+import agent.pi_binary
 import agent.pi_models
 from ai_backend_pi_rpc_test import _RefusingProc
+from conftest import TEST_PI_BINARY_PATH as PI
 
 
 LISTING = """\
@@ -59,10 +61,10 @@ class TestParseListedIds:
 
 class TestRequireListedModel:
     def test_an_unlisted_id_names_id_source_and_suggestions(self, monkeypatch):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
         monkeypatch.setenv("AI_SONNET_MODEL", UNLISTED)
         with pytest.raises(agent.pi_models.ModelNotServed) as caught:
-            agent.pi_models.require_listed_model(UNLISTED, PROVIDER)
+            agent.pi_models.require_listed_model(UNLISTED, PROVIDER, pi=PI)
         msg = str(caught.value)
         assert UNLISTED in msg
         assert "AI_SONNET_MODEL" in msg
@@ -72,23 +74,23 @@ class TestRequireListedModel:
         assert "agent.model" in msg
 
     def test_a_listed_id_passes_untouched(self, monkeypatch):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
-        assert agent.pi_models.require_listed_model(LISTED, PROVIDER) is None
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
+        assert agent.pi_models.require_listed_model(LISTED, PROVIDER, pi=PI) is None
 
     def test_an_empty_catalogue_skips_validation(self, monkeypatch):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
-        assert agent.pi_models.require_listed_model(UNLISTED, PROVIDER) is None
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        assert agent.pi_models.require_listed_model(UNLISTED, PROVIDER, pi=PI) is None
 
 
 class TestNotServedMessage:
     def test_names_the_model_and_the_override(self, monkeypatch):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
         monkeypatch.setenv("AI_SONNET_MODEL", UNLISTED)
         msg = agent.pi_models.not_served_message(
             UNLISTED,
             'Warning: No models match pattern "google-vertex-claude/claude-sonnet-5-5"\n'
             'Error: Model "claude-sonnet-5-5" not found. Use --list-models to see available models.\n',
-            PROVIDER,
+            PROVIDER, pi=PI,
         )
         assert msg is not None
         assert UNLISTED in msg
@@ -99,12 +101,12 @@ class TestNotServedMessage:
 
     def test_other_stderr_is_not_this_failure(self):
         assert agent.pi_models.not_served_message(
-            UNLISTED, "No API key found for amazon-bedrock.\n", PROVIDER,
+            UNLISTED, "No API key found for amazon-bedrock.\n", PROVIDER, pi=PI,
         ) is None
 
     def test_an_unrelated_not_found_is_not_this_failure(self):
         assert agent.pi_models.not_served_message(
-            UNLISTED, "Error: extension file not found: review.ts\n", PROVIDER,
+            UNLISTED, "Error: extension file not found: review.ts\n", PROVIDER, pi=PI,
         ) is None
 
 
@@ -125,7 +127,7 @@ class TestInvokeUsesTheConfiguredId:
     def test_a_listed_id_is_passed_untouched(
         self, monkeypatch, tmp_path, entry_point,
     ):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
         seen = []
 
         def fake_popen(cmd, **_kw):
@@ -145,7 +147,7 @@ class TestInvokeUsesTheConfiguredId:
     def test_an_unlisted_id_fails_without_spawning_and_logs_the_session(
         self, monkeypatch, tmp_path, entry_point,
     ):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
         monkeypatch.setenv("AI_SONNET_MODEL", UNLISTED)
 
         def fake_popen(*_a, **_kw):
@@ -167,7 +169,7 @@ class TestInvokeUsesTheConfiguredId:
         assert '"is_error": true' in logged
 
     def test_prompt_passes_a_listed_id_untouched(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
         seen = []
 
         def fake_run(cmd, **_kw):
@@ -183,7 +185,7 @@ class TestInvokeUsesTheConfiguredId:
         assert cmd[cmd.index("--model") + 1] == LISTED
 
     def test_prompt_fails_without_spawning_on_an_unlisted_id(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
         monkeypatch.setenv("AI_SONNET_MODEL", UNLISTED)
 
         def fake_run(*_a, **_kw):
@@ -201,7 +203,7 @@ class TestInvokeUsesTheConfiguredId:
     ):
         # catalogue is unreadable, so require_listed_model skips the pre-spawn
         # check and pi itself refuses the id over stderr.
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
 
         def fake_run(cmd, **_kw):
             return subprocess.CompletedProcess(
@@ -220,7 +222,7 @@ class TestInvokeUsesTheConfiguredId:
     def test_an_empty_catalogue_spawns_the_configured_id(
         self, monkeypatch, tmp_path,
     ):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
         seen = []
 
         def fake_popen(cmd, **_kw):
@@ -237,6 +239,113 @@ class TestInvokeUsesTheConfiguredId:
         assert cmd[cmd.index("--model") + 1] == UNLISTED
 
 
+class TestOneBinaryForCatalogueAndSpawn:
+    """The model is checked by the binary that will run it.
+
+    Two pi versions serve different models: a catalogue read from whichever
+    `pi` is first on PATH refused a model the chosen binary serves.
+    """
+
+    CHOSEN = "/opt/pi-1.2.0/bin/pi"
+
+    @pytest.fixture(autouse=True)
+    def _chosen(self, monkeypatch):
+        self.resolved_for = []
+
+        def resolve(cwd):
+            self.resolved_for.append(cwd)
+            return agent.pi_binary.PiBinary(
+                self.CHOSEN, "1.2.0", agent.pi_binary.Source.MANAGED, "test",
+            )
+
+        monkeypatch.setattr(agent.pi_binary, "resolve", resolve)
+        self.listed_by = []
+
+        def catalogue(pi):
+            self.listed_by.append(pi)
+            return LISTING
+
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", catalogue)
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_agent_runs_check_and_spawn_the_chosen_binary(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        seen = []
+        monkeypatch.setattr(subprocess, "Popen", lambda cmd, **_kw: seen.append(cmd) or _dead())
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+            model=LISTED, provider=PROVIDER,
+        ))
+        assert self.resolved_for == [str(tmp_path)]
+        assert self.listed_by == [self.CHOSEN]
+        assert seen[0][0] == self.CHOSEN
+
+    def test_a_prompt_checks_and_spawns_the_chosen_binary(self, monkeypatch, tmp_path):
+        seen = []
+
+        def fake_run(cmd, **_kw):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        agent.backend_pi.prompt("hi", cwd=str(tmp_path), model=LISTED, provider=PROVIDER)
+        assert self.listed_by == [self.CHOSEN]
+        assert seen[0][0] == self.CHOSEN
+
+    def test_the_catalogue_lists_with_the_binary_it_is_given(self, monkeypatch):
+        import core.proc
+        from conftest import _REAL_CATALOGUE_TEXT
+
+        ran = []
+        monkeypatch.setattr(core.proc, "run", lambda cmd, **_kw: ran.append(cmd) or core.proc.CmdResult(
+            returncode=0, stdout=LISTING,
+        ))
+        _REAL_CATALOGUE_TEXT.cache_clear()
+        try:
+            assert _REAL_CATALOGUE_TEXT(self.CHOSEN) == LISTING
+        finally:
+            _REAL_CATALOGUE_TEXT.cache_clear()
+        assert ran == [[self.CHOSEN, "--list-models"]]
+
+
+class TestNoChoosablePi:
+    @pytest.fixture(autouse=True)
+    def _unresolvable(self, monkeypatch):
+        def resolve(_cwd):
+            raise agent.pi_binary.PiUnresolvable("cannot read a pi version from current-version")
+
+        monkeypatch.setattr(agent.pi_binary, "resolve", resolve)
+
+        def no_spawn(*_a, **_kw):
+            raise AssertionError("spawned pi with no binary chosen")
+
+        monkeypatch.setattr(subprocess, "Popen", no_spawn)
+        monkeypatch.setattr(subprocess, "run", no_spawn)
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_agent_runs_fail_with_the_reason_in_the_session_log(
+        self, tmp_path, entry_point,
+    ):
+        session_log = tmp_path / "s.jsonl"
+        exit_code = getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(session_log),
+            model=LISTED, provider=PROVIDER,
+        ))
+        assert exit_code != 0
+        logged = session_log.read_text()
+        assert "current-version" in logged
+        assert '"is_error": true' in logged
+
+    def test_a_prompt_fails_without_spawning(self, tmp_path, capsys):
+        reply, exit_code, usage = agent.backend_pi.prompt(
+            "hi", cwd=str(tmp_path), model=LISTED, provider=PROVIDER,
+        )
+        assert (reply, usage) == ("", None)
+        assert exit_code != 0
+        assert "cannot choose a pi binary" in capsys.readouterr().err
+
+
 class TestUndeliveredNamesTheModel:
     def test_model_not_found_stderr_replaces_the_stdin_symptom(
         self, monkeypatch, tmp_path,
@@ -249,7 +358,7 @@ class TestUndeliveredNamesTheModel:
             "to see available models.\n"
         )
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
         monkeypatch.setenv("AI_SONNET_MODEL", UNLISTED)
         log = tmp_path / "s.jsonl"
         agent.backend_pi.invoke_agent(agent.backend_pi.AgentInvocation(

@@ -33,13 +33,14 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import agent.pi_binary
 import agent.usage
+import core.trail
 import git.client
 # Backend is defined in core.phases so the config layer can type agent.backend
 # without importing this module, and re-exported here because this is where
@@ -157,10 +158,6 @@ def _require_backend() -> Backend:
     return selected
 
 
-def _script_name() -> str:
-    return Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "unknown"
-
-
 def _record(
     *, entry_point: str, usage: agent.usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
@@ -172,7 +169,7 @@ def _record(
         return
     try:
         agent.usage.record(
-            script=_script_name(), entry_point=entry_point,
+            script=core.trail.script_name(), entry_point=entry_point,
             # "unknown" rather than a raise: this is inside the swallow-all
             # below, so raising here would drop the ledger row silently instead
             # of failing loudly, which is the opposite of the intent.
@@ -378,12 +375,17 @@ def invoke_fix(inv: AgentInvocation) -> int:
 
 
 def is_available() -> bool:
-    """Check if the selected backend binary exists on PATH.
+    """Check if the selected backend's binary is installed.
 
     False when nothing selects a backend, rather than raising: the rebase paths
     call this to decide whether to offer AI conflict resolution at all, and they
     already handle "no backend" by carrying on without it. An unselected backend
     is unavailable in exactly the sense they are asking about.
+
+    Pi is asked of `agent.pi_binary`, not PATH: the managed install it prefers
+    need not be on PATH at all, which is the ordinary state of a background job.
     """
     selected = selected_backend()
+    if selected is Backend.PI:
+        return agent.pi_binary.any_installed()
     return selected is not None and shutil.which(selected) is not None

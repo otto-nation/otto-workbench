@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import agent.backend_pi
 
 from ai_backend_pi_support import FIXTURES, _stats_response
+from conftest import TEST_PI_BINARY_PATH as PI
 
 
 def _prompt_stream() -> str:
@@ -153,7 +154,7 @@ class TestPromptUsage:
     def test_prompt_command_asks_for_the_json_stream(self):
         # Bare `-p` emits prose and no usage, which is how 953 prompt-shaped
         # calls would have gone unrecorded.
-        cmd = agent.backend_pi._build_prompt_cmd(model="haiku")
+        cmd = agent.backend_pi._build_prompt_cmd(PI, model="haiku")
         assert "--mode" in cmd and cmd[cmd.index("--mode") + 1] == "json"
         assert cmd.index("-p") < cmd.index("--mode")
 

@@ -3774,7 +3774,9 @@ works identically regardless of backend.
 Pi CLI backend for agent.backend.
 
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
-building `pi` commands and running them as subprocesses.
+building `pi` commands and running them as subprocesses. Which `pi` runs is
+`agent.pi_binary.resolve`'s answer for the call's cwd, never a bare PATH lookup,
+and the model is checked against that same binary's catalogue.
 
 invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
@@ -3821,6 +3823,36 @@ Owns the JSONL stdin/stdout protocol around a ``pi --mode rpc`` child:
 sending commands, reading replies, classifying a fatal response, and
 starting/stopping the process group. The event loop that consumes the
 stream lives in ``agent.backend_pi``.
+
+### agent/pi_binary.py
+
+Which `pi` binary every Pi-backend call runs, chosen once per directory.
+
+A bare ``"pi"`` resolves through ``PATH``, so the version that ran depended on
+how the calling shell was set up: inside a repo that pins pi through mise, a
+background job without ``~/.pi/agent/bin`` on ``PATH`` got the repo's pin, and a
+pin older than the configured model needs refused every run.
+
+The rule is that a repo's pin is a *floor*. The workbench should not run far
+from the pi a repo works with, but it should not be held back by a repo that is
+slow to update either:
+
+- the managed install (``~/.pi/agent/install``) when it is at least the pin;
+- the repo's pin when it is newer than the managed install;
+- the managed install when the repo pins nothing;
+- ``pi`` on ``PATH`` when there is no managed install and no pin.
+
+Only a pin declared inside the repo counts — a mise config file under the
+directory holding the repo's common git dir, which covers both an ordinary
+clone and a bare-repo container of worktrees. A global mise pin says nothing
+about the repo being worked on, and a repo without mise pins nothing.
+
+A version that cannot be read is an error naming its source, never a guess:
+choosing between two binaries on a version nobody could read would be choosing
+at random.
+
+Every resolution is logged and, inside a trailed run, recorded on the trail as
+a ``pi_binary`` event, so `otto-log show` can say which binary ran and why.
 
 ### agent/pi_models.py
 

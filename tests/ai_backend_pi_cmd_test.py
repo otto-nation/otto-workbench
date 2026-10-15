@@ -11,35 +11,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_pi
 from ai_backend_test import _recording_popen
+from conftest import TEST_PI_BINARY_PATH as PI
 
 
 class TestBuildFixCmd:
     def test_base_command_uses_rpc_mode(self):
-        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--mode" in cmd
         assert "rpc" in cmd
         assert "-p" not in cmd
 
     def test_includes_tools(self):
-        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--tools" in cmd
         idx = cmd.index("--tools")
         assert cmd[idx + 1] == agent.backend_pi.PI_FIX_TOOLS
 
     def test_withholds_github_tools(self):
-        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         tools = cmd[cmd.index("--tools") + 1].split(",")
         assert [t for t in tools if t.startswith("gh_")] == []
 
     def test_grants_research_tools(self):
-        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         tools = cmd[cmd.index("--tools") + 1].split(",")
         assert "web_fetch" in tools
         assert "go_references" in tools
 
     def test_model_flag(self):
         cmd = agent.backend_pi._build_fix_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", model="sonnet"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", model="sonnet"),
         )
         assert "--model" in cmd
         idx = cmd.index("--model")
@@ -47,14 +48,14 @@ class TestBuildFixCmd:
 
     def test_thinking_level_flag(self):
         cmd = agent.backend_pi._build_fix_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", thinking="low"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", thinking="low"),
         )
         assert "--thinking" in cmd
         idx = cmd.index("--thinking")
         assert cmd[idx + 1] == "low"
 
     def test_no_optional_flags_when_none(self):
-        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--model" not in cmd
         assert "--thinking" not in cmd
         assert "--provider" not in cmd
@@ -63,25 +64,25 @@ class TestBuildFixCmd:
 
 class TestBuildAgentCmd:
     def test_includes_rpc_mode(self):
-        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert cmd[:2] == ["pi", "--mode"]
         assert cmd[2] == "rpc"
 
     def test_includes_tools(self):
-        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--tools" in cmd
         idx = cmd.index("--tools")
         assert cmd[idx + 1] == agent.backend_pi.PI_AGENT_TOOLS
 
     def test_grants_read_only_github_tools(self):
-        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         tools = cmd[cmd.index("--tools") + 1].split(",")
         assert "gh_pr_unresolved_comments" in tools
         assert "gh_ci_failures" in tools
 
     def test_thinking_level(self):
         cmd = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", thinking="high"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", thinking="high"),
         )
         assert "--thinking" in cmd
         idx = cmd.index("--thinking")
@@ -97,7 +98,7 @@ class TestBuildAgentCmd:
         empty_skills_dir.mkdir()
         monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
         cmd = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", agent="test"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", agent="test"),
         )
         assert "--append-system-prompt" in cmd
         idx = cmd.index("--append-system-prompt")
@@ -112,7 +113,7 @@ class TestBuildAgentCmd:
         monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
         with pytest.raises(FileNotFoundError):
             agent.backend_pi._build_agent_cmd(
-                agent.backend_pi.AgentInvocation(prompt="", agent="nonexistent"),
+                PI, agent.backend_pi.AgentInvocation(prompt="", agent="nonexistent"),
             )
 
 
@@ -174,7 +175,7 @@ class TestBuildAgentCmdWithSkills:
         (reviewer_dir / "SKILL.md").write_text("---\nname: reviewer\n---\n# R")
         monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
         cmd = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
         )
         assert "--skill" in cmd
         assert "--append-system-prompt" not in cmd
@@ -188,7 +189,7 @@ class TestBuildAgentCmdWithSkills:
         (agents_dir / "reviewer.md").write_text("# Reviewer agent")
         monkeypatch.setattr(agent.backend_pi, "AGENTS_DIR", agents_dir)
         cmd = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
         )
         assert "--append-system-prompt" in cmd
         assert "--skill" not in cmd
@@ -197,26 +198,26 @@ class TestBuildAgentCmdWithSkills:
 class TestProviderFlag:
     def test_agent_cmd_with_provider(self):
         cmd = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", provider="bedrock"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", provider="bedrock"),
         )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"
 
     def test_agent_cmd_without_provider(self):
-        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--provider" not in cmd
 
     def test_fix_cmd_with_provider(self):
         cmd = agent.backend_pi._build_fix_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", provider="vertex"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", provider="vertex"),
         )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "vertex"
 
     def test_prompt_cmd_with_provider(self):
-        cmd = agent.backend_pi._build_prompt_cmd(provider="bedrock")
+        cmd = agent.backend_pi._build_prompt_cmd(PI, provider="bedrock")
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"
@@ -245,20 +246,20 @@ class TestPromptCmdHasNoTools:
     """
 
     def test_the_flag_is_on_the_command(self):
-        assert "--no-tools" in agent.backend_pi._build_prompt_cmd()
+        assert "--no-tools" in agent.backend_pi._build_prompt_cmd(PI)
 
     def test_it_survives_every_other_knob(self):
         """A later flag added ahead of it must not displace it."""
         cmd = agent.backend_pi._build_prompt_cmd(
-            model="sonnet", provider="bedrock", thinking="high",
+            PI, model="sonnet", provider="bedrock", thinking="high",
         )
         assert "--no-tools" in cmd
 
     def test_the_agent_modes_keep_their_tools(self):
         """Only the prompt shape loses them — an agent with no tools does nothing."""
         inv = agent.backend_pi.AgentInvocation(prompt="")
-        assert "--no-tools" not in agent.backend_pi._build_agent_cmd(inv)
-        assert "--no-tools" not in agent.backend_pi._build_fix_cmd(inv)
+        assert "--no-tools" not in agent.backend_pi._build_agent_cmd(PI, inv)
+        assert "--no-tools" not in agent.backend_pi._build_fix_cmd(PI, inv)
 
     def test_it_reaches_the_subprocess(self, monkeypatch, tmp_path):
         seen = []
@@ -279,11 +280,11 @@ class TestPromptCmdThinking:
     """
 
     def test_the_thinking_level_reaches_the_flag(self):
-        cmd = agent.backend_pi._build_prompt_cmd(thinking="high")
+        cmd = agent.backend_pi._build_prompt_cmd(PI, thinking="high")
         assert cmd[cmd.index("--thinking") + 1] == "high"
 
     def test_no_flags_when_nothing_was_resolved(self):
-        cmd = agent.backend_pi._build_prompt_cmd()
+        cmd = agent.backend_pi._build_prompt_cmd(PI)
         assert "--thinking" not in cmd
         assert "--provider" not in cmd
         assert "--model" not in cmd
@@ -311,19 +312,19 @@ def _detect_source() -> str:
 class TestExtensionFlag:
     def test_agent_cmd_with_extension(self):
         cmd = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
+            PI, agent.backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
         )
         assert "--extension" in cmd
         idx = cmd.index("--extension")
         assert cmd[idx + 1] == "/path/to/review-guard.ts"
 
     def test_agent_cmd_without_extension(self):
-        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--extension" not in cmd
 
     def test_fix_cmd_with_extension(self):
         cmd = agent.backend_pi._build_fix_cmd(
-            agent.backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
+            PI, agent.backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
         )
         assert "--extension" in cmd
         idx = cmd.index("--extension")
@@ -473,15 +474,15 @@ class TestBareFlags:
     """
 
     def test_agent_cmd_disables_context_file_discovery(self):
-        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-context-files" in cmd
 
     def test_agent_cmd_disables_skill_discovery(self):
-        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-skills" in cmd
 
     def test_fix_cmd_disables_both_too(self):
-        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-context-files" in cmd
         assert "--no-skills" in cmd
 
@@ -490,7 +491,7 @@ class TestBareFlags:
         # afford the interactive rulebook: its answer is parsed, not read, and
         # the superpowers bootstrap's "announce a skill first" turns a bare-JSON
         # contract into a prose preamble with no JSON in it at all.
-        cmd = agent.backend_pi._build_prompt_cmd()
+        cmd = agent.backend_pi._build_prompt_cmd(PI)
         assert "--no-context-files" in cmd
         assert "--no-skills" in cmd
 
@@ -498,8 +499,8 @@ class TestBareFlags:
         # --no-extensions would deregister the provider that serves the run and
         # strip every gh_*/web_* tool the agent list grants, leaving a review
         # with no provider and a truncated toolset.
-        agent_cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
-        fix = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        agent_cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
+        fix = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-extensions" not in agent_cmd
         assert "--no-extensions" not in fix
 
@@ -511,7 +512,7 @@ class TestBareFlags:
         (skills / "SKILL.md").write_text("---\nname: reviewer\n---\nbody\n")
         monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", tmp_path / "skills")
         cmd = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
         )
         assert "--no-skills" in cmd
         assert "--skill" in cmd
@@ -547,13 +548,13 @@ class TestRulesHomePrefix:
     """``rules_home`` is injected as ``--append-system-prompt``, or omitted when empty."""
 
     def test_empty_rules_home_argv_is_byte_identical_to_today(self):
-        fix = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
-        agent_cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        fix = agent.backend_pi._build_fix_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
+        agent_cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         empty_fix = agent.backend_pi._build_fix_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", rules_home=""),
+            PI, agent.backend_pi.AgentInvocation(prompt="", rules_home=""),
         )
         empty_agent = agent.backend_pi._build_agent_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", rules_home=""),
+            PI, agent.backend_pi.AgentInvocation(prompt="", rules_home=""),
         )
         assert fix == empty_fix
         assert agent_cmd == empty_agent
@@ -572,7 +573,7 @@ class TestRulesHomePrefix:
     def test_rules_home_is_appended_as_a_file_and_keeps_bare_flags(self, tmp_path):
         home = _arm(tmp_path)
         cmd = agent.backend_pi._build_fix_cmd(
-            agent.backend_pi.AgentInvocation(prompt="", rules_home=str(home)),
+            PI, agent.backend_pi.AgentInvocation(prompt="", rules_home=str(home)),
         )
         assert "--no-context-files" in cmd
         assert "--no-skills" in cmd
@@ -587,7 +588,7 @@ class TestRulesHomePrefix:
         from agent.rule_prefix import RulePrefixError
         with pytest.raises(RulePrefixError, match="rules/"):
             agent.backend_pi._build_fix_cmd(
-                agent.backend_pi.AgentInvocation(
+                PI, agent.backend_pi.AgentInvocation(
                     prompt="", rules_home=str(tmp_path / "missing"),
                 ),
             )
@@ -596,7 +597,7 @@ class TestRulesHomePrefix:
         from agent.rule_prefix import RulePrefixError
         with pytest.raises(RulePrefixError, match="absolute"):
             agent.backend_pi._build_fix_cmd(
-                agent.backend_pi.AgentInvocation(
+                PI, agent.backend_pi.AgentInvocation(
                     prompt="", rules_home="relative/arm",
                 ),
             )

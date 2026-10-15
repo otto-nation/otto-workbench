@@ -268,14 +268,16 @@ def _no_live_backend(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", guarded_popen)
 
 
-# The production runner, captured before tests stub it. A test that exercises
-# `_run_pi_list_models` fallbacks (missing binary, non-zero exit) rebinds this
-# rather than spawning `pi`.
-_REAL_RUN_PI_LIST_MODELS = None
+# The production functions, captured before tests stub them. A test of the
+# catalogue fallbacks (missing binary, non-zero exit) or of binary resolution
+# rebinds these rather than spawning a real `pi` or `mise`.
+_REAL_CATALOGUE_FOR = None
+_REAL_CATALOGUE_TEXT = None
+_REAL_PI_RESOLVE = None
 
 
 def pytest_configure(config):
-    """Budget lookups must not spawn `pi` during collection.
+    """Budget lookups must not spawn `pi` or `mise` during collection.
 
     `model_window_tokens` consults the catalogue first, and several test
     modules compute a ceiling at import time. Stubbing here — before
@@ -283,12 +285,15 @@ def pytest_configure(config):
     fixture below re-applies the stub per test so a catalogue test cannot
     leak a live listing into the next one.
     """
-    global _REAL_RUN_PI_LIST_MODELS
+    global _REAL_CATALOGUE_FOR, _REAL_CATALOGUE_TEXT, _REAL_PI_RESOLVE
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import review.budget
-    _REAL_RUN_PI_LIST_MODELS = review.budget._run_pi_list_models
-    review.budget._run_pi_list_models = lambda: ""
+    import agent.pi_binary
+    import agent.pi_models
+    _REAL_CATALOGUE_FOR = agent.pi_models.catalogue_for
+    _REAL_CATALOGUE_TEXT = agent.pi_models.catalogue_text
+    _REAL_PI_RESOLVE = agent.pi_binary.resolve
+    agent.pi_models.catalogue_for = lambda _cwd: ""
 
 
 @pytest.fixture(autouse=True)
@@ -320,23 +325,30 @@ def _isolated_stop_handling(monkeypatch):
             signal.signal(signum, handler)
 
 
+# What every test runs as "the chosen pi" unless it is testing the choice: a
+# bare `pi`, so an argv assertion reads as it did before resolution existed.
+TEST_PI_BINARY_PATH = "pi"
+
+
 @pytest.fixture(autouse=True)
 def _empty_pi_catalogue(monkeypatch):
-    """Budget lookups do not spawn `pi --list-models`.
+    """Neither budget lookups nor model checks spawn `pi` or `mise`.
 
-    A test that cares about a live listing stubs `_run_pi_list_models` itself;
-    every other test gets the fallback table, which is what they already
-    asserted against.
+    A test that cares about a live listing stubs `catalogue_text` or
+    `catalogue_for` itself; every other test gets the fallback table, which is
+    what they already asserted against. Binary resolution answers a fixed bare
+    `pi`; `tests/pi_binary_test.py` restores the real `resolve`.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
+    import agent.pi_binary
     import agent.pi_models
-    import review.budget
-    monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: "")
-    monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
-    review.budget._pi_catalogue_windows.cache_clear()
-    yield
-    review.budget._pi_catalogue_windows.cache_clear()
+    stub = agent.pi_binary.PiBinary(
+        TEST_PI_BINARY_PATH, "0.0.0", agent.pi_binary.Source.PATH, "test stub",
+    )
+    monkeypatch.setattr(agent.pi_binary, "resolve", lambda _cwd: stub)
+    monkeypatch.setattr(agent.pi_models, "catalogue_for", lambda _cwd: "")
+    monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
 
 
 @pytest.fixture(autouse=True)
@@ -642,7 +654,7 @@ def model_budget_bytes() -> int:
         sys.path.insert(0, LIB_DIR)
     from review.budget import ladder_target_bytes
 
-    return ladder_target_bytes(TEST_MODEL)
+    return ladder_target_bytes(TEST_MODEL, cwd=".")
 
 
 class MachineContention(AssertionError):

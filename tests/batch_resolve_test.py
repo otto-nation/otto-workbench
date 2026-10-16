@@ -345,6 +345,18 @@ def test_a_forced_rebase_records_the_tip_it_started_from(monkeypatch):
     assert run.items[0].pre_rebase_head == "p9"
 
 
+def test_a_forced_rebase_keeps_the_tip_the_refused_rebase_started_from(monkeypatch):
+    # The operator rebased by hand with --fork-point before forcing: the forced run
+    # starts from that rebased tip, which must not become the publish's start tip.
+    monkeypatch.setattr(batch.outcomes, "_load_pr_state",
+                        lambda item: SimpleNamespace(rebase=SimpleNamespace(
+                            pre_rebase_head="rebased")))
+    run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
+    run.items[0].step(batch.model.Step.REBASE).start_head = "original"
+    batch.resolve.apply(run, batch.requests.Decide("d1", "force"), pr_bin="pr", runner=Recorder())
+    assert run.items[0].pre_rebase_head == "original"
+
+
 def test_a_failed_publish_records_its_reason_detail_and_log():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     run.items[0].step(batch.model.Step.REVIEW).drafted = True

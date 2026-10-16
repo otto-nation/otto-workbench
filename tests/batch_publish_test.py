@@ -194,6 +194,41 @@ def test_a_rewritten_start_tip_missing_a_remote_commit_is_not_incorporated(tmp_p
     assert batch.publish.read_tree(item).incorporated is False
 
 
+def _fork_point_rebased(tmp_path):
+    """A stacked branch whose two-commit parent was squash-merged, rebased by hand with a fork point.
+
+    Returns the pair, the planned remote head, and the parent's commits as
+    `git cherry -v` names them.
+    """
+    pair = remote_and_clone(tmp_path)
+    parent1 = remote_tip(pair.origin, "feat")
+    parent2 = advance(pair.seed, "feat", "parent2")
+    planned = advance(pair.seed, "feat", "child")
+    git_in(pair.seed, "checkout", "-q", "main")
+    (pair.seed / "feat.txt").write_text("feat\n")
+    (pair.seed / "parent2").write_text("parent2\n")
+    commit_all(pair.seed, "feat: parent (squashed)")
+    git_in(pair.seed, "push", "-q", "origin", "main")
+    git_in(pair.work, "fetch", "-q", "origin")
+    git_in(pair.work, "reset", "-q", "--hard", "origin/feat")
+    git_in(pair.work, "rebase", "-q", "--onto", "origin/main", parent2, "feat")
+    return pair, planned, [f"{parent1} feat", f"{parent2} chore: parent2"]
+
+
+@pytest.mark.parametrize("start", ["planned", "none"])
+def test_a_fork_point_rebase_by_hand_publishes_past_the_skipped_commits(tmp_path, start):
+    # "planned": a forced re-run kept the refused rebase's start tip. "none": the
+    # batch's own rebase was a no-op, so no start tip was recorded.
+    pair, planned, skipped = _fork_point_rebased(tmp_path)
+    item = _item(worktree=str(pair.work), remote=planned, base_ref="main",
+                 pre_rebase_head=planned if start == "planned" else "")
+    tree = batch.publish.read_tree(item)
+    refused = batch.publish.plan(item, "pr", tree)
+    assert (refused.refusal, refused.commits) == (Refusal.NOT_INCORPORATED_REMOTE, skipped)
+    assert batch.publish.plan(item, "pr", tree, confirmed=skipped).commands == [
+        ["pr", "rebase", "--push-only", "--expect", planned, "--repo-dir", str(pair.work)]]
+
+
 def _publish_run(pair):
     run = batch.model.Run(id="r1", started_at="t", steps=list(batch.model.STEP_ORDER), pool=1,
                           auto_publish=[], items=[_item(worktree=str(pair.work),

@@ -165,6 +165,26 @@ def test_a_rebase_records_the_tip_it_started_from():
     assert h.run.items[0].pre_rebase_head == "p0"
 
 
+def test_a_rebase_that_moved_nothing_records_no_start_tip():
+    # A no-op rebase reports the tip it found, which may already be a hand rebase:
+    # recording it would make publish check the remote against the rebased tip.
+    h = Harness([row(1, {Step.REBASE: NEED})],
+                stdouts={("rebase", "/wt/b1"): '{"status": "completed", "pre_rebase_head": "p0"}'})
+    h.sched.run_until_blocked()
+    assert h.run.items[0].pre_rebase_head == ""
+
+
+def test_a_local_branch_the_remote_lacks_needs_a_publish_with_nothing_drafted():
+    h = Harness([row(1, {Step.REBASE: NEED})], auto_publish=STEP_ORDER,
+                unpublished=lambda wt, sha: (wt, sha) == ("/wt/b1", "h"))
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    item = h.run.items[0]
+    assert item.status is ItemStatus.READY_TO_PUBLISH
+    (publish,) = [d for d in h.run.decisions if d.kind is DecisionKind.PUBLISH]
+    assert publish.payload["unpublished"] is True and publish.payload["drafted"] == []
+    assert h.published == []
+
+
 def batch_row_with_head(r, head):
     """The replanned row for *r*, with GitHub reporting *head*."""
     import dataclasses

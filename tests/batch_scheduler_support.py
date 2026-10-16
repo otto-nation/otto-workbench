@@ -119,8 +119,8 @@ class Harness:
     def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
                  replan=None, worktrees=None, heads=None, selected=None, cfg=None,
                  runner=None, tree=None, closeout=None, moves=(), stdouts=None,
-                 contains=None, dirty=None, rebasing=None, watch_ci=False,
-                 verbose=False):
+                 contains=None, dirty=None, rebasing=None, unpublished=None,
+                 watch_ci=False, verbose=False):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
@@ -151,7 +151,7 @@ class Harness:
             estimates=batch.admission.Estimates({}), closeout=close,
             contains=contains or (lambda wt, sha: True),
             dirty=dirty or (lambda wt: False), rebasing=rebasing or (lambda wt: False),
-            verbose=verbose)
+            unpublished=unpublished or (lambda wt, sha: False), verbose=verbose)
         self.sched = self._make()
 
     @property

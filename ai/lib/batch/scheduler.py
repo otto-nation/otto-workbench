@@ -46,6 +46,22 @@ def _contains_commit(worktree: str, sha: str) -> bool:
     return git.client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=worktree)
 
 
+def _unpublished(worktree: str, remote_sha: str) -> bool:
+    """Whether *worktree*'s HEAD holds work *remote_sha* lacks: neither it nor an ancestor of it.
+
+    False when either is unknown or *remote_sha* is not in the local object
+    store, since then nothing says a push is owed.
+    """
+    if not (worktree and remote_sha):
+        return False
+    head = git.client.head_sha(cwd=worktree)
+    if not head or head == remote_sha:
+        return False
+    if not git.client.ok("cat-file", "-e", f"{remote_sha}^{{commit}}", cwd=worktree):
+        return False
+    return not git.client.ok("merge-base", "--is-ancestor", head, remote_sha, cwd=worktree)
+
+
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
@@ -178,6 +194,7 @@ class Scheduler:
                  contains: Callable[[str, str], bool] = _contains_commit,
                  dirty: Callable[[str], bool] = git.client.is_dirty,
                  rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
+                 unpublished: Callable[[str, str], bool] = _unpublished,
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
@@ -195,6 +212,7 @@ class Scheduler:
         self._live: dict[str, _Live] = {}
         self._contains = contains
         self._dirty, self._rebasing = dirty, rebasing
+        self._unpublished = unpublished
 
     @property
     def run(self) -> Run:
@@ -249,7 +267,10 @@ class Scheduler:
         # its replies even when it commits nothing — any clean exit. Sticky: a
         # retry that commits nothing never forgets what an earlier attempt drafted.
         rec.drafted = rec.drafted or moved or (rec.step is Step.COMMENTS and code == 0)
-        if result.pre_rebase_head:
+        # A rebase that moved nothing replayed nothing, so the tip it reports is
+        # no start tip: it may be one the operator already rebased by hand, and
+        # publish would check the remote against it and refuse.
+        if result.pre_rebase_head and moved:
             item.pre_rebase_head = result.pre_rebase_head
         if rec.step is not Step.REVIEW and moved:
             item.head_moved = True
@@ -302,12 +323,18 @@ class Scheduler:
     def _close(self, item: Item) -> None:
         drafted = [r.step for r in item.steps if r.drafted]
         debt = self._closeout(item.repo_dir, item.branch)
-        if not drafted and not debt.owed:
+        # Work no step drafted but the local branch holds anyway — a hand rebase
+        # the batch's own rebase then found nothing to do for. No step vouches
+        # for it, so it never auto-publishes: the operator answers it.
+        unpublished = not drafted and self._unpublished(item.worktree, item.remote_sha)
+        if not drafted and not debt.owed and not unpublished:
             item.status = ItemStatus.DONE
             self._emit("item_finished", run=self.run.id, item=item.key,
                        status=item.status.value)
             return
         payload = {"drafted": [s.value for s in drafted], "track": list(item.track)}
+        if unpublished:
+            payload["unpublished"] = True
         if debt.owed:
             payload["closeout"] = debt.describe()
         d = _decide(self.run, item, "publish", DecisionKind.PUBLISH, payload, emit=self._emit)
@@ -331,7 +358,8 @@ class Scheduler:
                                               or comments.exit_code is not None)
         unvouched = debt.owed and attempted and comments.status is not StepStatus.DONE
         vouched = set(drafted) | ({Step.COMMENTS} if debt.owed else set())
-        if finished and not unvouched and vouched <= set(self.run.auto_publish):
+        if finished and not unvouched and not unpublished and \
+                vouched <= set(self.run.auto_publish):
             self.session.apply(Decide(decision=d.id, action="publish"))
             return
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)

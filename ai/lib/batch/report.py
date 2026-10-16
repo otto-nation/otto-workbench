@@ -60,7 +60,7 @@ _PAYLOAD_KEYS: dict[DecisionKind, tuple[str, ...]] = {
     DecisionKind.REBASE_CONFLICT: ("files", "remaining_commits"),
     DecisionKind.REBASE_REFUSED: ("status", "override", "remedy", "detail"),
     DecisionKind.COMMENT_ITEM: ("id", "outcome", "file", "line", "replyable"),
-    DecisionKind.PUBLISH: ("drafted", "track", "closeout"),
+    DecisionKind.PUBLISH: ("drafted", "unpublished", "track", "closeout"),
     DecisionKind.DIRTY_WORKTREE: ("path", "reason"),
 }
 
@@ -118,6 +118,9 @@ def why(decision: Decision) -> str:
         parts = []
         if p.get("drafted"):
             parts.append(f"drafted work is ready to publish: {', '.join(p['drafted'])}")
+        if p.get("unpublished"):
+            parts.append("the local branch holds work no step drafted (a hand rebase?) "
+                         "that the remote lacks")
         if p.get("closeout"):
             parts.append(f"pr comments owes this PR a closeout: {p['closeout']}")
         return "; ".join(parts) or "drafted work is ready to publish"

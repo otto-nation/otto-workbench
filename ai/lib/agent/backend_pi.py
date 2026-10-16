@@ -58,6 +58,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import agent.machine_env
 import agent.pi_binary
 import agent.usage
 import core.log
@@ -1030,7 +1031,7 @@ def prompt(
         return "", _RPC_ERROR_EXIT_CODE, None
     cmd = _build_prompt_cmd(binary.path, model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
-                            timeout=core.timeouts.UNBOUNDED)
+                            timeout=core.timeouts.UNBOUNDED, env=agent.machine_env.base_env(cwd))
     parsed = pi_prompt_result(result.stdout)
     reply, code = parsed.text, result.returncode
     if code:

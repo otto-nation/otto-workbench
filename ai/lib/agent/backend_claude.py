@@ -20,6 +20,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+import agent.machine_env
 import agent.usage
 import core.children
 import core.log
@@ -286,7 +287,7 @@ def prompt(
     """
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
-                            timeout=core.timeouts.UNBOUNDED)
+                            timeout=core.timeouts.UNBOUNDED, env=agent.machine_env.base_env(cwd))
     if result.returncode != 0:
         core.log.dim(_failure_detail(result))
     reply, usage = _unwrap_prompt_output(result.stdout)

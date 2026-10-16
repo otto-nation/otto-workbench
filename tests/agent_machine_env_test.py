@@ -5,8 +5,10 @@ script and `trust --show` with a fixture listing, so the machine's own mise
 state answers nothing here.
 """
 
+import importlib
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -145,17 +147,20 @@ def test_an_agent_with_no_env_inherits_the_machine_env(mise, monkeypatch, tmp_pa
     assert env[MISE_IGNORED_ENV].split(os.pathsep)[-1] == "/wt"
 
 
-def test_invoke_agent_returns_nonzero_when_the_machine_env_is_unavailable(mise, monkeypatch, tmp_path):
+@pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+def test_an_agent_returns_nonzero_when_the_machine_env_is_unavailable(
+    mise, monkeypatch, tmp_path, entry_point,
+):
     for key, value in _repo_applied().items():
         monkeypatch.setenv(key, value)
     mise.answer(hook_rc=1)
     monkeypatch.setattr(agent.backend, "_get_module", lambda: type("M", (), {
-        "invoke_agent": staticmethod(lambda inv: agent.backend.agent_env(inv) and 0),
+        entry_point: staticmethod(lambda inv: agent.backend.agent_env(inv) and 0),
     }))
     inv = agent.backend.AgentInvocation(
         prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
     )
-    assert agent.backend.invoke_agent(inv) == 1
+    assert getattr(agent.backend, entry_point)(inv) == 1
 
 
 def test_a_caller_supplied_env_is_taken_as_given(mise, tmp_path):
@@ -165,3 +170,31 @@ def test_a_caller_supplied_env_is_taken_as_given(mise, tmp_path):
     ))
     assert env["GOOGLE_CLOUD_PROJECT"] == "chosen"
     assert not mise.called_from.exists()
+
+
+@pytest.mark.parametrize("module_name", ["agent.backend_claude", "agent.backend_pi"])
+def test_a_prompt_runs_under_the_machine_env(monkeypatch, tmp_path, module_name):
+    """A prompt reaches the model API too, so it must not carry the repo's credentials."""
+    machine = {"PATH": os.environ["PATH"], "GOOGLE_CLOUD_PROJECT": "machine-proj"}
+    asked = []
+    monkeypatch.setattr(agent.machine_env, "base_env", lambda cwd: asked.append(cwd) or dict(machine))
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, '{"result": "ok"}', "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    importlib.import_module(module_name).prompt("hi", cwd=str(tmp_path))
+    assert seen["env"] == machine
+    assert asked == [str(tmp_path)]
+
+
+def test_a_prompt_returns_nonzero_when_the_machine_env_is_unavailable(monkeypatch, tmp_path):
+    def unavailable(text, **kwargs):
+        raise MachineEnvUnavailable("mise is not on PATH")
+
+    monkeypatch.setattr(agent.backend, "_get_module", lambda: type("M", (), {
+        "prompt": staticmethod(unavailable),
+    }))
+    assert agent.backend.prompt("hi", cwd=str(tmp_path)) == ("", 1)

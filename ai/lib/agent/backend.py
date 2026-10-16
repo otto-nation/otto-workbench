@@ -241,11 +241,19 @@ def prompt(
 
     `thinking` and `provider` follow the same rule as on `AgentInvocation`: Pi
     honours both, Claude Code has a flag for neither and drops them.
+
+    The CLI runs under the machine's environment, as an agent does (see
+    `agent.machine_env`); when that cannot be built the call returns exit 1
+    with an empty reply.
     """
     _require_cwd(cwd, "prompt")
-    result = _get_module().prompt(
-        text, cwd=cwd, model=model, thinking=thinking, provider=provider,
-    )
+    try:
+        result = _get_module().prompt(
+            text, cwd=cwd, model=model, thinking=thinking, provider=provider,
+        )
+    except agent.machine_env.MachineEnvUnavailable as err:
+        core.log.error(f"prompt: {err}")
+        return "", 1
     # Backends report (text, code, usage); tolerate the older pair so a backend that
     # has not adopted the triple degrades to unmeasured rather than crashing dispatch.
     if len(result) == 3:

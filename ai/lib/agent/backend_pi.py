@@ -58,6 +58,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import agent.machine_env
 import agent.pi_binary
 import agent.usage
 import core.log
@@ -1023,6 +1024,9 @@ def prompt(
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
     """
+    # Before the binary check, so an environment that cannot be built costs no
+    # pi spawn. Raises MachineEnvUnavailable; backend.prompt turns it into exit 1.
+    env = agent.machine_env.base_env(cwd)
     try:
         binary = _checked_binary(cwd, model, provider)
     except (ModelNotServed, PiUnresolvable) as err:
@@ -1030,7 +1034,7 @@ def prompt(
         return "", _RPC_ERROR_EXIT_CODE, None
     cmd = _build_prompt_cmd(binary.path, model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
-                            timeout=core.timeouts.UNBOUNDED)
+                            timeout=core.timeouts.UNBOUNDED, env=env)
     parsed = pi_prompt_result(result.stdout)
     reply, code = parsed.text, result.returncode
     if code:

@@ -38,8 +38,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import agent.machine_env
 import agent.pi_binary
 import agent.usage
+import core.log
 import core.trail
 import git.client
 # Backend is defined in core.phases so the config layer can type agent.backend
@@ -239,11 +241,19 @@ def prompt(
 
     `thinking` and `provider` follow the same rule as on `AgentInvocation`: Pi
     honours both, Claude Code has a flag for neither and drops them.
+
+    The CLI runs under the machine's environment, as an agent does (see
+    `agent.machine_env`); when that cannot be built the call returns exit 1
+    with an empty reply.
     """
     _require_cwd(cwd, "prompt")
-    result = _get_module().prompt(
-        text, cwd=cwd, model=model, thinking=thinking, provider=provider,
-    )
+    try:
+        result = _get_module().prompt(
+            text, cwd=cwd, model=model, thinking=thinking, provider=provider,
+        )
+    except agent.machine_env.MachineEnvUnavailable as err:
+        core.log.error(f"prompt: {err}")
+        return "", 1
     # Backends report (text, code, usage); tolerate the older pair so a backend that
     # has not adopted the triple degrades to unmeasured rather than crashing dispatch.
     if len(result) == 3:
@@ -344,8 +354,16 @@ def agent_env(inv: AgentInvocation) -> dict[str, str]:
     exec-time environment ``Popen(env=None)`` would use; both backends call
     this immediately before ``Popen``, so the two are indistinguishable in
     practice.
+
+    What is inherited is the *machine's* environment, not the repo's: a mise
+    config the launching shell or a ``python3`` shim applied is undone, and an
+    untrusted one at the agent's ``cwd`` is ignored — see `agent.machine_env`.
+    A caller-supplied ``inv.env`` is taken as given; it is already the whole
+    environment that caller chose. Raises `MachineEnvUnavailable` rather than
+    spawning an agent with the repo's credentials.
     """
-    return git.client.unattended_env(os.environ if inv.env is None else inv.env)
+    base = agent.machine_env.base_env(inv.cwd) if inv.env is None else inv.env
+    return git.client.unattended_env(base)
 
 
 def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int) -> None:
@@ -361,7 +379,11 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
 def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with tool use and JSONL streaming. Returns exit code."""
     _require_cwd(inv.cwd, "invoke_agent")
-    code = _get_module().invoke_agent(inv)
+    try:
+        code = _get_module().invoke_agent(inv)
+    except agent.machine_env.MachineEnvUnavailable as err:
+        core.log.error(f"invoke_agent: {err}")
+        return 1
     _record_invocation(inv, entry_point="agent", exit_code=code)
     return code
 
@@ -369,7 +391,11 @@ def invoke_agent(inv: AgentInvocation) -> int:
 def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, raw output echoed. Returns exit code."""
     _require_cwd(inv.cwd, "invoke_fix")
-    code = _get_module().invoke_fix(inv)
+    try:
+        code = _get_module().invoke_fix(inv)
+    except agent.machine_env.MachineEnvUnavailable as err:
+        core.log.error(f"invoke_fix: {err}")
+        return 1
     _record_invocation(inv, entry_point="fix", exit_code=code)
     return code
 

@@ -61,7 +61,7 @@ _PRINT_ENV = (
 # part of the environment and must not land between the listings. `$1` is the
 # interpreter, `$2` the listing program.
 _RESTORE_SCRIPT = (
-    f'"$1" -c "$2" && printf "%s\\0" {_MARKER} && '
+    f'"$1" -c "$2" && printf "%s\\0" "{_MARKER}" && '
     'hook=$(mise hook-env -s bash --force) || exit $?; '
     'eval "$hook" >&2; exec "$1" -c "$2"'
 )
@@ -91,9 +91,6 @@ class EnvDelta:
         return env
 
 
-_NO_CHANGE = EnvDelta({}, frozenset())
-
-
 def _listing(raw: str) -> dict[str, str]:
     return dict(entry.split("=", 1) for entry in raw.split("\0") if "=" in entry)
 
@@ -118,7 +115,8 @@ def _restore_delta(base: frozenset[tuple[str, str]]) -> EnvDelta:
     Keyed on the whole environment, because which keys the undo drops depends
     on which are present. Cached because the bash and mise round trip costs a
     quarter of a second and a review spawns a dozen agents from an environment
-    that rarely changes between them.
+    that rarely changes between them. Any change to any variable
+    (`GH_TOKEN` set for publishing, say) is a new key and pays the cost again.
     """
     if not shutil.which("mise"):
         raise MachineEnvUnavailable(
@@ -126,8 +124,8 @@ def _restore_delta(base: frozenset[tuple[str, str]]) -> EnvDelta:
             "not on PATH to undo it",
         )
     r = core.proc.run(
-        ["bash", "-c", _RESTORE_SCRIPT, "bash", sys.executable, _PRINT_ENV], cwd=os.path.expanduser("~"),
-        timeout=core.timeouts.LOCAL, env=dict(base),
+        ["bash", "-c", _RESTORE_SCRIPT, "bash", sys.executable, _PRINT_ENV],
+        cwd=os.path.expanduser("~"), timeout=core.timeouts.LOCAL, env=dict(base),
     )
     if not r.ok:
         raise MachineEnvUnavailable(core.proc.failure_message(

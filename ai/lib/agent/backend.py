@@ -41,6 +41,7 @@ from pathlib import Path
 import agent.machine_env
 import agent.pi_binary
 import agent.usage
+import core.log
 import core.trail
 import git.client
 # Backend is defined in core.phases so the config layer can type agent.backend
@@ -370,7 +371,11 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
 def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with tool use and JSONL streaming. Returns exit code."""
     _require_cwd(inv.cwd, "invoke_agent")
-    code = _get_module().invoke_agent(inv)
+    try:
+        code = _get_module().invoke_agent(inv)
+    except agent.machine_env.MachineEnvUnavailable as err:
+        core.log.error(f"invoke_agent: {err}")
+        return 1
     _record_invocation(inv, entry_point="agent", exit_code=code)
     return code
 
@@ -378,7 +383,11 @@ def invoke_agent(inv: AgentInvocation) -> int:
 def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, raw output echoed. Returns exit code."""
     _require_cwd(inv.cwd, "invoke_fix")
-    code = _get_module().invoke_fix(inv)
+    try:
+        code = _get_module().invoke_fix(inv)
+    except agent.machine_env.MachineEnvUnavailable as err:
+        core.log.error(f"invoke_fix: {err}")
+        return 1
     _record_invocation(inv, entry_point="fix", exit_code=code)
     return code
 

@@ -69,7 +69,7 @@ def _restore_gh_token():
 
 
 @pytest.fixture(autouse=True)
-def _inherited_agent_env(monkeypatch):
+def _inherited_agent_env():
     """An agent spawned with no env inherits ``os.environ`` as it stands.
 
     The real `agent.machine_env.base_env` asks mise to undo whatever config the
@@ -77,8 +77,18 @@ def _inherited_agent_env(monkeypatch):
     ``tmp_path`` an agent is pointed at — one machine's mise state answering
     every backend test. `tests/agent_machine_env_test.py` restores the real one,
     which `conftest.pytest_configure` captured before any test ran.
+
+    Saved and restored by hand rather than through ``monkeypatch``: a plugin's
+    autouse fixture sets up before conftest's, so requesting ``monkeypatch``
+    here would set it up first and tear it down last — after conftest fixtures
+    whose teardown reads module globals a test has monkeypatched.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
     import agent.machine_env
-    monkeypatch.setattr(agent.machine_env, "base_env", lambda _cwd: dict(os.environ))
+    saved = agent.machine_env.base_env
+    agent.machine_env.base_env = lambda _cwd: dict(os.environ)
+    try:
+        yield
+    finally:
+        agent.machine_env.base_env = saved

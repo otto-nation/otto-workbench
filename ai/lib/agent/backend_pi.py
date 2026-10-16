@@ -1024,6 +1024,7 @@ def prompt(
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
     """
+    env = agent.machine_env.base_env(cwd)  # raises MachineEnvUnavailable, before any pi spawn
     try:
         binary = _checked_binary(cwd, model, provider)
     except (ModelNotServed, PiUnresolvable) as err:
@@ -1031,7 +1032,7 @@ def prompt(
         return "", _RPC_ERROR_EXIT_CODE, None
     cmd = _build_prompt_cmd(binary.path, model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
-                            timeout=core.timeouts.UNBOUNDED, env=agent.machine_env.base_env(cwd))
+                            timeout=core.timeouts.UNBOUNDED, env=env)
     parsed = pi_prompt_result(result.stdout)
     reply, code = parsed.text, result.returncode
     if code:

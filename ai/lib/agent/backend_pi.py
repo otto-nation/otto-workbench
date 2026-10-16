@@ -1024,7 +1024,9 @@ def prompt(
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
     """
-    env = agent.machine_env.base_env(cwd)  # raises MachineEnvUnavailable, before any pi spawn
+    # Before the binary check, so an environment that cannot be built costs no
+    # pi spawn. Raises MachineEnvUnavailable; backend.prompt turns it into exit 1.
+    env = agent.machine_env.base_env(cwd)
     try:
         binary = _checked_binary(cwd, model, provider)
     except (ModelNotServed, PiUnresolvable) as err:

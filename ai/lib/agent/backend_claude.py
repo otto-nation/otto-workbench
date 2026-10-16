@@ -285,7 +285,8 @@ def prompt(
     That is the levels taking effect as written, not a regression, but it is a
     real part of why a Pi review costs more per turn than a Claude one did.
     """
-    env = agent.machine_env.base_env(cwd)  # raises MachineEnvUnavailable
+    # Raises MachineEnvUnavailable; backend.prompt turns it into exit 1.
+    env = agent.machine_env.base_env(cwd)
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED, env=env)

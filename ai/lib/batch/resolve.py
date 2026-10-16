@@ -261,7 +261,9 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
             # the forced run starting from that rebase, which publish would then
             # check the remote against. The forced run's stdout went to the
             # operator's terminal, so its own tip is read back from the record it
-            # saved, for state written before start_head existed.
+            # saved, for state written before start_head existed. start_head is
+            # the first attempt's HEAD, so it is post-hand-rebase only when the
+            # hand rebase preceded that first attempt.
             item.pre_rebase_head = rec.start_head or batch.outcomes.recorded_pre_rebase_head(item)
             rec.status, rec.drafted = StepStatus.DONE, True
         else:

@@ -274,6 +274,7 @@ def _no_live_backend(monkeypatch):
 _REAL_CATALOGUE_FOR = None
 _REAL_CATALOGUE_TEXT = None
 _REAL_PI_RESOLVE = None
+_REAL_BASE_ENV = None
 
 
 def pytest_configure(config):
@@ -285,11 +286,13 @@ def pytest_configure(config):
     fixture below re-applies the stub per test so a catalogue test cannot
     leak a live listing into the next one.
     """
-    global _REAL_CATALOGUE_FOR, _REAL_CATALOGUE_TEXT, _REAL_PI_RESOLVE
+    global _REAL_CATALOGUE_FOR, _REAL_CATALOGUE_TEXT, _REAL_PI_RESOLVE, _REAL_BASE_ENV
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
+    import agent.machine_env
     import agent.pi_binary
     import agent.pi_models
+    _REAL_BASE_ENV = agent.machine_env.base_env
     _REAL_CATALOGUE_FOR = agent.pi_models.catalogue_for
     _REAL_CATALOGUE_TEXT = agent.pi_models.catalogue_text
     _REAL_PI_RESOLVE = agent.pi_binary.resolve

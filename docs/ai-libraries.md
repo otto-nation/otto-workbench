@@ -3838,6 +3838,34 @@ sending commands, reading replies, classifying a fatal response, and
 starting/stopping the process group. The event loop that consumes the
 stream lives in ``agent.backend_pi``.
 
+### agent/machine_env.py
+
+The machine's environment for an agent, without the mise config of the repo it runs in.
+
+`pr` runs under ``#!/usr/bin/env python3``. Where ``python3`` is a mise shim and
+`pr` starts inside a repo whose mise config is trusted, the shim applies that
+config's ``[env]`` before any workbench code runs, and every agent inherits it.
+A shell running ``mise activate`` leaks the same way from whichever directory
+it last entered. A repo that sets its own ``GOOGLE_CLOUD_PROJECT`` then sends
+every agent's model calls to a project the review identity cannot use: each
+agent fails with a 403 and spends nothing.
+
+`base_env` undoes that. mise records what it changed, with the values it
+overwrote, in ``__MISE_DIFF``, and ``mise hook-env`` run from ``$HOME`` turns
+that record into the shell that restores the machine's state — global config
+only. The shell is evaluated by bash and the environment is compared before and
+after inside that same bash, so the format mise writes is never parsed here.
+What the process added since it started (a ``PATH`` entry, a token) survives,
+because only the keys mise changed move.
+
+It also ignores, never trusts, every untrusted mise config at or above the
+agent's working directory. pi itself is spawned by path (see
+`agent.pi_binary`) and never reaches a shim, but the commands an agent runs in a
+fresh review worktree do, and mise refuses each one outright while the
+worktree's config is untrusted. Ignoring means mise does not read the file at
+all, so nothing in it runs; trusted configs stay active, so a fix agent running
+the repo's tests still gets the repo's toolchain.
+
 ### agent/pi_binary.py
 
 Which `pi` binary every Pi-backend call runs, chosen once per directory.

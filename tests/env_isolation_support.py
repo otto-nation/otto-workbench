@@ -66,3 +66,19 @@ def _restore_gh_token():
         os.environ.pop("GH_TOKEN", None)
     else:
         os.environ["GH_TOKEN"] = saved
+
+
+@pytest.fixture(autouse=True)
+def _inherited_agent_env(monkeypatch):
+    """An agent spawned with no env inherits ``os.environ`` as it stands.
+
+    The real `agent.machine_env.base_env` asks mise to undo whatever config the
+    test runner itself was started under, and lists untrusted configs at every
+    ``tmp_path`` an agent is pointed at — one machine's mise state answering
+    every backend test. `tests/agent_machine_env_test.py` restores the real one,
+    which `conftest.pytest_configure` captured before any test ran.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import agent.machine_env
+    monkeypatch.setattr(agent.machine_env, "base_env", lambda _cwd: dict(os.environ))

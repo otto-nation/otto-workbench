@@ -38,6 +38,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import agent.machine_env
 import agent.pi_binary
 import agent.usage
 import core.trail
@@ -344,8 +345,16 @@ def agent_env(inv: AgentInvocation) -> dict[str, str]:
     exec-time environment ``Popen(env=None)`` would use; both backends call
     this immediately before ``Popen``, so the two are indistinguishable in
     practice.
+
+    What is inherited is the *machine's* environment, not the repo's: a mise
+    config the launching shell or a ``python3`` shim applied is undone, and an
+    untrusted one at the agent's ``cwd`` is ignored — see `agent.machine_env`.
+    A caller-supplied ``inv.env`` is taken as given; it is already the whole
+    environment that caller chose. Raises `MachineEnvUnavailable` rather than
+    spawning an agent with the repo's credentials.
     """
-    return git.client.unattended_env(os.environ if inv.env is None else inv.env)
+    base = agent.machine_env.base_env(inv.cwd) if inv.env is None else inv.env
+    return git.client.unattended_env(base)
 
 
 def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int) -> None:

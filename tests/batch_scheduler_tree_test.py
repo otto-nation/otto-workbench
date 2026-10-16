@@ -11,6 +11,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import batch.scheduler  # noqa: E402
 import batch.steps  # noqa: E402
 import batch.store  # noqa: E402
 import git.client  # noqa: E402
@@ -260,3 +261,22 @@ def test_without_watch_ci_the_summary_names_what_was_not_rechecked():
     finished = [f for k, f in h.events if k == "run_finished"]
     assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
     assert _ci_spawns(h) == []
+
+
+def test_unpublished_is_local_work_the_lease_lacks(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    (repo / "a.txt").write_text("a\n")
+    commit_all(repo, "a")
+    lease = git.client.head_sha(cwd=str(repo))
+    wt = str(repo)
+    assert batch.scheduler._unpublished(wt, lease) is False
+    (repo / "b.txt").write_text("b\n")
+    commit_all(repo, "b")
+    ahead = git.client.head_sha(cwd=wt)
+    assert batch.scheduler._unpublished(wt, lease) is True
+    git_in(repo, "reset", "-q", "--hard", lease)
+    # Only behind the lease: nothing to push.
+    assert batch.scheduler._unpublished(wt, ahead) is False
+    # A lease this clone has never fetched says nothing about what is owed.
+    assert batch.scheduler._unpublished(wt, "0" * 40) is False
+    assert batch.scheduler._unpublished("", lease) is False

@@ -3584,7 +3584,11 @@ to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
 `--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. The lease advances as soon as
+appeared since is refused again) or drops the PR. A branch the operator rebased
+by hand with `--fork-point` reaches that refusal too: the commits the fork
+point skipped are the ones listed, and the rebase's start tip stays the one
+the batch saw before the hand rebase (`batch.resolve`, `force`), so
+`not_incorporated` does not fire for it. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 
 ### batch/report.py
@@ -3637,7 +3641,7 @@ Apply an operator's answer to one decision, then move the item on.
 | | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
 | `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
 | `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
-| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
+| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped`. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease |

@@ -26,7 +26,11 @@ to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
 `--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. The lease advances as soon as
+appeared since is refused again) or drops the PR. A branch the operator rebased
+by hand with `--fork-point` reaches that refusal too: the commits the fork
+point skipped are the ones listed, and the rebase's start tip stays the one
+the batch saw before the hand rebase (`batch.resolve`, `force`), so
+`not_incorporated` does not fire for it. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 """
 

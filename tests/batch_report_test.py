@@ -278,6 +278,12 @@ def test_why_says_exactly_why_each_kind_waits(kind, step, payload, sentence):
     assert batch.report.why(_d(kind, step, payload)) == sentence
 
 
+def test_why_names_local_work_no_step_drafted():
+    assert batch.report.why(_d(DecisionKind.PUBLISH, "publish",
+                               {"drafted": [], "unpublished": True})) == (
+        "the local branch holds work no step drafted (a hand rebase?) that the remote lacks")
+
+
 def test_a_review_decision_without_a_session_file_has_no_session_log(reviews_dir):
     run = _run([_item(1)], [_d(DecisionKind.FAILED, "review", {"reason": "error"})])
     assert _only_next(run)["session_log"] is None

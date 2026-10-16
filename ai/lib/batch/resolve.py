@@ -8,7 +8,7 @@
 | | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
 | `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
 | `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
-| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
+| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped`. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease |
@@ -256,10 +256,14 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
     elif action == "force":
         if ok:
             rec = item.step(Step.REBASE)
+            # The tip the refused attempt started from, not the forced run's: an
+            # operator who rebased by hand with --fork-point before forcing left
+            # the forced run starting from that rebase, which publish would then
+            # check the remote against. The forced run's stdout went to the
+            # operator's terminal, so its own tip is read back from the record it
+            # saved, for state written before start_head existed.
+            item.pre_rebase_head = rec.start_head or batch.outcomes.recorded_pre_rebase_head(item)
             rec.status, rec.drafted = StepStatus.DONE, True
-            # Its stdout went to the operator's terminal, so the tip is read back from
-            # the record the forced run saved.
-            item.pre_rebase_head = batch.outcomes.recorded_pre_rebase_head(item)
         else:
             created.append(_fail(run, item, "rebase"))
     elif action == "undo":

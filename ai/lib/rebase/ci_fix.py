@@ -170,9 +170,9 @@ def _try_rerun_transient(
 ) -> _Rerun | None:
     """Rerun rate-limit-only infra once, wait, and rebuild the adapter.
 
-    Returns None when this is not a transient-only skip, when any `gh run rerun`
-    fails for every run (including a latched budget breaker), or when the wait cannot rebuild
-    a report. Exactly one automatic rerun per `run_fix` invocation: the caller
+    Returns None when this is not a transient-only skip, when every `gh run
+    rerun` fails (including a latched budget breaker), or when the wait cannot
+    rebuild a report. Exactly one automatic rerun per `run_fix` invocation: the caller
     must not call this again on the rebuilt adapter.
     """
     if not _all_skipped_transient(adapter):

@@ -88,8 +88,7 @@ class TestFinishMustNotClaimUncommittedFixes:
         """The hook rejected the commit and nobody landed the work afterwards.
 
         Regression of the 2026-10-15 batch: 16 FIXED replies would have gone
-        out for staged, uncommitted edits. The existing
-        the former `test_falls_back_to_the_linkless_shape_when_no_commit_can_be_named`
+        out for staged, uncommitted edits. The former `test_falls_back_to_the_linkless_shape_when_no_commit_can_be_named`
         encoded that drain as intended; this is the claim it missed.
         """
         fix, threads_by_id = _failed_queue()

@@ -22,7 +22,7 @@ import contextlib
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -459,12 +459,21 @@ def _own_error(run_id: str, delivery: batch.inbox.Delivery) -> str:
     return ""
 
 
+@dataclass(frozen=True)
+class _HolderView:
+    """The queued-resolve `holder` object."""
+
+    role: str | None
+    pid: int
+    command: str
+
+
 def _holder_view(holder: batch.store.Holder | None) -> dict | None:
     """The queued-resolve `holder` object, or None when the delivery named nobody."""
     if holder is None:
         return None
-    return {"role": None if holder.role is None else holder.role.value,
-            "pid": holder.pid, "command": holder.command}
+    return asdict(_HolderView(None if holder.role is None else holder.role.value,
+                              holder.pid, holder.command))
 
 
 def _cmd_resolve(args, bin_dir: Path) -> int:

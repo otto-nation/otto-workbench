@@ -516,7 +516,8 @@ class Scheduler:
         After the parent is rewritten the child's prefix matches the old parent
         by patch-id. The fork is merge-base(parent.pre_rebase_head, HEAD): the
         parent's tip is not always an ancestor of the child. Empty when there is
-        no parent in this run, no recorded tip, or git finds no merge-base.
+        no parent in this run, no recorded tip, a parent whose rebase did not
+        finish (skipped, or its tip is from an earlier attempt), or no merge-base.
         """
         if rec.step is not Step.REBASE or not item.stacked_on:
             return ""
@@ -525,6 +526,8 @@ class Scheduler:
         except KeyError:
             return ""
         if not parent.pre_rebase_head:
+            return ""
+        if not parent.has(Step.REBASE) or parent.step(Step.REBASE).status is not StepStatus.DONE:
             return ""
         return git.client.out(
             "merge-base", parent.pre_rebase_head, "HEAD", cwd=item.worktree)

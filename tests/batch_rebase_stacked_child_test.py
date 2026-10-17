@@ -26,7 +26,7 @@ import batch.resolve  # noqa: E402
 import batch.steps  # noqa: E402
 import gh.landed  # noqa: E402
 import rebase.refusals  # noqa: E402
-from batch.model import Step  # noqa: E402
+from batch.model import Step, StepStatus  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from rebase.types import REFUSAL_EXIT  # noqa: E402
 from batch_scheduler_support import (  # noqa: F401
@@ -85,17 +85,6 @@ def _advance_main_and_rebase_parent(repo: Path) -> str:
     git_in(repo, "checkout", "-q", "parent")
     git_in(repo, "rebase", "main")
     return old_parent
-
-
-def _fork_point_from_payload(payload: dict) -> str:
-    """The sha a refusal payload names for `--fork-point`."""
-    if sha := payload.get("fork_point"):
-        return sha
-    remedy = payload.get("remedy", "")
-    prefix = "--fork-point "
-    if remedy.startswith(prefix):
-        return remedy[len(prefix):].split()[0]
-    return ""
 
 
 def _refused_child(tmp_path) -> tuple[batch.model.Decision, batch.model.Item, Path]:
@@ -183,7 +172,7 @@ def test_parent_grew_after_fork_so_old_tip_is_not_the_fork_point(tmp_path):
 
 def test_rebase_refused_naming_a_fork_point_offers_rebase_from_fork_point(tmp_path):
     decision, item, _repo = _refused_child(tmp_path)
-    assert _fork_point_from_payload(decision.payload)
+    assert batch.resolve._named_fork_point(decision.payload)
 
     actions = batch.resolve.available_actions(decision, item)
 
@@ -192,7 +181,7 @@ def test_rebase_refused_naming_a_fork_point_offers_rebase_from_fork_point(tmp_pa
 
 def test_command_for_rebase_from_fork_point_passes_fork_point_not_force(tmp_path):
     decision, item, _repo = _refused_child(tmp_path)
-    sha = _fork_point_from_payload(decision.payload)
+    sha = batch.resolve._named_fork_point(decision.payload)
     assert sha
 
     commands = batch.resolve.command_for(
@@ -234,7 +223,8 @@ def test_batch_rebase_argv_uses_merge_base_of_parent_pre_rebase_head(tmp_path):
 ONLY_REBASE = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO}
 
 
-def _child_rebase_argv(tmp_path, *, extra_parent: bool, pre_rebase_head: str | None):
+def _child_rebase_argv(tmp_path, *, extra_parent: bool, pre_rebase_head: str | None,
+                       parent_rebased: bool = True):
     """Spawn the stacked child's rebase via the scheduler and return its argv."""
     repo = _stacked(tmp_path, extra_parent=extra_parent)
     parent_pre = git_out(repo, "rev-parse", "parent").strip()
@@ -249,6 +239,7 @@ def _child_rebase_argv(tmp_path, *, extra_parent: bool, pre_rebase_head: str | N
     child = h.run.item("o/r#2")
     assert child.stacked_on == "o/r#1"
     parent.pre_rebase_head = parent_pre if pre_rebase_head is None else pre_rebase_head
+    parent.step(Step.REBASE).status = StepStatus.DONE if parent_rebased else StepStatus.SKIPPED
     child.worktree = wt
     h.sched._start(child, child.step(Step.REBASE), row(2, ONLY_REBASE, base_ref="b1"))
     return h.spawned[-1], expected, parent_pre
@@ -266,3 +257,13 @@ def test_scheduler_passes_merge_base_when_parent_grew_after_fork(tmp_path):
 def test_scheduler_omits_fork_point_when_parent_pre_rebase_head_is_empty(tmp_path):
     argv, _, _ = _child_rebase_argv(tmp_path, extra_parent=True, pre_rebase_head="")
     assert "--fork-point" not in argv
+
+
+def test_scheduler_omits_fork_point_when_parent_rebase_was_skipped(tmp_path):
+    argv, _, _ = _child_rebase_argv(
+        tmp_path, extra_parent=True, pre_rebase_head=None, parent_rebased=False)
+    assert "--fork-point" not in argv
+
+
+def test_named_fork_point_tolerates_bare_remedy_prefix():
+    assert batch.resolve._named_fork_point({"remedy": "--fork-point "}) == ""

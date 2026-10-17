@@ -88,6 +88,7 @@ ACTION_INPUTS: dict[str, tuple[ActionInput, ...]] = {
 class ResolveError(ValueError):
     pass
 
+
 _FORK_POINT_PREFIX = "--fork-point "
 
 
@@ -98,7 +99,8 @@ def _named_fork_point(payload: Mapping) -> str:
         return sha
     remedy = payload.get("remedy", "")
     if isinstance(remedy, str) and remedy.startswith(_FORK_POINT_PREFIX):
-        return remedy[len(_FORK_POINT_PREFIX):].split()[0]
+        named = remedy[len(_FORK_POINT_PREFIX):].split()
+        return named[0] if named else ""
     return ""
 
 

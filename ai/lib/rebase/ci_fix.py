@@ -17,8 +17,11 @@ import core.report
 import fix.ci
 import fix.engine
 import fix.verify
+import gh.client
 from git.land import CommitStatus
+import pr.ci_failures
 import pr.ci_report
+import pr.ci_wait
 import pr.state
 import rebase.commands
 import rebase.inspect
@@ -100,6 +103,88 @@ def _emit_tally(tally: pr.ci_report.CIFixTally) -> None:
     core.report.emit_stream_json(tally.to_json(), pr.ci_report.FIX_TALLY_TYPE)
 
 
+def _run_ids(report: pr.ci_report.CIReport) -> list[int]:
+    """Workflow runs to rerun: `run_ids` when present, else the single `run_id`."""
+    ids = [run_id for run_id in report.run_ids if run_id]
+    if ids:
+        return ids
+    return [report.run_id] if report.run_id else []
+
+
+def _all_skipped_transient(adapter: fix.ci.CIFixAdapter) -> bool:
+    return bool(adapter.skipped) and all(
+        pr.ci_failures.is_transient_infra(failure.group)
+        for failure in adapter.skipped
+    )
+
+
+def _rereport_after_rerun(
+    trail, report: pr.ci_report.CIReport, ctx, *,
+    wait_timeout: int, wait_interval: int,
+) -> pr.ci_report.CIReport | None:
+    """Wait for the rerun jobs and rebuild the CI report.
+
+    Pins no run id: a rate-limit incident can span several workflow runs, and
+    `poll_until_complete` only pins one. Re-resolving by `head_sha` is how
+    `ci-check --wait` watches the same commit.
+    """
+    # Imported here: `pr.ci_check` imports this module at load.
+    import pr.ci_check
+    import pr.ci_runs
+
+    try:
+        poll = pr.ci_wait.poll_until_complete(
+            ctx.repo, ctx.branch, run_id=None,
+            timeout=wait_timeout, interval=wait_interval,
+            trail=trail, head_sha=report.head_sha,
+        )
+    except pr.ci_runs.RunUnavailable:
+        return None
+    return pr.ci_check.report_run(
+        trail, ctx, poll.merged, poll.run_ids,
+        counts=poll.counts, show_status=True,
+    )
+
+
+def _try_rerun_transient(
+    trail, report: pr.ci_report.CIReport, adapter: fix.ci.CIFixAdapter, ctx, *,
+    wait_timeout: int, wait_interval: int,
+) -> tuple[pr.ci_report.CIReport, fix.ci.CIFixAdapter] | None:
+    """Rerun rate-limit-only infra once, wait, and rebuild the adapter.
+
+    Returns None when this is not a transient-only skip, when any `gh run rerun`
+    fails (including a latched budget breaker), or when the wait cannot rebuild
+    a report. Exactly one automatic rerun per `run_fix` invocation: the caller
+    must not call this again on the rebuilt adapter.
+    """
+    if not _all_skipped_transient(adapter):
+        return None
+    run_ids = _run_ids(report)
+    if not run_ids:
+        return None
+    core.log.info(
+        f"Rerunning {len(run_ids)} failed job run(s) that hit GitHub API rate limits"
+    )
+    for run_id in run_ids:
+        if not gh.client.run(
+            "run", "rerun", str(run_id), "--failed",
+            cwd=str(ctx.require_worktree()),
+        ).ok:
+            return None
+    rebuilt = _rereport_after_rerun(
+        trail, report, ctx,
+        wait_timeout=wait_timeout, wait_interval=wait_interval,
+    )
+    if rebuilt is None:
+        return None
+    state = pr.state.load_or_init(
+        target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
+        pr_number=ctx.pr_number, head_sha=rebuilt.head_sha,
+        worktree_root=str(ctx.worktree_root),
+    )
+    return rebuilt, fix.ci.CIFixAdapter(rebuilt, ctx, state)
+
+
 def _tally(adapter: fix.ci.CIFixAdapter,
            run: fix.engine.FixRun | None = None) -> pr.ci_report.CIFixTally:
     """The tally for *adapter*'s failures, after *run* when the pass ran."""
@@ -116,7 +201,8 @@ def _tally(adapter: fix.ci.CIFixAdapter,
 
 
 def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
-            rebase_first: bool = True, verify: bool = True) -> int:
+            rebase_first: bool = True, verify: bool = True,
+            wait_timeout: int = 900, wait_interval: int = 30) -> int:
     """Apply AI-driven fixes for CI failures. Returns exit code.
 
     *rebase_first* False skips `rebase_if_behind`: `pr batch` rebases in a
@@ -127,6 +213,15 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
     comments passes do: a ticked box is a claim an edit was made, not that it
     clears the failure, and the gate demotes the ones it finds broken. False
     (`--no-verify`) skips it and every fix lands unverified.
+
+    When every remaining failure is transient GitHub API rate-limit infra,
+    the failed jobs are rerun once (`gh run rerun --failed`), the run is
+    waited on with *wait_timeout* / *wait_interval* (the same defaults as
+    `ci-check --wait`), and the report is rebuilt. A clean rerun ends the
+    pass with an empty tally; newly fixable failures continue into the
+    engine; anything else still non-fixable is skipped for a person, as
+    today. Timeouts and OOM are not rerun. Bound: one automatic rerun per
+    invocation.
     """
     if not ctx.worktree_root:
         core.log.error("--fix requires a worktree (use --repo-dir)")
@@ -144,13 +239,24 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
     )
     adapter = fix.ci.CIFixAdapter(report, ctx, state)
     if not adapter.fixable:
-        # `adapter.fixable` empty with `report.failures` non-empty means every
-        # failure landed in `adapter.skipped` by elimination, so `kinds` is
-        # never empty here.
-        kinds = sorted({f.group.kind.value for f in adapter.skipped})
-        core.log.info(f"No fixable failures (all {'/'.join(kinds)})")
-        _emit_tally(_tally(adapter))
-        return 0
+        recovered = _try_rerun_transient(
+            trail, report, adapter, ctx,
+            wait_timeout=wait_timeout, wait_interval=wait_interval,
+        )
+        if recovered is not None:
+            report, adapter = recovered
+            if not report.failures:
+                core.log.info("No failures to fix")
+                _emit_tally(pr.ci_report.CIFixTally())
+                return 0
+        if not adapter.fixable:
+            # `adapter.fixable` empty with `report.failures` non-empty means
+            # every failure landed in `adapter.skipped` by elimination, so
+            # `kinds` is never empty here.
+            kinds = sorted({f.group.kind.value for f in adapter.skipped})
+            core.log.info(f"No fixable failures (all {'/'.join(kinds)})")
+            _emit_tally(_tally(adapter))
+            return 0
 
     # Rebase before the pass, not before the report — the original run has the
     # failures we need to fix, but the branch should be current before applying

@@ -99,7 +99,7 @@ For each non-infra, non-flaky, non-external failure group:
 - **lint:** The annotation usually contains the exact fix. Read the file to confirm context.
 - **test:** Read both the test file and the code under test. Identify the mismatch — is the test wrong, or is the code wrong?
 - **build:** Parse the log output. Look for missing dependencies, version mismatches, or config errors.
-- **infra:** Flag to user with the raw error. Do not attempt a fix.
+- **infra:** Flag to user with the raw error. Do not attempt a fix. Rate-limit-only infra is already rerun once by `ci-check --fix` before anything is handed over; other infra (timeouts, OOM) still needs a person.
 - **flaky:** Flag to user. Suggest re-running the workflow.
 - **external:** Flag to user with the annotation and the check's URL. Do not attempt a fix — another system reached this verdict and what would clear it is not knowable from here.
 
@@ -180,7 +180,7 @@ Print:
 | **lint** | ShellCheck, ESLint, yamllint | Annotations only | Direct code fix |
 | **test** | pytest, bats, jest | Annotations; logs when those are generic | Code or test fix |
 | **build** | Docker, webpack, gradle | Full logs | Dependency/config fix |
-| **infra** | Timeouts, rate limits, OOM | Full logs | Flag to user |
+| **infra** | Timeouts, OOM; rate limits (rerun once by `run_fix`) | Full logs | Flag to user; rate-limit-only is rerun then re-waited |
 | **flaky** | Same test passed in prior run | Never | Flag, suggest re-run |
 | **external** | CodeQL, Trivy, Scalr plan, any non-Actions check | Annotations only — it has no Actions logs | Flag to user |
 
@@ -191,7 +191,7 @@ Print:
 - An empty `failures` means CI passed only when `unread` is also empty — otherwise it means nobody could see all of it
 - Present classification + diagnosis, then proceed to fix without waiting for confirmation — the user can interrupt to override
 - Do not manually fetch CI logs (`gh run view`, `gh api`, `gh run view --log`). The `pr ci` JSON report includes failure context. Only call GitHub directly if the JSON context field is empty or clearly insufficient for a specific failure
-- NEVER auto-fix infra, flaky or external failures
+- NEVER auto-fix infra, flaky or external failures (rate-limit-only infra is rerun once by `ci-check --fix` / `run_fix`, not by editing the repo)
 - A commit can be checked by something that ran no workflow. The report then names no run number and the dashboard reads `## CI Checks (<sha>)` rather than `## CI Run #N` — that is a commit with checks, not a missing run
 - Persisting failures on re-invocation include context of prior fix attempts
 - Single commit per fix cycle

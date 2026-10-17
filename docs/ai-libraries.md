@@ -6017,7 +6017,10 @@ the `post-rewrite` hook, as one `<old> <new>` line per commit, after every
 cannot — a pick whose conflict resolution changed its hunks, and every commit a
 `fixup`/`squash` folded, each listed against the commit it folded into. Then git
 forgets it: `rebase-merge/rewritten-list` is deleted when the rebase finishes,
-so the only moment the answer exists is inside that hook.
+so the only moment the answer exists is inside that hook. `pr rebase`
+chains that hook in front of a repo's own ``core.hooksPath`` so a local
+hooks directory cannot hide the record; a hand-run rebase still needs the
+global ``core.hooksPath`` (or the same chain) to write one.
 
 Not every line is a rewrite. git maps a commit it *dropped* — a `--skip`, a
 resolution that emptied it — onto whatever came before it, so a dropped fix
@@ -6192,6 +6195,30 @@ Conflict classification, parsing, and git-level resolution.
 Pure conflict-analysis functions — prompt construction, AI invocation,
 and file-level dispatch live in ``resolve_ai``.
 
+### rebase/hooks_chain.py
+
+Chain workbench git hooks in front of a repo that set ``core.hooksPath``.
+
+The rewrite record ``git.rewrites`` reads is written only by the workbench
+``post-rewrite`` hook. A repo that points ``core.hooksPath`` at its own
+directory (``.githooks``, with no ``post-rewrite``) hides that hook, so a
+rebase there is never recorded. ``pr rebase`` cannot change the repo's
+setting — a hand-run ``git rebase --continue`` would still miss it — but
+the three git children it drives can pass ``-c core.hooksPath=<wrapper>``.
+
+The wrapper is a temp directory that lasts for one git child:
+
+* ``post-rewrite``, ``prepare-commit-msg``, and ``pre-commit`` run the
+  workbench hook first, then the repo's own if it is executable, with stdin
+  replayed to both.
+* every other hook file in the repo directory is forwarded as a symlink, so
+  a name this process did not know about still runs.
+
+``core.hooksPath=/dev/null`` (or any non-directory) is honoured: no wrap.
+When the effective path is already the workbench hooks dir, the config is
+left alone. :func:`warn_if_shadowed` is the one warning at ``pr rebase``
+start; it names what a hand-run git will miss.
+
 ### rebase/inspect.py
 
 Rebase-state detection and ref reads.
@@ -6356,7 +6383,9 @@ Three callers, one judgement:
 * the global `post-rewrite` hook reports commits a finished rebase dropped
   whose changes are not in the result — and, since it is reading the same
   map and the same rebase state, writes `git.rewrites`' record of every line
-  that is not a drop;
+  that is not a drop. `pr rebase` chains this hook in front of a repo's own
+  ``core.hooksPath`` rather than replacing it, so a local hooks directory
+  still runs and the record is still written;
 * `pr rebase` audits its own resolutions before it continues, so a refusal
   arrives as a paused rebase with the files named rather than as a hook
   failure it would have to interpret.

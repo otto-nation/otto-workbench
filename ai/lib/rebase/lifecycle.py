@@ -22,6 +22,7 @@ import git.topology
 import pr.context
 from pr.domains import RebaseStatus
 
+from . import hooks_chain
 from . import inspect as rebase_inspect
 from . import land as rebase_land
 from . import lease as rebase_lease
@@ -86,12 +87,18 @@ def _continue_command(mode: RunMode) -> str:
     return "pr rebase --fix"
 
 
+def _git_rebase(cwd: str, *args: str) -> CmdResult:
+    """One rebase git child, with REBASE_CONFIG and chained hooks."""
+    with hooks_chain.override(cwd) as extra:
+        return git.client.run(
+            *args, cwd=cwd, config={**REBASE_CONFIG, **extra},
+            env=unattended_env(),
+        )
+
+
 def rebase_continue(cwd: str) -> CmdResult:
     """Continue the rebase without stopping for a commit message."""
-    return git.client.run(
-        "rebase", "--continue", cwd=cwd, config=REBASE_CONFIG,
-        env=unattended_env(),
-    )
+    return _git_rebase(cwd, "rebase", "--continue")
 
 
 def drive_to_completion(
@@ -532,10 +539,7 @@ def step_advance(
         # Carries the same config as the other two: --skip drops the current
         # commit and goes straight on to apply the next, so the merges it runs
         # are as able to replay a recorded resolution as any other step's.
-        r = git.client.run(
-            "rebase", "--skip", cwd=cwd, config=REBASE_CONFIG,
-            env=unattended_env(),
-        )
+        r = _git_rebase(cwd, "rebase", "--skip")
         if not r.ok:
             core.log.error(f"git rebase --skip failed (exit {r.returncode})")
             return 1
@@ -720,10 +724,7 @@ def fresh(
     # made inside it would not be the one the whole run accumulates into.
     # Made before the replay so it holds the tip the replay starts from.
     tally = ResolutionTally(pre_rebase_head=git.client.head_sha(cwd=cwd))
-    r = git.client.run(
-        "rebase", "--autosquash", *replay, cwd=cwd, config=REBASE_CONFIG,
-        env=unattended_env(),
-    )
+    r = _git_rebase(cwd, "rebase", "--autosquash", *replay)
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(

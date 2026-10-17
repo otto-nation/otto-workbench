@@ -16,7 +16,9 @@ Three callers, one judgement:
 * the global `post-rewrite` hook reports commits a finished rebase dropped
   whose changes are not in the result — and, since it is reading the same
   map and the same rebase state, writes `git.rewrites`' record of every line
-  that is not a drop;
+  that is not a drop. `pr rebase` chains this hook in front of a repo's own
+  ``core.hooksPath`` rather than replacing it, so a local hooks directory
+  still runs and the record is still written;
 * `pr rebase` audits its own resolutions before it continues, so a refusal
   arrives as a paused rebase with the files named rather than as a hook
   failure it would have to interpret.

@@ -148,11 +148,11 @@ class FixRun:
     second attempt at one batch rather than a batch of its own, and the retry
     log line and trail entry are where it is reported.
 
-    `exit_code` is non-zero when any batch's backend call was, which is not the
-    same question as whether the pass did work: an agent can exit non-zero
-    having ticked boxes, and it can exit clean having ticked none. A caller that
-    reports process success reads this one; a caller reporting what got fixed
-    reads `outcomes`.
+    `exit_code` is non-zero when any batch's backend call was, or when landing
+    reports `COMMIT_FAILED`. A held or failed push is not a process failure: the
+    commit exists. An agent can still exit non-zero having ticked boxes, and it
+    can exit clean having ticked none. A caller that reports process success
+    reads this one; a caller reporting what got fixed reads `outcomes`.
     `stop` is MAX_TURNS when the last invocation hit the turn cap, even if it
     ticked boxes. Landing reads it so the commit body can tell a truncated pass
     from a finished one without consulting the trail. A stalled pass (see
@@ -1075,10 +1075,13 @@ def run(
     )
     _stamp(settled.outcomes, head_before, landed.sha)
 
+    exit_code = settled.exit_code
+    if landed.status is git.land.CommitStatus.COMMIT_FAILED:
+        exit_code = exit_code or 1
     finished = FixRun(
         outcomes=settled.outcomes,
         landed=landed,
-        exit_code=settled.exit_code,
+        exit_code=exit_code,
         stop=settled.stop,
         head_before=head_before,
         batches=len(batched),

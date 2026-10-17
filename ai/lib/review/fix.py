@@ -65,6 +65,7 @@ import fix.verify
 import core.log
 import core.publishing
 import git.client
+import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
@@ -808,11 +809,18 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             core.log.info("Fix summary:")
             for line in self.summary.splitlines():
                 print(f"  {line}", file=sys.stderr)
+        outcomes = run.outcomes
+        if (run.landed is not None
+                and run.landed.status is git.land.CommitStatus.COMMIT_FAILED):
+            # The edits never became a commit, so a ticked box would report a
+            # fix the tree does not hold. Declined and deferred answers do not
+            # claim a SHA and still stand.
+            outcomes = [o for o in outcomes if not o.outcome.counts_as_fixed]
         review_file = Path(self.job.review_file)
-        text = _apply_outcomes(review_file.read_text(), run.outcomes)
-        review_file.write_text(_apply_static_outcomes(text, run.outcomes))
-        self._persist_static_declines(run.outcomes)
-        self._persist_open_findings(run.outcomes)
+        text = _apply_outcomes(review_file.read_text(), outcomes)
+        review_file.write_text(_apply_static_outcomes(text, outcomes))
+        self._persist_static_declines(outcomes)
+        self._persist_open_findings(outcomes)
 
     def _persist_open_findings(self, outcomes: list[ItemOutcome]) -> None:
         """Record which findings this pass left open, so they can be filed later.
@@ -890,11 +898,12 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
         return described
 
 
-def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
+def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
     """Apply what an agent can of the findings in `job`'s review, and commit it.
 
-    Returns without running an agent when there is no review to work from or
-    nothing in it still open.
+    Returns 1 when landing reports `COMMIT_FAILED`, else 0. Returns 0 without
+    running an agent when there is no review to work from or nothing in it
+    still open.
 
     The gate runs on every pass, with no flag to switch it off. A ticked `fixed`
     box is the agent saying it made an edit, and this pass commits on the
@@ -906,7 +915,7 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     doc = ReviewDocument.read(job.review_file) if _has_output(job.review_file) else None
     if doc is None:
         core.log.warn("No review file to fix — skipping fix pass")
-        return
+        return 0
 
     # A declined finding is not work: it was considered and rejected, so it is
     # out of the work set and out of the turn budget it would otherwise buy.
@@ -918,13 +927,17 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     if not findings and not violations:
         core.log.info("No findings left to fix — skipping fix pass")
         _report_unpushed(job)
-        return
+        return 0
 
     run = fix.engine.run(
         ReviewFixAdapter(job, findings, violations),
         trail=trail, verify=fix.verify.run,
     )
     _record_commit(job, run)
+    if (run.landed is not None
+            and run.landed.status is git.land.CommitStatus.COMMIT_FAILED):
+        return 1
+    return 0
 
 
 def _static_items(

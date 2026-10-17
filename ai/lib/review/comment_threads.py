@@ -25,6 +25,7 @@ import core.log
 import core.publishing
 import core.run_lock
 import fix.comments
+from git.land import CommitStatus
 from gh.pr_data import PRData, fetch_pr_data
 import pr.comments
 import pr.comments_fix
@@ -291,6 +292,7 @@ def run_threads(trail, args, ctx) -> int:
         core.log.error(f"state update failed: {exc}")
 
     # Triage and/or fix mode
+    rc = 0
     if args.triage:
         triage_mode = "fix" if args.fix else "triage"
         trail.decision("triage_mode", f"running {triage_mode}",
@@ -331,6 +333,7 @@ def run_threads(trail, args, ctx) -> int:
             output["fix_pass"] = dataclasses.asdict(fix_pass)
             output["issue_comments"] = report.issue_comments
             output["review_body_comments"] = report.review_body_comments
+            rc = 1 if fix_pass.commit_status == CommitStatus.COMMIT_FAILED else 0
         else:
             output = dataclasses.asdict(triage_result) if triage_result else {}
             output["issue_comments"] = report.issue_comments
@@ -367,4 +370,4 @@ def run_threads(trail, args, ctx) -> int:
 
     json.dump(output, sys.stdout, indent=2)
     print()
-    return 0
+    return rc

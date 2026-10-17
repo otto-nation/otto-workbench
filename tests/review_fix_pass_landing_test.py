@@ -146,10 +146,10 @@ class TestWhatALandedPassLeavesBehind:
         assert "*(declined — by design)*" in Path(job.review_file).read_text()
 
     @patch("git.push.push", return_value=_PUSHED)
-    def test_a_commit_the_hook_refused_still_re_renders_the_review(
+    def test_a_commit_the_hook_refused_leaves_the_finding_open(
         self, mock_push, git_wt, tmp_path, live_git_hooks,
     ):
-        """The agent's fix is real and in the worktree; only the commit failed.
+        """The agent's fix is in the worktree, but a ticked box would claim a SHA.
 
         `live_git_hooks` is what lets the hook run at all — the suite disowns
         hooks by default.
@@ -160,7 +160,9 @@ class TestWhatALandedPassLeavesBehind:
              work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"))
 
         mock_push.assert_not_called()
-        assert "- [x] **[M2]**" in Path(job.review_file).read_text()
+        text = Path(job.review_file).read_text()
+        assert "- [x] **[M2]**" not in text
+        assert "- [ ] **[M2]**" in text
 
 
 class TestTheHeldCommitIsRecorded:

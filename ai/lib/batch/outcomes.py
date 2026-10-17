@@ -5,6 +5,7 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
 
 - `ai_prompt_failed`: the step's AI prompt failed
 - `review_orchestration_failed`: the review produced no review file
+- `commit_failed`: a fix commit was refused by a hook
 - `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
@@ -53,6 +54,7 @@ class FailureReason(StrEnum):
 
     AI_PROMPT_FAILED = "ai_prompt_failed"
     REVIEW_ORCHESTRATION_FAILED = "review_orchestration_failed"
+    COMMIT_FAILED = "commit_failed"
     PRE_PUSH_REJECTED = "pre_push_rejected"
     LOCK_BUSY = "lock_busy"
     PUSH_REJECTED = "push_rejected"
@@ -80,6 +82,7 @@ class _Marker:
 # mentions the review. Phrases are lowercase; lines are compared lowercased.
 # Text matching no marker is `error` — never a guess at a nearer reason.
 _MARKERS = (
+    _Marker(FailureReason.COMMIT_FAILED, ("commit failed:",)),
     _Marker(FailureReason.LOCK_BUSY, (LOCK_BUSY_MARKER,)),
     _Marker(FailureReason.PRE_PUSH_REJECTED, (
         "push refused (hook)", "pre-push checks failed",
@@ -96,6 +99,8 @@ FAILURE_WHY: dict[str, str] = {
     FailureReason.AI_PROMPT_FAILED.value: "an AI prompt the step depends on failed",
     FailureReason.REVIEW_ORCHESTRATION_FAILED.value:
         "the self-review's agents exited before writing a review",
+    FailureReason.COMMIT_FAILED.value:
+        "a pre-commit hook refused the fix commit",
     FailureReason.PRE_PUSH_REJECTED.value:
         "the pre-push checks rejected the push (a failing hook, or uncommitted work)",
     FailureReason.LOCK_BUSY.value: "another pr run held this branch's lock",
@@ -344,6 +349,10 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
         return _needs(DecisionKind.REBASE_REFUSED, [_rebase_payload(stdout, log_tail)])
     if exit_code != 0:
         return _failed(exit_code, log_tail, log_path)
+    if step in (Step.REVIEW, Step.COMMENTS):
+        found = classify_failure(log_tail)
+        if found.reason is FailureReason.COMMIT_FAILED:
+            return _failed(exit_code, log_tail, log_path)
     drafts: list[DecisionDraft] = []
     if step is Step.COMMENTS:
         drafts.extend(DecisionDraft(DecisionKind.COMMENT_ITEM, p) for p in comment_items(item))

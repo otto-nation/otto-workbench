@@ -52,9 +52,10 @@ outcome: a `git add` that fails, and a HEAD that will not read back after a
 commit git said it made. Both mean the repository is not answering, and a pass
 that treats them as "nothing to commit" reports success having lost the work.
 
-Two things can happen around a landing that are not the landing, and both are
-options rather than defaults, because a caller that does not ask for them wants
-the plain answer:
+Three recoveries sit around a landing. Two are options rather than defaults,
+because a caller that does not ask for them wants the plain answer; the third
+runs on every commit, because the hook that causes it is not the caller's to
+name:
 
 - `regen` — a pre-push hook that rewrites generated files leaves the tree dirty
   and the push refused, and the commit underneath it was fine. Naming a message
@@ -70,6 +71,13 @@ the plain answer:
   Recovery only ever *adds* information: it never overwrites what the caller's
   own commit attempt concluded, because reporting `no_changes` over a commit a
   hook rejected publishes "nothing needed doing" about work that was refused.
+- A pre-commit hook that rewrites a staged file in the worktree and then
+  refuses leaves the index holding the old bytes — porcelain `MM`, which
+  `_modified` does not see. The files present in both `git diff --cached` and
+  `git diff` (intersected with `paths` when the commit is scoped) are re-staged
+  and `git commit` runs once more, hooks still on. Nothing is retried when that
+  set is empty; a second refusal is `COMMIT_FAILED`. `--no-verify` is never
+  used here: the rewrite is the hook's, but the commit is still the pass's.
 """
 
 # doc-group: platform
@@ -262,6 +270,23 @@ def _modified(wt_path: str | Path) -> set[str]:
         "status", "--porcelain", "--untracked-files=no", cwd=wt_path,
     )
     return {line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")}
+
+
+def _hook_rewrites(
+    wt_path: str | Path, paths: Iterable[str] | None,
+) -> list[str]:
+    """Files a pre-commit hook rewrote in the worktree without restaging.
+
+    After a refused commit the porcelain is `MM` — index and worktree both
+    differ from HEAD, and from each other. `_modified` reads ` M `, the
+    unstaged-only spelling, and misses this.
+    """
+    staged = set(git.client.lines("diff", "--cached", "--name-only", cwd=wt_path))
+    unstaged = set(git.client.lines("diff", "--name-only", cwd=wt_path))
+    rewritten = staged & unstaged
+    if paths is not None:
+        rewritten &= set(paths)
+    return sorted(rewritten)
 
 
 def _regenerated(wt_path: str | Path, before: set[str]) -> list[str]:
@@ -484,6 +509,25 @@ def _record_commit_failure(trail: Trail | None, output: str) -> None:
         core.log.dim(f"full output: {artifact}")
 
 
+def _retry_after_hook(
+    wt_path: str | Path,
+    committed: CmdResult,
+    message: str,
+    limit: list[str],
+    paths: Iterable[str] | None,
+    whole_tree: bool,
+) -> CmdResult:
+    """Re-stage a pre-commit rewrite and retry the commit once, or the original."""
+    if committed_nothing(committed):
+        return committed
+    restage = _hook_rewrites(wt_path, None if whole_tree else paths)
+    if not restage:
+        return committed
+    if not git.client.ok("add", "--", *_pathspecs(restage), cwd=wt_path):
+        return committed
+    return git.client.run("commit", "-m", message, *limit, cwd=wt_path)
+
+
 def _commit(
     wt_path: str | Path,
     *,
@@ -505,6 +549,10 @@ def _commit(
     # staged before the pass started stays staged instead of riding along.
     limit = [] if whole_tree else ["--", *scope]
     committed = git.client.run("commit", "-m", message, *limit, cwd=wt_path)
+    if not committed.ok:
+        committed = _retry_after_hook(
+            wt_path, committed, message, limit, paths, whole_tree,
+        )
     if not committed.ok:
         if committed_nothing(committed):
             return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))

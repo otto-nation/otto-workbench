@@ -55,7 +55,8 @@ class TestPushHeldCommit:
 
     def test_pushes_and_marks_it_pushed(self, publishing_on):
         state = self._state()
-        with patch.object(git.push, "holds", return_value=False), \
+        on_remote = iter((False, True))
+        with patch.object(git.push, "holds", side_effect=lambda *a, **k: next(on_remote)), \
              patch.object(git.client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))) as run:
@@ -331,10 +332,8 @@ class TestPendingFixReplies:
         assert "owner/repo/blob/def5678/x.py" in body
         assert fix.replies_pending is False
 
-    def test_falls_back_to_the_linkless_shape_when_no_commit_can_be_named(
-        self, publishing_on,
-    ):
-        """HEAD never moved, so there is no commit to cite and none is invented."""
+    def test_keeps_replies_queued_when_no_commit_landed(self, publishing_on):
+        """HEAD never moved and the commit was refused — nothing to post as fixed."""
         fix, threads_by_id = self._queue(
             commit_status="commit_failed", commit_sha="", replies_pending=True,
             head_sha="abc1234",
@@ -343,14 +342,12 @@ class TestPendingFixReplies:
         with patch.object(git.client, "head_sha", return_value="abc1234"), \
              patch.object(git.push, "holds", return_value=True), \
              patch.object(pr.attribution, "find_addressing_commit", return_value=None), \
-             patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
-             patch("pr.comments.resolve_thread", return_value=True):
+             patch("pr.comments.post_thread_reply") as mock_reply, \
+             patch("pr.comments.resolve_thread") as mock_resolve:
             review.closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
-        body = mock_reply.call_args[0][3]
-        assert "Fixed in" not in body
-        assert "/commit/)" not in body
-        assert "/blob//" not in body
-        assert fix.replies_pending is False
+        mock_reply.assert_not_called()
+        mock_resolve.assert_not_called()
+        assert fix.replies_pending is True
 
 
 class TestTriageOnlyPassQueue:

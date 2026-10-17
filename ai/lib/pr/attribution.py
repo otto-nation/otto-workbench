@@ -28,10 +28,12 @@ from enum import StrEnum
 from pathlib import Path
 
 import git.client
+import git.push
+import git.replay
 import git.topology
 from git.land import CommitStatus, LandResult
 import pr.permalinks
-from pr.fix import ItemOutcome, SettledBy
+from pr.fix import FixRecord, ItemOutcome, SettledBy
 from pr.thread_models import CommentItem, ReportThread
 
 
@@ -93,6 +95,52 @@ _UNPUSHED_STATUSES = frozenset({
 
 def commit_unpushed(status: str) -> bool:
     return status in _UNPUSHED_STATUSES
+
+
+class FixLanding(StrEnum):
+    """Whether a recorded fix commit is on the remote, only local, or gone."""
+
+    LANDED = "landed"
+    UNPUSHED = "unpushed"
+    ORPHANED = "orphaned"
+    NEVER_COMMITTED = "never_committed"
+
+
+def landing_of(record: FixRecord, wt_path: Path | None) -> FixLanding:
+    """How closeout should treat the pass's recorded commit.
+
+    `LANDED` is a SHA the remote holds, or HEAD moved past the snapshot and
+    the remote holds HEAD — the operator landed the same work by hand. An
+    empty SHA is not a hand-landing by itself: that is `NEVER_COMMITTED`
+    until HEAD actually moves.
+    """
+    sha = record.commit_sha or ""
+    if wt_path is None:
+        if sha:
+            return FixLanding.UNPUSHED
+        if record.commit_status == CommitStatus.COMMIT_FAILED:
+            return FixLanding.NEVER_COMMITTED
+        return FixLanding.LANDED
+    if sha:
+        if git.replay.rewritten_away(wt_path, sha):
+            return FixLanding.ORPHANED
+        if git.push.holds(wt_path, sha):
+            return FixLanding.LANDED
+        return FixLanding.UNPUSHED
+    current = git.client.head_sha(cwd=wt_path)
+    snap = record.head_sha or ""
+    moved = bool(current and snap and current != snap)
+    if moved:
+        resolved = git.client.out("rev-parse", snap, cwd=wt_path)
+        if resolved and current == resolved:
+            moved = False
+    if moved:
+        if git.push.holds(wt_path, current):
+            return FixLanding.LANDED
+        return FixLanding.UNPUSHED
+    if record.commit_status == CommitStatus.COMMIT_FAILED:
+        return FixLanding.NEVER_COMMITTED
+    return FixLanding.LANDED
 
 
 def pass_commit(wt_path: Path, result: LandResult | None) -> CommitPushResult:

@@ -7,6 +7,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | Tree | Command |
 |---|---|
 | the fetch failed | refuse: `fetch_failed` |
+| the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
@@ -42,6 +43,7 @@ import shlex
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 import git.client
 import rebase.target
@@ -56,6 +58,7 @@ class Refusal(StrEnum):
     NOT_INCORPORATED = "not_incorporated"
     NOT_INCORPORATED_REMOTE = "not_incorporated_remote"
     FETCH_FAILED = "fetch_failed"
+    UNLANDED_FIXES = "unlanded_fixes"
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,13 @@ def read_tree(item: Item) -> TreeState:
     return TreeState(local, remote, divergence, fetched, incorporated, unincorporated)
 
 
+def _has_staged(wt: str) -> bool:
+    """Whether *wt* has staged changes. An unreadable tree is not staged."""
+    if not wt or not Path(wt).is_dir():
+        return False
+    return git.client.run("diff", "--cached", "--quiet", cwd=wt).returncode == 1
+
+
 def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> PublishPlan:
     return PublishPlan(refusal=refusal, detail=detail, commits=list(commits or []))
 
@@ -186,6 +196,11 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
     div = tree.divergence
     if not div.comparable:
         return _refuse(Refusal.NOT_COMPARABLE, f"cannot compare {item.branch} with origin")
+    if closeout.unlanded or _has_staged(item.worktree):
+        return _refuse(
+            Refusal.UNLANDED_FIXES,
+            "the fix commit was refused, or the worktree still holds staged fixes",
+        )
     commands: list[list[str]] = []
     if div.diverged:
         if not tree.incorporated:

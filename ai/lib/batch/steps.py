@@ -31,7 +31,7 @@ from batch.model import Step
 
 
 def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
-              wait: bool = False, watch: bool = False) -> list[str]:
+              wait: bool = False, watch: bool = False, fork_point: str = "") -> list[str]:
     """The child process for one step. Every step runs drafted — nothing here pushes
     or posts — because publishing is the batch's own decision, made once per item
     against the tree.
@@ -39,9 +39,14 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
     The CI step runs `ci-check`, from the same directory as *pr_bin*, rather than
     `pr ci`: the `pr` dispatcher fetches into the repo's shared `.git` before the
     command starts, and a CI step that waits on GitHub must hold no git lock.
+
+    A stacked child's rebase whose parent was rewritten in this run passes
+    `--fork-point` so only the child's unique commits replay; never `--force`.
     """
     if step is Step.REBASE:
         argv = [pr_bin, "rebase", "--fix", "--no-push"]
+        if fork_point:
+            argv += ["--fork-point", fork_point]
     elif step is Step.CI:
         # ci-check claims the run lock itself and makes no startup fetch. A
         # watch run only reads CI for the head a publish just pushed; a fix run

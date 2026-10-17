@@ -510,11 +510,31 @@ class Scheduler:
                 continue
             self._start(item, rec, fresh)
 
+    def _rebase_fork_point(self, item: Item, rec: StepRecord) -> str:
+        """`--fork-point` for a stacked child's rebase, or empty.
+
+        After the parent is rewritten the child's prefix matches the old parent
+        by patch-id. The fork is merge-base(parent.pre_rebase_head, HEAD): the
+        parent's tip is not always an ancestor of the child. Empty when there is
+        no parent in this run, no recorded tip, or git finds no merge-base.
+        """
+        if rec.step is not Step.REBASE or not item.stacked_on:
+            return ""
+        try:
+            parent = self.run.item(item.stacked_on)
+        except KeyError:
+            return ""
+        if not parent.pre_rebase_head:
+            return ""
+        return git.client.out(
+            "merge-base", parent.pre_rebase_head, "HEAD", cwd=item.worktree)
+
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
         log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
         wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
-                         wait=wait, watch=rec.watch)
+                         wait=wait, watch=rec.watch,
+                         fork_point=self._rebase_fork_point(item, rec))
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         rec.start_head = rec.start_head or head_before

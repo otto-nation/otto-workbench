@@ -688,8 +688,12 @@ namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
 `pr ci`) when the rollup failed, with `--wait` if it was still running. Fork
 heads skip both. A stacked PR waits for its base's publish; `resume` retries
-`stacked_on` once that base is terminal. One fetching rebase or CI step per
-repo at a time (a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
+`stacked_on` once that base is terminal. The child's rebase then uses
+`--fork-point` at `merge-base(parent pre_rebase_head, child HEAD)`, so only the
+child's unique commits replay onto the rewritten parent. A `rebase_refused`
+decision that names that fork point offers `rebase-from-fork-point` (not only
+`force`). One fetching rebase or CI step per repo at a time (a waiting CI
+step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
 its own paused replay or restoring unstaged generated files. A mise toml is trusted on assign only when its bytes match the default branch.
 
 An item that closes with drafted work, an owed closeout (`pr status`'s `⚠ closeout owed`),

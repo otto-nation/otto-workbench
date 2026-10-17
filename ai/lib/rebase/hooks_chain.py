@@ -28,7 +28,6 @@ start; it names what a hand-run git will miss.
 
 from __future__ import annotations
 
-import os
 import shlex
 import tempfile
 from collections.abc import Iterator

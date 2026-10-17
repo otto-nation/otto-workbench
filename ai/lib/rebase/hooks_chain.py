@@ -13,7 +13,10 @@ The wrapper is a temp directory that lasts for one git child:
   workbench hook first, then the repo's own if it is executable, with stdin
   replayed to both.
 * every other hook file in the repo directory is forwarded as a symlink, so
-  a name this process did not know about still runs.
+  a name this process did not know about still runs. Directories are not
+  forwarded, and ``$0`` in a forwarded hook is the wrapper path, so a repo
+  hook that finds siblings (``.githooks/lib.sh``) via ``dirname "$0"`` will
+  not find them during ``pr rebase``.
 
 ``core.hooksPath=/dev/null`` (or any non-directory) is honoured: no wrap.
 When the effective path is already the workbench hooks dir, the config is
@@ -56,10 +59,10 @@ def _hooks_path(cwd: str) -> Path | None:
     Relative values are resolved against the worktree toplevel, which is how
     a repo's ``core.hooksPath=.githooks`` is stored and how git finds it.
     """
-    raw = git.client.out("config", "--get", "core.hooksPath", cwd=cwd).strip()
+    raw = git.client.out("config", "--type=path", "--get", "core.hooksPath", cwd=cwd).strip()
     if not raw:
         return None
-    path = Path(os.path.expanduser(raw))
+    path = Path(raw)
     if path.is_absolute():
         return path
     top = git.client.out("rev-parse", "--show-toplevel", cwd=cwd).strip()
@@ -75,7 +78,7 @@ def _is_workbench(path: Path) -> bool:
 
 
 def _disabled(path: Path) -> bool:
-    return str(path) == os.devnull or path.resolve() == Path(os.devnull) or not path.is_dir()
+    return not path.is_dir()
 
 
 def warn_if_shadowed(cwd: str) -> None:

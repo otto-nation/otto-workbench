@@ -34,6 +34,8 @@ import fix.engine  # noqa: E402
 import gh.client  # noqa: E402
 import pr.ci_failures  # noqa: E402
 import pr.ci_report  # noqa: E402
+import pr.ci_runs  # noqa: E402
+import pr.ci_wait  # noqa: E402
 import rebase.ci_fix  # noqa: E402
 import rebase.inspect  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
@@ -292,3 +294,36 @@ def test_batch_ci_step_does_not_ask_ci_check_to_rerun():
     assert argv[0].endswith("ci-check")
     assert "--fix" in argv and "--no-rebase" in argv
     assert "rerun" not in argv
+
+
+def _poll(status, *, running=0, queued=0, completed=3):
+    return pr.ci_wait.PollResult(
+        run_ids=[38794327836], merged={"status": status, "jobs": []},
+        counts=pr.ci_runs.JobCounts(
+            completed=completed, failed=0, running=running, queued=queued,
+        ),
+    )
+
+
+def _rereport(poll):
+    import pr.ci_check
+    report_run = MagicMock(return_value=_report({}))
+    with patch.object(pr.ci_wait, "poll_until_complete", return_value=poll), \
+         patch.object(pr.ci_check, "report_run", report_run):
+        rebuilt = rebase.ci_fix._rereport_after_rerun(
+            MagicMock(), _report({}), make_ctx(), wait_timeout=900, wait_interval=30,
+        )
+    return rebuilt, report_run
+
+
+def test_a_rerun_wait_that_timed_out_is_not_read_as_green():
+    """Jobs still running when the wait gives up have reported no failure yet."""
+    rebuilt, report_run = _rereport(_poll("in_progress", running=2, completed=1))
+    assert rebuilt is None
+    report_run.assert_not_called()
+
+
+def test_a_rerun_wait_that_finished_rebuilds_the_report():
+    rebuilt, report_run = _rereport(_poll("completed"))
+    assert rebuilt is not None
+    report_run.assert_called_once()

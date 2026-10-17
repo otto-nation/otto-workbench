@@ -10,6 +10,8 @@ branch up to its target first when it is behind, through `rebase.commands`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 import core.log
 import core.publishing
@@ -140,16 +142,33 @@ def _rereport_after_rerun(
         )
     except pr.ci_runs.RunUnavailable:
         return None
+    # A wait that timed out still returns what it saw, and a rerun job still
+    # queued has no failure to report yet. Rebuilding from that would read as
+    # green while CI is still running, so an unfinished wait hands the step
+    # back to a person with the original report.
+    if poll.merged.get("status") != "completed" and not poll.counts.finished:
+        core.log.warn(
+            f"Rerun jobs did not finish within {wait_timeout}s — leaving them to a person"
+        )
+        return None
     return pr.ci_check.report_run(
         trail, ctx, poll.merged, poll.run_ids,
         counts=poll.counts, show_status=True,
     )
 
 
+@dataclass(frozen=True)
+class _Rerun:
+    """The CI report rebuilt after an automatic rerun, and the adapter over it."""
+
+    report: pr.ci_report.CIReport
+    adapter: fix.ci.CIFixAdapter
+
+
 def _try_rerun_transient(
     trail, report: pr.ci_report.CIReport, adapter: fix.ci.CIFixAdapter, ctx, *,
     wait_timeout: int, wait_interval: int,
-) -> tuple[pr.ci_report.CIReport, fix.ci.CIFixAdapter] | None:
+) -> _Rerun | None:
     """Rerun rate-limit-only infra once, wait, and rebuild the adapter.
 
     Returns None when this is not a transient-only skip, when any `gh run rerun`
@@ -182,7 +201,7 @@ def _try_rerun_transient(
         pr_number=ctx.pr_number, head_sha=rebuilt.head_sha,
         worktree_root=str(ctx.worktree_root),
     )
-    return rebuilt, fix.ci.CIFixAdapter(rebuilt, ctx, state)
+    return _Rerun(report=rebuilt, adapter=fix.ci.CIFixAdapter(rebuilt, ctx, state))
 
 
 def _tally(adapter: fix.ci.CIFixAdapter,
@@ -244,7 +263,7 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
             wait_timeout=wait_timeout, wait_interval=wait_interval,
         )
         if recovered is not None:
-            report, adapter = recovered
+            report, adapter = recovered.report, recovered.adapter
             if not report.failures:
                 core.log.info("No failures to fix")
                 _emit_tally(pr.ci_report.CIFixTally())

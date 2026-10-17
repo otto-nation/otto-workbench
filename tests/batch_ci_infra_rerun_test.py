@@ -1,13 +1,10 @@
-"""Rate-limited 'Retry preempted jobs' is classified infra, then sent to a person.
+"""Rate-limited 'Retry preempted jobs' is rerun, not sent to a person.
 
 Run ``20261015T211317-f108`` (PRs 4089/4116/4195/4200): the CI dashboard named
-``Retry preempted jobs → Re-run jobs killed by spot preemption`` with
-``gh: API rate limit exceeded for installation``. ``classify_job`` matched
-``INFRA_SIGNATURES`` (``rate limit``). ``CIFixAdapter`` skipped every item.
-The fix tally listed them under ``skipped``, and ``batch.outcomes.ci_unfixed``
-treated any skip as evidence, so the CI step became a ``step_review``.
-``gh run rerun --failed`` cleared them. There is no ``run rerun`` anywhere
-under ``ai/lib``.
+``Retry preempted jobs`` with ``gh: API rate limit exceeded for installation``.
+``classify_job`` matches ``INFRA_SIGNATURES`` (``rate limit``) and
+``CIFixAdapter`` skips every item; ``run_fix`` reruns them with
+``gh run rerun --failed`` rather than leaving a ``step_review``.
 
 Expected: when every remaining failure is transient infra (GitHub API rate
 limit), ``run_fix`` reruns the failed jobs instead of handing them to a
@@ -116,7 +113,10 @@ def _fix_tally(stdout):
 
 def _run_fix_with_rerun(tmp_path, report, *, gh_ok=True, rereport=None):
     """run_fix with gh rerun, wait/re-report, and the engine stubbed."""
-    gh_run = MagicMock(return_value=MagicMock(ok=gh_ok))
+    if isinstance(gh_ok, list):
+        gh_run = MagicMock(side_effect=[MagicMock(ok=ok) for ok in gh_ok])
+    else:
+        gh_run = MagicMock(return_value=MagicMock(ok=gh_ok))
     engine = MagicMock(return_value=fix.engine.FixRun())
     rereport_fn = MagicMock(
         return_value=_report({}) if rereport is None else rereport,
@@ -241,6 +241,19 @@ def test_run_fix_rerun_gh_failure_is_skipped_tally(tmp_path, capsys):
     assert rc == 0
     tally = _fix_tally(capsys.readouterr().out)
     assert tally["skipped"] == [{"id": "err-.github-14", "kind": "infra"}]
+
+
+def test_run_fix_partial_rerun_failure_continues_and_waits(tmp_path):
+    """One refused rerun does not abandon the others; the wait still happens."""
+    report = _report({
+        "retry-preempted-jobs": _group(_item("err-.github-14", RATE_LIMIT)),
+    })
+    rc, engine, gh_run, rereport = _run_fix_with_rerun(
+        tmp_path, report, gh_ok=[False, True, True],
+    )
+    assert len(_rerun_argvs(gh_run)) == len(report.run_ids)
+    rereport.assert_called_once()
+    assert rc == 0
 
 
 def test_run_fix_rerun_then_fixable_failure_enters_the_engine(tmp_path):

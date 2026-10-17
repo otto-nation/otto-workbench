@@ -147,6 +147,8 @@ def is_transient_infra(group: FailureGroup) -> bool:
     failures stay non-transient — rerunning those is not what clears them.
     Any item annotation or headline in the group matching the transient
     subset is enough; `classify_job` already promoted every item in the job.
+    A mixed group (one rate-limit item among real errors) is therefore rerun
+    and its real failures wait for the rerun's result.
     """
     if group.kind is not FailureKind.INFRA:
         return False

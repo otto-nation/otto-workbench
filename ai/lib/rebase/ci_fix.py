@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 import core.log
 import core.publishing
 import core.report
@@ -172,7 +171,7 @@ def _try_rerun_transient(
     """Rerun rate-limit-only infra once, wait, and rebuild the adapter.
 
     Returns None when this is not a transient-only skip, when any `gh run rerun`
-    fails (including a latched budget breaker), or when the wait cannot rebuild
+    fails for every run (including a latched budget breaker), or when the wait cannot rebuild
     a report. Exactly one automatic rerun per `run_fix` invocation: the caller
     must not call this again on the rebuilt adapter.
     """
@@ -184,12 +183,17 @@ def _try_rerun_transient(
     core.log.info(
         f"Rerunning {len(run_ids)} failed job run(s) that hit GitHub API rate limits"
     )
+    started = 0
     for run_id in run_ids:
-        if not gh.client.run(
+        if gh.client.run(
             "run", "rerun", str(run_id), "--failed",
             cwd=str(ctx.require_worktree()),
         ).ok:
-            return None
+            started += 1
+        else:
+            core.log.warn(f"Could not rerun run {run_id} — continuing with the others")
+    if not started:
+        return None
     rebuilt = _rereport_after_rerun(
         trail, report, ctx,
         wait_timeout=wait_timeout, wait_interval=wait_interval,
@@ -264,10 +268,10 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
         )
         if recovered is not None:
             report, adapter = recovered.report, recovered.adapter
-            if not report.failures:
-                core.log.info("No failures to fix")
-                _emit_tally(pr.ci_report.CIFixTally())
-                return 0
+        if not report.failures:
+            core.log.info("No failures to fix")
+            _emit_tally(pr.ci_report.CIFixTally())
+            return 0
         if not adapter.fixable:
             # `adapter.fixable` empty with `report.failures` non-empty means
             # every failure landed in `adapter.skipped` by elimination, so

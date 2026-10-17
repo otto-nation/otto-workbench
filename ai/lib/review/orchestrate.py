@@ -342,7 +342,15 @@ def _file_open_findings(args, job, trail) -> None:
         review.finding_issue.file_and_link(Path(job.artifact_dir), job, track, trail)
 
 
-def _run_phases(trail, args, job) -> tuple[Pipeline, int]:
+@dataclass(frozen=True)
+class _PhasesRun:
+    """What one run of every phase leaves: the pipeline it took and the fix-pass rc."""
+
+    pipeline: Pipeline
+    fix_rc: int = 0
+
+
+def _run_phases(trail, args, job) -> _PhasesRun:
     """Every phase of one run, in order, returning the pipeline and the fix-pass rc.
 
     Split out from `_run_orchestrate` so the whole sequence sits inside one
@@ -361,7 +369,7 @@ def _run_phases(trail, args, job) -> tuple[Pipeline, int]:
             f"forward ({abbrev(job.preflight.prior_head_sha)}.."
             f"{abbrev(job.pr.head_sha)})")
         write_unchanged_review(job)
-        return Pipeline.SINGLE, 0
+        return _PhasesRun(pipeline=Pipeline.SINGLE)
 
     pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job, args.effort)
 
@@ -411,7 +419,7 @@ def _run_phases(trail, args, job) -> tuple[Pipeline, int]:
     elif args.fix:
         trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
 
-    return pipeline, rc
+    return _PhasesRun(pipeline=pipeline, fix_rc=rc)
 
 
 def run_orchestrate(trail, args, repo, session_log) -> int:
@@ -484,7 +492,7 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         job.preflight = collect_preflight_data(job)
 
     with cleaned_on_success(Path(job.artifact_dir)):
-        pipeline, rc = _run_phases(trail, args, job)
+        phases = _run_phases(trail, args, job)
 
     # The one place a run is known to have finished with a review in hand: a
     # phase that produced none exits the process rather than returning, so
@@ -495,8 +503,8 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     result = {
         "review_file": job.review_file,
         "session_log": job.session_log,
-        "mode": pipeline,
+        "mode": phases.pipeline,
     }
     json.dump(result, sys.stdout)
     print()
-    return rc
+    return phases.fix_rc

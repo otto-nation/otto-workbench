@@ -347,7 +347,10 @@ def test_a_resolve_queued_after_a_drivers_finish_is_applied_by_its_hand_off(tmp_
         (tmp_path / "release").touch()
         _, err = child.communicate(timeout=_PROC_TIMEOUT)
     assert code == 0
-    assert json.loads(capsys.readouterr().out) == {"queued": True, "decision": "d1"}
+    assert json.loads(capsys.readouterr().out) == {
+        "applied": False, "queued": True, "decision": "d1",
+        "holder": {"role": "driver", "pid": child.pid, "command": "test driver"},
+    }
     assert parked.decision("d1").open
     assert child.returncode == 0, err
     saved = batch.store.load(RID)

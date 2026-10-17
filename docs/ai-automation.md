@@ -678,6 +678,12 @@ pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` if a holder will apply it
 ```
 
+`pr batch resolve` always prints `applied`. It is true only when this call
+applied the decision. Inline when no draining holder has the run; otherwise
+`queued` is true, `applied` is false, and `holder` names `{role, pid, command}`
+of who will apply it (the driver's next tick, its hand-off, or the next
+session). Exit 0 on a queued write is not "the decision closed".
+
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
 step is still planned into the run when its saved `pr` state owes a closeout,

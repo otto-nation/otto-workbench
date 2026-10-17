@@ -24,8 +24,8 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _fix, _no_published_summary  # noqa: E402
-from conftest import git_in, make_ctx, run_checked
-from pr_history_rewrite_test import (
+from conftest import git_in, make_ctx, run_checked # noqa: E402
+from pr_history_rewrite_test import ( # noqa: E402
     _feature_off_origin,
     _fix_commit,
     _held_fix_branch,

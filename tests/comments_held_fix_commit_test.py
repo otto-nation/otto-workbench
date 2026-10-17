@@ -40,7 +40,6 @@ import pr.attribution  # noqa: E402
 import review.closeout  # noqa: E402
 
 PR_BIN = str(REPO_ROOT / "ai" / "bin" / "pr")
-WT = ["--repo-dir", "/wt"]
 
 
 SNAPSHOT = "abc1234"
@@ -90,7 +89,7 @@ class TestFinishMustNotClaimUncommittedFixes:
 
         Regression of the 2026-10-15 batch: 16 FIXED replies would have gone
         out for staged, uncommitted edits. The existing
-        `test_falls_back_to_the_linkless_shape_when_no_commit_can_be_named`
+        the former `test_falls_back_to_the_linkless_shape_when_no_commit_can_be_named`
         encoded that drain as intended; this is the claim it missed.
         """
         fix, threads_by_id = _failed_queue()

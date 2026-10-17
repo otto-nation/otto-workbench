@@ -208,13 +208,7 @@ class TestBatchDoesNotMarkAFailedCommitDone:
         assert r.status is batch.model.StepStatus.FAILED
         assert r.decisions
         assert r.decisions[0].kind is batch.model.DecisionKind.FAILED
-        blob = " ".join(
-            str(r.decisions[0].payload.get(k, ""))
-            for k in ("reason", "detail")
-        ).lower()
-        assert "commit" in blob or "commit failed" in "\n".join(
-            r.decisions[0].payload.get("log_tail", [])
-        ).lower()
+        assert r.decisions[0].payload.get("reason") == "commit_failed"
 
     def test_open_findings_do_not_hide_a_failed_commit(self, monkeypatch):
         """PR 4116: classified as ordinary `step_review` over the leftover nits."""

@@ -634,14 +634,17 @@ def render_deferred_summary(
     # no SHA still renders: the summary reports the failure rather than
     # claiming a fix, so there is nothing for it to wait on.
     status = record.commit_status
-    if pr.attribution.commit_unpushed(status) and record.commit_sha:
-        landing = pr.attribution.landing_of(record, wt_path)
-        if landing is not pr.attribution.FixLanding.LANDED:
-            # An orphaned SHA is not pending a push; `follow_history_rewrite`
-            # has already said it is no longer on the branch.
-            if landing is pr.attribution.FixLanding.UNPUSHED:
-                core.log.info("Push still pending — keeping summary deferred")
-            return None
+    held = bool(pr.attribution.commit_unpushed(status) and record.commit_sha)
+    landing = (pr.attribution.landing_of(record, wt_path) if held
+               else pr.attribution.FixLanding.LANDED)
+    if landing is pr.attribution.FixLanding.UNPUSHED:
+        core.log.info("Push still pending — keeping summary deferred")
+        return None
+    # An orphaned SHA is not pending a push; `follow_history_rewrite` has
+    # already said it is no longer on the branch.
+    if landing is not pr.attribution.FixLanding.LANDED:
+        return None
+    if held:
         status = CommitStatus.PUSHED
         # Same reason as the deferred-reply queue: only a run that actually
         # publishes may retire an unpushed status, or the queue is lost silently.

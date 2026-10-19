@@ -26,6 +26,7 @@ still fetching.
 from __future__ import annotations
 
 import functools
+import os
 import time
 from pathlib import Path
 
@@ -146,6 +147,16 @@ def _live_namespaces() -> set[str]:
     return live
 
 
+def _absolute(repo_dirs: list[str]) -> list[str]:
+    """The absolute entries of *repo_dirs*.
+
+    Runs saved before plans recorded absolute checkouts can hold `.` or a path
+    relative to wherever they started; from gc's cwd that names some other
+    repo, or none, so a sweep must not scan or drop there.
+    """
+    return [d for d in repo_dirs if os.path.isabs(d)]
+
+
 def _namespace_repos() -> dict[str, set[str]]:
     """Namespace → checkouts that may still hold its refs.
 
@@ -156,16 +167,18 @@ def _namespace_repos() -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     dirs: dict[str, None] = {}
     for claim in batch.plan.load_claims():
-        found.setdefault(claim.namespace, set()).update(claim.repo_dirs)
-        for d in claim.repo_dirs:
+        claimed = _absolute(claim.repo_dirs)
+        found.setdefault(claim.namespace, set()).update(claimed)
+        for d in claimed:
             dirs[d] = None
     for run_id in batch.store.run_ids():
         run = _read_run(run_id)
         if run is None:
             continue
+        ref_dirs = _absolute(run.ref_dirs)
         if run.ref_namespace:
-            found.setdefault(run.ref_namespace, set()).update(run.ref_dirs)
-        for d in run.ref_dirs:
+            found.setdefault(run.ref_namespace, set()).update(ref_dirs)
+        for d in ref_dirs:
             dirs[d] = None
     for path in config.workbench_projects.registered():
         dirs[str(path)] = None
@@ -193,6 +206,11 @@ def gc_namespaces() -> int:
     dropped = 0
     for ns, dirs in sorted(found.items()):
         if ns in live:
+            continue
+        if not dirs:
+            # No checkout left to hold its refs: nothing to prune, only a
+            # dead claim to retire. Counting it would report work not done.
+            batch.plan.remove_claim(ns)
             continue
         if batch.plan.drop_refs(sorted(dirs), ns):
             dropped += 1

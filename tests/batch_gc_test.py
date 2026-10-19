@@ -260,3 +260,14 @@ def test_gc_keeps_a_namespace_whose_plan_claims_it_during_the_scan(tmp_path):
     with mock.patch.object(batch.gc, "_namespace_repos", scan_then_claim):
         assert batch.gc.gc_namespaces() == 0
     assert git_out(pair.work, "for-each-ref", ns) != ""
+
+
+def test_gc_never_scans_a_relative_ref_dir_from_its_own_cwd(tmp_path, monkeypatch):
+    # An old run recorded "." — from gc's cwd that is whatever repo gc runs in.
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _save("old", status=RunStatus.INTERRUPTED, age_days=1,
+          namespace="refs/pr-batch/0ld0ld00", ref_dirs=(".",))
+    monkeypatch.chdir(pair.work)
+    assert batch.gc.gc_namespaces() == 0
+    assert git_out(pair.work, "for-each-ref", ns) != ""

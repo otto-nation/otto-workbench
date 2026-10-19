@@ -292,16 +292,22 @@ class TestRunTimeout:
 
 
 def _running(pid: int) -> bool:
-    """Whether *pid* is a live process; a zombie nobody has reaped yet is not."""
+    """Whether *pid* is a live process; a zombie nobody has reaped yet is not.
+
+    Zombie state comes from `ps`, which works on Linux and Darwin alike.
+    """
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     try:
-        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except (OSError, IndexError):
+        out = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
         return True
-    return state != "Z"
+    return bool(out) and not out.startswith("Z")
+
 
 class TestRunTermThenKill:
     """An expired bound TERMs first so git can drop its lockfiles.

@@ -552,9 +552,14 @@ def _terminate(process: subprocess.Popen, kill_process_group: bool) -> str:
     note = _signal_process(process, signal.SIGTERM, group=kill_process_group)
     try:
         process.wait(timeout=TERM_GRACE)
-        return note
     except subprocess.TimeoutExpired:
         pass
+    else:
+        if kill_process_group:
+            # The leader exiting on TERM says nothing about grandchildren that
+            # ignore it; the group still gets KILL.
+            note += _signal_process(process, signal.SIGKILL, group=True)
+        return note
     note += _signal_process(process, signal.SIGKILL, group=kill_process_group)
     return note + _reap(process)
 

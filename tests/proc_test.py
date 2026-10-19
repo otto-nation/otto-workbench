@@ -310,11 +310,26 @@ class TestRunTermThenKill:
             "    raise SystemExit(0)\n"
             "signal.signal(signal.SIGTERM, stop)\n"
             "open(lock, 'w').close()\n"
+            "open(sys.argv[2], 'w').close()\n"
             "time.sleep(30)\n"
         )
-        r = core.proc.run([sys.executable, "-c", child, str(lock)], timeout=0.4)
+        ready = tmp_path / "ready"
+        r = core.proc.run([sys.executable, "-c", child, str(lock), str(ready)], timeout=2.0)
+        assert ready.exists(), "child never installed its handler before the bound"
         assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert not lock.exists(), "SIGKILL-only would leave the lock behind"
+
+    def test_group_is_killed_even_when_leader_exits_on_term(self, monkeypatch):
+        sent = []
+        real = core.proc.os.killpg
+
+        def spy(pid, sig):
+            sent.append(sig)
+            return real(pid, sig)
+
+        monkeypatch.setattr(core.proc.os, "killpg", spy)
+        core.proc.run(["sleep", "30"], timeout=0.2, kill_process_group=True)
+        assert signal.SIGKILL in sent
 
     def test_a_child_that_ignores_term_is_still_killed(self, monkeypatch):
         monkeypatch.setattr(core.proc, "TERM_GRACE", 0.2)

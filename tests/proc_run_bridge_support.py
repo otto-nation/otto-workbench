@@ -44,6 +44,7 @@ def real_run_section():
     finally:
         _pop(_in_real_run)
 
+
 # Never a live pid: production signals the non-group path via send_signal, not
 # os.kill, so this value is never delivered to the kernel on that path.
 _FAKE_PID = -1
@@ -126,12 +127,12 @@ class RunStubPopen:
             run_kwargs["stdin"] = stdin
         run_kwargs["input"] = input
         run_kwargs["timeout"] = timeout
+        # Set before the stub runs: a stub that raises leaves returncode None
+        # and a later wait() returns None without re-invoking it.
         self._done = True
         _push(_in_stub)
         try:
             result = self._stub(self._cmd, **run_kwargs)
-        except subprocess.TimeoutExpired:
-            raise
         finally:
             _pop(_in_stub)
         self._result = result

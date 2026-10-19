@@ -42,6 +42,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import TYPE_CHECKING, ClassVar
 
+from git.land import CommitStatus
 from pr.domains import Domain, Readiness
 from pr.fix import FixOutcome
 from core.serde import from_dict as _serde_from_dict
@@ -146,6 +147,9 @@ class CloseoutDebt:
     # write like any other, so it is owed here rather than quietly sitting in
     # the worktree until someone notices the description never changed.
     description: bool = False
+    # The fix commit was refused. Not itself a debt `--finish` can drain: publish
+    # refuses rather than posting FIXED replies for work that never landed.
+    unlanded: bool = False
 
     @property
     def owed(self) -> bool:
@@ -322,6 +326,7 @@ class FixSummary(Domain):
                 1 for o in self.fix.items if o.outcome in _REPLY_OUTCOMES
             ),
             description=self.pr_body_pending,
+            unlanded=self.fix.commit_status == CommitStatus.COMMIT_FAILED,
         )
 
     def render_status(self) -> list[str]:

@@ -197,6 +197,12 @@ same review (one answer); `--settle` still names the item id.
 
 **Report auto-fixes:** "Fixed N threads/items (commit SHA). M need your input. K skipped."
 
+**If `commit_status` is `commit_failed`:** the commit never landed. The edits
+are still staged. Do not run `--finish --post` as if the work were on the
+remote — FIXED replies stay queued until a commit the remote holds exists.
+Inspect `git status`, repair whatever the hook refused, restage, and commit.
+An empty SHA is not a hand-landing.
+
 **If `commit_status` is `push_held`:** the fixes are committed locally and
 nothing has been published, because something in the run judged the branch not
 safe to assert progress on — one of the three holds above. Say so plainly and

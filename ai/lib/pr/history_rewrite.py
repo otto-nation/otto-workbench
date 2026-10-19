@@ -99,8 +99,17 @@ def follow_history_rewrite(state: pr.state.PRState, wt_path: Path) -> None:
             f"rewrite, {len(moved) - exact} by matching the change)"
         )
     held = replays.get(recorded) if recorded else None
-    if held is not None and not held.found and commit_unpushed(record.commit_status):
+    if held is not None and not held.found and _closeout_owes(state):
         core.log.warn(_unfollowed_warning(recorded, held))
+
+
+def _closeout_owes(state: pr.state.PRState) -> bool:
+    """Whether an unfollowed rewrite still has closeout work to talk about."""
+    return (
+        commit_unpushed(state.fix.fix.commit_status)
+        or state.fix.replies_pending
+        or state.fix.summary_deferred
+    )
 
 
 def _unfollowed_warning(recorded: str, replay: git.replay.Replay) -> str:

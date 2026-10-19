@@ -75,6 +75,9 @@ Therefore, at step 2 above, audit the diff:
    it now, or revert that hunk. Do not take the annotation as a statement that nothing
    happened
 
+A `commit failed` line means HEAD did not move and the work is staged — inspect
+`git status`. Ticked boxes without a SHA are not fixes.
+
 ### The tally now says what stood behind it
 
 The counts line is no longer a bare claim. Before `landing` renders it, the pass runs the

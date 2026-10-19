@@ -3540,6 +3540,7 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
 
 - `ai_prompt_failed`: the step's AI prompt failed
 - `review_orchestration_failed`: the review produced no review file
+- `commit_failed`: a fix commit was refused by a hook
 - `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
@@ -3565,6 +3566,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | Tree | Command |
 |---|---|
 | the fetch failed | refuse: `fetch_failed` |
+| the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
@@ -5845,9 +5847,10 @@ outcome: a `git add` that fails, and a HEAD that will not read back after a
 commit git said it made. Both mean the repository is not answering, and a pass
 that treats them as "nothing to commit" reports success having lost the work.
 
-Two things can happen around a landing that are not the landing, and both are
-options rather than defaults, because a caller that does not ask for them wants
-the plain answer:
+Three recoveries sit around a landing. Two are options rather than defaults,
+because a caller that does not ask for them wants the plain answer; the third
+runs on every commit, because the hook that causes it is not the caller's to
+name:
 
 - `regen` — a pre-push hook that rewrites generated files leaves the tree dirty
   and the push refused, and the commit underneath it was fine. Naming a message
@@ -5863,6 +5866,13 @@ the plain answer:
   Recovery only ever *adds* information: it never overwrites what the caller's
   own commit attempt concluded, because reporting `no_changes` over a commit a
   hook rejected publishes "nothing needed doing" about work that was refused.
+- A pre-commit hook that rewrites a staged file in the worktree and then
+  refuses leaves the index holding the old bytes — porcelain `MM`, which
+  `_modified` does not see. The files present in both `git diff --cached` and
+  `git diff` (intersected with `paths` when the commit is scoped) are re-staged
+  and `git commit` runs once more, hooks still on. Nothing is retried when that
+  set is empty; a second refusal is `COMMIT_FAILED`. `--no-verify` is never
+  used here: the rewrite is the hook's, but the commit is still the pass's.
 
 ### git/numstat.py
 

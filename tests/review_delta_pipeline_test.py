@@ -146,7 +146,7 @@ def run_phases(monkeypatch):
     def _run(job) -> tuple[_Trail, list[str], Pipeline]:
         trail = _Trail()
         with redirect_stdout(io.StringIO()):
-            pipeline = cli.review_orchestrate._run_phases(trail, _args(), job)
+            pipeline = cli.review_orchestrate._run_phases(trail, _args(), job).pipeline
         return trail, called, pipeline
 
     return _run

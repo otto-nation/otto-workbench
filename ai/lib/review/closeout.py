@@ -185,6 +185,8 @@ def push_held_commit(
     if not result.ok:
         record.commit_status = git.land.commit_status(result.status)
         return
+    if not git.push.holds(wt_path, record.commit_sha):
+        return
 
     core.log.info(f"Pushed held fixes ({record.commit_sha})")
     record.commit_status = CommitStatus.PUSHED
@@ -200,9 +202,11 @@ def post_pending_fix_replies(
     """Send the replies the fix pass produced but did not deliver.
 
     Four ways a reply ends up here: the push failed, the push was held because
-    discussion was open, the run was a draft, or the pass had nothing to commit
-    because the operator landed the same fixes by hand first. Called during
-    --finish, which is the second chance for all four.
+    discussion was open, the run was a draft, or the operator landed the same
+    fixes by hand — HEAD moved past the snapshot and the remote holds it. An
+    empty SHA with HEAD unmoved is not a hand-landing: the commit never
+    happened, and FIXED replies stay queued. Called during --finish, which is
+    the second chance for all four.
 
     All three reply buckets are drained, not just the fixed one. The
     already-addressed and dismissed replies are sent eagerly during triage,
@@ -222,13 +226,7 @@ def post_pending_fix_replies(
     if not wt_path:
         return
 
-    # Only a pass that made its own commit has to wait for it. One that
-    # committed nothing leaves entries citing the commits that did — already on
-    # the remote — and the triage buckets cite HEAD rather than a fix commit,
-    # so there is nothing for either to wait on.
-    if record.commit_sha and not git.push.holds(wt_path, record.commit_sha):
-        core.log.info("Push still pending — skipping deferred replies")
-        return
+    landing = pr.attribution.landing_of(record, wt_path)
 
     resolved: list[ThreadState] = []
 
@@ -248,8 +246,11 @@ def post_pending_fix_replies(
     # Accumulate rather than discard: these are the same round's replies
     # finally going out, and the fix pass already counted any it sent
     # itself. A draft returns 0 here, so a drafted drain adds nothing.
+    # FIXED replies wait for the work to be on the remote; the other buckets
+    # cite no fix commit and drain regardless.
+    withheld = False
     fixed = bucket(FixOutcome.FIXED)
-    if fixed:
+    if landing is pr.attribution.FixLanding.LANDED and fixed:
         # The same reconciliation the summary rows get, read through the same
         # resolver. A pass whose commit a hook rejected records no SHA of its
         # own, so an operator who then lands those fixes by hand would
@@ -260,6 +261,12 @@ def post_pending_fix_replies(
             host,
         )
         resolved += pr.settlement.resolve_fixed_threads(fixed, threads_by_id)
+    elif fixed:
+        withheld = True
+        if landing is pr.attribution.FixLanding.UNPUSHED:
+            core.log.info("Push still pending — skipping deferred replies")
+        elif landing is pr.attribution.FixLanding.NEVER_COMMITTED:
+            core.log.info("Fixes were never committed — skipping deferred replies")
 
     addressed = bucket(FixOutcome.ALREADY_ADDRESSED)
     if addressed:
@@ -280,7 +287,11 @@ def post_pending_fix_replies(
     state.comments.move_to_resolved(resolved, updated_at=pr.state.now_iso())
 
     # A draft delivered nothing, so the queue has to survive for the next run.
+    # Withheld FIXED replies keep the queue; an unlanded commit is never marked
+    # pushed just because the other buckets drained.
     if core.publishing.enabled():
-        if pr.attribution.commit_unpushed(record.commit_status):
+        if (landing is pr.attribution.FixLanding.LANDED
+                and pr.attribution.commit_unpushed(record.commit_status)):
             record.commit_status = CommitStatus.PUSHED
-        fix.replies_sent()
+        if not withheld:
+            fix.replies_sent()

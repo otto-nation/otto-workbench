@@ -9,6 +9,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+from review.document import is_skipped
 from review.ingest import IngestErrorKind, IngestRejected, ingest_review
 from review.record import Disposition
 from review.render import BANNER
@@ -134,8 +135,10 @@ class TestWhatIsRead:
         (f,) = ingest_review(
             "## Should fix\n- [ ] **[S1]** `a.py:1` —\n  *(skipped — r)* more text\n"
         ).findings
+        assert f.lead == "`a.py:1` — "
+        assert not f.body.startswith("—")
         assert (f.disposition, f.reason) == (Disposition.SKIPPED, "r")
-        assert f.body == "—\n  more text"
+        assert is_skipped(f.view())
 
     def test_a_tail_annotation_with_an_em_dash_is_not_the_body_separator(self):
         (f,) = ingest_review(

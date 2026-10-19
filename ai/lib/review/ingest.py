@@ -244,6 +244,13 @@ def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
         declared = extract_body_text(remainder)
         if declared and remainder.endswith(declared):
             lead, first = remainder[: len(remainder) - len(declared)], declared
+        elif not declared and (
+            "—" in remainder or " -- " in remainder or " - " in remainder
+        ):
+            # extract_body_text found a separator and nothing after it. Consume
+            # the dash into lead ("`a.py:1` — ") rather than leaving it for
+            # _LOCATION_OPEN_RE, which would park it in the body.
+            lead, first = remainder.rstrip() + " ", ""
         else:
             opened = _LOCATION_OPEN_RE.match(remainder)
             if opened:

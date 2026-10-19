@@ -130,6 +130,13 @@ class TestWhatIsRead:
         ).findings
         assert (f.disposition, f.reason, f.body) == (Disposition.SKIPPED, "r", "body\n  more prose")
 
+    def test_a_skip_head_on_a_continuation_counts_when_the_declaration_body_is_empty(self):
+        (f,) = ingest_review(
+            "## Should fix\n- [ ] **[S1]** `a.py:1` —\n  *(skipped — r)* more text\n"
+        ).findings
+        assert (f.disposition, f.reason) == (Disposition.SKIPPED, "r")
+        assert f.body == "—\n  more text"
+
     def test_a_tail_annotation_with_an_em_dash_is_not_the_body_separator(self):
         (f,) = ingest_review(
             "## Should fix\n- [ ] **[S1]** `a.py:1` text *(declined — x)*\n"

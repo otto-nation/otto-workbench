@@ -160,29 +160,59 @@ def _skip_on_declaration(remainder: str, has_later: bool, note: _Annotation) -> 
     return note
 
 
-def _skip_on_later(first: str, cont: list[str], rest: list[str], note: _Annotation) -> tuple[str, list[str], _Annotation]:
-    """Skip tail at the end of the last non-blank span line after the declaration.
+@dataclass(frozen=True)
+class _SkipLater:
+    first: str
+    cont: tuple[str, ...]
+    note: _Annotation
 
-    The last line is taken from `rest` in document order, evidence included,
-    because today's `is_skipped` sees evidence as part of `finding.body`.
+
+def _skip_on_later(
+    first: str,
+    cont: list[str],
+    rest: list[str],
+    note: _Annotation,
+    *,
+    declared_empty: bool,
+) -> _SkipLater:
+    """Skip on a continuation that today's `is_skipped` would see.
+
+    Tail: the last non-blank span line after the declaration (`rest` in
+    document order, evidence included). Head: the first non-blank of those
+    lines, only when the declaration body is empty, so that line is the start
+    of today's stripped `finding.body`.
     """
     if note.disposition is not Disposition.OPEN:
-        return first, cont, note
+        return _SkipLater(first, tuple(cont), note)
     last = ""
+    first_later = ""
     for raw in rest:
         if raw.strip():
             last = raw.rstrip()
-    if not last or not (m := SKIP_TAIL_RE.search(last)):
-        return first, cont, note
-    note = _Annotation(first, Disposition.SKIPPED, (m.group(1) or "").strip())
-    stripped = last[:m.start()].rstrip()
-    for i in range(len(cont) - 1, -1, -1):
-        if cont[i].strip():
-            if SKIP_TAIL_RE.search(cont[i]):
-                cont = list(cont)
-                cont[i] = stripped
-            break
-    return first, cont, note
+            if not first_later:
+                first_later = raw.strip()
+    if last and (m := SKIP_TAIL_RE.search(last)):
+        note = _Annotation(first, Disposition.SKIPPED, (m.group(1) or "").strip())
+        stripped = last[:m.start()].rstrip()
+        new_cont = list(cont)
+        for i in range(len(new_cont) - 1, -1, -1):
+            if new_cont[i].strip():
+                if SKIP_TAIL_RE.search(new_cont[i]):
+                    new_cont[i] = stripped
+                break
+        return _SkipLater(first, tuple(new_cont), note)
+    if declared_empty and first_later and (m := SKIP_HEAD_RE.match(first_later)):
+        note = _Annotation(first, Disposition.SKIPPED, (m.group(1) or "").strip())
+        leftover = first_later[m.end():].lstrip()
+        new_cont = list(cont)
+        for i, line in enumerate(new_cont):
+            if line.strip():
+                if SKIP_HEAD_RE.match(line.strip()):
+                    indent = line[: len(line) - len(line.lstrip())]
+                    new_cont[i] = f"{indent}{leftover}".rstrip()
+                break
+        return _SkipLater(first, tuple(new_cont), note)
+    return _SkipLater(first, tuple(cont), note)
 
 
 def _apply_head(first: str, note: _Annotation) -> _Annotation:
@@ -211,9 +241,9 @@ def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
     remainder = tail.first
     location = finding_location(remainder)
     if location.named:
-        first = extract_body_text(remainder)
-        if first and remainder.endswith(first):
-            lead = remainder[: len(remainder) - len(first)]
+        declared = extract_body_text(remainder)
+        if declared and remainder.endswith(declared):
+            lead, first = remainder[: len(remainder) - len(declared)], declared
         else:
             opened = _LOCATION_OPEN_RE.match(remainder)
             if opened:
@@ -222,12 +252,16 @@ def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
                 lead, first = remainder, ""
     else:
         lead, first = "", remainder.strip()
+        declared = first
     note = _apply_head(first, tail)
     split = split_evidence(rest)
     cont = [part.rstrip() for part in split.body]
     while cont and not cont[-1].strip():
         cont.pop()
-    first, cont, note = _skip_on_later(note.first, cont, rest, note)
+    skipped = _skip_on_later(
+        note.first, cont, rest, note, declared_empty=not declared,
+    )
+    first, cont, note = skipped.first, skipped.cont, skipped.note
     identity = FindingIdentity.of(line)
     return RecordFinding(
         id=f"{m.group(2)}{m.group(3)}", severity=m.group(2),

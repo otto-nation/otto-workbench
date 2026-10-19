@@ -7,6 +7,17 @@
 - When the user references a broken script, tool, or automation, fix the script's code — don't manually perform the action the script was supposed to automate
 - Implement the practical fix before deep-diving into upstream or third-party source code. Ask before spending time on root-cause analysis in code you don't own
 
+## Choosing What to Recommend
+
+The recommendation is the option you would still defend a year from now, not the one with the smallest diff. Size, effort, and "fewest files touched" are costs to state, never reasons to choose.
+
+- Before recommending a fix, ask what let the defect happen and whether the option removes that cause or only this instance. Two matchers that must agree, two error paths for one condition, a value computed in two places: a fix that makes them agree today leaves them free to drift tomorrow — the structural fix makes the disagreement unrepresentable (one matcher, one sentinel, one owner)
+- Check every option against the codebase's own written conventions — ADRs, the repo's AGENTS.md or CLAUDE.md, the pattern its siblings follow — and say which one each option honours or breaks. An option that matches the nearest code but contradicts a documented decision is the outlier, not the precedent
+- Verify the claims an option rests on before presenting it. "Everything else does X" is a grep, not a memory; one counter-example inside the same subsystem changes the recommendation
+- When the easiest option genuinely is the best long-term one, say why it is — that it is easy is not the argument
+- If the long-term fix is larger than the task, present it anyway as the recommendation, with its size and what it would touch, and offer the smaller fix as the alternative. Scoping it down is the user's call, not a filter applied before they see it
+- The reuse ladder below and `reuse.level` govern how a chosen design is *built* — reuse before writing, shortest diff that implements it. They never choose *which* design to recommend
+
 ## Planning
 
 Before code changes, walk this ladder — stop at the first unmet gate:
@@ -46,7 +57,7 @@ it is not deferred, it is dropped.
 
 ## Code Quality
 
-Reuse ladder — stop at the first rung that solves the problem:
+Reuse ladder — stop at the first rung that solves the problem. It decides how to build the design already chosen, not which design to choose (see § Choosing What to Recommend):
 
 1. **Already in this codebase?** Reuse it — before writing new code, grep for existing implementations of the same logic. Check sibling files, shared libs, and format/helper directories
 2. **Stdlib / language built-in?** Use it

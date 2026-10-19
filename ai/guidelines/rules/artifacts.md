@@ -68,6 +68,10 @@ start — it controls how aggressively the reuse ladder (in `general.md`) is enf
 | **full** | Enforce the reuse ladder. Stdlib and native first. Shortest diff (default) |
 | **ultra** | Challenge the requirement. Deletion before addition. Ship the one-liner |
 
+Every level governs implementation, never the recommendation: the design you
+recommend is the best long-term one at every level (`general.md` § Choosing What
+to Recommend), and the level then decides how lean its implementation is.
+
 When `reuse.level` is unset, the level is the value of `reuse.default` in the
 same file, and `full` when that is unset too. Change either with
 `otto-workbench config set reuse.level ultra` (or `reuse.default`), which every harness

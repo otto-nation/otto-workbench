@@ -109,7 +109,7 @@ class OwedFeedback:
 
 
 def owed_feedback(pr_data: PRData, settled: set[str],
-                  seen: CommentsSummary | None) -> OwedFeedback:
+                  seen: "CommentsSummary | None") -> OwedFeedback:
     """What `pr comments` would find to answer on the PR *pr_data* describes.
 
     *settled* is the thread ids a recorded fix outcome already settled, and

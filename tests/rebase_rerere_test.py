@@ -32,6 +32,18 @@ import rebase.stash  # noqa: E402
 import rebase.types  # noqa: E402
 
 
+def _rebase_main(repo):
+    """Run the production autosquash rebase onto main, with the unattended env.
+
+    Checked only against the locally installed git; the `-i` form is assumed to
+    behave alike on older versions (pre-2.44) and is not exercised on one.
+    """
+    return git.client.run(
+        "rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
+        config=rebase.lifecycle.REBASE_CONFIG, env=rebase.lifecycle.unattended_env(),
+    )
+
+
 def _write(repo: Path, name: str, body: str) -> None:
     (repo / name).write_text(body)
 
@@ -110,8 +122,7 @@ class TestRerereIsHeldOff:
 
     def test_the_resolver_s_own_output_is_not_recorded(self, tmp_path):
         repo = _diverged(tmp_path)
-        git.client.run("rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
@@ -130,8 +141,7 @@ class TestRerereIsHeldOff:
         cache = cache if cache.is_absolute() else repo / cache
         cache.mkdir(parents=True, exist_ok=True)
 
-        git.client.run("rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         assert _cached_resolutions(repo) == []
@@ -145,8 +155,7 @@ class TestRerereIsHeldOff:
         rather than about a directory.
         """
         repo = _diverged(tmp_path)
-        git.client.run("rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nAI-WROTE-THIS\nc\n")
 
         git_in(repo, "checkout", "-q", "-b", "feat2", "main~1")
@@ -346,8 +355,7 @@ class TestAutosquash:
 
     def test_folds_a_fixup_commit(self, tmp_path):
         repo = self._with_fixup(tmp_path, "fixup")
-        git.client.run("rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
@@ -362,8 +370,7 @@ class TestAutosquash:
         with the editor" and leaves a rebase in progress.
         """
         repo = self._with_fixup(tmp_path, "squash")
-        git.client.run("rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         assert not rebase.inspect.rebase_in_progress(str(repo))
@@ -377,8 +384,7 @@ class TestAutosquash:
         git_in(repo, "add", "g.txt")
         git_in(repo, "commit", "-q", "-m", "feat: second thing")
 
-        git.client.run("rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
@@ -420,10 +426,7 @@ class TestAutosquashOnEveryGit:
         git_in(repo, "commit", "-q", "-m", "main: add b and g")
         git_in(repo, "checkout", "-q", "feat")
 
-        r = git.client.run(
-            "rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
-            config=rebase.lifecycle.REBASE_CONFIG, env=rebase.lifecycle.unattended_env(),
-        )
+        r = _rebase_main(repo)
 
         assert r.ok, r.combined_output
         assert not rebase.inspect.rebase_in_progress(str(repo))

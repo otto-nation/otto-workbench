@@ -399,6 +399,7 @@ def test_fresh_rebases_a_landed_branch_under_force():
     rc, commands, _ = _run_fresh(tracker=_landed_report(), force=True)
 
     assert rc == 0
+    # Literal argv on purpose: pins the exact flags, unlike AUTOSQUASH_ARGS tests.
     assert ["git", "rebase", "-i", "--autosquash", "--empty=drop", _TARGET] in [
         _unconfigured(cmd) for cmd in commands
     ]

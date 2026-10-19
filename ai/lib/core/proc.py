@@ -46,7 +46,7 @@ quoted, since it is then the only evidence there is.
 An expired timeout is the same kind of answer. `run` converts it into a
 `CmdResult` carrying `TIMEOUT_RETURNCODE` — the shell convention — with the bound
 and the command quoted on stderr, and whatever the process wrote before it was
-killed preserved on both streams. Raising instead would need a handler at each of
+stopped preserved on both streams. Raising instead would need a handler at each of
 the call sites that has none; as a result code it degrades through
 `out`/`ok`/`lines` exactly as any other failure does, and it is contract rather
 than an implementation detail: the eval scorers tell a timed-out case from a
@@ -60,20 +60,22 @@ post-processing, after every agent had been paid for.
 
 A caller running something that spawns its own tree passes
 `kill_process_group=True` and gets a child in a session of its own, so an
-expired bound takes the whole group. Killing is not reaping: SIGKILL is posted
-and may not have landed — `killpg` can be refused outright, and a child in
-uninterruptible sleep does not receive it until it leaves that state — so every
-wait after a kill on that path is bounded, and what outlived it is named on the
-stderr the caller already reads. That path does not enter `Popen` as a context
-manager for the same reason: `__exit__` reaps with an unbounded `wait()` for
-anything but a `KeyboardInterrupt`, which would hang the unwinding of an
-ordinary exception on exactly the group the kill failed to remove.
-
-The default path still reaps unbounded, through `subprocess.run`'s own kill.
-It is the narrower exposure by some way — one direct child, no `killpg` to be
-refused, no grandchild to outlive the signal — and a `ceiling:` at that call
-names what closing it would cost, which is a rewrite of how the suite stubs
-`gh` rather than anything in this module.
+expired bound takes the whole group. An expired bound is SIGTERM first, a
+bounded `TERM_GRACE` for the child to act, then SIGKILL. git unlinks its
+lockfiles (`packed-refs.lock`, `index.lock`, ref `.lock` files) from a sigchain
+handler that SIGKILL never runs; the grace is that cleanup, not a second copy of
+the expired tier. Signalling is not reaping: SIGKILL is posted and may not have
+landed — `killpg` can be refused outright, and a child in uninterruptible sleep
+does not receive it until it leaves that state — so every wait after a signal is
+bounded, and what outlived it is named on the stderr the caller already reads.
+Neither spawn path enters `Popen` as a context manager: `__exit__` reaps with an
+unbounded `wait()` for anything but a `KeyboardInterrupt`, which would hang the
+unwinding of an ordinary exception on exactly the child the kill failed to remove.
+Both the default path and the group path spawn through `_run_popen`:
+`subprocess.run` SIGKILLs on timeout and never yields the pid a TERM-first
+ladder needs. The non-group path signals with `Popen.send_signal`, so the
+handle that spawned the child is the one that stops it; the group path still
+uses `killpg` because the rest of the tree has no handle here.
 
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
@@ -293,6 +295,14 @@ class MachineKill:
         return f"{self.cmd} — {self.cause}"
 
 
+# How long a timed-out child has to act on SIGTERM before SIGKILL. git unlinks
+# packed-refs.lock / index.lock from its sigchain on TERM and cannot on KILL;
+# that cleanup is milliseconds. Two seconds is the same window `core.children.GRACE`
+# uses for the same ladder, long enough for a contended scheduler to deliver the
+# signal, and not a second copy of the expired tier — LOCAL stays 12s worst case,
+# not 20.
+TERM_GRACE = 2.0
+
 # How many kills to keep. A bound rather than a list because `run` is called by
 # long-lived things — an MCP server, a review pass over dozens of files — and an
 # unbounded record of a failure mode nobody drains is a leak. The oldest go
@@ -470,8 +480,8 @@ def _text(value: str | bytes | None) -> str:
     return value if isinstance(value, str) else value.decode(errors="replace")
 
 
-def _kill_group(process: subprocess.Popen) -> str:
-    """SIGKILL the group *process* leads, and say what may have survived.
+def _signal_process(process: subprocess.Popen, sig: int, *, group: bool) -> str:
+    """Send *sig* to *process*, or to the group it leads.
 
     Returns the empty string when the signal landed or there was nothing left
     to signal, and a note for the timeout detail when it did not. Nothing here
@@ -479,22 +489,28 @@ def _kill_group(process: subprocess.Popen) -> str:
     exception would replace that result with a failure no call site has a
     branch for.
 
-    `start_new_session` made the child a group leader, so its pid is the group
-    id. A process that exited between the bound expiring and this call leaves
-    nothing to signal — the race, not a failure. A group this process may not
-    signal is the one case worth telling the caller about, because something is
+    When *group* is true, `start_new_session` made the child a group leader, so
+    its pid is the group id and `killpg` reaches the rest of the tree. When it
+    is false, `Popen.send_signal` posts to the child this handle already owns.
+    A process that exited between the bound expiring and this call leaves
+    nothing to signal — the race, not a failure. A process this one may not
+    signal is the case worth telling the caller about, because something is
     then still running with nothing holding a handle to it.
 
-    Signalling is not reaping, which is why `_reap` exists and why every caller
-    here pairs the two. SIGKILL is posted and this returns; the caller then
-    decides how long it is prepared to wait for the group to act on it.
+    Signalling is not reaping, which is why `_reap` exists and why `_terminate`
+    pairs the two. The signal is posted and this returns; the caller then
+    decides how long it is prepared to wait for the child to act on it.
     """
     try:
-        os.killpg(process.pid, signal.SIGKILL)
+        if group:
+            os.killpg(process.pid, sig)
+        else:
+            process.send_signal(sig)
     except ProcessLookupError:
         return ""
     except PermissionError:
-        return (f"\nprocess group {process.pid} could not be signalled and may "
+        target = f"process group {process.pid}" if group else f"process {process.pid}"
+        return (f"\n{target} could not be signalled and may "
                 f"still be running")
     return ""
 
@@ -517,7 +533,7 @@ def _reap(process: subprocess.Popen) -> str:
 
     Returns a note for the timeout detail, empty when the process is gone, so
     what outlived the kill reaches the same stderr the caller already reads.
-    Nothing raises, for the same reason `_kill_group` does not.
+    Nothing raises, for the same reason `_signal_process` does not.
     """
     try:
         process.wait(timeout=core.timeouts.QUICK)
@@ -525,6 +541,27 @@ def _reap(process: subprocess.Popen) -> str:
         return (f"\nprocess {process.pid} did not exit after SIGKILL and may "
                 f"still be running")
     return ""
+
+
+def _terminate(process: subprocess.Popen, kill_process_group: bool) -> str:
+    """SIGTERM, `TERM_GRACE`, then SIGKILL. Every wait is bounded.
+
+    Returns notes for the timeout detail, empty when the process is gone.
+    Nothing raises, for the same reason `_signal_process` does not.
+    """
+    note = _signal_process(process, signal.SIGTERM, group=kill_process_group)
+    try:
+        process.wait(timeout=TERM_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    else:
+        if kill_process_group:
+            # The leader exiting on TERM says nothing about grandchildren that
+            # ignore it; the group still gets KILL.
+            note += _signal_process(process, signal.SIGKILL, group=True)
+        return note
+    note += _signal_process(process, signal.SIGKILL, group=kill_process_group)
+    return note + _reap(process)
 
 
 def _close_quietly(pipe: IO | None) -> None:
@@ -562,46 +599,49 @@ def _timed_out(cmd: list[str], timeout: float | None, exc: subprocess.TimeoutExp
     )
 
 
-def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | None,
-                      spawn: dict) -> CmdResult:
-    """Run *cmd* as a group leader, killing the whole group if the bound expires.
+def _run_popen(cmd: list[str], timeout: float | None, input_text: str | None,
+               spawn: dict, *, kill_process_group: bool) -> CmdResult:
+    """Run *cmd* under Popen so an expired bound can TERM before KILL.
 
-    `subprocess.run` cannot express this. Its timeout handler kills the direct
-    child and it never yields the pid, so the group id a caller would need to
-    reach the rest of the tree is gone by the time the exception arrives —
-    which is the whole of why this path is hand-rolled rather than sharing the
-    one above.
+    `subprocess.run` cannot express this. Its timeout handler SIGKILLs the
+    direct child and never yields the pid, so neither a TERM-first ladder nor
+    a group id to reach the rest of a tree is available once the exception
+    arrives — which is why both the default path and the group path share this
+    rather than calling `subprocess.run`.
 
     An expired bound is not the only way out of `communicate`. A
     `KeyboardInterrupt`, or a `ValueError` from writing to a stream the child
-    already closed, leaves through the bare clause below, which kills the group
-    on the way and lets the exception continue — `subprocess.run` does the same
-    for the same reason. Without it the tree this function exists to contain
-    would outlive the call that started it.
+    already closed, leaves through the bare clause below, which stops the child
+    on the way and lets the exception continue. Without it a tree started with
+    `kill_process_group` would outlive the call that started it.
 
     Popen is not entered as a context manager, and that is the other half of
     the same argument. `__exit__` closes the pipes — worth having — and then
     reaps with an unbounded `self.wait()` for anything but a `KeyboardInterrupt`,
-    so a group that survived its SIGKILL would block the unwinding of an
-    ordinary exception: the hang this function exists to prevent, reached while
-    handling the error that was going to report it. The two halves are done by
-    hand instead, `_reap` before `_close_pipes`, both bounded and neither able
+    so a child that survived SIGKILL would block the unwinding of an ordinary
+    exception: the hang this function exists to prevent, reached while handling
+    the error that was going to report it. The two halves are done by hand
+    instead, `_terminate` before `_close_pipes`, both bounded and neither able
     to raise.
     """
     stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
-    process = subprocess.Popen(cmd, start_new_session=True, stdin=stdin, **spawn)
+    process = subprocess.Popen(
+        cmd, start_new_session=kill_process_group, stdin=stdin, **spawn,
+    )
     try:
         stdout, stderr = process.communicate(input_text, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        survivors = _kill_group(process) + _reap(process)
+        survivors = _terminate(process, kill_process_group)
         _close_pipes(process)
+        _record_kill(cmd, f"timed out after {timeout:g}s")
         return _timed_out(cmd, timeout, exc, survivors)
     except BaseException:
-        _kill_group(process)
-        _reap(process)
+        _terminate(process, kill_process_group)
         _close_pipes(process)
         raise
     _close_pipes(process)
+    if externally_killed(process.returncode):
+        _record_kill(cmd, f"killed by {signal_description(process.returncode)}")
     return CmdResult(returncode=process.returncode, stdout=stdout or "", stderr=stderr or "")
 
 
@@ -688,14 +728,6 @@ def _feed_stdin(stdin: TextIO, input_text: str) -> None:
         _close_quietly(stdin)
 
 
-def _stop(process: subprocess.Popen, kill_process_group: bool) -> str:
-    """SIGKILL the child or its group, then reap. See `_run_relayed`."""
-    if kill_process_group:
-        return _kill_group(process) + _reap(process)
-    process.kill()
-    return _reap(process)
-
-
 def _finish_pumps(process: subprocess.Popen, pumps: list[threading.Thread],
                   tee: _Tee) -> str:
     """Join the pumps under one deadline, detach the tee, and say what is late.
@@ -768,7 +800,7 @@ def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
             pump.start()
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        survivors = _stop(process, kill_process_group)
+        survivors = _terminate(process, kill_process_group)
         survivors += _finish_pumps(process, pumps, tee)
         _record_kill(cmd, f"timed out after {timeout:g}s")
         exc = subprocess.TimeoutExpired(
@@ -776,7 +808,7 @@ def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
         )
         return _timed_out(cmd, timeout, exc, survivors)
     except BaseException:
-        _stop(process, kill_process_group)
+        _terminate(process, kill_process_group)
         _finish_pumps(process, pumps, tee)
         raise
     late = _finish_pumps(process, pumps, tee)
@@ -858,15 +890,16 @@ def run(
     Nothing here is interactive, so there is nothing for an inherited stdin to
     be for.
 
-    `kill_process_group` decides what an expired bound kills. By default the
-    direct child, which is `subprocess.run`'s behaviour and right for a command
-    that is one process. A caller running something that spawns its own tree
-    passes True and gets the child in a session of its own, so the whole group
-    goes: an MCP tool call drives agents, and signalling the direct child alone
-    left them running against the account with nothing holding a handle to
-    them. SIGKILL with no grace window either way — the budget has already
-    expired, and a TERM-then-KILL ladder doubles the worst case on a call that
-    is already late.
+    `kill_process_group` decides what an expired bound stops. By default the
+    direct child, right for a command that is one process. A caller running
+    something that spawns its own tree passes True and gets the child in a
+    session of its own, so the whole group goes: an MCP tool call drives agents,
+    and signalling the direct child alone left them running against the account
+    with nothing holding a handle to them. Either way the bound's expiry is
+    SIGTERM, `TERM_GRACE` for the child to drop lockfiles and flush, then
+    SIGKILL. The grace is not a second copy of the tier — two seconds on a
+    LOCAL that already ran ten, not twenty — and every wait after either signal
+    is bounded.
 
     `relay` is a live tee: each line the child writes is copied to it (typically
     `sys.stderr`) as it arrives, and still collected on the result. Without it
@@ -888,36 +921,6 @@ def run(
             cmd, timeout, input_text, spawn, relay,
             kill_process_group=kill_process_group,
         )
-    if kill_process_group:
-        return _run_in_own_group(cmd, timeout, input_text, spawn)
-    # `input` and `stdin` are mutually exclusive to `subprocess.run` — it opens
-    # the pipe itself when there is something to write, so naming the closed
-    # stream is only ours to do when there is not.
-    if input_text is None:
-        spawn["stdin"] = subprocess.DEVNULL
-    # ceiling: this path inherits `subprocess.run`'s unbounded reap — on a bound
-    # it SIGKILLs the direct child and then waits for it with no bound of its
-    # own, so a child that cannot take the signal hangs the call, which is the
-    # defect `_reap` closes on the group path. Much narrower here: the target is
-    # this process's own child, so there is no `killpg` to be refused and no
-    # grandchild to outlive the signal, leaving uninterruptible sleep on a
-    # stalled mount as the only way in. Left because the cost is not in this
-    # function: `subprocess.run` is the seam 58 stubs across 8 test files patch
-    # to answer as `gh` would, handing back `CompletedProcess`, so taking the
-    # spawn over here swaps that for a Popen double and rewrites all of them —
-    # a refactor of the suite's mocking strategy rather than a bug fix.
-    # Upgrade trigger: when a caller on this path is seen hanging past its
-    # bound, or once those stubs move to a Popen-shaped double for any other
-    # reason, at which point this becomes the same three-line change
-    # `_run_in_own_group` took.
-    try:
-        completed = subprocess.run(cmd, input=input_text, timeout=timeout, **spawn)
-    except subprocess.TimeoutExpired as exc:
-        _record_kill(cmd, f"timed out after {timeout:g}s")
-        # `subprocess.run` has already killed the child and reaped it; what is
-        # left to do is turn the exception into the result every caller reads.
-        return _timed_out(cmd, timeout, exc, "")
-    if externally_killed(completed.returncode):
-        _record_kill(cmd, f"killed by {signal_description(completed.returncode)}")
-    return CmdResult(returncode=completed.returncode,
-                     stdout=completed.stdout or "", stderr=completed.stderr or "")
+    return _run_popen(
+        cmd, timeout, input_text, spawn, kill_process_group=kill_process_group,
+    )

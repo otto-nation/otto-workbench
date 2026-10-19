@@ -225,7 +225,7 @@ class TestRunUndecodableOutput:
     killed there by `git show` reading a latin-1 shell script.
 
     Both spawn paths are covered because they are separate code — the group
-    path hand-rolls `Popen` rather than sharing `subprocess.run`.
+    path starts a session of its own rather than signalling one child.
     """
 
     # 0xb2 is the byte the review run actually died on, written raw.
@@ -288,6 +288,107 @@ class TestRunTimeout:
     def test_a_timeout_is_distinguishable_from_an_ordinary_failure(self):
         """The eval scorers separate the two by this code."""
         assert core.proc.run(["false"], timeout=core.timeouts.QUICK).returncode != core.proc.TIMEOUT_RETURNCODE
+
+
+
+def _running(pid: int) -> bool:
+    """Whether *pid* is a live process; a zombie nobody has reaped yet is not.
+
+    Zombie state comes from `ps`, which works on Linux and Darwin alike.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return bool(out) and not out.startswith("Z")
+
+
+class TestRunTermThenKill:
+    """An expired bound TERMs first so git can drop its lockfiles.
+
+    SIGKILL skips git's sigchain tempfile cleanup, which is how a timed-out
+    write left a stale packed-refs.lock with no holder. The grace is the
+    chance to unlink; a child that ignores TERM is still KILLed after it.
+    """
+
+    def test_a_child_that_traps_term_can_drop_its_lockfile(self, tmp_path):
+        """A Python handler, not a shell trap: bash defers trapped signals until
+        the foreground `sleep` finishes, which is longer than `TERM_GRACE`."""
+        lock = tmp_path / "packed-refs.lock"
+        child = (
+            "import os, signal, sys, time\n"
+            "lock = sys.argv[1]\n"
+            "def stop(signum, frame):\n"
+            "    os.remove(lock)\n"
+            "    raise SystemExit(0)\n"
+            "signal.signal(signal.SIGTERM, stop)\n"
+            "open(lock, 'w').close()\n"
+            "open(sys.argv[2], 'w').close()\n"
+            "time.sleep(30)\n"
+        )
+        ready = tmp_path / "ready"
+        r = core.proc.run([sys.executable, "-c", child, str(lock), str(ready)], timeout=2.0)
+        assert ready.exists(), "child never installed its handler before the bound"
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
+        assert not lock.exists(), "SIGKILL-only would leave the lock behind"
+
+    def test_group_is_killed_even_when_leader_exits_on_term(self, monkeypatch):
+        sent = []
+        real = core.proc.os.killpg
+
+        def spy(pid, sig):
+            sent.append(sig)
+            return real(pid, sig)
+
+        monkeypatch.setattr(core.proc.os, "killpg", spy)
+        core.proc.run(["sleep", "30"], timeout=0.2, kill_process_group=True)
+        assert signal.SIGKILL in sent
+
+    def test_term_ignoring_grandchild_dies_when_leader_exits_on_term(self, tmp_path):
+        pidfile = tmp_path / "pid"
+        grand = (
+            "import os, signal, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            f"open({str(pidfile)!r} + '.tmp', 'w').write(str(os.getpid()))\n"
+            f"os.replace({str(pidfile)!r} + '.tmp', {str(pidfile)!r})\n"
+            "time.sleep(30)\n"
+        )
+        # The leader waits for the grandchild's pidfile, so the bound cannot
+        # expire before the TERM-ignoring process exists to be tested.
+        leader = (
+            "import os, subprocess, sys, time\n"
+            f"subprocess.Popen([sys.executable, '-c', {grand!r}])\n"
+            f"while not os.path.exists({str(pidfile)!r}): time.sleep(0.01)\n"
+            "time.sleep(30)\n"
+        )
+        core.proc.run([sys.executable, "-c", leader], timeout=5.0,
+                      kill_process_group=True)
+        pid = int(pidfile.read_text())
+        deadline = time.monotonic() + 3
+        while _running(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _running(pid), "TERM-ignoring grandchild survived the group kill"
+
+    def test_a_child_that_ignores_term_is_still_killed(self, monkeypatch):
+        monkeypatch.setattr(core.proc, "TERM_GRACE", 0.2)
+        child = (
+            "import signal, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(30)\n"
+        )
+        started = time.monotonic()
+        r = core.proc.run([sys.executable, "-c", child], timeout=0.2)
+        elapsed = time.monotonic() - started
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
+        assert elapsed < 1.0, (
+            f"the call waited {elapsed:.1f}s on a child that ignored SIGTERM, "
+            f"which is past the {core.proc.TERM_GRACE:g}s grace plus SIGKILL")
 
 
 class TestExternallyKilled:
@@ -415,8 +516,12 @@ def short_reap_ceiling(monkeypatch):
     constant fixed at import stays at the shipped bound while the patch moves
     the reap, so the assertion keeps passing against a window twice as wide as
     the one it means to police — a test that loosened itself and said nothing.
+
+    `TERM_GRACE` is shortened too: these cases police the wait *after* SIGKILL,
+    and the production two-second TERM window would dominate that measurement.
     """
     monkeypatch.setattr(core.timeouts, "QUICK", REAP_BOUND)
+    monkeypatch.setattr(core.proc, "TERM_GRACE", 0.05)
     return REAP_BOUND * 2
 
 

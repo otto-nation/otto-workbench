@@ -127,6 +127,9 @@ NO_DEPS_TESTS = {
     # Corpus-case and argument builders for the eval.task and eval.run suites;
     # stdlib only, and the suites importing it carry the deps.
     "tests/eval_task_support.py",
+    # Popen double that forwards to a subprocess.run stub; stdlib only, and
+    # conftest plus the suites that stub run carry the deps.
+    "tests/proc_run_bridge_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')

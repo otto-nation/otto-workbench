@@ -684,10 +684,7 @@ step is still planned into the run when its saved `pr` state owes a closeout,
 but only when `comments` is one of the run's steps and there is no `--select`.
 It is queued and gets a worktree like any other item. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
-namespace that holds only the origin branches the plan's rows need — each PR's
-base, and same-repo heads; fork heads are skipped (GitHub merge state fallback;
-`UNKNOWN` and `DIRTY` count as needed). A claim under `batch/claims/` owns the
-namespace until the refs drop or a run records it.
+namespace of only the branches rows read (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
 `pr ci`) when the rollup failed, with `--wait` if it was still running; rate-limit-only infra is rerun once (`gh run rerun --failed`) and re-waited. Fork
 heads skip both. A stacked PR waits for its base's publish; `resume` retries `stacked_on` once that base is terminal,

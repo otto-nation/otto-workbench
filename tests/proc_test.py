@@ -331,6 +331,32 @@ class TestRunTermThenKill:
         core.proc.run(["sleep", "30"], timeout=0.2, kill_process_group=True)
         assert signal.SIGKILL in sent
 
+    def test_term_ignoring_grandchild_dies_when_leader_exits_on_term(self, tmp_path):
+        pidfile = tmp_path / "pid"
+        grand = (
+            "import os, signal, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+            "time.sleep(30)\n"
+        )
+        leader = (
+            "import subprocess, sys, time\n"
+            f"subprocess.Popen([sys.executable, '-c', {grand!r}])\n"
+            "time.sleep(30)\n"
+        )
+        core.proc.run([sys.executable, "-c", leader], timeout=1.0,
+                      kill_process_group=True)
+        pid = int(pidfile.read_text())
+        deadline = time.monotonic() + 3
+        alive = True
+        while alive and time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+                time.sleep(0.05)
+            except ProcessLookupError:
+                alive = False
+        assert not alive, "TERM-ignoring grandchild survived the group kill"
+
     def test_a_child_that_ignores_term_is_still_killed(self, monkeypatch):
         monkeypatch.setattr(core.proc, "TERM_GRACE", 0.2)
         child = (

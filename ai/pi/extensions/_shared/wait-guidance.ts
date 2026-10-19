@@ -25,7 +25,7 @@ const SEE = "See general.md § Waiting on Background Work.";
  * you get depends on which guard saw the command first.
  */
 export const FOREGROUND_WAIT =
-  "Run the command in the foreground with the bash tool's timeout and do not " +
+  "Run the command in the foreground bounded by the bash tool's own `timeout` parameter (check its unit) and do not " +
   "end the turn while the work is outstanding.";
 
 /** Whether `job_start` is among the tools declared to the model. */
@@ -39,6 +39,12 @@ export function jobStartIsActive(activeTools: readonly string[]): boolean {
  * `kind` picks the lead; `jobStartActive` picks the alternative. Sleep needs
  * the duration so the reason can name the wait it refused.
  */
+export function waitBlockReason(kind: "background", jobStartActive: boolean): string;
+export function waitBlockReason(
+  kind: "sleep",
+  jobStartActive: boolean,
+  sleepSeconds: number,
+): string;
 export function waitBlockReason(
   kind: "background" | "sleep",
   jobStartActive: boolean,

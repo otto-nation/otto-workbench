@@ -44,6 +44,10 @@ def _write_text(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
+        # mkstemp is 0600; review.md is not secret — match Path.write_text.
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)
         core.serde.replace_file(Path(tmp), path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -54,6 +58,8 @@ def write_review(review_file: Path, record: ReviewRecord, meta: ReviewMeta) -> N
     """Save `record` and `meta` beside `review_file`, and render `review_file` from them."""
     review_dir = review_file.parent
     review_dir.mkdir(parents=True, exist_ok=True)
+    # The record is written first so a torn write leaves meta.json's head_sha
+    # behind and the review reads as outdated (safe direction).
     save_record(review_dir, record)
     write_review_meta(review_dir, meta)
     _write_text(review_file, render_review(record, meta))
@@ -87,12 +93,12 @@ def archive_prior(review_dir: Path) -> None:
     A stale directory leaves no prior at all — a leftover copy from an older
     round would be read as this one's predecessor.
     """
+    clear_prior(review_dir)
     if load_record(review_dir) is None:
-        clear_prior(review_dir)
         return
-    core.serde.replace_file(review_dir / FILENAME_RECORD, review_dir / FILENAME_PRIOR_RECORD)
     if (review_dir / FILENAME_META).is_file():
         shutil.copy2(review_dir / FILENAME_META, review_dir / FILENAME_PRIOR_META)
+    core.serde.replace_file(review_dir / FILENAME_RECORD, review_dir / FILENAME_PRIOR_RECORD)
 
 
 def clear_prior(review_dir: Path) -> None:

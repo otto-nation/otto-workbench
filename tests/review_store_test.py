@@ -1,5 +1,6 @@
 """The store: review.json, meta.json and review.md written as one, and the prior round's copies."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -13,12 +14,22 @@ from dataclasses import replace
 
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument
-from review.ingest import ingest_review
-from review.paths import FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
+from review.ingest import IngestRejected, ingest_review
+from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
 from review.render import BANNER
 from review.store import archive_prior, clear_prior, read_prior, read_review, update_review, write_review
+from review.types import ReviewMeta, SEVERITIES
 
-from review_record_support import fixture_meta, fixture_text
+from review_record_support import FIXTURES, fixture_meta, fixture_text
+
+_INPUTS = ("input.md", "raw.md", "before.md", "group-1.md", "group-2.md")
+
+
+def _fixture_inputs():
+    for case_dir in sorted(p for p in FIXTURES.iterdir() if p.is_dir()):
+        for src in _INPUTS:
+            if (case_dir / src).is_file():
+                yield case_dir.name, src
 
 
 def _stored(tmp_path, case="synthesis_pr"):
@@ -52,6 +63,12 @@ class TestTheStore:
         assert update_review(tmp_path / "review.md") is None
         assert not (tmp_path / "review.md").exists()
 
+    def test_rendered_review_md_mode_matches_write_text(self, tmp_path):
+        review_file = _stored(tmp_path)
+        probe = tmp_path / "probe.md"
+        probe.write_text("probe\n")
+        assert review_file.stat().st_mode == probe.stat().st_mode
+
 
 class TestThePriorRound:
     def test_archiving_moves_the_record_and_copies_its_sidecar(self, tmp_path):
@@ -75,6 +92,18 @@ class TestThePriorRound:
         assert not (tmp_path / FILENAME_PRIOR_RECORD).exists()
         assert not (tmp_path / FILENAME_PRIOR_META).exists()
 
+    def test_archiving_without_meta_does_not_keep_an_older_prior_sidecar(self, tmp_path):
+        _stored(tmp_path)
+        archive_prior(tmp_path)
+        write_review(
+            tmp_path / "review.md",
+            ingest_review(fixture_text("synthesis_pr", "input.md")),
+            fixture_meta("synthesis_pr"),
+        )
+        (tmp_path / FILENAME_META).unlink()
+        archive_prior(tmp_path)
+        assert not (tmp_path / FILENAME_PRIOR_META).exists()
+
 
 class TestARecordBackedDocument:
     def test_the_read_api_answers_from_the_record(self, tmp_path):
@@ -96,3 +125,32 @@ class TestARecordBackedDocument:
             doc.render()
         with pytest.raises(TypeError, match="write_review"):
             doc.write(tmp_path / "out.md")
+
+    @pytest.mark.parametrize("case,src", list(_fixture_inputs()))
+    def test_from_stored_matches_parse_of_the_rendered_review(self, tmp_path, case, src):
+        try:
+            record = ingest_review((FIXTURES / case / src).read_text())
+        except IngestRejected:
+            pytest.skip("fixture does not ingest")
+        meta = fixture_meta(case) if (FIXTURES / case / "meta.json").is_file() else ReviewMeta()
+        review_file = tmp_path / "review.md"
+        write_review(review_file, record, meta)
+        stored = ReviewDocument.from_stored(read_review(review_file))
+        parsed = ReviewDocument.parse(review_file.read_text())
+        assert stored.findings == parsed.findings
+        assert stored.open_findings == parsed.open_findings
+        assert stored.open_counts == parsed.open_counts
+        assert stored.verdict == parsed.verdict
+        assert stored.header == parsed.header
+        severity = {s.section.lower() for s in SEVERITIES}
+        for heading in re.findall(r"^## (.+)$", review_file.read_text(), re.MULTILINE):
+            if heading.strip().lower() in severity:
+                continue
+            assert stored.section(heading) == parsed.section(heading), heading
+
+    def test_section_on_a_severity_heading_raises(self, tmp_path):
+        doc = ReviewDocument.from_stored(read_review(_stored(tmp_path)))
+        for heading in ("Must fix", "Should fix", "Nit", "Idioms"):
+            with pytest.raises(ValueError, match=re.escape(heading)) as caught:
+                doc.section(heading)
+            assert ".findings" in str(caught.value)

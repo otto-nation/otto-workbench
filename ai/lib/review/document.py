@@ -87,8 +87,8 @@ from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from pr.target import display_repo
 from review.grammar import SKIP_HEAD_RE, SKIP_TAIL_RE
-from review.spans import finding_spans
 from review.record import ReviewRecord
+from review.spans import finding_spans
 from review.types import SEVERITIES, Finding, FindingScope, ReviewMeta, ReviewType, meta_enum
 
 # The headers a review is written with. `Summary` and `Verdict` are the two this
@@ -588,8 +588,12 @@ def _parse_findings(text: str) -> list[Finding]:
 
 def _record_section(record: ReviewRecord, header: str) -> str:
     """A section's text read off the record's fields. Findings are read through
-    `findings`, never as a section."""
+    `findings`, never as a section — a severity heading raises."""
     key = header.strip().lower()
+    if key in {s.section.lower() for s in SEVERITIES}:
+        raise ValueError(
+            f"{header!r} is a severity heading; read it from .findings"
+        )
     by_key = {
         SECTION_SUMMARY.lower(): record.summary,
         SECTION_VERDICT.lower(): record.verdict,
@@ -599,6 +603,12 @@ def _record_section(record: ReviewRecord, header: str) -> str:
     }
     if key in by_key:
         return by_key[key].strip()
+    if key == SECTION_FAILURES.lower():
+        if not record.failures:
+            return ""
+        # review.render imports this module; a top-level import here is circular.
+        from review.render import failures_body
+        return failures_body(record.failures)
     return next((e.body.strip() for e in record.extra if e.heading.lower() == key), "")
 
 
@@ -694,7 +704,9 @@ class ReviewDocument:
         """The body of the `## <header>` section, stripped, or "" when absent.
 
         Read off the body, so a metadata comment above it can never be mistaken
-        for the section's contents.
+        for the section's contents. A record-backed document raises
+        ``ValueError`` on a severity heading; those findings live on
+        ``.findings``.
         """
         if self.record is not None:
             return _record_section(self.record, header)

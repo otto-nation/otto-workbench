@@ -23,13 +23,23 @@ from review.types import ReviewMeta, SEVERITIES
 from review_record_support import FIXTURES, fixture_meta, fixture_text
 
 _INPUTS = ("input.md", "raw.md", "before.md", "group-1.md", "group-2.md")
+# Fixture inputs ingest must refuse. The parity test below skips these; the
+# dedicated reject test asserts each still raises, so a silent skip cannot drop.
+_EXPECTED_REJECT: tuple[tuple[str, str], ...] = ()
+
+
+def _all_fixture_inputs() -> list[tuple[str, str]]:
+    return [
+        (case_dir.name, src)
+        for case_dir in sorted(p for p in FIXTURES.iterdir() if p.is_dir())
+        for src in _INPUTS
+        if (case_dir / src).is_file()
+    ]
 
 
 def _fixture_inputs():
-    for case_dir in sorted(p for p in FIXTURES.iterdir() if p.is_dir()):
-        for src in _INPUTS:
-            if (case_dir / src).is_file():
-                yield case_dir.name, src
+    reject = set(_EXPECTED_REJECT)
+    return [pair for pair in _all_fixture_inputs() if pair not in reject]
 
 
 def _stored(tmp_path, case="synthesis_pr"):
@@ -75,6 +85,21 @@ class TestTheStore:
 
         monkeypatch.setattr("review.store.os.umask", _umask)
         _stored(tmp_path)
+
+    def test_a_render_failure_does_not_write_the_record(self, tmp_path, monkeypatch):
+        def _boom(*_a, **_k):
+            raise RuntimeError("render failed")
+
+        monkeypatch.setattr("review.store.render_review", _boom)
+        with pytest.raises(RuntimeError, match="render failed"):
+            write_review(
+                tmp_path / "review.md",
+                ingest_review(fixture_text("synthesis_pr", "input.md")),
+                fixture_meta("synthesis_pr"),
+            )
+        assert not (tmp_path / FILENAME_RECORD).exists()
+        assert not (tmp_path / FILENAME_META).exists()
+        assert not (tmp_path / "review.md").exists()
 
 
 class TestThePriorRound:
@@ -133,12 +158,21 @@ class TestARecordBackedDocument:
         with pytest.raises(TypeError, match="write_review"):
             doc.write(tmp_path / "out.md")
 
+    def test_expected_reject_inputs_are_rejected(self):
+        actual = []
+        for case, src in _all_fixture_inputs():
+            try:
+                ingest_review((FIXTURES / case / src).read_text())
+            except IngestRejected:
+                actual.append((case, src))
+        assert set(actual) == set(_EXPECTED_REJECT)
+        for case, src in _EXPECTED_REJECT:
+            with pytest.raises(IngestRejected):
+                ingest_review((FIXTURES / case / src).read_text())
+
     @pytest.mark.parametrize("case,src", list(_fixture_inputs()))
     def test_from_stored_matches_parse_of_the_rendered_review(self, tmp_path, case, src):
-        try:
-            record = ingest_review((FIXTURES / case / src).read_text())
-        except IngestRejected:
-            pytest.skip("fixture does not ingest")
+        record = ingest_review((FIXTURES / case / src).read_text())
         meta = fixture_meta(case) if (FIXTURES / case / "meta.json").is_file() else ReviewMeta()
         review_file = tmp_path / "review.md"
         write_review(review_file, record, meta)

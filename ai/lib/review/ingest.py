@@ -167,6 +167,47 @@ class _SkipLater:
     note: _Annotation
 
 
+@dataclass(frozen=True)
+class _LaterEnds:
+    last: str
+    first: str
+
+
+def _later_ends(rest: list[str]) -> _LaterEnds:
+    last = ""
+    first = ""
+    for raw in rest:
+        if not raw.strip():
+            continue
+        last = raw.rstrip()
+        if not first:
+            first = raw.strip()
+    return _LaterEnds(last, first)
+
+
+def _rewrite_last_nonblank(cont: list[str], replacement: str) -> list[str]:
+    new_cont = list(cont)
+    for i in range(len(new_cont) - 1, -1, -1):
+        if not new_cont[i].strip():
+            continue
+        if SKIP_TAIL_RE.search(new_cont[i]):
+            new_cont[i] = replacement
+        break
+    return new_cont
+
+
+def _rewrite_first_nonblank(cont: list[str], leftover: str) -> list[str]:
+    new_cont = list(cont)
+    for i, line in enumerate(new_cont):
+        if not line.strip():
+            continue
+        if SKIP_HEAD_RE.match(line.strip()):
+            indent = line[: len(line) - len(line.lstrip())]
+            new_cont[i] = f"{indent}{leftover}".rstrip()
+        break
+    return new_cont
+
+
 def _skip_on_later(
     first: str,
     cont: list[str],
@@ -184,34 +225,15 @@ def _skip_on_later(
     """
     if note.disposition is not Disposition.OPEN:
         return _SkipLater(first, tuple(cont), note)
-    last = ""
-    first_later = ""
-    for raw in rest:
-        if raw.strip():
-            last = raw.rstrip()
-            if not first_later:
-                first_later = raw.strip()
-    if last and (m := SKIP_TAIL_RE.search(last)):
+    ends = _later_ends(rest)
+    if ends.last and (m := SKIP_TAIL_RE.search(ends.last)):
         note = _Annotation(first, Disposition.SKIPPED, (m.group(1) or "").strip())
-        stripped = last[:m.start()].rstrip()
-        new_cont = list(cont)
-        for i in range(len(new_cont) - 1, -1, -1):
-            if new_cont[i].strip():
-                if SKIP_TAIL_RE.search(new_cont[i]):
-                    new_cont[i] = stripped
-                break
-        return _SkipLater(first, tuple(new_cont), note)
-    if declared_empty and first_later and (m := SKIP_HEAD_RE.match(first_later)):
+        stripped = ends.last[:m.start()].rstrip()
+        return _SkipLater(first, tuple(_rewrite_last_nonblank(cont, stripped)), note)
+    if declared_empty and ends.first and (m := SKIP_HEAD_RE.match(ends.first)):
         note = _Annotation(first, Disposition.SKIPPED, (m.group(1) or "").strip())
-        leftover = first_later[m.end():].lstrip()
-        new_cont = list(cont)
-        for i, line in enumerate(new_cont):
-            if line.strip():
-                if SKIP_HEAD_RE.match(line.strip()):
-                    indent = line[: len(line) - len(line.lstrip())]
-                    new_cont[i] = f"{indent}{leftover}".rstrip()
-                break
-        return _SkipLater(first, tuple(new_cont), note)
+        leftover = ends.first[m.end():].lstrip()
+        return _SkipLater(first, tuple(_rewrite_first_nonblank(cont, leftover)), note)
     return _SkipLater(first, tuple(cont), note)
 
 
@@ -228,6 +250,28 @@ def _apply_head(first: str, note: _Annotation) -> _Annotation:
     return _Annotation(first, Disposition.OPEN)
 
 
+@dataclass(frozen=True)
+class _Lead:
+    lead: str
+    first: str
+    declared: str
+
+
+def _split_lead(remainder: str) -> _Lead:
+    declared = extract_body_text(remainder)
+    if declared and remainder.endswith(declared):
+        return _Lead(remainder[: len(remainder) - len(declared)], declared, declared)
+    if not declared and ("—" in remainder or " -- " in remainder or " - " in remainder):
+        # extract_body_text found a separator and nothing after it. Consume
+        # the dash into lead ("`a.py:1` — ") rather than leaving it for
+        # _LOCATION_OPEN_RE, which would park it in the body.
+        return _Lead(remainder.rstrip() + " ", "", declared)
+    opened = _LOCATION_OPEN_RE.match(remainder)
+    if opened:
+        return _Lead(remainder[:opened.end()], remainder[opened.end():].strip(), declared)
+    return _Lead(remainder, "", declared)
+
+
 def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
     line = span.line
     m = FINDING_ID_RE.match(line)
@@ -241,39 +285,23 @@ def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
     remainder = tail.first
     location = finding_location(remainder)
     if location.named:
-        declared = extract_body_text(remainder)
-        if declared and remainder.endswith(declared):
-            lead, first = remainder[: len(remainder) - len(declared)], declared
-        elif not declared and (
-            "—" in remainder or " -- " in remainder or " - " in remainder
-        ):
-            # extract_body_text found a separator and nothing after it. Consume
-            # the dash into lead ("`a.py:1` — ") rather than leaving it for
-            # _LOCATION_OPEN_RE, which would park it in the body.
-            lead, first = remainder.rstrip() + " ", ""
-        else:
-            opened = _LOCATION_OPEN_RE.match(remainder)
-            if opened:
-                lead, first = remainder[:opened.end()], remainder[opened.end():].strip()
-            else:
-                lead, first = remainder, ""
+        parts = _split_lead(remainder)
     else:
-        lead, first = "", remainder.strip()
-        declared = first
-    note = _apply_head(first, tail)
+        parts = _Lead("", remainder.strip(), remainder.strip())
+    note = _apply_head(parts.first, tail)
     split = split_evidence(rest)
     cont = [part.rstrip() for part in split.body]
     while cont and not cont[-1].strip():
         cont.pop()
     skipped = _skip_on_later(
-        note.first, cont, rest, note, declared_empty=not declared,
+        note.first, cont, rest, note, declared_empty=not parts.declared,
     )
     first, cont, note = skipped.first, skipped.cont, skipped.note
     identity = FindingIdentity.of(line)
     return RecordFinding(
         id=f"{m.group(2)}{m.group(3)}", severity=m.group(2),
         path=location.path, line=location.line, end_line=location.end_line,
-        lead=lead, body="\n".join([first, *cont]),
+        lead=parts.lead, body="\n".join([first, *cont]),
         evidence="\n".join(part.rstrip() for part in split.evidence),
         stable_id=identity.stable_id if identity else "",
         sid=sid.group(1) if sid else "",

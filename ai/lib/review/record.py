@@ -240,13 +240,26 @@ class ReviewRecord:
         return replace(self, findings=tuple(out))
 
 
-def _unwrap_optional(hint):
+def _field_dropped(written, loaded, hint) -> bool:
+    """True when serde dropped or shortened this on-disk value."""
     args = get_args(hint)
+    inner, optional = hint, False
     if type(None) in args:
         non_none = tuple(a for a in args if a is not type(None))
         if len(non_none) == 1:
-            return non_none[0], True
-    return hint, False
+            inner, optional = non_none[0], True
+    if get_origin(inner) is not tuple:
+        return (
+            optional
+            and is_dataclass(inner)
+            and written is not None
+            and not isinstance(written, dict)
+        )
+    if isinstance(written, list):
+        return not (isinstance(loaded, tuple) and len(loaded) == len(written))
+    # to_dict never writes null for a required tuple; an Optional
+    # tuple (triage) is written as null when the section is absent.
+    return not (written is None and optional)
 
 
 def _dropped_field(raw: dict, record: ReviewRecord) -> str | None:
@@ -254,25 +267,7 @@ def _dropped_field(raw: dict, record: ReviewRecord) -> str | None:
     for name, hint in get_type_hints(ReviewRecord).items():
         if name not in raw:
             continue
-        written = raw[name]
-        inner, optional = _unwrap_optional(hint)
-        if get_origin(inner) is tuple:
-            if not isinstance(written, list):
-                # to_dict never writes null for a required tuple; an Optional
-                # tuple (triage) is written as null when the section is absent.
-                if written is None and optional:
-                    continue
-                return name
-            loaded = getattr(record, name)
-            if isinstance(loaded, tuple) and len(loaded) == len(written):
-                continue
-            return name
-        if (
-            optional
-            and is_dataclass(inner)
-            and written is not None
-            and not isinstance(written, dict)
-        ):
+        if _field_dropped(raw[name], getattr(record, name), hint):
             return name
     return None
 

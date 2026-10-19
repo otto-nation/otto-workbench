@@ -1,9 +1,10 @@
 """Where a review's record, sidecar and rendered view are written — together.
 
-`write_review` is the one writer of `review.md`: it saves `review.json`, then
-`meta.json`, then renders `review.md` from the two, each atomically. A caller
-that changes a review loads it with `read_review`, transforms the record, and
-writes it back — `update_review` is that loop. Nothing edits `review.md`.
+`write_review` is the one writer of `review.md`: it renders into a local first,
+then saves `review.json`, then `meta.json`, then writes `review.md`, each
+atomically. A render failure leaves the directory unchanged. A caller that
+changes a review loads it with `read_review`, transforms the record, and writes
+it back — `update_review` is that loop. Nothing edits `review.md`.
 
 A directory with no readable `review.json` is stale: `read_review` answers None
 and every reader treats that as no review. The prior round's record is moved
@@ -56,13 +57,14 @@ def _write_text(path: Path, text: str) -> None:
 
 def write_review(review_file: Path, record: ReviewRecord, meta: ReviewMeta) -> None:
     """Save `record` and `meta` beside `review_file`, and render `review_file` from them."""
+    text = render_review(record, meta)
     review_dir = review_file.parent
     review_dir.mkdir(parents=True, exist_ok=True)
     # The record is written first so a torn write leaves meta.json's head_sha
     # behind and the review reads as outdated (safe direction).
     save_record(review_dir, record)
     write_review_meta(review_dir, meta)
-    _write_text(review_file, render_review(record, meta))
+    _write_text(review_file, text)
 
 
 def read_review(review_file: Path) -> StoredReview | None:

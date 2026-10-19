@@ -1274,10 +1274,11 @@ file is `review.outcome`'s.
 
 Where a review's record, sidecar and rendered view are written — together.
 
-`write_review` is the one writer of `review.md`: it saves `review.json`, then
-`meta.json`, then renders `review.md` from the two, each atomically. A caller
-that changes a review loads it with `read_review`, transforms the record, and
-writes it back — `update_review` is that loop. Nothing edits `review.md`.
+`write_review` is the one writer of `review.md`: it renders into a local first,
+then saves `review.json`, then `meta.json`, then writes `review.md`, each
+atomically. A render failure leaves the directory unchanged. A caller that
+changes a review loads it with `read_review`, transforms the record, and writes
+it back — `update_review` is that loop. Nothing edits `review.md`.
 
 A directory with no readable `review.json` is stale: `read_review` answers None
 and every reader treats that as no review. The prior round's record is moved

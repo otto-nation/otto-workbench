@@ -453,9 +453,9 @@ def review_meta_from_dict(d) -> ReviewMeta:
     `serde` does the reconstruction, so the fields on `ReviewMeta` are the whole
     schema and a key added there is read without a line here. What it will not
     do on its own is survive a vocabulary it does not know: an unrecognised
-    `review_type` or `mode` raises out of `serde.from_dict` and would cost the
-    whole record. Both are dropped to absent first, which is what `meta_enum`
-    decides, so one unreadable field costs one field.
+    `review_type`, `mode`, or `status` raises out of `serde.from_dict` and would
+    cost the whole record. Those are dropped to absent first, which is what
+    `meta_enum` decides, so one unreadable field costs one field.
 
     A payload that is not an object at all — a hand-edit that left a list, a
     truncated write that json still parsed — reconstructs as if the file were

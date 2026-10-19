@@ -11,7 +11,7 @@ from review.document import (
     ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, sid_marker
-from review.record import AgentFailure, Disposition, RecordFinding, ReviewRecord
+from review.record import AgentFailure, Disposition, ProseSection, RecordFinding, ReviewRecord
 from review.types import SEVERITIES, ReviewMeta
 
 # The line every rendered review.md carries. Ingest refuses any text holding it,
@@ -51,7 +51,7 @@ def failures_body(failures: tuple[AgentFailure, ...]) -> str:
     return "\n".join(lines)
 
 
-def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[tuple[str, str]]:
+def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
     out = []
     for severity in SEVERITIES:
         notes = [s.note for s in record.severity_sections if s.severity == severity.key]
@@ -59,27 +59,27 @@ def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list
         if not notes and not findings:
             continue
         lines = [n for n in notes if n] + [finding_line(f, sids=sids, evidence=evidence) for f in findings]
-        out.append((severity.section, "\n".join(lines)))
+        out.append(ProseSection(severity.section, "\n".join(lines)))
     return out
 
 
-def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[tuple[str, str]]:
+def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
     """Every section the record holds, in spec §2's order."""
-    sections: list[tuple[str, str]] = []
+    sections: list[ProseSection] = []
     if record.triage is not None:
-        sections.append((SECTION_FILE_TRIAGE, "\n".join(e.text for e in record.triage)))
+        sections.append(ProseSection(SECTION_FILE_TRIAGE, "\n".join(e.text for e in record.triage)))
     if record.failures:
-        sections.append((SECTION_FAILURES, failures_body(record.failures)))
+        sections.append(ProseSection(SECTION_FAILURES, failures_body(record.failures)))
     if record.summary:
-        sections.append((SECTION_SUMMARY, record.summary))
+        sections.append(ProseSection(SECTION_SUMMARY, record.summary))
     sections += _severity_sections(record, sids, evidence)
     if record.ledger:
-        sections.append((SECTION_PRIOR_FINDINGS, record.ledger))
-    sections += [(e.heading, e.body) for e in record.extra]
+        sections.append(ProseSection(SECTION_PRIOR_FINDINGS, record.ledger))
+    sections += list(record.extra)
     if record.static_analysis:
-        sections.append((SECTION_STATIC_ANALYSIS, record.static_analysis))
+        sections.append(ProseSection(SECTION_STATIC_ANALYSIS, record.static_analysis))
     if record.verdict:
-        sections.append((SECTION_VERDICT, record.verdict))
+        sections.append(ProseSection(SECTION_VERDICT, record.verdict))
     return sections
 
 
@@ -87,14 +87,14 @@ def render_body(record: ReviewRecord, *, sids: bool = False, evidence: bool = Fa
                 omit: frozenset[str] = frozenset()) -> str:
     """The `## ` sections of `record`, without title or header. `omit` names headings."""
     return "\n".join(
-        f"## {heading}\n\n{body.strip()}\n" if body.strip() else f"## {heading}\n"
-        for heading, body in _sections(record, sids, evidence) if heading not in omit
+        f"## {s.heading}\n\n{s.body.strip()}\n" if s.body.strip() else f"## {s.heading}\n"
+        for s in _sections(record, sids, evidence) if s.heading not in omit
     )
 
 
 def render_findings(record: ReviewRecord, *, sids: bool = False, evidence: bool = False) -> str:
     """Only the severity sections — what a re-review's scoped prior section shows."""
-    return "\n".join(f"## {h}\n{b}" for h, b in _severity_sections(record, sids, evidence)).strip()
+    return "\n".join(f"## {s.heading}\n{s.body}" for s in _severity_sections(record, sids, evidence)).strip()
 
 
 def render_review(record: ReviewRecord, meta: ReviewMeta, *, sids: bool = False,

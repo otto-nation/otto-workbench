@@ -211,6 +211,70 @@ def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
     assert not core.run_lock.is_held(_target(repo, "feat/a"))
 
 
+def _awaiting(run, item, decision_id, kind=batch.model.DecisionKind.DIRTY_WORKTREE):
+    """Park *item* on an open *kind* decision, as a dirty worktree leaves it."""
+    item.status = batch.model.ItemStatus.AWAITING_DECISION
+    run.decisions.append(batch.model.Decision(id=decision_id, item=item.key, step="worktree",
+                                              kind=kind))
+
+
+def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
+        monkeypatch, tmp_path):
+    repo = repo_with_origin(tmp_path / "repo")
+    monkeypatch.setattr(batch.plan, "build_plan",
+                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
+    real_run = batch.scheduler.Scheduler.run_until_blocked
+    seen = {}
+
+    def drop_one_then_drive(self):
+        first, second = self.run.items
+        _awaiting(self.run, first, "d1")
+        _awaiting(self.run, second, "d2")
+        self.session.commit()
+        # What a `pr batch resolve` beside a live driver does: it writes the
+        # request and reports it queued, and the driver's tick applies it.
+        batch.store.write_request(self.run.id, Decide("d1", "drop-pr"))
+        seen["before"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
+        status = real_run(self)
+        seen["status"] = self.run.item(first.key).status
+        seen["after"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
+        return status
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", drop_one_then_drive)
+    assert _main(["batch", "run", "--checkout", str(repo)]) == 10
+    assert seen["before"] == [True, True]
+    assert seen["status"] is batch.model.ItemStatus.DROPPED
+    assert seen["after"] == [False, True]
+    record = core.run_lock.read_holder(_target(repo, "feat/a") / core.run_lock.LOCK_FILE)
+    assert record["released"] is not None
+
+
+def test_resume_does_not_take_back_a_dropped_or_done_items_target(monkeypatch, tmp_path):
+    repo = repo_with_origin(tmp_path / "repo")
+    run = batch.scheduler.new_run(
+        [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b"), _row(repo, 3, "feat/c")],
+        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[])
+    run.items[0].status = batch.model.ItemStatus.DROPPED
+    run.items[1].status = batch.model.ItemStatus.DONE
+    _awaiting(run, run.items[2], "d3")
+    run.status = batch.model.RunStatus.WAITING
+    seed(run)
+    seen = {}
+
+    def fake_run(self):
+        seen["held"] = [core.run_lock.is_held(_target(repo, b))
+                        for b in ("feat/a", "feat/b", "feat/c")]
+        return batch.model.RunStatus.WAITING
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    with live_pid() as pid, held_elsewhere(
+            _target(repo, "feat/a") / core.run_lock.LOCK_FILE,
+            {"pid": pid, "command": "pr fix", "started": "t0"}):
+        code = _main(["batch", "resume", run.id])
+    assert code == 10
+    assert seen["held"] == [True, False, True]
+
+
 def test_run_is_refused_whole_when_one_item_is_being_worked_on(monkeypatch, tmp_path, capsys):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_plan",
@@ -259,7 +323,7 @@ def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp
 
     def queue_then_hold(held, opened, verb):
         batch.store.write_request(opened.id, Decide("d1", "drop-pr"))
-        real(held, opened, verb)
+        return real(held, opened, verb)
 
     monkeypatch.setattr(cli.pr_batch, "_hold_items", queue_then_hold)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",

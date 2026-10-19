@@ -17,7 +17,7 @@ import batch.scheduler  # noqa: E402
 import batch.targets  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
-from batch.model import Decision, DecisionKind, Item, Step  # noqa: E402
+from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step  # noqa: E402
 from batch.plan import PlanRow  # noqa: E402
 from batch.requests import Decide  # noqa: E402
 # `_quiet_outcomes` is an autouse fixture; imported only so pytest registers it here.
@@ -184,3 +184,42 @@ def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
     assert env[LOCK_ENV] == str(target)
     assert TREE_LOCK_ENV not in env
     assert GLOBAL_LOCK_ENV not in env
+
+
+def _holding(holds, *keys_by_target):
+    for target, keys in keys_by_target:
+        holds.take(target, keys, label=keys[0], command="pr batch run r", started="t")
+
+
+def test_item_holds_release_only_targets_whose_items_are_all_terminal(repo):
+    a, b, c = (_item(repo, "feat/a", 1), _item(repo, "feat/b", 2), _item(repo, "feat/b", 3))
+    run = Run(id="r", started_at="t", steps=[Step.REVIEW], pool=1, auto_publish=[],
+              items=[a, b, c])
+    ta, tb = batch.targets.item_target_dir(a), batch.targets.item_target_dir(b)
+    with batch.targets.ItemHolds() as holds:
+        _holding(holds, (ta, [a.key]), (tb, [b.key, c.key]))
+        a.status = ItemStatus.DROPPED
+        b.status = ItemStatus.DONE
+        assert holds.release_finished(run) == [ta]
+        assert not core.run_lock.is_held(ta)
+        assert not core.run_lock.holds(ta / core.run_lock.LOCK_FILE)
+        assert str(ta) not in core.run_lock._marker_values(LOCK_ENV)
+        # feat/b is shared, and #3 is still live.
+        assert core.run_lock.is_held(tb)
+        assert holds.held() == [tb]
+        c.status = ItemStatus.SKIPPED_CLOSED
+        assert holds.release_finished(run) == [tb]
+        assert holds.held() == []
+    assert not core.run_lock.is_held(tb)
+    assert core.run_lock.read_holder(ta / core.run_lock.LOCK_FILE)["released"] is not None
+
+
+def test_item_holds_release_every_target_left_when_the_block_ends(repo):
+    a = _item(repo, "feat/a", 1)
+    run = Run(id="r", started_at="t", steps=[Step.REVIEW], pool=1, auto_publish=[], items=[a])
+    ta = batch.targets.item_target_dir(a)
+    with batch.targets.ItemHolds() as holds:
+        _holding(holds, (ta, [a.key]))
+        assert holds.release_finished(run) == []
+        assert core.run_lock.is_held(ta)
+    assert not core.run_lock.is_held(ta)

@@ -25,6 +25,17 @@ at random.
 
 Every resolution is logged and, inside a trailed run, recorded on the trail as
 a ``pi_binary`` event, so `otto-log show` can say which binary ran and why.
+
+How the chosen binary is *started* is `PiBinary.spawn`'s answer. pi is a
+``#!/usr/bin/env node`` script, and ``env node`` finds whatever ``node`` is first
+on ``PATH`` — on a machine using mise shims, a shim. A shim applies the ``[env]``
+of every trusted mise config at and above its working directory, and an agent is
+spawned in the repo it works on, so a repo setting its own
+``GOOGLE_CLOUD_PROJECT`` overrode the environment the workbench handed pi and
+every model call failed with a 403. So pi is spawned as ``[node, <pi script>]``
+with a `real_node` that is not a shim, and ``PATH`` is left as it was: the
+commands pi runs still reach the repo's mise toolchain, only pi's own process
+does not.
 """
 
 # doc-group: backend
@@ -37,6 +48,7 @@ import os
 import re
 import shutil
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -82,6 +94,48 @@ class PiBinary:
     managed_version: str | None = None
     pin_version: str | None = None
     pin_source: str | None = None
+    # A managed install only: the release the launcher at `path` would exec,
+    # and the install root the launcher exports to it.
+    release: str | None = None
+    install_root: str | None = None
+
+    def spawn(self, env: Mapping[str, str]) -> PiSpawn:
+        """The argv prefix and environment that start this pi from *env*.
+
+        ``[real_node, script]`` when the script pi runs is an ``env node``
+        script and `real_node` finds a node that is not a mise shim; otherwise
+        ``[path]``, exactly as before. *env* is not modified, and its ``PATH``
+        reaches pi unchanged.
+
+        For a managed install the script is the release and the launcher's own
+        environment is reproduced: ``PI_MANAGED_INSTALL_ROOT``, and pi's bundled
+        node directory in front of ``PATH`` when that is the node chosen — the
+        two things the launcher does besides exec'ing the release.
+        """
+        script = self.release or self.path
+        node = real_node(env) if _runs_on_env_node(script) else None
+        if node is None:
+            # ceiling: no node but a shim (a machine whose only node is mise's,
+            # reached through shims), so `env node` is left to find it and a
+            # trusted repo's mise [env] still reaches pi. Upgrade trigger: once
+            # a run on such a machine is refused for the repo's environment,
+            # resolve the shim's target from mise's global config in $HOME.
+            return PiSpawn((self.path,), dict(env))
+        out = dict(env)
+        if self.install_root:
+            out[MANAGED_ROOT_ENV] = self.install_root
+            bundled = pi_node(env)
+            if node == str(bundled):
+                out["PATH"] = os.pathsep.join(filter(None, [str(bundled.parent), env.get("PATH", "")]))
+        return PiSpawn((node, script), out)
+
+
+@dataclass(frozen=True)
+class PiSpawn:
+    """How one pi process starts: the argv in front of pi's own flags, and its env."""
+
+    argv: tuple[str, ...]
+    env: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -105,6 +159,7 @@ class _Managed:
     launcher: str
     version: str
     root: str
+    release: str
 
 
 def version_key(raw: str, origin: str) -> tuple:
@@ -133,17 +188,86 @@ def managed_root() -> Path:
     return Path(override) if override else Path.home() / ".pi" / "agent" / "install"
 
 
+def _data_home(env: Mapping[str, str]) -> Path:
+    """``${XDG_DATA_HOME:-$HOME/.local/share}`` as *env* spells it, empty meaning unset."""
+    xdg = env.get("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg)
+    return Path(env.get("HOME") or Path.home()) / ".local" / "share"
+
+
+def pi_node(env: Mapping[str, str]) -> Path:
+    """The node pi's installer provides, at the path pi's launcher looks for it."""
+    return _data_home(env) / "pi-node" / "current" / "bin" / "node"
+
+
+def _executable_file(path: str | Path) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _is_mise_shim(candidate: str, shims_dir: str) -> bool:
+    """Whether *candidate* is a mise shim: a link to the mise binary, or in mise's shims dir.
+
+    Both are compared whole — the resolved file's name against ``mise``, the
+    resolved directory against the shims directory — so ``mise-tools/bin`` is
+    not mistaken for either.
+    """
+    if os.path.basename(os.path.realpath(candidate)) == "mise":
+        return True
+    return os.path.realpath(os.path.dirname(candidate)) == shims_dir
+
+
+def real_node(env: Mapping[str, str]) -> str | None:
+    """A node executable that is not a mise shim, from *env*; None when there is none.
+
+    pi's bundled node (`pi_node`) when it is executable — the one pi's launcher
+    puts first — else the first ``node`` on *env*'s ``PATH`` that is not a mise
+    shim, else None. Relative ``PATH`` entries are skipped.
+
+    `mise which node` is not asked: it fails where node is not active in the
+    global config, and the answer needed is any real node, not mise's.
+    """
+    bundled = pi_node(env)
+    if _executable_file(bundled):
+        return str(bundled)
+    data = env.get("MISE_DATA_DIR")
+    shims_dir = os.path.realpath((Path(data) if data else _data_home(env) / "mise") / "shims")
+    for entry in (env.get("PATH") or "").split(os.pathsep):
+        if not os.path.isabs(entry):
+            continue
+        candidate = os.path.join(entry, "node")
+        if _executable_file(candidate) and not _is_mise_shim(candidate, shims_dir):
+            return candidate
+    return None
+
+
+def _runs_on_env_node(script: str) -> bool:
+    """Whether *script*'s first line is exactly ``#!<…>/env node``.
+
+    That is the form that finds node through ``PATH``, and so through a shim. A
+    shebang naming node by absolute path never reaches a shim, and one passing
+    node flags would lose them if node were put in front of it — both, and
+    anything that is not a script, run as they are.
+    """
+    try:
+        with open(script, "rb") as fh:
+            first = fh.readline(256)
+    except OSError:
+        return False
+    if not first.startswith(b"#!"):
+        return False
+    words = first[2:].decode(errors="replace").split()
+    return len(words) == 2 and os.path.basename(words[0]) == "env" and words[1] == "node"
+
+
 def _managed() -> _Managed | None:
     """The managed install, None when there is none, or `PiUnresolvable` when broken.
 
     The version is the launcher's own ``current-version`` file — the one it
     reads to pick a release — so it names the release that will run. The
-    launcher, not the release's ``cli.js``, is what gets spawned: it is pi's
-    contract for running a managed release, node included.
-
-    ceiling: a `pi update` landing between this read and a later spawn runs a
-    newer release than the one logged. Upgrade to spawning the release directly
-    if a run is ever seen to straddle an update.
+    release is spawned directly under a real node (see `PiBinary.spawn`), so
+    the release logged is the release that runs; the launcher is kept for the
+    fallback when no real node can be found.
     """
     root = managed_root()
     version_file = root / "current-version"
@@ -161,7 +285,7 @@ def _managed() -> _Managed | None:
             raise PiUnresolvable(
                 f"the managed pi install at {root} names {version} but {need} is not executable"
             )
-    return _Managed(str(launcher), version, str(root))
+    return _Managed(str(launcher), version, str(root), str(release))
 
 
 def _mise_current(cwd: str) -> dict:
@@ -280,6 +404,7 @@ def _choose(cwd: str) -> PiBinary:
         return PiBinary(
             managed.launcher, managed.version, Source.MANAGED,
             f"{lookup.note}; using the managed install", managed_version=managed.version,
+            release=managed.release, install_root=managed.root,
         )
     pinned = dict(pin_version=pin.version, pin_source=pin.source)
     if managed is None:
@@ -300,7 +425,8 @@ def _choose(cwd: str) -> PiBinary:
     return PiBinary(
         managed.launcher, managed.version, Source.MANAGED,
         f"the managed {managed.version} {relation} the repo pin {pin.version}",
-        managed_version=managed.version, **pinned,
+        managed_version=managed.version, release=managed.release,
+        install_root=managed.root, **pinned,
     )
 
 

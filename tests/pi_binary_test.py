@@ -167,6 +167,27 @@ class TestTheChoice:
         assert _resolve(machine).path == launcher
 
 
+class TestTheManagedRelease:
+    """A managed choice carries the release it spawns directly, and the root to export."""
+
+    @pytest.mark.parametrize("pin", [None, "0.87.1"])
+    def test_the_managed_choice_names_its_release_and_root(self, machine, pin):
+        machine.managed("1.2.0")
+        if pin:
+            machine.pin(pin)
+        else:
+            machine.mise()
+        chosen = _resolve(machine)
+        assert chosen.release == str(machine.root / "releases" / "1.2.0" / "node_modules" / ".bin" / "pi")
+        assert chosen.install_root == str(machine.root)
+
+    def test_a_pin_choice_has_no_release(self, machine):
+        machine.managed("1.2.0")
+        machine.pin("1.4.0")
+        chosen = _resolve(machine)
+        assert (chosen.release, chosen.install_root) == (None, None)
+
+
 class TestUnreadable:
     def test_an_unreadable_managed_version_is_an_error_naming_its_file(self, machine):
         machine.managed("1.2.0")

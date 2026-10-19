@@ -17,9 +17,11 @@ What the process added since it started (a ``PATH`` entry, a token) survives,
 because only the keys mise changed move.
 
 It also ignores, never trusts, every untrusted mise config at or above the
-agent's working directory. pi itself is spawned by path (see
-`agent.pi_binary`) and never reaches a shim, but the commands an agent runs in a
-fresh review worktree do, and mise refuses each one outright while the
+agent's working directory. pi itself is started under a node that is not a
+mise shim (`agent.pi_binary.PiBinary.spawn`) — undoing the parent's changes here
+cannot stop a shim from applying the worktree's trusted ``[env]`` afresh, so pi
+must not reach one at all. The commands an agent runs in a fresh review
+worktree do reach shims, and mise refuses each one outright while the
 worktree's config is untrusted. Ignoring means mise does not read the file at
 all, so nothing in it runs; trusted configs stay active, so a fix agent running
 the repo's tests still gets the repo's toolchain.

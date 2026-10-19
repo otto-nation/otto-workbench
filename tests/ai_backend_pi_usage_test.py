@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import agent.backend_pi
 
 from ai_backend_pi_support import FIXTURES, _stats_response
-from conftest import TEST_PI_BINARY_PATH as PI
+from conftest import TEST_PI_ARGV as PI
 
 
 def _prompt_stream() -> str:

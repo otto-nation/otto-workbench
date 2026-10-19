@@ -2097,6 +2097,22 @@ page in the failure guidance.
 Run as a script, the token is the only thing on stdout and the guidance goes to
 stderr, so a failure can never be captured into ``GH_TOKEN``.
 
+### pr/owed_feedback.py
+
+What a PR is owed an answer for — the one definition `pr comments` and `pr batch` share.
+
+Owed feedback is three things: unresolved review threads nobody has settled;
+review bodies from someone else that carry text and are neither pending nor
+minimized (`PRData.review_body_comments`); and PR comments from someone else
+that are not a bot's (`PRData.non_self_issue_comments`). The two top-level
+kinds are then filtered through the seen record a successful triage writes
+(`CommentsSummary.seen_*`), keyed on comment id *and* edit stamp.
+
+`pr comments` flags what triage may skip with `mark_seen`; `pr batch` plans
+its comments step from `owed_feedback`. Both read seen-ness through
+`is_seen`, so the planner cannot skip a review body that `pr comments` would
+decompose, nor plan a step for one it would drop.
+
 ### pr/permalinks.py
 
 Links back to the code a review comment is about, pinned so they keep pointing.
@@ -3582,9 +3598,11 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
 
 Pre-flight: which of my open PRs need which batch steps.
 
-One GraphQL search covers every repo and asks only for fields whose cost does
-not scale with comment volume — no nested `comments` connection — so a plan
-over dozens of PRs costs a point or two of the hourly GraphQL budget.
+One GraphQL search covers every repo. The only nested connections are the ones
+the comments need cannot do without — review threads, and the newest reviews and
+PR comments, each bounded and never paged — so a plan over dozens of PRs costs a
+few points of the hourly GraphQL budget. Thread comments, the connection whose
+cost would scale with discussion length, are never asked for.
 
 ### batch/publish.py
 
@@ -7300,7 +7318,7 @@ Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
 alongside it. `--track` / `--track-all` are not implied by `--finish`.
 
 A comment `pr comments` has already read is dropped from triage decomposition
-(`review.comment_threads.mark_seen`), keyed on the comment id *and*
+(`pr.owed_feedback.mark_seen`), keyed on the comment id *and*
 `last_edited_at` — see `pr.comments` for how that stamp is fetched.
 
 `main` returns rather than exits, as every module under `cli/` does; the shim at

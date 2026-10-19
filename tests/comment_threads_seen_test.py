@@ -52,18 +52,19 @@ def _ctx(tmp_path):
                     target_dir=tmp_path / "target")
 
 
-def _run(tmp_path, argv, answer, *, fix_pass=None):
+def _run(tmp_path, argv, answer, *, fix_pass=None, reviews=()):
     """One `pr comments` run whose triage prompt answers `answer`.
 
     `answer` is a `PromptResult` handed back by `run_prompt`, or a backend
     `(text, exit_code)` pair, which runs the real retry and usable predicate.
     `fix_pass` stands in for `fix.comments.run_pass` on a `--fix` run.
+    `reviews` are raw review nodes for the PR data the owed counts read.
     Returns the exit code, the prompt mock and the persisted seen record.
     """
     ctx = _ctx(tmp_path)
     pr_data = PRData(viewer_login="isaacg", head_sha="abc1234",
                      head_ref="isaac/deps/pi_1_1_0", base_ref="main",
-                     review_threads=[], threads_complete=True)
+                     review_threads=[], reviews=list(reviews), threads_complete=True)
     prompt = MagicMock(return_value=answer)
     args = cli.review_threads.build_parser().parse_args(argv)
     with patch.object(review.comment_threads, "fetch_pr_data", return_value=pr_data), \
@@ -154,3 +155,29 @@ class TestSeenFollowsTriage:
         code, _prompt, seen = _run(tmp_path, ["--triage", "--fix"], _decomposed())
         assert code == 0
         assert seen == {REVIEW_ID: ""}
+
+
+# The raw node `REVIEW_BODY` is read from, for the owed counts `pr status` shows.
+REVIEW_NODE = {"databaseId": REVIEW_ID, "state": "COMMENTED", "body": REVIEW_BODY["body"],
+               "minimizedReason": None, "lastEditedAt": None, "author": {"login": "bob"}}
+
+
+class TestStatusNamesOwedReviewBodies:
+    """`pr status` reported "0 thread(s)" over a review body nobody had answered."""
+
+    def test_a_view_records_the_review_body_as_owed(self, tmp_path):
+        _run(tmp_path, [], _decomposed(), reviews=[REVIEW_NODE])
+        comments = pr.state.load_state(_ctx(tmp_path).target_dir).comments
+        assert comments.owed_review_bodies == 1
+        assert "  1 unanswered review body" in comments.render_status()
+
+    def test_a_triage_that_read_it_clears_the_debt(self, tmp_path):
+        _run(tmp_path, ["--triage"], _decomposed(), reviews=[REVIEW_NODE])
+        comments = pr.state.load_state(_ctx(tmp_path).target_dir).comments
+        assert comments.owed_review_bodies == 0
+        assert not any("unanswered" in line for line in comments.render_status())
+
+    def test_the_next_view_after_triage_still_owes_nothing(self, tmp_path):
+        _run(tmp_path, ["--triage"], _decomposed(), reviews=[REVIEW_NODE])
+        _run(tmp_path, [], _decomposed(), reviews=[REVIEW_NODE])
+        assert pr.state.load_state(_ctx(tmp_path).target_dir).comments.owed_review_bodies == 0

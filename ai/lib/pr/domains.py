@@ -123,6 +123,7 @@ import core.log
 import git.client
 from pr.comments_state import ThreadState
 from pr.fix import FixRecord
+from pr.owed_feedback import OwedFeedback
 
 if TYPE_CHECKING:
     # Only under the type checker. `readiness` is handed the state it is
@@ -558,6 +559,12 @@ class CommentsSummary(Domain):
     # a short tally that claimed to be the whole PR is what this exists to
     # stop `pr status` reporting as settled.
     complete: bool = True
+    # Review bodies and PR comments `pr.owed_feedback` found unread by any
+    # triage, as of the last write. A PR whose only feedback is top-level has
+    # no threads at all, so without these the dashboard reads "0 thread(s)"
+    # over a review nobody has answered.
+    owed_review_bodies: int = 0
+    owed_issue_comments: int = 0
 
     def move_to_resolved(
         self, priors: Sequence[ThreadState], *, updated_at: str,
@@ -617,6 +624,10 @@ class CommentsSummary(Domain):
         if self.by_state:
             parts = [f"{s}: {ct}" for s, ct in sorted(self.by_state.items())]
             lines.append(f"  {', '.join(parts)}")
+        owed = OwedFeedback(review_bodies=self.owed_review_bodies,
+                            issue_comments=self.owed_issue_comments).describe()
+        if owed:
+            lines.append(f"  {owed}")
         if self.blocking_reviewers:
             lines.append(f"  blocking: {', '.join(self.blocking_reviewers)}")
         return lines

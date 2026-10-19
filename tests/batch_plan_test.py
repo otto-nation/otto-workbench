@@ -9,6 +9,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.plan  # noqa: E402
+import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
 import pr.target  # noqa: E402
 from batch.model import Step  # noqa: E402
@@ -28,14 +29,22 @@ def test_rebase_need_unknown_leaves_it_to_the_rebase_step():
     assert "the rebase step decides" in batch.plan.rebase_need("UNKNOWN").reason
 
 
-def test_comments_need_counts_unresolved_unsettled_threads():
-    threads = [{"id": "T1", "isResolved": False}, {"id": "T2", "isResolved": False},
-               {"id": "T3", "isResolved": True}]
-    assert batch.plan.comments_need(threads, settled={"T2"}) == batch.plan.StepNeed(True, "1 unresolved thread")
+def _threads_node(*threads):
+    return {"reviewThreads": {"nodes": list(threads)}}
 
 
-def test_comments_not_needed_when_every_open_thread_is_settled():
-    assert batch.plan.comments_need([{"id": "T1", "isResolved": False}], {"T1"}).needed is False
+def test_comments_need_counts_unresolved_unsettled_threads(monkeypatch):
+    monkeypatch.setattr(batch.plan, "_settled_from", lambda state: {"T2"})
+    node = _threads_node({"id": "T1", "isResolved": False}, {"id": "T2", "isResolved": False},
+                         {"id": "T3", "isResolved": True})
+    assert batch.plan.comments_need(node, "me", None) == \
+        batch.plan.StepNeed(True, "1 unresolved thread")
+
+
+def test_comments_not_needed_when_every_open_thread_is_settled(monkeypatch):
+    monkeypatch.setattr(batch.plan, "_settled_from", lambda state: {"T1"})
+    node = _threads_node({"id": "T1", "isResolved": False})
+    assert batch.plan.comments_need(node, "me", None).needed is False
 
 
 def test_review_needed_when_no_file(tmp_path):
@@ -283,3 +292,70 @@ def test_review_short_prefix_is_not_current(tmp_path):
     f = tmp_path / "review.md"
     f.write_text("<!-- head_sha: abc -->\n# Review\n")
     assert batch.plan.review_need(f, "abcdef0123456").needed is True
+
+
+# ── The comments need is `pr comments`' definition of owed feedback ─────────
+#
+# A PR whose only feedback is a review body or a plain PR comment used to plan
+# no comments step, because only review threads were counted.
+
+
+def _review_body(rid=11, *, edited=None, login="rev", body="M1: rename the helper"):
+    return {"databaseId": rid, "state": "COMMENTED", "body": body, "minimizedReason": None,
+            "lastEditedAt": edited, "author": {"login": login}}
+
+
+def _comments_need(monkeypatch, *, reviews=(), comments=(), threads=(), seen_bodies=None):
+    """The planned comments need for one PR, its seen record saved as *seen_bodies*."""
+    state = None
+    if seen_bodies is not None:
+        state = pr.state.new_state("o/a", "b", None, "h", "/repos/a")
+        state.comments = pr.domains.CommentsSummary(
+            seen_review_body_comments=seen_bodies, updated_at="2026-01-01T00:00:00Z")
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: state)
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
+    node = dict(_node(), reviewThreads={"nodes": list(threads)},
+                reviews={"nodes": list(reviews)}, comments={"nodes": list(comments)})
+    data = {"viewer": {"login": "me"}, "search": {"nodes": [node]}}
+    [row] = batch.plan.rows_from_search(data, {"o/a": "/repos/a"})
+    return row.needs[Step.COMMENTS]
+
+
+def test_a_pr_whose_only_feedback_is_a_review_body_plans_comments(monkeypatch):
+    need = _comments_need(monkeypatch, reviews=[_review_body()])
+    assert need == batch.plan.StepNeed(True, "1 unanswered review body")
+
+
+def test_a_review_body_in_the_seen_record_is_not_owed(monkeypatch):
+    # 11 was read by an earlier triage; 12 was not. Only 12 is owed.
+    need = _comments_need(monkeypatch, reviews=[_review_body(11), _review_body(12)],
+                          seen_bodies={11: ""})
+    assert need == batch.plan.StepNeed(True, "1 unanswered review body")
+
+
+# passes-at-base: the old planner never planned review bodies, seen or not
+def test_every_review_body_seen_plans_no_comments(monkeypatch):
+    need = _comments_need(monkeypatch, reviews=[_review_body(11)], seen_bodies={11: ""})
+    assert need.needed is False
+
+
+def test_a_seen_review_body_edited_since_is_owed_again(monkeypatch):
+    need = _comments_need(monkeypatch, reviews=[_review_body(11, edited="2026-02-01T00:00:00Z")],
+                          seen_bodies={11: ""})
+    assert need == batch.plan.StepNeed(True, "1 unanswered review body")
+
+
+def test_own_bodies_count_for_nothing_and_a_plain_pr_comment_is_owed(monkeypatch):
+    comment = {"databaseId": 31, "lastEditedAt": None, "body": "why?",
+               "author": {"login": "rev", "__typename": "User"}}
+    bot = {"databaseId": 32, "lastEditedAt": None, "body": "deployed",
+           "author": {"login": "ci", "__typename": "Bot"}}
+    need = _comments_need(monkeypatch, reviews=[_review_body(login="me")],
+                          comments=[comment, bot])
+    assert need == batch.plan.StepNeed(True, "1 unanswered PR comment")
+
+
+def test_the_reason_names_every_kind_of_owed_feedback(monkeypatch):
+    need = _comments_need(monkeypatch, reviews=[_review_body(11), _review_body(12)],
+                          threads=[{"id": "T1", "isResolved": False}])
+    assert need == batch.plan.StepNeed(True, "1 unresolved thread, 2 unanswered review bodies")

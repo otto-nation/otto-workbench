@@ -32,6 +32,8 @@ import pr.comments_fix
 import pr.comments_state
 import pr.context
 import pr.domains
+import pr.owed_feedback
+from pr.owed_feedback import mark_seen, seen_record
 import pr.settlement
 import pr.state
 import pr.thread_replies
@@ -58,49 +60,6 @@ def resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord]
     return resolved
 
 
-
-def edit_stamp(comment: dict) -> str:
-    """When this comment's body was last rewritten, or "" if never.
-
-    One spelling for the two helpers below, so the key they record and the key
-    they compare against cannot come to disagree about which field dates a
-    comment.
-    """
-    return comment.get("last_edited_at", "") or ""
-
-
-def mark_seen(comments: list[dict], prior: dict[int, str]) -> None:
-    """Flag each comment the last round already read, in place.
-
-    Seen means *this* text was read, not that this comment id was: an edit
-    keeps the id, so matching on id alone treats a rewritten comment as handled
-    and `triage.collect_unseen_comments` drops it before an agent ever sees it.
-    A reviewer who edits a comment to add a demand is asking for something, and
-    that is the case an id-only record loses.
-
-    A comment absent from `prior` is unseen, which is also how a state file
-    written before the stamps existed reads. That direction is deliberate: a
-    false unseen re-reports something once, a false seen drops it for good.
-    """
-    for c in comments:
-        cid = c.get("id")
-        c["seen"] = cid is not None and cid in prior and prior[cid] == edit_stamp(c)
-
-
-def seen_record(comments: list[dict]) -> dict[int, str]:
-    """What this round read, for the next round to compare against.
-
-    A comment with no id is left out rather than recorded under one. Both
-    builders take the id from `databaseId`, which GraphQL can omit, and the key
-    type here is `int`: a `None` key serialises to the JSON string `"null"`,
-    which `serde` then refuses to coerce back on load, so `load_state`
-    discards the whole file as unreadable. Under the former `list[int]` shape
-    the bad entry cost one dropped field; under this one it would cost every
-    verdict, round and outcome the PR had accumulated.
-    """
-    return {c["id"]: edit_stamp(c) for c in comments if c.get("id") is not None}
-
-
 def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
     """Record the report's top-level comments as read, after triage succeeded.
 
@@ -122,6 +81,9 @@ def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
             st.comments,
             seen_issue_comments=seen_record(report.issue_comments),
             seen_review_body_comments=seen_record(report.review_body_comments),
+            # Everything the report held is now read, so nothing top-level is owed.
+            owed_review_bodies=0,
+            owed_issue_comments=0,
             updated_at=pr.state.now_iso(),
         )
         pr.state.save_state(ctx_args["target_dir"], st)
@@ -272,6 +234,7 @@ def run_threads(trail, args, ctx) -> int:
         )
         st = pr.state.load_or_init(**ctx_args)
         mark_report_seen(report, st.comments)
+        owed = pr.owed_feedback.owed_feedback(pr_data, set(), st.comments)
         # The seen record is carried forward, not advanced: nothing has read
         # these comments yet. `record_triaged_seen` advances it once a triage
         # has.
@@ -282,6 +245,8 @@ def run_threads(trail, args, ctx) -> int:
             has_approvals=has_approvals,
             seen_issue_comments=st.comments.seen_issue_comments,
             seen_review_body_comments=st.comments.seen_review_body_comments,
+            owed_review_bodies=owed.review_bodies,
+            owed_issue_comments=owed.issue_comments,
             complete=fetched.complete,
             updated_at=pr.state.now_iso(),
         ))

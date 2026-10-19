@@ -327,6 +327,14 @@ def test_comments_render_with_threads():
     assert any("resolved: 3" in l for l in lines)
 
 
+def test_comments_render_names_top_level_feedback_still_owed():
+    lines = pr.domains.CommentsSummary(
+        owed_review_bodies=1, owed_issue_comments=2, updated_at="t",
+    ).render_status()
+    assert lines == ["**Comments**: 0 thread(s)",
+                     "  1 unanswered review body, 2 unanswered PR comments"]
+
+
 def test_comments_render_with_blocking_reviewers():
     lines = pr.domains.CommentsSummary(
         total_threads=1, blocking_reviewers=["alice", "bob"], updated_at="t",

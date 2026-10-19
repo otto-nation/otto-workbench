@@ -438,7 +438,7 @@ step is still planned into the run when its saved `pr` state owes a closeout,
 but only when `comments` is one of the run's steps and there is no `--select`.
 It is queued and gets a worktree like any other item. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
-namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
+namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed). `comments` is needed when `pr comments` would find something to answer (`pr.owed_feedback`): threads, review bodies or PR comments.
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
 `pr ci`) when the rollup failed, with `--wait` if it was still running; rate-limit-only infra is rerun once (`gh run rerun --failed`) and re-waited. Fork
 heads skip both. A stacked PR waits for its base's publish; `resume` retries `stacked_on` once that base is terminal,

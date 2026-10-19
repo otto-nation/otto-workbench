@@ -674,15 +674,9 @@ pr batch next [RUN_ID]                   # only what needs action (JSON)
 pr batch status [RUN_ID]                 # the run report (JSON)
 pr batch status [RUN_ID] --full          # the raw run state
 pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
-pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
+pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  # JSON `applied`; `queued`+`holder` when deferred
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` if a holder will apply it
 ```
-
-`pr batch resolve` always prints `applied`. It is true only when this call
-applied the decision. Inline when no draining holder has the run; otherwise
-`queued` is true, `applied` is false, and `holder` names `{role, pid, command}`
-of who will apply it (the driver's next tick, its hand-off, or the next
-session). Exit 0 on a queued write is not "the decision closed".
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
@@ -693,13 +687,9 @@ when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
 namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
 `pr ci`) when the rollup failed, with `--wait` if it was still running. Fork
-heads skip both. A stacked PR waits for its base's publish; `resume` retries
-`stacked_on` once that base is terminal. The child's rebase then uses
-`--fork-point` at `merge-base(parent pre_rebase_head, child HEAD)`, so only the
-child's unique commits replay onto the rewritten parent. A `rebase_refused`
-decision that names that fork point offers `rebase-from-fork-point` (not only
-`force`). One fetching rebase or CI step per repo at a time (a waiting CI
-step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
+heads skip both. A stacked PR waits for its base's publish; `resume` retries `stacked_on` once that base is terminal,
+rebasing from `--fork-point` merge-base(parent pre-rebase head, child); `rebase_refused` offers `rebase-from-fork-point`. One fetching rebase or CI step per
+repo at a time (a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
 its own paused replay or restoring unstaged generated files. A mise toml is trusted on assign only when its bytes match the default branch.
 
 An item that closes with drafted work, an owed closeout (`pr status`'s `⚠ closeout owed`),

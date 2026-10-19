@@ -290,6 +290,19 @@ class TestRunTimeout:
         assert core.proc.run(["false"], timeout=core.timeouts.QUICK).returncode != core.proc.TIMEOUT_RETURNCODE
 
 
+
+def _running(pid: int) -> bool:
+    """Whether *pid* is a live process; a zombie nobody has reaped yet is not."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return True
+    return state != "Z"
+
 class TestRunTermThenKill:
     """An expired bound TERMs first so git can drop its lockfiles.
 
@@ -336,26 +349,25 @@ class TestRunTermThenKill:
         grand = (
             "import os, signal, time\n"
             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-            f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+            f"open({str(pidfile)!r} + '.tmp', 'w').write(str(os.getpid()))\n"
+            f"os.replace({str(pidfile)!r} + '.tmp', {str(pidfile)!r})\n"
             "time.sleep(30)\n"
         )
+        # The leader waits for the grandchild's pidfile, so the bound cannot
+        # expire before the TERM-ignoring process exists to be tested.
         leader = (
-            "import subprocess, sys, time\n"
+            "import os, subprocess, sys, time\n"
             f"subprocess.Popen([sys.executable, '-c', {grand!r}])\n"
+            f"while not os.path.exists({str(pidfile)!r}): time.sleep(0.01)\n"
             "time.sleep(30)\n"
         )
-        core.proc.run([sys.executable, "-c", leader], timeout=1.0,
+        core.proc.run([sys.executable, "-c", leader], timeout=5.0,
                       kill_process_group=True)
         pid = int(pidfile.read_text())
         deadline = time.monotonic() + 3
-        alive = True
-        while alive and time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-                time.sleep(0.05)
-            except ProcessLookupError:
-                alive = False
-        assert not alive, "TERM-ignoring grandchild survived the group kill"
+        while _running(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _running(pid), "TERM-ignoring grandchild survived the group kill"
 
     def test_a_child_that_ignores_term_is_still_killed(self, monkeypatch):
         monkeypatch.setattr(core.proc, "TERM_GRACE", 0.2)

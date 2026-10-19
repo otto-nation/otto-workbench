@@ -333,6 +333,7 @@ def test_a_review_body_in_the_seen_record_is_not_owed(monkeypatch):
     assert need == batch.plan.StepNeed(True, "1 unanswered review body")
 
 
+# passes-at-base: the old planner never planned review bodies, seen or not
 def test_every_review_body_seen_plans_no_comments(monkeypatch):
     need = _comments_need(monkeypatch, reviews=[_review_body(11)], seen_bodies={11: ""})
     assert need.needed is False

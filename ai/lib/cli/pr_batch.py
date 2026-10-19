@@ -10,7 +10,7 @@
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request.
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 """
 
 # doc-group: cli
@@ -22,7 +22,7 @@ import contextlib
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -459,6 +459,23 @@ def _own_error(run_id: str, delivery: batch.inbox.Delivery) -> str:
     return ""
 
 
+@dataclass(frozen=True)
+class _HolderView:
+    """The queued-resolve `holder` object."""
+
+    role: str | None
+    pid: int
+    command: str
+
+
+def _holder_view(holder: batch.store.Holder | None) -> dict | None:
+    """The queued-resolve `holder` object, or None when the delivery named nobody."""
+    if holder is None:
+        return None
+    return asdict(_HolderView(None if holder.role is None else holder.role.value,
+                              holder.pid, holder.command))
+
+
 def _cmd_resolve(args, bin_dir: Path) -> int:
     run_id = args.run_id
     try:
@@ -474,16 +491,22 @@ def _cmd_resolve(args, bin_dir: Path) -> int:
     except batch.store.RunUnreachable:
         return _err(_unreachable(run_id))
     if delivery.queued:
-        core.report.emit_json({"queued": True, "decision": args.decision_id})
+        result: dict = {"applied": False, "queued": True, "decision": args.decision_id}
+        if view := _holder_view(delivery.holder):
+            result["holder"] = view
+        core.report.emit_json(result)
         return EXIT_OK
     error = _own_error(run_id, delivery)
-    result = {"applied": not error, "decision": args.decision_id,
+    if delivery.own is None and not error:
+        error = "the drain did not report this request"
+    applied = delivery.own is not None and not error
+    result = {"applied": applied, "decision": args.decision_id,
               "open_decisions": len(batch.store.load(run_id).open_decisions())}
     if error:
         result["errors"] = [error]
         print(f"pr batch: {error}", file=sys.stderr)
     core.report.emit_json(result)
-    return 1 if error else EXIT_OK
+    return EXIT_OK if applied else 1
 
 
 def _cmd_cancel(args, bin_dir: Path) -> int:

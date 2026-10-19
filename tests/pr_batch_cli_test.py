@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -121,7 +122,11 @@ def test_resolve_queues_when_a_draining_holder_has_the_run(capsys):
     run = _saved_run_with_decision()
     with holding(run.id, "applier", "pr batch resolve"):
         assert _main(["batch", "resolve", run.id, "d1", "--action", "accept"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"queued": True, "decision": "d1"}
+    assert json.loads(capsys.readouterr().out) == {
+        "applied": False, "queued": True, "decision": "d1",
+        "holder": {"role": "applier", "pid": os.getppid(),
+                    "command": "pr batch resolve"},
+    }
     assert batch.store.load(run.id).decision("d1").open
     assert batch.store.pending_requests(run.id) == 1
 

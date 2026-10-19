@@ -8,7 +8,7 @@
 | | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
 | `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
 | `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
-| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
+| `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped`. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease |
@@ -52,7 +52,7 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
     DecisionKind.COMMENT_ITEM: frozenset({"settle-fixed", "settle-addressed",
                                           "settle-dismissed", "reply", "track", "open-chat"}),
     DecisionKind.REBASE_CONFLICT: frozenset({"retry", "abort", "open-chat"}),
-    DecisionKind.REBASE_REFUSED: frozenset({"drop-pr", "force"}),
+    DecisionKind.REBASE_REFUSED: frozenset({"drop-pr", "force", "rebase-from-fork-point"}),
     DecisionKind.OPEN_FINDINGS: frozenset({"accept", "open-chat"}),
     DecisionKind.STEP_REVIEW: frozenset({"accept", "retry", "skip-step", "undo", "open-chat"}),
     DecisionKind.DIRTY_WORKTREE: frozenset({"retry", "drop-pr", "open-chat"}),
@@ -87,6 +87,21 @@ ACTION_INPUTS: dict[str, tuple[ActionInput, ...]] = {
 
 class ResolveError(ValueError):
     pass
+
+
+_FORK_POINT_PREFIX = "--fork-point "
+
+
+def _named_fork_point(payload: Mapping) -> str:
+    """The sha a refusal names for `--fork-point`, or empty."""
+    sha = payload.get("fork_point", "")
+    if isinstance(sha, str) and sha:
+        return sha
+    remedy = payload.get("remedy", "")
+    if isinstance(remedy, str) and remedy.startswith(_FORK_POINT_PREFIX):
+        named = remedy[len(_FORK_POINT_PREFIX):].split()
+        return named[0] if named else ""
+    return ""
 
 
 def default_runner(argv: list[str], log_path: Path | None = None, *,
@@ -132,6 +147,9 @@ def _unavailable(decision: Decision, action: str, item: Item) -> str:
         return "this item cannot take a reply; settle or track it instead"
     if action == "force" and not decision.payload.get("override"):
         return "this refusal names no override; force is not available"
+    if action == "rebase-from-fork-point" and not _named_fork_point(decision.payload):
+        return ("this refusal names no fork point; "
+                "rebase-from-fork-point is not available")
     if action == "force-publish" and decision.payload.get("reason") != \
             batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
         return "force-publish only answers a not_incorporated_remote refusal"
@@ -189,6 +207,11 @@ def command_for(decision: Decision, item: Item, request: Decide,
         return [[pr_bin, "rebase", "--abort"] + wt]
     if a == "force":
         return [[pr_bin, "rebase", "--fix", "--force", "--no-push"] + wt]
+    if a == "rebase-from-fork-point":
+        sha = _named_fork_point(decision.payload)
+        if not sha:
+            return []
+        return [[pr_bin, "rebase", "--fix", "--fork-point", sha, "--no-push"] + wt]
     return []
 
 
@@ -253,17 +276,17 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
             item.step(Step.REBASE).status = StepStatus.SKIPPED
         else:
             created.append(_fail(run, item, "rebase"))
-    elif action == "force":
+    elif action in ("force", "rebase-from-fork-point"):
         if ok:
             rec = item.step(Step.REBASE)
-            # The tip the refused attempt started from, not the forced run's: an
-            # operator who rebased by hand with --fork-point before forcing left
-            # the forced run starting from that rebase, which publish would then
-            # check the remote against. The forced run's stdout went to the
-            # operator's terminal, so its own tip is read back from the record it
-            # saved, for state written before start_head existed. start_head is
-            # the first attempt's HEAD, so it is post-hand-rebase only when the
-            # hand rebase preceded that first attempt.
+            # The tip the refused attempt started from, not this run's: an
+            # operator who rebased by hand with --fork-point, or this action's
+            # own `--fork-point` replay, left the run starting from that rebase,
+            # which publish would then check the remote against. The run's stdout
+            # went to the operator's terminal, so its own tip is read back from
+            # the record it saved, for state written before start_head existed.
+            # start_head is the first attempt's HEAD, so it is post-hand-rebase
+            # only when the hand rebase preceded that first attempt.
             item.pre_rebase_head = rec.start_head or batch.outcomes.recorded_pre_rebase_head(item)
             rec.status, rec.drafted = StepStatus.DONE, True
         else:

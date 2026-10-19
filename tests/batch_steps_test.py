@@ -31,6 +31,13 @@ def test_no_step_argv_forces_a_rebase():
     assert "--force" not in batch.steps.step_argv(Step.REBASE, "pr", "/wt")
 
 
+def test_rebase_argv_passes_fork_point_when_set():
+    argv = batch.steps.step_argv(Step.REBASE, "pr", "/wt", fork_point="abc")
+    assert argv == ["pr", "rebase", "--fix", "--no-push", "--fork-point", "abc",
+                    "--repo-dir", "/wt"]
+    assert "--force" not in argv
+
+
 def test_the_ci_step_fixes_without_rebasing_against_the_remote_head():
     assert batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="abc") == \
         ["ci-check", "--fix", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]

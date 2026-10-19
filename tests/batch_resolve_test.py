@@ -357,6 +357,35 @@ def test_a_forced_rebase_keeps_the_tip_the_refused_rebase_started_from(monkeypat
     assert run.items[0].pre_rebase_head == "original"
 
 
+def test_rebase_from_fork_point_is_offered_only_when_the_payload_names_one():
+    item = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase",
+                   {"override": "--force"})).items[0]
+    refused = _d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"})
+    assert "rebase-from-fork-point" not in batch.resolve.available_actions(refused, item)
+    named = _d(batch.model.DecisionKind.REBASE_REFUSED, "rebase",
+               {"override": "--force", "remedy": "--fork-point abc"})
+    assert "rebase-from-fork-point" in batch.resolve.available_actions(named, item)
+
+
+def test_rebase_from_fork_point_keeps_the_tip_the_refused_rebase_started_from(
+        monkeypatch):
+    monkeypatch.setattr(batch.outcomes, "_load_pr_state",
+                        lambda item: SimpleNamespace(rebase=SimpleNamespace(
+                            pre_rebase_head="rebased")))
+    run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase",
+                  {"override": "--force", "fork_point": "abc"}))
+    rec = Recorder()
+    run.items[0].step(batch.model.Step.REBASE).start_head = "original"
+    batch.resolve.apply(run, batch.requests.Decide("d1", "rebase-from-fork-point"),
+                        pr_bin="pr", runner=rec)
+    assert rec.calls == [["pr", "rebase", "--fix", "--fork-point", "abc", "--no-push",
+                          "--repo-dir", "/wt"]]
+    assert "--force" not in rec.calls[0]
+    rb = run.items[0].step(batch.model.Step.REBASE)
+    assert rb.status is batch.model.StepStatus.DONE and rb.drafted
+    assert run.items[0].pre_rebase_head == "original"
+
+
 def test_a_failed_publish_records_its_reason_detail_and_log():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     run.items[0].step(batch.model.Step.REVIEW).drafted = True

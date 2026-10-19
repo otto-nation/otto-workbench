@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, is_dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
@@ -240,33 +240,46 @@ class ReviewRecord:
         return replace(self, findings=tuple(out))
 
 
-def _dropped_tuple_field(raw: dict, record: ReviewRecord) -> str | None:
-    """Name of a tuple field whose on-disk list did not survive serde, if any."""
+def _unwrap_optional(hint):
+    args = get_args(hint)
+    if type(None) in args:
+        non_none = tuple(a for a in args if a is not type(None))
+        if len(non_none) == 1:
+            return non_none[0], True
+    return hint, False
+
+
+def _dropped_field(raw: dict, record: ReviewRecord) -> str | None:
+    """Name of a present-on-disk field serde dropped or shortened, if any."""
     for name, hint in get_type_hints(ReviewRecord).items():
         if name not in raw:
             continue
         written = raw[name]
-        if not isinstance(written, list):
-            continue
-        inner = hint
-        args = get_args(hint)
-        if type(None) in args:
-            non_none = tuple(a for a in args if a is not type(None))
-            if len(non_none) != 1:
+        inner, optional = _unwrap_optional(hint)
+        if get_origin(inner) is tuple:
+            if not isinstance(written, list):
+                # to_dict never writes null for a required tuple; an Optional
+                # tuple (triage) is written as null when the section is absent.
+                if written is None and optional:
+                    continue
+                return name
+            loaded = getattr(record, name)
+            if isinstance(loaded, tuple) and len(loaded) == len(written):
                 continue
-            inner = non_none[0]
-        if get_origin(inner) is not tuple:
-            continue
-        loaded = getattr(record, name)
-        if isinstance(loaded, tuple) and len(loaded) == len(written):
-            continue
-        return name
+            return name
+        if (
+            optional
+            and is_dataclass(inner)
+            and written is not None
+            and not isinstance(written, dict)
+        ):
+            return name
     return None
 
 
 def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewRecord | None:
     """The record in `review_dir`, or None — absent, unreadable, another schema,
-    or a list field serde could not keep.
+    or a field serde could not keep.
 
     None is the stale answer every reader treats as "no review here".
     """
@@ -286,7 +299,7 @@ def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewReco
     except (TypeError, ValueError):
         core.log.warn(f"{path} is unreadable — discarding it")
         return None
-    dropped = _dropped_tuple_field(raw, record)
+    dropped = _dropped_field(raw, record)
     if dropped is not None:
         core.log.warn(f"{path} dropped {dropped} on load — treating the review as stale")
         return None

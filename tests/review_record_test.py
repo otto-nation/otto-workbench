@@ -3,11 +3,15 @@
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import core.log
 from review.paths import FILENAME_RECORD
 from review.record import (
     SCHEMA_VERSION, AgentFailure, Disposition, ProseSection, RecordFinding,
@@ -67,6 +71,31 @@ class TestOnDisk:
             json.dumps({"schema_version": 1, "findings": [42]}),
         )
         assert load_record(tmp_path) is None
+
+    @pytest.mark.parametrize("findings", [42, None, {}])
+    def test_a_non_list_findings_field_is_stale(self, tmp_path, findings):
+        (tmp_path / FILENAME_RECORD).write_text(
+            json.dumps({"schema_version": 1, "findings": findings}),
+        )
+        warned = []
+        with patch.object(core.log, "warn", side_effect=warned.append):
+            assert load_record(tmp_path) is None
+        assert any("dropped findings" in msg for msg in warned)
+
+    def test_a_null_triage_round_trips(self, tmp_path):
+        save_record(tmp_path, ReviewRecord(triage=None))
+        loaded = load_record(tmp_path)
+        assert loaded is not None
+        assert loaded.triage is None
+
+    def test_a_non_object_approach_is_stale(self, tmp_path):
+        (tmp_path / FILENAME_RECORD).write_text(
+            json.dumps({"schema_version": 1, "approach": "nope"}),
+        )
+        warned = []
+        with patch.object(core.log, "warn", side_effect=warned.append):
+            assert load_record(tmp_path) is None
+        assert any("dropped approach" in msg for msg in warned)
 
 
 class TestWhatTheReadApiSees:

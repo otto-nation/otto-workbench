@@ -141,7 +141,17 @@ class Plan:
     ref_dirs: list[str] = field(default_factory=list)
 
 
-CLAIM_GRACE_SECONDS = 300
+def _pid_exists(pid: int) -> bool:
+    """Whether the kernel still has *pid*; 0 and negative never name a claim's writer."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 @dataclass(frozen=True)
@@ -160,20 +170,16 @@ class NamespaceClaim:
     def live(self) -> bool:
         """Whether the process that wrote this claim is still running.
 
-        `process_start` returns "" when `ps` fails, so an empty reading on either
-        side is not evidence of death: an unreadable current start is live, and a
-        claim written without one is live until `CLAIM_GRACE_SECONDS` after *created*.
+        A pid that no longer exists is dead. `process_start` cannot say that by
+        itself: it returns "" both for a dead pid and for a `ps` that failed. So
+        existence is asked of the kernel first, and an unreadable start time on
+        either side then errs toward live; only two readable, differing start
+        times prove the pid was recycled.
         """
-        now = core.session_lock.process_start(self.pid)
-        if self.started and now:
-            return now == self.started
-        if self.started:
-            return True
-        try:
-            age = (datetime.now(timezone.utc) - datetime.fromisoformat(self.created)).total_seconds()
-        except ValueError:
+        if not _pid_exists(self.pid):
             return False
-        return age < CLAIM_GRACE_SECONDS
+        now = core.session_lock.process_start(self.pid)
+        return not (self.started and now) or now == self.started
 
 
 def search_query(repos: list[str]) -> str:

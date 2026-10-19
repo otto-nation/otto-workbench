@@ -1,8 +1,8 @@
 import dataclasses
 import os
+import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -289,8 +289,19 @@ def test_gc_drops_a_namespace_whose_claim_pid_was_recycled(tmp_path):
     assert batch.plan.read_claim(ns) is None
 
 
-def test_claim_with_empty_started_is_live_within_grace_then_dead():
-    fresh = batch.plan.NamespaceClaim(pid=os.getpid(), started="",
-                                      created=datetime.now(timezone.utc).isoformat())
-    old = dataclasses.replace(fresh, created="2000-01-01T00:00:00+00:00")
-    assert fresh.live and not old.live
+def _dead_pid():
+    # A reaped child's pid: the kernel has nothing under it until it wraps.
+    child = subprocess.Popen(["true"])
+    child.wait()
+    return child.pid
+
+
+def test_a_claim_whose_writer_is_gone_is_dead_even_when_ps_cannot_read_it():
+    claim = batch.plan.NamespaceClaim(pid=_dead_pid(), started="Mon Oct 19 10:00:00 2026")
+    assert not claim.live
+
+
+def test_a_running_writer_ps_cannot_read_stays_live(monkeypatch):
+    monkeypatch.setattr(batch.plan.core.session_lock, "process_start", lambda pid: "")
+    for started in ("", "Mon Oct 19 10:00:00 2026"):
+        assert batch.plan.NamespaceClaim(pid=os.getpid(), started=started).live

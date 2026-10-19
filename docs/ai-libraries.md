@@ -3523,6 +3523,37 @@ when a live holder that drains will apply it. A request reported `queued` is
 applied by that holder or its hand-off, or, if the holder dies, by the next
 session to open the run.
 
+### batch/live.py
+
+What GitHub says about a run's repos now: the `github` section of `pr batch status`.
+
+A run's state file holds what this machine saw when it last drove the run. A
+PR opened, pushed, merged or closed since then, from another machine or by
+hand, does not show in it. This module re-reads the viewer's open PRs in every
+repo the run covers, using the search `pr batch plan` makes, and compares them
+with the run's items.
+
+| Key | Content |
+|---|---|
+| `checked` | true when GitHub answered. When false, `error` says why, or `skipped` is true under `--offline` |
+| `viewer` | the login the search ran as |
+| `repos` | the repos searched |
+| `unchecked` | repos the run covers with no checkout found here, so not searched |
+| `open` | how many open PRs the search found |
+| `untracked` | open PRs the run has no item for: `pr`, `title`, `branch`, `head_sha` |
+| `moved` | items whose GitHub head differs from the one the run last saw: `pr`, `run_sha`, `head_sha` |
+| `closed` | keys of items no longer open on GitHub (merged or closed) |
+| `owed` | open PRs with a step needed: `pr`, `needs` (step → reason) |
+
+The needs are `pr batch plan`'s, fetch included: GitHub's merge state reads
+CLEAN for a branch that is only behind, so without the fetch the rebase need
+would be understated. The plan's namespaced refs are dropped before returning.
+
+A checkout is found by the item's `repo_dir` first, then the current
+directory. Either one counts only when its `origin` names the item's repo,
+because a relative `repo_dir` saved by an older run resolves against whatever
+directory the reader happens to be in.
+
 ### batch/model.py
 
 The persisted shape of a `pr batch` run.
@@ -3607,6 +3638,7 @@ decision with its full payload and log tail.
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
 | `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+| `github` | `pr batch status`/`next` only: what GitHub says about the run's repos now (see `batch.live`) |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
@@ -3621,6 +3653,10 @@ item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed`
 entry per PR whose saved `pr` state still owes a closeout. Each entry carries
 the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
 and no actions. A closed PR is left out.
+
+When a finished run's `github` section shows open PRs with work owed, PRs the
+run never saw, or heads that moved since it ran, `hint` says so and points at
+`pr batch run`: the run itself has nothing left, but the PRs do.
 
 ### batch/requests.py
 
@@ -6855,8 +6891,8 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
-    pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
-    pr batch next   [RUN_ID]                   only what needs action (JSON)
+    pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
+    pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 

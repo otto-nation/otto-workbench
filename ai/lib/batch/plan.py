@@ -10,6 +10,7 @@ over dozens of PRs costs a point or two of the hourly GraphQL budget.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -340,6 +341,9 @@ def _graphql(query: str, variables: dict) -> dict:
 
 
 def build_plan(repo_dirs: list[str]) -> Plan:
+    # Absolute, because a run persists these: a relative checkout names a
+    # different directory, or none, to every later reader in another cwd.
+    repo_dirs = [os.path.abspath(d) for d in repo_dirs]
     slugs = [_repo_slug(d) for d in repo_dirs]
     by_slug = dict(zip(slugs, repo_dirs))
     if len(by_slug) != len(repo_dirs):

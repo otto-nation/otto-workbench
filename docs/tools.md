@@ -936,12 +936,14 @@ Takes no flags.
 | `[<run-id>]` | Run to show (default: the latest). |
 | `--full` | Print the raw run state instead of the report. Not with `--decision`. |
 | `--decision` `<id>` | Print one decision with its full payload and log tail. Not with `--full`. |
+| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. |
 
 **`pr batch next`** — Print only what needs action: run, counts and next (JSON)
 
 | Flag | Description |
 |------|-------------|
 | `[<run-id>]` | Run to show (default: the latest). |
+| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. |
 
 **`pr gc`** — Clean up stale PR artifacts
 

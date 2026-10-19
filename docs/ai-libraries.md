@@ -6212,7 +6212,10 @@ The wrapper is a temp directory that lasts for one git child:
   workbench hook first, then the repo's own if it is executable, with stdin
   replayed to both.
 * every other hook file in the repo directory is forwarded as a symlink, so
-  a name this process did not know about still runs.
+  a name this process did not know about still runs. Directories are not
+  forwarded, and ``$0`` in a forwarded hook is the wrapper path, so a repo
+  hook that finds siblings (``.githooks/lib.sh``) via ``dirname "$0"`` will
+  not find them during ``pr rebase``.
 
 ``core.hooksPath=/dev/null`` (or any non-directory) is honoured: no wrap.
 When the effective path is already the workbench hooks dir, the config is

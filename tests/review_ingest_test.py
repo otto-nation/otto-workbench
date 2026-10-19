@@ -14,7 +14,7 @@ from review.ingest import IngestErrorKind, IngestRejected, ingest_review
 from review.record import Disposition
 from review.render import BANNER
 
-from review_record_support import copy_tree, fixture_text
+from review_record_support import fixture_text
 
 
 def _kinds(text: str) -> list[IngestErrorKind]:
@@ -180,8 +180,3 @@ class TestWhatIsRead:
         assert record.verdict == ""
         assert "HEADER_ONLY_KEY" not in repr(record)
         assert "would be the summary" not in repr(record)
-
-    def test_copy_tree_restores_py_names(self, tmp_path):
-        dest = copy_tree(tmp_path / "tree")
-        assert (dest / "src" / "cli.py").is_file()
-        assert not list(dest.rglob("*.txt"))

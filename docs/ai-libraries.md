@@ -1451,9 +1451,8 @@ handled as failures already are.
 Text carrying the render `BANNER` is refused outright: `review.md` is a view of
 `review.json` and is never parsed back.
 
-In PR 0 this reads today's markdown grammar — `review.grammar` for a finding
-line, `review.spans` for where its body ends. From PR 1 agents write JSON and
-this becomes `json.loads` + `serde.from_dict` + validation.
+This reads the markdown grammar — `review.grammar` for a finding line,
+`review.spans` for where its body ends.
 
 ### review/merge.py
 

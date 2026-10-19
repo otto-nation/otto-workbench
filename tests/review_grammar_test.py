@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from review.grammar import (  # noqa: E402
     BODY_FINDING_RE, BOLD_FINDING_ID_RE, FINDING_ID_RE, SID_MARKER_RE,
-    extract_body_text, _FIRST_FILE_RE, FindingIdentity, finding_location,
+    FindingIdentity, _FIRST_FILE_RE, extract_body_text, finding_location,
     finding_tag, has_sid_marker, parse_finding_line, posted_finding_tag,
     sid_marker, strip_line_suffix, strip_sid_markers,
 )

@@ -344,6 +344,7 @@ def _match_decline(body: str, line: str) -> re.Match[str] | None:
 
 
 def extract_body_text(line: str) -> str:
+    """The prose after a finding line's separator (em dash, ` -- `, or ` - `), or "" when it has none."""
     em_dash_pos = line.find("—")
     if em_dash_pos != -1:
         return line[em_dash_pos + 1:].strip()

@@ -10,9 +10,9 @@
   "mode": "self",
   "prior_sha": "d54f88931bcca25ad039ebb2428cf4310a50c7ec",
   "delta_files": [
-    "delta-0.py",
-    "delta-1.py",
-    "delta-2.py"
+    "src/app.py",
+    "src/cli.py",
+    "src/util.py"
   ],
   "date": "2026-10-19",
   "prior_date": "2026-10-17",

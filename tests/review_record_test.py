@@ -21,6 +21,7 @@ from review.record import (
     save_record,
 )
 from review.types import ReviewMeta, ReviewType, review_meta_from_dict
+from review_record_support import copy_tree
 
 
 def _record() -> ReviewRecord:
@@ -136,6 +137,13 @@ class TestWhatTheReadApiSees:
 
     def test_defusing_touches_only_the_first_line(self):
         assert defuse_first_line("a *(b)*\nc *(d)*") == "a * (b)*\nc *(d)*"
+
+
+class TestCopyTree:
+    def test_copy_tree_restores_py_names(self, tmp_path):
+        dest = copy_tree(tmp_path / "tree")
+        assert (dest / "src" / "cli.py").is_file()
+        assert not list(dest.rglob("*.txt"))
 
 
 class TestMetaHeaderFields:

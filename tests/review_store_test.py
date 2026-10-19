@@ -25,7 +25,7 @@ from review_record_support import FIXTURES, fixture_meta, fixture_text
 _INPUTS = ("input.md", "raw.md", "before.md", "group-1.md", "group-2.md")
 # Fixture inputs ingest must refuse. The parity test below skips these; the
 # dedicated reject test asserts each still raises, so a silent skip cannot drop.
-_EXPECTED_REJECT: tuple[tuple[str, str], ...] = ()
+_KNOWN_REJECTED_INPUTS: tuple[tuple[str, str], ...] = ()
 
 
 def _all_fixture_inputs() -> list[tuple[str, str]]:
@@ -38,7 +38,7 @@ def _all_fixture_inputs() -> list[tuple[str, str]]:
 
 
 def _fixture_inputs():
-    reject = set(_EXPECTED_REJECT)
+    reject = set(_KNOWN_REJECTED_INPUTS)
     return [pair for pair in _all_fixture_inputs() if pair not in reject]
 
 
@@ -158,6 +158,12 @@ class TestARecordBackedDocument:
         with pytest.raises(TypeError, match="write_review"):
             doc.write(tmp_path / "out.md")
 
+    def test_update_review_rejects_unknown_meta_key_before_transform(self, tmp_path):
+        calls = []
+        with pytest.raises(TypeError, match="bogus"):
+            update_review(_stored(tmp_path), lambda r: calls.append(r) or r, bogus=1)
+        assert calls == []
+
     def test_expected_reject_inputs_are_rejected(self):
         actual = []
         for case, src in _all_fixture_inputs():
@@ -165,8 +171,8 @@ class TestARecordBackedDocument:
                 ingest_review((FIXTURES / case / src).read_text())
             except IngestRejected:
                 actual.append((case, src))
-        assert set(actual) == set(_EXPECTED_REJECT)
-        for case, src in _EXPECTED_REJECT:
+        assert set(actual) == set(_KNOWN_REJECTED_INPUTS)
+        for case, src in _KNOWN_REJECTED_INPUTS:
             with pytest.raises(IngestRejected):
                 ingest_review((FIXTURES / case / src).read_text())
 

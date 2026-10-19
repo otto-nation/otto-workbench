@@ -21,7 +21,7 @@ import os
 import secrets
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 
 import core.serde
@@ -81,6 +81,9 @@ def update_review(
     **meta_changes,
 ) -> StoredReview | None:
     """Load, transform, write back. None, and nothing written, when stale."""
+    unknown = set(meta_changes) - {f.name for f in fields(ReviewMeta)}
+    if unknown:
+        raise TypeError(f"update_review: unknown meta field(s) {sorted(unknown)}")
     stored = read_review(review_file)
     if stored is None:
         return None

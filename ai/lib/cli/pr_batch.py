@@ -158,7 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _offline(p: argparse.ArgumentParser) -> None:
     p.add_argument("--offline", action="store_true",
                    help="Skip the `github` section: report only what this machine saved, "
-                        "without asking GitHub for the run's repos' open PRs")
+                        "without asking GitHub for the run's repos' open PRs. Without it, a read "
+                        "runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), "
+                        "even while a driver holds the run")
 
 
 def _err(message: str) -> int:

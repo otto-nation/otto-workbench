@@ -82,17 +82,18 @@ def compare(run: Run, plan: batch.plan.Plan, repos: set[str]) -> dict:
     Items in a repo that was not searched are left out: absent from the search
     is not the same as closed.
     """
-    items = {i.key: i for i in run.items if i.repo in repos}
-    rows = {r.key: r for r in plan.rows}
+    folded = {r.casefold() for r in repos}
+    items = {i.key.casefold(): i for i in run.items if i.repo.casefold() in folded}
+    rows = {r.key.casefold(): r for r in plan.rows}
     return {
         "open": len(rows),
-        "untracked": [{"pr": k, "title": r.title, "branch": r.branch, "head_sha": r.head_sha}
+        "untracked": [{"pr": r.key, "title": r.title, "branch": r.branch, "head_sha": r.head_sha}
                       for k, r in rows.items() if k not in items],
-        "moved": [{"pr": k, "run_sha": _last_seen(items[k]), "head_sha": r.head_sha}
+        "moved": [{"pr": r.key, "run_sha": _last_seen(items[k]), "head_sha": r.head_sha}
                   for k, r in rows.items() if k in items and r.head_sha != _last_seen(items[k])],
-        "closed": [k for k, i in items.items()
+        "closed": [i.key for k, i in items.items()
                    if k not in rows and i.status is not ItemStatus.SKIPPED_CLOSED],
-        "owed": [{"pr": k, "needs": {s.value: n.reason for s, n in r.needs.items() if n.needed}}
+        "owed": [{"pr": r.key, "needs": {s.value: n.reason for s, n in r.needs.items() if n.needed}}
                  for k, r in rows.items() if any(n.needed for n in r.needs.values())],
     }
 
@@ -108,7 +109,7 @@ def view(run: Run, *, cwd: str, plan_fn: PlanFn | None = None) -> dict:
                          "run from one, or use `pr batch plan --checkout DIR`"}
     try:
         plan = (plan_fn or batch.plan.build_plan)(sorted(found.values()))
-    except batch.plan.PlanError as exc:
+    except (batch.plan.PlanError, OSError) as exc:
         return {"checked": False, **head, "error": str(exc)}
     try:
         return {"checked": True, "viewer": plan.viewer, **head,

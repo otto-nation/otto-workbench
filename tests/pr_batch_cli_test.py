@@ -148,7 +148,7 @@ def test_status_full_prints_the_raw_run_and_whether_it_is_active(capsys):
 
 def test_status_prints_the_compact_report_by_default(capsys):
     run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
-    assert _main(["batch", "status", run.id]) == 0
+    assert _main(["batch", "status", run.id, "--offline"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert set(out) == {"schema_version", "run", "counts", "items", "next", "github"}
     assert (out["run"]["id"], out["run"]["active"], out["run"]["exit_hint"]) == (run.id, False, 10)
@@ -178,7 +178,7 @@ def test_status_full_and_decision_are_exclusive():
 
 def test_next_prints_only_what_needs_action(capsys):
     run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
-    assert _main(["batch", "next", run.id]) == 0
+    assert _main(["batch", "next", run.id, "--offline"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert set(out) == {"schema_version", "run", "counts", "next", "github"}
     assert [n["decision"] for n in out["next"]] == ["d1"]

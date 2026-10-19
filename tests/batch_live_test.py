@@ -49,6 +49,23 @@ def test_compare_reports_untracked_moved_closed_and_owed_prs():
     }
 
 
+def test_compare_matches_repos_case_insensitively():
+    run = _run([_item(1, repo="O/R")])
+    got = batch.live.compare(run, Plan("me", [_row(1)]), {"o/r"})
+    assert got["untracked"] == [] and got["closed"] == []
+
+
+def test_an_os_error_from_the_plan_is_reported_in_the_section(tmp_path):
+    repo = _checkout(tmp_path, "repo", "o/r")
+
+    def failing(dirs):
+        raise FileNotFoundError("gh")
+
+    got = batch.live.view(_run([_item(1, repo_dir=str(repo))]), cwd=str(tmp_path),
+                          plan_fn=failing)
+    assert got["checked"] is False and "gh" in got["error"]
+
+
 def test_a_head_the_run_published_is_not_reported_as_moved():
     run = _run([_item(1, published_sha="s2")])
     assert batch.live.compare(run, Plan("me", [_row(1, sha="s2")]), {"o/r"})["moved"] == []

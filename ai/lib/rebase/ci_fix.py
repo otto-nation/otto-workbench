@@ -203,7 +203,7 @@ def _try_rerun_transient(
     state = pr.state.load_or_init(
         target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
         pr_number=ctx.pr_number, head_sha=rebuilt.head_sha,
-        worktree_root=str(ctx.worktree_root),
+        worktree_root=str(ctx.require_worktree()),
     )
     return _Rerun(report=rebuilt, adapter=fix.ci.CIFixAdapter(rebuilt, ctx, state))
 

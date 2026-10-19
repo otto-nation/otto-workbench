@@ -686,9 +686,8 @@ It is queued and gets a worktree like any other item. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
 namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
-`pr ci`) when the rollup failed, with `--wait` if it was still running. Rate-limit-only
-infra is rerun once (`gh run rerun --failed`) then re-waited; other infra still needs a
-person. Fork heads skip both. A stacked PR waits for its base's publish; `resume` retries
+`pr ci`) when the rollup failed, with `--wait` if it was still running; rate-limit-only infra is rerun once (`gh run rerun --failed`) and re-waited. Fork
+heads skip both. A stacked PR waits for its base's publish; `resume` retries
 `stacked_on` once that base is terminal. One fetching rebase or CI step per
 repo at a time (a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
 its own paused replay or restoring unstaged generated files. A mise toml is trusted on assign only when its bytes match the default branch.

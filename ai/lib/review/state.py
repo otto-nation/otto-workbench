@@ -23,7 +23,6 @@ from pathlib import Path
 
 import core.log
 import core.serde
-from core.markdown import escape_cell
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import SCAN_PHASES
 from core.phases import Phase
@@ -38,6 +37,8 @@ from review.paths import (
     phase_log_path,
     review_artifact_path,
 )
+from review.record import AgentFailure
+from review.render import failures_body
 from review.types import Group, ReviewJob, ReviewType
 from core.text import plural
 
@@ -309,32 +310,25 @@ def build_failures_body(state: "PipelineState") -> str:
     whose rerun fixed it. The heading and where the section sits belong to
     `review.document.set_section` — see `set_failures_section`.
     """
-    rows: list[tuple[str, str, str]] = []
+    rows: list[AgentFailure] = []
 
     for idx, diagnosis in sorted(state.groups_failed.items()):
-        rows.append((f"group-{idx}: {state.group_label(idx)}", diagnosis.message, "failed"))
+        rows.append(AgentFailure(
+            f"group-{idx}: {state.group_label(idx)}", diagnosis.message, "failed",
+            diagnosis.recoverable,
+        ))
 
     for phase, diagnosis in sorted(state.failed.items()):
         fell_back = diagnosis.kind is DiagnosisKind.MECHANICAL_FALLBACK
-        rows.append((str(phase), diagnosis.message, "fallback" if fell_back else "failed"))
+        rows.append(AgentFailure(
+            str(phase), diagnosis.message, "fallback" if fell_back else "failed",
+            diagnosis.recoverable,
+        ))
 
     if not rows:
         return ""
 
-    lines = [
-        "| Agent | Reason | Status |",
-        "|-------|--------|--------|",
-    ]
-    for agent, reason, status in rows:
-        # A reason is free text — an RPC error, a quoted stderr line — and one
-        # literal pipe in it shifts every later cell in the row.
-        lines.append(f"| {agent} | {escape_cell(reason)} | {status} |")
-
-    if _any_recoverable(state):
-        lines.append("")
-        lines.append("Run `pr review --recover` to retry failed agents.")
-
-    return "\n".join(lines)
+    return failures_body(tuple(rows))
 
 
 def set_failures_section(content: str, state: "PipelineState") -> str:

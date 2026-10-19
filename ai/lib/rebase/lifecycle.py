@@ -55,9 +55,24 @@ RERERE_CONFIG = rebase_types.RERERE_CONFIG
 # `--autosquash` a `squash!` commit asks for the combined message *during* the
 # initial replay, and without this the run halts there with "there was a problem
 # with the editor". A `fixup!` never asks, which is why the gap stayed hidden.
-UNATTENDED_CONFIG = {"core.editor": git.client.NO_EDITOR}
+#
+# `sequence.editor` is the same no-op for the todo list `AUTOSQUASH_ARGS`
+# makes git write: the run is interactive in name only, and nothing reads it.
+UNATTENDED_CONFIG = {
+    "core.editor": git.client.NO_EDITOR,
+    "sequence.editor": git.client.NO_EDITOR,
+}
 
 REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
+
+# Before git 2.44, `--autosquash` only reorders the todo list of an interactive
+# rebase; a plain `git rebase --autosquash` replays `fixup!` and `squash!`
+# commits unfolded and reports success. `-i` with the sequence editor pinned to
+# a no-op (`UNATTENDED_CONFIG`, `unattended_env`) runs the same todo unattended
+# on every git. `-i` also turns the default `--empty=drop` into a halt on a
+# commit that became empty, so `--empty=drop` restores the non-interactive
+# behaviour.
+AUTOSQUASH_ARGS = ("-i", "--autosquash", "--empty=drop")
 
 # Paired with `UNATTENDED_CONFIG`: the config says which editor to use, and this
 # makes sure nothing in the environment outranks it. Both halves are needed —
@@ -709,8 +724,8 @@ def fresh(
     # marker commits back and left the branch to be cleaned up by hand. The
     # `fixup` alias in git/gitconfig.shared produces exactly these.
     #
-    # Non-interactive since git 2.22 — no todo editor opens, so nothing here
-    # waits on one.
+    # `AUTOSQUASH_ARGS` makes this interactive in name only: the todo editor
+    # is a no-op, so nothing here waits on one.
     #
     # `--onto <target> <fork>` rather than a bare `<target>` when a fork point
     # was named: git collapses <newbase> and <upstream> onto one ref only in
@@ -724,7 +739,7 @@ def fresh(
     # made inside it would not be the one the whole run accumulates into.
     # Made before the replay so it holds the tip the replay starts from.
     tally = ResolutionTally(pre_rebase_head=git.client.head_sha(cwd=cwd))
-    r = _git_rebase(cwd, "rebase", "--autosquash", *replay)
+    r = _git_rebase(cwd, "rebase", *AUTOSQUASH_ARGS, *replay)
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(

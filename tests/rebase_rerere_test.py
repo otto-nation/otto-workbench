@@ -32,6 +32,18 @@ import rebase.stash  # noqa: E402
 import rebase.types  # noqa: E402
 
 
+def _rebase_main(repo):
+    """Run the production autosquash rebase onto main, with the unattended env.
+
+    Checked only against the locally installed git; the `-i` form is assumed to
+    behave alike on older versions (pre-2.44) and is not exercised on one.
+    """
+    return git.client.run(
+        "rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "main", cwd=str(repo),
+        config=rebase.lifecycle.REBASE_CONFIG, env=rebase.lifecycle.unattended_env(),
+    )
+
+
 def _write(repo: Path, name: str, body: str) -> None:
     (repo / name).write_text(body)
 
@@ -110,8 +122,7 @@ class TestRerereIsHeldOff:
 
     def test_the_resolver_s_own_output_is_not_recorded(self, tmp_path):
         repo = _diverged(tmp_path)
-        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
@@ -130,8 +141,7 @@ class TestRerereIsHeldOff:
         cache = cache if cache.is_absolute() else repo / cache
         cache.mkdir(parents=True, exist_ok=True)
 
-        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         assert _cached_resolutions(repo) == []
@@ -145,8 +155,7 @@ class TestRerereIsHeldOff:
         rather than about a directory.
         """
         repo = _diverged(tmp_path)
-        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nAI-WROTE-THIS\nc\n")
 
         git_in(repo, "checkout", "-q", "-b", "feat2", "main~1")
@@ -237,7 +246,10 @@ class TestUnattendedEditor:
     def test_the_driver_uses_the_client_s_pinned_env(self):
         """Re-exported, not re-implemented — a local copy is a place to drift."""
         assert rebase.lifecycle.unattended_env is git.client.unattended_env
-        assert rebase.lifecycle.UNATTENDED_CONFIG == {"core.editor": git.client.NO_EDITOR}
+        assert rebase.lifecycle.UNATTENDED_CONFIG == {
+            "core.editor": git.client.NO_EDITOR,
+            "sequence.editor": git.client.NO_EDITOR,
+        }
 
     def test_git_resolves_to_the_configured_editor_under_the_pinned_env(self, tmp_path):
         """The precedence this defends against, asserted against git itself.
@@ -308,7 +320,7 @@ class TestUnattendedEditor:
             from rebase import lifecycle
             from git import client as git_client
             git_client.run(
-                "rebase", "--autosquash", "main",
+                "rebase", *lifecycle.AUTOSQUASH_ARGS, "main",
                 cwd={str(repo)!r}, config=lifecycle.REBASE_CONFIG,
                 env=lifecycle.unattended_env(),
             )
@@ -343,8 +355,7 @@ class TestAutosquash:
 
     def test_folds_a_fixup_commit(self, tmp_path):
         repo = self._with_fixup(tmp_path, "fixup")
-        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
@@ -359,8 +370,7 @@ class TestAutosquash:
         with the editor" and leaves a rebase in progress.
         """
         repo = self._with_fixup(tmp_path, "squash")
-        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         assert not rebase.inspect.rebase_in_progress(str(repo))
@@ -374,11 +384,50 @@ class TestAutosquash:
         git_in(repo, "add", "g.txt")
         git_in(repo, "commit", "-q", "-m", "feat: second thing")
 
-        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=rebase.lifecycle.REBASE_CONFIG)
+        _rebase_main(repo)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
         assert [s for s in subjects if s] == [
             "feat: second thing", "feat: branch edit",
         ]
+
+
+class TestAutosquashOnEveryGit:
+    """The fold must not depend on git >= 2.44 honouring a non-interactive `--autosquash`."""
+
+    def test_the_sequence_editor_cannot_open_under_the_rebase_config(self, tmp_path):
+        repo = init_repo(tmp_path / "repo")
+        with mock.patch.dict(os.environ, {"GIT_SEQUENCE_EDITOR": "vim"}):
+            pinned = git.client.run(
+                "var", "GIT_SEQUENCE_EDITOR", cwd=str(repo),
+                config=rebase.lifecycle.REBASE_CONFIG,
+                env=rebase.lifecycle.unattended_env(),
+            )
+        assert pinned.stdout.strip() == git.client.NO_EDITOR
+
+    def test_a_commit_that_became_empty_is_dropped_not_halted_on(self, tmp_path):
+        """`-i` turns git's default `--empty=drop` into a halt; the replay must not stop.
+
+        The branch commit's change lands on main inside a larger commit, so it is
+        not a clean cherry-pick and only becomes empty during the replay.
+        """
+        repo = init_repo(tmp_path / "repo")
+        _write(repo, "f.txt", "a\n")
+        git_in(repo, "add", "f.txt")
+        git_in(repo, "commit", "-q", "-m", "base")
+        git_in(repo, "checkout", "-q", "-b", "feat")
+        _write(repo, "f.txt", "a\nb\n")
+        git_in(repo, "commit", "-q", "-am", "feat: add b")
+        git_in(repo, "checkout", "-q", "main")
+        _write(repo, "f.txt", "a\nb\n")
+        _write(repo, "g.txt", "g\n")
+        git_in(repo, "add", "f.txt", "g.txt")
+        git_in(repo, "commit", "-q", "-m", "main: add b and g")
+        git_in(repo, "checkout", "-q", "feat")
+
+        r = _rebase_main(repo)
+
+        assert r.ok, r.combined_output
+        assert not rebase.inspect.rebase_in_progress(str(repo))
+        assert git_out(repo, "log", "--format=%s", "main..HEAD").strip() == ""

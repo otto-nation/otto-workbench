@@ -399,7 +399,8 @@ def test_fresh_rebases_a_landed_branch_under_force():
     rc, commands, _ = _run_fresh(tracker=_landed_report(), force=True)
 
     assert rc == 0
-    assert ["git", "rebase", "--autosquash", _TARGET] in [
+    # Literal argv on purpose: pins the exact flags, unlike AUTOSQUASH_ARGS tests.
+    assert ["git", "rebase", "-i", "--autosquash", "--empty=drop", _TARGET] in [
         _unconfigured(cmd) for cmd in commands
     ]
 
@@ -414,7 +415,7 @@ def test_fresh_rebases_onto_the_resolved_ref():
     bare = [_unconfigured(cmd) for cmd in commands]
 
     assert rc == 0
-    assert ["git", "rebase", "--autosquash", "origin/master"] in bare
+    assert ["git", "rebase", *rebase.lifecycle.AUTOSQUASH_ARGS, "origin/master"] in bare
     assert not any(cmd[:2] == ["git", "rebase"] and _TARGET in cmd
                    for cmd in bare)
 

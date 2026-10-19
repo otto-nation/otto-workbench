@@ -88,6 +88,7 @@ from pr.domains import ReviewStatus, ReviewVerdict
 from pr.target import display_repo
 from review.grammar import SKIP_HEAD_RE, SKIP_TAIL_RE
 from review.spans import finding_spans
+from review.record import ReviewRecord
 from review.types import SEVERITIES, Finding, FindingScope, ReviewMeta, ReviewType, meta_enum
 
 # The headers a review is written with. `Summary` and `Verdict` are the two this
@@ -585,6 +586,22 @@ def _parse_findings(text: str) -> list[Finding]:
     ]
 
 
+def _record_section(record: ReviewRecord, header: str) -> str:
+    """A section's text read off the record's fields. Findings are read through
+    `findings`, never as a section."""
+    key = header.strip().lower()
+    by_key = {
+        SECTION_SUMMARY.lower(): record.summary,
+        SECTION_VERDICT.lower(): record.verdict,
+        SECTION_STATIC_ANALYSIS.lower(): record.static_analysis,
+        SECTION_PRIOR_FINDINGS.lower(): record.ledger,
+        SECTION_FILE_TRIAGE.lower(): "\n".join(e.text for e in record.triage or ()),
+    }
+    if key in by_key:
+        return by_key[key].strip()
+    return next((e.body.strip() for e in record.extra if e.heading.lower() == key), "")
+
+
 @dataclass(frozen=True)
 class ReviewDocument:
     """A review document being built: its title, its header, and its body.
@@ -597,6 +614,19 @@ class ReviewDocument:
     title: str = ""
     header: ReviewHeader = field(default_factory=ReviewHeader)
     body: str = ""
+    # Set when the document is the read view of a stored review. The read API
+    # answers from it; `body` is the legacy text form, removed once every
+    # caller reads through the store.
+    record: ReviewRecord | None = None
+    meta: ReviewMeta | None = None
+
+    @classmethod
+    def from_stored(cls, stored) -> "ReviewDocument":
+        """The read view of `stored` (a `review.store.StoredReview`)."""
+        return cls(
+            title=review_title(stored.meta), header=ReviewHeader.from_meta(stored.meta),
+            record=stored.record, meta=stored.meta,
+        )
 
     def render(self) -> str:
         """The document as it goes on disk: title, header block, blank line, body.
@@ -604,6 +634,11 @@ class ReviewDocument:
         A document with no title opens with its header, which is what a
         mechanical merge written before synthesis has.
         """
+        if self.record is not None:
+            raise TypeError(
+                "a record-backed ReviewDocument has no markdown body; "
+                "write it with review.store.write_review"
+            )
         title = f"{self.title}\n" if self.title else ""
         return f"{title}{self.header.render()}\n{self.body}"
 
@@ -661,6 +696,8 @@ class ReviewDocument:
         Read off the body, so a metadata comment above it can never be mistaken
         for the section's contents.
         """
+        if self.record is not None:
+            return _record_section(self.record, header)
         span = section_span(self.body, header)
         return span.body_of(self.body).strip() if span else ""
 
@@ -677,6 +714,8 @@ class ReviewDocument:
         declarations: the ones still outstanding, so a finding the fix pass
         checked off is one of these and not one of those.
         """
+        if self.record is not None:
+            return [f.view() for f in self.record.visible]
         return _parse_findings(self.body)
 
     @property
@@ -704,13 +743,16 @@ class ReviewDocument:
         a finding line under any other heading — the prior-findings ledger is
         one — is prose about a finding rather than a declaration of one.
         """
+        if self.record is not None:
+            return self.record.open_counts
         tally = Counter(f.severity for f in self.open_findings)
         return {s.key: tally[s.key] for s in SEVERITIES}
 
     @property
     def verdict(self) -> ReviewVerdict | None:
         """The verdict the `## Verdict` section states, if it states one."""
-        return ReviewVerdict.stated_in(self.section(SECTION_VERDICT))
+        text = self.record.verdict if self.record is not None else self.section(SECTION_VERDICT)
+        return ReviewVerdict.stated_in(text)
 
 
 def _is_header_line(line: str) -> bool:

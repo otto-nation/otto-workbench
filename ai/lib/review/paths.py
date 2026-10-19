@@ -174,7 +174,7 @@ def self_review_file_path(repo: str, branch: str) -> Path:
     return self_review_dir(repo, branch) / FILENAME_REVIEW
 
 
-def _load_review_meta(review_dir: Path) -> ReviewMeta | None:
+def _load_review_meta(review_dir: Path, filename: str = FILENAME_META) -> ReviewMeta | None:
     """The sidecar a review directory holds, or None if it holds no usable one.
 
     The distinction `read_review_meta` throws away: a reader wanting attribution
@@ -187,7 +187,7 @@ def _load_review_meta(review_dir: Path) -> ReviewMeta | None:
     empty record — the right answer for a reader, and the wrong one here, since
     it would licence writing a fresh sidecar over the file.
     """
-    meta_file = review_dir / FILENAME_META
+    meta_file = review_dir / filename
     if not meta_file.is_file():
         return None
     try:
@@ -197,9 +197,9 @@ def _load_review_meta(review_dir: Path) -> ReviewMeta | None:
     return review_meta_from_dict(payload) if isinstance(payload, dict) else None
 
 
-def read_review_meta(review_dir: Path) -> ReviewMeta:
+def read_review_meta(review_dir: Path, filename: str = FILENAME_META) -> ReviewMeta:
     """What meta.json attributes this review to, empty where it says nothing."""
-    return _load_review_meta(review_dir) or ReviewMeta()
+    return _load_review_meta(review_dir, filename) or ReviewMeta()
 
 
 def write_review_meta(review_dir: Path, meta: ReviewMeta) -> None:

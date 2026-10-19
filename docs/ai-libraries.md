@@ -1270,6 +1270,21 @@ disprove gate runs (`_should_disprove`), and sizing the synthesis turn budget
 (`_synthesis_max_turns`) all read from there. Writing the result to the review
 file is `review.outcome`'s.
 
+### review/store.py
+
+Where a review's record, sidecar and rendered view are written — together.
+
+`write_review` is the one writer of `review.md`: it saves `review.json`, then
+`meta.json`, then renders `review.md` from the two, each atomically. A caller
+that changes a review loads it with `read_review`, transforms the record, and
+writes it back — `update_review` is that loop. Nothing edits `review.md`.
+
+A directory with no readable `review.json` is stale: `read_review` answers None
+and every reader treats that as no review. The prior round's record is moved
+to `prior.json` and its sidecar copied to `prior-meta.json` when a re-review
+archives, so the re-review reads its predecessor as data rather than parsing
+`prior.md`.
+
 ### review/verdict.py
 
 What a set of counts means, and the review a run without an agent writes.

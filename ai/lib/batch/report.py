@@ -10,6 +10,7 @@ decision with its full payload and log tail.
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
 | `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+| `github` | `pr batch status`/`next` only: what GitHub says about the run's repos now (see `batch.live`) |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
@@ -24,6 +25,10 @@ item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed`
 entry per PR whose saved `pr` state still owes a closeout. Each entry carries
 the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
 and no actions. A closed PR is left out.
+
+When a finished run's `github` section shows open PRs with work owed, PRs the
+run never saw, or heads that moved since it ran, `hint` says so and points at
+`pr batch run`: the run itself has nothing left, but the PRs do.
 """
 
 # doc-group: batch
@@ -35,6 +40,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+import batch.live
 import batch.outcomes
 import batch.plan
 import batch.publish
@@ -228,13 +234,24 @@ def _owed_entries(run: Run, closeout: Callable[[str, str], CloseoutDebt]) -> lis
     return entries
 
 
-def _hint(run: Run, active: bool, owed: bool = False) -> str:
+def _github_hint(github: dict) -> str:
+    counts = [(len(github["owed"]), "with work owed"),
+              (len(github["untracked"]), "this run never saw"),
+              (len(github["moved"]), "pushed since it ran")]
+    said = "; ".join(f"{n} open PR{'' if n == 1 else 's'} {what}" for n, what in counts if n)
+    return f"GitHub shows {said} — see `github`, and start a new `pr batch run`"
+
+
+def _hint(run: Run, active: bool, owed: bool = False, github: dict | None = None) -> str:
     if active:
         return "a scheduler is driving this run; wait for its run_summary line"
     if run.status in FINISHED_RUN:
-        return (f"the run is {run.status.value}; `next` lists what pr still owes these PRs — "
-                "run each entry's command" if owed
-                else f"the run is {run.status.value}; nothing is left to answer")
+        if owed:
+            return (f"the run is {run.status.value}; `next` lists what pr still owes these "
+                    "PRs — run each entry's command")
+        if batch.live.owes(github):
+            return f"the run is {run.status.value}; {_github_hint(github)}"
+        return f"the run is {run.status.value}; nothing is left to answer"
     if run.open_decisions():
         return f"answer each `next` entry, then continue with `pr batch resume {run.id}`"
     return f"nothing is waiting on you; continue with `pr batch resume {run.id}`"
@@ -251,8 +268,12 @@ def _item_view(item: Item) -> dict:
 def build(run: Run, *, active: bool,
           closeout: Callable[[str, str], CloseoutDebt] | None = None,
           pending_requests: int = 0,
-          failed_requests: Sequence[FailedRequest] = ()) -> dict:
+          failed_requests: Sequence[FailedRequest] = (),
+          github: dict | None = None) -> dict:
     """The whole report. *active* is whether a scheduler is driving the run.
+
+    *github* is the `batch.live` section; None leaves the key out, which is
+    what a `run_summary` event carries.
 
     *closeout* reads what `pr` still owes a PR. None reads saved state
     (`batch.plan.closeout_debt`), and only for a finished run.
@@ -267,11 +288,11 @@ def build(run: Run, *, active: bool,
         entries = _owed_entries(run, closeout or batch.plan.closeout_debt)
     else:
         entries = []
-    return {
+    report = {
         "schema_version": SCHEMA_VERSION,
         "run": {"id": run.id, "status": run.status.value, "active": active,
                 "exit_hint": None if active else exit_code(run.status),
-                "hint": _hint(run, active, bool(entries) and not owned),
+                "hint": _hint(run, active, bool(entries) and not owned, github),
                 "pending_requests": pending_requests,
                 "failed_requests": [{"name": f.name, "error": f.error}
                                     for f in failed_requests]},
@@ -280,11 +301,14 @@ def build(run: Run, *, active: bool,
         "items": [_item_view(i) for i in run.items if not i.terminal],
         "next": entries,
     }
+    if github is not None:
+        report["github"] = github
+    return report
 
 
 def next_view(report: dict) -> dict:
     """The part of *report* that needs action: everything but `items`."""
-    return {k: report[k] for k in _NEXT_KEYS}
+    return {k: report[k] for k in (*_NEXT_KEYS, "github") if k in report}
 
 
 def decision_detail(run: Run, decision_id: str) -> dict:

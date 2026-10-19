@@ -5,8 +5,8 @@
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
-    pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
-    pr batch next   [RUN_ID]                   only what needs action (JSON)
+    pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
+    pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
@@ -29,6 +29,7 @@ from pathlib import Path
 import batch.admission
 import batch.events
 import batch.inbox
+import batch.live
 import batch.plan
 import batch.report
 import batch.scheduler
@@ -146,10 +147,20 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Print the raw run state instead of the report")
     view.add_argument("--decision", default="", metavar="ID",
                       help="Print one decision with its full payload and log tail")
+    _offline(s)
 
-    sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)"
-                   ).add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
+    n = sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)")
+    n.add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
+    _offline(n)
     return parser
+
+
+def _offline(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--offline", action="store_true",
+                   help="Skip the `github` section: report only what this machine saved, "
+                        "without asking GitHub for the run's repos' open PRs. Without it, a read "
+                        "runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), "
+                        "even while a driver holds the run")
 
 
 def _err(message: str) -> int:
@@ -209,11 +220,12 @@ def _active(run_id: str) -> bool:
     return found is not None and found.role in (Role.DRIVER, None)
 
 
-def _report(run: Run, active: bool) -> dict:
+def _report(run: Run, active: bool, github: dict | None = None) -> dict:
     """The whole report for *run*, with what its inbox still holds and what it rejected."""
     return batch.report.build(run, active=active,
                               pending_requests=batch.store.pending_requests(run.id),
-                              failed_requests=batch.store.failed_requests(run.id))
+                              failed_requests=batch.store.failed_requests(run.id),
+                              github=github)
 
 
 def _emit_summary(run: Run, code: int) -> None:
@@ -546,7 +558,7 @@ def _cmd_status(args) -> int:
         return _err(f"no run {run_id}")
     active = _active(run_id)
     if args.command == "next":
-        core.report.emit_json(batch.report.next_view(_report(run, active)))
+        core.report.emit_json(batch.report.next_view(_report(run, active, _github(run, args))))
         return EXIT_OK
     if args.full:
         core.report.emit_json({"schema_version": run.schema_version, "active": active,
@@ -558,8 +570,13 @@ def _cmd_status(args) -> int:
         except KeyError:
             return _err(f"run {run_id} has no decision {args.decision}")
         return EXIT_OK
-    core.report.emit_json(_report(run, active))
+    core.report.emit_json(_report(run, active, _github(run, args)))
     return EXIT_OK
+
+
+def _github(run: Run, args) -> dict:
+    """The report's `github` section: GitHub's open PRs for *run*'s repos, unless --offline."""
+    return batch.live.skipped() if args.offline else batch.live.view(run, cwd=os.getcwd())
 
 
 def _cmd_plan(args) -> int:

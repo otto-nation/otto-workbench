@@ -144,6 +144,34 @@ def test_a_waiting_run_hints_exit_10_and_resume():
     assert view["exit_hint"] == 10 and "pr batch resume r1" in view["hint"]
 
 
+_QUIET_GITHUB = {"checked": True, "owed": [], "untracked": [], "moved": []}
+
+
+def test_a_finished_run_whose_prs_github_shows_owing_work_says_so():
+    run = _run([_item(1, status=ItemStatus.DONE)], status=RunStatus.DONE)
+    github = {**_QUIET_GITHUB, "owed": [{"pr": "o/r#1"}, {"pr": "o/r#2"}],
+              "untracked": [{"pr": "o/r#2"}]}
+    hint = batch.report.build(run, active=False, github=github)["run"]["hint"]
+    assert hint == ("the run is done; GitHub shows 2 open PRs with work owed; "
+                    "1 open PR this run never saw — see `github`, and start a new "
+                    "`pr batch run`")
+
+
+def test_a_finished_run_github_shows_nothing_for_has_nothing_left():
+    run = _run([_item(1, status=ItemStatus.DONE)], status=RunStatus.DONE)
+    hint = batch.report.build(run, active=False, github=_QUIET_GITHUB)["run"]["hint"]
+    assert hint == "the run is done; nothing is left to answer"
+
+
+def test_the_github_section_is_reported_by_build_and_next_only_when_given():
+    run = _run([_item(1, status=ItemStatus.DONE)], status=RunStatus.DONE)
+    with_github = batch.report.build(run, active=False, github=_QUIET_GITHUB)
+    assert with_github["github"] == _QUIET_GITHUB
+    assert batch.report.next_view(with_github)["github"] == _QUIET_GITHUB
+    without = batch.report.build(run, active=False)
+    assert "github" not in without and "github" not in batch.report.next_view(without)
+
+
 def test_a_failed_decision_says_its_classified_reason():
     run = _run([_item(1)], [_d(DecisionKind.FAILED, "comments", {
         "reason": "ai_prompt_failed", "detail": "ai prompt failed", "exit_code": 1,

@@ -10,6 +10,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import batch.live  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
@@ -147,9 +148,9 @@ def test_status_full_prints_the_raw_run_and_whether_it_is_active(capsys):
 
 def test_status_prints_the_compact_report_by_default(capsys):
     run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
-    assert _main(["batch", "status", run.id]) == 0
+    assert _main(["batch", "status", run.id, "--offline"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert set(out) == {"schema_version", "run", "counts", "items", "next"}
+    assert set(out) == {"schema_version", "run", "counts", "items", "next", "github"}
     assert (out["run"]["id"], out["run"]["active"], out["run"]["exit_hint"]) == (run.id, False, 10)
     assert [n["decision"] for n in out["next"]] == ["d1"]
     assert out["next"][0]["commands"][0].startswith(f"pr batch resolve {run.id} d1 --action ")
@@ -177,10 +178,37 @@ def test_status_full_and_decision_are_exclusive():
 
 def test_next_prints_only_what_needs_action(capsys):
     run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
-    assert _main(["batch", "next", run.id]) == 0
+    assert _main(["batch", "next", run.id, "--offline"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert set(out) == {"schema_version", "run", "counts", "next"}
+    assert set(out) == {"schema_version", "run", "counts", "next", "github"}
     assert [n["decision"] for n in out["next"]] == ["d1"]
+
+
+@pytest.mark.parametrize("command", ["status", "next"])
+def test_status_and_next_ask_github_about_the_runs_repos(monkeypatch, capsys, command):
+    run = _saved_run_with_decision()
+    seen = {}
+
+    def fake_view(r, *, cwd):
+        seen["run"], seen["cwd"] = r.id, cwd
+        return {"checked": True, "owed": [], "untracked": [], "moved": []}
+
+    monkeypatch.setattr(batch.live, "view", fake_view)
+    assert _main(["batch", command, run.id]) == 0
+    assert json.loads(capsys.readouterr().out)["github"]["checked"] is True
+    assert seen == {"run": run.id, "cwd": os.getcwd()}
+
+
+@pytest.mark.parametrize("command", ["status", "next"])
+def test_offline_skips_github(monkeypatch, capsys, command):
+    run = _saved_run_with_decision()
+
+    def no_github(*a, **kw):
+        raise AssertionError("asked GitHub under --offline")
+
+    monkeypatch.setattr(batch.live, "view", no_github)
+    assert _main(["batch", command, run.id, "--offline"]) == 0
+    assert json.loads(capsys.readouterr().out)["github"] == {"checked": False, "skipped": True}
 
 
 def test_next_lists_nothing_while_a_scheduler_holds_the_run(capsys):

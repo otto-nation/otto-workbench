@@ -425,7 +425,7 @@ pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID]                 # continue waiting or interrupted; a cancel is final
 pr batch next [RUN_ID]                   # only what needs action (JSON)
-pr batch status [RUN_ID]                 # the run report (JSON)
+pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state
 pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  # JSON `applied`; `queued`+`holder` when deferred
@@ -479,7 +479,7 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 - `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
 - `next`: one entry per open decision — or, once the run is finished, one `closeout_owed` entry per PR that `pr` still owes a closeout, whose `commands` is the `pr comments --finish --post …` that pays it.
 
-`pr batch next` prints the same report without `items`.
+`pr batch next` prints the same report without `items`. Both also carry `github`: GitHub's current view of the run's repos — open PRs the run never saw, heads pushed since, closed PRs, and what each open PR owes — so work done on another machine shows. A finished run whose `github` shows work owed says so in `hint`. Keys and checkout rules are in [`batch/live.py`](ai-libraries.md#batchlivepy); `--offline` skips it.
 
 Each `next` entry carries:
 

@@ -96,6 +96,20 @@ def test_build_plan_raises_when_two_checkouts_name_the_same_repo(monkeypatch):
         batch.plan.build_plan(["/repos/a", "/repos/a-worktree-2"])
 
 
+def test_build_plan_records_a_relative_checkout_as_absolute(monkeypatch, tmp_path):
+    # A run persists repo_dir; a relative one names another directory to any later reader.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: False)
+    monkeypatch.setattr(batch.plan, "_local_heads", lambda d: {})
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
+    node = {"number": 1, "headRefName": "b", "headRefOid": "h",
+            "repository": {"nameWithOwner": "o/a"}}
+    monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {"search": {"nodes": [node]}})
+    [row] = batch.plan.build_plan(["."]).rows
+    assert row.repo_dir == str(tmp_path)
+
+
 def test_replan_returns_none_for_a_closed_pr(monkeypatch):
     monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {
         "repository": {"pullRequest": {"state": "MERGED"}}})

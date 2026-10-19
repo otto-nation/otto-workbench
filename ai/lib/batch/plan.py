@@ -149,7 +149,7 @@ def _pid_exists(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    except PermissionError:
+    except OSError:
         return True
     return True
 

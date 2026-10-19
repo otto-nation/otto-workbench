@@ -281,3 +281,11 @@ def test_claim_is_written_before_fetch_and_removed_after_drop(tmp_path, monkeypa
     assert batch.plan.read_claim(plan.ref_namespace) is not None
     assert batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace) is True
     assert batch.plan.read_claim(plan.ref_namespace) is None
+
+
+def test_pid_exists_treats_unexpected_oserror_as_live(monkeypatch):
+    def boom(pid, sig):
+        raise OSError(22, "Invalid argument")
+
+    monkeypatch.setattr(batch.plan.os, "kill", boom)
+    assert batch.plan._pid_exists(123) is True

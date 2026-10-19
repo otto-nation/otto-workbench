@@ -1,7 +1,7 @@
 """Pre-flight: which of my open PRs need which batch steps.
 
 One GraphQL search covers every repo. The only nested connections are the ones
-the comments need cannot do without — review threads, and the newest reviews and
+the comments need requires — review threads, and the newest reviews and
 PR comments, each bounded and never paged — so a plan over dozens of PRs costs a
 few points of the hourly GraphQL budget. Thread comments, the connection whose
 cost would scale with discussion length, are never asked for.

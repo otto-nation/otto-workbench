@@ -33,7 +33,6 @@ import pr.comments_state
 import pr.context
 import pr.domains
 import pr.owed_feedback
-from pr.owed_feedback import mark_seen, seen_record
 import pr.settlement
 import pr.state
 import pr.thread_replies
@@ -79,8 +78,8 @@ def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
         st = pr.state.load_or_init(**ctx_args)
         st.comments = dataclasses.replace(
             st.comments,
-            seen_issue_comments=seen_record(report.issue_comments),
-            seen_review_body_comments=seen_record(report.review_body_comments),
+            seen_issue_comments=pr.owed_feedback.seen_record(report.issue_comments),
+            seen_review_body_comments=pr.owed_feedback.seen_record(report.review_body_comments),
             # Everything the report held is now read, so nothing top-level is owed.
             owed_review_bodies=0,
             owed_issue_comments=0,
@@ -130,8 +129,8 @@ def build_report(
 
 def mark_report_seen(report: PRReport, comments: pr.domains.CommentsSummary) -> None:
     """Flag the report's top-level comments the last round already read, in place."""
-    mark_seen(report.issue_comments, comments.seen_issue_comments)
-    mark_seen(report.review_body_comments, comments.seen_review_body_comments)
+    pr.owed_feedback.mark_seen(report.issue_comments, comments.seen_issue_comments)
+    pr.owed_feedback.mark_seen(report.review_body_comments, comments.seen_review_body_comments)
 
 
 def read_report(ctx, pr_data: PRData) -> PRReport:
@@ -234,6 +233,8 @@ def run_threads(trail, args, ctx) -> int:
         )
         st = pr.state.load_or_init(**ctx_args)
         mark_report_seen(report, st.comments)
+        # Only the top-level owed_* counts are persisted; they do not depend
+        # on the settled set, so it is left empty here.
         owed = pr.owed_feedback.owed_feedback(pr_data, set(), st.comments)
         # The seen record is carried forward, not advanced: nothing has read
         # these comments yet. `record_triaged_seen` advances it once a triage

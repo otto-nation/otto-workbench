@@ -184,9 +184,14 @@ def gc_namespaces() -> int:
     Stale claims (dead pid, no run) are removed with the refs. drop_refs
     already refuses to delete a lock; it never removes the lock file.
     """
+    # Scan the repos before reading who owns what. A plan writes its claim
+    # before it fetches, so any namespace the scan finds already had its claim
+    # on disk; reading owners first would miss a plan that started in between
+    # and drop its refs mid-flight.
+    found = _namespace_repos()
     live = _live_namespaces()
     dropped = 0
-    for ns, dirs in sorted(_namespace_repos().items()):
+    for ns, dirs in sorted(found.items()):
         if ns in live:
             continue
         if batch.plan.drop_refs(sorted(dirs), ns):

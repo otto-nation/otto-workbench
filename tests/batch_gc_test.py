@@ -243,3 +243,20 @@ def test_gc_keeps_a_namespace_with_a_live_claim(tmp_path):
     assert batch.gc.gc_runs(now=NOW) == 0
     assert git_out(pair.work, "for-each-ref", ns) != ""
     assert batch.plan.read_claim(ns) is not None
+
+
+def test_gc_keeps_a_namespace_whose_plan_claims_it_during_the_scan(tmp_path):
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _register(pair.work)
+    scan = batch.gc._namespace_repos
+
+    def scan_then_claim():
+        found = scan()
+        # A plan that starts mid-sweep: its claim lands after the repo scan.
+        batch.plan.write_claim(ns, [str(pair.work)], pid=os.getpid())
+        return found
+
+    with mock.patch.object(batch.gc, "_namespace_repos", scan_then_claim):
+        assert batch.gc.gc_namespaces() == 0
+    assert git_out(pair.work, "for-each-ref", ns) != ""

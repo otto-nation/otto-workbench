@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_pi
 from ai_backend_test import _recording_popen
-from conftest import TEST_PI_BINARY_PATH as PI
+from conftest import TEST_PI_ARGV as PI
 
 
 class TestBuildFixCmd:
@@ -658,7 +658,7 @@ class TestRulesHomePrefix:
         def boom(*_a, **_k):
             raise RuntimeError("between materialize and spawn")
 
-        monkeypatch.setattr(agent.backend_pi, "_spawn_env", boom)
+        monkeypatch.setattr(agent.backend_pi, "_rpc_process", boom)
         with pytest.raises(RuntimeError, match="between materialize and spawn"):
             getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
                 prompt="p", cwd=str(tmp_path),

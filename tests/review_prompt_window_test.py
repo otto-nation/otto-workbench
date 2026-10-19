@@ -314,8 +314,8 @@ class TestTheWindowPrefersPisCatalogue:
 
         binaries = {"/old": "/bin/pi-old", "/new": "/bin/pi-new"}
         listings = {
-            "/bin/pi-old": "",
-            "/bin/pi-new": (
+            ("/bin/pi-old",): "",
+            ("/bin/pi-new",): (
                 "provider model context max-out thinking images\n"
                 "google-vertex-claude claude-sonnet-5-5 700K 128K yes yes\n"
             ),

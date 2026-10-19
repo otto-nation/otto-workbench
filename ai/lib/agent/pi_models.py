@@ -127,12 +127,12 @@ def unserved_message(
 
 
 def not_served_message(
-    model: str, stderr: str, provider: str | None = None, *, pi: str,
+    model: str, stderr: str, provider: str | None = None, *, pi: tuple[str, ...],
 ) -> str | None:
     """An override hint when Pi's stderr says the model is unknown, else None.
 
-    ``pi`` is the binary that wrote *stderr*, so the closest ids it suggests
-    come from the same catalogue that refused the model.
+    ``pi`` is the argv that started the binary that wrote *stderr*, so the closest ids
+    it suggests come from the same catalogue that refused the model.
     """
     if not stderr:
         return None
@@ -158,22 +158,26 @@ def effective_provider(explicit: str | None) -> str:
 
 
 @functools.cache
-def catalogue_text(pi: str) -> str:
+def catalogue_text(pi: tuple[str, ...]) -> str:
     """Stdout of ``<pi> --list-models``, or empty when the catalogue cannot be read.
 
-    ``pi`` is the binary `agent.pi_binary.resolve` chose, so the catalogue a
-    model is checked against is the one the spawn will run with — two pi
-    versions serve different model sets. This is the one place the workbench
+    ``pi`` is the argv `PiBinary.spawn` starts the chosen binary with, so the
+    catalogue a model is checked against is the one the spawn will run with —
+    two pi versions serve different model sets. This is the one place the workbench
     lists models; the review budget reads its context windows from here too.
 
     The empty string is a skip, not an empty provider: a missing or unreadable
     ``pi`` must not refuse a model this process cannot check. The result is
-    cached per binary for the life of the process, so a transient miss skips
+    cached per argv for the life of the process, so a transient miss skips
     validation for every later call with that binary too.
+
+    Only the argv is taken, not the spawn's environment: the listing runs in
+    this process's environment, and the one variable a direct release spawn
+    adds (``PI_MANAGED_INSTALL_ROOT``) governs pi's self-update, not its models.
     """
     try:
         result = core.proc.run(
-            [pi, "--list-models"], timeout=core.timeouts.LOCAL,
+            [*pi, "--list-models"], timeout=core.timeouts.LOCAL,
         )
     except OSError:
         # Not just FileNotFoundError: a `pi` present on disk but not executable
@@ -195,16 +199,16 @@ def catalogue_for(cwd: str | Path) -> str:
         binary = agent.pi_binary.resolve(cwd)
     except agent.pi_binary.PiUnresolvable:
         return ""
-    return catalogue_text(binary.path)
+    return catalogue_text(binary.spawn(os.environ).argv)
 
 
-def listed_models(provider: str | None, *, pi: str) -> frozenset[str]:
+def listed_models(provider: str | None, *, pi: tuple[str, ...]) -> frozenset[str]:
     """Ids *pi* lists under *provider* right now. Empty when the catalogue is unread."""
     return parse_listed_ids(catalogue_text(pi), effective_provider(provider))
 
 
 def require_listed_model(
-    model: str | None, provider: str | None = None, *, pi: str,
+    model: str | None, provider: str | None = None, *, pi: tuple[str, ...],
 ) -> None:
     """Raise ``ModelNotServed`` when *model* is absent from a readable catalogue.
 

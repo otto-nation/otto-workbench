@@ -766,7 +766,7 @@ default provider is a sync warning, not a failure. That check (`step_pi_models`)
 runs after the package refresh and asks the user's own pi from `$HOME`, so neither
 a stale extension clone nor a repo's pinned pi reads as a wrong id. AI runs pick
 their pi per repo: the managed install, or the repo's mise pin when it is newer
-([`agent/pi_binary.py`](ai-libraries.md#agentpi_binarypy)). A provider with no rows
+([`agent/pi_binary.py`](ai-libraries.md#agentpi_binarypy)), started as `<node> <pi script>` with a node that is not a mise shim, which would apply the repo's trusted mise `[env]` (its `GOOGLE_CLOUD_PROJECT`, say) to pi itself. A provider with no rows
 warns that it did not load: Vertex extensions skip registration without
 `GOOGLE_CLOUD_PROJECT` or an ADC file, usually a shell older than `~/.env.local`.
 

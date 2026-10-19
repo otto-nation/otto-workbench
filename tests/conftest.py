@@ -331,6 +331,9 @@ def _isolated_stop_handling(monkeypatch):
 # What every test runs as "the chosen pi" unless it is testing the choice: a
 # bare `pi`, so an argv assertion reads as it did before resolution existed.
 TEST_PI_BINARY_PATH = "pi"
+# The argv prefix that stub spawns with: `pi` is no `env node` script on disk,
+# so `PiBinary.spawn` starts it as it is.
+TEST_PI_ARGV = (TEST_PI_BINARY_PATH,)
 
 
 @pytest.fixture(autouse=True)

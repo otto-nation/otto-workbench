@@ -3,7 +3,9 @@
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `pi` commands and running them as subprocesses. Which `pi` runs is
 `agent.pi_binary.resolve`'s answer for the call's cwd, never a bare PATH lookup,
-and the model is checked against that same binary's catalogue.
+and the model is checked against that same binary's catalogue. How it starts is
+`PiBinary.spawn`'s: under a node that is not a mise shim, so the repo the agent
+works in cannot rewrite pi's own environment through its mise config.
 
 invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
@@ -64,7 +66,7 @@ import agent.usage
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
-from agent.pi_binary import PiBinary, PiUnresolvable
+from agent.pi_binary import PiSpawn, PiUnresolvable
 from agent.pi_models import ModelNotServed, not_served_message, require_listed_model
 from agent.rule_prefix import (
     TEMP_PREFIX,
@@ -173,6 +175,10 @@ def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
     ``--no-context-files``. ``PI_CODING_AGENT_DIR`` is the wrong mapping: it
     relocates settings, sessions and extensions/ (Vertex provider, gh_*
     tools) rather than the operator rule prefix.
+
+    This is the environment before `PiBinary.spawn` sees it: a managed release
+    started directly gets the launcher's ``PI_MANAGED_INSTALL_ROOT`` there, on
+    every entry point including ``prompt``, which does not come through here.
     """
     if REVIEW_EXTENSION.is_file():
         return _guard_env(inv)
@@ -235,7 +241,7 @@ def _release_rule_prefix(cmd: list[str]) -> None:
 
 
 def _build_prompt_cmd(
-    pi: str, model: str | None = None, provider: str | None = None,
+    pi: Sequence[str], model: str | None = None, provider: str | None = None,
     thinking: str | None = None,
 ) -> list[str]:
     # --mode json, not bare -p: print mode emits the reply and nothing else, so
@@ -261,7 +267,7 @@ def _build_prompt_cmd(
     # the tool it wanted and ends the turn. No JSON, and the caller's retry
     # re-sends the same prompt into the same rulebook.
     cmd = [
-        pi, "-p", "--mode", "json", "--no-session", "--approve", "--no-tools",
+        *pi, "-p", "--mode", "json", "--no-session", "--approve", "--no-tools",
         *BARE_FLAGS,
     ]
     if provider:
@@ -274,10 +280,10 @@ def _build_prompt_cmd(
 
 
 def _build_agent_cmd(
-    pi: str, inv: AgentInvocation, extension: str | None = None,
+    pi: Sequence[str], inv: AgentInvocation, extension: str | None = None,
 ) -> list[str]:
     cmd = [
-        pi, "--mode", "rpc", "--no-session", "--approve", "--verbose",
+        *pi, "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_AGENT_TOOLS, *BARE_FLAGS,
     ]
     cmd += _rule_prefix_flags(inv)
@@ -301,7 +307,7 @@ def _build_agent_cmd(
 
 
 def _build_fix_cmd(
-    pi: str, inv: AgentInvocation, extension: str | None = None,
+    pi: Sequence[str], inv: AgentInvocation, extension: str | None = None,
 ) -> list[str]:
     # ceiling: no `gh` deny here, unlike the Claude backend's FIX_DENIED_TOOLS —
     # `--tools` allowlists tool *names*, so barring one bash command is not
@@ -320,7 +326,7 @@ def _build_fix_cmd(
     # allowlist grants it, so the one form of GitHub reach this list can express
     # is the one it declines to.
     cmd = [
-        pi, "--mode", "rpc", "--no-session", "--approve", "--verbose",
+        *pi, "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_FIX_TOOLS, *BARE_FLAGS,
     ]
     cmd += _rule_prefix_flags(inv)
@@ -617,7 +623,7 @@ def _exited_stderr(proc: subprocess.Popen | None) -> str:
 
 
 def _undelivered_prompt(
-    log_file, pi: str, proc: subprocess.Popen | None = None, model: str = "",
+    log_file, pi: tuple[str, ...], proc: subprocess.Popen | None = None, model: str = "",
     provider: str | None = None,
 ) -> StreamResult:
     """The result of a run whose prompt never reached Pi.
@@ -986,15 +992,17 @@ def _refusal_line(err: ModelNotServed | PiUnresolvable) -> str:
     return f"pi refused the run: {err}"
 
 
-def _checked_binary(cwd: str, model: str | None, provider: str | None) -> PiBinary:
-    """The pi to run in *cwd*, with *model* checked against that binary's catalogue.
+def _checked_spawn(
+    cwd: str, model: str | None, provider: str | None, env: Mapping[str, str],
+) -> PiSpawn:
+    """How to start the pi for *cwd* from *env*, with *model* checked against its catalogue.
 
     Raises `PiUnresolvable` or `ModelNotServed`. Resolved first so the model is
-    checked by the same binary that will be spawned.
+    checked by the same binary, started the same way, that will be spawned.
     """
-    binary = agent.pi_binary.resolve(cwd)
-    require_listed_model(model, provider, pi=binary.path)
-    return binary
+    spawn = agent.pi_binary.resolve(cwd).spawn(env)
+    require_listed_model(model, provider, pi=spawn.argv)
+    return spawn
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
@@ -1028,17 +1036,17 @@ def prompt(
     # pi spawn. Raises MachineEnvUnavailable; backend.prompt turns it into exit 1.
     env = agent.machine_env.base_env(cwd)
     try:
-        binary = _checked_binary(cwd, model, provider)
+        spawn = _checked_spawn(cwd, model, provider, env)
     except (ModelNotServed, PiUnresolvable) as err:
         core.log.error(_refusal_line(err))
         return "", _RPC_ERROR_EXIT_CODE, None
-    cmd = _build_prompt_cmd(binary.path, model=model, provider=provider, thinking=thinking)
+    cmd = _build_prompt_cmd(spawn.argv, model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
-                            timeout=core.timeouts.UNBOUNDED, env=env)
+                            timeout=core.timeouts.UNBOUNDED, env=spawn.env)
     parsed = pi_prompt_result(result.stdout)
     reply, code = parsed.text, result.returncode
     if code:
-        msg = not_served_message(model or "", result.stderr or "", provider, pi=binary.path)
+        msg = not_served_message(model or "", result.stderr or "", provider, pi=spawn.argv)
         if msg:
             core.log.error(msg)
             reply = msg
@@ -1062,27 +1070,27 @@ def invoke_agent(inv: AgentInvocation) -> int:
     - A Claude-compatible result record is written at the end for cost tracking
     """
     try:
-        binary = _checked_binary(inv.cwd, inv.model, inv.provider)
+        spawn = _checked_spawn(inv.cwd, inv.model, inv.provider, _spawn_env(inv))
     except (ModelNotServed, PiUnresolvable) as err:
         return _refused_before_spawn(err, inv.session_log, inv.model)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
-    cmd = _build_agent_cmd(binary.path, inv, extension=ext)
+    cmd = _build_agent_cmd(spawn.argv, inv, extension=ext)
     try:
-        spawn = dict(
+        popen = dict(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             cwd=inv.cwd,
-            env=_spawn_env(inv),
+            env=spawn.env,
         )
-        with _rpc_process(cmd, **spawn) as proc:
-            return _drive_agent(inv, proc, binary.path)
+        with _rpc_process(cmd, **popen) as proc:
+            return _drive_agent(inv, proc, spawn.argv)
     finally:
         _release_rule_prefix(cmd)
 
 
-def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen, pi: str) -> int:
+def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen, pi: tuple[str, ...]) -> int:
     """Prompt Pi, consume its stream, and record what the run cost."""
     full_prompt = _prompt_with_dirs(inv)
     prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
@@ -1139,27 +1147,27 @@ def invoke_fix(inv: AgentInvocation) -> int:
     If session_log is empty, events are consumed but not persisted.
     """
     try:
-        binary = _checked_binary(inv.cwd, inv.model, inv.provider)
+        spawn = _checked_spawn(inv.cwd, inv.model, inv.provider, _spawn_env(inv))
     except (ModelNotServed, PiUnresolvable) as err:
         return _refused_before_spawn(err, inv.session_log, inv.model)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
-    cmd = _build_fix_cmd(binary.path, inv, extension=ext)
+    cmd = _build_fix_cmd(spawn.argv, inv, extension=ext)
     try:
-        spawn = dict(
+        popen = dict(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             cwd=inv.cwd,
-            env=_spawn_env(inv),
+            env=spawn.env,
         )
-        with _rpc_process(cmd, **spawn) as proc:
-            return _drive_fix(inv, proc, binary.path)
+        with _rpc_process(cmd, **popen) as proc:
+            return _drive_fix(inv, proc, spawn.argv)
     finally:
         _release_rule_prefix(cmd)
 
 
-def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen, pi: str) -> int:
+def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen, pi: tuple[str, ...]) -> int:
     """Prompt Pi and consume its stream, persisting the run only if asked to."""
     start_time = time.monotonic()
 

@@ -14,7 +14,7 @@ import agent.backend_pi
 import agent.pi_binary
 import agent.pi_models
 from ai_backend_pi_rpc_test import _RefusingProc
-from conftest import TEST_PI_BINARY_PATH as PI
+from conftest import TEST_PI_ARGV as PI
 
 
 LISTING = """\
@@ -278,7 +278,7 @@ class TestOneBinaryForCatalogueAndSpawn:
             model=LISTED, provider=PROVIDER,
         ))
         assert self.resolved_for == [str(tmp_path)]
-        assert self.listed_by == [self.CHOSEN]
+        assert self.listed_by == [(self.CHOSEN,)]
         assert seen[0][0] == self.CHOSEN
 
     def test_a_prompt_checks_and_spawns_the_chosen_binary(self, monkeypatch, tmp_path):
@@ -290,7 +290,7 @@ class TestOneBinaryForCatalogueAndSpawn:
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         agent.backend_pi.prompt("hi", cwd=str(tmp_path), model=LISTED, provider=PROVIDER)
-        assert self.listed_by == [self.CHOSEN]
+        assert self.listed_by == [(self.CHOSEN,)]
         assert seen[0][0] == self.CHOSEN
 
     def test_the_catalogue_lists_with_the_binary_it_is_given(self, monkeypatch):
@@ -303,7 +303,7 @@ class TestOneBinaryForCatalogueAndSpawn:
         ))
         _REAL_CATALOGUE_TEXT.cache_clear()
         try:
-            assert _REAL_CATALOGUE_TEXT(self.CHOSEN) == LISTING
+            assert _REAL_CATALOGUE_TEXT((self.CHOSEN,)) == LISTING
         finally:
             _REAL_CATALOGUE_TEXT.cache_clear()
         assert ran == [[self.CHOSEN, "--list-models"]]

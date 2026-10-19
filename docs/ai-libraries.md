@@ -3838,7 +3838,9 @@ Pi CLI backend for agent.backend.
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `pi` commands and running them as subprocesses. Which `pi` runs is
 `agent.pi_binary.resolve`'s answer for the call's cwd, never a bare PATH lookup,
-and the model is checked against that same binary's catalogue.
+and the model is checked against that same binary's catalogue. How it starts is
+`PiBinary.spawn`'s: under a node that is not a mise shim, so the repo the agent
+works in cannot rewrite pi's own environment through its mise config.
 
 invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
@@ -3907,9 +3909,11 @@ What the process added since it started (a ``PATH`` entry, a token) survives,
 because only the keys mise changed move.
 
 It also ignores, never trusts, every untrusted mise config at or above the
-agent's working directory. pi itself is spawned by path (see
-`agent.pi_binary`) and never reaches a shim, but the commands an agent runs in a
-fresh review worktree do, and mise refuses each one outright while the
+agent's working directory. pi itself is started under a node that is not a
+mise shim (`agent.pi_binary.PiBinary.spawn`) — undoing the parent's changes here
+cannot stop a shim from applying the worktree's trusted ``[env]`` afresh, so pi
+must not reach one at all. The commands an agent runs in a fresh review
+worktree do reach shims, and mise refuses each one outright while the
 worktree's config is untrusted. Ignoring means mise does not read the file at
 all, so nothing in it runs; trusted configs stay active, so a fix agent running
 the repo's tests still gets the repo's toolchain.
@@ -3943,6 +3947,17 @@ at random.
 
 Every resolution is logged and, inside a trailed run, recorded on the trail as
 a ``pi_binary`` event, so `otto-log show` can say which binary ran and why.
+
+How the chosen binary is *started* is `PiBinary.spawn`'s answer. pi is a
+``#!/usr/bin/env node`` script, and ``env node`` finds whatever ``node`` is first
+on ``PATH`` — on a machine using mise shims, a shim. A shim applies the ``[env]``
+of every trusted mise config at and above its working directory, and an agent is
+spawned in the repo it works on, so a repo setting its own
+``GOOGLE_CLOUD_PROJECT`` overrode the environment the workbench handed pi and
+every model call failed with a 403. So pi is spawned as ``[node, <pi script>]``
+with a `real_node` that is not a shim, and ``PATH`` is left as it was: the
+commands pi runs still reach the repo's mise toolchain, only pi's own process
+does not.
 
 ### agent/pi_models.py
 

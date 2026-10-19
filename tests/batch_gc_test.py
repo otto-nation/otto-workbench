@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import sys
 import time
@@ -271,3 +272,17 @@ def test_gc_never_scans_a_relative_ref_dir_from_its_own_cwd(tmp_path, monkeypatc
     monkeypatch.chdir(pair.work)
     assert batch.gc.gc_namespaces() == 0
     assert git_out(pair.work, "for-each-ref", ns) != ""
+
+
+def test_gc_drops_a_namespace_whose_claim_pid_was_recycled(tmp_path):
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _register(pair.work)
+    # A running pid that did not write the claim: its start time differs.
+    batch.plan.write_claim(ns, [str(pair.work)], pid=os.getpid())
+    claim = batch.plan.read_claim(ns)
+    core.serde.write_json(batch.plan._claim_path(ns), core.serde.to_dict(
+        dataclasses.replace(claim, started="Thu Jan  1 00:00:00 1970")))
+    assert batch.gc.gc_namespaces() == 1
+    assert git_out(pair.work, "for-each-ref", ns) == ""
+    assert batch.plan.read_claim(ns) is None

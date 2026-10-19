@@ -3522,8 +3522,8 @@ place: deleting it from outside the lock would race a live reap that still
 holds the flock on that directory's inode.
 
 After the run sweep, orphaned `refs/pr-batch/<hex>` namespaces are dropped:
-any namespace with no live claim (claim pid still running) and no run
-referencing it. Repos are the union of claim `repo_dirs`, run `ref_dirs`, and
+any namespace with no live claim (its writer still running, matched by pid and
+start time) and no run referencing it. Repos are the union of claim `repo_dirs`, run `ref_dirs`, and
 the machine's registered projects. A namespace with no claim at all is
 orphaned by definition — the one gap is a process that predates claims and is
 still fetching.

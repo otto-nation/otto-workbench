@@ -364,6 +364,9 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox)
     except BaseException:
         batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
         raise
+    # The committed run owns the namespace now; the plan's claim only covered
+    # the window before it existed, and one owner is what gc reads.
+    batch.plan.remove_claim(plan.ref_namespace)
     return _Started(session, cfg, trail, holds)
 
 

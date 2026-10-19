@@ -25,6 +25,7 @@ from pathlib import Path
 
 import core.log
 import core.serde
+import core.session_lock
 import gh.client
 import gh.pr_pages
 import git.client
@@ -147,7 +148,15 @@ class NamespaceClaim:
     namespace: str = ""
     repo_dirs: list[str] = field(default_factory=list)
     pid: int = 0
+    # When *pid* started (`core.session_lock.process_start`), so a pid the
+    # kernel recycles onto an unrelated process does not keep the claim live.
+    started: str = ""
     created: str = ""
+
+    @property
+    def live(self) -> bool:
+        """Whether the process that wrote this claim is still running."""
+        return bool(self.started) and core.session_lock.process_start(self.pid) == self.started
 
 
 def search_query(repos: list[str]) -> str:
@@ -218,9 +227,10 @@ def write_claim(namespace: str, repo_dirs: list[str], *,
     path = _claim_path(namespace)
     if path is None:
         return
+    owner = os.getpid() if pid is None else pid
     claim = NamespaceClaim(
-        namespace=namespace, repo_dirs=list(repo_dirs),
-        pid=os.getpid() if pid is None else pid,
+        namespace=namespace, repo_dirs=list(repo_dirs), pid=owner,
+        started=core.session_lock.process_start(owner),
         created=created or datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     core.serde.write_json(path, core.serde.to_dict(claim))
@@ -269,19 +279,6 @@ def namespaces_in(repo_dir: str) -> list[str]:
         if token:
             found[f"{prefix}{token}"] = None
     return list(found)
-
-
-def pid_alive(pid: int) -> bool:
-    """Whether *pid* still exists; 0 and negative are never live."""
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:

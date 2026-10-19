@@ -14,8 +14,8 @@ place: deleting it from outside the lock would race a live reap that still
 holds the flock on that directory's inode.
 
 After the run sweep, orphaned `refs/pr-batch/<hex>` namespaces are dropped:
-any namespace with no live claim (claim pid still running) and no run
-referencing it. Repos are the union of claim `repo_dirs`, run `ref_dirs`, and
+any namespace with no live claim (its writer still running, matched by pid and
+start time) and no run referencing it. Repos are the union of claim `repo_dirs`, run `ref_dirs`, and
 the machine's registered projects. A namespace with no claim at all is
 orphaned by definition — the one gap is a process that predates claims and is
 still fetching.
@@ -135,10 +135,10 @@ def _warn_leftover_tombstones() -> None:
 
 
 def _live_namespaces() -> set[str]:
-    """Namespaces a live claim pid or any saved run still owns."""
+    """Namespaces a live claim (pid running since it wrote the claim) or any saved run owns."""
     live: set[str] = set()
     for claim in batch.plan.load_claims():
-        if batch.plan.pid_alive(claim.pid):
+        if claim.live:
             live.add(claim.namespace)
     for run_id in batch.store.run_ids():
         run = _read_run(run_id)
@@ -193,7 +193,7 @@ def _namespace_repos() -> dict[str, set[str]]:
 def gc_namespaces() -> int:
     """Drop `refs/pr-batch/<hex>` namespaces nobody owns; return how many went.
 
-    A namespace is live if its claim's pid is alive or any run state names it.
+    A namespace is live if its claim's writer is still running or any run state names it.
     Stale claims (dead pid, no run) are removed with the refs. drop_refs
     already refuses to delete a lock; it never removes the lock file.
     """

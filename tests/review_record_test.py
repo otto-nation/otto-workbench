@@ -12,12 +12,15 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import core.log
+from pr.domains import ReviewStatus
+from review.document import ReviewHeader
 from review.paths import FILENAME_RECORD
 from review.record import (
     SCHEMA_VERSION, AgentFailure, Disposition, ProseSection, RecordFinding,
     ReviewRecord, SeveritySection, TriageEntry, defuse_first_line, load_record,
     save_record,
 )
+from review.types import ReviewMeta, ReviewType, review_meta_from_dict
 
 
 def _record() -> ReviewRecord:
@@ -133,3 +136,28 @@ class TestWhatTheReadApiSees:
 
     def test_defusing_touches_only_the_first_line(self):
         assert defuse_first_line("a *(b)*\nc *(d)*") == "a * (b)*\nc *(d)*"
+
+
+class TestMetaHeaderFields:
+    def test_status_and_date_round_trip_through_meta_json(self):
+        meta = review_meta_from_dict({"date": "2026-10-15", "status": "partial"})
+        assert meta.date == "2026-10-15" and meta.status is ReviewStatus.PARTIAL
+
+    def test_an_unknown_status_costs_only_itself(self):
+        meta = review_meta_from_dict({"status": "exploded", "repo": "a/b"})
+        assert meta.status is None and meta.repo == "a/b"
+
+    def test_the_header_states_what_meta_records(self):
+        meta = ReviewMeta(date="2026-10-19", status=ReviewStatus.COMPLETED,
+                          review_type=ReviewType.INCREMENTAL, prior_sha="d54f",
+                          prior_date="2026-10-17", skipped_groups=0, total_groups=6,
+                          delta_files=("a", "b", "c"))
+        rendered = ReviewHeader.from_meta(meta).render()
+        assert "<!-- date: 2026-10-19 -->" in rendered
+        assert "<!-- prior_date: 2026-10-17 -->" in rendered
+        assert "<!-- skipped_groups: 0/6 -->" in rendered
+        assert "<!-- status: completed -->" in rendered
+
+    def test_a_full_review_states_no_ratio(self):
+        meta = ReviewMeta(review_type=ReviewType.FULL, skipped_groups=1, total_groups=4)
+        assert "skipped_groups" not in ReviewHeader.from_meta(meta).render()

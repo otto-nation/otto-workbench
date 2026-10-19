@@ -241,12 +241,11 @@ class ReviewHeader:
         past this is stating the review's attribution twice, and the second
         statement is the one that drifts.
 
-        Left to the caller is everything `meta.json` does not know: the date the
-        document is being written, the prior review's own date — which only that
-        document records — the group ratio, and how the run ended.
+        Overrides win over what `meta.json` records.
         """
         incremental = meta.review_type == ReviewType.INCREMENTAL
         return replace(cls(
+            date=meta.date,
             mode=meta.mode,
             pr_number=meta.pr_number,
             head_sha=meta.head_sha,
@@ -254,10 +253,14 @@ class ReviewHeader:
             base_ref=meta.base_ref,
             review_type=meta.review_type or ReviewType.FULL,
             prior_sha=meta.prior_sha,
+            prior_date=meta.prior_date if incremental else "",
             # A count only an incremental review has: on a full one the sidecar
             # records no delta, and a `0` here would read as a delta of nothing
             # rather than as the absence of one.
             delta_files=len(meta.delta_files) if incremental else None,
+            skipped_groups=meta.skipped_groups if incremental else 0,
+            total_groups=meta.total_groups if incremental else 0,
+            status=meta.status,
             generator_version=meta.generator_version,
         ), **overrides)
 

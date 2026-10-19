@@ -131,8 +131,8 @@ def not_served_message(
 ) -> str | None:
     """An override hint when Pi's stderr says the model is unknown, else None.
 
-    ``pi`` is the argv that started the binary that wrote *stderr*, so the closest ids it suggests
-    come from the same catalogue that refused the model.
+    ``pi`` is the argv that started the binary that wrote *stderr*, so the closest ids
+    it suggests come from the same catalogue that refused the model.
     """
     if not stderr:
         return None

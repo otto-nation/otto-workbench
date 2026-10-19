@@ -69,6 +69,13 @@ class TestTheStore:
         probe.write_text("probe\n")
         assert review_file.stat().st_mode == probe.stat().st_mode
 
+    def test_write_review_does_not_call_umask(self, tmp_path, monkeypatch):
+        def _umask(_mask):
+            raise AssertionError("os.umask must not be called")
+
+        monkeypatch.setattr("review.store.os.umask", _umask)
+        _stored(tmp_path)
+
 
 class TestThePriorRound:
     def test_archiving_moves_the_record_and_copies_its_sidecar(self, tmp_path):

@@ -17,8 +17,8 @@ archives, so the re-review reads its predecessor as data rather than parsing
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -40,17 +40,17 @@ class StoredReview:
 
 
 def _write_text(path: Path, text: str) -> None:
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    # 0o666 so the kernel applies the process umask (Path.write_text).
+    # os.open, not mkstemp: mkstemp is 0600, and reading umask to chmod is
+    # process-global (threads in the review pipeline would race a umask of 0).
+    tmp = path.parent / f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
-        # mkstemp is 0600; review.md is not secret — match Path.write_text.
-        mask = os.umask(0)
-        os.umask(mask)
-        os.chmod(tmp, 0o666 & ~mask)
-        core.serde.replace_file(Path(tmp), path)
+        core.serde.replace_file(tmp, path)
     except BaseException:
-        Path(tmp).unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
         raise
 
 

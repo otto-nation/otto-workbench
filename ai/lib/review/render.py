@@ -43,6 +43,8 @@ def finding_line(f: RecordFinding, *, sids: bool = False, evidence: bool = False
 def failures_body(failures: tuple[AgentFailure, ...]) -> str:
     """The Agent Failures table, and the recover hint when a retry could help."""
     lines = ["| Agent | Reason | Status |", "|-------|--------|--------|"]
+    # A reason is free text — an RPC error, a quoted stderr line — and one
+    # literal pipe in it shifts every later cell in the row.
     lines += [f"| {f.agent} | {escape_cell(f.reason)} | {f.status} |" for f in failures]
     if any(f.recoverable for f in failures):
         lines += ["", f"{RECOVER_HINT} to retry failed agents."]

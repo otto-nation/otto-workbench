@@ -314,15 +314,19 @@ def build_failures_body(state: "PipelineState") -> str:
 
     for idx, diagnosis in sorted(state.groups_failed.items()):
         rows.append(AgentFailure(
-            f"group-{idx}: {state.group_label(idx)}", diagnosis.message, "failed",
-            diagnosis.recoverable,
+            agent=f"group-{idx}: {state.group_label(idx)}",
+            reason=diagnosis.message,
+            status="failed",
+            recoverable=diagnosis.recoverable,
         ))
 
     for phase, diagnosis in sorted(state.failed.items()):
         fell_back = diagnosis.kind is DiagnosisKind.MECHANICAL_FALLBACK
         rows.append(AgentFailure(
-            str(phase), diagnosis.message, "fallback" if fell_back else "failed",
-            diagnosis.recoverable,
+            agent=str(phase),
+            reason=diagnosis.message,
+            status="fallback" if fell_back else "failed",
+            recoverable=diagnosis.recoverable,
         ))
 
     if not rows:

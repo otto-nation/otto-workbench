@@ -1,5 +1,5 @@
 """review.md rendered from the record: parity with today's documents, and the
-deviations the plan accepts, each pinned."""
+deviations the plan accepts (D1–D10), each pinned."""
 
 import sys
 from pathlib import Path
@@ -106,6 +106,19 @@ def test_evidence_is_never_on_the_page():
     record = ingest_review(text)
     assert "call()" not in render_review(record, ReviewMeta(repo="a/b", pr_number=1))
     assert "  > call()" in render_body(record, evidence=True)
+
+
+def test_a_finding_renders_under_the_section_its_id_names():
+    """D10."""
+    body = render_body(ingest_review(
+        "## Nit\n"
+        "- [ ] **[S1]** `a.py:1` — x\n"
+        "- [ ] **[N1]** `b.py:2` — y\n"
+    ))
+    assert "## Should fix" in body
+    assert "**[S1]**" in body.split("## Should fix", 1)[1].split("## ", 1)[0]
+    assert "**[N1]**" in body.split("## Nit", 1)[1].split("## ", 1)[0]
+    assert body.index("## Should fix") < body.index("## Nit")
 
 
 def test_omitted_sections_are_left_out():

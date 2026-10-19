@@ -71,10 +71,11 @@ bounded, and what outlived it is named on the stderr the caller already reads.
 Neither spawn path enters `Popen` as a context manager: `__exit__` reaps with an
 unbounded `wait()` for anything but a `KeyboardInterrupt`, which would hang the
 unwinding of an ordinary exception on exactly the child the kill failed to remove.
-
-Tests that stub `subprocess.run` as `gh` still hit that function, so they keep
-handing back `CompletedProcess` without a Popen double. A `ceiling:` on that
-branch names why it remains.
+Both the default path and the group path spawn through `_run_popen`:
+`subprocess.run` SIGKILLs on timeout and never yields the pid a TERM-first
+ladder needs. The non-group path signals with `Popen.send_signal`, so the
+handle that spawned the child is the one that stops it; the group path still
+uses `killpg` because the rest of the tree has no handle here.
 
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them
@@ -133,15 +134,6 @@ from typing import IO, TextIO
 
 import core.children
 import core.timeouts
-
-# Captured at import so a test that replaces `subprocess.run` with a
-# CompletedProcess stub is visible by identity. Production never diverges.
-_STDLIB_RUN = subprocess.run
-
-# The suite's autouse backend guard wraps `subprocess.run` under this name and
-# still spawns. It is not a stub; treating it as one would SIGKILL on timeout
-# in every test, which is the defect this module just closed.
-_BACKEND_GUARD_RUN = "guarded_run"
 
 # gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
 # from REST or GraphQL, and git over https reports one as "HTTP 502" too.
@@ -498,10 +490,12 @@ def _signal_process(process: subprocess.Popen, sig: int, *, group: bool) -> str:
     branch for.
 
     When *group* is true, `start_new_session` made the child a group leader, so
-    its pid is the group id. A process that exited between the bound expiring
-    and this call leaves nothing to signal — the race, not a failure. A process
-    this one may not signal is the case worth telling the caller about, because
-    something is then still running with nothing holding a handle to it.
+    its pid is the group id and `killpg` reaches the rest of the tree. When it
+    is false, `Popen.send_signal` posts to the child this handle already owns.
+    A process that exited between the bound expiring and this call leaves
+    nothing to signal — the race, not a failure. A process this one may not
+    signal is the case worth telling the caller about, because something is
+    then still running with nothing holding a handle to it.
 
     Signalling is not reaping, which is why `_reap` exists and why `_terminate`
     pairs the two. The signal is posted and this returns; the caller then
@@ -511,7 +505,7 @@ def _signal_process(process: subprocess.Popen, sig: int, *, group: bool) -> str:
         if group:
             os.killpg(process.pid, sig)
         else:
-            os.kill(process.pid, sig)
+            process.send_signal(sig)
     except ProcessLookupError:
         return ""
     except PermissionError:
@@ -822,16 +816,6 @@ def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
     )
 
 
-def _subprocess_run_is_stubbed() -> bool:
-    """A test replaced `subprocess.run` with a double that does not spawn."""
-    fn = subprocess.run
-    if fn is _STDLIB_RUN:
-        return False
-    if getattr(fn, "__name__", "") == _BACKEND_GUARD_RUN:
-        return False
-    return True
-
-
 def run(
     cmd: list[str],
     *,
@@ -932,28 +916,6 @@ def run(
             cmd, timeout, input_text, spawn, relay,
             kill_process_group=kill_process_group,
         )
-    # ceiling: tests patch `subprocess.run` as `gh`, handing back
-    # `CompletedProcess`, so a patched run still takes this branch and inherits
-    # `subprocess.run`'s SIGKILL on timeout. Production never does — it goes
-    # through `_run_popen`, which TERMs first. The suite's autouse backend guard
-    # also replaces `subprocess.run`, but still spawns, so it is not a stub.
-    # Upgrade trigger: once those stubs move to a Popen-shaped double, delete
-    # this branch.
-    if not kill_process_group and _subprocess_run_is_stubbed():
-        # `input` and `stdin` are mutually exclusive to `subprocess.run` — it
-        # opens the pipe itself when there is something to write, so naming the
-        # closed stream is only ours to do when there is not.
-        if input_text is None:
-            spawn["stdin"] = subprocess.DEVNULL
-        try:
-            completed = subprocess.run(cmd, input=input_text, timeout=timeout, **spawn)
-        except subprocess.TimeoutExpired as exc:
-            _record_kill(cmd, f"timed out after {timeout:g}s")
-            return _timed_out(cmd, timeout, exc, "")
-        if externally_killed(completed.returncode):
-            _record_kill(cmd, f"killed by {signal_description(completed.returncode)}")
-        return CmdResult(returncode=completed.returncode,
-                         stdout=completed.stdout or "", stderr=completed.stderr or "")
     return _run_popen(
         cmd, timeout, input_text, spawn, kill_process_group=kill_process_group,
     )

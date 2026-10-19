@@ -4893,10 +4893,11 @@ bounded, and what outlived it is named on the stderr the caller already reads.
 Neither spawn path enters `Popen` as a context manager: `__exit__` reaps with an
 unbounded `wait()` for anything but a `KeyboardInterrupt`, which would hang the
 unwinding of an ordinary exception on exactly the child the kill failed to remove.
-
-Tests that stub `subprocess.run` as `gh` still hit that function, so they keep
-handing back `CompletedProcess` without a Popen double. A `ceiling:` on that
-branch names why it remains.
+Both the default path and the group path spawn through `_run_popen`:
+`subprocess.run` SIGKILLs on timeout and never yields the pid a TERM-first
+ladder needs. The non-group path signals with `Popen.send_signal`, so the
+handle that spawned the child is the one that stops it; the group path still
+uses `killpg` because the rest of the tree has no handle here.
 
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them

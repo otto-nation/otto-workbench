@@ -15,6 +15,7 @@ from unittest import mock
 
 import pytest
 
+from proc_run_bridge_support import maybe_bridge_popen, real_run_section
 from repo_config_guard_support import _REPO_CONFIG, _assert_config_unchanged, _config_bytes
 
 # The suite heartbeat's in-flight records, as a plugin of their own so this
@@ -258,11 +259,13 @@ def _no_live_backend(monkeypatch):
 
     def guarded_run(cmd, *args, **kwargs):
         refuse_backend(cmd)
-        return real_run(cmd, *args, **kwargs)
+        with real_run_section():
+            return real_run(cmd, *args, **kwargs)
 
     def guarded_popen(cmd, *args, **kwargs):
-        refuse_backend(cmd)
-        return real_popen(cmd, *args, **kwargs)
+        # Stubs model subprocess.run; production spawns via Popen.
+        return maybe_bridge_popen(
+            subprocess.run, guarded_run, refuse_backend, real_popen, cmd, args, kwargs)
 
     monkeypatch.setattr(subprocess, "run", guarded_run)
     monkeypatch.setattr(subprocess, "Popen", guarded_popen)

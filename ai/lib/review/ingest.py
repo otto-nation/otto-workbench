@@ -3,9 +3,8 @@
 Every agent artifact that becomes review state passes through `ingest_review`
 where it enters. Ingest is strict: an entry it cannot represent faithfully — an
 unknown severity token, a duplicate ID, a declaration with nothing after it — is
-an `IngestError`, never a silent repair. The phase that wrote it gets one repair
-turn (`ingest_with_repair`), with the errors quoted; a second rejection is an
-agent failure, handled as failures already are.
+an `IngestError`, never a silent repair. A second rejection is an agent failure,
+handled as failures already are.
 
 Text carrying the render `BANNER` is refused outright: `review.md` is a view of
 `review.json` and is never parsed back.
@@ -52,8 +51,11 @@ _DECLARATION_LIKE_RE = re.compile(r"^- (?:\[[ x]\] )?\*\*\[([A-Z]+)(\d+)\]")
 _FAILURE_ROW_RE = re.compile(r"^\|\s*(.+?)\s*\|\s*(.*?)\s*\|\s*(\w+)\s*\|$")
 _FAILURE_HEADER = ("| agent |", "|---")
 _SEVERITY_KEYS = frozenset(s.key for s in SEVERITIES)
-# Named location at the start of the remainder, for a line with no dash separator.
-_LOCATION_OPEN_RE = re.compile(r"^(?:\*\*`[^`]+`\*\*|\*\*[^*]+?\*\*|`[^`]+`)\s*")
+# Named location at the start of the remainder when the line has no dash
+# separator. extract_body_text then returns "" and R2 still needs the body
+# (`text` in `- [ ] **[S1]** \`a.py:1\` text *(declined — x)*`). The `.+?`
+# alternatives match `_PATH_SECTION_RE`; this exists only for that no-dash case.
+_LOCATION_OPEN_RE = re.compile(r"^(?:\*\*`.+?`\*\*|\*\*.+?\*\*|`.+?`)\s*")
 
 
 class IngestErrorKind(StrEnum):
@@ -129,20 +131,58 @@ class _Annotation:
 
 
 def _take_tail(after: str, checked: bool) -> _Annotation:
-    """Tail annotation taken off `after`; disposition/reason/unverified filled."""
+    """Declined/unverified tail taken off `after`. Skip is applied later."""
     if checked:
         m = UNVERIFIED_TAIL_RE.search(after)
         if m:
             return _Annotation(after[:m.start()].rstrip(), Disposition.FIXED,
                                (m.group(1) or "").strip(), True)
         return _Annotation(after, Disposition.FIXED)
-    for tail_re, disposition in (
-        (DECLINED_TAIL_RE, Disposition.DECLINED),
-        (SKIP_TAIL_RE, Disposition.SKIPPED),
-    ):
-        if m := tail_re.search(after):
-            return _Annotation(after[:m.start()].rstrip(), disposition, (m.group(1) or "").strip())
+    if m := DECLINED_TAIL_RE.search(after):
+        return _Annotation(after[:m.start()].rstrip(), Disposition.DECLINED,
+                           (m.group(1) or "").strip())
     return _Annotation(after, Disposition.OPEN)
+
+
+def _skip_on_declaration(remainder: str, has_later: bool, note: _Annotation) -> _Annotation:
+    """Skip tail on the declaration line only when it is also the last body line.
+
+    Today's `is_skipped` searches `SKIP_TAIL_RE` against the whole span body, so
+    a skip at the end of the declaration does not count once a continuation
+    (evidence included) follows. Strip here only when nothing follows, so the
+    skip's em dash cannot steal `extract_body_text`'s separator.
+    """
+    if note.disposition is not Disposition.OPEN or has_later:
+        return note
+    if m := SKIP_TAIL_RE.search(remainder):
+        return _Annotation(remainder[:m.start()].rstrip(), Disposition.SKIPPED,
+                           (m.group(1) or "").strip())
+    return note
+
+
+def _skip_on_later(first: str, cont: list[str], rest: list[str], note: _Annotation) -> tuple[str, list[str], _Annotation]:
+    """Skip tail at the end of the last non-blank span line after the declaration.
+
+    The last line is taken from `rest` in document order, evidence included,
+    because today's `is_skipped` sees evidence as part of `finding.body`.
+    """
+    if note.disposition is not Disposition.OPEN:
+        return first, cont, note
+    last = ""
+    for raw in rest:
+        if raw.strip():
+            last = raw.rstrip()
+    if not last or not (m := SKIP_TAIL_RE.search(last)):
+        return first, cont, note
+    note = _Annotation(first, Disposition.SKIPPED, (m.group(1) or "").strip())
+    stripped = last[:m.start()].rstrip()
+    for i in range(len(cont) - 1, -1, -1):
+        if cont[i].strip():
+            if SKIP_TAIL_RE.search(cont[i]):
+                cont = list(cont)
+                cont[i] = stripped
+            break
+    return first, cont, note
 
 
 def _apply_head(first: str, note: _Annotation) -> _Annotation:
@@ -165,14 +205,15 @@ def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
     sid = SID_MARKER_RE.search(line[:m.end()])
     after = line[m.end():]
     tail = _take_tail(after, checked=box == "x")
+    rest = lines[span.start + 1: span.end]
+    has_later = any(raw.strip() for raw in rest)
+    tail = _skip_on_declaration(tail.first, has_later, tail)
     remainder = tail.first
     location = finding_location(remainder)
     if location.named:
         first = extract_body_text(remainder)
         if first and remainder.endswith(first):
             lead = remainder[: len(remainder) - len(first)]
-        elif first:
-            lead = remainder
         else:
             opened = _LOCATION_OPEN_RE.match(remainder)
             if opened:
@@ -182,15 +223,16 @@ def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
     else:
         lead, first = "", remainder.strip()
     note = _apply_head(first, tail)
-    split = split_evidence(lines[span.start + 1: span.end])
+    split = split_evidence(rest)
     cont = [part.rstrip() for part in split.body]
     while cont and not cont[-1].strip():
         cont.pop()
+    first, cont, note = _skip_on_later(note.first, cont, rest, note)
     identity = FindingIdentity.of(line)
     return RecordFinding(
         id=f"{m.group(2)}{m.group(3)}", severity=m.group(2),
         path=location.path, line=location.line, end_line=location.end_line,
-        lead=lead, body="\n".join([note.first, *cont]),
+        lead=lead, body="\n".join([first, *cont]),
         evidence="\n".join(part.rstrip() for part in split.evidence),
         stable_id=identity.stable_id if identity else "",
         sid=sid.group(1) if sid else "",
@@ -259,7 +301,7 @@ class _Builder:
             else:
                 self.errors.append(IngestError(
                     IngestErrorKind.MISSING_ANCHOR, index + 1,
-                    f"{tag} declares a finding but names no location and says nothing",
+                    f"could not parse a finding declaration (nothing usable after its tag): {text.strip()}",
                 ))
 
     def record(self, findings: list[RecordFinding]) -> ReviewRecord:

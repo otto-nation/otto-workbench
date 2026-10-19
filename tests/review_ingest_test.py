@@ -42,6 +42,30 @@ class TestRejections:
         assert exc.value.errors[0].line == 6
         assert "N1" in exc.value.errors[0].render()
 
+    def test_errors_come_back_sorted_by_line(self):
+        text = (
+            "## Nit\n"
+            "- **[X1]** `a.py:1` — z\n"
+            "- **[N1]** `b.py:2` — x\n"
+            "- **[N1]** `c.py:3` — y\n"
+        )
+        with pytest.raises(IngestRejected) as exc:
+            ingest_review(text)
+        assert [e.line for e in exc.value.errors] == [2, 4]
+
+    def test_missing_anchor_quotes_the_unparsed_line(self):
+        line = "- **[M1]**: `a.py:1` — body"
+        with pytest.raises(IngestRejected) as exc:
+            ingest_review(f"## Must fix\n{line}\n")
+        err = exc.value.errors[0]
+        assert err.kind is IngestErrorKind.MISSING_ANCHOR
+        assert line in err.detail
+        assert "says nothing" not in err.detail
+
+    def test_a_capital_x_checkbox_stays_prose(self):
+        record = ingest_review("## Should fix\n- [X] **[S1]** `a.py:1` — body\n")
+        assert record.findings == ()
+
     def test_a_rendered_file_is_refused_even_when_not_strict(self):
         with pytest.raises(IngestRejected):
             ingest_review(f"{BANNER}\n## Summary\nx\n", strict=False)
@@ -60,6 +84,11 @@ class TestWhatIsRead:
         (f,) = record.findings
         assert (f.path, f.line, f.end_line) == ("a.py", 3, 5)
         assert f.lead == "**`a.py:3-5`** — " and f.body == "Missing guard."
+
+    def test_a_named_location_without_a_dash_still_splits(self):
+        (f,) = ingest_review("## Should fix\n- **[S1]** `a.py:1` text without a dash\n").findings
+        assert f.lead == "`a.py:1` " and f.body == "text without a dash"
+        assert (f.path, f.line) == ("a.py", 1)
 
     def test_an_unlocated_finding_keeps_its_whole_text_as_body(self):
         (f,) = ingest_review("## Should fix\n- [ ] **[S3]** PR scope — two changes.\n").findings
@@ -87,6 +116,19 @@ class TestWhatIsRead:
         assert (f["N2"].disposition, f["N2"].reason, f["N2"].body) == (Disposition.DECLINED, "by design", "no.")
         assert (f["N3"].disposition, f["N3"].reason) == (Disposition.SKIPPED, "needs a person")
         assert (f["N4"].unverified, f["N4"].reason) == (True, "suite red")
+
+    def test_a_skip_on_the_declaration_does_not_count_once_a_continuation_follows(self):
+        (f,) = ingest_review(
+            "## Should fix\n- [ ] **[S1]** `a.py:1` — body *(skipped — r)*\n  more prose\n"
+        ).findings
+        assert f.disposition is Disposition.OPEN
+        assert "*(skipped — r)*" in f.body
+
+    def test_a_skip_at_the_end_of_the_last_continuation_counts(self):
+        (f,) = ingest_review(
+            "## Should fix\n- [ ] **[S1]** `a.py:1` — body\n  more prose *(skipped — r)*\n"
+        ).findings
+        assert (f.disposition, f.reason, f.body) == (Disposition.SKIPPED, "r", "body\n  more prose")
 
     def test_a_tail_annotation_with_an_em_dash_is_not_the_body_separator(self):
         (f,) = ingest_review(
@@ -120,8 +162,14 @@ class TestWhatIsRead:
         assert record.extra[0].heading == "Review gaps"
 
     def test_the_header_is_not_read(self):
-        record = ingest_review("# T\n<!-- head_sha: abc -->\n<!-- weird: 1 -->\n\n## Summary\nx\n")
+        record = ingest_review(
+            "# T\n<!-- head_sha: abc -->\n<!-- summary: HEADER_ONLY_KEY -->\n"
+            "This would be the summary if the header were read.\n\n## Summary\nx\n"
+        )
         assert record.summary == "x"
+        assert record.verdict == ""
+        assert "HEADER_ONLY_KEY" not in repr(record)
+        assert "would be the summary" not in repr(record)
 
     def test_copy_tree_restores_py_names(self, tmp_path):
         dest = copy_tree(tmp_path / "tree")

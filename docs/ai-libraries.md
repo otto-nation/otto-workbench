@@ -1429,9 +1429,8 @@ One ingest boundary: an agent's markdown review becomes a `ReviewRecord`, once.
 Every agent artifact that becomes review state passes through `ingest_review`
 where it enters. Ingest is strict: an entry it cannot represent faithfully — an
 unknown severity token, a duplicate ID, a declaration with nothing after it — is
-an `IngestError`, never a silent repair. The phase that wrote it gets one repair
-turn (`ingest_with_repair`), with the errors quoted; a second rejection is an
-agent failure, handled as failures already are.
+an `IngestError`, never a silent repair. A second rejection is an agent failure,
+handled as failures already are.
 
 Text carrying the render `BANNER` is refused outright: `review.md` is a view of
 `review.json` and is never parsed back.

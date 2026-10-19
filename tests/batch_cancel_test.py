@@ -161,8 +161,9 @@ def test_a_new_run_is_locked_before_its_items_and_saved_only_after_them(monkeypa
 
     def spy(held, run, verb):
         seen.append(_seen(run.id))
-        real(held, run, verb)
+        holds = real(held, run, verb)
         seen.append(_seen(run.id))
+        return holds
 
     monkeypatch.setattr(cli.pr_batch, "_hold_items", spy)
     assert _main(["batch", "run", "--checkout", str(repo)]) == 0

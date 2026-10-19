@@ -39,7 +39,7 @@ import config.workbench_config
 import core.report
 import core.run_lock
 import core.serde
-from batch.model import FINISHED_RUN, STEP_ORDER, Run, RunStatus, Step
+from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step
 from batch.requests import Cancel, Decide, Outcome
 from batch.store import Role
 from core.trail import TRAIL_ROOT_ENV, Trail
@@ -239,16 +239,17 @@ def _emit_summary(run: Run, code: int) -> None:
     batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
 
 
-def _drive(session: batch.store.Session, reporter: _Reporter, *, bin_dir: Path, cfg,
-           verbose: bool) -> RunStatus:
+def _drive(session: batch.store.Session, reporter: _Reporter, holds: batch.targets.ItemHolds,
+           *, bin_dir: Path, cfg, verbose: bool) -> RunStatus:
     """Drive *session*'s run until it blocks, then finish the session.
 
-    The caller still holds every item's target, so publishes that the final
-    drain applies stay narrowed to their items. Returns the status the
-    scheduler stopped at.
+    The scheduler releases an item's target from *holds* once the item is
+    terminal and committed. The caller still holds every other item's target,
+    so publishes that the final drain applies stay narrowed to their items.
+    Returns the status the scheduler stopped at.
     """
     scheduler = batch.scheduler.Scheduler(session, pr_bin=str(bin_dir / "pr"), cfg=cfg,
-                                          verbose=verbose)
+                                          verbose=verbose, release=holds.release_finished)
     reporter.counting = False
     stopped = scheduler.run_until_blocked()
     reporter.counting = True
@@ -287,6 +288,7 @@ class _Started:
     session: batch.store.Session
     cfg: config.workbench_config.BatchConfig
     trail: Trail
+    holds: batch.targets.ItemHolds
 
 
 def _busy_item(run, item, verb: str, exc: core.run_lock.LockBusy) -> str:
@@ -297,31 +299,36 @@ def _busy_item(run, item, verb: str, exc: core.run_lock.LockBusy) -> str:
     return f"run {run.id} not {action}: {item.key} is held by {exc.holder_text}{hint}"
 
 
-def _hold_items(held: contextlib.ExitStack, run, verb: str) -> None:
-    """Hold every item's target on *held*, sorted by path; raise _Refused if one is busy.
+def _hold_items(held: contextlib.ExitStack, run, verb: str) -> batch.targets.ItemHolds:
+    """Hold every unfinished item's target, sorted by path; raise _Refused if one is busy.
 
-    All or nothing: one PR that another process is working on refuses the
-    whole batch rather than silently dropping it, and the targets taken before
-    it are released as the stack unwinds. An item with no `origin` has no
-    target to hold. It is named on stderr, and its steps take their own locks.
+    The holds go on *held* as one `batch.targets.ItemHolds`, returned so the
+    scheduler can release a target once its items are terminal. Terminal items
+    are not held. All or nothing: a busy target refuses the whole batch, and
+    targets already taken are released as the stack unwinds. An item with no
+    `origin` is named on stderr; its steps take their own locks.
     """
-    targets = {}
+    targets: dict[Path, list[Item]] = {}
     for item in run.items:
+        if item.terminal:
+            continue
         target = batch.targets.item_target_dir(item)
         if target is None:
             print(f"pr batch: cannot name the pr target of {item.key} (no origin remote in "
                   f"{item.repo_dir}) — its steps lock it themselves", file=sys.stderr)
             continue
-        targets[target] = item
+        targets.setdefault(target, []).append(item)
+    holds = held.enter_context(batch.targets.ItemHolds())
     started = batch.store.now_iso()
     for target in sorted(targets):
-        item = targets[target]
+        items = targets[target]
         try:
-            held.enter_context(core.run_lock.hold(
-                {core.run_lock.TARGET}, target_dir=target, target_label=item.key,
+            holds.take(target, [i.key for i in items], core.run_lock.hold(
+                {core.run_lock.TARGET}, target_dir=target, target_label=items[0].key,
                 command=f"pr batch {verb} {run.id}", started=started))
         except core.run_lock.LockBusy as exc:
-            raise _Refused(_busy_item(run, item, verb, exc)) from exc
+            raise _Refused(_busy_item(run, items[0], verb, exc)) from exc
+    return holds
 
 
 def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox) -> _Started:
@@ -350,14 +357,14 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox)
         # The id exists only now. From here a batch refused the lock is told
         # which run to wait for or cancel, not only a pid.
         core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run.id)
-        _hold_items(held, run, "run")
+        holds = _hold_items(held, run, "run")
         trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
         run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
         session.commit()
     except BaseException:
         batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
         raise
-    return _Started(session, cfg, trail)
+    return _Started(session, cfg, trail, holds)
 
 
 def _emit_started(run: Run) -> None:
@@ -372,9 +379,10 @@ def _emit_started(run: Run) -> None:
 def _cmd_run(args, bin_dir: Path) -> int:
     plan = _plan(args)
     reporter = _Reporter()
-    # The run's own lock goes on `held` first, so it is released last. Every
-    # item's target is released before the session's exit (release, then
-    # hand-off), and a manual `pr` on one of these PRs is refused until then.
+    # The run's own lock goes on `held` first, so it is released last. An
+    # item's target is released once the item is terminal, and every other
+    # one before the session's exit (release, then hand-off); a manual `pr`
+    # on one of these PRs is refused until then.
     with contextlib.ExitStack() as held:
         try:
             started = _start_run(held, args, plan, _driver_inbox(bin_dir, reporter))
@@ -382,8 +390,8 @@ def _cmd_run(args, bin_dir: Path) -> int:
             return _err(str(exc))
         _emit_started(started.session.run)
         try:
-            stopped = _drive(started.session, reporter, bin_dir=bin_dir, cfg=started.cfg,
-                             verbose=args.verbose)
+            stopped = _drive(started.session, reporter, started.holds, bin_dir=bin_dir,
+                             cfg=started.cfg, verbose=args.verbose)
         finally:
             started.trail.finish()
     return _conclude(started.session.run.id, stopped, reporter)
@@ -397,12 +405,12 @@ def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
         return _Refused(f"run {run.id} is {run.status.value}")
     try:
         core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run.id)
-        _hold_items(held, run, "resume")
+        holds = _hold_items(held, run, "resume")
     except _Refused as exc:
         return exc
     batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
-    return _drive(session, reporter, bin_dir=bin_dir,
+    return _drive(session, reporter, holds, bin_dir=bin_dir,
                   cfg=_cfg([i.repo_dir for i in run.items]), verbose=verbose)
 
 

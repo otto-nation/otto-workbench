@@ -196,8 +196,13 @@ class Scheduler:
                  rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
                  unpublished: Callable[[str, str], bool] = _unpublished,
                  verbose: bool = False,
-                 closeout: Callable[[str, str], CloseoutDebt] | None = None):
+                 closeout: Callable[[str, str], CloseoutDebt] | None = None,
+                 release: Callable[[Run], object] | None = None):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
+        # Called with the run after every commit a tick makes, so the driver
+        # can give back the target lock of an item that is now terminal. A
+        # scheduler built without one (a test, a dry tick) holds nothing.
+        self._release = release or (lambda run: None)
         self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
@@ -592,6 +597,9 @@ class Scheduler:
         # The inbox reports each outcome as it is applied; the returned list is
         # not emitted again here.
         self.session.drain(settle=False)
+        # The drain committed after each request, so an item a queued drop-pr
+        # finished is on disk: its lock goes now, not after an inline publish.
+        self._release(self.run)
         cancel = self.run.cancel
         kill = cancel is not None and cancel.kill
         if kill:
@@ -600,6 +608,7 @@ class Scheduler:
         if cancel is None:
             self._admit()
         self.session.commit()
+        self._release(self.run)
         return self._blocked_status(cancel)
 
     def _loop(self) -> RunStatus:

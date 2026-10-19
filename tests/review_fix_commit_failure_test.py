@@ -1,17 +1,17 @@
 """A fix commit that fails pre-commit must not be reported as done.
 
-On the 2026-10-16 batch run, a self-review `--fix` pass edited files, then
-`git commit` died in the pre-commit chain:
+A self-review `--fix` pass edits files, then `git commit` dies in the
+pre-commit chain, in one of two shapes:
 
-- PR 4529 (`isaac/fix/queue_conflicts_partial_fetch`): `precommit:lint:py`
-  Ruff I001 auto-fixed the file and did not re-stage it.
-- PR 4116 (`isaac/ENG-4203/doc_external_tokens`): `precommit:lint:ts` failed
-  because `doc-external/node_modules` was missing.
+- a formatter (Ruff I001) rewrites a staged file in place and does not
+  re-stage it;
+- a lint task fails outright, e.g. because a dependency directory is missing.
 
-Both left staged, uncommitted edits. The review sidecar's `fix_commit_sha`
-stayed empty. The review child still exited 0, so the batch marked 4529 `done`
-(every box ticked, no open findings) and 4116 as an ordinary `step_review`
-(open findings). Nothing reported the uncommitted work.
+Either way the edits stay staged and uncommitted and the review sidecar's
+`fix_commit_sha` stays empty. Before this was fixed the review child still
+exited 0, so a batch marked the item `done` when every box was ticked, or
+raised an ordinary `step_review` over the leftover findings. Nothing reported
+the uncommitted work.
 
 Expected: a formatter's auto-fix is re-staged and the commit retried; a
 commit that still fails is a failed step, with the reason surfaced.
@@ -97,7 +97,7 @@ def _land(repo, **kwargs):
 
 
 class TestAFormatterAutoFixIsRestaged:
-    """Ruff I001 on PR 4529: the hook rewrote the file and the commit died."""
+    """Ruff I001: the hook rewrote the file and the commit died."""
 
     def test_land_restages_the_rewrite_and_retries_the_commit(
         self, git_wt, tmp_path, live_git_hooks,
@@ -151,7 +151,7 @@ class TestAFormatterAutoFixIsRestaged:
 
 
 class TestARefusedCommitIsAFailedPass:
-    """PR 4116: `precommit:lint:ts` failed; nothing to restage would have helped."""
+    """A lint task failed outright; nothing to restage would have helped."""
 
     def test_the_work_stays_uncommitted_and_the_sidecar_stays_unstamped(
         self, git_wt, tmp_path, live_git_hooks,
@@ -202,7 +202,7 @@ class TestBatchDoesNotMarkAFailedCommitDone:
     """The review child exited 0. classify read that, not the failed landing."""
 
     def test_ticked_findings_and_a_failed_commit_are_not_done(self, monkeypatch):
-        """PR 4529: every box ticked, `fix_commit_sha` empty, item `done`."""
+        """Every box ticked, `fix_commit_sha` empty: the item must not be `done`."""
         r = _classify_review(monkeypatch, findings=[], log_tail=[_COMMIT_FAILED_LINE])
 
         assert r.status is batch.model.StepStatus.FAILED
@@ -211,7 +211,7 @@ class TestBatchDoesNotMarkAFailedCommitDone:
         assert r.decisions[0].payload.get("reason") == "commit_failed"
 
     def test_open_findings_do_not_hide_a_failed_commit(self, monkeypatch):
-        """PR 4116: classified as ordinary `step_review` over the leftover nits."""
+        """Open findings must not hide the failed commit behind a `step_review`."""
         findings = [{"severity": "nit", "title": "x", "declined": True}]
         r = _classify_review(monkeypatch, findings=findings, log_tail=[_COMMIT_FAILED_LINE])
 

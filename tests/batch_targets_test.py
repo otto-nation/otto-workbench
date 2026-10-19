@@ -188,7 +188,8 @@ def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
 
 def _holding(holds, *keys_by_target):
     for target, keys in keys_by_target:
-        holds.take(target, keys, label=keys[0], command="pr batch run r", started="t")
+        holds.take(target, keys, core.run_lock.hold(
+            {TARGET}, target_dir=target, command="pr batch run r", started="t"))
 
 
 def test_item_holds_release_only_targets_whose_items_are_all_terminal(repo):

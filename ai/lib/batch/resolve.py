@@ -14,7 +14,7 @@
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
-| | `discard` | item → `done`; local commits stay and nothing is pushed |
+| | `discard` | item → `done` and its target lock released; local commits stay and nothing is pushed |
 
 Every action that leaves the item terminal (`dropped` or `done`) ends the
 batch's claim on that PR: the driver holding the run releases the item's target

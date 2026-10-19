@@ -303,13 +303,10 @@ def _hold_items(held: contextlib.ExitStack, run, verb: str) -> batch.targets.Ite
     """Hold every unfinished item's target, sorted by path; raise _Refused if one is busy.
 
     The holds go on *held* as one `batch.targets.ItemHolds`, returned so the
-    scheduler can release each item's target once that item is terminal; the
-    rest are released as the stack unwinds. A terminal item — dropped, done,
-    or closed on a resume — is never admitted again, so its target is not
-    taken. All or nothing: one PR that another process is working on refuses
-    the whole batch rather than silently dropping it, and the targets taken
-    before it are released as the stack unwinds. An item with no `origin` has
-    no target to hold. It is named on stderr, and its steps take their own locks.
+    scheduler can release a target once its items are terminal. Terminal items
+    are not held. All or nothing: a busy target refuses the whole batch, and
+    targets already taken are released as the stack unwinds. An item with no
+    `origin` is named on stderr; its steps take their own locks.
     """
     targets: dict[Path, list[Item]] = {}
     for item in run.items:
@@ -326,8 +323,9 @@ def _hold_items(held: contextlib.ExitStack, run, verb: str) -> batch.targets.Ite
     for target in sorted(targets):
         items = targets[target]
         try:
-            holds.take(target, [i.key for i in items], label=items[0].key,
-                       command=f"pr batch {verb} {run.id}", started=started)
+            holds.take(target, [i.key for i in items], core.run_lock.hold(
+                {core.run_lock.TARGET}, target_dir=target, target_label=items[0].key,
+                command=f"pr batch {verb} {run.id}", started=started))
         except core.run_lock.LockBusy as exc:
             raise _Refused(_busy_item(run, items[0], verb, exc)) from exc
     return holds

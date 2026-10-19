@@ -1,7 +1,7 @@
 """Rate-limited 'Retry preempted jobs' is rerun, not sent to a person.
 
-Run ``20261015T211317-f108`` (PRs 4089/4116/4195/4200): the CI dashboard named
-``Retry preempted jobs`` with ``gh: API rate limit exceeded for installation``.
+A helper job named ``Retry preempted jobs`` fails with
+``gh: API rate limit exceeded for installation``.
 ``classify_job`` matches ``INFRA_SIGNATURES`` (``rate limit``) and
 ``CIFixAdapter`` skips every item; ``run_fix`` reruns them with
 ``gh run rerun --failed`` rather than leaving a ``step_review``.
@@ -38,8 +38,7 @@ import rebase.inspect  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 
 
-# Headlines from run 20261015T211317-f108, PR 4089 log
-# (…/batch/20261015T211317-f108/logs/usemaximum__maximum-4089-ci-0.log).
+# Headlines as the CI dashboard reports them for a rate-limited helper job.
 RATE_LIMIT = (
     "gh: API rate limit exceeded for installation. If you reach out to GitHub "
     "Support for help, please include the request ID"
@@ -49,8 +48,8 @@ PREEMPTED_JOB = "Retry preempted jobs"
 OOM = "The runner process was killed: oom / out of memory"
 
 ITEM = batch.model.Item(
-    key="usemaximum/maximum#4089", repo="usemaximum/maximum", repo_dir=".",
-    pr=4089, branch="isaac/ENG-4203/brand_tokens", head_sha="s", worktree="/wt",
+    key="owner/repo#42", repo="owner/repo", repo_dir=".",
+    pr=42, branch="feature/x", head_sha="s", worktree="/wt",
 )
 
 
@@ -70,10 +69,10 @@ def _group(*items):
 
 def _report(failures):
     return CIReport(
-        repo="usemaximum/maximum", branch="isaac/ENG-4203/brand_tokens",
-        pr_number=4089, run_id=38794327836,
-        run_ids=[38794327836, 38794327524, 38794327554],
-        run_number=18374, head_sha="93b5acd", conclusion="failure",
+        repo="owner/repo", branch="feature/x",
+        pr_number=42, run_id=101,
+        run_ids=[101, 102, 103],
+        run_number=7, head_sha="abc1234", conclusion="failure",
         behind_main=0, failures=failures, progression={},
         resolved_since_prior=[],
     )
@@ -311,7 +310,7 @@ def test_batch_ci_step_does_not_ask_ci_check_to_rerun():
 
 def _poll(status, *, running=0, queued=0, completed=3):
     return pr.ci_wait.PollResult(
-        run_ids=[38794327836], merged={"status": status, "jobs": []},
+        run_ids=[101], merged={"status": status, "jobs": []},
         counts=pr.ci_runs.JobCounts(
             completed=completed, failed=0, running=running, queued=queued,
         ),

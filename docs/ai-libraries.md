@@ -4868,7 +4868,7 @@ quoted, since it is then the only evidence there is.
 An expired timeout is the same kind of answer. `run` converts it into a
 `CmdResult` carrying `TIMEOUT_RETURNCODE` — the shell convention — with the bound
 and the command quoted on stderr, and whatever the process wrote before it was
-killed preserved on both streams. Raising instead would need a handler at each of
+stopped preserved on both streams. Raising instead would need a handler at each of
 the call sites that has none; as a result code it degrades through
 `out`/`ok`/`lines` exactly as any other failure does, and it is contract rather
 than an implementation detail: the eval scorers tell a timed-out case from a
@@ -4882,20 +4882,21 @@ post-processing, after every agent had been paid for.
 
 A caller running something that spawns its own tree passes
 `kill_process_group=True` and gets a child in a session of its own, so an
-expired bound takes the whole group. Killing is not reaping: SIGKILL is posted
-and may not have landed — `killpg` can be refused outright, and a child in
-uninterruptible sleep does not receive it until it leaves that state — so every
-wait after a kill on that path is bounded, and what outlived it is named on the
-stderr the caller already reads. That path does not enter `Popen` as a context
-manager for the same reason: `__exit__` reaps with an unbounded `wait()` for
-anything but a `KeyboardInterrupt`, which would hang the unwinding of an
-ordinary exception on exactly the group the kill failed to remove.
+expired bound takes the whole group. An expired bound is SIGTERM first, a
+bounded `TERM_GRACE` for the child to act, then SIGKILL. git unlinks its
+lockfiles (`packed-refs.lock`, `index.lock`, ref `.lock` files) from a sigchain
+handler that SIGKILL never runs; the grace is that cleanup, not a second copy of
+the expired tier. Signalling is not reaping: SIGKILL is posted and may not have
+landed — `killpg` can be refused outright, and a child in uninterruptible sleep
+does not receive it until it leaves that state — so every wait after a signal is
+bounded, and what outlived it is named on the stderr the caller already reads.
+Neither spawn path enters `Popen` as a context manager: `__exit__` reaps with an
+unbounded `wait()` for anything but a `KeyboardInterrupt`, which would hang the
+unwinding of an ordinary exception on exactly the child the kill failed to remove.
 
-The default path still reaps unbounded, through `subprocess.run`'s own kill.
-It is the narrower exposure by some way — one direct child, no `killpg` to be
-refused, no grandchild to outlive the signal — and a `ceiling:` at that call
-names what closing it would cost, which is a rewrite of how the suite stubs
-`gh` rather than anything in this module.
+Tests that stub `subprocess.run` as `gh` still hit that function, so they keep
+handing back `CompletedProcess` without a Popen double. A `ceiling:` on that
+branch names why it remains.
 
 Both of the first two are also *recorded*, in `MACHINE_KILLS`. Returning them as
 ordinary results is right for the caller and is exactly what makes them

@@ -86,6 +86,7 @@ from pathlib import Path
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from pr.target import display_repo
+from review.grammar import SKIP_HEAD_RE, SKIP_TAIL_RE
 from review.spans import finding_spans
 from review.types import SEVERITIES, Finding, FindingScope, ReviewMeta, ReviewType, meta_enum
 
@@ -98,6 +99,7 @@ SECTION_SUMMARY = "Summary"
 SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
+SECTION_FAILURES = "Agent Failures"
 
 # A re-review's ledger: one line per prior finding, saying whether the change
 # resolved it. Reconciliation reads it to tell a finding the re-review dropped
@@ -565,19 +567,6 @@ def review_title(meta: ReviewMeta) -> str:
 
 # ── Finding lines ────────────────────────────────────────────────────────────
 
-# The fix pass's record of a finding it read and left alone, in the same grammar
-# as `review.grammar`'s decline annotation and optional in the same way — a skip
-# written without a reason is still a skip, and reading it as an ordinary open
-# finding is what lets a sibling finding's edit report it as fixed.
-#
-# Anchored to head and tail for the reason the decline annotation is: matched
-# anywhere, a finding whose prose quotes the annotation — the docs of the fix
-# pass do, verbatim — would read as carrying it and never be touched again.
-_SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
-_SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
-_SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
-
-
 def is_skipped(finding: Finding) -> bool:
     """Whether a previous fix pass recorded that it left this finding alone.
 
@@ -586,7 +575,7 @@ def is_skipped(finding: Finding) -> bool:
     """
     if finding.checked:
         return False
-    return bool(_SKIP_HEAD_RE.match(finding.body) or _SKIP_TAIL_RE.search(finding.body))
+    return bool(SKIP_HEAD_RE.match(finding.body) or SKIP_TAIL_RE.search(finding.body))
 
 
 def _parse_findings(text: str) -> list[Finding]:

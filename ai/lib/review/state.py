@@ -30,7 +30,8 @@ from core.phases import Phase
 from pr.domains import ReviewStatus
 from agent.session import _parse_session_cost
 from review.document import (
-    SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument, set_section, set_status,
+    SECTION_FAILURES, SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument,
+    set_section, set_status,
 )
 from review.paths import (
     FILENAME_PIPELINE_STATE,
@@ -299,9 +300,6 @@ def _update_group_failed(
     with _state_lock:
         state.groups_failed[group_idx] = diagnosis
         _write_pipeline_state(job, state)
-
-
-SECTION_FAILURES = "Agent Failures"
 
 
 def build_failures_body(state: "PipelineState") -> str:

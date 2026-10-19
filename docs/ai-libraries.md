@@ -1422,6 +1422,24 @@ the different question of whether a finding is about to be posted twice.
 What a document is assembled from is `review.document`'s; what a finding means
 once parsed is `review.types`'.
 
+### review/ingest.py
+
+One ingest boundary: an agent's markdown review becomes a `ReviewRecord`, once.
+
+Every agent artifact that becomes review state passes through `ingest_review`
+where it enters. Ingest is strict: an entry it cannot represent faithfully — an
+unknown severity token, a duplicate ID, a declaration with nothing after it — is
+an `IngestError`, never a silent repair. The phase that wrote it gets one repair
+turn (`ingest_with_repair`), with the errors quoted; a second rejection is an
+agent failure, handled as failures already are.
+
+Text carrying the render `BANNER` is refused outright: `review.md` is a view of
+`review.json` and is never parsed back.
+
+In PR 0 this reads today's markdown grammar — `review.grammar` for a finding
+line, `review.spans` for where its body ends. From PR 1 agents write JSON and
+this becomes `json.loads` + `serde.from_dict` + validation.
+
 ### review/merge.py
 
 What becomes of findings as the group reviews are folded into one document.
@@ -1564,6 +1582,10 @@ annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 Some fields carry today's markdown verbatim — `lead`, `verdict`, `ledger`,
 `extra`, `severity_sections` — so the cut-over renders what the markdown
 pipeline wrote. They go when agents write JSON and the verdict is derived.
+
+### review/render.py
+
+Rendering a review record — `review.md` today, the GitHub comment from PR 2.
 
 ### review/reply_threads.py
 

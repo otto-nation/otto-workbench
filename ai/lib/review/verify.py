@@ -81,6 +81,7 @@ from review.grammar import (
     VERIFY_FINDING_RE, strip_line_suffix, strip_sid_markers,
 )
 from review.format import resolve_path
+from review.ingest import split_evidence
 from review.merge import renumber_findings
 from review.spans import drop_findings, finding_spans
 from review.types import (
@@ -368,26 +369,8 @@ def _verify_findings(
     return text, result
 
 
-_EVIDENCE_BLOCK_START_RE = re.compile(r"^ {2,}>\s*```")
-_EVIDENCE_BLOCKQUOTE_RE = re.compile(r"^ {2,}>")
-
-
 def _strip_evidence_blocks(text: str) -> str:
-    lines = text.split("\n")
-    kept: list[str] = []
-    in_evidence = False
-    for line in lines:
-        is_fence = _EVIDENCE_BLOCK_START_RE.match(line)
-        if not in_evidence and is_fence:
-            in_evidence = True
-            continue
-        if in_evidence:
-            in_evidence = not is_fence
-            continue
-        if _EVIDENCE_BLOCKQUOTE_RE.match(line):
-            continue
-        kept.append(line)
-    return "\n".join(kept)
+    return "\n".join(split_evidence(text.split("\n")).body)
 
 
 # ── Reconciling prose against dropped findings ───────────────────────────────

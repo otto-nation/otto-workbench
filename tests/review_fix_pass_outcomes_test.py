@@ -352,7 +352,7 @@ class TestApplyOutcomes:
                      verify_detail="no runnable check"),
         ])
         finding = review.document.ReviewDocument.parse(out).findings[0]
-        assert review.document._SKIP_TAIL_RE.search(finding.body) is None
+        assert review.grammar.SKIP_TAIL_RE.search(finding.body) is None
         assert finding.checked is True
 
     def test_a_box_quoted_in_prose_is_not_the_one_that_gets_ticked(self):
@@ -495,7 +495,7 @@ class TestApplyOutcomes:
                      verify_detail="see *(skipped — needs design)*"),
         ])
         finding = review.document.ReviewDocument.parse(out).findings[0]
-        assert review.document._SKIP_TAIL_RE.search(finding.body) is None
+        assert review.grammar.SKIP_TAIL_RE.search(finding.body) is None
         assert review.document.is_skipped(finding) is False
         assert finding.checked is True
 

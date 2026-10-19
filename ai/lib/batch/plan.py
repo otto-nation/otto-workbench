@@ -141,6 +141,9 @@ class Plan:
     ref_dirs: list[str] = field(default_factory=list)
 
 
+CLAIM_GRACE_SECONDS = 300
+
+
 @dataclass(frozen=True)
 class NamespaceClaim:
     """Ownership of one `refs/pr-batch/<hex>` namespace while a plan is in flight."""
@@ -155,8 +158,22 @@ class NamespaceClaim:
 
     @property
     def live(self) -> bool:
-        """Whether the process that wrote this claim is still running."""
-        return bool(self.started) and core.session_lock.process_start(self.pid) == self.started
+        """Whether the process that wrote this claim is still running.
+
+        `process_start` returns "" when `ps` fails, so an empty reading on either
+        side is not evidence of death: an unreadable current start is live, and a
+        claim written without one is live until `CLAIM_GRACE_SECONDS` after *created*.
+        """
+        now = core.session_lock.process_start(self.pid)
+        if self.started and now:
+            return now == self.started
+        if self.started:
+            return True
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(self.created)).total_seconds()
+        except ValueError:
+            return False
+        return age < CLAIM_GRACE_SECONDS
 
 
 def search_query(repos: list[str]) -> str:

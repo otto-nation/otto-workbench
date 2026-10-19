@@ -2,6 +2,7 @@ import dataclasses
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -286,3 +287,10 @@ def test_gc_drops_a_namespace_whose_claim_pid_was_recycled(tmp_path):
     assert batch.gc.gc_namespaces() == 1
     assert git_out(pair.work, "for-each-ref", ns) == ""
     assert batch.plan.read_claim(ns) is None
+
+
+def test_claim_with_empty_started_is_live_within_grace_then_dead():
+    fresh = batch.plan.NamespaceClaim(pid=os.getpid(), started="",
+                                      created=datetime.now(timezone.utc).isoformat())
+    old = dataclasses.replace(fresh, created="2000-01-01T00:00:00+00:00")
+    assert fresh.live and not old.live

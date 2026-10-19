@@ -68,6 +68,12 @@ FILENAME_PRIOR_FINDINGS = "prior-findings.json"
 
 FILENAME_POST_SESSION = "post.jsonl"
 REVIEW_EXT = ".md"
+FILENAME_REVIEW = f"review{REVIEW_EXT}"
+# The record `review.md` is rendered from, and the prior round's copies of it and
+# of its sidecar that a re-review reads instead of parsing `prior.md` back.
+FILENAME_RECORD = "review.json"
+FILENAME_PRIOR_RECORD = "prior.json"
+FILENAME_PRIOR_META = "prior-meta.json"
 
 ARCHIVES_DIRNAME = "archives"
 ARCHIVE_KEEP_COUNT = 3
@@ -154,7 +160,7 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
 def review_file_path(repo: str, pr_number: str) -> Path:
     """Return the expected path for a review file given repo and PR number."""
     repo_name = repo.split("/")[-1]
-    return core.workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
+    return core.workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / FILENAME_REVIEW
 
 
 def self_review_dir(repo: str, branch: str) -> Path:
@@ -165,7 +171,7 @@ def self_review_dir(repo: str, branch: str) -> Path:
 
 def self_review_file_path(repo: str, branch: str) -> Path:
     """The self-review document for *branch* in *repo*."""
-    return self_review_dir(repo, branch) / f"review{REVIEW_EXT}"
+    return self_review_dir(repo, branch) / FILENAME_REVIEW
 
 
 def _load_review_meta(review_dir: Path) -> ReviewMeta | None:
@@ -279,7 +285,7 @@ class ReviewEntry:
         """
         if self.kind is ReviewEntryKind.STRAY:
             raise ValueError(f"a stray file holds no review: {self.path}")
-        return self.path / f"review{REVIEW_EXT}"
+        return self.path / FILENAME_REVIEW
 
     def is_for(self, repo: str, pr_number: str | int) -> bool:
         """Whether meta.json attributes this entry to *repo*'s PR *pr_number*."""
@@ -327,7 +333,7 @@ def iter_review_entries(reviews_dir: Path | None = None) -> Iterator[ReviewEntry
         if entry.is_dir():
             kind = (
                 ReviewEntryKind.REVIEW
-                if (entry / f"review{REVIEW_EXT}").is_file()
+                if (entry / FILENAME_REVIEW).is_file()
                 else ReviewEntryKind.ORPHAN
             )
             # ceiling: meta.json is read for every directory, including by a

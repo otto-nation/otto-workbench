@@ -1546,6 +1546,25 @@ prior finding. Every finding posted inline opened a review thread,
 independent of that ledger, and what the author did with that thread is the
 other one — `review.reply_threads` reads it.
 
+### review/record.py
+
+The review record — `review.json`, the one source of truth for a review.
+
+A review used to be a markdown file that agents wrote and a dozen code paths
+edited in place. It is now this frozen tree, written atomically beside
+`meta.json`; `review.md` is rendered from it by `review.render` and never read
+back. Header facts — SHAs, mode, status, dates, generator — are `meta.json`'s
+(`ReviewMeta`); this record holds what the review *says*.
+
+Each finding carries its `Disposition`, which replaces the four partial ledgers
+that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped — …)*`
+annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
+`review.types.Finding` it always handed out, so readers did not change.
+
+Some fields carry today's markdown verbatim — `lead`, `verdict`, `ledger`,
+`extra`, `severity_sections` — so the cut-over renders what the markdown
+pipeline wrote. They go when agents write JSON and the verdict is derived.
+
 ### review/reply_threads.py
 
 What the author did with the threads the prior review's findings opened.

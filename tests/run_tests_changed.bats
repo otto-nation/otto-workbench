@@ -102,6 +102,7 @@ _stub_select_tests() {
   chmod +x "$bin/bats"
   PATH="$bin:$PATH" run --separate-stderr run_bats
   [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"no test file is affected by this diff"* ]]
   [[ "$output" != *RAN-BATS* ]]
 }

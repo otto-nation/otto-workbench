@@ -53,12 +53,11 @@ _run_step() {
   ' _ "$REPO_ROOT" "$TMPDIR" "${1:-}"
 }
 
-# _git_plugins [MANIFEST] — "name url" for each entry the shell Brewfile
-# annotates with `git:`, read straight from the file rather than through the
-# parser under test.
+# _git_plugins — "name url" for each entry the shell Brewfile annotates with
+# `git:`, read straight from the file rather than through the parser under test.
 _git_plugins() {
   sed -n 's/^brew "\([^"]*\)".*# *git: *\([^ ;]*\).*/\1 \2/p' \
-    "${1:-$REPO_ROOT/packages/shell/shell.Brewfile}"
+    "$REPO_ROOT/packages/shell/shell.Brewfile"
 }
 
 @test "without Homebrew, starship goes through install_package" {

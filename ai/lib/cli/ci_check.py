@@ -122,6 +122,7 @@ def main(argv: list[str] | None = None, *,
             return rebase.ci_fix.run_fix(
                 trail, report, ctx,
                 rebase_first=not args.no_rebase, verify=not args.no_verify,
+                wait_timeout=args.wait_timeout, wait_interval=args.wait_interval,
             ) if args.fix else 0
         except pr.ci_runs.RunUnavailable as exc:
             # Expected: there is no run to report on. Trailed where it was raised,

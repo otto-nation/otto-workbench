@@ -14,6 +14,7 @@ from pr.ci_failures import (
     FailureKind,
     Outcome,
     classify_job,
+    is_transient_infra,
     FailureItem,
     FailureGroup,
     RunState,
@@ -21,6 +22,8 @@ from pr.ci_failures import (
     sync_ci_domain,
     LogMarker,
     LOG_MARKERS,
+    INFRA_SIGNATURES,
+    TRANSIENT_INFRA_SIGNATURES,
 )
 from pr.domains import CIDomain
 
@@ -116,6 +119,60 @@ def test_classify_job_case_insensitive():
 def test_classify_job_no_infra_override_without_signature():
     annotations = ["SC2086: Double quote to prevent globbing"]
     assert classify_job("lint / shellcheck", annotations) == FailureKind.LINT
+
+
+def _infra_group(*annotations, kind=FailureKind.INFRA, headline=None):
+    items = tuple(
+        FailureItem(
+            id=f"i-{i}", annotation=text, file=None, line=None,
+            diagnosis=None, fix_sha=None, outcome=None, headline=headline,
+        )
+        for i, text in enumerate(annotations)
+    )
+    return FailureGroup(job="Retry preempted jobs", kind=kind, items=items)
+
+
+def test_transient_infra_signatures_are_a_subset_of_infra():
+    assert set(TRANSIENT_INFRA_SIGNATURES) <= set(INFRA_SIGNATURES)
+
+
+def test_is_transient_infra_rate_limit():
+    assert is_transient_infra(_infra_group(
+        "gh: API rate limit exceeded for installation",
+    ))
+
+
+def test_is_transient_infra_429():
+    assert is_transient_infra(_infra_group("HTTP 429 too many requests"))
+
+
+def test_is_transient_infra_secondary_rate_limit():
+    assert is_transient_infra(_infra_group(
+        "secondary rate limit exceeded",
+    ))
+
+
+def test_is_transient_infra_false_for_oom():
+    assert not is_transient_infra(_infra_group(
+        "The runner process was killed: oom / out of memory",
+    ))
+
+
+def test_is_transient_infra_false_for_timeout():
+    assert not is_transient_infra(_infra_group("The job running on runner timed out"))
+
+
+def test_is_transient_infra_requires_infra_kind():
+    assert not is_transient_infra(_infra_group(
+        "gh: API rate limit exceeded", kind=FailureKind.TEST,
+    ))
+
+
+def test_is_transient_infra_true_when_one_item_in_the_group_matches():
+    assert is_transient_infra(_infra_group(
+        "Process completed with exit code 1.",
+        "gh: API rate limit exceeded for installation",
+    ))
 
 
 # ── Progression Tests ──────────────────────────────────────────────────────

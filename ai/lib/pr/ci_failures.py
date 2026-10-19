@@ -53,6 +53,11 @@ JOB_PATTERNS: list[tuple[re.Pattern, FailureKind]] = [
     (re.compile(r"build|compile|docker|bundle|webpack|vite|gradle|maven|cargo", re.IGNORECASE), FailureKind.BUILD),
 ]
 
+# Platform failures, not the repo. `classify_job` promotes a job to INFRA when
+# any annotation matches. Rate-limit wording is also listed in
+# TRANSIENT_INFRA_SIGNATURES: those are the only INFRA failures `run_fix` will
+# `gh run rerun --failed` rather than skip for a person. Timeouts, OOM, and
+# the rest stay non-transient. Secondary rate-limit messages match `rate limit`.
 INFRA_SIGNATURES: list[str] = [
     "rate limit",
     "timeout",
@@ -66,6 +71,11 @@ INFRA_SIGNATURES: list[str] = [
     "could not resolve host",
     "socket hang up",
     "econnreset",
+    "429 too many requests",
+]
+
+TRANSIENT_INFRA_SIGNATURES: list[str] = [
+    "rate limit",
     "429 too many requests",
 ]
 
@@ -111,10 +121,15 @@ class RunState:
 
 # ── Classification ─────────────────────────────────────────────────────────
 
+def _matches_signatures(text: str, signatures: list[str]) -> bool:
+    lowered = text.lower()
+    return any(sig in lowered for sig in signatures)
+
+
 def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
     """Classify a CI job by name pattern, with infra override from annotations."""
     for annotation in annotations:
-        if any(sig in annotation.lower() for sig in INFRA_SIGNATURES):
+        if _matches_signatures(annotation, INFRA_SIGNATURES):
             return FailureKind.INFRA
 
     for pattern, kind in JOB_PATTERNS:
@@ -122,6 +137,26 @@ def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
             return kind
 
     return FailureKind.BUILD
+
+
+def is_transient_infra(group: FailureGroup) -> bool:
+    """True when this INFRA group failed on a GitHub API rate limit.
+
+    Kind must already be INFRA: a test or build job whose log happens to
+    mention a rate limit is not rerun. Timeouts, OOM, and other platform
+    failures stay non-transient — rerunning those is not what clears them.
+    Any item annotation or headline in the group matching the transient
+    subset is enough; `classify_job` already promoted every item in the job.
+    A mixed group (one rate-limit item among real errors) is therefore rerun
+    and its real failures wait for the rerun's result.
+    """
+    if group.kind is not FailureKind.INFRA:
+        return False
+    return any(
+        _matches_signatures(item.annotation, TRANSIENT_INFRA_SIGNATURES)
+        or _matches_signatures(item.headline or "", TRANSIENT_INFRA_SIGNATURES)
+        for item in group.items
+    )
 
 
 # ── Log extraction ────────────────────────────────────────────────────────

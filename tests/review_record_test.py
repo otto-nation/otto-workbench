@@ -38,7 +38,10 @@ def _record() -> ReviewRecord:
 class TestOnDisk:
     def test_a_record_round_trips_through_review_json(self, tmp_path):
         save_record(tmp_path, _record())
-        assert load_record(tmp_path) == _record()
+        loaded = load_record(tmp_path)
+        assert loaded == _record()
+        assert [f.id for f in loaded.visible] == ["S1", "N1"]
+        assert loaded.findings[1].disposition is Disposition.DECLINED
 
     def test_it_is_stamped_with_schema_version_1(self, tmp_path):
         save_record(tmp_path, _record())
@@ -59,8 +62,19 @@ class TestOnDisk:
         save_record(tmp_path, ReviewRecord())
         assert load_record(tmp_path).triage is None
 
+    def test_a_finding_list_that_cannot_coerce_is_stale(self, tmp_path):
+        (tmp_path / FILENAME_RECORD).write_text(
+            json.dumps({"schema_version": 1, "findings": [42]}),
+        )
+        assert load_record(tmp_path) is None
+
 
 class TestWhatTheReadApiSees:
+    def test_a_string_disposition_is_the_enum(self):
+        f = RecordFinding(id="N2", severity="N", body="gone", disposition="falsified")
+        assert f.disposition is Disposition.FALSIFIED
+        assert not f.visible
+
     def test_a_falsified_finding_is_not_visible(self):
         assert [f.id for f in _record().visible] == ["S1", "N1"]
 

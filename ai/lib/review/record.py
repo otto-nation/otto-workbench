@@ -25,6 +25,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
+from typing import get_args, get_origin, get_type_hints
 
 import core.log
 import core.serde
@@ -95,6 +96,9 @@ class RecordFinding:
     # `deferred(IssueRef)`.
     filed: str = ""
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "disposition", Disposition(self.disposition))
+
     @property
     def seq(self) -> int:
         return int(self.id[1:])
@@ -158,6 +162,9 @@ class FocusArea:
     rationale: str = ""
     source: FocusSource = FocusSource.DERIVED
     coverage: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source", FocusSource(self.source))
 
 
 @dataclass(frozen=True)
@@ -233,8 +240,33 @@ class ReviewRecord:
         return replace(self, findings=tuple(out))
 
 
+def _dropped_tuple_field(raw: dict, record: ReviewRecord) -> str | None:
+    """Name of a tuple field whose on-disk list did not survive serde, if any."""
+    for name, hint in get_type_hints(ReviewRecord).items():
+        if name not in raw:
+            continue
+        written = raw[name]
+        if not isinstance(written, list):
+            continue
+        inner = hint
+        args = get_args(hint)
+        if type(None) in args:
+            non_none = tuple(a for a in args if a is not type(None))
+            if len(non_none) != 1:
+                continue
+            inner = non_none[0]
+        if get_origin(inner) is not tuple:
+            continue
+        loaded = getattr(record, name)
+        if isinstance(loaded, tuple) and len(loaded) == len(written):
+            continue
+        return name
+    return None
+
+
 def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewRecord | None:
-    """The record in `review_dir`, or None — absent, unreadable, or another schema.
+    """The record in `review_dir`, or None — absent, unreadable, another schema,
+    or a list field serde could not keep.
 
     None is the stale answer every reader treats as "no review here".
     """
@@ -242,13 +274,23 @@ def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewReco
     if not path.is_file():
         return None
     try:
-        version = json.loads(path.read_text()).get("schema_version")
+        raw = json.loads(path.read_text())
+        version = raw.get("schema_version")
     except (OSError, ValueError, AttributeError):
-        version = None
+        raw, version = None, None
     if version != SCHEMA_VERSION:
         core.log.warn(f"{path} is schema {version!r}, not {SCHEMA_VERSION} — treating the review as stale")
         return None
-    return core.serde.load_file(ReviewRecord, path)
+    try:
+        record = core.serde.from_dict(ReviewRecord, raw)
+    except (TypeError, ValueError):
+        core.log.warn(f"{path} is unreadable — discarding it")
+        return None
+    dropped = _dropped_tuple_field(raw, record)
+    if dropped is not None:
+        core.log.warn(f"{path} dropped {dropped} on load — treating the review as stale")
+        return None
+    return record
 
 
 def save_record(review_dir: Path, record: ReviewRecord, filename: str = FILENAME_RECORD) -> None:

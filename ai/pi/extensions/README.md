@@ -45,6 +45,11 @@ loading as an extension. The extensions import it by relative path
 in the checkout, not from its installed symlink, so only the extension
 directories need to reach `~/.pi/agent/extensions/`.
 
+`wait-guidance.ts` is the refusal alternative sleep-guard and background-guard
+share: `job_start` when `getActiveTools()` lists it, otherwise a foreground bash
+call bounded by the tool's timeout, so a session without that tool is not told
+to use one.
+
 ## Overriding one
 
 `~/.config/workbench/overrides/ai/pi/extensions/<name>/` replaces the extension

@@ -312,3 +312,68 @@ curl -sI localhost:3000'
   [ -n "$claude_value" ]
   [ "$pi_value" = "$claude_value" ]
 }
+
+# ─── wait-guidance ────────────────────────────────────────────────────────
+# The reason both guards return. Imports nothing, so node loads it directly.
+# The block is unchanged either way; only the named alternative switches.
+
+_wait() {
+  run node --input-type=module -e "
+    const { waitBlockReason } = await import('$REPO_ROOT/ai/pi/extensions/_shared/wait-guidance.ts');
+    process.stdout.write(waitBlockReason(...JSON.parse(process.argv[1])));
+  " -- "$1"
+}
+
+@test "wait-guidance: jobStartIsActive is an exact name match" {
+  run node --input-type=module -e "
+    const { jobStartIsActive } = await import('$REPO_ROOT/ai/pi/extensions/_shared/wait-guidance.ts');
+    const cases = JSON.parse(process.argv[1]);
+    process.stdout.write(cases.map(c => String(jobStartIsActive(c))).join(' '));
+  " -- '[["bash","job_start"],["bash"],["job_start_extra"],[]]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "true false false false" ]
+}
+
+@test "wait-guidance: with job_start active, the current alternative is named" {
+  _wait '["background",true]'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Use job_start instead"* ]]
+  [[ "$output" == *"job_start returns it"* ]]
+  [[ "$output" != *"foreground"* ]]
+  _wait '["sleep",true,295]'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"A sleep of 295s"* ]]
+  [[ "$output" == *"timeout_minutes to job_start"* ]]
+  [[ "$output" != *"foreground"* ]]
+}
+
+@test "wait-guidance: without job_start, both guards name the same foreground" {
+  # The case this module exists for: a one-shot session or a restricted tool
+  # list has nothing to message on completion, so naming job_start points at a
+  # tool that is not there. Both refusals have to say the same thing instead.
+  run node --input-type=module -e "
+    const { waitBlockReason, FOREGROUND_WAIT } = await import('$REPO_ROOT/ai/pi/extensions/_shared/wait-guidance.ts');
+    const background = waitBlockReason('background', false);
+    const sleep = waitBlockReason('sleep', false, 295);
+    if (!background.includes(FOREGROUND_WAIT)) process.exit(2);
+    if (!sleep.includes(FOREGROUND_WAIT)) process.exit(3);
+    if (background.includes('job_start')) process.exit(4);
+    if (sleep.includes('job_start')) process.exit(5);
+    process.stdout.write(FOREGROUND_WAIT);
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"foreground"* ]]
+  [[ "$output" == *"bash tool's own \`timeout\` parameter (check its unit)"* ]]
+  [[ "$output" == *"do not end the turn"* ]]
+}
+
+@test "wait-guidance: both guards take the reason from the active tools" {
+  # index.ts imports the SDK, so the wiring cannot be loaded under node. The
+  # call is the contract: drop it and the reason is frozen to one session shape.
+  grep -qF 'waitBlockReason(' "$REPO_ROOT/ai/pi/extensions/background-guard/index.ts"
+  grep -qF 'jobStartIsActive(pi.getActiveTools())' \
+    "$REPO_ROOT/ai/pi/extensions/background-guard/index.ts"
+  grep -qF 'waitBlockReason(' "$REPO_ROOT/ai/pi/extensions/sleep-guard/index.ts"
+  grep -qF 'jobStartIsActive(pi.getActiveTools())' \
+    "$REPO_ROOT/ai/pi/extensions/sleep-guard/index.ts"
+}

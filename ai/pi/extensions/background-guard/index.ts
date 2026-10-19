@@ -7,7 +7,8 @@
  * owns it, so stopping it means hunting a pid. The observed failure is a rebase
  * launched with `nohup ... > ignore/rebase.json &`, followed by a sleep, a poll,
  * and a turn ending in "ping me and I'll check" — for a job that had already
- * finished.
+ * finished. The reason names `job_start` only when `getActiveTools()` lists it;
+ * otherwise the alternative is a foreground bash call. See ../_shared/wait-guidance.ts.
  *
  * Claude Code gets the same rule from ai/claude/bin/claude-bash-guard, where it
  * also prevents a permission prompt; that hook does not run under Pi. The two
@@ -26,6 +27,7 @@ import {
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { isDetachedBackground } from "./detect.ts";
+import { jobStartIsActive, waitBlockReason } from "../_shared/wait-guidance.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {
@@ -36,12 +38,10 @@ export default function (pi: ExtensionAPI) {
     // carry on with the turn having started the job properly instead.
     return {
       block: true,
-      reason:
-        "Backgrounding with & or nohup detaches a shell nothing reports on, so the only " +
-        "way left to learn it finished is to poll it. Use job_start instead — it messages " +
-        "you on completion and takes timeout_minutes to bound the run. Redirecting the " +
-        "output to a file in the repo is part of the same pattern: job_start returns it. " +
-        "See general.md § Waiting on Background Work.",
+      reason: waitBlockReason(
+        "background",
+        jobStartIsActive(pi.getActiveTools()),
+      ),
     };
   });
 }

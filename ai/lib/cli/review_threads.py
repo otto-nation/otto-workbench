@@ -15,7 +15,7 @@ Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
 alongside it. `--track` / `--track-all` are not implied by `--finish`.
 
 A comment `pr comments` has already read is dropped from triage decomposition
-(`review.comment_threads.mark_seen`), keyed on the comment id *and*
+(`pr.owed_feedback.mark_seen`), keyed on the comment id *and*
 `last_edited_at` — see `pr.comments` for how that stamp is fetched.
 
 `main` returns rather than exits, as every module under `cli/` does; the shim at

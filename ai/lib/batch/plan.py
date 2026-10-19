@@ -1,8 +1,10 @@
 """Pre-flight: which of my open PRs need which batch steps.
 
-One GraphQL search covers every repo and asks only for fields whose cost does
-not scale with comment volume — no nested `comments` connection — so a plan
-over dozens of PRs costs a point or two of the hourly GraphQL budget.
+One GraphQL search covers every repo. The only nested connections are the ones
+the comments need requires — review threads, and the newest reviews and
+PR comments, each bounded and never paged — so a plan over dozens of PRs costs a
+few points of the hourly GraphQL budget. Thread comments, the connection whose
+cost would scale with discussion length, are never asked for.
 """
 
 # doc-group: batch
@@ -17,10 +19,12 @@ from pathlib import Path
 
 import core.log
 import gh.client
+import gh.pr_pages
 import git.client
 import git.topology
 import pr.ci_need
 import pr.context
+import pr.owed_feedback
 import pr.settlement
 import pr.state
 import pr.target
@@ -29,17 +33,30 @@ import rebase.need
 import review.document
 import review.paths
 from batch.model import Step
+from gh.pr_data import PRData
 from pr.comments_fix import CloseoutDebt
 
 PLAN_SCHEMA_VERSION = 1
 
+# The comments need reads the newest reviews and PR comments, at the page sizes
+# `pr comments`' own read uses. GitHub prices a nested connection by the count of
+# its parents, not its `last:`, so the size is free: each one adds about a point
+# to a search over 100 PRs, whatever its limit.
+# ceiling: a PR whose only unanswered feedback is older than its newest 100
+# reviews (or PR comments) plans no comments step; page them, as `pr comments`
+# does, once a PR carries that much top-level traffic.
 _PR_FIELDS = """
   number title isDraft headRefName headRefOid mergeStateStatus
   baseRefName isCrossRepository
   repository { nameWithOwner }
   reviewThreads(first: 100) { nodes { id isResolved } }
+  reviews(last: %(reviews)d) {
+    nodes { databaseId state body minimizedReason lastEditedAt author { login } }
+  }
+  comments(last: %(comments)d) { nodes { databaseId lastEditedAt author { login __typename } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-"""
+""" % {"reviews": gh.pr_pages.GQL_REVIEWS_LIMIT,
+       "comments": gh.pr_pages.GQL_ISSUE_COMMENTS_LIMIT}
 
 # ceiling: search first:100 and reviewThreads first:100 are unpaginated; upgrade
 # to pagination if a user has >100 open PRs in the scope or a PR has >100 threads.
@@ -52,6 +69,7 @@ query($q: String!) {
 
 _ONE = """
 query($owner: String!, $name: String!, $number: Int!) {
+  viewer { login }
   repository(owner: $owner, name: $name) { pullRequest(number: $number) { state %s } }
 }
 """ % _PR_FIELDS
@@ -199,11 +217,25 @@ def _drop_repo_refs(repo_dir: str, namespace: str) -> bool:
     return dropped
 
 
-def comments_need(threads: list[dict], settled: set[str]) -> StepNeed:
-    owed = [t for t in threads if not t.get("isResolved") and t.get("id") not in settled]
-    if not owed:
-        return StepNeed(False, "no unresolved threads")
-    return StepNeed(True, f"{len(owed)} unresolved thread{'' if len(owed) == 1 else 's'}")
+def comments_need(node: dict, viewer: str, state: pr.state.PRState | None) -> StepNeed:
+    """Whether `pr comments` would find feedback to answer on *node*'s PR.
+
+    The answer is `pr.owed_feedback`'s, read over the plan query's subset of
+    the PR — threads, the newest reviews and PR comments — so the planner and
+    `pr comments` cannot disagree about what is owed.
+    """
+    data = PRData(
+        viewer_login=viewer, head_sha=node.get("headRefOid", ""),
+        head_ref=node.get("headRefName", ""), base_ref=node.get("baseRefName") or "",
+        review_threads=(node.get("reviewThreads") or {}).get("nodes") or [],
+        reviews=(node.get("reviews") or {}).get("nodes") or [],
+        issue_comments=(node.get("comments") or {}).get("nodes") or [],
+    )
+    owed = pr.owed_feedback.owed_feedback(
+        data, _settled_from(state), state.comments if state is not None else None)
+    if not owed.owed:
+        return StepNeed(False, "no unresolved threads or unanswered comments")
+    return StepNeed(True, owed.describe())
 
 
 def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> StepNeed:
@@ -274,12 +306,11 @@ def _local_heads(repo_dir: str) -> dict[str, str]:
 
 
 def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
-         ref_namespace: str = "") -> PlanRow:
+         ref_namespace: str = "", viewer: str = "") -> PlanRow:
     branch, head = node["headRefName"], node["headRefOid"]
     base = node.get("baseRefName") or ""
     fork = bool(node.get("isCrossRepository"))
     ci_state = rollup_state(node)
-    threads = (node.get("reviewThreads") or {}).get("nodes") or []
     merge_state = node.get("mergeStateStatus") or "UNKNOWN"
     # One state load (one git call) per row, shared by the comments need and the closeout.
     state = _pr_state(repo_dir, branch)
@@ -290,7 +321,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
             Step.REBASE: FORK_NEED if fork else tree_rebase_need(
                 repo_dir, branch, base, ref_namespace, merge_state),
             Step.CI: FORK_NEED if fork else ci_step_need(ci_state),
-            Step.COMMENTS: comments_need(threads, _settled_from(state)),
+            Step.COMMENTS: comments_need(node, viewer, state),
             Step.REVIEW: review_need(_review_file(repo, branch), head, local_head=local_head),
         },
         local_head=local_head, base_ref=base, is_fork=fork, ci_state=ci_state,
@@ -302,6 +333,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
 def rows_from_search(data: dict, repo_dirs: dict[str, str],
                      namespaces: dict[str, str] | None = None) -> list[PlanRow]:
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
+    viewer = (data.get("viewer") or {}).get("login", "")
     heads: dict[str, dict[str, str]] = {}
     rows = []
     for n in (data.get("search") or {}).get("nodes") or []:
@@ -313,7 +345,7 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
         if repo_dir not in heads:
             heads[repo_dir] = _local_heads(repo_dir)
         rows.append(_row(n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), ""),
-                         (namespaces or {}).get(repo_dir, "")))
+                         (namespaces or {}).get(repo_dir, ""), viewer))
     return sorted(rows, key=lambda r: (r.repo, r.pr))
 
 
@@ -367,8 +399,9 @@ def build_plan(repo_dirs: list[str]) -> Plan:
 def replan_row(row: PlanRow) -> PlanRow | None:
     """Re-read one PR from GitHub, judging its review against ``row.local_head``."""
     owner, name = row.repo.split("/", 1)
-    node = (_graphql(_ONE, {"owner": owner, "name": name, "number": row.pr})
-            .get("repository") or {}).get("pullRequest") or {}
+    data = _graphql(_ONE, {"owner": owner, "name": name, "number": row.pr})
+    node = (data.get("repository") or {}).get("pullRequest") or {}
     if node.get("state") != "OPEN":
         return None
-    return _row(node, row.repo_dir, row.repo, row.local_head, row.ref_namespace)
+    return _row(node, row.repo_dir, row.repo, row.local_head, row.ref_namespace,
+                (data.get("viewer") or {}).get("login", ""))

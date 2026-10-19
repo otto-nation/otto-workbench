@@ -24,6 +24,7 @@ import pr.context
 import pr.domains
 import pr.state
 from pr.domains import RebaseStatus
+import rebase.hooks_chain
 import rebase.inspect
 import rebase.land
 import rebase.lease
@@ -214,6 +215,7 @@ def cmd_start(
     commits git replays, and a resumed rebase's todo list was written by the
     run that started it.
     """
+    rebase.hooks_chain.warn_if_shadowed(cwd)
     if rebase.inspect.rebase_in_progress(cwd):
         target_ref = rebase.target.resume_target_ref(ctx, target_ref, trail=trail)
         core.trail.tdecision(

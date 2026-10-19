@@ -6,7 +6,10 @@ the `post-rewrite` hook, as one `<old> <new>` line per commit, after every
 cannot — a pick whose conflict resolution changed its hunks, and every commit a
 `fixup`/`squash` folded, each listed against the commit it folded into. Then git
 forgets it: `rebase-merge/rewritten-list` is deleted when the rebase finishes,
-so the only moment the answer exists is inside that hook.
+so the only moment the answer exists is inside that hook. `pr rebase`
+chains that hook in front of a repo's own ``core.hooksPath`` so a local
+hooks directory cannot hide the record; a hand-run rebase still needs the
+global ``core.hooksPath`` (or the same chain) to write one.
 
 Not every line is a rewrite. git maps a commit it *dropped* — a `--skip`, a
 resolution that emptied it — onto whatever came before it, so a dropped fix

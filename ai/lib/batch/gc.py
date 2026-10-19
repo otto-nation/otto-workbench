@@ -12,6 +12,13 @@ permissions problem, say) keeps the run, and warns, on every sweep. A leftover
 `<id>.reaping` tombstone from a crash mid-reap is warned about and left in
 place: deleting it from outside the lock would race a live reap that still
 holds the flock on that directory's inode.
+
+After the run sweep, orphaned `refs/pr-batch/<hex>` namespaces are dropped:
+any namespace with no live claim (claim pid still running) and no run
+referencing it. Repos are the union of claim `repo_dirs`, run `ref_dirs`, and
+the machine's registered projects. A namespace with no claim at all is
+orphaned by definition — the one gap is a process that predates claims and is
+still fetching.
 """
 
 # doc-group: batch
@@ -20,8 +27,11 @@ from __future__ import annotations
 
 import functools
 import time
+from pathlib import Path
 
+import batch.plan
 import batch.store
+import config.workbench_projects
 import core.log
 from batch.model import FINISHED_RUN, DecisionKind, Item, ItemStatus, Run, StepStatus
 from review.gc import GC_FAILED_STALE_DAYS, GC_STALE_DAYS
@@ -123,12 +133,76 @@ def _warn_leftover_tombstones() -> None:
         f"GC: leftover reap tombstone(s) {', '.join(names)} — leaving in place")
 
 
+def _live_namespaces() -> set[str]:
+    """Namespaces a live claim pid or any saved run still owns."""
+    live: set[str] = set()
+    for claim in batch.plan.load_claims():
+        if batch.plan.pid_alive(claim.pid):
+            live.add(claim.namespace)
+    for run_id in batch.store.run_ids():
+        run = _read_run(run_id)
+        if run is not None and run.ref_namespace:
+            live.add(run.ref_namespace)
+    return live
+
+
+def _namespace_repos() -> dict[str, set[str]]:
+    """Namespace → checkouts that may still hold its refs.
+
+    Union of claim repo_dirs, run ref_dirs, and registered projects. A
+    namespace with no claim is still found in a registered repo — that is how
+    a pre-upgrade leak is collected.
+    """
+    found: dict[str, set[str]] = {}
+    dirs: dict[str, None] = {}
+    for claim in batch.plan.load_claims():
+        found.setdefault(claim.namespace, set()).update(claim.repo_dirs)
+        for d in claim.repo_dirs:
+            dirs[d] = None
+    for run_id in batch.store.run_ids():
+        run = _read_run(run_id)
+        if run is None:
+            continue
+        if run.ref_namespace:
+            found.setdefault(run.ref_namespace, set()).update(run.ref_dirs)
+        for d in run.ref_dirs:
+            dirs[d] = None
+    for path in config.workbench_projects.registered():
+        dirs[str(path)] = None
+    for repo_dir in dirs:
+        if not Path(repo_dir).is_dir():
+            continue
+        for ns in batch.plan.namespaces_in(repo_dir):
+            found.setdefault(ns, set()).add(repo_dir)
+    return found
+
+
+def gc_namespaces() -> int:
+    """Drop `refs/pr-batch/<hex>` namespaces nobody owns; return how many went.
+
+    A namespace is live if its claim's pid is alive or any run state names it.
+    Stale claims (dead pid, no run) are removed with the refs. drop_refs
+    already refuses to delete a lock; it never removes the lock file.
+    """
+    live = _live_namespaces()
+    dropped = 0
+    for ns, dirs in sorted(_namespace_repos().items()):
+        if ns in live:
+            continue
+        if batch.plan.drop_refs(sorted(dirs), ns):
+            dropped += 1
+            core.log.info(f"Pruned orphaned batch ref namespace {ns}")
+    return dropped
+
+
 def gc_runs(*, now: float | None = None) -> int:
     """Remove every finished batch run past its window; returns how many went.
 
     *now* is the instant every run's age is measured against, the clock when
     omitted. The unlocked expiry check still runs first so a live or young run
-    is never locked just to be told FRESH.
+    is never locked just to be told FRESH. Orphaned ref namespaces are dropped
+    after the run sweep so a reaped run's refs are already gone, and a live
+    run still owns its namespace.
     """
     instant = time.time() if now is None else now
     removed = 0
@@ -139,4 +213,4 @@ def gc_runs(*, now: float | None = None) -> int:
         if _reap(run, instant):
             removed += 1
     _warn_leftover_tombstones()
-    return removed
+    return removed + gc_namespaces()

@@ -89,7 +89,7 @@ def test_rows_from_search_maps_nodes_and_drops_unknown_repos(monkeypatch):
 
 def test_build_plan_raises_on_graphql_failure(monkeypatch):
     monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
-    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: False)
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns, branches=(): False)
 
     class R:
         ok, stdout, stderr = False, "", "boom"
@@ -109,7 +109,7 @@ def test_build_plan_records_a_relative_checkout_as_absolute(monkeypatch, tmp_pat
     # A run persists repo_dir; a relative one names another directory to any later reader.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
-    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: False)
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns, branches=(): False)
     monkeypatch.setattr(batch.plan, "_local_heads", lambda d: {})
     monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     node = {"number": 1, "headRefName": "b", "headRefOid": "h",
@@ -147,7 +147,7 @@ def test_rows_from_search_matches_repos_case_insensitively(monkeypatch):
 
 def test_graphql_wraps_ok_payload_with_errors(monkeypatch):
     monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
-    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: False)
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns, branches=(): False)
 
     class R:
         ok, stdout, stderr = True, '{"errors":[{"message":"bad"}]}', ""

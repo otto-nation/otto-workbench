@@ -5,6 +5,11 @@ the comments need requires — review threads, and the newest reviews and
 PR comments, each bounded and never paged — so a plan over dozens of PRs costs a
 few points of the hourly GraphQL budget. Thread comments, the connection whose
 cost would scale with discussion length, are never asked for.
+
+The plan fetches only the origin branches rows need into a private
+`refs/pr-batch/<hex>` namespace, claimed under the batch state root before
+the fetch so a killed plan does not leak refs. `pr gc` drops a namespace
+that has no live claim and no run referencing it.
 """
 
 # doc-group: batch
@@ -15,9 +20,11 @@ import json
 import os
 import secrets
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import core.log
+import core.serde
 import gh.client
 import gh.pr_pages
 import git.client
@@ -133,6 +140,16 @@ class Plan:
     ref_dirs: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class NamespaceClaim:
+    """Ownership of one `refs/pr-batch/<hex>` namespace while a plan is in flight."""
+
+    namespace: str = ""
+    repo_dirs: list[str] = field(default_factory=list)
+    pid: int = 0
+    created: str = ""
+
+
 def search_query(repos: list[str]) -> str:
     return " ".join(["is:pr is:open author:@me archived:false", *(f"repo:{r}" for r in repos)])
 
@@ -179,27 +196,168 @@ def new_namespace() -> str:
     return f"{NAMESPACE_ROOT}/{secrets.token_hex(4)}"
 
 
-def fetch_namespace(repo_dir: str, namespace: str) -> bool:
-    """Fetch every branch of origin into *namespace*, leaving origin's refs alone."""
+def _claims_dir() -> Path:
+    # store.batch_root is the SSOT; imported here to avoid a module-level cycle
+    # (store imports plan for drop_refs on terminal commit and reap).
+    import batch.store
+    return batch.store.batch_root() / "claims"
+
+
+def _claim_path(namespace: str) -> Path | None:
+    if not namespace.startswith(f"{NAMESPACE_ROOT}/"):
+        return None
+    token = namespace[len(NAMESPACE_ROOT) + 1:]
+    if not token or token != Path(token).name:
+        return None
+    return _claims_dir() / f"{token}.json"
+
+
+def write_claim(namespace: str, repo_dirs: list[str], *,
+                pid: int | None = None, created: str | None = None) -> None:
+    """Record that *pid* owns *namespace* in *repo_dirs*, before any fetch."""
+    path = _claim_path(namespace)
+    if path is None:
+        return
+    claim = NamespaceClaim(
+        namespace=namespace, repo_dirs=list(repo_dirs),
+        pid=os.getpid() if pid is None else pid,
+        created=created or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    core.serde.write_json(path, core.serde.to_dict(claim))
+
+
+def read_claim(namespace: str) -> NamespaceClaim | None:
+    path = _claim_path(namespace)
+    if path is None or not path.is_file():
+        return None
+    try:
+        return core.serde.from_dict(NamespaceClaim, json.loads(path.read_text()))
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def load_claims() -> list[NamespaceClaim]:
+    root = _claims_dir()
+    if not root.is_dir():
+        return []
+    claims = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            claims.append(core.serde.from_dict(NamespaceClaim, json.loads(path.read_text())))
+        except (OSError, ValueError, TypeError) as exc:
+            core.log.warn(f"could not read namespace claim {path.name}: {exc}")
+    return claims
+
+
+def remove_claim(namespace: str) -> None:
+    path = _claim_path(namespace)
+    if path is not None:
+        path.unlink(missing_ok=True)
+
+
+def namespaces_in(repo_dir: str) -> list[str]:
+    """The `refs/pr-batch/<hex>` prefixes that have refs in *repo_dir*."""
+    if not Path(repo_dir).is_dir():
+        return []
+    found: dict[str, None] = {}
+    prefix = f"{NAMESPACE_ROOT}/"
+    for ref in git.client.lines("for-each-ref", "--format=%(refname)", NAMESPACE_ROOT,
+                                cwd=repo_dir):
+        if not ref.startswith(prefix):
+            continue
+        token = ref[len(prefix):].split("/", 1)[0]
+        if token:
+            found[f"{prefix}{token}"] = None
+    return list(found)
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether *pid* still exists; 0 and negative are never live."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:
     # An empty --refmap is what stops git's opportunistic update: with a
     # command-line refspec it still applies remote.origin.fetch and would move
     # refs/remotes/origin/* alongside the namespace.
     r = git.client.run("fetch", "--no-tags", "--quiet", "--refmap=", "origin",
-                       f"+refs/heads/*:{namespace}/*", cwd=repo_dir)
+                       *specs, cwd=repo_dir)
     return r.ok
+
+
+def fetch_namespace(repo_dir: str, namespace: str, branches: list[str]) -> bool:
+    """Fetch *branches* of origin into *namespace*, leaving origin's refs alone."""
+    wanted = sorted({b for b in branches if b})
+    if not wanted:
+        return True
+    specs = [f"+refs/heads/{b}:{namespace}/{b}" for b in wanted]
+    if _fetch_refspecs(repo_dir, specs):
+        return True
+    # An explicit refspec whose source ref is gone fails the whole fetch, so a
+    # branch deleted on origin would drop every other ref this plan needs.
+    # Retry each remaining refspec; keep whatever landed. A namespaced ref that
+    # is still missing falls back to GitHub's merge state, as today. Listing
+    # with ls-remote first would add a transfer to every plan (status's hot
+    # path) and still race a delete between the list and the fetch, so the
+    # retry is the robust option on its own.
+    landed = [_fetch_refspecs(repo_dir, [spec]) for spec in specs]
+    return any(landed)
 
 
 def drop_refs(repo_dirs: list[str], namespace: str) -> bool:
     """Delete *namespace*'s refs in each repo; a no-op for anything outside NAMESPACE_ROOT.
 
-    Returns False when any ref would not delete (each is warned about), True
-    otherwise — including when there was nothing to drop.
+    Returns False when any repo's refs would not delete (one warning per repo),
+    True otherwise — including when there was nothing to drop. The claim is
+    removed only after every repo dropped successfully.
     """
     if not namespace.startswith(f"{NAMESPACE_ROOT}/"):
         return True
+    dirs = set(repo_dirs)
+    claim = read_claim(namespace)
+    if claim is not None:
+        dirs.update(claim.repo_dirs)
     # A list, not a generator: all() would short-circuit and skip the remaining repos after one failure.
-    results = [_drop_repo_refs(d, namespace) for d in sorted(set(repo_dirs))]
-    return all(results)
+    results = [_drop_repo_refs(d, namespace) for d in sorted(dirs)]
+    ok = all(results)
+    if ok:
+        remove_claim(namespace)
+    return ok
+
+
+def _held_ref_lock(repo_dir: str, namespace: str) -> str | None:
+    """The packed-refs or loose-ref lock blocking a drop, if one exists."""
+    packed = git.client.out("rev-parse", "--git-path", "packed-refs.lock", cwd=repo_dir)
+    if packed:
+        path = Path(packed) if os.path.isabs(packed) else Path(repo_dir) / packed
+        if path.is_file():
+            return str(path)
+    ns_path = git.client.out("rev-parse", "--git-path", namespace, cwd=repo_dir)
+    root = Path(ns_path) if os.path.isabs(ns_path) else Path(repo_dir) / ns_path
+    if root.is_dir():
+        locks = sorted(p for p in root.rglob("*.lock") if p.is_file())
+        if locks:
+            return str(locks[0])
+    return None
+
+
+def _warn_drop_failed(repo_dir: str, namespace: str, stderr: str) -> None:
+    lock = _held_ref_lock(repo_dir, namespace)
+    if lock is not None:
+        core.log.warn(
+            f"could not delete {namespace} in {repo_dir}: {lock} exists; "
+            f"confirm no git process holds it before removing the lock")
+        return
+    detail = stderr.strip() or "git update-ref failed"
+    core.log.warn(f"could not delete {namespace} in {repo_dir}: {detail}")
 
 
 def _drop_repo_refs(repo_dir: str, namespace: str) -> bool:
@@ -207,14 +365,16 @@ def _drop_repo_refs(repo_dir: str, namespace: str) -> bool:
     # cannot even start with it as the working directory.
     if not Path(repo_dir).is_dir():
         return True
-    dropped = True
-    for ref in git.client.lines("for-each-ref", "--format=%(refname)", namespace,
-                                cwd=repo_dir):
-        r = git.client.run("update-ref", "-d", ref, cwd=repo_dir)
-        if not r.ok:
-            core.log.warn(f"could not delete {ref} in {repo_dir}: {r.stderr.strip()}")
-            dropped = False
-    return dropped
+    refs = git.client.lines("for-each-ref", "--format=%(refname)", namespace, cwd=repo_dir)
+    if not refs:
+        return True
+    lines = ["start", *(f"delete {ref}" for ref in refs), "prepare", "commit"]
+    r = git.client.run("update-ref", "--stdin", cwd=repo_dir,
+                       input_text="\n".join(lines) + "\n")
+    if r.ok:
+        return True
+    _warn_drop_failed(repo_dir, namespace, r.stderr)
+    return False
 
 
 def comments_need(node: dict, viewer: str, state: pr.state.PRState | None) -> StepNeed:
@@ -330,6 +490,30 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     )
 
 
+def _fetch_branches(data: dict, repo_dirs: dict[str, str]) -> dict[str, list[str]]:
+    """Per checkout, the origin branches tree_rebase_need will read.
+
+    Base branches of every matched PR, plus same-repo heads. Fork heads live
+    on another remote and are skipped, so a missing namespaced ref still falls
+    back to GitHub's merge state as today.
+    """
+    by_fold = {slug.casefold(): slug for slug in repo_dirs}
+    needed: dict[str, set[str]] = {d: set() for d in repo_dirs.values()}
+    for n in (data.get("search") or {}).get("nodes") or []:
+        name = (n.get("repository") or {}).get("nameWithOwner") or ""
+        slug = by_fold.get(name.casefold())
+        if slug is None:
+            continue
+        repo_dir = repo_dirs[slug]
+        base = n.get("baseRefName") or ""
+        if base:
+            needed[repo_dir].add(base)
+        head = n.get("headRefName") or ""
+        if head and not n.get("isCrossRepository"):
+            needed[repo_dir].add(head)
+    return {d: sorted(b) for d, b in needed.items()}
+
+
 def rows_from_search(data: dict, repo_dirs: dict[str, str],
                      namespaces: dict[str, str] | None = None) -> list[PlanRow]:
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
@@ -381,10 +565,14 @@ def build_plan(repo_dirs: list[str]) -> Plan:
     if len(by_slug) != len(repo_dirs):
         dupes = sorted({s for s in slugs if slugs.count(s) > 1})
         raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
+    data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
+    needed = _fetch_branches(data, by_slug)
     namespace = new_namespace()
     try:
-        fetched = [d for d in repo_dirs if fetch_namespace(d, namespace)]
-        data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
+        # Claim before the fetch so a killed plan still names the namespace;
+        # drop_refs removes the claim only after every repo dropped.
+        write_claim(namespace, repo_dirs)
+        fetched = [d for d in repo_dirs if fetch_namespace(d, namespace, needed.get(d, []))]
         rows = rows_from_search(data, by_slug, {d: namespace for d in fetched})
     except BaseException:
         # No plan comes back to own the refs — Ctrl-C included — so drop them

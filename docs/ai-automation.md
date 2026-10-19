@@ -684,7 +684,10 @@ step is still planned into the run when its saved `pr` state owes a closeout,
 but only when `comments` is one of the run's steps and there is no `--select`.
 It is queued and gets a worktree like any other item. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
-namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed). `comments` is needed when `pr comments` would find something to answer (`pr.owed_feedback`): threads, review bodies or PR comments.
+namespace that holds only the origin branches the plan's rows need — each PR's
+base, and same-repo heads; fork heads are skipped (GitHub merge state fallback;
+`UNKNOWN` and `DIRTY` count as needed). A claim under `batch/claims/` owns the
+namespace until the refs drop or a run records it.
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
 `pr ci`) when the rollup failed, with `--wait` if it was still running; rate-limit-only infra is rerun once (`gh run rerun --failed`) and re-waited. Fork
 heads skip both. A stacked PR waits for its base's publish; `resume` retries `stacked_on` once that base is terminal,
@@ -752,7 +755,7 @@ minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
 under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
 one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no
 pressure metrics (macOS) use `batch.pool_default` (1). State lives under
-`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
+`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces that have no live claim and no run ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### The Pi package the sync declares, and who gets it
 

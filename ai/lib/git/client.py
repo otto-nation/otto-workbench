@@ -14,7 +14,7 @@ used once belongs at its call site, spelled out with `run`.
 
 | Call | What it gives you |
 |---|---|
-| `run(*args, cwd=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
+| `run(*args, cwd=, config=, input_text=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. `input_text` is the child's stdin (`git update-ref --stdin`). |
 | `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
 | `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |
@@ -233,6 +233,7 @@ def run(
     config: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
     relay: TextIO | None = None,
+    input_text: str | None = None,
 ) -> CmdResult:
     """Run git with *args* in *cwd*, capturing both streams.
 
@@ -255,10 +256,14 @@ def run(
 
     `relay` is forwarded to `proc.run`: a live tee of both streams, used by
     `git.push` so a pre-push hook is visible while it runs.
+
+    `input_text` is forwarded too: the child's stdin, closed when omitted.
+    `update-ref --stdin` is the caller that needs it; a bound still follows
+    the subcommand (`LOCAL` for `update-ref`).
     """
     return core.proc.run(
         _argv(args, config), cwd=cwd, timeout=timeout_for(args), env=env,
-        relay=relay,
+        relay=relay, input_text=input_text,
     )
 
 

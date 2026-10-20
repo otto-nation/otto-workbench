@@ -239,11 +239,12 @@ def _row_rebase_need(repo_dir: str, branch: str, base: str, merge_state: str,
     if not namespace and remote_heads is None:
         return rebase_need(merge_state)
     local = f"refs/heads/{branch}"
-    has_local = rebase.inspect.ref_exists(repo_dir, local)
     if namespace and base:
+        has_local = rebase.inspect.ref_exists(repo_dir, local)
         head = local if has_local else f"{namespace}/{branch}"
         return tree_rebase_need(
             repo_dir, head, f"{namespace}/{base}", merge_state, base_label=base)
+    has_local = rebase.inspect.ref_exists(repo_dir, local)
     head = local if has_local else (remote_heads or {}).get(branch, "")
     return tree_rebase_need(
         repo_dir, head, (remote_heads or {}).get(base, ""), merge_state,
@@ -352,6 +353,9 @@ def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:
     r = git.client.run(
         "fetch", "--no-tags", "--quiet", "--no-write-fetch-head",
         "--no-auto-maintenance", "--refmap=", "origin", *specs, cwd=repo_dir)
+    if not r.ok and ("unknown option" in r.stderr or "usage:" in r.stderr):
+        core.log.warn("git fetch rejected its options (needs git >= 2.29); "
+                      "plans fall back to GitHub merge state")
     return r.ok
 
 
@@ -377,9 +381,8 @@ def fetch_namespace(repo_dir: str, namespace: str, branches: list[str]) -> bool:
     # branch deleted on origin would drop every other ref this plan needs.
     # Retry each remaining refspec; keep whatever landed. A namespaced ref that
     # is still missing falls back to GitHub's merge state, as today. Listing
-    # with ls-remote first would add a transfer to every plan (status's hot
-    # path) and still race a delete between the list and the fetch, so the
-    # retry is the robust option on its own.
+    # with ls-remote first would still race a delete between the list and the
+    # fetch, so the retry is the robust option on its own.
     landed = [_fetch_refspecs(repo_dir, [spec]) for spec in specs]
     return any(landed)
 
@@ -576,7 +579,8 @@ def _fetch_branches(data: dict, repo_dirs: dict[str, str]) -> dict[str, list[str
 
     Base branches of every matched PR, plus same-repo heads. Fork heads live
     on another remote and are skipped, so a missing namespaced ref still falls
-    back to GitHub's merge state as today.
+    back to GitHub's merge state as today. Also the branch list the read path
+    hands to `ls-remote`.
     """
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
     needed: dict[str, set[str]] = {d: set() for d in repo_dirs.values()}

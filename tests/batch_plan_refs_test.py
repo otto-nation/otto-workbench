@@ -439,3 +439,14 @@ def test_keep_refs_fetches_into_a_namespace_replan_still_reads(
     assert fresh is not None and fresh.ref_namespace == ns
     assert fresh.needs[Step.REBASE] == StepNeed(True, "1 behind main")
     batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
+
+
+def test_a_fetch_rejecting_its_options_warns(tmp_path, monkeypatch):
+    class R:
+        ok = False
+        stderr = "error: unknown option `no-write-fetch-head'"
+    warned = []
+    monkeypatch.setattr(batch.plan.git.client, "run", lambda *a, **k: R())
+    monkeypatch.setattr(batch.plan.core.log, "warn", warned.append)
+    assert not batch.plan._fetch_refspecs(str(tmp_path), ["x"])
+    assert warned and "git >= 2.29" in warned[0]

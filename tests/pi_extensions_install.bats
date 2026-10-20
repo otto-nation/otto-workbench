@@ -323,10 +323,10 @@ _run_step_from_worktree() {
 }
 
 @test "a shared module is not installed as an extension" {
-  # ../_shared is imported by the guards' detect.ts files. Node resolves it
-  # from the extension's real path rather than its installed symlink, so it
-  # must stay out of ~/.pi/agent/extensions rather than being installed beside
-  # them.
+  # ../_shared is imported by the guards' detect.ts files, which Node loads
+  # from their real path in the checkout rather than through the installed
+  # symlink, so it can stay out of ~/.pi/agent/extensions. The entry point is
+  # the exception — see the next test.
   mkdir -p "$FAKE_WORKBENCH/ai/pi/extensions/_shared"
   printf 'export function helper() {}\n' \
     > "$FAKE_WORKBENCH/ai/pi/extensions/_shared/util.ts"
@@ -335,6 +335,26 @@ _run_step_from_worktree() {
   [ "$status" -eq 0 ]
   [ ! -e "$PI_EXT_DIR/_shared" ]
   [ -L "$PI_EXT_DIR/capture" ]
+}
+
+@test "no extension entry point imports a shared module directly" {
+  # Pi loads index.ts by its installed symlink path, so `../_shared` written
+  # there resolves to ~/.pi/agent/extensions/_shared, which is never installed:
+  # the extension then fails to load in every new session. Shared code reaches
+  # an entry point through a sibling module (detect.ts), which Node loads from
+  # its real path. Holding this by the source is what keeps the shared module
+  # uninstalled, as the surrounding tests require.
+  local entry offenders=()
+  for entry in "$REPO_ROOT"/ai/pi/extensions/*/index.ts "$REPO_ROOT"/ai/pi/extensions/*/index.js; do
+    [ -f "$entry" ] || continue
+    if grep -Eq "from ['\"]\.\./_" "$entry"; then
+      offenders+=("$entry")
+    fi
+  done
+  if (( ${#offenders[@]} )); then
+    printf 'imports ../_* directly: %s\n' "${offenders[@]}"
+    return 1
+  fi
 }
 
 @test "a shared module is skipped without a warning" {

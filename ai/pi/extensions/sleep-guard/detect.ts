@@ -1,5 +1,10 @@
 import { statements } from "../_shared/statements.ts";
 
+// Re-exported for index.ts, which must not import ../_shared itself: Pi loads
+// the entry point by its installed symlink path, where ../_shared does not
+// resolve. See ../README.md § What does not go here.
+export { jobStartIsActive, waitBlockReason } from "../_shared/wait-guidance.ts";
+
 /**
  * The `sleep`-as-a-wait predicate, kept apart from the extension that uses it.
  *

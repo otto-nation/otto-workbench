@@ -3,8 +3,9 @@
 Every agent artifact that becomes review state passes through `ingest_review`
 where it enters. Ingest is strict: an entry it cannot represent faithfully — an
 unknown severity token, a duplicate ID, a declaration with nothing after it — is
-an `IngestError`, never a silent repair. A second rejection is an agent failure,
-handled as failures already are.
+an `IngestError`, never a silent repair. `ingest_with_repair` gives the agent one
+turn to fix a rejection and returns an `IngestOutcome`; a second rejection is an
+agent failure, handled as failures already are.
 
 Text carrying the render `BANNER` is refused outright: `review.md` is a view of
 `review.json` and is never parsed back.
@@ -25,6 +26,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import core.log
+from agent.diagnosis import Diagnosis, DiagnosisKind
 
 from review.document import (
     SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
@@ -94,9 +96,18 @@ REPAIR_MAX_TURNS = 10
 
 @dataclass(frozen=True)
 class IngestOutcome:
+    """What ingesting an agent file produced, after at most one repair turn.
+
+    `ok` is whether a record was built. `repaired` is whether the repair turn
+    ran. `diagnosis` is the repair invoke's own failure — a non-zero exit or a
+    cause `diagnose` named — and is unset when the repair ran and ingest still
+    rejected the file.
+    """
+
     record: ReviewRecord | None
     errors: tuple[IngestError, ...] = ()
     repaired: bool = False
+    diagnosis: Diagnosis | None = None
 
     @property
     def ok(self) -> bool:
@@ -436,8 +447,8 @@ def ingest_review(text: str, *, strict: bool = True) -> ReviewRecord:
     """The record `text` declares. Raises `IngestRejected` when it is malformed.
 
     The title and header are not read — they are `meta.json`'s. `strict=False`
-    keeps what it can and drops the errors; callers ingesting recovery artifacts
-    and test helpers that are not agent output.
+    keeps what it can and drops the errors. That path is for callers ingesting
+    recovery artifacts and for test helpers that are not agent output.
     Text carrying `BANNER` is refused whatever `strict` says.
     """
     if BANNER in text:
@@ -459,6 +470,7 @@ def ingest_review(text: str, *, strict: bool = True) -> ReviewRecord:
 
 
 def repair_prompt(prompt: str, path: str, errors: tuple[IngestError, ...]) -> str:
+    """Re-send `prompt` with the ingest errors the agent must fix in `path`."""
     listed = "\n".join(f"- {e.render()}" for e in errors)
     return (
         f"{prompt}\n\n## Your review was rejected\n\n"
@@ -468,19 +480,32 @@ def repair_prompt(prompt: str, path: str, errors: tuple[IngestError, ...]) -> st
     )
 
 
-def ingest_with_repair(path: str, prompt: str, invoke: Callable[[str, int], int]) -> IngestOutcome:
+def ingest_with_repair(
+    path: str, prompt: str, invoke: Callable[[str, int], int],
+    *, diagnose: Callable[[], Diagnosis] | None = None,
+) -> IngestOutcome:
     """Ingest the agent's output at `path`, giving the agent one turn to fix a rejection.
 
     A second rejection is returned, not raised: the caller handles it as the
-    agent failure it is, the way a missing output is handled today.
+    agent failure it is, the way a missing output is handled today. A repair
+    turn that itself fails — non-zero exit, or a cause `diagnose` names — is
+    that failure, not a malformed-output rejection.
     """
     try:
         return IngestOutcome(ingest_review(Path(path).read_text()))
     except IngestRejected as exc:
         errors = exc.errors
     core.log.warn(f"{path} rejected ({len(errors)} error(s)) — one repair turn")
-    invoke(repair_prompt(prompt, path, errors), REPAIR_MAX_TURNS)
+    rc = invoke(repair_prompt(prompt, path, errors), REPAIR_MAX_TURNS)
     try:
         return IngestOutcome(ingest_review(Path(path).read_text()), repaired=True)
     except IngestRejected as exc:
+        if rc != 0:
+            failure = (
+                diagnose() if diagnose is not None
+                else Diagnosis(
+                    DiagnosisKind.AGENT_ERROR, detail=f"exited with code {rc}",
+                )
+            )
+            return IngestOutcome(None, repaired=True, diagnosis=failure)
         return IngestOutcome(None, exc.errors, repaired=True)

@@ -390,7 +390,7 @@ def _malformed_group(
     i: int, grp: Group, job: ReviewJob, group_output: str,
     outcome: IngestOutcome, pipeline_state: PipelineState | None,
 ) -> tuple[int, str, GroupFailure]:
-    diagnosis = Diagnosis(
+    diagnosis = outcome.diagnosis or Diagnosis(
         DiagnosisKind.MALFORMED_OUTPUT,
         detail="; ".join(e.render() for e in outcome.errors),
     )
@@ -499,7 +499,12 @@ def _review_group(
         if pipeline_state is not None:
             _update_group_failed(job, i, diagnosis, pipeline_state)
     else:
-        outcome = ingest_with_repair(group_output, sent, invoke)
+        outcome = ingest_with_repair(
+            group_output, sent, invoke,
+            diagnose=lambda: diagnose_missing_output(
+                group_log, output_path=group_output,
+            ),
+        )
         if not outcome.ok:
             return _malformed_group(
                 i, grp, job, group_output, outcome, pipeline_state,

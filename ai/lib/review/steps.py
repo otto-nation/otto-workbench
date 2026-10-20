@@ -24,7 +24,7 @@ import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Phase
-from agent.session import _parse_session_cost
+from agent.session import _parse_session_cost, diagnose_missing_output
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.ingest import (
@@ -359,7 +359,12 @@ def _phase_synthesis(
     )
 
     outcome = (
-        ingest_with_repair(job.review_file, sent, invoke)
+        ingest_with_repair(
+            job.review_file, sent, invoke,
+            diagnose=lambda: diagnose_missing_output(
+                synthesis_log, job.review_file,
+            ),
+        )
         if agent_output_complete(job.review_file) else IngestOutcome(None)
     )
     if outcome.ok:
@@ -511,7 +516,7 @@ def _run_disprove_gate(
 
 def _phase_merge(
     group_outputs: list[str], failed_groups: list[GroupFailure],
-    group_names: tuple[str, ...] = (),
+    group_names: tuple[str, ...],
 ) -> Merged:
     core.log.info("Phase 3: Merging findings...")
     ingested = _ingest_group_outputs(group_outputs, failed_groups, group_names)
@@ -531,13 +536,15 @@ class _GroupIngest:
 
 def _malformed_gap(
     name: str, failed_names: set[str], errors: tuple[IngestError, ...],
-) -> GroupFailure | None:
+    gaps: list[GroupFailure],
+) -> None:
     if name in failed_names:
-        return None
-    return GroupFailure(name, Diagnosis(
+        return
+    gaps.append(GroupFailure(name, Diagnosis(
         DiagnosisKind.MALFORMED_OUTPUT,
         detail="; ".join(e.render() for e in errors),
-    ))
+    )))
+    failed_names.add(name)
 
 
 def _ingest_group_outputs(
@@ -557,10 +564,5 @@ def _ingest_group_outputs(
             records.append(ingest_review(Path(path).read_text()))
         except IngestRejected as exc:
             core.log.warn(f"{path} rejected ({exc}) — excluding from merge")
-            name = group_names[i] if i < len(group_names) else Path(path).stem
-            gap = _malformed_gap(name, failed_names, exc.errors)
-            if gap is None:
-                continue
-            gaps.append(gap)
-            failed_names.add(name)
+            _malformed_gap(group_names[i], failed_names, exc.errors, gaps)
     return _GroupIngest(tuple(records), tuple(gaps))

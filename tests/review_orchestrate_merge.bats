@@ -26,7 +26,7 @@ result = mod._phase_merge([], [
         mod.DiagnosisKind.AGENT_ERROR, detail="model not available")),
     mod.GroupFailure("svc-card", mod.Diagnosis(
         mod.DiagnosisKind.MAX_TURNS, num_turns=10)),
-])
+], ())
 print(result.text)
 PYEOF
 )

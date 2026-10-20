@@ -50,6 +50,7 @@ from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
 from agent.backend import selected_backend
 from agent.phases import phase_model
+from agent.session import diagnose_missing_output
 from review.budget import (
     MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes,
     ladder_target_bytes,
@@ -194,10 +195,20 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
 
-    outcome = ingest_with_repair(job.review_file, sent, invoke)
+    outcome = ingest_with_repair(
+        job.review_file, sent, invoke,
+        diagnose=lambda: diagnose_missing_output(
+            job.session_log, job.review_file,
+        ),
+    )
     if not outcome.ok:
-        listed = "; ".join(e.render() for e in outcome.errors)
-        core.log.error(f"review agent output rejected: {listed}")
+        if outcome.diagnosis is not None:
+            core.log.error(
+                f"review agent repair failed: {outcome.diagnosis.message}"
+            )
+        else:
+            listed = "; ".join(e.render() for e in outcome.errors)
+            core.log.error(f"review agent output rejected: {listed}")
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
     raw = Path(job.review_file).read_text()

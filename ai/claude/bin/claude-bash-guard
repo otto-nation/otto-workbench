@@ -284,7 +284,9 @@ _gh_api_publishes() {
 _command_publishes() {
   local statement
   for statement in "${SCAN_STATEMENTS[@]}"; do
-    _statement_publishes "$statement" && return 0
+    if _statement_publishes "$statement"; then
+      return 0
+    fi
   done
   return 1
 }

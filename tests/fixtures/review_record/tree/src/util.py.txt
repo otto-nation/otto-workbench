@@ -1,0 +1,2 @@
+def clamp(v, lo, hi):
+    return max(min(v, hi), lo)

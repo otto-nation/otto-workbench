@@ -1,0 +1,18 @@
+{
+  "repo": "acme/widget",
+  "pr_number": null,
+  "head_sha": "9f1c2e3d4b5a69788796a5b4c3d2e1f00a1b2c3d",
+  "head_ref": "feat/retry",
+  "base_ref": "main",
+  "title": "",
+  "generator_version": "review 1.42.0 / otto-workbench 1.47.0 (6c990742)",
+  "review_type": "full",
+  "mode": "self",
+  "prior_sha": "",
+  "delta_files": [],
+  "date": "2026-10-19",
+  "prior_date": "",
+  "skipped_groups": 0,
+  "total_groups": 0,
+  "status": null
+}

@@ -1,0 +1,6 @@
+import os
+
+
+def run(args, elapsed):
+    if args.timeout > elapsed:
+        return True

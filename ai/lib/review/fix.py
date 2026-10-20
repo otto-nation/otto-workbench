@@ -72,7 +72,7 @@ from review.paths import phase_log_path, read_review_meta, write_review_meta
 from review.document import (
     SECTION_STATIC_ANALYSIS, ReviewDocument, is_skipped, section_span,
 )
-from review.grammar import FINDING_ID_RE
+from review.grammar import FINDING_ID_RE, UNVERIFIED_TAIL_RE
 from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
 )
@@ -272,14 +272,6 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit - 1].rstrip() + "\u2026"
 
 
-# The caveat a landed-but-unverifiable fix carries on the review document, in
-# the shape the other two annotations use. Anchored to the tail for the reason
-# `_SKIP` and `_DECLINED` are: matched anywhere, a finding whose prose quotes
-# the annotation — the docs of this module do, verbatim — would read as already
-# carrying one.
-_UNVERIFIED_TAIL_RE = re.compile(r"\*\(unverified(?:\s*[—–-]+\s*.+?)?\)\*\s*$")
-
-
 def _annotated(line: str, note: str) -> str:
     """`line` with `note` appended, and nothing on it left to misread.
 
@@ -325,7 +317,7 @@ def _annotated(line: str, note: str) -> str:
     case it refuses to overwrite is narrow and the annotation it would have
     written is recoverable; the one it protects is not.
     """
-    if _UNVERIFIED_TAIL_RE.search(line):
+    if UNVERIFIED_TAIL_RE.search(line):
         return line
     return f"{line.rstrip().replace('*(', '* (')} {note}"
 

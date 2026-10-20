@@ -1,0 +1,18 @@
+{
+  "repo": "acme/widget",
+  "pr_number": 38,
+  "head_sha": "2cb613ec084559a9590f074eabde546c44b284a3",
+  "head_ref": "add-voice-chat",
+  "base_ref": "main",
+  "title": "feat: add on-device dictation to the composer",
+  "generator_version": "review 1.42.0 / otto-workbench 1.47.0 (a1350c77)",
+  "review_type": "full",
+  "mode": "pr",
+  "prior_sha": "",
+  "delta_files": [],
+  "date": "2026-10-15",
+  "prior_date": "",
+  "skipped_groups": 0,
+  "total_groups": 0,
+  "status": "partial"
+}

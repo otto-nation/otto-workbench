@@ -1,0 +1,22 @@
+{
+  "repo": "acme/platform",
+  "pr_number": 4560,
+  "head_sha": "c637bb6512253dc83a080d1d7fc01759e7523592",
+  "head_ref": "isaac/ENG-1/exactly_once",
+  "base_ref": "main",
+  "title": "",
+  "generator_version": "review 1.42.0 / otto-workbench 1.47.0 (b25a5b64)",
+  "review_type": "incremental",
+  "mode": "self",
+  "prior_sha": "d54f88931bcca25ad039ebb2428cf4310a50c7ec",
+  "delta_files": [
+    "src/app.py",
+    "src/cli.py",
+    "src/util.py"
+  ],
+  "date": "2026-10-19",
+  "prior_date": "2026-10-17",
+  "skipped_groups": 0,
+  "total_groups": 6,
+  "status": "completed"
+}

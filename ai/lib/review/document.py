@@ -86,6 +86,8 @@ from pathlib import Path
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from pr.target import display_repo
+from review.grammar import SKIP_HEAD_RE, SKIP_TAIL_RE
+from review.record import ReviewRecord
 from review.spans import finding_spans
 from review.types import SEVERITIES, Finding, FindingScope, ReviewMeta, ReviewType, meta_enum
 
@@ -98,6 +100,7 @@ SECTION_SUMMARY = "Summary"
 SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
+SECTION_FAILURES = "Agent Failures"
 
 # A re-review's ledger: one line per prior finding, saying whether the change
 # resolved it. Reconciliation reads it to tell a finding the re-review dropped
@@ -241,12 +244,11 @@ class ReviewHeader:
         past this is stating the review's attribution twice, and the second
         statement is the one that drifts.
 
-        Left to the caller is everything `meta.json` does not know: the date the
-        document is being written, the prior review's own date — which only that
-        document records — the group ratio, and how the run ended.
+        Overrides win over what `meta.json` records.
         """
         incremental = meta.review_type == ReviewType.INCREMENTAL
         return replace(cls(
+            date=meta.date,
             mode=meta.mode,
             pr_number=meta.pr_number,
             head_sha=meta.head_sha,
@@ -254,10 +256,14 @@ class ReviewHeader:
             base_ref=meta.base_ref,
             review_type=meta.review_type or ReviewType.FULL,
             prior_sha=meta.prior_sha,
+            prior_date=meta.prior_date if incremental else "",
             # A count only an incremental review has: on a full one the sidecar
             # records no delta, and a `0` here would read as a delta of nothing
             # rather than as the absence of one.
             delta_files=len(meta.delta_files) if incremental else None,
+            skipped_groups=meta.skipped_groups if incremental else 0,
+            total_groups=meta.total_groups if incremental else 0,
+            status=meta.status,
             generator_version=meta.generator_version,
         ), **overrides)
 
@@ -562,19 +568,6 @@ def review_title(meta: ReviewMeta) -> str:
 
 # ── Finding lines ────────────────────────────────────────────────────────────
 
-# The fix pass's record of a finding it read and left alone, in the same grammar
-# as `review.grammar`'s decline annotation and optional in the same way — a skip
-# written without a reason is still a skip, and reading it as an ordinary open
-# finding is what lets a sibling finding's edit report it as fixed.
-#
-# Anchored to head and tail for the reason the decline annotation is: matched
-# anywhere, a finding whose prose quotes the annotation — the docs of the fix
-# pass do, verbatim — would read as carrying it and never be touched again.
-_SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
-_SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
-_SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
-
-
 def is_skipped(finding: Finding) -> bool:
     """Whether a previous fix pass recorded that it left this finding alone.
 
@@ -583,7 +576,7 @@ def is_skipped(finding: Finding) -> bool:
     """
     if finding.checked:
         return False
-    return bool(_SKIP_HEAD_RE.match(finding.body) or _SKIP_TAIL_RE.search(finding.body))
+    return bool(SKIP_HEAD_RE.match(finding.body) or SKIP_TAIL_RE.search(finding.body))
 
 
 def _parse_findings(text: str) -> list[Finding]:
@@ -591,6 +584,32 @@ def _parse_findings(text: str) -> list[Finding]:
         span.finding for span in finding_spans(text)
         if span.scope is FindingScope.DECLARED
     ]
+
+
+def _record_section(record: ReviewRecord, header: str) -> str:
+    """A section's text read off the record's fields. Findings are read through
+    `findings`, never as a section — a severity heading raises."""
+    key = header.strip().lower()
+    if key in {s.section.lower() for s in SEVERITIES}:
+        raise ValueError(
+            f"{header!r} is a severity heading; read it from .findings"
+        )
+    by_key = {
+        SECTION_SUMMARY.lower(): record.summary,
+        SECTION_VERDICT.lower(): record.verdict,
+        SECTION_STATIC_ANALYSIS.lower(): record.static_analysis,
+        SECTION_PRIOR_FINDINGS.lower(): record.ledger,
+        SECTION_FILE_TRIAGE.lower(): "\n".join(e.text for e in record.triage or ()),
+    }
+    if key in by_key:
+        return by_key[key].strip()
+    if key == SECTION_FAILURES.lower():
+        if not record.failures:
+            return ""
+        # review.render imports this module; a top-level import here is circular.
+        from review.render import failures_body
+        return failures_body(record.failures)
+    return next((e.body.strip() for e in record.extra if e.heading.lower() == key), "")
 
 
 @dataclass(frozen=True)
@@ -605,6 +624,19 @@ class ReviewDocument:
     title: str = ""
     header: ReviewHeader = field(default_factory=ReviewHeader)
     body: str = ""
+    # Set when the document is the read view of a stored review. The read API
+    # answers from it; `body` is the legacy text form, removed once every
+    # caller reads through the store.
+    record: ReviewRecord | None = None
+    meta: ReviewMeta | None = None
+
+    @classmethod
+    def from_stored(cls, stored) -> "ReviewDocument":
+        """The read view of `stored` (a `review.store.StoredReview`)."""
+        return cls(
+            title=review_title(stored.meta), header=ReviewHeader.from_meta(stored.meta),
+            record=stored.record, meta=stored.meta,
+        )
 
     def render(self) -> str:
         """The document as it goes on disk: title, header block, blank line, body.
@@ -612,6 +644,11 @@ class ReviewDocument:
         A document with no title opens with its header, which is what a
         mechanical merge written before synthesis has.
         """
+        if self.record is not None:
+            raise TypeError(
+                "a record-backed ReviewDocument has no markdown body; "
+                "write it with review.store.write_review"
+            )
         title = f"{self.title}\n" if self.title else ""
         return f"{title}{self.header.render()}\n{self.body}"
 
@@ -667,8 +704,12 @@ class ReviewDocument:
         """The body of the `## <header>` section, stripped, or "" when absent.
 
         Read off the body, so a metadata comment above it can never be mistaken
-        for the section's contents.
+        for the section's contents. A record-backed document raises
+        ``ValueError`` on a severity heading; those findings live on
+        ``.findings``.
         """
+        if self.record is not None:
+            return _record_section(self.record, header)
         span = section_span(self.body, header)
         return span.body_of(self.body).strip() if span else ""
 
@@ -685,6 +726,8 @@ class ReviewDocument:
         declarations: the ones still outstanding, so a finding the fix pass
         checked off is one of these and not one of those.
         """
+        if self.record is not None:
+            return [f.view() for f in self.record.visible]
         return _parse_findings(self.body)
 
     @property
@@ -712,13 +755,16 @@ class ReviewDocument:
         a finding line under any other heading — the prior-findings ledger is
         one — is prose about a finding rather than a declaration of one.
         """
+        if self.record is not None:
+            return self.record.open_counts
         tally = Counter(f.severity for f in self.open_findings)
         return {s.key: tally[s.key] for s in SEVERITIES}
 
     @property
     def verdict(self) -> ReviewVerdict | None:
         """The verdict the `## Verdict` section states, if it states one."""
-        return ReviewVerdict.stated_in(self.section(SECTION_VERDICT))
+        text = self.record.verdict if self.record is not None else self.section(SECTION_VERDICT)
+        return ReviewVerdict.stated_in(text)
 
 
 def _is_header_line(line: str) -> bool:

@@ -16,7 +16,7 @@ if LIB_DIR not in sys.path:
 import pytest
 from review.document import ReviewDocument
 from review.spans import (
-    _finalize_finding, _match_severity_header,
+    _finalize_finding, severity_of_heading,
     drop_findings, ends_finding_body,
     finding_spans, is_section_boundary,
     starts_finding_or_section,
@@ -63,31 +63,31 @@ class TestStartsFindingOrSection:
 
 class TestMatchSeverityHeader:
     def test_h2_must_fix(self):
-        assert _match_severity_header("## Must fix") == "M"
+        assert severity_of_heading("## Must fix") == "M"
 
     def test_h3_should_fix_hyphenated(self):
-        assert _match_severity_header("### Should-fix") == "S"
+        assert severity_of_heading("### Should-fix") == "S"
 
     def test_h3_nit(self):
-        assert _match_severity_header("### Nit") == "N"
+        assert severity_of_heading("### Nit") == "N"
 
     def test_h2_nits_plural(self):
-        assert _match_severity_header("## Nits") == "N"
+        assert severity_of_heading("## Nits") == "N"
 
     def test_h4_idioms(self):
-        assert _match_severity_header("#### Idioms") == "I"
+        assert severity_of_heading("#### Idioms") == "I"
 
     def test_case_insensitive(self):
-        assert _match_severity_header("## SHOULD FIX") == "S"
+        assert severity_of_heading("## SHOULD FIX") == "S"
 
     def test_non_severity_header_returns_none(self):
-        assert _match_severity_header("## Summary") is None
+        assert severity_of_heading("## Summary") is None
 
     def test_non_header_returns_none(self):
-        assert _match_severity_header("Some text") is None
+        assert severity_of_heading("Some text") is None
 
     def test_findings_parent_returns_none(self):
-        assert _match_severity_header("## Findings") is None
+        assert severity_of_heading("## Findings") is None
 
 
 class TestFinalizeFinding:

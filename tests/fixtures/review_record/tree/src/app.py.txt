@@ -1,0 +1,3 @@
+def fetch(call):
+    for attempt in range(3):
+        call()

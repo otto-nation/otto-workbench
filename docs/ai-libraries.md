@@ -1270,6 +1270,22 @@ disprove gate runs (`_should_disprove`), and sizing the synthesis turn budget
 (`_synthesis_max_turns`) all read from there. Writing the result to the review
 file is `review.outcome`'s.
 
+### review/store.py
+
+Where a review's record, sidecar and rendered view are written — together.
+
+`write_review` is the one writer of `review.md`: it renders into a local first,
+then saves `review.json`, then `meta.json`, then writes `review.md`, each
+atomically. A render failure leaves the directory unchanged. A caller that
+changes a review loads it with `read_review`, transforms the record, and writes
+it back — `update_review` is that loop. Nothing edits `review.md`.
+
+A directory with no readable `review.json` is stale: `read_review` answers None
+and every reader treats that as no review. The prior round's record is moved
+to `prior.json` and its sidecar copied to `prior-meta.json` when a re-review
+archives, so the re-review reads its predecessor as data rather than parsing
+`prior.md`.
+
 ### review/verdict.py
 
 What a set of counts means, and the review a run without an agent writes.
@@ -1422,6 +1438,22 @@ the different question of whether a finding is about to be posted twice.
 What a document is assembled from is `review.document`'s; what a finding means
 once parsed is `review.types`'.
 
+### review/ingest.py
+
+One ingest boundary: an agent's markdown review becomes a `ReviewRecord`, once.
+
+Every agent artifact that becomes review state passes through `ingest_review`
+where it enters. Ingest is strict: an entry it cannot represent faithfully — an
+unknown severity token, a duplicate ID, a declaration with nothing after it — is
+an `IngestError`, never a silent repair. A second rejection is an agent failure,
+handled as failures already are.
+
+Text carrying the render `BANNER` is refused outright: `review.md` is a view of
+`review.json` and is never parsed back.
+
+This reads the markdown grammar — `review.grammar` for a finding line,
+`review.spans` for where its body ends.
+
 ### review/merge.py
 
 What becomes of findings as the group reviews are folded into one document.
@@ -1545,6 +1577,29 @@ The ledger this module reads is not the only account of what became of a
 prior finding. Every finding posted inline opened a review thread,
 independent of that ledger, and what the author did with that thread is the
 other one — `review.reply_threads` reads it.
+
+### review/record.py
+
+The review record — `review.json`, the one source of truth for a review.
+
+A review used to be a markdown file that agents wrote and a dozen code paths
+edited in place. It is now this frozen tree, written atomically beside
+`meta.json`; `review.md` is rendered from it by `review.render` and never read
+back. Header facts — SHAs, mode, status, dates, generator — are `meta.json`'s
+(`ReviewMeta`); this record holds what the review *says*.
+
+Each finding carries its `Disposition`, which replaces the four partial ledgers
+that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped — …)*`
+annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
+`review.types.Finding` it always handed out, so readers did not change.
+
+Some fields carry today's markdown verbatim — `lead`, `verdict`, `ledger`,
+`extra`, `severity_sections` — so the cut-over renders what the markdown
+pipeline wrote. They go when agents write JSON and the verdict is derived.
+
+### review/render.py
+
+Rendering a review record — `review.md` today, the GitHub comment from PR 2.
 
 ### review/reply_threads.py
 

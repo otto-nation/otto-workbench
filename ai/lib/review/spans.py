@@ -31,7 +31,7 @@ def _severity_names() -> dict[str, str]:
     names: dict[str, str] = {}
     for s in SEVERITIES:
         names[s.section.lower()] = s.key
-        # replace("-", " ") mirrors _match_severity_header's input normalisation so
+        # replace("-", " ") mirrors severity_of_heading's input normalisation so
         # future hyphenated section names (e.g. "Should-fix") still resolve correctly.
         names[s.section.lower().replace("-", " ")] = s.key
         for alias in s.aliases:
@@ -70,7 +70,7 @@ def starts_finding_or_section(stripped: str) -> bool:
     )
 
 
-def _match_severity_header(stripped: str) -> str | None:
+def severity_of_heading(stripped: str) -> str | None:
     if not stripped.startswith("#"):
         return None
     text = stripped.lstrip("#").strip().lower().replace("-", " ")
@@ -97,7 +97,7 @@ def ends_finding_body(stripped: str) -> bool:
         starts_finding_or_section(stripped)
         or is_section_boundary(stripped)
         or bool(FINDING_ID_RE.match(stripped))
-        or _match_severity_header(stripped) is not None
+        or severity_of_heading(stripped) is not None
     )
 
 
@@ -111,7 +111,7 @@ def _finalize_finding(finding: Finding, body_lines: list[str]):
 
 def _scope_after(stripped: str, scope: FindingScope) -> FindingScope:
     """The scope a heading line puts the walk into, or the one it was in."""
-    if _match_severity_header(stripped) is not None:
+    if severity_of_heading(stripped) is not None:
         return FindingScope.DECLARED
     if stripped.startswith("## "):
         return FindingScope.REPORTED

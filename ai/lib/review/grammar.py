@@ -317,16 +317,34 @@ _DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
 # declined and is silently dropped from the fix pass's work set with no warning
 # anywhere. So the match is anchored to the two places the templates put an
 # annotation: at the head of the finding body, and at the end of the line.
-_DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
-_DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
+DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
+DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
+
+# The fix pass's record of a finding it read and left alone, in the same grammar
+# as the decline annotation and optional in the same way — a skip written
+# without a reason is still a skip, and reading it as an ordinary open finding
+# is what lets a sibling finding's edit report it as fixed.
+#
+# Anchored to head and tail for the reason the decline annotation is: matched
+# anywhere, a finding whose prose quotes the annotation — the docs of the fix
+# pass do, verbatim — would read as carrying it and never be touched again.
+_SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
+SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
+SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
+
+# The caveat a landed-but-unverifiable fix carries, in the same shape. Anchored
+# to the tail for the same reason: matched anywhere, a finding whose prose
+# quotes the annotation would read as already carrying one.
+UNVERIFIED_TAIL_RE = re.compile(r"\*\(unverified(?:\s*[—–-]+\s*(.+?))?\)\*\s*$")
 
 
 def _match_decline(body: str, line: str) -> re.Match[str] | None:
     """The decline annotation a finding line carries, if it carries one."""
-    return _DECLINED_HEAD_RE.match(body) or _DECLINED_TAIL_RE.search(line)
+    return DECLINED_HEAD_RE.match(body) or DECLINED_TAIL_RE.search(line)
 
 
-def _extract_body_text(line: str) -> str:
+def extract_body_text(line: str) -> str:
+    """The prose after a finding line's separator (em dash, ` -- `, or ` - `), or "" when it has none."""
     em_dash_pos = line.find("—")
     if em_dash_pos != -1:
         return line[em_dash_pos + 1:].strip()
@@ -357,7 +375,7 @@ def parse_finding_line(stripped: str) -> Finding | None:
     seq = int(id_match.group(3))
     after_id = stripped[id_match.end():]
     location = finding_location(after_id)
-    body = _extract_body_text(stripped) if location.named else after_id.strip()
+    body = extract_body_text(stripped) if location.named else after_id.strip()
     declined = _match_decline(body, stripped)
     identity = FindingIdentity.of(stripped)
     return Finding(

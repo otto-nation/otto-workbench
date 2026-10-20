@@ -33,6 +33,7 @@ import config.workbench_config
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
 from core.phases import Effort, Mode, Phase
+from pr.domains import ReviewStatus
 from pr.state import now_iso
 
 
@@ -398,6 +399,14 @@ class ReviewMeta:
     # reads the same findings again and its verdict supersedes: an entry kept
     # from an earlier round would offer to file work that has since been fixed.
     open_findings: tuple["OpenFinding", ...] = ()
+    # What the rendered header states about the run beyond attribution. They
+    # live here because the record holds what the review says and the sidecar
+    # holds what the run was; `review.md`'s header is rendered from these.
+    date: str = ""
+    prior_date: str = ""
+    skipped_groups: int = 0
+    total_groups: int = 0
+    status: ReviewStatus | None = None
 
     @property
     def unpushed_fix_commit(self) -> str:
@@ -435,7 +444,7 @@ def meta_enum(enum_cls, value):
 
 
 # The sidecar's fixed-vocabulary keys, by the enum each is read into.
-_META_VOCABULARIES = {"review_type": ReviewType, "mode": Mode}
+_META_VOCABULARIES = {"review_type": ReviewType, "mode": Mode, "status": ReviewStatus}
 
 
 def review_meta_from_dict(d) -> ReviewMeta:
@@ -444,9 +453,9 @@ def review_meta_from_dict(d) -> ReviewMeta:
     `serde` does the reconstruction, so the fields on `ReviewMeta` are the whole
     schema and a key added there is read without a line here. What it will not
     do on its own is survive a vocabulary it does not know: an unrecognised
-    `review_type` or `mode` raises out of `serde.from_dict` and would cost the
-    whole record. Both are dropped to absent first, which is what `meta_enum`
-    decides, so one unreadable field costs one field.
+    `review_type`, `mode`, or `status` raises out of `serde.from_dict` and would
+    cost the whole record. Those are dropped to absent first, which is what
+    `meta_enum` decides, so one unreadable field costs one field.
 
     A payload that is not an object at all — a hand-edit that left a list, a
     truncated write that json still parsed — reconstructs as if the file were

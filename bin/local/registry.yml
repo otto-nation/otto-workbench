@@ -114,6 +114,11 @@ tools:
     visibility: brief
     description: "Validates that stat format flags are confined to the lib/portable.sh helpers"
 
+  - name: validate-pipe-early-exit
+    permission: false
+    visibility: brief
+    description: "Validates that awk in a pipeline drains stdin instead of exiting after the first match — an early exit SIGPIPEs the producer under pipefail"
+
   - name: validate-bats-version
     permission: false
     visibility: brief

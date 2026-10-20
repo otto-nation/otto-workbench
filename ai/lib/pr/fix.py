@@ -257,9 +257,9 @@ class ItemOutcome:
     # When this outcome was decided, as an ISO stamp — the conversation it was
     # decided against is everything on the thread up to here. A settled outcome
     # stays out of the next triage round only until someone else speaks on the
-    # thread after this instant; see `settlement.settled_ids`. Empty on a record
-    # written before the field existed, which falls back to the record's own
-    # `updated_at`.
+    # thread after this instant; see `settlement.settled_ids`. Empty on an
+    # outcome written before the field existed, which is never settled: no
+    # instant here says what conversation it answered.
     decided_at: str = ""
 
 

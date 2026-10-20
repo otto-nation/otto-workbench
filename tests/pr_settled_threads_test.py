@@ -85,14 +85,11 @@ class TestTheSettledRule:
             record = FixRecord(items=[_outcome(outcome=owed)])
             assert _settled(record, [_comment("kgn", BEFORE)]) == set(), owed
 
-    def test_a_legacy_outcome_is_dated_by_the_record(self):
+    def test_an_undated_outcome_is_never_settled_even_in_a_dated_record(self):
+        """The record's write time is a late bound, so it cannot stand in."""
         record = FixRecord(items=[_outcome(decided_at="")], updated_at=SETTLED_AT)
-        assert _settled(record, [_comment("kgn", BEFORE)]) == {"t1"}
-        assert _settled(record, [_comment("kgn", AFTER)]) == set()
-
-    def test_no_date_at_all_reopens_rather_than_closes(self):
-        record = FixRecord(items=[_outcome(decided_at="")])
         assert _settled(record, [_comment("kgn", BEFORE)]) == set()
+        assert _settled(record, []) == set()
 
     def test_stamps_are_compared_as_instants(self):
         """`Z` and `+00:00` spell one instant; a lexical compare would split them."""
@@ -115,7 +112,7 @@ class TestEveryDecisionIsDated:
         record.reconcile({"t1": FixOutcome.SETTLED_ELSEWHERE})
         assert pr.comments._instant(record.items[0].decided_at) is not None
 
-    def test_the_fix_record_keeps_a_triage_stamp_and_fills_a_missing_one(self):
+    def test_the_fix_record_keeps_a_triage_stamp_and_invents_none(self):
         triaged = CommentItem(id="t1", decided_at=SETTLED_AT)
         unstamped = CommentItem(id="t2")
         record = pr.fix_state.fix_record_for({
@@ -123,7 +120,7 @@ class TestEveryDecisionIsDated:
         })
         by_id = {o.id: o for o in record.items}
         assert by_id["t1"].decided_at == SETTLED_AT
-        assert by_id["t2"].decided_at == record.updated_at
+        assert by_id["t2"].decided_at == ""
 
     def test_a_replayed_entry_keeps_its_stamp(self):
         outcome = _outcome()

@@ -60,26 +60,24 @@ def fix_record_for(
     commit. The others were not landed by this commit, and a SHA on them would
     read as if they had been.
 
-    An entry reaching here without a `decided_at` takes the record's own
-    stamp: the decision was made no later than the write that records it.
+    `decided_at` is carried as the entry has it and never filled in here. The
+    write happens after the decision, so its time is a late bound, and the
+    reopen rule in `settlement.settled_ids` needs an early one: a reply landing
+    between the two would read as predating the decision.
     """
     for outcome, entries in by_outcome.items():
         if outcome.may_cite_a_commit:
             pr.attribution.stamp_pass_commit(entries, commit_sha)
-    updated_at = pr.state.now_iso()
-    items = [
-        entry.to_outcome(outcome)
-        for outcome, entries in by_outcome.items()
-        for entry in entries
-    ]
-    for item in items:
-        item.decided_at = item.decided_at or updated_at
     return FixRecord(
-        items=items,
+        items=[
+            entry.to_outcome(outcome)
+            for outcome, entries in by_outcome.items()
+            for entry in entries
+        ],
         commit_sha=commit_sha,
         commit_status=commit_status,
         head_sha=head_sha,
-        updated_at=updated_at,
+        updated_at=pr.state.now_iso(),
     )
 
 

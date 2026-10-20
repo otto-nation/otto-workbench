@@ -131,20 +131,21 @@ def settled_ids(
     decision never read. A thread with no comments listed for it has nothing
     to reopen it.
 
-    An outcome recorded before `decided_at` existed is dated by the record's
-    `updated_at`, which is no earlier than the decision. With neither there is
-    no instant to compare against and the thread reopens — a needless second
-    look costs an agent pass, a false close loses the reviewer's demand.
+    An outcome with no `decided_at` — one recorded before the field existed —
+    is never settled. The record's `updated_at` is no substitute: it is the
+    time of a write that came after the decision, so a reply in between would
+    read as already answered. A needless second look costs an agent pass, and
+    the triage it gets stamps the outcome; a false close loses the reviewer's
+    demand.
     """
     settled: set[str] = set()
     for outcome in record.items:
         if not outcome.id or outcome.outcome not in SETTLE_OUTCOMES:
             continue
-        stamp = outcome.decided_at or record.updated_at
-        if not stamp:
+        if not outcome.decided_at:
             continue
         comments = comments_by_thread.get(outcome.id, [])
-        if comments and pr.comments.spoken_since(comments, my_login, stamp):
+        if comments and pr.comments.spoken_since(comments, my_login, outcome.decided_at):
             continue
         settled.add(outcome.id)
     return settled

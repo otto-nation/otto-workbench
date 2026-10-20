@@ -18,7 +18,7 @@ functions.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import core.log
@@ -37,7 +37,7 @@ from review.paths import (
     phase_log_path,
     review_artifact_path,
 )
-from review.record import AgentFailure
+from review.record import AgentFailure, ReviewRecord
 from review.render import failures_body
 from review.types import Group, ReviewJob, ReviewType
 from core.text import plural
@@ -303,6 +303,44 @@ def _update_group_failed(
         _write_pipeline_state(job, state)
 
 
+def failures_of(state: "PipelineState") -> tuple[AgentFailure, ...]:
+    """What failed in `state`, one row per agent, in the table's order."""
+    rows = [
+        AgentFailure(
+            agent=f"group-{idx}: {state.group_label(idx)}",
+            reason=d.message,
+            status="failed",
+            recoverable=d.recoverable,
+        )
+        for idx, d in sorted(state.groups_failed.items())
+    ]
+    rows += [
+        AgentFailure(
+            agent=str(phase),
+            reason=d.message,
+            status="fallback" if d.kind is DiagnosisKind.MECHANICAL_FALLBACK else "failed",
+            recoverable=d.recoverable,
+        )
+        for phase, d in sorted(state.failed.items())
+    ]
+    return tuple(rows)
+
+
+def apply_failures(record: ReviewRecord, state: "PipelineState") -> ReviewRecord:
+    """`record` reporting `state`'s failures, its verdict withheld when the run was partial.
+
+    The reasoning is `_withhold_verdict_if_partial`'s: a verdict synthesised over
+    files no agent opened is the line a reader acts on without reading further.
+    """
+    from review.verdict import PARTIAL_VERDICT
+
+    record = replace(record, failures=failures_of(state))
+    failed = len(state.groups_failed)
+    if not failed or failed >= state.group_count > 0 or not record.verdict:
+        return record
+    return replace(record, verdict=PARTIAL_VERDICT.strip())
+
+
 def build_failures_body(state: "PipelineState") -> str:
     """What the Agent Failures section says about `state`, heading excluded.
 
@@ -310,29 +348,7 @@ def build_failures_body(state: "PipelineState") -> str:
     whose rerun fixed it. The heading and where the section sits belong to
     `review.document.set_section` — see `set_failures_section`.
     """
-    rows: list[AgentFailure] = []
-
-    for idx, diagnosis in sorted(state.groups_failed.items()):
-        rows.append(AgentFailure(
-            agent=f"group-{idx}: {state.group_label(idx)}",
-            reason=diagnosis.message,
-            status="failed",
-            recoverable=diagnosis.recoverable,
-        ))
-
-    for phase, diagnosis in sorted(state.failed.items()):
-        fell_back = diagnosis.kind is DiagnosisKind.MECHANICAL_FALLBACK
-        rows.append(AgentFailure(
-            agent=str(phase),
-            reason=diagnosis.message,
-            status="fallback" if fell_back else "failed",
-            recoverable=diagnosis.recoverable,
-        ))
-
-    if not rows:
-        return ""
-
-    return failures_body(tuple(rows))
+    return failures_body(rows) if (rows := failures_of(state)) else ""
 
 
 def set_failures_section(content: str, state: "PipelineState") -> str:

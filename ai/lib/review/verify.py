@@ -67,7 +67,7 @@ from __future__ import annotations
 import functools
 import re
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import core.log
@@ -82,7 +82,9 @@ from review.grammar import (
 )
 from review.format import resolve_path
 from review.ingest import split_evidence
-from review.merge import renumber_findings
+from review.merge import renumber_findings, renumber_record
+from review.record import Disposition, RecordFinding, ReviewRecord
+from review.render import finding_line
 from review.spans import drop_findings, finding_spans
 from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, FindingSpan, severity_by_key,
@@ -369,6 +371,45 @@ def _verify_findings(
     return text, result
 
 
+@dataclass(frozen=True)
+class PostProcessed:
+    record: ReviewRecord
+    verification: dict | None
+
+
+def _verification_text(f: RecordFinding, head: str) -> str:
+    """The finding's words and its evidence, in the shape `_extract_evidence` reads."""
+    rest = f.body.split("\n")[1:]
+    below = [line.rstrip() for line in [*rest, *f.evidence.split("\n")] if line.strip()]
+    return "\n".join([head, *below] if head else below)
+
+
+def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str]) -> PostProcessed:
+    dropped: list[str] = []
+    details: list[dict] = []
+    tracked = functools.cache(lambda: _tracked_files(wt_path))
+    for f in record.visible:
+        if f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD):
+            continue
+        m = VERIFY_FINDING_RE.match(finding_line(f, sids=True).split("\n", 1)[0])
+        if not m:
+            continue
+        written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
+        finding = {"id": f.id, "severity": f.severity, "path": f.path or written}
+        evidence = _extract_evidence(_verification_text(f, m.group(5)))
+        detail = _verification_detail(finding, evidence, wt_path, tracked, changed)
+        details.append(detail)
+        if not detail["match_result"]:
+            dropped.append(f.id)
+            core.log.info(f"Dropping {f.id} ({finding['path']}): {_drop_reason(detail)}")
+    gone = set(dropped)
+    kept = tuple(f for f in record.findings if not (f.visible and f.id in gone))
+    return PostProcessed(replace(record, findings=kept), {
+        "findings_checked": len(details), "findings_passed": len(details) - len(dropped),
+        "findings_dropped": len(dropped), "dropped": dropped, "details": details,
+    })
+
+
 def _strip_evidence_blocks(text: str) -> str:
     return "\n".join(split_evidence(text.split("\n")).body)
 
@@ -413,6 +454,15 @@ def _insert_drop_note(text: str, note: str) -> str:
     )
 
 
+def _revised_verdict(verdict: str, counts: dict[str, int], n_dropped: int) -> str:
+    stated = ReviewVerdict.stated_in(verdict)
+    supported = verdict_from_counts(counts)
+    if not stated or not stated.outranks(supported):
+        return verdict
+    return (f"{supported.prose} — {counts_prose(counts) or 'no findings'} after "
+            f"evidence verification removed {n_dropped} finding{plural(n_dropped)}.")
+
+
 def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
     """Lower a verdict the surviving findings no longer support.
 
@@ -422,17 +472,11 @@ def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
     span = section_span(text, SECTION_VERDICT)
     if span is None:
         return text
-
-    stated = ReviewVerdict.stated_in(span.body_of(text))
-    supported = verdict_from_counts(counts)
-    if not stated or not stated.outranks(supported):
+    body = span.body_of(text)
+    revised = _revised_verdict(body, counts, n_dropped)
+    if revised == body:
         return text
-
-    revised = (
-        f"{supported.prose} — {counts_prose(counts) or 'no findings'} after "
-        f"evidence verification removed {n_dropped} finding{plural(n_dropped)}.\n"
-    )
-    return f"{text[:span.start]}\n{revised}\n{text[span.end:].lstrip(chr(10))}"
+    return f"{text[:span.start]}\n{revised}\n\n{text[span.end:].lstrip(chr(10))}"
 
 
 def _reconcile_dropped_findings(text: str, verification: dict) -> str:
@@ -447,6 +491,16 @@ def _reconcile_dropped_findings(text: str, verification: dict) -> str:
 
     text = _revise_verdict(text, ReviewDocument(body=text).open_counts, len(dropped))
     return _insert_drop_note(text, _drop_note(verification.get("details") or [], dropped))
+
+
+def _reconciled_record(record: ReviewRecord, verification: dict) -> ReviewRecord:
+    dropped = verification.get("dropped") or []
+    if not dropped or _DROP_NOTE_MARKER in record.summary:
+        return record
+    note = _drop_note(verification.get("details") or [], dropped)
+    summary = f"{record.summary.rstrip()}\n\n{note}" if record.summary else note
+    return replace(record, summary=summary,
+                   verdict=_revised_verdict(record.verdict, record.open_counts, len(dropped)))
 
 
 # ── Disprove-it gate ─────────────────────────────────────────────────────────
@@ -504,6 +558,26 @@ def apply_disprove_results(
     }
 
 
+@dataclass(frozen=True)
+class DisproveApplied:
+    record: ReviewRecord
+    summary: dict
+
+
+def apply_disprove(record: ReviewRecord, results: list[DisproveResult]) -> DisproveApplied:
+    """Mark each finding the gate falsified; kept on the record, never rendered."""
+    falsified = {r.finding_id for r in results if r.verdict == "FALSIFIED"}
+    reasons = {r.finding_id: r.reason for r in results if r.verdict == "FALSIFIED"}
+    marked = tuple(
+        replace(f, disposition=Disposition.FALSIFIED) if f.visible and f.id in falsified else f
+        for f in record.findings
+    )
+    return DisproveApplied(replace(record, findings=marked), {
+        "total_challenged": len(results), "survived": len(results) - len(falsified),
+        "falsified": len(falsified), "falsified_ids": sorted(falsified), "reasons": reasons,
+    })
+
+
 # ── The whole pass over a finished review ────────────────────────────────────
 
 def post_process_findings(
@@ -544,3 +618,26 @@ def post_process_findings(
         text = _reconcile_dropped_findings(text, verification)
     path.write_text(text)
     return verification
+
+
+def post_process_record(
+    record: ReviewRecord, wt_path: str = "", changed_files: Collection[str] = (),
+) -> PostProcessed:
+    """Every gate and cleanup a finished review needs, as one record transform.
+
+    The order is `post_process_findings`'s, and still the contract: the ledger
+    numbers the prior review, so it goes before renumbering; the drop note reads
+    the finished counts, so it goes after.
+    """
+    verification = None
+    if wt_path:
+        verified = _verify_record(record, wt_path, changed_files)
+        record, verification = verified.record, verified.verification
+        if verification["dropped"]:
+            core.log.info(f"Dropped {len(verification['dropped'])} unverified findings: "
+                          f"{', '.join(verification['dropped'])}")
+    record = replace(record, findings=tuple(replace(f, sid="") for f in record.findings), ledger="")
+    record = renumber_record(record)
+    if verification:
+        record = _reconciled_record(record, verification)
+    return PostProcessed(record, verification)

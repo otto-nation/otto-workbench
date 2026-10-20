@@ -19,9 +19,12 @@ states `PARTIAL_VERDICT` and exits 0, since the surviving findings are real.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
+from review.record import ReviewRecord
 from review.types import SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
 from core.text import plural
 
@@ -224,6 +227,23 @@ def build_mechanical_body(
     run came to drop the triage its groups had already merged.
     """
     counts = ReviewDocument(body=merged_content).open_counts
+    lead = _summary_lead(
+        counts, group_count=group_count, summary_note=summary_note,
+        file_count=file_count, groups_reported=groups_reported,
+    )
+    body = (
+        f"## {SECTION_SUMMARY}\n"
+        f"{lead}\n\n"
+        f"{merged_content}\n"
+    )
+    if not include_verdict:
+        return body
+    return f"{body}\n## {SECTION_VERDICT}\n{verdict or mechanical_verdict(counts)}"
+
+
+def _summary_lead(counts: dict[str, int], *, group_count: int, summary_note: str,
+                  file_count: int, groups_reported: int | None) -> str:
+    """The one-sentence scope and reason a mechanical Summary opens with."""
     total = sum(counts.values())
     count_summary = f"{total} finding{plural(total)}" if total else "No findings"
     # Nothing reported is not the same as nothing found, and the tally cannot
@@ -247,12 +267,22 @@ def build_mechanical_body(
         scope = f" across {file_count} file{plural(file_count)} in {group_scope}"
     else:
         scope = f" across {group_scope}"
-    body = (
-        f"## {SECTION_SUMMARY}\n"
-        f"{count_summary}{scope}. "
-        f"{summary_note}\n\n"
-        f"{merged_content}\n"
-    )
-    if not include_verdict:
-        return body
-    return f"{body}\n## {SECTION_VERDICT}\n{verdict or mechanical_verdict(counts)}"
+    return f"{count_summary}{scope}. {summary_note}"
+
+
+def build_mechanical_record(
+    merged: ReviewRecord, *, group_count: int, summary_note: str,
+    include_verdict: bool = True, verdict: str = "", file_count: int = 0,
+    groups_reported: int | None = None,
+) -> ReviewRecord:
+    """`merged` as a whole review no synthesis agent read — `build_mechanical_body`'s record.
+
+    Text already on `merged.summary` (a verification drop note) follows the
+    scope sentence, inside the Summary, which is where the text pipeline put it.
+    """
+    counts = merged.open_counts
+    lead = _summary_lead(counts, group_count=group_count, summary_note=summary_note,
+                         file_count=file_count, groups_reported=groups_reported)
+    summary = f"{lead}\n\n{merged.summary}" if merged.summary else lead
+    stated = (verdict or mechanical_verdict(counts)).strip() if include_verdict else ""
+    return replace(merged, summary=summary, verdict=stated)

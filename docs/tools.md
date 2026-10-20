@@ -908,7 +908,7 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
+| `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering, else the latest; refused when several unfinished runs cover this repo). |
 | `--verbose` | Also stream each step's stderr as step_log events. |
 
 **`pr batch resolve`** — Answer one decision
@@ -926,7 +926,7 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to cancel (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
+| `[<run-id>]` | Run to cancel (default: this repo's newest unfinished covering run, else its newest covering, else the latest; refused when several unfinished runs cover this repo). |
 | `--kill` | Also terminate running steps. |
 
 **`pr batch status`** — Print a run's report: what needs action, and why (JSON)

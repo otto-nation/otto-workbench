@@ -241,11 +241,11 @@ def _try_load(run_id: str) -> Run | None:
         return None
 
 
-def _covering_runs(repo: str) -> list[tuple[str, Run]]:
+def _covering_runs(repo: str) -> list[Run]:
     """Readable runs with an item whose repo matches *repo*, case-folded, oldest first."""
     wanted = repo.casefold()
-    runs = ((run_id, _try_load(run_id)) for run_id in run_ids())
-    return [(run_id, run) for run_id, run in runs
+    runs = (_try_load(run_id) for run_id in run_ids())
+    return [run for run in runs
             if run and any(item.repo.casefold() == wanted for item in run.items)]
 
 
@@ -254,12 +254,12 @@ def ids_covering(repo: str) -> list[str]:
 
     A run whose state cannot be read is skipped, as it is by `unfinished_covering`.
     """
-    return [run_id for run_id, _ in _covering_runs(repo)]
+    return [run.id for run in _covering_runs(repo)]
 
 
 def unfinished_covering(repo: str) -> list[str]:
     """`ids_covering(repo)` narrowed to runs not yet finished, oldest first."""
-    return [run_id for run_id, run in _covering_runs(repo) if run.status not in FINISHED_RUN]
+    return [run.id for run in _covering_runs(repo) if run.status not in FINISHED_RUN]
 
 
 def default_run_id(repo: str | None) -> str | None:
@@ -271,10 +271,10 @@ def default_run_id(repo: str | None) -> str | None:
     if not repo:
         return latest_run_id()
     covering = _covering_runs(repo)
-    unfinished = [i for i, run in covering if run.status not in FINISHED_RUN]
+    unfinished = [run.id for run in covering if run.status not in FINISHED_RUN]
     if unfinished:
         return unfinished[-1]
-    return covering[-1][0] if covering else latest_run_id()
+    return covering[-1].id if covering else latest_run_id()
 
 
 def state_mtime(run_id: str) -> float:

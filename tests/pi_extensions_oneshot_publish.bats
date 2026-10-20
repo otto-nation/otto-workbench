@@ -91,33 +91,84 @@ _publishes() {
   [ "$status" -ne 0 ]
 }
 
-# ── claude-bash-guard (agent_id) ─────────────────────────────────────────────
-# The same command set, keyed on a non-empty agent_id rather than session mode.
-# Uses _guard_in so these run without claude_settings_writes.bats' setup_file.
+# ── harness parity ───────────────────────────────────────────────────────────
+# isPublishing (Pi) vs claude-bash-guard with a non-empty agent_id. Claude hook
+# tests for the agent_id gate live in tests/claude_settings_writes.bats; this
+# corpus only asks whether the two predicates agree.
+#
+# Classified by the block message, the way _agree in
+# tests/pi_extensions_testpipe.bats is: a command the Claude hook refuses for
+# an unrelated rule (compound cd, $VAR) is not a publish disagreement when Pi
+# also declines to fire.
 
-_claude_publish() {
-  local cmd="$1" agent="$2" sandbox payload
-  sandbox="$(_review_sandbox "isaac/feat/x")"
+_pi_publish_verdict() {
+  _publishes "$1"
+  [ "$status" -eq 0 ]
+  if [ "$output" = true ]; then
+    echo publish
+  else
+    echo allowed
+  fi
+}
+
+_claude_subagent_verdict() {
+  local payload
   payload=$(python3 -c '
 import json, sys
-agent = None if sys.argv[2] == "null" else sys.argv[2]
-print(json.dumps({"tool_input": {"command": sys.argv[1]}, "agent_id": agent}))
-' "$cmd" "$agent")
-  run _guard_in "$sandbox" "$payload"
+print(json.dumps({"agent_id": "abc", "tool_input": {"command": sys.argv[1]}}))
+' "$1")
+  run _guard_in "$2" "$payload"
+  case "$output" in
+    *"does not file issues"*) echo publish ;;
+    *"BLOCKED:"*) echo other ;;
+    *) echo allowed ;;
+  esac
 }
 
-@test "claude-bash-guard: subagent gh issue create is denied" {
-  _claude_publish 'gh issue create --title x --body y' 'a7175461c26907157'
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"subagent"* ]]
+_agree_publish() {
+  local cmd="$1" sandbox="$2" claude pi
+  pi=$(_pi_publish_verdict "$cmd")
+  claude=$(_claude_subagent_verdict "$cmd" "$sandbox")
+  if [ "$claude" = other ] && [ "$pi" = allowed ]; then
+    return 0
+  fi
+  [ "$claude" = "$pi" ] || {
+    echo "harness disagreement on: $cmd"
+    echo "  claude=$claude  pi=$pi"
+    return 1
+  }
 }
 
-@test "claude-bash-guard: main session gh issue create is allowed" {
-  _claude_publish 'gh issue create --title x --body y' 'null'
-  [ "$status" -eq 0 ]
-}
-
-@test "claude-bash-guard: subagent gh pr view is allowed" {
-  _claude_publish 'gh pr view 1' 'a7175461c26907157'
-  [ "$status" -eq 0 ]
+@test "oneshot-publish-guard: Claude subagent and Pi agree on the corpus" {
+  local cmd sandbox
+  sandbox="$(_review_sandbox "isaac/feat/x")"
+  for cmd in \
+    'gh issue create --title x --body y --repo nobody/nothing' \
+    'linear issue create --team KEY --title x' \
+    'gh pr create --draft' \
+    'gh pr edit 1 --body x' \
+    'gh pr comment 1 --body x' \
+    'gh pr review 1 --comment x' \
+    'gh api -X POST /repos/o/r/issues' \
+    'gh api --method PATCH /repos/o/r/pulls/1' \
+    'gh api --method=PUT /repos/o/r/issues/1' \
+    'gh api -XDELETE /repos/o/r/issues/1/lock' \
+    'gh api -X "POST" /repos/o/r/issues' \
+    'gh api -X POST "/repos/o/r/issues"' \
+    '"gh" issue create --title x' \
+    'gh "issue" create --title x' \
+    'pr create --draft' \
+    'pr comments --post' \
+    'pr describe --post' \
+    'cd x && gh issue create --title x' \
+    'gh issue list' \
+    'gh pr view 1' \
+    'gh api GET /repos/o/r/issues' \
+    'gh api -X GET /repos/o/r/issues' \
+    'gh api -X POST /repos/o/r/git/refs' \
+    'pr comments --triage' \
+    'pr describe --draft' \
+    "echo 'gh issue create'"; do
+    _agree_publish "$cmd" "$sandbox"
+  done
 }

@@ -201,44 +201,57 @@ stage_is_filter() {
   [[ "|$STATUS_FILTERS|" == *"|$_STAGE_NAME|"* ]]
 }
 
+# _statement_words STATEMENT — set STATEMENT_WORDS to STATEMENT's IFS words
+# with surrounding quotes stripped.
+#
+# The same split stage_invokes_runner uses (`read -ra`) and the same two
+# expansions stage_command_name uses to dequote a token. Not a second
+# tokenizer: a quoted method (`-X "POST"`) or command (`"gh" issue create`)
+# has to match the Pi side, which reads tokenize().value.
+_statement_words() {
+  local tok
+  local -a raw
+  STATEMENT_WORDS=()
+  read -ra raw <<<"$1"
+  for tok in "${raw[@]}"; do
+    tok="${tok#[\'\"]}"
+    tok="${tok%[\'\"]}"
+    STATEMENT_WORDS+=("$tok")
+  done
+}
+
 # True when STATEMENT files an issue or writes to a PR. Own function so other
 # agent_id checks stay theirs — this one is only the publishing command set.
+# Word matches, not regexes over the raw statement, so quoting a command name
+# or subcommand is not a way around the rule.
 _statement_publishes() {
   local statement="$1"
-  local re_gh_issue='^[[:space:]]*gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
-  local re_linear='^[[:space:]]*linear[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
-  local re_gh_pr='^[[:space:]]*gh[[:space:]]+pr[[:space:]]+(edit|comment|review|create)([[:space:]]|$)'
-  local re_pr_create='^[[:space:]]*pr[[:space:]]+create([[:space:]]|$)'
-  local re_pr_comments='^[[:space:]]*pr[[:space:]]+comments([[:space:]]|$)'
-  local re_pr_describe='^[[:space:]]*pr[[:space:]]+describe([[:space:]]|$)'
-  local re_post='(^|[[:space:]])--post([[:space:]]|$)'
-  [[ "$statement" =~ $re_gh_issue ]] && return 0
-  [[ "$statement" =~ $re_linear ]] && return 0
-  [[ "$statement" =~ $re_gh_pr ]] && return 0
-  [[ "$statement" =~ $re_pr_create ]] && return 0
-  if [[ "$statement" =~ $re_pr_comments && "$statement" =~ $re_post ]]; then
-    return 0
-  fi
-  if [[ "$statement" =~ $re_pr_describe && "$statement" =~ $re_post ]]; then
-    return 0
-  fi
+  _statement_words "$statement"
+  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == issue && "${STATEMENT_WORDS[2]}" == create ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == linear && "${STATEMENT_WORDS[1]}" == issue && "${STATEMENT_WORDS[2]}" == create ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == edit ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == comment ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == review ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == create ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == create ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == comments && " ${STATEMENT_WORDS[*]} " == *" --post "* ]] && return 0
+  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == describe && " ${STATEMENT_WORDS[*]} " == *" --post "* ]] && return 0
   _gh_api_publishes "$statement" && return 0
   return 1
 }
 
 # True when STATEMENT is `gh api` with a mutating method on an issues/pulls path.
 _gh_api_publishes() {
-  local statement="$1" word method=""
-  local -a tokens
+  local word method=""
   local -i i touches=0
-  read -ra tokens <<<"$statement"
-  (( ${#tokens[@]} >= 3 )) || return 1
-  [[ "${tokens[0]}" == gh && "${tokens[1]}" == api ]] || return 1
-  for ((i = 2; i < ${#tokens[@]}; i++)); do
-    word="${tokens[$i]}"
+  _statement_words "$1"
+  (( ${#STATEMENT_WORDS[@]} >= 3 )) || return 1
+  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == api ]] || return 1
+  for ((i = 2; i < ${#STATEMENT_WORDS[@]}; i++)); do
+    word="${STATEMENT_WORDS[$i]}"
     case "$word" in
       -X|--method)
-        method="${tokens[i+1]:-}"
+        method="${STATEMENT_WORDS[i+1]:-}"
         i=$((i + 1))
         ;;
       --method=*)
@@ -248,13 +261,14 @@ _gh_api_publishes() {
         method="${word#-X}"
         ;;
       *)
-        if [[ "$word" =~ (^|/)(issues|pulls)(/|$) ]]; then
-          touches=1
-        fi
+        [[ "$word" =~ (^|/)(issues|pulls)(/|$) ]] || continue
+        touches=1
         ;;
     esac
   done
   [[ "$touches" -eq 1 ]] || return 1
+  method="${method#[\'\"]}"
+  method="${method%[\'\"]}"
   case "${method^^}" in
     POST|PATCH|PUT|DELETE) return 0 ;;
   esac

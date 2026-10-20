@@ -35,6 +35,7 @@ import { isOneshotSession, isPublishing } from "./detect.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
+    // A missing ctx.mode reads as not one-shot, which fails safe (allows).
     if (!isOneshotSession(ctx.mode)) return;
     if (!isToolCallEventType("bash", event)) return;
     if (!isPublishing(event.input.command)) return;

@@ -559,3 +559,25 @@ def test_a_run_summary_after_apply_errors_hints_the_real_exit_code(monkeypatch, 
     last = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert last["kind"] == "run_summary"
     assert last["run"]["exit_hint"] == 1
+
+
+def test_a_started_run_takes_over_its_plans_namespace_from_the_claim(monkeypatch):
+    plan = _plan_with_refs()
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
+    plan.rows.extend(rows)
+    batch.plan.write_claim(plan.ref_namespace, plan.ref_dirs)
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: plan)
+    # Leave refs and claims alone so only the hand-over can retire the claim.
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: True)
+    seen = {}
+
+    def fake_run(self):
+        seen["claim"] = batch.plan.read_claim(plan.ref_namespace)
+        seen["owner"] = self.run.ref_namespace
+        self.run.status = batch.model.RunStatus.DONE
+        return batch.model.RunStatus.DONE
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert seen == {"claim": None, "owner": plan.ref_namespace}

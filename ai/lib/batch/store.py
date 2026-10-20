@@ -2,6 +2,7 @@
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
+    <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)

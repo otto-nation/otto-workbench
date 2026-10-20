@@ -3521,6 +3521,13 @@ permissions problem, say) keeps the run, and warns, on every sweep. A leftover
 place: deleting it from outside the lock would race a live reap that still
 holds the flock on that directory's inode.
 
+After the run sweep, orphaned `refs/pr-batch/<hex>` namespaces are dropped:
+any namespace with no live claim (its writer still running, matched by pid and
+start time) and no run referencing it. Repos are the union of claim
+`repo_dirs`, run `ref_dirs`, and the machine's registered projects. A
+namespace with no claim at all is orphaned by definition — the one gap is a
+process that predates claims and is still fetching.
+
 ### batch/inbox.py
 
 Apply one inbound request to a loaded run, and settle a run that is idle.
@@ -3603,6 +3610,11 @@ the comments need requires — review threads, and the newest reviews and
 PR comments, each bounded and never paged — so a plan over dozens of PRs costs a
 few points of the hourly GraphQL budget. Thread comments, the connection whose
 cost would scale with discussion length, are never asked for.
+
+The plan fetches only the origin branches rows need into a private
+`refs/pr-batch/<hex>` namespace, claimed under the batch state root before
+the fetch so a killed plan does not leak refs. `pr gc` drops a namespace
+that has no live claim and no run referencing it.
 
 ### batch/publish.py
 
@@ -3736,6 +3748,7 @@ Where a `pr batch` run lives on disk; the only module that touches it.
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
+    <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
@@ -5814,7 +5827,7 @@ used once belongs at its call site, spelled out with `run`.
 
 | Call | What it gives you |
 |---|---|
-| `run(*args, cwd=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
+| `run(*args, cwd=, config=, input_text=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. `input_text` is the child's stdin (`git update-ref --stdin`). |
 | `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
 | `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |

@@ -1,4 +1,6 @@
+import dataclasses
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -12,9 +14,11 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.gc  # noqa: E402
+import batch.plan  # noqa: E402
 import batch.store  # noqa: E402
 import core.run_lock  # noqa: E402
 import core.serde  # noqa: E402
+import core.workbench_paths  # noqa: E402
 import review.gc  # noqa: E402
 from batch.model import (  # noqa: E402
     Decision,
@@ -27,6 +31,8 @@ from batch.model import (  # noqa: E402
     StepRecord,
     StepStatus,
 )
+from batch_git_support import remote_and_clone  # noqa: E402
+from conftest import git_out  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
 
 DAY = 86400
@@ -197,3 +203,105 @@ def test_a_leftover_tombstone_is_warned_not_removed(dropped_refs, capsys):
 
 def test_no_batch_directory_is_nothing_to_clean():
     assert batch.gc.gc_runs(now=time.time()) == 0
+
+
+def _register(repo_dir):
+    path = core.workbench_paths.projects_registry()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{repo_dir}\n")
+
+
+def _plant(tmp_path, ns, branches=("feat", "main")):
+    pair = remote_and_clone(tmp_path)
+    assert batch.plan.fetch_namespace(str(pair.work), ns, list(branches))
+    return pair
+
+
+def test_gc_drops_an_orphan_namespace_with_no_claim_or_run(tmp_path):
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _register(pair.work)
+    assert git_out(pair.work, "for-each-ref", ns) != ""
+    assert batch.gc.gc_runs(now=NOW) == 1
+    assert git_out(pair.work, "for-each-ref", ns) == ""
+
+
+def test_gc_keeps_a_namespace_a_run_still_references(tmp_path):
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _register(pair.work)
+    _save("live", status=RunStatus.INTERRUPTED, age_days=365,
+          namespace=ns, ref_dirs=(str(pair.work),))
+    assert batch.gc.gc_runs(now=NOW) == 0
+    assert git_out(pair.work, "for-each-ref", ns) != ""
+    assert _remaining() == ["live"]
+
+
+def test_gc_keeps_a_namespace_with_a_live_claim(tmp_path):
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _register(pair.work)
+    batch.plan.write_claim(ns, [str(pair.work)], pid=os.getpid())
+    assert batch.gc.gc_runs(now=NOW) == 0
+    assert git_out(pair.work, "for-each-ref", ns) != ""
+    assert batch.plan.read_claim(ns) is not None
+
+
+def test_gc_keeps_a_namespace_whose_plan_claims_it_during_the_scan(tmp_path):
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _register(pair.work)
+    scan = batch.gc._namespace_repos
+
+    def scan_then_claim():
+        found = scan()
+        # A plan that starts mid-sweep: its claim lands after the repo scan.
+        batch.plan.write_claim(ns, [str(pair.work)], pid=os.getpid())
+        return found
+
+    with mock.patch.object(batch.gc, "_namespace_repos", scan_then_claim):
+        assert batch.gc.gc_namespaces() == 0
+    assert git_out(pair.work, "for-each-ref", ns) != ""
+
+
+def test_gc_never_scans_a_relative_ref_dir_from_its_own_cwd(tmp_path, monkeypatch):
+    # An old run recorded "." — from gc's cwd that is whatever repo gc runs in.
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _save("old", status=RunStatus.INTERRUPTED, age_days=1,
+          namespace="refs/pr-batch/0ld0ld00", ref_dirs=(".",))
+    monkeypatch.chdir(pair.work)
+    assert batch.gc.gc_namespaces() == 0
+    assert git_out(pair.work, "for-each-ref", ns) != ""
+
+
+def test_gc_drops_a_namespace_whose_claim_pid_was_recycled(tmp_path):
+    ns = batch.plan.new_namespace()
+    pair = _plant(tmp_path, ns)
+    _register(pair.work)
+    # A running pid that did not write the claim: its start time differs.
+    batch.plan.write_claim(ns, [str(pair.work)], pid=os.getpid())
+    claim = batch.plan.read_claim(ns)
+    core.serde.write_json(batch.plan._claim_path(ns), core.serde.to_dict(
+        dataclasses.replace(claim, started="Thu Jan  1 00:00:00 1970")))
+    assert batch.gc.gc_namespaces() == 1
+    assert git_out(pair.work, "for-each-ref", ns) == ""
+    assert batch.plan.read_claim(ns) is None
+
+
+def _dead_pid():
+    # A reaped child's pid: the kernel has nothing under it until it wraps.
+    child = subprocess.Popen(["true"])
+    child.wait()
+    return child.pid
+
+
+def test_a_claim_whose_writer_is_gone_is_dead_even_when_ps_cannot_read_it():
+    claim = batch.plan.NamespaceClaim(pid=_dead_pid(), started="Mon Oct 19 10:00:00 2026")
+    assert not claim.live
+
+
+def test_a_running_writer_ps_cannot_read_stays_live(monkeypatch):
+    monkeypatch.setattr(batch.plan.core.session_lock, "process_start", lambda pid: "")
+    for started in ("", "Mon Oct 19 10:00:00 2026"):
+        assert batch.plan.NamespaceClaim(pid=os.getpid(), started=started).live

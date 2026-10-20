@@ -14,10 +14,11 @@ scratch script that drove today's writers directly:
 | fix_annotated | captured from `review.fix._apply_outcomes` + `_apply_static_outcomes` over `before.md` (those helpers are gone; the same cases now go through `review.fix.apply_outcomes` / `apply_static_outcomes`) |
 | rebuild | `review.rebuild.rebuild` over `groups/` |
 
-`input.md` is what today's code wrote. `expected.md`, where present, is the same
-document with its sections in spec §2 order (deviations D2/D4 in the plan).
+`input.md` is what today's code wrote. `expected.md` is the same document as
+the record now renders it: schema 2, locations spelled from the fields (X1),
+sections in spec §2 order (D2/D4). Every parity case has an `expected.md`.
 `meta.json` is the `ReviewMeta` whose rendered header equals `input.md`'s.
-Parity is `canonical(render(...)) == canonical(expected.md or input.md)` — see
+Parity is `canonical(render(...)) == canonical(expected.md)` — see
 `tests/review_record_support.py`.
 
 The tree under `tree/src/` is stored as `*.py.txt` (`app.py.txt`, `cli.py.txt`,

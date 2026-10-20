@@ -1,6 +1,7 @@
 """review.md rendered from the record: parity with today's documents, and the
 deviations the plan accepts (D1–D10), each pinned."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -11,8 +12,8 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from review.ingest import ingest_review
-from review.record import Disposition, RecordFinding, ReviewRecord
-from review.render import BANNER, finding_line, render_body, render_review
+from review.record import Disposition, RecordFinding, ReviewRecord, TriageEntry, load_record
+from review.render import BANNER, evidence_block, finding_line, render_body, render_review, triage_line
 from review.types import ReviewMeta
 
 from review_record_support import canonical, expected_text, fixture_meta, fixture_text
@@ -34,7 +35,7 @@ def test_the_banner_is_the_only_line_rendering_adds():
     source = fixture_text("synthesis_pr", "input.md")
     rendered = render_review(ingest_review(source), fixture_meta("synthesis_pr"))
     added = set(rendered.splitlines()) - set(source.splitlines())
-    assert added - {""} == {BANNER}
+    assert BANNER in added
 
 
 def test_prompt_text_omits_the_banner():
@@ -53,8 +54,8 @@ def test_the_header_is_meta_json_s():
 
 def test_a_falsified_finding_is_not_rendered():
     record = ReviewRecord(findings=(
-        RecordFinding(id="S1", severity="S", lead="`a.py:1` — ", body="kept"),
-        RecordFinding(id="S2", severity="S", lead="`b.py:1` — ", body="gone",
+        RecordFinding(id="S1", severity="S", path="a.py", line=1, body="kept"),
+        RecordFinding(id="S2", severity="S", path="b.py", line=1, body="gone",
                       disposition=Disposition.FALSIFIED),
     ))
     assert "gone" not in render_body(record) and "kept" in render_body(record)
@@ -133,3 +134,31 @@ def test_omitted_sections_are_left_out():
     record = ingest_review(fixture_text("synthesis_pr", "input.md"))
     body = render_body(record, omit=frozenset({"File Triage"}))
     assert "## File Triage" not in body and "## Summary" in body
+
+
+def test_a_location_renders_from_the_fields():
+    """X1: the location is the record's, in one canonical spelling."""
+    ranged = RecordFinding(id="M1", severity="M", path="a.py", line=3, end_line=5, body="x")
+    bare = RecordFinding(id="N1", severity="N", body="PR title says docs-only")
+    assert finding_line(ranged) == "- **[M1]** `a.py:3-5` — x"
+    assert finding_line(bare) == "- **[N1]** PR title says docs-only"
+    assert triage_line(TriageEntry("a.py", "**Tier 2**")) == "- `a.py` — **Tier 2**"
+    assert triage_line(TriageEntry("", "`a.py`, `b.py` — **Tier 1**")) == "- `a.py`, `b.py` — **Tier 1**"
+
+
+def test_evidence_renders_as_a_quoted_fence_only_when_asked():
+    f = RecordFinding(id="M1", severity="M", path="a.py", line=1, body="x", evidence="a = 1\nb = 2")
+    assert finding_line(f) == "- **[M1]** `a.py:1` — x"
+    assert finding_line(f, evidence=True).split("\n")[1:] == [
+        "  > ```", "  > a = 1", "  > b = 2", "  > ```",
+    ]
+    assert evidence_block("a") == "  > ```\n  > a\n  > ```"
+
+
+def test_a_multi_file_location_renders_its_first_file(tmp_path):
+    """X1: a schema-1 finding naming two files kept the first as `path`; the rest lived in `lead`."""
+    (tmp_path / "review.json").write_text(json.dumps({"schema_version": 1, "findings": [
+        {"id": "M1", "severity": "M", "path": "a.py", "lead": "`a.py`, `b.py` — ", "body": "x"},
+    ]}))
+    (f,) = load_record(tmp_path).findings
+    assert finding_line(f) == "- **[M1]** `a.py` — x"

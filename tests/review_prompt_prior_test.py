@@ -11,14 +11,17 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402
+from dataclasses import replace
+
 from review.document import SECTION_PRIOR_FINDINGS
 from review.grammar import FindingIdentity, sid_marker
 from review.ingest import ingest_review
+from review.record import RecordFinding
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
 from review.types import ReplyState, ReviewMeta
 from review.prompt_prior import (
-    _annotate_with_thread_state, _build_prior_section, _prior_text, _scoped,
+    _annotate_with_thread_state, _build_prior_section, _in_group, _prior_text, _scoped,
 )
 
 
@@ -244,23 +247,14 @@ class TestPriorTextOmitsBookkeeping:
         assert _prior_text(_stored(f"## Must fix\n{line}\n"), None) == result
 
 
-class TestScopingReadsTheDeclarationNotIngestLocation:
-    """Ingest path/line stay as finding_location set them; scoping re-reads."""
+def test_scoping_reads_the_finding_s_own_path_and_line():
+    f = RecordFinding(id="M1", severity="M", path="src/a.go", line=10, body="x")
+    assert _in_group(f, {"src/a.go"})
+    assert not _in_group(replace(f, line=None), {"src/a.go"})
+    assert not _in_group(f, {"src/b.go"})
 
-    def test_a_bare_unbackticked_path_stays_in_the_group(self):
-        prior = ingest_review(
-            "## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n",
-            strict=False,
-        )
-        assert prior.findings[0].path == ""
-        scoped = _scoped(prior, ["src/auth.go"])
-        assert [f.id for f in scoped.findings] == ["M1"]
 
-    def test_an_extensionless_dockerfile_stays_in_the_group(self):
-        prior = ingest_review(
-            "## Must fix\n- [ ] **[M1]** **`Dockerfile:50`** — no USER\n",
-            strict=False,
-        )
-        assert prior.findings[0].path == ""
-        scoped = _scoped(prior, ["Dockerfile"])
-        assert [f.id for f in scoped.findings] == ["M1"]
+def test_a_finding_without_a_path_is_scoped_to_no_group():
+    """X12: a location ingest never placed is a whole-PR finding, in no group's slice."""
+    f = RecordFinding(id="M1", severity="M", body="src/auth.go:10 — auth bug")
+    assert not _in_group(f, {"src/auth.go"})

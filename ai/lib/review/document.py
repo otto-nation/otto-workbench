@@ -232,10 +232,13 @@ def _record_section(record: ReviewRecord, header: str) -> str:
         SECTION_VERDICT.lower(): record.verdict,
         SECTION_STATIC_ANALYSIS.lower(): record.static_analysis,
         SECTION_PRIOR_FINDINGS.lower(): record.ledger,
-        SECTION_FILE_TRIAGE.lower(): "\n".join(e.text for e in record.triage or ()),
     }
     if key in by_key:
         return by_key[key].strip()
+    if key == SECTION_FILE_TRIAGE.lower():
+        # review.render imports this module; a top-level import here is circular.
+        from review.render import triage_line
+        return "\n".join(triage_line(e) for e in record.triage or ()).strip()
     if key == SECTION_FAILURES.lower():
         if not record.failures:
             return ""

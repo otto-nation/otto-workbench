@@ -27,7 +27,7 @@ from review.document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 )
-from review.grammar import BOLD_FINDING_ID_RE, FindingIdentity, SID_MARKER_RE
+from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
 from review.record import RecordFinding, ReviewRecord
 from review.render import finding_line, render_body, render_findings, render_review
 from review.reply_threads import ReplyThreads
@@ -46,34 +46,9 @@ def _with_sids(record: ReviewRecord) -> ReviewRecord:
     )
 
 
-# ceiling: a second location reader: it re-reads the finding's declaration
-# with FindingIdentity.of because ingest's path/line stay as posting reads
-# them. Upgrade trigger: once posting reads path/line from the record (PR 2),
-# use RecordFinding.path/line and delete this.
-def _scoping_location(finding: RecordFinding) -> FindingIdentity | None:
-    """Where the old scoped-prior reader would place this finding.
-
-    Ingest stores `path`/`line` from `finding_location` alone, so a bare
-    `src/auth.go:10` or an extensionless `` `Dockerfile:50` `` arrives with
-    path ''. Scoping still has to keep those: it re-reads the declaration
-    through `FindingIdentity.of`, which includes `_fallback_location`. A
-    ticked `[x]` is opened for that read only — identity skips checked
-    lines, and the old `SCOPED_FINDING_RE` did not.
-    """
-    line = finding_line(finding).split("\n", 1)[0]
-    if line.startswith("- [x] "):
-        line = "- [ ] " + line[6:]
-    return FindingIdentity.of(line)
-
-
 def _in_group(finding: RecordFinding, files: set[str]) -> bool:
     """Whether `finding` names a line of one of `files`."""
-    identity = _scoping_location(finding)
-    return (
-        identity is not None
-        and identity.line is not None
-        and identity.path in files
-    )
+    return finding.line is not None and finding.path in files
 
 
 def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:

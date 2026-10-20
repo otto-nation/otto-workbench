@@ -107,9 +107,8 @@ def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
         if f.disposition is Disposition.FIXED:
             continue
         line = finding_line(f)
-        identity = FindingIdentity.of(line.split("\n", 1)[0])
         out.append(PriorFinding(
-            ref=FindingRef(f.id, identity.path if identity else ""),
+            ref=FindingRef(f.id, f.path),
             stable_id=f.stable_id,
             text="\n".join(raw.strip() for raw in line.split("\n")).strip(),
         ))

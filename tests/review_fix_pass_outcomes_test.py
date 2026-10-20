@@ -384,7 +384,7 @@ class TestApplyOutcomes:
                      verify_detail="no runnable check"),
         ])
         assert _finding_line(out, "M1") == (
-            "- **[M1]** **`a.py:1`** — the template writes `- [ ] **[M1]**` "
+            "- **[M1]** `a.py:1` — the template writes `- [ ] **[M1]**` "
             "with no box"
         )
 

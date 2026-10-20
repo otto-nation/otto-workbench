@@ -7,11 +7,6 @@ was bold, while carry-forward read all four shapes and hashed them together, so
 a finding written with plain backticks was carried forward and deduplicated
 against nothing.
 
-One owner does not mean one pattern. `VERIFY_FINDING_RE` bounds a spaced
-filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
-and the two have to keep reading the same line the same way for different
-purposes. Both live here so a change to one is made next to the other.
-
 A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
 `:12-18` several of them match inside a span they capture, and
 `strip_line_suffix` is how such a reader takes it back off — each used to
@@ -184,6 +179,20 @@ def posted_finding_tag(posted_id: str, severity: str) -> str:
     return f"**[{posted_id}] [{severity_by_key(severity).label}]**"
 
 
+def location_ref(path: str, line: int | None, end_line: int | None) -> str:
+    """A finding's location as one backtick span: `path`, `path:12` or `path:12-18`.
+
+    The one spelling both views use: `review.md` writes it before a finding's
+    body and the posted comment writes it before a body-routed finding.
+    """
+    ref = path
+    if line is not None:
+        ref += f":{line}"
+        if end_line is not None:
+            ref += f"-{end_line}"
+    return f"`{ref}`"
+
+
 # ── The location a declaration names ─────────────────────────────────────────
 
 _PATH_SECTION_RE = re.compile(
@@ -203,8 +212,8 @@ _PATH_CHAR = r"[^\s:*`—]"
 _SEGMENT_CHAR = r"[^\s/:*`—]"
 
 # The `:12` or `:12-18` a location may carry after its filename. A fragment
-# rather than a reader: `_FIRST_FILE_RE`, `VERIFY_FINDING_RE` and
-# `BODY_FINDING_RE` each bound it differently, and they have to agree on what a
+# rather than a reader: `_FIRST_FILE_RE` and `BODY_FINDING_RE` each bound it
+# differently, and they have to agree on what a
 # line suffix is or a finding parses one way and is selected by the other.
 # `strip_line_suffix` removes what this matches, so a reader that matched one
 # without capturing it does not decide for itself what it was.
@@ -409,37 +418,6 @@ def parse_ledger_line(raw: str) -> LedgerEntry | None:
 
 # ── Readers with bounds of their own ─────────────────────────────────────────
 
-# This pattern selects which findings the evidence gate checks, and nothing
-# more. The location each one is checked against is `finding_location`'s — the
-# reading the poster places the comment with — because a second reading here
-# drifted from it each time a reviewer wrote a suffix it did not know
-# (`:64,82`, `:_short`), and the gate then dropped a correct finding as "file
-# not found". Only a span `finding_location` cannot place at all is checked
-# against what it captured, since there is then no placement to contradict.
-# Where a finding's body ends is not its business either — `review.ingest.finding_spans`
-# measures that.
-#
-# The space-free class stays exactly as it was — anything the delimiters cannot
-# hold, line suffix included — and the spaced shape is beside it rather than
-# replacing it. Every
-# location that parsed before parses the same way, since a space-free span
-# never reaches the second alternative at all.
-#
-# `SPACED_FILE` needs the same bound it has in `_FIRST_FILE_RE` above, where a
-# lookahead makes the filename account for the whole span. Here the closing
-# delimiter is that bound: the extension and its optional line suffix have to
-# run right up to it, so "the fix lands in v2.0 of the tool" is still no path
-# and a greedy space run cannot walk past the real filename.
-VERIFY_FINDING_RE = re.compile(
-    r"^- (?:\[ \] )?"
-    rf"\*\*\[({SEVERITY_KEY})(\d+)\]\*\*"
-    rf"\s+{_SID_PREFIX}"
-    rf"(?:\*\*[`]?([^`*\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`]?\*\*"
-    rf"|[`]([^`\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`])"
-    rf"{LINE_SUFFIX}"
-    r"\s*—\s*(.*)"
-)
-
 # A declaration as it reads once posted, in the body of a review comment rather
 # than in the review file: no checkbox, since the fix pass has not seen it, the
 # severity label the posted spelling carries, and the path and the body captured
@@ -541,6 +519,19 @@ class FindingIdentity:
             return None
         desc_m = _FINDING_DESC_RE.search(text)
         return cls(path, line, desc_m.group(1).strip() if desc_m else "")
+
+    @classmethod
+    def of_fields(cls, path: str, line: int | None, body: str) -> "FindingIdentity":
+        """The identity of a finding held as fields rather than as a line.
+
+        `desc` is what `of` captured after a declaration's dash: the body's first
+        line, leading space dropped, cut to eighty characters. Anchored findings
+        therefore keep the stable ID their rendered line hashed to, which is
+        the sid a posted comment already carries. A finding with no file hashes
+        with an empty path.
+        """
+        first = body.split("\n", 1)[0].lstrip()
+        return cls(path, line, first[:80].strip())
 
     @property
     def dedup_key(self) -> DedupKey:

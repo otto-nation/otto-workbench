@@ -131,7 +131,7 @@ class TestPostProcessFindings:
         _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
-        assert "- **[M1]** **`handler.go:4`** — real problem" in result
+        assert "- **[M1]** `handler.go:4` — real problem" in result
         assert "revisit once [removed] lands" in result
 
     def test_an_undecodable_file_costs_its_finding_and_not_the_pass(self, tmp_path):
@@ -161,7 +161,7 @@ class TestPostProcessFindings:
         verification = _post_process(str(review), str(tmp_path))
 
         result = review.read_text()
-        assert "- **[M1]** **`handler.go:4`** — real problem" in result
+        assert "- **[M1]** `handler.go:4` — real problem" in result
         assert "cannot be read to verify" not in result
         # The drop note still names the file, which is the record of why.
         assert verification["dropped"] == ["M1"]
@@ -239,7 +239,7 @@ class TestReconcileDroppedFindings:
         assert "[M1]" not in note and "[M2]" not in note
         # M2 survived and took M1's number — citing the dropped ID would point
         # the reader at it.
-        assert "- **[M1]** **`kept.py:1`**" in result
+        assert "- **[M1]** `kept.py:1`" in result
 
     def test_verdict_is_lowered_to_what_survives(self, tmp_path):
         review = self._review(tmp_path)

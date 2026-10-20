@@ -88,16 +88,16 @@ class TestWhatIsRead:
         record = ingest_review("## Should fix\n- **[S1]** **`a.py:3-5`** — Missing guard.\n")
         (f,) = record.findings
         assert (f.path, f.line, f.end_line) == ("a.py", 3, 5)
-        assert f.lead == "**`a.py:3-5`** — " and f.body == "Missing guard."
+        assert f.body == "Missing guard."
 
     def test_a_named_location_without_a_dash_still_splits(self):
         (f,) = ingest_review("## Should fix\n- **[S1]** `a.py:1` text without a dash\n").findings
-        assert f.lead == "`a.py:1` " and f.body == "text without a dash"
+        assert f.body == "text without a dash"
         assert (f.path, f.line) == ("a.py", 1)
 
     def test_an_unlocated_finding_keeps_its_whole_text_as_body(self):
         (f,) = ingest_review("## Should fix\n- [ ] **[S3]** PR scope — two changes.\n").findings
-        assert f.lead == "" and f.body == "PR scope — two changes." and f.checkbox
+        assert f.body == "PR scope — two changes." and f.checkbox
 
     def test_evidence_is_split_from_the_body(self):
         text = (
@@ -106,7 +106,7 @@ class TestWhatIsRead:
         )
         (f,) = ingest_review(text).findings
         assert f.body == "Loop.\n  more prose"
-        assert f.evidence == "  > ```python\n  > call()\n  > ```"
+        assert f.evidence == "call()"
 
     def test_annotations_become_dispositions(self):
         text = (
@@ -139,7 +139,6 @@ class TestWhatIsRead:
         (f,) = ingest_review(
             "## Should fix\n- [ ] **[S1]** `a.py:1` —\n  *(skipped — r)* more text\n"
         ).findings
-        assert f.lead == "`a.py:1` — "
         assert not f.body.startswith("—")
         assert (f.disposition, f.reason) == (Disposition.SKIPPED, "r")
 
@@ -163,7 +162,7 @@ class TestWhatIsRead:
 
     def test_a_sid_marker_is_kept_off_the_lead(self):
         (f,) = ingest_review("## Nit\n- **[N1]** <!-- sid:ab12cd34 --> `a.py:1` — x\n").findings
-        assert f.sid == "ab12cd34" and f.lead == "`a.py:1` — "
+        assert f.sid == "ab12cd34" and (f.path, f.line) == ("a.py", 1)
 
     def test_the_stable_id_is_the_grammar_s(self):
         from review.grammar import FindingIdentity
@@ -416,5 +415,17 @@ class TestTheWalk:
         )
         spans = finding_spans(text)
         assert all(a.end <= b.start for a, b in zip(spans, spans[1:]))
+
+
+def test_markdown_evidence_is_stored_as_raw_code():
+    text = "## Must fix\n- **[M1]** **`a.py:2`** — bad\n  > ```python\n  > y = compute(x)\n  > ```\n"
+    (f,) = ingest_review(text).findings
+    assert f.evidence == "y = compute(x)"
+    assert (f.path, f.line, f.body) == ("a.py", 2, "bad")
+
+
+def test_a_triage_line_is_split_into_path_and_note():
+    (entry,) = ingest_review("## File Triage\n- `a.go` — **Tier 2** (logic)\n").triage
+    assert (entry.path, entry.note) == ("a.go", "**Tier 2** (logic)")
 
 

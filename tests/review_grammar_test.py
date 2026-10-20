@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 from review.grammar import (  # noqa: E402
     BODY_FINDING_RE, BOLD_FINDING_ID_RE, FINDING_ID_RE, SID_MARKER_RE,
     FindingIdentity, _FIRST_FILE_RE, extract_body_text, finding_location,
-    finding_tag, has_sid_marker, parse_finding_line, posted_finding_tag,
+    finding_tag, has_sid_marker, location_ref, parse_finding_line, posted_finding_tag,
     sid_marker, strip_line_suffix, strip_sid_markers,
 )
 from review.types import SEVERITIES  # noqa: E402
@@ -511,3 +511,62 @@ class TestParseFindingLine:
 
     def test_section_header_returns_none(self):
         assert parse_finding_line("## Must fix") is None
+
+
+LONG = (
+    "The retry loop re-reads the whole session log on every attempt, "
+    "which is quadratic in the number of attempts made"
+)
+
+
+# The literals are what `FindingIdentity.of` produced for the rendered lines
+# `- **[M1]** **`ai/lib/x.py:12`** — Missing check on the db.Query error`,
+# `- [ ] **[S2]** `Src/Handler.go` — <LONG>`, `- **[N1]** **`pkg/a.go:3-9`** —   padded body`
+# and `- **[M1]** `a.py`, `b.py` — x` (`of` took the first of several files too),
+# captured before the line reader was deleted. A sid already posted on GitHub
+# is one of these; a fields identity that hashes differently orphans its thread.
+@pytest.mark.parametrize("path, line, body, sid", [
+    ("ai/lib/x.py", 12, "Missing check on the db.Query error", "99e705a8"),
+    ("Src/Handler.go", None, LONG, "6998c8c3"),
+    ("pkg/a.go", 3, "  padded body", "78fa736a"),
+    ("a.py", None, "x", "8239ab41"),
+])
+def test_fields_hash_to_the_sid_the_rendered_line_did(path, line, body, sid):
+    assert FindingIdentity.of_fields(path, line, body).stable_id == sid
+
+
+# The shapes `of` hashed differently from the fields, pinned so the divergence
+# is a decision (D12) rather than a surprise. `stored` is what `of` gave the
+# line, which a schema-1 record keeps through the upgrade; `fields` is what
+# `of_fields` gives the same finding as ingest stores it. The lines:
+# `- **[M1]** `a.py:3` -- body here` (no em dash, so `of` hashed an empty
+# description), `- **[S1]** **Documentation** — the README is stale` (`of` read
+# the label as a path through `_fallback_location`), and
+# `- [ ] **[S1]** `a.py:1` — short *(declined — why)*` (`of` hashed the
+# annotation into the description). `rendered` is that line, and the `of`
+# assertion holds `stored` to it until Task 15 deletes `of`.
+@pytest.mark.parametrize("rendered, path, line, body, stored, fields", [
+    ("- **[M1]** `a.py:3` -- body here", "a.py", 3, "body here", "5e406135", "94e8c5c8"),
+    ("- **[S1]** **Documentation** — the README is stale",
+     "", None, "**Documentation** — the README is stale", "d284f4e9", "ff46b213"),
+    ("- [ ] **[S1]** `a.py:1` — short *(declined — why)*", "a.py", 1, "short", "7b0fdab7", "2ccda39f"),
+])
+def test_these_shapes_hash_differently_from_the_line_they_were(rendered, path, line, body, stored, fields):
+    assert FindingIdentity.of(rendered).stable_id == stored
+    assert FindingIdentity.of_fields(path, line, body).stable_id == fields
+    assert fields != stored
+
+
+def test_a_pathless_finding_hashes_with_an_empty_path():
+    body = "PR title says docs-only but changes code"
+    assert FindingIdentity.of_fields("", None, body).stable_id == "f47fca21"
+
+
+def test_only_the_first_line_of_the_body_is_the_description():
+    assert FindingIdentity.of_fields("a.py", 1, "head\nmore").desc == "head"
+
+
+def test_location_ref_spells_the_three_shapes():
+    assert location_ref("a.py", None, None) == "`a.py`"
+    assert location_ref("a.py", 3, None) == "`a.py:3`"
+    assert location_ref("a.py", 3, 5) == "`a.py:3-5`"

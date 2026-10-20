@@ -72,7 +72,7 @@ from review.paths import phase_log_path, read_review_meta, write_review_meta
 from review.document import ReviewDocument
 from review.grammar import FINDING_ID_RE, UNVERIFIED_TAIL_RE
 from review.record import (
-    Disposition, RecordFinding, ReviewRecord, defuse, defuse_first_line,
+    Disposition, RecordFinding, ReviewRecord, defuse_first_line,
 )
 from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
@@ -508,7 +508,7 @@ def _answered(f: RecordFinding, outcome: ItemOutcome) -> RecordFinding:
         if detail is None:
             return replace(f, disposition=Disposition.FIXED)
         return replace(f, disposition=Disposition.FIXED, unverified=True,
-                       reason=_escape_annotation(detail), lead=defuse(f.lead),
+                       reason=_escape_annotation(detail),
                        body=defuse_first_line(f.body))
     if outcome.outcome in (FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN):
         disposition = (
@@ -516,7 +516,7 @@ def _answered(f: RecordFinding, outcome: ItemOutcome) -> RecordFinding:
             else Disposition.SKIPPED
         )
         return replace(f, disposition=disposition, reason=_escape_annotation(outcome.reason),
-                       lead=defuse(f.lead), body=defuse_first_line(f.body))
+                       body=defuse_first_line(f.body))
     if outcome.outcome is FixOutcome.DEFERRED:
         return replace(f, disposition=Disposition.UNREACHED, reason=outcome.reason)
     return f
@@ -566,7 +566,7 @@ def apply_outcomes(record: ReviewRecord, outcomes: list[ItemOutcome]) -> ReviewR
         record = record.with_finding(
             current.id,
             disposition=answered.disposition, unverified=answered.unverified,
-            reason=answered.reason, lead=answered.lead, body=answered.body,
+            reason=answered.reason, body=answered.body,
         )
     return record
 

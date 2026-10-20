@@ -62,3 +62,16 @@ def test_a_group_ledger_keeps_the_prior_reviews_ids():
     )
     merged = merge_records([record])
     assert "[S3]" in merged.ledger
+
+
+def test_dedup_reads_the_fields_not_a_rendered_line():
+    a = RecordFinding(id="S1", severity="S", path="a.py", line=3, body="Same words")
+    merged = merge_records([ReviewRecord(findings=(a,)), ReviewRecord(findings=(a,))])
+    assert [f.id for f in merged.visible] == ["S1"]
+
+
+# passes-at-base: two PR-wide findings have no location to agree on, so they stay two
+def test_pathless_findings_are_never_merged():
+    a = RecordFinding(id="N1", severity="N", body="Same words")
+    merged = merge_records([ReviewRecord(findings=(a,)), ReviewRecord(findings=(a,))])
+    assert [f.id for f in merged.visible] == ["N1", "N2"]

@@ -43,64 +43,64 @@ GATES = [
 DROP_CASES = [
     pytest.param(
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n"
+        "- **[M1]** `a.go:1` — one\n"
         "- a flat bullet continuing the finding\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         ["M1"],
         "## Must fix\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         "## Must fix\n\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         id="a-flat-bullet-is-the-finding's-own-body",
     ),
     pytest.param(
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n"
-        "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
-        "- **[M3]** **`c.go:3`** — three\n",
+        "- **[M1]** `a.go:1` — one\n"
+        "- ~~**[M2]** `b.go:2` — resolved~~\n"
+        "- **[M3]** `c.go:3` — three\n",
         ["M1"],
         "## Must fix\n"
-        "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
-        "- **[M3]** **`c.go:3`** — three\n",
+        "- ~~**[M2]** `b.go:2` — resolved~~\n"
+        "- **[M3]** `c.go:3` — three\n",
         "## Must fix\n\n"
-        "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
-        "- **[M3]** **`c.go:3`** — three\n",
+        "- ~~**[M2]** `b.go:2` — resolved~~\n"
+        "- **[M3]** `c.go:3` — three\n",
         id="a-resolved-finding-below-a-dropped-one-survives",
     ),
     pytest.param(
         "## Must fix\n"
         "### Group A\n"
-        "- **[M1]** **`a.go:1`** — one\n"
+        "- **[M1]** `a.go:1` — one\n"
         "### Group B\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         ["M1"],
         "## Must fix\n"
         "### Group A\n"
         "### Group B\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         "## Must fix\n\n"
         "### Group A\n"
         "### Group B\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         id="a-sub-heading-below-a-dropped-finding-survives",
     ),
     pytest.param(
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n"
-        "  - **[M2]** **`b.go:2`** — nested declaration\n"
-        "- **[M3]** **`c.go:3`** — three\n",
+        "- **[M1]** `a.go:1` — one\n"
+        "  - **[M2]** `b.go:2` — nested declaration\n"
+        "- **[M3]** `c.go:3` — three\n",
         ["M1"],
         "## Must fix\n"
-        "  - **[M2]** **`b.go:2`** — nested declaration\n"
-        "- **[M3]** **`c.go:3`** — three\n",
+        "  - **[M2]** `b.go:2` — nested declaration\n"
+        "- **[M3]** `c.go:3` — three\n",
         "## Must fix\n\n"
-        "- **[M2]** **`b.go:2`** — nested declaration\n"
-        "- **[M3]** **`c.go:3`** — three\n",
+        "- **[M2]** `b.go:2` — nested declaration\n"
+        "- **[M3]** `c.go:3` — three\n",
         id="an-indented-declaration-is-a-declaration",
     ),
     pytest.param(
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n"
+        "- **[M1]** `a.go:1` — one\n"
         "## Prior findings\n"
         "- **[M1]** `old.go` — Fixed\n",
         ["M1"],
@@ -114,24 +114,24 @@ DROP_CASES = [
     ),
     pytest.param(
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n"
+        "- **[M1]** `a.go:1` — one\n"
         "  > ```go\n"
         "  > x := 1\n"
         "  > ```\n"
         "\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         ["M1"],
         "## Must fix\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         "## Must fix\n\n"
-        "- **[M2]** **`b.go:2`** — two\n",
+        "- **[M2]** `b.go:2` — two\n",
         id="an-evidence-block-goes-with-the-finding-that-quotes-it",
     ),
     pytest.param(
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n"
+        "- **[M1]** `a.go:1` — one\n"
         "## Nit\n"
-        "- **[N1]** **`b.go:2`** — two\n",
+        "- **[N1]** `b.go:2` — two\n",
         ["M1", "N1"],
         # The document's last finding owns the blank line closing the file, so
         # a review whose last finding goes loses its trailing newline with it.
@@ -143,12 +143,12 @@ DROP_CASES = [
     ),
     pytest.param(
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n",
+        "- **[M1]** `a.go:1` — one\n",
         ["S9"],
         "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n",
+        "- **[M1]** `a.go:1` — one\n",
         "## Must fix\n\n"
-        "- **[M1]** **`a.go:1`** — one\n",
+        "- **[M1]** `a.go:1` — one\n",
         id="an-id-the-review-does-not-declare-changes-nothing",
     ),
 ]

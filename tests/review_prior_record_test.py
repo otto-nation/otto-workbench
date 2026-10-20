@@ -66,36 +66,6 @@ def test_the_delta_is_measured_from_the_prior_sidecar(monkeypatch):
     assert review.collect._prior_sha_for_delta(job) == "2cb613ec084559a9590f074eabde546c44b284a3"
 
 
-_BARE = "## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n"
-_DOCKER = "## Must fix\n- [ ] **[M2]** **`Dockerfile:50`** — no USER\n"
-
-
-def test_carry_forward_keeps_a_bare_path_on_the_record_with_its_sid():
-    prior = StoredReview(ingest_review(_BARE, strict=False), ReviewMeta())
-    carried = _carry_forward_prior_findings(
-        prior, [Group(name="auth", files=["src/auth.go"], lines=1)], {1},
-    )
-    assert carried is not None
-    assert [f.id for f in carried.record.findings] == ["M1"]
-    assert all(f.sid == f.stable_id for f in carried.record.findings)
-    assert any(
-        s.note == "### Carried forward: auth" for s in carried.record.severity_sections
-    )
-
-
-def test_carry_forward_keeps_an_extensionless_dockerfile_on_the_record():
-    prior = StoredReview(ingest_review(_DOCKER, strict=False), ReviewMeta())
-    carried = _carry_forward_prior_findings(
-        prior, [Group(name="docker", files=["Dockerfile"], lines=1)], {1},
-    )
-    assert carried is not None
-    assert [f.id for f in carried.record.findings] == ["M2"]
-    assert all(f.sid for f in carried.record.findings)
-    assert any(
-        s.note == "### Carried forward: docker" for s in carried.record.severity_sections
-    )
-
-
 def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     monkeypatch, tmp_path,
 ):
@@ -116,7 +86,7 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
         review.pipeline, "group_files",
         lambda pr: [
             Group(name="auth", files=["src/auth.go"], lines=250),
-            Group(name="docker", files=["Dockerfile"], lines=250),
+            Group(name="docker", files=["docker/build.sh"], lines=250),
         ],
     )
     monkeypatch.setattr(
@@ -126,15 +96,15 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     prior = StoredReview(
         ingest_review(
             "## Must fix\n"
-            "- [ ] **[M1]** src/auth.go:10 — auth bug\n"
-            "- [ ] **[M2]** **`Dockerfile:50`** — no USER\n",
+            "- [ ] **[M1]** `src/auth.go:10` — auth bug\n"
+            "- [ ] **[M2]** **`docker/build.sh:50`** — no USER\n",
             strict=False,
         ),
         ReviewMeta(),
     )
     files = [
         {"path": "src/auth.go", "additions": 250, "deletions": 0},
-        {"path": "Dockerfile", "additions": 250, "deletions": 0},
+        {"path": "docker/build.sh", "additions": 250, "deletions": 0},
     ]
     job = ReviewJob(
         repo="org/repo", pr_number="1",

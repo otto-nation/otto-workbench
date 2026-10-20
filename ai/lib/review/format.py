@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import pr.target
 from pr.domains import VERDICT_PROSE_PREFIX_RE
-from review.grammar import finding_tag, posted_finding_tag, sid_marker
+from review.grammar import finding_tag, location_ref, posted_finding_tag, sid_marker
 from review.sections import ReviewSections, SectionConfig
 from review.types import SEVERITIES, Finding, severity_by_key
 
@@ -241,12 +241,7 @@ def format_inline_comment(f: Finding) -> dict:
 
 def _format_path_ref(f: Finding) -> str:
     """Format a finding's path as a backtick-wrapped reference."""
-    ref = f.path
-    if f.line is not None:
-        ref += f":{f.line}"
-        if f.end_line is not None:
-            ref += f"-{f.end_line}"
-    return f"`{ref}`"
+    return location_ref(f.path, f.line, f.end_line)
 
 
 def _format_finding_line(f: Finding, include_label: bool = True) -> str:

@@ -10,8 +10,8 @@ from review.document import (
     SECTION_STATIC_ANALYSIS, SECTION_SUMMARY, SECTION_VERDICT,
     ReviewHeader, review_title,
 )
-from review.grammar import finding_tag, sid_marker
-from review.record import AgentFailure, Disposition, ProseSection, RecordFinding, ReviewRecord
+from review.grammar import finding_tag, location_ref, sid_marker
+from review.record import AgentFailure, Disposition, ProseSection, RecordFinding, ReviewRecord, TriageEntry
 from review.types import SEVERITIES, ReviewMeta
 
 # The line every rendered review.md carries. Ingest refuses any text holding it,
@@ -22,22 +22,37 @@ BANNER = "<!-- rendered from review.json — edits here are overwritten; change 
 RECOVER_HINT = "Run `pr review --recover`"
 
 
+def evidence_block(code: str) -> str:
+    """Raw evidence as the indented, quoted fence a markdown finding carries it in."""
+    return "\n".join(f"  > {line}".rstrip() for line in ["```", *code.split("\n"), "```"])
+
+
+def triage_line(entry: TriageEntry) -> str:
+    """One File Triage list item."""
+    if not entry.path:
+        return f"- {entry.note}"
+    return f"- `{entry.path}` — {entry.note}" if entry.note else f"- `{entry.path}`"
+
+
 def finding_line(f: RecordFinding, *, sids: bool = False, evidence: bool = False) -> str:
     """The finding as its review.md list item, continuation lines included.
 
-    `evidence` appends the quoted code after the body. Only prompt text asks
-    for it; review.md never carries evidence (D9).
+    The location is rendered from the fields. A finding with no path has none,
+    and its body says what it is about. `evidence` appends the quoted code
+    after the body; only prompt text asks for it, and review.md never carries
+    evidence (D9).
     """
     box = ""
     if f.checkbox:
         box = "[x] " if f.disposition is Disposition.FIXED else "[ ] "
     marker = sid_marker(f.sid) if sids and f.sid else ""
+    where = f"{location_ref(f.path, f.line, f.end_line)} — " if f.path else ""
     first, sep, rest = f.body.partition("\n")
-    head = f"- {box}{finding_tag(f.id)}{marker} {f.lead}{first}".rstrip()
+    head = f"- {box}{finding_tag(f.id)}{marker} {where}{first}".rstrip()
     if f.annotation:
         head = f"{head} {f.annotation}"
     line = head + (sep + rest if sep else "")
-    return f"{line}\n{f.evidence}" if evidence and f.evidence else line
+    return f"{line}\n{evidence_block(f.evidence)}" if evidence and f.evidence else line
 
 
 def failures_body(failures: tuple[AgentFailure, ...]) -> str:
@@ -67,7 +82,7 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSec
     """Every section the record holds, in spec §2's order."""
     sections: list[ProseSection] = []
     if record.triage is not None:
-        sections.append(ProseSection(SECTION_FILE_TRIAGE, "\n".join(e.text for e in record.triage)))
+        sections.append(ProseSection(SECTION_FILE_TRIAGE, "\n".join(triage_line(e) for e in record.triage)))
     if record.failures:
         sections.append(ProseSection(SECTION_FAILURES, failures_body(record.failures)))
     if record.summary:

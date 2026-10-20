@@ -44,14 +44,13 @@ says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review.verdict`'s. The
-finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from the record, the
-same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path` — against the files the diff changed first, as
-the poster does, and the tracked tree only when the diff has no match — so a
-finding is not placed against one file and verified against another.
+Which verdict a tally supports in the first place is `review.verdict`'s. A
+finding's evidence is the code on the record, and the file it is checked
+against is `path` — resolved with the poster's `review.format.resolve_path`
+against the files the diff changed first, as the poster does, and the tracked
+tree only when the diff has no match — so a finding is not placed against one
+file and verified against another. A finding with no path names no file, and
+is not checked.
 """
 
 # doc-group: findings
@@ -67,13 +66,9 @@ from pathlib import Path
 import core.log
 import git.client
 from pr.domains import ReviewVerdict
-from review.grammar import (
-    VERIFY_FINDING_RE, strip_line_suffix,
-)
 from review.format import resolve_path
 from review.merge import renumber_record
-from review.record import Disposition, RecordFinding, ReviewRecord
-from review.render import finding_line
+from review.record import Disposition, ReviewRecord
 from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key,
 )
@@ -81,28 +76,6 @@ from review.verdict import counts_prose, verdict_from_counts
 from core.text import plural
 
 # ── Evidence verification ────────────────────────────────────────────────────
-
-_EVIDENCE_RE = re.compile(
-    r">\s*```\w*\n(.*?)\n\s*>\s*```",
-    re.DOTALL,
-)
-
-
-def _extract_evidence(body: str) -> str | None:
-    m = _EVIDENCE_RE.search(body)
-    if not m:
-        return None
-    lines = m.group(1).split("\n")
-    cleaned = []
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped.startswith("> "):
-            stripped = stripped[2:]
-        elif stripped.startswith(">"):
-            stripped = stripped[1:]
-        cleaned.append(stripped.rstrip())
-    return "\n".join(ln for ln in cleaned if ln)
-
 
 def _normalize_code(text: str) -> str:
     lines = text.strip().split("\n")
@@ -264,17 +237,6 @@ def _match_evidence(
     return detail
 
 
-def _verification_detail(
-    finding: dict, evidence: str | None, wt_path: str,
-    tracked: Callable[[], Collection[str]] = _no_tracked_files,
-    changed: Collection[str] = (),
-) -> dict:
-    detail = _match_evidence(finding["path"], evidence, wt_path, tracked, changed)
-    detail["id"] = finding["id"]
-    detail["severity"] = finding["severity"]
-    return detail
-
-
 def _drop_reason(detail: dict) -> str:
     reason = "file not found" if not detail["file_exists"] else "evidence mismatch"
     if detail.get("longest_match_prefix") is not None:
@@ -288,41 +250,24 @@ class PostProcessed:
     verification: dict | None
 
 
-def _verification_text(f: RecordFinding, head: str) -> str:
-    """The finding's words and its evidence, in the shape `_extract_evidence` reads."""
-    rest = f.body.split("\n")[1:]
-    below = [line.rstrip() for line in [*rest, *f.evidence.split("\n")] if line.strip()]
-    return "\n".join([head, *below] if head else below)
-
-
-def _verification_finding(f: RecordFinding) -> dict | None:
-    """The finding as evidence verification walks it, or None if it is not a finding line."""
-    m = VERIFY_FINDING_RE.match(finding_line(f, sids=True).split("\n", 1)[0])
-    if not m:
-        return None
-    written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
-    return {
-        "id": f.id, "severity": f.severity, "path": f.path or written,
-        "body": _verification_text(f, m.group(5)),
-    }
-
-
 def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str]) -> PostProcessed:
+    """Drop each must-fix and should-fix finding whose evidence is not in its file.
+
+    A finding with no path names no file to check, so it is not checked: a
+    label such as `**Documentation**` is not a file the gate can open.
+    """
     dropped: list[str] = []
     details: list[dict] = []
     tracked = functools.cache(lambda: _tracked_files(wt_path))
     for f in record.visible:
-        if f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD):
+        if f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD) or not f.path:
             continue
-        finding = _verification_finding(f)
-        if finding is None:
-            continue
-        evidence = _extract_evidence(finding["body"])
-        detail = _verification_detail(finding, evidence, wt_path, tracked, changed)
+        detail = _match_evidence(f.path, f.evidence or None, wt_path, tracked, changed)
+        detail.update(id=f.id, severity=f.severity)
         details.append(detail)
         if not detail["match_result"]:
             dropped.append(f.id)
-            core.log.info(f"Dropping {f.id} ({finding['path']}): {_drop_reason(detail)}")
+            core.log.info(f"Dropping {f.id} ({f.path}): {_drop_reason(detail)}")
     gone = set(dropped)
     kept = tuple(f for f in record.findings if not (f.visible and f.id in gone))
     return PostProcessed(replace(record, findings=kept), {

@@ -1346,11 +1346,6 @@ was bold, while carry-forward read all four shapes and hashed them together, so
 a finding written with plain backticks was carried forward and deduplicated
 against nothing.
 
-One owner does not mean one pattern. `VERIFY_FINDING_RE` bounds a spaced
-filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
-and the two have to keep reading the same line the same way for different
-purposes. Both live here so a change to one is made next to the other.
-
 A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
 `:12-18` several of them match inside a span they capture, and
 `strip_line_suffix` is how such a reader takes it back off — each used to
@@ -1532,9 +1527,11 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields carry today's markdown verbatim — `lead`, `verdict`, `ledger`,
-`extra`, `severity_sections` — so the cut-over renders what the markdown
-pipeline wrote. They go when agents write JSON and the verdict is derived.
+Some fields still carry markdown an agent wrote — `verdict`, `ledger`,
+`extra`, `severity_sections` — and go when agents write JSON and the verdict
+is derived. A record written at schema 1, before agents wrote JSON, is
+upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the
+stable IDs its posted comments carry.
 
 ### review/render.py
 
@@ -1644,14 +1641,13 @@ says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review.verdict`'s. The
-finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from the record, the
-same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path` — against the files the diff changed first, as
-the poster does, and the tracked tree only when the diff has no match — so a
-finding is not placed against one file and verified against another.
+Which verdict a tally supports in the first place is `review.verdict`'s. A
+finding's evidence is the code on the record, and the file it is checked
+against is `path` — resolved with the poster's `review.format.resolve_path`
+against the files the diff changed first, as the poster does, and the tracked
+tree only when the diff has no match — so a finding is not placed against one
+file and verified against another. A finding with no path names no file, and
+is not checked.
 
 ## Publishing
 

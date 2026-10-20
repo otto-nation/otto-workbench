@@ -31,7 +31,9 @@ def _rev(text: str):
 
 from review.paths import FILENAME_PRIOR_FINDINGS
 from review.grammar import FindingIdentity
-from review.reconcile import _VERDICT_SHAPE, DispositionSource, UndecidedReason
+from review.reconcile import _VERDICT_SHAPE, DispositionSource, UndecidedReason, _prior_findings
+from review.record import RecordFinding, ReviewRecord
+from review.types import FindingRef
 from review.grammar import parse_ledger_line
 from review.types import (
     DISPOSITION_TAIL_PUNCTUATION, DISPOSITION_TAIL_WORD_JOINERS,
@@ -729,3 +731,8 @@ class TestVerdictShapeDescribesWhatParses:
             assert entry and entry.disposition is None, (
                 f"{char!r} glued mid-word now parses — the caveat is stale"
             )
+
+
+def test_a_prior_finding_is_referenced_by_its_own_path():
+    record = ReviewRecord(findings=(RecordFinding(id="M1", severity="M", path="a.py", line=1, body="x"),))
+    assert _prior_findings(record)[0].ref == FindingRef("M1", "a.py")

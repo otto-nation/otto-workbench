@@ -39,7 +39,7 @@ from review.grammar import (
 )
 from review.record import (
     AgentFailure, Disposition, ProseSection, RecordFinding, ReviewRecord,
-    SeveritySection, TriageEntry,
+    SeveritySection, TriageEntry, unquote_evidence,
 )
 from review.render import BANNER, RECOVER_HINT
 from review.types import SEVERITIES, Finding, FindingScope, FindingSpan
@@ -303,6 +303,17 @@ def split_evidence(lines: list[str]) -> EvidenceSplit:
     return EvidenceSplit(tuple(body), tuple(evidence))
 
 
+_TRIAGE_SEPARATOR_RE = re.compile(r"^(?:—|--|-)\s*")
+
+
+def _triage_entry(text: str) -> TriageEntry:
+    """A File Triage line as its file and its note."""
+    m = TRIAGE_LINE_RE.match(text)
+    if not m:
+        return TriageEntry("", text.strip().removeprefix("- ").strip())
+    return TriageEntry(m.group(1), _TRIAGE_SEPARATOR_RE.sub("", text[m.end():].strip()))
+
+
 @dataclass(frozen=True)
 class _Section:
     heading: str
@@ -495,8 +506,8 @@ def _finding(span: FindingSpan, lines: list[str]) -> RecordFinding:
     return RecordFinding(
         id=f"{m.group(2)}{m.group(3)}", severity=m.group(2),
         path=location.path, line=location.line, end_line=location.end_line,
-        lead=parts.lead, body="\n".join([first, *cont]),
-        evidence="\n".join(part.rstrip() for part in split.evidence),
+        body="\n".join([first, *cont]),
+        evidence=unquote_evidence("\n".join(split.evidence)),
         stable_id=identity.stable_id if identity else "",
         sid=sid.group(1) if sid else "",
         disposition=note.disposition, reason=note.reason, unverified=note.unverified,
@@ -526,10 +537,7 @@ class _Builder:
         if severity:
             self._severity(severity, residual, body)
         elif key == SECTION_FILE_TRIAGE.lower():
-            self.triage = (self.triage or []) + [
-                TriageEntry(m.group(1) if (m := TRIAGE_LINE_RE.match(t)) else "", t.rstrip())
-                for _, t in residual if t.strip()
-            ]
+            self.triage = (self.triage or []) + [_triage_entry(t) for _, t in residual if t.strip()]
         elif key == SECTION_FAILURES.lower():
             self.failures += _failures([t for _, t in residual])
         elif key == SECTION_SUMMARY.lower() and not self.summary:

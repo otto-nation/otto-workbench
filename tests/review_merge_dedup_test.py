@@ -23,18 +23,13 @@ from review_record_support import canonical
 class TestCleanTriage:
     def test_valid_triage_lines(self):
         merged = merge_records([_triage("- `file.go` reviewed", "- `other.go` skimmed")])
-        texts = "\n".join(e.text for e in merged.triage)
-        assert "file.go" in texts
-        assert "other.go" in texts
+        assert [e.path for e in merged.triage] == ["file.go", "other.go"]
 
     def test_mixed_valid_invalid(self):
         merged = merge_records([_triage(
             "- `file.go` reviewed", "some other text", "- `b.go` done",
         )])
-        texts = "\n".join(e.text for e in merged.triage)
-        assert "file.go" in texts
-        assert "b.go" in texts
-        assert "some other text" not in texts
+        assert [e.path for e in merged.triage] == ["file.go", "b.go"]
 
     def test_empty_input(self):
         assert merge_records([ReviewRecord()]).triage == ()
@@ -48,13 +43,11 @@ class TestDedupTriage:
         merged = merge_records([_triage(
             "- `file.go` — reviewed", "- `file.go` — reviewed again",
         )])
-        assert sum("file.go" in e.text for e in merged.triage) == 1
+        assert [e.path for e in merged.triage] == ["file.go"]
 
     def test_no_duplicates(self):
         merged = merge_records([_triage("- `a.go` — reviewed", "- `b.go` — reviewed")])
-        texts = "\n".join(e.text for e in merged.triage)
-        assert "a.go" in texts
-        assert "b.go" in texts
+        assert [e.path for e in merged.triage] == ["a.go", "b.go"]
 
     def test_empty_input(self):
         assert merge_records([ReviewRecord()]).triage == ()
@@ -153,7 +146,7 @@ class TestDedupSections:
             "- **[M3]** **`other.go:2`** — see [M2] for context\n"
         ))
         rendered = canonical(render_body(merged, sids=True))
-        assert "- **[M2]** **`other.go:2`** — see [M1] for context" in rendered
+        assert "- **[M2]** `other.go:2` — see [M1] for context" in rendered
 
     def test_a_citation_across_severities_follows_the_gap_closing(self):
         # S1 was dropped before the merge; closing the gap hands its number to
@@ -164,7 +157,7 @@ class TestDedupSections:
         )
         rendered = canonical(render_body(merged, sids=True))
         assert "blocked on [S1]" in rendered
-        assert "- **[S1]** **`b.go:1`** — issue b" in rendered
+        assert "- **[S1]** `b.go:1` — issue b" in rendered
 
     def test_a_citation_nothing_declares_names_nothing(self):
         merged = _merge(

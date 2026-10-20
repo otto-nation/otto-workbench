@@ -71,11 +71,10 @@ import re
 from dataclasses import dataclass, replace
 
 from review.grammar import (
-    SEVERITY_KEY, TRIAGE_LINE_RE,
+    SEVERITY_KEY,
     DedupKey, FindingIdentity, parse_ledger_line,
 )
 from review.record import RecordFinding, ReviewRecord, SeveritySection
-from review.render import finding_line
 from review.types import (
     SEVERITIES, FindingRef, LedgerEntry,
     disposition_precedence,
@@ -202,10 +201,7 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRe
         if not f.visible:
             return f
         new_id = renumbering.moves.get(FindingId(f.severity, f.seq))
-        return replace(
-            f, id=str(new_id) if new_id else f.id,
-            lead=renumbering.rewrite(f.lead), body=renumbering.rewrite(f.body),
-        )
+        return replace(f, id=str(new_id) if new_id else f.id, body=renumbering.rewrite(f.body))
     return replace(
         record,
         findings=tuple(moved(f) for f in record.findings),
@@ -326,7 +322,8 @@ def _dedup_records(findings: list[RecordFinding]) -> _DedupedRecords:
     merged_into: dict[FindingId, FindingId] = {}
     kept: list[RecordFinding] = []
     for f in findings:
-        identity = FindingIdentity.of(finding_line(f, sids=True).split("\n", 1)[0])
+        # A finding with no file has no location for two groups to agree on.
+        identity = FindingIdentity.of_fields(f.path, f.line, f.body) if f.path else None
         key = (f.severity, identity.dedup_key) if identity else None
         if key is not None and key in seen:
             merged_into[FindingId(f.severity, f.seq)] = seen[key]
@@ -346,7 +343,7 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
     notes: list[SeveritySection] = []
     for group in groups:
         shifted = _shift_record(group, offsets)
-        triage += [e for e in (shifted.triage or ()) if TRIAGE_LINE_RE.match(e.text)]
+        triage += [e for e in (shifted.triage or ()) if e.path]
         if (ledger := _clean_section_text(shifted.ledger)):
             ledgers.append(ledger)
         notes += [
@@ -361,7 +358,7 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
     seen_paths: set[str] = set()
     unique_triage = []
     for entry in triage:
-        key = entry.path or entry.text
+        key = entry.path or entry.note
         if key not in seen_paths:
             seen_paths.add(key)
             unique_triage.append(entry)

@@ -189,8 +189,8 @@ class TestMergeReviews:
         )
         result = _merged_text([str(g1), str(g2)])
 
-        assert "- **[S2]** **`a.go:2`** — issue b, related to [S1]" in result
-        assert "- **[S4]** **`b.go:2`** — issue d, see S3 above" in result
+        assert "- **[S2]** `a.go:2` — issue b, related to [S1]" in result
+        assert "- **[S4]** `b.go:2` — issue d, see S3 above" in result
 
     def test_merge_carries_a_citation_across_severities(self, tmp_path):
         # Both groups number their Should-fix findings from S1, so the second
@@ -216,9 +216,9 @@ class TestMergeReviews:
         )
         result = _merged_text([str(g1), str(g2)])
 
-        assert "- **[S3]** **`b.go:2`** — issue e" in result
-        assert "- **[M2]** **`b.go:1`** — issue d, blocked on [S3]" in result
-        assert "- **[N1]** **`b.go:3`** — issue f, see S3 above" in result
+        assert "- **[S3]** `b.go:2` — issue e" in result
+        assert "- **[M2]** `b.go:1` — issue d, blocked on [S3]" in result
+        assert "- **[N1]** `b.go:3` — issue f, see S3 above" in result
 
     def _misdirected_pair(self, tmp_path, *, citing_first: bool) -> str:
         """One group citing a Should-fix ID it never declared, and one declaring one."""
@@ -243,13 +243,13 @@ class TestMergeReviews:
         # [S1] over its own files alone. Resolving this citation through the
         # pooled map lands the reader on a real finding about a different file.
         result = self._misdirected_pair(tmp_path, citing_first=True)
-        assert "- **[M1]** **`a.go:1`** — issue a, blocked on [removed]" in result
-        assert "- **[S1]** **`b.go:2`** — unrelated issue in group two" in result
+        assert "- **[M1]** `a.go:1` — issue a, blocked on [removed]" in result
+        assert "- **[S1]** `b.go:2` — unrelated issue in group two" in result
 
     def test_a_dangling_reference_is_marked_whichever_group_merges_first(self, tmp_path):
         result = self._misdirected_pair(tmp_path, citing_first=False)
-        assert "- **[M1]** **`a.go:1`** — issue a, blocked on [removed]" in result
-        assert "- **[S1]** **`b.go:2`** — unrelated issue in group two" in result
+        assert "- **[M1]** `a.go:1` — issue a, blocked on [removed]" in result
+        assert "- **[S1]** `b.go:2` — unrelated issue in group two" in result
 
     def test_merge_clears_a_gap_the_first_group_left(self, tmp_path):
         # Nothing closes a group's gaps before the merge, so offsetting by the
@@ -273,9 +273,9 @@ class TestMergeReviews:
 
         # Offsetting by the count would put issue c on S3, where issue b already
         # sits; the gaps close afterwards, so all three come out distinct.
-        assert "- **[S1]** **`a.go:1`** — issue a" in result
-        assert "- **[S2]** **`a.go:3`** — issue b" in result
-        assert "- **[S3]** **`b.go:1`** — issue c" in result
+        assert "- **[S1]** `a.go:1` — issue a" in result
+        assert "- **[S2]** `a.go:3` — issue b" in result
+        assert "- **[S3]** `b.go:1` — issue c" in result
 
     def test_merge_unions_prior_findings_ledgers(self, tmp_path):
         g1 = tmp_path / "g1.md"
@@ -296,7 +296,7 @@ class TestMergeReviews:
         assert "**[S2]** `b.go` — Still open" in result
         # Ledger IDs name the prior review, so the merge must not renumber them
         # into the sequence it assigns this review's findings.
-        assert "- **[M1]** **`a.go:1`** — new issue" in result
+        assert "- **[M1]** `a.go:1` — new issue" in result
 
     def test_merge_keeps_the_still_open_verdict_when_groups_disagree(self, tmp_path):
         g1 = tmp_path / "g1.md"

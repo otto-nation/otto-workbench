@@ -458,7 +458,6 @@ class TestApplyStaticOutcomes:
         quoted = "- [ ] **[SA1]** **`src.py:9`** — depth 5 exceeds limit 4"
         finding = RecordFinding(
             id="M1", severity="M", path="t.py", line=1,
-            lead="`t.py:1` — ",
             body=f"the fixture quotes a declaration:\n  {quoted}",
             checkbox=True,
         )

@@ -127,9 +127,8 @@ def load_file(cls, path: Path):
     keeps that from being silent.
 
     A file holding anything that cannot be re-fetched needs its tolerance one
-    level down instead, on the type that owns the unreproducible part — see
-    `pr.comments_state.ThreadRecord._from_raw`, whose per-entry recovery keeps a
-    single damaged thread from discarding every thread's triage.
+    level down instead, on the type that owns the unreproducible part: a
+    `_from_raw` hook that takes the loss per entry rather than per file.
 
     ValueError covers JSONDecodeError and UnicodeDecodeError, which subclass it,
     along with an unknown enum value and a non-numeric key under a dict[int, V].

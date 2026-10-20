@@ -111,7 +111,6 @@ def build_report(
         report_threads.append(ReportThread.from_node(
             thread_data, my_login,
             state=t.state,
-            classification=t.classification,
             reviewer=t.reviewer,
         ))
     return PRReport(
@@ -179,8 +178,8 @@ def run_threads(trail, args, ctx) -> int:
     if not fetched.complete:
         core.log.warn(
             f"Only {len(threads_raw)} review threads could be read — the rest are "
-            "unreachable right now, so their triage verdicts are being kept rather "
-            "than treated as resolved")
+            "unreachable right now, so their last-known records are being kept "
+            "rather than treated as resolved")
 
     # Sync
     threads = pr.comments.sync_threads(fetched, prior_threads, my_login)

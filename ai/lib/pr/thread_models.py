@@ -675,7 +675,6 @@ class ReportThread:
 
     id: str = ""
     state: ThreadState = ThreadState.NEW
-    classification: str | None = None
     reviewer: str = ""
     comments: list[dict] = field(default_factory=list)
     is_resolved: bool = False
@@ -691,7 +690,6 @@ class ReportThread:
     def from_node(
         cls, node: dict, my_login: str = "", *,
         state: ThreadState = ThreadState.NEW,
-        classification: str | None = None,
         reviewer: str = "",
     ) -> "ReportThread":
         """A raw GraphQL review-thread node as a report thread.
@@ -700,18 +698,14 @@ class ReportThread:
         resolved, and the file and line it is anchored to — are read here and
         nowhere else, so a change to the GraphQL shape has one place to land.
 
-        The other three are keyword arguments because the two callers answer
-        them differently and both answers are correct. The report path takes
-        state, classification and reviewer from the synced `ThreadRecord`, which
-        is what carries a triage verdict across runs; the reply path has no
-        record to read and computes state from the conversation it just fetched.
-        A factory that recomputed state for both would discard the verdict on
-        the report path.
+        State and reviewer are keyword arguments because they are derived, not
+        read: the report path takes them from the synced `ThreadRecord`, and the
+        reply path, which has no record, computes them from the conversation it
+        just fetched.
         """
         return cls(
             id=node.get("id", ""),
             state=state,
-            classification=classification,
             reviewer=reviewer,
             comments=node.get("comments", {}).get("nodes", []),
             is_resolved=node.get("isResolved", False),

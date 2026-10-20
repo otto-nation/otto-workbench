@@ -18,17 +18,13 @@ from pr.comments_state import (
 )
 
 
-def _decided(**overrides) -> ThreadRecord:
-    """A thread carrying triage nothing can re-derive."""
+def _recorded(**overrides) -> ThreadRecord:
+    """A thread as a prior run recorded it."""
     return ThreadRecord(**{
         "state": ThreadState.ADDRESSED,
         "reviewer": "alice",
-        "last_seen_reply_id": 1001,
         "file": "handler.go",
         "line": 42,
-        "classification": "suggestion",
-        "summary": "Fix the handler",
-        "decided_at": "2026-06-14T15:00:00Z",
         **overrides,
     })
 
@@ -86,7 +82,7 @@ def test_save_and_load_roundtrip(tmp_path):
     path = tmp_path / "state.json"
     state = CommentsState(
         repo="otto-nation/maximum", pr_number=142, my_login="isaacg-otto",
-        threads={"12345": _decided()},
+        threads={"12345": _recorded()},
     )
     save_state(path, state)
 
@@ -94,7 +90,7 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.repo == "otto-nation/maximum"
     assert loaded.pr_number == 142
     assert loaded.my_login == "isaacg-otto"
-    assert loaded.threads == {"12345": _decided()}
+    assert loaded.threads == {"12345": _recorded()}
 
 
 def test_save_stamps_the_run_without_mutating_the_caller(tmp_path):
@@ -139,15 +135,15 @@ def test_the_written_shape_is_a_bare_id_to_record_mapping(tmp_path):
     """The ledger is typed in place, so the file a prior run wrote is the file
     this one writes. A wrapper around `threads` would have been a migration."""
     path = tmp_path / "state.json"
-    save_state(path, _state(threads={"T_abc": _decided()}))
+    save_state(path, _state(threads={"T_abc": _recorded()}))
 
     raw = json.loads(path.read_text())
     assert set(raw) == {"repo", "pr_number", "my_login", "last_run", "threads"}
-    assert raw["threads"]["T_abc"]["classification"] == "suggestion"
+    assert raw["threads"]["T_abc"]["reviewer"] == "alice"
     assert raw["threads"]["T_abc"]["state"] == "addressed"
 
 
-# ── Per-thread recovery ────────────────────────────────────────────────────
+# ── Recovery ───────────────────────────────────────────────────────────────
 
 
 def _write(path: Path, threads: dict) -> None:
@@ -156,40 +152,41 @@ def _write(path: Path, threads: dict) -> None:
     path.write_text(json.dumps({**document, "threads": threads}))
 
 
+def test_an_unreadable_thread_discards_the_ledger(tmp_path, capsys):
+    """A cache: every field is re-fetched next run, so one bad entry costs the
+    file rather than a per-entry recovery path."""
+    path = tmp_path / "state.json"
+    _write(path, {"T_good": core.serde.to_dict(_recorded()),
+                  "T_bad": {"state": "half-fixed"}})
+
+    assert load_state(path) is None
+    assert "unreadable" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("corrupt", [
-    pytest.param({"state": "half-fixed"}, id="unknown-lifecycle-state"),
     pytest.param("addressed", id="entry-is-not-an-object"),
     pytest.param([], id="entry-is-a-list"),
-    pytest.param(None, id="entry-is-null"),
 ])
-def test_one_unreadable_thread_does_not_discard_the_others(tmp_path, corrupt):
-    """The reason this file does not use `serde.load_file`'s own recovery.
-    Discarding the whole ledger would re-triage every thread on the PR to
-    recover from one entry, and triage is the part no API replays."""
+def test_a_malformed_thread_map_loads_empty(tmp_path, corrupt):
+    """The shared reader drops a map holding a non-object entry. Nothing in it
+    is irreplaceable, so the next run rebuilds every record from GitHub."""
     path = tmp_path / "state.json"
-    _write(path, {"T_good": core.serde.to_dict(_decided()), "T_bad": corrupt})
+    _write(path, {"T_good": core.serde.to_dict(_recorded()), "T_bad": corrupt})
 
-    loaded = load_state(path)
-    assert loaded is not None
-    assert loaded.threads["T_good"] == _decided()
-    assert loaded.threads["T_bad"] == ThreadRecord()
+    assert load_state(path).threads == {}
 
 
-@pytest.mark.parametrize("corrupt,expected", [
-    pytest.param({"state": "half-fixed"}, "unreadable thread entry", id="unreadable"),
-    pytest.param(None, "thread entry is null", id="null"),
-])
-def test_an_unreadable_thread_says_so(tmp_path, capsys, corrupt, expected):
-    """A run that quietly re-asks about a thread the operator already decided
-    is indistinguishable from one that had nothing cached.
-
-    A null needs its own line because `serde.from_dict` reads one as "every
-    field omitted" and would rebuild the blank record without a word."""
+def test_a_ledger_written_with_the_old_triage_fields_still_loads(tmp_path):
+    """A file from before the fields were dropped is not corruption: the keys
+    nothing reads any more are ignored."""
     path = tmp_path / "state.json"
-    _write(path, {"T_bad": corrupt})
+    _write(path, {"T_abc": {
+        **core.serde.to_dict(_recorded()), "classification": "suggestion",
+        "summary": "Fix the handler", "decided_at": "2026-06-14T15:00:00Z",
+        "last_seen_reply_id": 1001,
+    }})
 
-    load_state(path)
-    assert expected in capsys.readouterr().err
+    assert load_state(path).threads["T_abc"] == _recorded()
 
 
 def test_a_thread_missing_optional_fields_keeps_what_it_has(tmp_path):
@@ -202,8 +199,7 @@ def test_a_thread_missing_optional_fields_keeps_what_it_has(tmp_path):
         state=ThreadState.VERIFIED, reviewer="alice")
 
 
-def test_a_file_that_is_not_json_is_still_discarded_whole(tmp_path, capsys):
-    """Per-entry recovery reaches entries, not the document holding them."""
+def test_a_file_that_is_not_json_is_discarded(tmp_path, capsys):
     path = tmp_path / "state.json"
     path.write_text('{"threads": {"T_abc"')
 

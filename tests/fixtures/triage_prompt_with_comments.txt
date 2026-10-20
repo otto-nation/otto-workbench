@@ -34,7 +34,6 @@ Thread data:
   {
     "id": "t1",
     "state": "new",
-    "classification": null,
     "reviewer": "alice",
     "comments": [
       {

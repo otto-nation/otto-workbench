@@ -1,26 +1,20 @@
-"""The review-thread ledger, and the one state file that is not a snapshot.
+"""The review-thread ledger: where every thread stood at the end of the last run.
 
-``<target_dir>/pr-comments/state.json`` records where every review thread on a
-PR stood at the end of the last run. ``pr.comments.threads_state_path`` owns
-that join; this module is handed the path rather than deriving it.
+``<target_dir>/pr-comments/state.json`` is a snapshot of what GitHub said about
+each review thread — its lifecycle state, reviewer, file and line.
+``pr.comments.threads_state_path`` owns that join; this module is handed the path
+rather than deriving it.
 
-Most of what the file holds — the lifecycle state, the reviewer, the last reply
-seen, the file and line — is re-fetched from the API on every run, so losing it
-costs nothing. Three fields are not:
-``classification``, ``summary`` and ``decided_at`` are triage decisions made
-locally, and no API call reproduces them.
+Everything here is re-fetched from the API on every run, so the file is a cache
+and recovers like one: :func:`serde.load_file` discards a file it cannot parse
+and the next write rebuilds it. Its one use beyond the dashboard is standing in
+for a thread an incomplete fetch could not reach — see ``pr.comments.sync_threads``.
 
-That asymmetry is why this file recovers differently from every other one behind
-:func:`serde.load_file`. The shared reader discards a file it cannot parse and
-lets the next write rebuild it, which is unconditionally safe for a cache. Here
-it would silently re-triage every thread on the PR to recover from one bad
-entry, so the tolerance sits one level down: :meth:`ThreadRecord._from_raw`
-takes the loss per entry, and the threads either side of a corrupt one keep
-their decisions.
+Whether a thread still needs triage is not recorded here. That is the fix
+record's to answer, through ``pr.settlement.settled_ids``.
 
-Imports ``log`` and ``serde`` and nothing else in ``ai/lib``, so the vocabulary
-the thread pipeline is written in sits below the code that fetches, renders and
-triages it.
+Imports ``serde`` and nothing else in ``ai/lib``, so the vocabulary the thread
+pipeline is written in sits below the code that fetches, renders and triages it.
 """
 
 # doc-group: pr-state
@@ -32,7 +26,6 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
-import core.log
 import core.serde
 
 
@@ -54,12 +47,7 @@ class ThreadState(StrEnum):
 
 @dataclass(frozen=True)
 class ThreadRecord:
-    """One review thread, as the last run left it.
-
-    The first five fields are a snapshot of what GitHub said and are replaced
-    wholesale on the next sync. The last three are local: triage decided them,
-    nothing re-derives them, and `sync_threads` drops them only when a reply
-    arrives that the decision was not made against.
+    """One review thread, as the last run saw it on GitHub.
 
     Frozen because a run reads the whole ledger, decides, and writes a new
     record — a caller that resolves a thread replaces its record rather than
@@ -68,54 +56,8 @@ class ThreadRecord:
 
     state: ThreadState = ThreadState.NEW
     reviewer: str = ""
-    last_seen_reply_id: int | None = None
     file: str = ""
     line: int | None = None
-    classification: str | None = None
-    summary: str | None = None
-    decided_at: str | None = None
-
-    @classmethod
-    def _from_raw(cls, raw) -> "ThreadRecord":
-        """Rebuild one thread's record, or a blank one when the entry is corrupt.
-
-        The hook exists for the blank. `serde` reconstructs a nested dataclass
-        by raising on a value it cannot read, and that exception would travel
-        up to :func:`serde.load_file` and discard the whole ledger — every
-        thread's triage lost to recover from one entry. Catching it here spends
-        the one entry instead: the thread it names is re-triaged on this run,
-        which is the correct answer for a decision that cannot be read, and its
-        neighbours are untouched.
-
-        The warning is what keeps that from being silent. A run that quietly
-        re-asks the model about a thread the operator already decided looks
-        exactly like a run that had nothing cached.
-
-        A `null` entry is named rather than left to `serde.from_dict`, which
-        reads one as "every field omitted" and would rebuild it as a blank
-        record without saying so. It is corruption here: a thread the file
-        records but holds nothing about.
-        """
-        if isinstance(raw, cls):
-            return raw
-        if raw is None:
-            core.log.warn("thread entry is null — re-triaging it")
-            return cls()
-        try:
-            return core.serde.from_dict(cls, raw)
-        except (TypeError, ValueError) as exc:
-            core.log.warn(f"unreadable thread entry — re-triaging it: {exc}")
-            return cls()
-
-    @classmethod
-    def _raw_schema(cls, object_schema: dict) -> dict:
-        """The object form, unwidened — the recovery path is not a second shape.
-
-        `_from_raw` reads more than this describes, but what it reads beyond the
-        object is corruption it discards, not a document anything should write.
-        Publishing the wider form would invite a writer to produce it.
-        """
-        return object_schema
 
 
 @dataclass(frozen=True)
@@ -141,10 +83,8 @@ class CommentsState:
 def load_state(path: Path) -> CommentsState | None:
     """The recorded thread state, or None when there is no usable file.
 
-    The shared reader, reached through the per-entry tolerance
-    :meth:`ThreadRecord._from_raw` installs — so this returns None only for a
-    file that is missing or whose top level will not parse, never for one whose
-    threads are individually damaged.
+    A file with any unreadable entry is discarded whole: every field is
+    re-fetched on the next run, so there is nothing in it worth keeping apart.
     """
     return core.serde.load_file(CommentsState, path)
 

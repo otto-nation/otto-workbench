@@ -2903,29 +2903,23 @@ starts to.
 
 ### pr/comments_state.py
 
-The review-thread ledger, and the one state file that is not a snapshot.
+The review-thread ledger: where every thread stood at the end of the last run.
 
-``<target_dir>/pr-comments/state.json`` records where every review thread on a
-PR stood at the end of the last run. ``pr.comments.threads_state_path`` owns
-that join; this module is handed the path rather than deriving it.
+``<target_dir>/pr-comments/state.json`` is a snapshot of what GitHub said about
+each review thread — its lifecycle state, reviewer, file and line.
+``pr.comments.threads_state_path`` owns that join; this module is handed the path
+rather than deriving it.
 
-Most of what the file holds — the lifecycle state, the reviewer, the last reply
-seen, the file and line — is re-fetched from the API on every run, so losing it
-costs nothing. Three fields are not:
-``classification``, ``summary`` and ``decided_at`` are triage decisions made
-locally, and no API call reproduces them.
+Everything here is re-fetched from the API on every run, so the file is a cache
+and recovers like one: :func:`serde.load_file` discards a file it cannot parse
+and the next write rebuilds it. Its one use beyond the dashboard is standing in
+for a thread an incomplete fetch could not reach — see ``pr.comments.sync_threads``.
 
-That asymmetry is why this file recovers differently from every other one behind
-:func:`serde.load_file`. The shared reader discards a file it cannot parse and
-lets the next write rebuild it, which is unconditionally safe for a cache. Here
-it would silently re-triage every thread on the PR to recover from one bad
-entry, so the tolerance sits one level down: :meth:`ThreadRecord._from_raw`
-takes the loss per entry, and the threads either side of a corrupt one keep
-their decisions.
+Whether a thread still needs triage is not recorded here. That is the fix
+record's to answer, through ``pr.settlement.settled_ids``.
 
-Imports ``log`` and ``serde`` and nothing else in ``ai/lib``, so the vocabulary
-the thread pipeline is written in sits below the code that fetches, renders and
-triages it.
+Imports ``serde`` and nothing else in ``ai/lib``, so the vocabulary the thread
+pipeline is written in sits below the code that fetches, renders and triages it.
 
 ### pr/context.py
 

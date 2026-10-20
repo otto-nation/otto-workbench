@@ -30,7 +30,10 @@ fi
 _main_worktree() {
   local dir="$1"
   [[ "$(git -C "$dir" config --get core.bare 2>/dev/null)" == "true" ]] || return 0
-  git -C "$dir" worktree list 2>/dev/null | awk '/\[main\]/{print $1; exit}'
+  # awk drains the listing: exiting after the match closes the pipe while git
+  # may still have a write to make, and under pipefail that SIGPIPE fails the
+  # caller.
+  git -C "$dir" worktree list 2>/dev/null | awk '!found && /\[main\]/ { print $1; found = 1 }'
 }
 
 # Stable symlink target — in bare repos, resolves to the main worktree so

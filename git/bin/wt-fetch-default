@@ -70,9 +70,13 @@ fi
 # one, so the path is carried forward to the line that matches. A bare repo's
 # own entry names no branch and so never matches, which is correct — there is
 # nothing there to merge into.
+#
+# awk drains the listing after the match: exiting there closes the pipe while
+# git still has worktrees to print, and under pipefail that SIGPIPE fails this
+# substitution.
 worktree=$(git worktree list --porcelain | awk -v ref="refs/heads/$branch" '
   /^worktree / { path = substr($0, 10) }
-  $0 == "branch " ref { print path; exit }
+  !found && $0 == "branch " ref { print path; found = 1 }
 ')
 
 if [[ -n "$worktree" ]]; then

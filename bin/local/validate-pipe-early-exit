@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Validate that awk in a pipeline does not exit before draining stdin.
+
+Usage: bin/local/validate-pipe-early-exit [--quiet] [file...]
+
+An awk program that `exit`s while it is the consuming side of a pipeline (`cmd | awk`)
+closes the pipe while the producer still has a later write to make. Under
+`set -o pipefail` that SIGPIPE fails the pipeline — `git worktree list
+--porcelain | awk '... exit'` is the shape that took `wt switch -c` with it.
+
+The fix is to drain the input and print only the first match (`!found &&
+condition { print; found = 1 }`), not to `exit` after it.
+
+awk reading a FILE argument (`awk '...exit' "$file"`) is not this: there is
+no producer on a pipe to SIGPIPE. `|| awk` is not a pipeline.
+
+When no files are given, discovers tracked shell files (bash shebang or .sh),
+skipping tests/.
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import DIM, GREEN, NC, RED  # noqa: E402
+from repo_scan import BASE_SKIP_DIRS  # noqa: E402
+
+EXIT_TOKEN = re.compile(r'(?<![\w$])exit(?![\w])')
+PIPE_AWK = re.compile(r'(?<!\|)\|\s*awk\b')
+HEREDOC_START = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+BASH_SHEBANG = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
+WHY = (
+    'awk exit in a pipeline SIGPIPEs the producer under pipefail; '
+    'drain the input and print the first match instead'
+)
+
+
+@dataclass(frozen=True)
+class Statement:
+    line: int
+    text: str
+
+
+Violation = Statement  # same shape: line number plus the statement's first line
+
+
+@dataclass(frozen=True)
+class QuoteState:
+    index: int
+    in_single: bool
+    in_double: bool
+
+    @property
+    def closed(self) -> bool:
+        return not self.in_single and not self.in_double
+
+
+@dataclass(frozen=True)
+class Token:
+    text: str
+    end: int
+
+
+@dataclass(frozen=True)
+class AwkCall:
+    program: str
+    rest: str
+
+
+def _read_shebang(path: str) -> bytes | None:
+    try:
+        with open(path, 'rb') as f:
+            return f.readline()
+    except OSError:
+        return None
+
+
+def _is_shell_file(path: str) -> bool:
+    if path.endswith('.sh'):
+        return True
+    shebang = _read_shebang(path)
+    return shebang is not None and BASH_SHEBANG.search(shebang) is not None
+
+
+def join_continuations(lines: list[str]) -> list[Statement]:
+    """Join backslash-continued lines, returning Statement pairs."""
+    result: list[Statement] = []
+    buf = ''
+    start_lineno = 1
+
+    for lineno, line in enumerate(lines, 1):
+        stripped = line.rstrip('\n')
+        if buf:
+            buf += ' ' + stripped.lstrip()
+        else:
+            buf = stripped
+            start_lineno = lineno
+
+        if not stripped.endswith('\\'):
+            result.append(Statement(start_lineno, buf))
+            buf = ''
+        else:
+            buf = buf[:-1].rstrip()
+
+    if buf:
+        result.append(Statement(start_lineno, buf))
+    return result
+
+
+def _heredoc_delimiter(line: str) -> str | None:
+    """Delimiter of a heredoc opened on `line`, ignoring `<<` inside quotes."""
+    match = HEREDOC_START.search(line)
+    if not match or not _quotes_closed(line[:match.start()]):
+        return None
+    return match.group(2)
+
+
+def blank_heredoc_bodies(lines: list[str]) -> list[str]:
+    """Blank heredoc body lines (keeping line numbers): they are text, not commands."""
+    result: list[str] = []
+    delimiter: str | None = None
+    for line in lines:
+        if delimiter is None:
+            result.append(line)
+            delimiter = _heredoc_delimiter(line)
+            continue
+        if line.strip() == delimiter:
+            delimiter = None
+        result.append('\n')
+    return result
+
+
+def _advance_quote(text: str, state: QuoteState) -> QuoteState:
+    """Consume text[state.index] and return the next quote state."""
+    i = state.index
+    c = text[i]
+    if state.in_single:
+        return QuoteState(i + 1, c != "'", False)
+    if state.in_double and c == '\\':
+        return QuoteState(i + 2, False, True)
+    if state.in_double:
+        return QuoteState(i + 1, False, c != '"')
+    if c == "'":
+        return QuoteState(i + 1, True, False)
+    if c == '"':
+        return QuoteState(i + 1, False, True)
+    return QuoteState(i + 1, False, False)
+
+
+def _quotes_closed(text: str) -> bool:
+    state = QuoteState(0, False, False)
+    while state.index < len(text):
+        state = _advance_quote(text, state)
+    return state.closed
+
+
+def join_statements(lines: list[str]) -> list[Statement]:
+    """Join backslash continuations and open quotes into one statement each.
+
+    A comment-only line never starts a statement: an apostrophe in `DIR's`
+    would otherwise swallow every following line until the next quote, and
+    `strip_unquoted_comment` would then drop the awk it had swallowed.
+    """
+    continued = join_continuations(lines)
+    result: list[Statement] = []
+    buf = ''
+    start = 1
+
+    for stmt in continued:
+        stripped = stmt.text.lstrip()
+        skip_comment = not buf and (not stripped or stripped.startswith('#'))
+        if skip_comment:
+            continue
+        if not buf:
+            buf = stmt.text
+            start = stmt.line
+        else:
+            buf += '\n' + stmt.text
+        if _quotes_closed(buf):
+            result.append(Statement(start, buf))
+            buf = ''
+
+    if buf:
+        result.append(Statement(start, buf))
+    return result
+
+
+def strip_unquoted_comment(text: str) -> str:
+    state = QuoteState(0, False, False)
+    while state.index < len(text):
+        if state.closed and text[state.index] == '#':
+            return text[:state.index]
+        state = _advance_quote(text, state)
+    return text
+
+
+def _skip_ws(text: str, i: int) -> int:
+    while i < len(text) and text[i] in ' \t\n':
+        i += 1
+    return i
+
+
+def _read_quoted(text: str, i: int) -> Token | None:
+    if i >= len(text) or text[i] not in "'\"":
+        return None
+    quote = text[i]
+    i += 1
+    start = i
+    while i < len(text):
+        if quote == '"' and text[i] == '\\':
+            i += 2
+            continue
+        if text[i] == quote:
+            return Token(text[start:i], i + 1)
+        i += 1
+    return Token(text[start:], len(text))
+
+
+def _read_word(text: str, i: int) -> Token:
+    start = i
+    while i < len(text) and text[i] not in ' \t\n;|&)<>#':
+        if text[i] not in "'\"":
+            i += 1
+            continue
+        quoted = _read_quoted(text, i)
+        if quoted is None:
+            break
+        i = quoted.end
+    return Token(text[start:i], i)
+
+
+def _is_redirect_start(text: str, i: int) -> bool:
+    if i >= len(text):
+        return True
+    if text[i] in ';|&)<>':
+        return True
+    return text[i] == '2' and i + 1 < len(text) and text[i + 1] == '>'
+
+
+def _skip_flag_value(text: str, i: int) -> int:
+    i = _skip_ws(text, i)
+    if i < len(text) and text[i] in "'\"":
+        token = _read_quoted(text, i) or Token('', i)
+        return token.end
+    return _read_word(text, i).end
+
+
+def _awk_program_and_rest(after_awk: str) -> AwkCall:
+    """Return the program text and remaining args from the tokens after `awk`."""
+    i = 0
+    program_parts: list[str] = []
+    rest_parts: list[str] = []
+    seen_program = False
+
+    while True:
+        i = _skip_ws(after_awk, i)
+        if _is_redirect_start(after_awk, i):
+            break
+        if not seen_program and after_awk[i] in "'\"":
+            token = _read_quoted(after_awk, i) or Token('', i)
+            program_parts.append(token.text)
+            seen_program = True
+            i = token.end
+            continue
+
+        token = _read_word(after_awk, i)
+        if not token.text:
+            break
+        takes_value = token.text[:2] in {'-F', '-v', '-f', '-e'} and not token.text[2:]
+        if not seen_program and token.text.startswith('-'):
+            i = _skip_flag_value(after_awk, token.end) if takes_value else token.end
+            continue
+        if not seen_program:
+            program_parts.append(token.text)
+            seen_program = True
+            i = token.end
+            continue
+        rest_parts.append(token.text)
+        i = token.end
+
+    return AwkCall('\n'.join(program_parts), ' '.join(rest_parts))
+
+
+def _rest_is_file_argument(rest: str) -> bool:
+    rest = rest.strip()
+    if not rest:
+        return False
+    if rest == '-':
+        return False
+    if rest.startswith(('>', '<', '2>', '1>', '&>')):
+        return False
+    return True
+
+
+def find_pipeline_awk_exits(statement: str) -> bool:
+    """True when a `| awk` consumer's program contains the token `exit`."""
+    cleaned = strip_unquoted_comment(statement)
+    for match in PIPE_AWK.finditer(cleaned):
+        awk = _awk_program_and_rest(cleaned[match.end():])
+        if _rest_is_file_argument(awk.rest):
+            continue
+        if EXIT_TOKEN.search(awk.program):
+            return True
+    return False
+
+
+def check_file(filepath: str) -> list[Violation]:
+    """Return violations of pipeline awk that exits before draining stdin."""
+    with open(filepath, errors='replace') as f:
+        lines = f.readlines()
+
+    violations: list[Violation] = []
+    for stmt in join_statements(blank_heredoc_bodies(lines)):
+        if find_pipeline_awk_exits(stmt.text):
+            preview = stmt.text.strip().split('\n', 1)[0]
+            violations.append(Violation(stmt.line, preview))
+    return violations
+
+
+def _path_skipped(relpath: str) -> bool:
+    parts = relpath.split(os.sep)
+    if parts and parts[0] in BASE_SKIP_DIRS:
+        return True
+    if parts and parts[0] == 'tests':
+        return True
+    return False
+
+
+def discover_scripts(repo_root: str) -> list[str]:
+    """Tracked shell files (bash shebang or .sh), excluding tests/."""
+    try:
+        raw = subprocess.check_output(
+            ['git', '-C', repo_root, 'ls-files', '-z'],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return []
+
+    scripts: list[str] = []
+    for rel in raw.split(b'\0'):
+        if not rel:
+            continue
+        relpath = rel.decode('utf-8', 'replace')
+        if _path_skipped(relpath):
+            continue
+        path = os.path.join(repo_root, relpath)
+        if not os.path.isfile(path):
+            continue
+        if _is_shell_file(path):
+            scripts.append(path)
+    return sorted(scripts)
+
+
+def _report_violations(relpath: str, violations: list[Violation]) -> None:
+    print(f'{RED}✗{NC} {relpath}: awk exit in a pipeline', file=sys.stderr)
+    for violation in violations:
+        print(f'      line {violation.line}: {violation.text}', file=sys.stderr)
+    print(f'    {DIM}{WHY}{NC}', file=sys.stderr)
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, no pipeline awk early-exit')
+    else:
+        print(
+            f'{RED}✗{NC} {errors} of {files_checked} files exit awk in a pipeline',
+            file=sys.stderr,
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Validate that pipeline awk drains stdin instead of exiting early.',
+    )
+    parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = _WORKBENCH_DIR
+    files = args.files if args.files else discover_scripts(repo_root)
+
+    errors = 0
+    checked = 0
+    for filepath in files:
+        relpath = os.path.relpath(filepath, repo_root)
+        checked += 1
+        violations = check_file(filepath)
+        if violations:
+            errors += 1
+            _report_violations(relpath, violations)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    _print_summary(checked, errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

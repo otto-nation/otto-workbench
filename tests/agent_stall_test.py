@@ -17,6 +17,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import core.proc
+
 import agent.stall
 from agent.stall import Sample, StallWatch
 
@@ -33,13 +35,16 @@ def _sample(pids, cpu):
 
 
 class TestParseTime:
-    """`ps` TIME is MM:SS.ss, or HH:MM:SS.ss once a process passes an hour."""
+    """`ps` TIME is MM:SS.ss, HH:MM:SS, or procps DD-HH:MM:SS past a day."""
 
     def test_minutes_and_seconds(self):
         assert agent.stall._parse_time("2:30.50") == pytest.approx(150.5)
+        assert agent.stall._parse_time("03:04") == pytest.approx(184.0)
+        assert agent.stall._parse_time("0:01.25") == pytest.approx(1.25)
 
     def test_hours_are_read_when_present(self):
         assert agent.stall._parse_time("1:00:00.00") == pytest.approx(3600.0)
+        assert agent.stall._parse_time("02:03:04") == pytest.approx(7384.0)
 
     def test_the_procps_spelling_reads_the_same(self):
         # Linux `ps` writes HH:MM:SS with no fractional part and zero-padded
@@ -52,6 +57,12 @@ class TestParseTime:
     def test_a_process_past_an_hour_is_not_truncated(self):
         # BSD keeps counting minutes rather than rolling into an hours field.
         assert agent.stall._parse_time("117:02.75") == pytest.approx(7022.75)
+
+    def test_a_procps_day_prefix_is_not_read_as_zero(self):
+        # procps writes DD-HH:MM:SS once a process accrues a day of CPU.
+        # Parsing the hours field as a float would raise on the dash and
+        # report the process as idle for the rest of its life.
+        assert agent.stall._parse_time("1-02:03:04") == pytest.approx(93784.0)
 
     def test_an_unreadable_field_is_zero_rather_than_an_exception(self):
         # The watchdog thread declining to act is the right failure; taking
@@ -143,11 +154,49 @@ class TestAnUnreadableSample:
         assert watch.aborted_reason == ""
 
     def test_ps_failing_reads_as_unreadable_rather_than_as_idle(self, monkeypatch):
-        # Driven through `_ps_rows` rather than by stubbing `sample_subtree`,
+        # Driven through `_process_rows` rather than by stubbing `sample_subtree`,
         # so the path from a failed command to an unreadable sample is the
         # one under test.
-        monkeypatch.setattr(agent.stall, "_ps_rows", lambda: [])
+        monkeypatch.setattr(agent.stall, "_process_rows", lambda: [])
         assert agent.stall.sample_subtree(1).readable is False
+
+
+def _write_proc_stat(proc_root, pid, comm, ppid, utime, stime, state="S"):
+    """A /proc/<pid>/stat whose comm, ppid and ticks are under the test's control."""
+    directory = proc_root / str(pid)
+    directory.mkdir()
+    filler = " ".join("0" for _ in range(9))
+    (directory / "stat").write_text(
+        f"{pid} ({comm}) {state} {ppid} {filler} {utime} {stime}\n",
+    )
+
+
+class TestProcRows:
+    """Linux CPU comes from /proc ticks; an empty scan falls back to ps."""
+
+    def test_a_fixture_tree_converts_ticks_and_skips_unreadable_pids(self, tmp_path):
+        _write_proc_stat(tmp_path, 10, "a) b (c", ppid=1, utime=50, stime=25)
+        _write_proc_stat(tmp_path, 20, "bash", ppid=10, utime=100, stime=0)
+        (tmp_path / "cpuinfo").write_text("not a pid\n")
+        (tmp_path / "99").mkdir()
+        ticks = os.sysconf("SC_CLK_TCK")
+        rows = agent.stall._process_rows(proc_root=tmp_path)
+        assert set(rows) == {
+            (10, 1, 75 / ticks),
+            (20, 10, 100 / ticks),
+        }
+
+    def test_an_empty_proc_scan_falls_back_to_ps(self, tmp_path, monkeypatch):
+        seen = []
+
+        def fake_run(cmd, timeout=None):
+            seen.append(cmd)
+            return core.proc.CmdResult(returncode=0, stdout="  7  1  00:00:01.25\n")
+
+        monkeypatch.setattr(core.proc, "run", fake_run)
+        rows = agent.stall._process_rows(proc_root=tmp_path)
+        assert seen
+        assert rows == [(7, 1, 1.25)]
 
 
 class TestSampleSubtree:

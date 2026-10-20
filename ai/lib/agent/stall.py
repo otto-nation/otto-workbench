@@ -91,6 +91,7 @@ into the duration bound `timeouts` rejects.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable, Container, Mapping
@@ -113,10 +114,13 @@ CONFIRM_SAMPLES = 4
 SAMPLE_INTERVAL = 15.0
 
 # CPU seconds across one interval below which a subtree counts as having done
-# nothing. `ps` quantises TIME to hundredths, so this is ten ticks — clear of
-# the quantisation, and under one percent of one core. Measured idle subtrees
-# report 0.00s and measured busy ones report whole seconds, so the threshold
-# sits two orders of magnitude from both sides rather than between them.
+# nothing. Resolution is /proc ticks on Linux (10 ms at the usual 100 Hz
+# SC_CLK_TCK) and BSD `ps` hundredths on macOS, so this is ten ticks — clear
+# of the quantisation, and under one percent of one core. procps TIME is whole
+# seconds and cannot resolve this window: a busy process that does not cross a
+# second boundary reads as 0.0. Measured idle subtrees report 0.00s and
+# measured busy ones report well above this, so the threshold sits two orders
+# of magnitude from both sides rather than between them.
 CPU_FLOOR = 0.10
 
 # The longest any single tool call may run, whatever it is doing. This is the
@@ -187,27 +191,105 @@ class Sample:
 
 
 def _parse_time(field_text: str) -> float:
-    """Seconds from a `ps` TIME field — `MM:SS.ss`, or `HH:MM:SS.ss` past an hour.
+    """Seconds from a `ps` TIME field.
 
-    A field that will not parse reads as zero rather than raising. This runs on
-    a watchdog thread whose failure mode should be declining to act, not taking
-    down the run it is watching over a format it did not expect.
+    Accepts BSD `MM:SS.ss`, `HH:MM:SS` / `HH:MM:SS.ss`, and procps
+    `DD-HH:MM:SS`. A field that will not parse reads as zero rather than
+    raising. This runs on a watchdog thread whose failure mode should be
+    declining to act, not taking down the run it is watching over a format
+    it did not expect.
     """
     parts = field_text.split(":")
     try:
         seconds = float(parts[-1]) + 60.0 * float(parts[-2])
     except (IndexError, ValueError):
         return 0.0
-    if len(parts) > 2:
+    if len(parts) <= 2:
+        return seconds
+    hours_field = parts[-3]
+    days = 0.0
+    if "-" in hours_field:
+        day_text, hours_field = hours_field.split("-", 1)
         try:
-            seconds += 3600.0 * float(parts[-3])
+            days = float(day_text)
         except ValueError:
             return 0.0
+    try:
+        seconds += 3600.0 * float(hours_field) + 86400.0 * days
+    except ValueError:
+        return 0.0
     return seconds
 
 
+def _parse_proc_stat(
+    pid_text: str, text: str, ticks: int,
+) -> tuple[int, int, float]:
+    """`(pid, ppid, cpu_seconds)` from one `/proc/<pid>/stat` body."""
+    try:
+        rest = text.rsplit(")", 1)[1].split()
+        ppid = int(rest[1])
+        cpu = (int(rest[11]) + int(rest[12])) / ticks
+    except (IndexError, ValueError, ZeroDivisionError) as exc:
+        raise ValueError("unreadable /proc stat") from exc
+    return int(pid_text), ppid, cpu
+
+
+def _read_proc_pid(
+    proc_root: str, name: str, ticks: int,
+) -> tuple[int, int, float] | None:
+    """One `/proc/<pid>/stat` row, or None if that pid cannot be read."""
+    if not name.isdigit():
+        return None
+    path = os.path.join(proc_root, name, "stat")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return _parse_proc_stat(name, handle.read(), ticks)
+    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+        return None
+
+
+def _proc_stat_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[int, int, float]]:
+    """Every process under *proc_root* as `(pid, ppid, cpu_seconds)`.
+
+    Empty if *proc_root* cannot be listed or yields no readable pids. A pid
+    that vanishes or cannot be read mid-scan is skipped, not a failed reading.
+    """
+    try:
+        names = os.listdir(proc_root)
+        ticks = os.sysconf("SC_CLK_TCK")
+    except OSError:
+        return []
+    if ticks <= 0:
+        return []
+    root = os.fspath(proc_root)
+    rows: list[tuple[int, int, float]] = []
+    for name in names:
+        row = _read_proc_pid(root, name, ticks)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _process_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[int, int, float]]:
+    """Every process as `(pid, ppid, cpu_seconds)`, or empty if the reading failed.
+
+    Linux reads `/proc/<pid>/stat`: utime+stime ticks at `SC_CLK_TCK` (10 ms
+    at the usual 100 Hz). macOS has no `/proc`, so this falls back to `ps`,
+    whose TIME is hundredths. procps TIME is whole seconds and cannot resolve
+    `CPU_FLOOR` — a window that does not cross a second boundary reads as 0.0.
+
+    An empty `/proc` scan is not a successful idle reading: it falls back to
+    `ps`, and a failed `ps` stays empty. `sample_subtree` treats empty as the
+    instrument failing rather than the tree being idle.
+    """
+    rows = _proc_stat_rows(proc_root)
+    if rows:
+        return rows
+    return _ps_rows()
+
+
 def _ps_rows() -> list[tuple[int, int, float]]:
-    """Every process as `(pid, ppid, cpu_seconds)`, or empty if `ps` failed.
+    """Every process as `(pid, ppid, cpu_seconds)` from `ps`, or empty on failure.
 
     `ps -A -o pid=,ppid=,time=` is the POSIX spelling and is used rather than
     any per-group selector on purpose. `-g` is the trap: it selects by process
@@ -216,7 +298,7 @@ def _ps_rows() -> list[tuple[int, int, float]]:
     everything and filtering here costs one exec and cannot be misread.
 
     A tree walk also needs the global table regardless, since a subtree is only
-    computable from every PPID edge.
+    computable from every PPID edge. Used when `/proc` is absent or empty.
     """
     result = core.proc.run(
         ["ps", "-A", "-o", "pid=,ppid=,time="], timeout=core.timeouts.LOCAL,
@@ -244,7 +326,7 @@ def sample_subtree(root_pid: int) -> Sample:
     in the tree, so nothing to report means the reading failed rather than
     that nothing is running. `Sample.readable` is what callers check.
     """
-    rows = _ps_rows()
+    rows = _process_rows()
     children: dict[int, list[int]] = {}
     for pid, ppid, _ in rows:
         children.setdefault(ppid, []).append(pid)

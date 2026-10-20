@@ -11,10 +11,11 @@ spoke after a settlement.
 A read (`pr batch plan` / `status` / `next`) must not take packed-refs.lock:
 a killed status that wrote refs left a stale 0-byte lock that blocked every
 later ref update. It lists origin tips with `ls-remote`, fetches those SHAs
-with no ref updates (`--no-write-fetch-head --no-auto-maintenance`), and
-counts rebase need from the objects. Only `pr batch run` keeps a private
-`refs/pr-batch/<hex>` namespace (claimed before fetch so a killed run does
-not leak refs; `pr gc` drops one with no live claim and no run).
+with no ref updates (`-c maintenance.auto=false -c gc.auto=0` and an empty
+`--refmap`; FETCH_HEAD is written), and counts rebase need from the objects.
+Only `pr batch run` keeps a private `refs/pr-batch/<hex>` namespace (claimed
+before fetch so a killed run does not leak refs; `pr gc` drops one with no
+live claim and no run).
 """
 
 # doc-group: batch
@@ -244,11 +245,13 @@ def _row_rebase_need(repo_dir: str, branch: str, base: str, merge_state: str,
         head = local if has_local else f"{namespace}/{branch}"
         return tree_rebase_need(
             repo_dir, head, f"{namespace}/{base}", merge_state, base_label=base)
+    base_sha = (remote_heads or {}).get(base, "")
+    if not base_sha:
+        return rebase_need(merge_state)
     has_local = rebase.inspect.ref_exists(repo_dir, local)
     head = local if has_local else (remote_heads or {}).get(branch, "")
     return tree_rebase_need(
-        repo_dir, head, (remote_heads or {}).get(base, ""), merge_state,
-        base_label=base)
+        repo_dir, head, base_sha, merge_state, base_label=base)
 
 
 def rollup_state(node: dict) -> str:
@@ -347,16 +350,16 @@ def namespaces_in(repo_dir: str) -> list[str]:
 def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:
     # An empty --refmap is what stops git's opportunistic update: with a
     # command-line refspec it still applies remote.origin.fetch and would move
-    # refs/remotes/origin/* alongside the namespace. --no-auto-maintenance
-    # stops the detached `git maintenance run --auto` a fetch otherwise starts,
-    # which can pack refs and take packed-refs.lock after the fetch returns.
-    r = git.client.run(
-        "fetch", "--no-tags", "--quiet", "--no-write-fetch-head",
-        "--no-auto-maintenance", "--refmap=", "origin", *specs, cwd=repo_dir)
-    if not r.ok and ("unknown option" in r.stderr or "usage:" in r.stderr):
-        core.log.warn("git fetch rejected its options (needs git >= 2.29); "
-                      "plans fall back to GitHub merge state")
-    return r.ok
+    # refs/remotes/origin/* alongside the namespace. maintenance.auto=false and
+    # gc.auto=0 stop the detached `git maintenance run --auto` a fetch otherwise
+    # starts, which can pack refs and take packed-refs.lock after the fetch
+    # returns. FETCH_HEAD is written (it takes no packed-refs lock); SHA specs
+    # update no refs.
+    return git.client.run(
+        "fetch", "--quiet", "--no-tags", "--refmap=", "origin", *specs,
+        cwd=repo_dir,
+        config={"maintenance.auto": "false", "gc.auto": "0"},
+    ).ok
 
 
 def _fetch_objects(repo_dir: str, shas: list[str]) -> None:
@@ -365,8 +368,11 @@ def _fetch_objects(repo_dir: str, shas: list[str]) -> None:
         return
     if _fetch_refspecs(repo_dir, wanted):
         return
-    for sha in wanted:
-        _fetch_refspecs(repo_dir, [sha])
+    landed = [_fetch_refspecs(repo_dir, [sha]) for sha in wanted]
+    if not any(landed):
+        core.log.warn(
+            f"could not fetch objects in {repo_dir}; "
+            f"rebase need falls back to GitHub merge state")
 
 
 def fetch_namespace(repo_dir: str, namespace: str, branches: list[str]) -> bool:
@@ -645,7 +651,7 @@ def _graphql(query: str, variables: dict) -> dict:
         raise PlanError(f"GitHub query failed: {detail}") from exc
 
 
-def build_plan(repo_dirs: list[str], *, keep_refs: bool = False) -> Plan:
+def _plan_inputs(repo_dirs: list[str]):
     # Absolute, because a run persists these: a relative checkout names a
     # different directory, or none, to every later reader in another cwd.
     repo_dirs = [os.path.abspath(d) for d in repo_dirs]
@@ -655,10 +661,17 @@ def build_plan(repo_dirs: list[str], *, keep_refs: bool = False) -> Plan:
         dupes = sorted({s for s in slugs if slugs.count(s) > 1})
         raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
     data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
-    needed = _fetch_branches(data, by_slug)
-    if keep_refs:
-        return _plan_with_namespace(data, by_slug, repo_dirs, needed)
+    return repo_dirs, by_slug, data, _fetch_branches(data, by_slug)
+
+
+def build_plan(repo_dirs: list[str]) -> Plan:
+    repo_dirs, by_slug, data, needed = _plan_inputs(repo_dirs)
     return _plan_without_refs(data, by_slug, repo_dirs, needed)
+
+
+def build_run_plan(repo_dirs: list[str]) -> Plan:
+    repo_dirs, by_slug, data, needed = _plan_inputs(repo_dirs)
+    return _plan_with_namespace(data, by_slug, repo_dirs, needed)
 
 
 def _plan_with_namespace(

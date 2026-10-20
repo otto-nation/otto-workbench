@@ -206,7 +206,7 @@ def test_a_plan_that_fails_after_fetching_leaves_no_refs(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(batch.plan, "rows_from_search", explode)
     with pytest.raises(exc):
-        batch.plan.build_plan([str(pair.work)], keep_refs=True)
+        batch.plan.build_run_plan([str(pair.work)])
     assert git_out(pair.work, "for-each-ref", batch.plan.NAMESPACE_ROOT) == ""
 
 
@@ -221,7 +221,7 @@ def test_a_fetch_that_fails_part_way_leaves_no_refs_on_a_failed_plan(tmp_path, m
 
     monkeypatch.setattr(batch.plan, "fetch_namespace", fetch_then_raise)
     with pytest.raises(RuntimeError):
-        batch.plan.build_plan([str(pair.work)], keep_refs=True)
+        batch.plan.build_run_plan([str(pair.work)])
     assert git_out(pair.work, "for-each-ref", batch.plan.NAMESPACE_ROOT) == ""
 
 
@@ -286,7 +286,7 @@ def test_claim_is_written_before_fetch_and_removed_after_drop(tmp_path, monkeypa
         return real(d, ns, branches)
 
     monkeypatch.setattr(batch.plan, "fetch_namespace", fetch)
-    plan = batch.plan.build_plan([str(pair.work)], keep_refs=True)
+    plan = batch.plan.build_run_plan([str(pair.work)])
     assert seen == [True]
     assert batch.plan.read_claim(plan.ref_namespace) is not None
     assert batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace) is True
@@ -299,12 +299,6 @@ def test_pid_exists_treats_unexpected_oserror_as_live(monkeypatch):
 
     monkeypatch.setattr(batch.plan.os, "kill", boom)
     assert batch.plan._pid_exists(123) is True
-
-
-def _snapshot(work):
-    fetch_head = work / ".git" / "FETCH_HEAD"
-    return (git_out(work, "for-each-ref"),
-            fetch_head.read_bytes() if fetch_head.is_file() else None)
 
 
 def _fetch_args(monkeypatch):
@@ -320,7 +314,20 @@ def _fetch_args(monkeypatch):
     return seen
 
 
-def test_a_read_plan_does_not_write_refs_or_fetch_head_and_still_counts_behind(
+def _fetch_calls(monkeypatch):
+    real = batch.plan.git.client.run
+    seen = []
+
+    def spy(*args, **kwargs):
+        if args and args[0] == "fetch":
+            seen.append((args, kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(batch.plan.git.client, "run", spy)
+    return seen
+
+
+def test_a_read_plan_does_not_write_refs_and_still_counts_behind(
         tmp_path, monkeypatch):
     pair = remote_and_clone(tmp_path)
     git_in(pair.seed, "checkout", "-q", "-b", "feat2")
@@ -334,9 +341,9 @@ def test_a_read_plan_does_not_write_refs_or_fetch_head_and_still_counts_behind(
             _node(merge_state="BLOCKED"),
             _node(branch="feat2", base="feat", merge_state="CLEAN", number=8),
         ]}})
-    before = _snapshot(pair.work)
+    before = git_out(pair.work, "for-each-ref")
     plan = batch.plan.build_plan([str(pair.work)])
-    assert _snapshot(pair.work) == before
+    assert git_out(pair.work, "for-each-ref") == before
     assert plan.ref_namespace == "" and plan.ref_dirs == []
     by_pr = {r.pr: r for r in plan.rows}
     assert by_pr[7].needs[Step.REBASE] == StepNeed(True, "1 behind main")
@@ -400,26 +407,30 @@ def test_a_read_plan_prefers_the_local_branch_over_the_remote_head(
     assert plan.rows[0].needs[Step.REBASE].needed is False
 
 
-def test_fetch_argv_on_both_paths_disables_maintenance_and_fetch_head(
+def test_fetch_on_both_paths_disables_maintenance_via_config(
         tmp_path, monkeypatch):
     pair = remote_and_clone(tmp_path)
     advance(pair.seed, "main", "upstream")
     _plan_against(monkeypatch)
-    seen = _fetch_args(monkeypatch)
+    seen = _fetch_calls(monkeypatch)
     batch.plan.build_plan([str(pair.work)])
     assert seen and all(
-        "--no-auto-maintenance" in args and "--no-write-fetch-head" in args
-        for args in seen)
+        kwargs.get("config") == {"maintenance.auto": "false", "gc.auto": "0"}
+        and "--no-auto-maintenance" not in args
+        and "--no-write-fetch-head" not in args
+        for args, kwargs in seen)
     seen.clear()
-    plan = batch.plan.build_plan([str(pair.work)], keep_refs=True)
+    plan = batch.plan.build_run_plan([str(pair.work)])
     assert seen and all(
-        "--no-auto-maintenance" in args and "--no-write-fetch-head" in args
-        for args in seen)
-    assert any(any(s.startswith("+refs/heads/") for s in args) for args in seen)
+        kwargs.get("config") == {"maintenance.auto": "false", "gc.auto": "0"}
+        and "--no-auto-maintenance" not in args
+        and "--no-write-fetch-head" not in args
+        for args, kwargs in seen)
+    assert any(any(s.startswith("+refs/heads/") for s in args) for args, _ in seen)
     batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
 
 
-def test_keep_refs_fetches_into_a_namespace_replan_still_reads(
+def test_build_run_plan_fetches_into_a_namespace_replan_still_reads(
         tmp_path, monkeypatch):
     pair = remote_and_clone(tmp_path)
     advance(pair.seed, "main", "upstream")
@@ -428,7 +439,7 @@ def test_keep_refs_fetches_into_a_namespace_replan_still_reads(
     monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {
         "viewer": {"login": "me"}, "search": {"nodes": [node]},
         "repository": {"pullRequest": dict(node, state="OPEN")}})
-    plan = batch.plan.build_plan([str(pair.work)], keep_refs=True)
+    plan = batch.plan.build_run_plan([str(pair.work)])
     ns = plan.ref_namespace
     assert ns.startswith(f"{batch.plan.NAMESPACE_ROOT}/")
     refs = git_out(pair.work, "for-each-ref", "--format=%(refname)", ns).split()
@@ -441,12 +452,51 @@ def test_keep_refs_fetches_into_a_namespace_replan_still_reads(
     batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
 
 
-def test_a_fetch_rejecting_its_options_warns(tmp_path, monkeypatch):
+def test_a_read_path_fetch_that_fails_outright_warns(monkeypatch):
     class R:
         ok = False
-        stderr = "error: unknown option `no-write-fetch-head'"
+        stderr = "fatal: unable to access"
     warned = []
     monkeypatch.setattr(batch.plan.git.client, "run", lambda *a, **k: R())
     monkeypatch.setattr(batch.plan.core.log, "warn", warned.append)
-    assert not batch.plan._fetch_refspecs(str(tmp_path), ["x"])
-    assert warned and "git >= 2.29" in warned[0]
+    batch.plan._fetch_objects("/repos/a", ["abc", "def"])
+    assert len(warned) == 1
+    assert "/repos/a" in warned[0]
+    assert "rebase need falls back to GitHub merge state" in warned[0]
+
+
+def test_a_partial_object_fetch_does_not_warn(monkeypatch):
+    results = iter([False, True, False])
+
+    class R:
+        def __init__(self, ok):
+            self.ok = ok
+            self.stderr = ""
+
+    warned = []
+    monkeypatch.setattr(batch.plan.git.client, "run",
+                        lambda *a, **k: R(next(results)))
+    monkeypatch.setattr(batch.plan.core.log, "warn", warned.append)
+    batch.plan._fetch_objects("/repos/a", ["abc", "def"])
+    assert warned == []
+
+
+def test_read_path_skips_ref_exists_when_base_sha_is_missing(monkeypatch):
+    called = []
+    monkeypatch.setattr(batch.plan.rebase.inspect, "ref_exists",
+                        lambda *a, **k: called.append(1) or False)
+    need = batch.plan._row_rebase_need(
+        "/r", "feat", "main", "BEHIND", "", {"feat": "abc"})
+    assert called == []
+    assert need == StepNeed(True, "behind its base")
+
+
+def test_read_path_calls_ref_exists_when_base_sha_exists(monkeypatch):
+    called = []
+    monkeypatch.setattr(batch.plan.rebase.inspect, "ref_exists",
+                        lambda *a, **k: called.append(1) or False)
+    monkeypatch.setattr(batch.plan, "tree_rebase_need",
+                        lambda *a, **k: StepNeed(False, "x"))
+    batch.plan._row_rebase_need(
+        "/r", "feat", "main", "BEHIND", "", {"feat": "abc", "main": "def"})
+    assert called == [1]

@@ -3581,10 +3581,11 @@ spoke after a settlement.
 A read (`pr batch plan` / `status` / `next`) must not take packed-refs.lock:
 a killed status that wrote refs left a stale 0-byte lock that blocked every
 later ref update. It lists origin tips with `ls-remote`, fetches those SHAs
-with no ref updates (`--no-write-fetch-head --no-auto-maintenance`), and
-counts rebase need from the objects. Only `pr batch run` keeps a private
-`refs/pr-batch/<hex>` namespace (claimed before fetch so a killed run does
-not leak refs; `pr gc` drops one with no live claim and no run).
+with no ref updates (`-c maintenance.auto=false -c gc.auto=0` and an empty
+`--refmap`; FETCH_HEAD is written), and counts rebase need from the objects.
+Only `pr batch run` keeps a private `refs/pr-batch/<hex>` namespace (claimed
+before fetch so a killed run does not leak refs; `pr gc` drops one with no
+live claim and no run).
 
 ### batch/publish.py
 

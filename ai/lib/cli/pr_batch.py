@@ -204,7 +204,7 @@ def _cfg(dirs: list[str]):
 def _plan(args) -> batch.plan.Plan:
     if args.plan:
         return core.serde.from_dict(batch.plan.Plan, json.loads(Path(args.plan).read_text()))
-    return batch.plan.build_plan(args.checkout, keep_refs=True)
+    return batch.plan.build_run_plan(args.checkout)
 
 
 class _Reporter:

@@ -46,7 +46,11 @@ def _with_sids(record: ReviewRecord) -> ReviewRecord:
     )
 
 
-def _scoping_location(finding: RecordFinding) -> tuple[str, int | None]:
+# ceiling: a second location reader: it re-reads the finding's declaration
+# with FindingIdentity.of because ingest's path/line stay as posting reads
+# them. Upgrade trigger: once posting reads path/line from the record (PR 2),
+# use RecordFinding.path/line and delete this.
+def _scoping_location(finding: RecordFinding) -> FindingIdentity | None:
     """Where the old scoped-prior reader would place this finding.
 
     Ingest stores `path`/`line` from `finding_location` alone, so a bare
@@ -59,16 +63,17 @@ def _scoping_location(finding: RecordFinding) -> tuple[str, int | None]:
     line = finding_line(finding).split("\n", 1)[0]
     if line.startswith("- [x] "):
         line = "- [ ] " + line[6:]
-    identity = FindingIdentity.of(line)
-    if identity is None:
-        return "", None
-    return identity.path, identity.line
+    return FindingIdentity.of(line)
 
 
 def _in_group(finding: RecordFinding, files: set[str]) -> bool:
     """Whether `finding` names a line of one of `files`."""
-    path, line = _scoping_location(finding)
-    return line is not None and path in files
+    identity = _scoping_location(finding)
+    return (
+        identity is not None
+        and identity.line is not None
+        and identity.path in files
+    )
 
 
 def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:

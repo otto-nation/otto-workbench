@@ -525,27 +525,29 @@ def _answered(f: RecordFinding, outcome: ItemOutcome) -> RecordFinding:
 def apply_outcomes(record: ReviewRecord, outcomes: list[ItemOutcome]) -> ReviewRecord:
     """The record with each finding's disposition set from this pass's outcome.
 
-    A fix ticks the box, a decline or a `needs a person` appends the annotation,
-    and anything else leaves the line alone — which is what hands a finding the
-    pass never answered to the next round unchanged.
+    A fix sets `Disposition.FIXED`, a decline `DECLINED`, a `needs a person`
+    `SKIPPED`, and anything else leaves the finding as it is — which is what
+    hands a finding the pass never answered to the next round unchanged.
+    Rendering turns those dispositions into the checkbox and annotation; this
+    function does not edit the line.
 
-    A fix the gate could not stand behind ticks the box and says so beside it.
-    The tick is honest — an edit was made, and the pass committed it — but the
-    document is what a reviewer reads and what the next round reconciles
-    against, and a bare tick there is the pass vouching for an edit nothing
-    exercised. The annotation is not a verdict the parsers read back, so the
-    finding stays fixed to every reader that matters and carries the caveat for
-    the one who is deciding whether to trust it.
+    A fix the gate could not stand behind is still `FIXED`, with `unverified`
+    set and the caveat in `reason`. The disposition is honest — an edit was
+    made, and the pass committed it — but the document is what a reviewer reads
+    and what the next round reconciles against, and a bare fixed finding there
+    is the pass vouching for an edit nothing exercised. The caveat is not a
+    verdict the next round reads back, so the finding stays fixed to every
+    reader that matters and carries the warning for the one who is deciding
+    whether to trust it.
 
     A finding the review had already checked, declined or skipped keeps what it
-    has: those verdicts were reached before the agent ran and outrank it, and
-    appending a second annotation to a line that carries one leaves the document
-    saying two things about one finding.
+    has: those verdicts were reached before the agent ran and outrank it.
 
-    The deferred queue is this pass's alone: an earlier pass's deferral is reset
-    before the outcomes are applied, as `open_findings` was replaced each pass.
-    Matches go through `.visible` / `.finding()` / `.with_finding()` so a
-    falsified twin of the same id cannot take the outcome.
+    The deferred queue is this pass's alone: an earlier pass's `UNREACHED` is
+    reset to `OPEN` before the outcomes are applied, as `open_findings` was
+    replaced each pass. Matches go through `.visible` / `.finding()` /
+    `.with_finding()` so a falsified twin of the same id cannot take the
+    outcome.
     """
     by_id = {o.id: o for o in outcomes}
     written: set[str] = set()

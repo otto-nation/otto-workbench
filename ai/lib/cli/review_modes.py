@@ -118,7 +118,8 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
     if rc != 0:
         return rc
 
-    # The rebuild writes `review.md` and says nothing on stdout. This used to
+    # The rebuild writes review.json, meta.json and the rendered review.md
+    # through the store, and says nothing on stdout. This used to
     # capture its output and grep it for a `REVIEW_SUMMARY:` marker — a
     # protocol whose only writer was `review`, so on this path it
     # parsed a string nothing emitted and silently updated nothing. The

@@ -3532,9 +3532,10 @@ with the run's items.
 | `closed` | keys of items no longer open on GitHub (merged or closed) |
 | `owed` | open PRs with a step needed: `pr`, `needs` (step → reason) |
 
-The needs are `pr batch plan`'s, fetch included: GitHub's merge state reads
-CLEAN for a branch that is only behind, so without the fetch the rebase need
-would be understated. The plan's namespaced refs are dropped before returning.
+The needs are `pr batch plan`'s: an objects-only fetch of the origin tips,
+counted without writing refs. A read must not take packed-refs.lock; a killed
+status that wrote refs left a stale lock that blocked every later ref update.
+Only `pr batch run` keeps a `refs/pr-batch/` namespace.
 
 A checkout is found by the item's `repo_dir` first, then the current
 directory. Either one counts only when its `origin` names the item's repo,
@@ -3577,10 +3578,14 @@ comments are priced per thread, about a point per hundred threads in the search,
 and are read only as far as `_THREAD_COMMENTS` — enough to see whether anyone
 spoke after a settlement.
 
-The plan fetches only the origin branches rows need into a private
-`refs/pr-batch/<hex>` namespace, claimed under the batch state root before
-the fetch so a killed plan does not leak refs. `pr gc` drops a namespace
-that has no live claim and no run referencing it.
+A read (`pr batch plan` / `status` / `next`) must not take packed-refs.lock:
+a killed status that wrote refs left a stale 0-byte lock that blocked every
+later ref update. It lists origin tips with `ls-remote`, fetches those SHAs
+with no ref updates (`-c maintenance.auto=false -c gc.auto=0` and an empty
+`--refmap`; FETCH_HEAD is written), and counts rebase need from the objects.
+Only `pr batch run` keeps a private `refs/pr-batch/<hex>` namespace (claimed
+before fetch so a killed run does not leak refs; `pr gc` drops one with no
+live claim and no run).
 
 ### batch/publish.py
 

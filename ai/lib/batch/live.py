@@ -18,9 +18,10 @@ with the run's items.
 | `closed` | keys of items no longer open on GitHub (merged or closed) |
 | `owed` | open PRs with a step needed: `pr`, `needs` (step → reason) |
 
-The needs are `pr batch plan`'s, fetch included: GitHub's merge state reads
-CLEAN for a branch that is only behind, so without the fetch the rebase need
-would be understated. The plan's namespaced refs are dropped before returning.
+The needs are `pr batch plan`'s: an objects-only fetch of the origin tips,
+counted without writing refs. A read must not take packed-refs.lock; a killed
+status that wrote refs left a stale lock that blocked every later ref update.
+Only `pr batch run` keeps a `refs/pr-batch/` namespace.
 
 A checkout is found by the item's `repo_dir` first, then the current
 directory. Either one counts only when its `origin` names the item's repo,
@@ -111,12 +112,8 @@ def view(run: Run, *, cwd: str, plan_fn: PlanFn | None = None) -> dict:
         plan = (plan_fn or batch.plan.build_plan)(sorted(found.values()))
     except (batch.plan.PlanError, OSError) as exc:
         return {"checked": False, **head, "error": str(exc)}
-    try:
-        return {"checked": True, "viewer": plan.viewer, **head,
-                **compare(run, plan, set(found))}
-    finally:
-        # Nothing runs from a status read, so its refs go now, as `pr batch plan`'s do.
-        batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
+    return {"checked": True, "viewer": plan.viewer, **head,
+            **compare(run, plan, set(found))}
 
 
 def owes(section: dict | None) -> bool:

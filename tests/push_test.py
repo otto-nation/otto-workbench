@@ -83,6 +83,43 @@ def test_remote_head_is_not_fooled_by_a_branch_ending_in_the_same_name(pushable)
     assert git.push.remote_head(wt, "main") == on_main
 
 
+# ── remote_heads ────────────────────────────────────────────
+
+
+def test_remote_heads_maps_exact_matches_and_omits_absent(pushable):
+    wt, _ = pushable
+    on_main = git.client.head_sha(cwd=wt)
+    git_in(wt, "checkout", "-q", "-b", "feat")
+    on_feat = _commit(wt, "feat")
+    git_in(wt, "push", "-q", "origin", "feat")
+    got = git.push.remote_heads(wt, ["feat", "main", "missing"])
+    assert got == {"feat": on_feat, "main": on_main}
+
+
+def test_remote_heads_ignores_an_impostor_ref_whose_tail_spells_the_branch(pushable):
+    wt, remote = pushable
+    on_main = git.client.head_sha(cwd=wt)
+    git_in(wt, "checkout", "-q", "-b", "impostor")
+    other = _commit(wt, "impostor")
+    git_in(wt, "push", "-q", "origin", "impostor")
+    git_in(remote, "update-ref", "refs/heads/x/refs/heads/main", other)
+    assert git.push.remote_heads(wt, ["main"]) == {"main": on_main}
+    assert git.push.remote_head(wt, "main") == on_main
+
+
+def test_remote_heads_returns_none_when_the_remote_cannot_be_asked(pushable):
+    wt, _ = pushable
+    git_in(wt, "remote", "set-url", "origin", str(wt / "nope.git"))
+    assert git.push.remote_heads(wt, ["main"]) is None
+    assert git.push.remote_head(wt, "main") is None
+
+
+def test_remote_heads_empty_list_does_not_call_git(monkeypatch):
+    monkeypatch.setattr(git.client, "run", _never_runs)
+    assert git.push.remote_heads("/nope", []) == {}
+    assert git.push.remote_heads("/nope", ["", ""]) == {}
+
+
 # ── holds ───────────────────────────────────────────────────────────────────
 
 

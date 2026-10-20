@@ -359,6 +359,39 @@ def _push_output(r: core.proc.CmdResult) -> str:
             "what the remote received is unconfirmed")
 
 
+def remote_heads(
+    wt_path: str | Path, branches: list[str], *, remote: str = "origin",
+) -> dict[str, str] | None:
+    """The commits *remote* holds for *branches*, in one `ls-remote`.
+
+    A branch whose exact `refs/heads/<branch>` is on the remote maps to its
+    SHA. A branch the remote lacks is omitted. `None` when the remote could
+    not be asked. An empty *branches* is `{}` and does not talk to git.
+
+    An `ls-remote` pattern matches any ref whose trailing path components
+    spell it, so asking for `main` also answers with `refs/heads/topic/main`
+    and with `refs/heads/x/refs/heads/main`. The full refname narrows the
+    query and comparing it again keeps the one line that is actually an
+    answer to the question.
+    """
+    wanted = list(dict.fromkeys(b for b in branches if b))
+    if not wanted:
+        return {}
+    refs = [f"refs/heads/{b}" for b in wanted]
+    r = git.client.run("ls-remote", "--heads", remote, *refs, cwd=wt_path)
+    if not r.ok:
+        return None
+    found: dict[str, str] = {}
+    exact = set(refs)
+    prefix = "refs/heads/"
+    for line in r.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        name = name.strip()
+        if name in exact:
+            found[name[len(prefix):]] = sha.strip()
+    return found
+
+
 def remote_head(
     wt_path: str | Path, branch: str, *, remote: str = "origin",
 ) -> str | None:
@@ -368,27 +401,17 @@ def remote_head(
     such ref, and `None` when the remote could not be asked at all. Collapsing
     the last two would report an unreachable remote as a branch that was never
     pushed, which is the opposite of what a caller should do about it.
+    Delegates to `remote_heads` so one owner does the exact-refname match.
 
     This asks the remote. `git branch -r --contains` reads the local
     remote-tracking ref, which a lost push leaves pointing at the commit that
     never arrived — so it answers "landed" for exactly the failure being looked
     for.
-
-    An `ls-remote` pattern matches any ref whose trailing path components spell
-    it, so asking for `main` also answers with `refs/heads/topic/main` — and
-    since git sorts its output, the impostor can come first. The full refname
-    narrows the query and comparing it again reads the one line that is actually
-    an answer to the question.
     """
-    ref = f"refs/heads/{branch}"
-    r = git.client.run("ls-remote", "--heads", remote, ref, cwd=wt_path)
-    if not r.ok:
+    heads = remote_heads(wt_path, [branch], remote=remote)
+    if heads is None:
         return None
-    for line in r.stdout.splitlines():
-        sha, _, name = line.partition("\t")
-        if name.strip() == ref:
-            return sha.strip()
-    return ""
+    return heads.get(branch, "")
 
 
 def holds(wt_path: str | Path, sha: str, *, remote: str = "origin") -> bool:

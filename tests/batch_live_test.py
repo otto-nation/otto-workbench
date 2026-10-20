@@ -119,15 +119,15 @@ def test_a_github_failure_is_reported_in_the_section(tmp_path):
                    "error": "GitHub query failed: rate limited"}
 
 
-def test_view_drops_the_plans_refs(tmp_path, monkeypatch):
+def test_view_does_not_drop_refs(tmp_path, monkeypatch):
     repo = _checkout(tmp_path, "repo", "o/r")
     dropped = []
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
-    plan = Plan("me", [_row(1)], ref_namespace="refs/pr-batch/x", ref_dirs=[str(repo)])
+    plan = Plan("me", [_row(1)], ref_namespace="", ref_dirs=[])
     got = batch.live.view(_run([_item(1, repo_dir=str(repo))]), cwd=str(tmp_path),
                           plan_fn=lambda dirs: plan)
     assert got["checked"] is True and got["viewer"] == "me"
-    assert dropped == [([str(repo)], "refs/pr-batch/x")]
+    assert dropped == []
 
 
 def test_owes_only_for_a_checked_section_with_work():

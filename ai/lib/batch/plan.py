@@ -8,10 +8,14 @@ comments are priced per thread, about a point per hundred threads in the search,
 and are read only as far as `_THREAD_COMMENTS` — enough to see whether anyone
 spoke after a settlement.
 
-The plan fetches only the origin branches rows need into a private
-`refs/pr-batch/<hex>` namespace, claimed under the batch state root before
-the fetch so a killed plan does not leak refs. `pr gc` drops a namespace
-that has no live claim and no run referencing it.
+A read (`pr batch plan` / `status` / `next`) must not take packed-refs.lock:
+a killed status that wrote refs left a stale 0-byte lock that blocked every
+later ref update. It lists origin tips with `ls-remote`, fetches those SHAs
+with no ref updates (`-c maintenance.auto=false -c gc.auto=0` and an empty
+`--refmap`; FETCH_HEAD is written), and counts rebase need from the objects.
+Only `pr batch run` keeps a private `refs/pr-batch/<hex>` namespace (claimed
+before fetch so a killed run does not leak refs; `pr gc` drops one with no
+live claim and no run).
 """
 
 # doc-group: batch
@@ -31,6 +35,7 @@ import core.session_lock
 import gh.client
 import gh.pr_pages
 import git.client
+import git.push
 import git.topology
 import pr.ci_need
 import pr.context
@@ -213,20 +218,40 @@ def rebase_need(merge_state: str) -> StepNeed:
     return StepNeed(False, f"up to date ({merge_state.lower()})")
 
 
-def tree_rebase_need(repo_dir: str, branch: str, base: str, namespace: str,
-                     merge_state: str) -> StepNeed:
-    """Rebase need counted from refs, falling back to *merge_state*.
+def tree_rebase_need(repo_dir: str, head: str, base: str, merge_state: str,
+                     *, base_label: str = "") -> StepNeed:
+    """Rebase need counted from resolved *head* and *base*, else *merge_state*.
 
-    The head is the local branch when one exists — it carries any unpushed
-    work — and the namespaced copy of the remote branch otherwise.
+    *head* and *base* are SHAs or ref names `rebase.need` can resolve. Either
+    missing, or a comparison git cannot make, falls back to GitHub's merge
+    state as today.
     """
-    if namespace and base:
-        local = f"refs/heads/{branch}"
-        head = local if rebase.inspect.ref_exists(repo_dir, local) else f"{namespace}/{branch}"
-        found = rebase.need.need(repo_dir, head, f"{namespace}/{base}", base_label=base)
+    if head and base:
+        found = rebase.need.need(
+            repo_dir, head, base, base_label=base_label or base)
         if found.resolved:
             return StepNeed(found.needed, found.reason)
     return rebase_need(merge_state)
+
+
+def _row_rebase_need(repo_dir: str, branch: str, base: str, merge_state: str,
+                     namespace: str,
+                     remote_heads: dict[str, str] | None) -> StepNeed:
+    if not namespace and remote_heads is None:
+        return rebase_need(merge_state)
+    local = f"refs/heads/{branch}"
+    if namespace and base:
+        has_local = rebase.inspect.ref_exists(repo_dir, local)
+        head = local if has_local else f"{namespace}/{branch}"
+        return tree_rebase_need(
+            repo_dir, head, f"{namespace}/{base}", merge_state, base_label=base)
+    base_sha = (remote_heads or {}).get(base, "")
+    if not base_sha:
+        return rebase_need(merge_state)
+    has_local = rebase.inspect.ref_exists(repo_dir, local)
+    head = local if has_local else (remote_heads or {}).get(branch, "")
+    return tree_rebase_need(
+        repo_dir, head, base_sha, merge_state, base_label=base)
 
 
 def rollup_state(node: dict) -> str:
@@ -325,10 +350,29 @@ def namespaces_in(repo_dir: str) -> list[str]:
 def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:
     # An empty --refmap is what stops git's opportunistic update: with a
     # command-line refspec it still applies remote.origin.fetch and would move
-    # refs/remotes/origin/* alongside the namespace.
-    r = git.client.run("fetch", "--no-tags", "--quiet", "--refmap=", "origin",
-                       *specs, cwd=repo_dir)
-    return r.ok
+    # refs/remotes/origin/* alongside the namespace. maintenance.auto=false and
+    # gc.auto=0 stop the detached `git maintenance run --auto` a fetch otherwise
+    # starts, which can pack refs and take packed-refs.lock after the fetch
+    # returns. FETCH_HEAD is written (it takes no packed-refs lock); SHA specs
+    # update no refs.
+    return git.client.run(
+        "fetch", "--quiet", "--no-tags", "--refmap=", "origin", *specs,
+        cwd=repo_dir,
+        config={"maintenance.auto": "false", "gc.auto": "0"},
+    ).ok
+
+
+def _fetch_objects(repo_dir: str, shas: list[str]) -> None:
+    wanted = sorted({s for s in shas if s})
+    if not wanted:
+        return
+    if _fetch_refspecs(repo_dir, wanted):
+        return
+    landed = [_fetch_refspecs(repo_dir, [sha]) for sha in wanted]
+    if not any(landed):
+        core.log.warn(
+            f"could not fetch objects in {repo_dir}; "
+            f"rebase need falls back to GitHub merge state")
 
 
 def fetch_namespace(repo_dir: str, namespace: str, branches: list[str]) -> bool:
@@ -343,9 +387,8 @@ def fetch_namespace(repo_dir: str, namespace: str, branches: list[str]) -> bool:
     # branch deleted on origin would drop every other ref this plan needs.
     # Retry each remaining refspec; keep whatever landed. A namespaced ref that
     # is still missing falls back to GitHub's merge state, as today. Listing
-    # with ls-remote first would add a transfer to every plan (status's hot
-    # path) and still race a delete between the list and the fetch, so the
-    # retry is the robust option on its own.
+    # with ls-remote first would still race a delete between the list and the
+    # fetch, so the retry is the robust option on its own.
     landed = [_fetch_refspecs(repo_dir, [spec]) for spec in specs]
     return any(landed)
 
@@ -512,7 +555,8 @@ def _local_heads(repo_dir: str) -> dict[str, str]:
 
 
 def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
-         ref_namespace: str = "", viewer: str = "") -> PlanRow:
+         ref_namespace: str = "", viewer: str = "",
+         remote_heads: dict[str, str] | None = None) -> PlanRow:
     branch, head = node["headRefName"], node["headRefOid"]
     base = node.get("baseRefName") or ""
     fork = bool(node.get("isCrossRepository"))
@@ -524,8 +568,8 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
         repo=repo, repo_dir=repo_dir, pr=int(node["number"]), title=node.get("title", ""),
         branch=branch, head_sha=head, is_draft=bool(node.get("isDraft")),
         needs={
-            Step.REBASE: FORK_NEED if fork else tree_rebase_need(
-                repo_dir, branch, base, ref_namespace, merge_state),
+            Step.REBASE: FORK_NEED if fork else _row_rebase_need(
+                repo_dir, branch, base, merge_state, ref_namespace, remote_heads),
             Step.CI: FORK_NEED if fork else ci_step_need(ci_state),
             Step.COMMENTS: comments_need(node, viewer, state),
             Step.REVIEW: review_need(_review_file(repo, branch), head, local_head=local_head),
@@ -541,7 +585,8 @@ def _fetch_branches(data: dict, repo_dirs: dict[str, str]) -> dict[str, list[str
 
     Base branches of every matched PR, plus same-repo heads. Fork heads live
     on another remote and are skipped, so a missing namespaced ref still falls
-    back to GitHub's merge state as today.
+    back to GitHub's merge state as today. Also the branch list the read path
+    hands to `ls-remote`.
     """
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
     needed: dict[str, set[str]] = {d: set() for d in repo_dirs.values()}
@@ -561,7 +606,9 @@ def _fetch_branches(data: dict, repo_dirs: dict[str, str]) -> dict[str, list[str
 
 
 def rows_from_search(data: dict, repo_dirs: dict[str, str],
-                     namespaces: dict[str, str] | None = None) -> list[PlanRow]:
+                     namespaces: dict[str, str] | None = None,
+                     remote_heads: dict[str, dict[str, str] | None] | None = None,
+                     ) -> list[PlanRow]:
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
     viewer = (data.get("viewer") or {}).get("login", "")
     heads: dict[str, dict[str, str]] = {}
@@ -574,8 +621,10 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
         repo_dir = repo_dirs[slug]
         if repo_dir not in heads:
             heads[repo_dir] = _local_heads(repo_dir)
-        rows.append(_row(n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), ""),
-                         (namespaces or {}).get(repo_dir, ""), viewer))
+        rows.append(_row(
+            n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), ""),
+            (namespaces or {}).get(repo_dir, ""), viewer,
+            (remote_heads or {}).get(repo_dir)))
     return sorted(rows, key=lambda r: (r.repo, r.pr))
 
 
@@ -602,7 +651,7 @@ def _graphql(query: str, variables: dict) -> dict:
         raise PlanError(f"GitHub query failed: {detail}") from exc
 
 
-def build_plan(repo_dirs: list[str]) -> Plan:
+def _plan_inputs(repo_dirs: list[str]):
     # Absolute, because a run persists these: a relative checkout names a
     # different directory, or none, to every later reader in another cwd.
     repo_dirs = [os.path.abspath(d) for d in repo_dirs]
@@ -612,7 +661,23 @@ def build_plan(repo_dirs: list[str]) -> Plan:
         dupes = sorted({s for s in slugs if slugs.count(s) > 1})
         raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
     data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
-    needed = _fetch_branches(data, by_slug)
+    return repo_dirs, by_slug, data, _fetch_branches(data, by_slug)
+
+
+def build_plan(repo_dirs: list[str]) -> Plan:
+    repo_dirs, by_slug, data, needed = _plan_inputs(repo_dirs)
+    return _plan_without_refs(data, by_slug, repo_dirs, needed)
+
+
+def build_run_plan(repo_dirs: list[str]) -> Plan:
+    repo_dirs, by_slug, data, needed = _plan_inputs(repo_dirs)
+    return _plan_with_namespace(data, by_slug, repo_dirs, needed)
+
+
+def _plan_with_namespace(
+    data: dict, by_slug: dict[str, str], repo_dirs: list[str],
+    needed: dict[str, list[str]],
+) -> Plan:
     namespace = new_namespace()
     try:
         # Claim before the fetch so a killed plan still names the namespace;
@@ -628,6 +693,20 @@ def build_plan(repo_dirs: list[str]) -> Plan:
         raise
     return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows,
                 ref_namespace=namespace, ref_dirs=fetched)
+
+
+def _plan_without_refs(
+    data: dict, by_slug: dict[str, str], repo_dirs: list[str],
+    needed: dict[str, list[str]],
+) -> Plan:
+    tips: dict[str, dict[str, str] | None] = {}
+    for repo_dir in repo_dirs:
+        heads = git.push.remote_heads(repo_dir, needed.get(repo_dir, []))
+        tips[repo_dir] = heads
+        if heads:
+            _fetch_objects(repo_dir, list(heads.values()))
+    rows = rows_from_search(data, by_slug, remote_heads=tips)
+    return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows)
 
 
 def replan_row(row: PlanRow) -> PlanRow | None:

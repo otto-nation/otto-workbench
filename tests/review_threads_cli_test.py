@@ -15,7 +15,7 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402
-from conftest import assert_no_worktree_exit, make_ctx, triaged_thread_record
+from conftest import assert_no_worktree_exit, make_ctx, recorded_thread
 from gh.pr_data import PRData
 import pr.state
 import pr.comments_state
@@ -501,15 +501,15 @@ class TestTruncatedThreadFetch:
         }
 
     def _seed_ledger(self, ctx):
-        """A prior run's ledger, carrying a human verdict on each of two threads."""
+        """A prior run's ledger, recording each of two threads."""
         state_path = pr.comments.threads_state_path(ctx.target_dir)
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        triaged = {
-            tid: triaged_thread_record(f"verdict on {tid}")
+        recorded = {
+            tid: recorded_thread(f"reviewer of {tid}")
             for tid in ("T_page1", "T_page2")
         }
         pr.comments_state.save_state(state_path, pr.comments_state.CommentsState(
-            repo="owner/repo", pr_number=1, my_login="isaacg", threads=triaged,
+            repo="owner/repo", pr_number=1, my_login="isaacg", threads=recorded,
         ))
         return state_path
 
@@ -524,15 +524,13 @@ class TestTruncatedThreadFetch:
             code = review.comment_threads.run_threads(MagicMock(), args, ctx)
         return code, pr.comments_state.load_state(state_path), fin
 
-    def test_an_incomplete_fetch_does_not_erase_triage_from_the_written_ledger(
+    def test_an_incomplete_fetch_keeps_unreached_threads_in_the_written_ledger(
             self, tmp_path):
         """The bug, at the layer that made it permanent."""
         _code, written, _fin = self._run(
             tmp_path, [self._thread("T_page1")], complete=False)
 
-        assert "T_page2" in written.threads
-        assert written.threads["T_page2"].summary == "verdict on T_page2"
-        assert written.threads["T_page2"].classification == "suggestion"
+        assert written.threads["T_page2"] == recorded_thread("reviewer of T_page2")
 
     def test_a_complete_fetch_still_drops_a_deleted_thread(self, tmp_path):
         """The control: absence after a full read still means gone."""

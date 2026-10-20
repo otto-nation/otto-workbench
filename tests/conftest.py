@@ -31,22 +31,19 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 _LIBS: dict[str, object] = {}
 
 
-def triaged_thread_record(summary: str):
-    """A `ThreadRecord` carrying a prior human triage verdict, for #1354's
-    carry-forward tests.
+def recorded_thread(reviewer: str):
+    """A `ThreadRecord` a prior run wrote, for the incomplete-fetch tests.
 
     Shared between the unit-level sync tests and the end-to-end CLI tests so
-    the fixture's field set — everything a triage decided, which no API call
-    rebuilds — cannot drift between the two layers that exercise it.
+    the fixture cannot drift between the two layers that exercise it. The
+    reviewer is the field each test reads back, so it names the record.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
     from pr.comments_state import ThreadRecord, ThreadState
 
     return ThreadRecord(
-        state=ThreadState.NEW, classification="suggestion", reviewer="alice",
-        file="handler.go", line=42, summary=summary,
-        decided_at="2026-06-14T15:00:00Z", last_seen_reply_id=1000,
+        state=ThreadState.NEW, reviewer=reviewer, file="handler.go", line=42,
     )
 
 

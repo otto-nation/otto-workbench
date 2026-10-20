@@ -133,7 +133,7 @@ class TestReportThreadFromNode:
 
     Two call sites build a report thread from a raw node — the report path in
     `cli.review_threads` and the reply path in `pr.thread_replies` — and they
-    disagree about state, classification and reviewer, which is why those stay
+    derive state and reviewer from different sources, which is why those stay
     keyword arguments rather than being derived here.
     """
 
@@ -157,11 +157,9 @@ class TestReportThreadFromNode:
 
     def test_the_per_caller_fields_are_the_callers_to_supply(self):
         thread = ReportThread.from_node(
-            self._node(), "bot", state=ThreadState.VERIFIED,
-            classification="suggestion", reviewer="alice",
+            self._node(), "bot", state=ThreadState.VERIFIED, reviewer="alice",
         )
         assert thread.state is ThreadState.VERIFIED
-        assert thread.classification == "suggestion"
         assert thread.reviewer == "alice"
 
     def test_a_node_missing_everything_optional_still_builds(self):

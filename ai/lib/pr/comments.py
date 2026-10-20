@@ -708,54 +708,35 @@ def sync_threads(
     prior_threads: dict[str, ThreadRecord],
     my_login: str,
 ) -> dict[str, ThreadRecord]:
-    """Fold what GitHub says about each thread into what the last run recorded.
+    """Each thread's record, as GitHub now shows it.
 
-    Everything GitHub owns is taken fresh. The three triage fields are carried
-    over from `prior_threads`, because nothing re-derives them — except on a
-    thread that has been replied to since the decision was made, where carrying
-    them would attach a verdict to a conversation it never read.
+    Every field is taken fresh from the fetch; `prior_threads` matters only for
+    a thread the fetch did not reach.
 
     Takes the `ThreadSet` rather than its list because absence means two
     different things. After a complete fetch, a thread that is not there was
     deleted, and dropping its record is how the ledger stays honest. After an
-    incomplete one it was merely unreached, and dropping it discards a triage
-    verdict a person made and nothing can rebuild — so the prior records are
-    seeded first and the loop overwrites the ones actually seen. The next
-    complete fetch reaps whatever is genuinely gone.
+    incomplete one it was merely unreached, and dropping it would report a
+    thread that is still open as gone — so the prior records are seeded first
+    and the loop overwrites the ones actually seen. The next complete fetch
+    reaps whatever is genuinely gone.
 
     A `ThreadSet` and not a `complete: bool = True` parameter: a defaulting
     flag is the argument a later call site forgets to pass, and forgetting it
-    restores the data loss silently.
+    restores the loss silently.
     """
     result: dict[str, ThreadRecord] = {}
     if not fetched.complete:
         result.update(prior_threads)
     for thread in fetched.threads:
-        tid = thread["id"]
         comments = thread.get("comments", {}).get("nodes", [])
-        is_resolved = thread.get("isResolved", False)
-
-        state = compute_thread_state(comments, is_resolved, my_login)
-        last_comment_id = comments[-1]["databaseId"] if comments else None
         first_comment = comments[0] if comments else {}
-        reviewer = (first_comment.get("author") or {}).get("login", "")
-
-        prior = prior_threads.get(tid) or ThreadRecord()
-        has_new_replies = (
-            prior.last_seen_reply_id is not None
-            and last_comment_id != prior.last_seen_reply_id
-        )
-        decided = ThreadRecord() if has_new_replies else prior
-
-        result[tid] = ThreadRecord(
-            state=state,
-            reviewer=reviewer,
-            last_seen_reply_id=last_comment_id,
+        result[thread["id"]] = ThreadRecord(
+            state=compute_thread_state(
+                comments, thread.get("isResolved", False), my_login),
+            reviewer=(first_comment.get("author") or {}).get("login", ""),
             file=thread.get("path") or "",
             line=thread.get("line"),
-            classification=decided.classification,
-            summary=decided.summary,
-            decided_at=decided.decided_at,
         )
     return result
 

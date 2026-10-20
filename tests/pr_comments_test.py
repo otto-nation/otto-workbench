@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from conftest import triaged_thread_record
+from conftest import recorded_thread
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -234,32 +234,6 @@ def test_last_comment_is_mine_needs_both_halves(comments, login):
     assert not pr.comments.last_comment_is_mine(comments, login)
 
 
-def test_sync_clears_summary_on_new_replies():
-    threads = [{
-        "id": "T_abc",
-        "isResolved": False,
-        "comments": {"nodes": _make_comments(
-            ("alice", "Fix this"),
-            ("isaacg", "Fixed."),
-            ("alice", "Not quite, still needs work"),
-        )},
-    }]
-    prior_threads = {
-        "T_abc": ThreadRecord(
-            state=ThreadState.ADDRESSED,
-            classification="suggestion",
-            reviewer="alice",
-            summary="Old summary",
-            decided_at="2026-06-14T15:00:00Z",
-            last_seen_reply_id=1001,
-        ),
-    }
-    result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
-    assert result["T_abc"].classification is None
-    assert result["T_abc"].summary is None
-    assert result["T_abc"].decided_at is None
-
-
 def test_sync_new_thread_no_prior_state():
     threads = [{
         "id": "T_abc",
@@ -271,30 +245,6 @@ def test_sync_new_thread_no_prior_state():
     assert "T_abc" in result
     assert result["T_abc"].state == ThreadState.NEW
     assert result["T_abc"].reviewer == "alice"
-    assert result["T_abc"].last_seen_reply_id == 1000
-
-
-def test_sync_keeps_cached_classification():
-    threads = [{
-        "id": "T_abc",
-        "isResolved": False,
-        "comments": {"nodes": _make_comments(("alice", "Fix this"))},
-    }]
-    prior_threads = {
-        "T_abc": ThreadRecord(
-            state=ThreadState.NEW,
-            classification="suggestion",
-            reviewer="alice",
-            file="handler.go",
-            line=42,
-            summary="Fix the handler",
-            decided_at="2026-06-14T15:00:00Z",
-            last_seen_reply_id=1000,
-        ),
-    }
-    result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
-    assert result["T_abc"].classification == "suggestion"
-    assert result["T_abc"].summary == "Fix the handler"
 
 
 def test_sync_detects_new_reply_updates_state():
@@ -307,16 +257,10 @@ def test_sync_detects_new_reply_updates_state():
         )},
     }]
     prior_threads = {
-        "T_abc": ThreadRecord(
-            state=ThreadState.NEW,
-            classification="suggestion",
-            reviewer="alice",
-            last_seen_reply_id=1000,
-        ),
+        "T_abc": ThreadRecord(state=ThreadState.NEW, reviewer="alice"),
     }
     result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert result["T_abc"].state == ThreadState.ADDRESSED
-    assert result["T_abc"].last_seen_reply_id == 1001
 
 
 def test_sync_resolved_on_github_overrides():
@@ -327,7 +271,7 @@ def test_sync_resolved_on_github_overrides():
     }]
     prior_threads = {
         "T_abc": ThreadRecord(
-            state=ThreadState.NEW, last_seen_reply_id=1000, reviewer="alice"),
+            state=ThreadState.NEW, reviewer="alice"),
     }
     result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert result["T_abc"].state == ThreadState.RESOLVED
@@ -375,32 +319,28 @@ def test_reviewer_verdicts_are_dated():
 
 # ── An incomplete fetch must not erase what it could not see ────────────────
 #
-# The triage fields are the only thing on a ThreadRecord that no API call
-# rebuilds — a person decided them. sync_threads builds its result from the
-# threads it was handed, so a short fetch silently dropped the records for
-# every thread it missed. The pair below is the whole argument: the flag is
-# what lets the carry-forward happen without also resurrecting threads that
-# were really deleted.
+# The prior ledger is the only record of threads on pages the fetch did not
+# read. sync_threads builds its result from the threads it was handed, so a
+# short fetch silently dropped the records for every thread it missed. The
+# pair below is the whole argument: the flag is what lets the carry-forward
+# happen without also resurrecting threads that were really deleted.
 
 
-_triaged = triaged_thread_record
+_recorded = recorded_thread
 
 
-def test_sync_keeps_a_triage_verdict_for_a_thread_the_fetch_could_not_reach():
+def test_sync_keeps_the_record_of_a_thread_the_fetch_could_not_reach():
     """#1354: a thread on an unread page is unknown, not gone."""
     reached = [{
         "id": "T_page1",
         "isResolved": False,
         "comments": {"nodes": _make_comments(("alice", "Fix this"))},
     }]
-    prior = {"T_page1": _triaged("page one"), "T_page2": _triaged("page two")}
+    prior = {"T_page1": _recorded("page one"), "T_page2": _recorded("page two")}
 
     result = sync_threads(ThreadSet(reached, complete=False), prior, "isaacg")
 
-    assert "T_page2" in result
-    assert result["T_page2"].classification == "suggestion"
-    assert result["T_page2"].summary == "page two"
-    assert result["T_page2"].decided_at == "2026-06-14T15:00:00Z"
+    assert result["T_page2"] == _recorded("page two")
 
 
 def test_sync_drops_a_thread_absent_from_a_complete_fetch():
@@ -411,7 +351,7 @@ def test_sync_drops_a_thread_absent_from_a_complete_fetch():
         "isResolved": False,
         "comments": {"nodes": _make_comments(("alice", "Fix this"))},
     }]
-    prior = {"T_page1": _triaged("page one"), "T_deleted": _triaged("gone")}
+    prior = {"T_page1": _recorded("page one"), "T_deleted": _recorded("gone")}
 
     result = sync_threads(ThreadSet(reached, complete=True), prior, "isaacg")
 
@@ -421,7 +361,7 @@ def test_sync_drops_a_thread_absent_from_a_complete_fetch():
 def test_sync_prefers_the_fetched_record_over_the_carried_one():
     """The seed must not shadow the loop: a thread we did read is authoritative
     even when the fetch as a whole fell short."""
-    prior = {"T_abc": _triaged("stale")}
+    prior = {"T_abc": _recorded("stale")}
     reached = [{
         "id": "T_abc",
         "isResolved": True,
@@ -431,7 +371,8 @@ def test_sync_prefers_the_fetched_record_over_the_carried_one():
     result = sync_threads(ThreadSet(reached, complete=False), prior, "isaacg")
 
     assert result["T_abc"].state == ThreadState.RESOLVED
-    assert result["T_abc"].summary == "stale"
+    # The carried record's reviewer is "stale"; the fetched comment's is "alice".
+    assert result["T_abc"].reviewer == "alice"
 
 
 # ── The two fetch paths must date a comment the same way ────────────────────

@@ -169,8 +169,7 @@ class ThreadSet:
     from "we stopped early at N", and a bare list cannot: a page that failed
     mid-walk returned a short list indistinguishable from a complete one, so
     `pr comments` wrote a ledger missing every thread past the failure and
-    dropped the triage verdicts on them — the one thing on a record that no API
-    call re-derives.
+    reported every one of them as gone.
 
     The distinction is per-fetch rather than per-thread, and that is enough:
     the fetch never learns which ids it failed to reach, but it knows for

@@ -285,7 +285,7 @@ class TestCleanupScope:
         import fix.engine  # the `ro` fixture has already put `ai/lib` on the path
 
         review_dir = tmp_path / "review-dir"
-        review_dir.mkdir()
+        review_dir.mkdir(exist_ok=True)
         review_file = review_dir / "review.md"
 
         pr_meta = ro.PRMetadata(
@@ -499,6 +499,39 @@ class TestCleanupScope:
             "mode": ro.Pipeline.SINGLE,
         }
         assert (review_dir / "disprove.jsonl").exists()
+
+    def test_a_prior_review_flag_loads_the_prior_record(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """`--prior-review` sets job.prior from prior.json, not from the text."""
+        from review.ingest import ingest_review
+        from review.store import archive_prior, write_review
+        from review.types import ReviewMeta
+
+        review_dir = tmp_path / "review-dir"
+        review_dir.mkdir()
+        write_review(
+            review_dir / "review.md",
+            ingest_review("## Summary\nprior round\n", strict=False),
+            ReviewMeta(head_sha="0ldc0de", date="2026-10-15"),
+        )
+        archive_prior(review_dir)
+        (review_dir / "prior.md").write_text("## Summary\nprior round\n")
+
+        seen = {}
+
+        def _capture(job, **_kwargs):
+            seen["prior"] = job.prior
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}")
+
+        self._run(
+            ro, monkeypatch, tmp_path, pipeline=_capture,
+            prior_review=str(review_dir / "prior.md"),
+        )
+        assert seen["prior"] is not None
+        assert seen["prior"].meta.head_sha == "0ldc0de"
+        assert seen["prior"].record.summary.startswith("prior round")
 
 
 class TestThePublishingGate:

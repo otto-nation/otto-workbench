@@ -72,6 +72,50 @@ def _seeded_review_dir(tmp_path, *, pipeline_state=True):
     return d
 
 
+def test_a_fresh_run_archives_the_prior_record(tmp_path):
+    """A non-resumed resolve moves review.json aside and copies its sidecar."""
+    from review.ingest import ingest_review
+    from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
+    from review.store import write_review
+    from review.types import ReviewMeta
+
+    review_dir = _seeded_review_dir(tmp_path, pipeline_state=False)
+    write_review(
+        review_dir / "review.md",
+        ingest_review("## Summary\nthis round\n", strict=False),
+        ReviewMeta(head_sha="abc1234", date="2026-10-19"),
+    )
+    record_before = (review_dir / FILENAME_RECORD).read_text()
+    meta_before = (review_dir / FILENAME_META).read_text()
+
+    review.run.resolve_prior_review(
+        review_dir / "review.md", str(review_dir / "session.jsonl"), False,
+    )
+
+    assert not (review_dir / FILENAME_RECORD).exists(), (
+        "a fresh run must move review.json to prior.json"
+    )
+    assert (review_dir / FILENAME_PRIOR_RECORD).read_text() == record_before
+    assert (review_dir / FILENAME_PRIOR_META).read_text() == meta_before
+
+
+def test_cleanup_without_pipeline_state_clears_the_prior_record(tmp_path):
+    """Dropping prior.md without pipeline.json also drops prior.json and its sidecar."""
+    from review.paths import FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD
+
+    review_dir = _seeded_review_dir(tmp_path, pipeline_state=False)
+    prior = review_dir / "prior.md"
+    prior.write_text("## Must fix\n- **[M1]** leftover\n")
+    (review_dir / FILENAME_PRIOR_RECORD).write_text("{}")
+    (review_dir / FILENAME_PRIOR_META).write_text("{}")
+
+    review.completion.cleanup_prior_review(review_dir / "review.md", str(prior))
+
+    assert not prior.exists()
+    assert not (review_dir / FILENAME_PRIOR_RECORD).exists()
+    assert not (review_dir / FILENAME_PRIOR_META).exists()
+
+
 def test_a_resumed_run_does_not_rearchive_the_prior_record(tmp_path):
     """`--recover` keeps reading the existing prior.json; it must not archive again."""
     from review.ingest import ingest_review

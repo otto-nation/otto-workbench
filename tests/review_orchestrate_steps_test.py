@@ -153,6 +153,29 @@ class TestPhaseSynthesis:
         assert result.cost == 2.5
         assert result.diagnosis == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
 
+    def test_rejected_synthesis_output_falls_back_to_the_merge(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """A synthesis that wrote the render banner is refused and merged."""
+        from review.render import BANNER
+
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(job.review_file).write_text(
+                f"{BANNER}\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
+            )
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+
+        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
+        result = ro._phase_synthesis(job, "", 3, _merged(merged))
+
+        assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
+        assert result.diagnosis == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
+
     def test_an_unpromptable_synthesis_falls_back_to_the_merge(
         self, ro, tmp_path, monkeypatch,
     ):

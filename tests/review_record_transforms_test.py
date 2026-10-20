@@ -49,8 +49,21 @@ class TestPostProcess:
         )
         done = post_process_record(record, str(tree), ["src/cli.py"])
         assert done.verification["dropped"] == ["M1"]
-        assert done.record.summary
-        assert "verification-drops" in done.record.summary
+        summary = done.record.summary.strip()
+        assert summary.startswith("<!-- verification-drops -->")
+        assert "findings across" not in summary
+        lines = [ln for ln in summary.splitlines() if ln.strip()]
+        assert lines[0] == "<!-- verification-drops -->"
+        assert all(
+            ln == "<!-- verification-drops -->" or ln.startswith(">")
+            for ln in lines
+        )
+        from review.document import SECTION_SUMMARY, section_span
+        rendered = render_review(done.record, fixture_meta("evidence_dropped"))
+        span = section_span(rendered, SECTION_SUMMARY)
+        assert span is not None
+        page_summary = span.body_of(rendered).strip()
+        assert page_summary == summary
 
 
 class TestDisprove:
@@ -93,3 +106,12 @@ class TestFailures:
         state = self._state(groups_failed={2: Diagnosis(DiagnosisKind.OUTPUT_MISSING)})
         record = apply_failures(ingest_review("## Verdict\n**Approve.**\n"), state)
         assert record.verdict == PARTIAL_VERDICT.strip()
+
+    def test_failures_with_no_named_groups_are_partial(self):
+        """`group_count == 0` with failures is partial, matching the old rule."""
+        state = PipelineState(
+            head_sha="x", group_names=[],
+            groups_failed={1: Diagnosis(DiagnosisKind.OUTPUT_MISSING)},
+        )
+        assert state.partial
+        assert not state.all_groups_failed

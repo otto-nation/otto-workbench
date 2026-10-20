@@ -451,6 +451,22 @@ class TestTheFastPathStaysShut:
 
         assert called, "an agent has to write the review the fast path did not"
 
+    def test_prior_review_text_without_a_prior_record_is_not_a_no_op(
+        self, tmp_path, run_phases,
+    ):
+        """Stale prior.md is not enough: the no-op path needs job.prior."""
+        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job.prior = None
+        job.preflight = _preflight(
+            delta_files=[], delta_weighted_lines=0,
+            delta_attribution=DeltaAttribution.ATTRIBUTED,
+            prior_head_sha="0ldc0de",
+        )
+
+        _, called, _ = run_phases(job)
+
+        assert called, "a stale prior.md must not take the no-op shortcut"
+
     def test_author_work_beside_a_merge_is_reviewed(self, tmp_path, run_phases):
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
         job.preflight = _preflight(

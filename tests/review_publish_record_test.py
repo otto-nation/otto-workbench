@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
@@ -102,3 +104,34 @@ def test_the_sidecar_and_the_header_cannot_disagree(tmp_path):
     stored = read_review(Path(job.review_file))
     assert stored.meta.head_sha == HEAD
     assert f"<!-- head_sha: {HEAD} -->" in Path(job.review_file).read_text()
+
+
+@pytest.mark.parametrize(
+    ("skip_synthesis", "cost_so_far"),
+    [(True, 0.0), (False, 25.0)],
+    ids=["no-synthesis", "budget"],
+)
+def test_no_synthesis_paths_reconcile_and_verify(tmp_path, skip_synthesis, cost_so_far):
+    """Skipping `_reconcile_and_verify` on either path must fail this."""
+    from core.phases import Phase
+    from review.state import PipelineState
+    from review.steps import Merged, _run_synthesis_or_fallback
+
+    job = _job(
+        tmp_path,
+        skip_phases=frozenset({Phase.SYNTHESIS}) if skip_synthesis else frozenset(),
+    )
+    state = PipelineState(
+        head_sha=HEAD, group_names=["g1"], done={Phase.HOLISTIC}, groups_done=[1],
+    )
+    merged = Merged(
+        ingest_review(
+            "## Should fix\n- **[S1]** **`ghost.go:1`** — gone\n"
+            "  > ```go\n  > not_in_the_tree()\n  > ```\n",
+            strict=False,
+        ),
+        "unused",
+    )
+    _run_synthesis_or_fallback(job, state, "", 1, merged, [], 0, cost_so_far, 20.0)
+    assert job.verification is not None and job.verification["dropped"] == ["S1"]
+    assert "verification-drops" in Path(job.review_file).read_text()

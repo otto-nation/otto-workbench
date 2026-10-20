@@ -123,7 +123,7 @@ class PipelineState:
         everything needs neither qualification.
         """
         failed = len(self.groups_failed)
-        return failed > 0 and failed < self.group_count
+        return bool(failed) and not failed >= self.group_count > 0
 
     @property
     def all_groups_failed(self) -> bool:

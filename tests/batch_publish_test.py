@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from batch_git_support import advance, remote_and_clone, remote_tip
-from conftest import commit_all, git_in, git_out
+from conftest import commit_all, git_in, git_out, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PR_BIN = str(REPO_ROOT / "ai" / "bin" / "pr")
@@ -248,6 +248,62 @@ def _remote_moved_run(pair):
     return run
 
 
+def _head(work):
+    return git_out(work, "rev-parse", "HEAD").strip()
+
+
+def _retry(run):
+    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
+    return run.items[0]
+
+
+def _advance_main(pair):
+    git_in(pair.seed, "checkout", "-q", "main")
+    (pair.seed / "upstream.txt").write_text("upstream\n")
+    commit_all(pair.seed, "chore: upstream")
+    git_in(pair.seed, "push", "-q", "origin", "main")
+
+
+def _rebase_feat(repo):
+    git_in(repo, "fetch", "-q", "origin")
+    git_in(repo, "checkout", "-q", "feat")
+    git_in(repo, "rebase", "-q", "origin/main")
+
+
+def _equivalent_rebase(pair):
+    """Rebase feat onto a new main on origin and, independently, in work."""
+    _advance_main(pair)
+    _rebase_feat(pair.seed)
+    git_in(pair.seed, "push", "-q", "--force", "origin", "feat")
+    _rebase_feat(pair.work)
+
+
+def _rebase_feat_resolving(repo, text):
+    git_in(repo, "fetch", "-q", "origin")
+    git_in(repo, "checkout", "-q", "feat")
+    run_checked(["git", "-C", str(repo), "rebase", "-q", "origin/main"], check=False)
+    (repo / "feat.txt").write_text(text)
+    git_in(repo, "add", "feat.txt")
+    git_in(repo, "-c", "core.editor=true", "rebase", "--continue")
+
+
+def _assert_adopted(item, pair, planned):
+    remote = remote_tip(pair.origin, "feat")
+    assert remote != planned
+    assert item.remote_sha == remote
+    assert item.published_sha == ""
+    assert _head(pair.work) == remote
+    assert item.status is batch.model.ItemStatus.QUEUED
+    assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).ok
+
+
+def _assert_refused(item, pair, planned, head):
+    assert item.remote_sha == planned
+    assert item.published_sha == ""
+    assert _head(pair.work) == head
+    assert item.status is batch.model.ItemStatus.QUEUED
+
+
 def test_a_publish_retry_leases_on_the_branch_the_operator_pushed(tmp_path):
     # Regression: the retry re-planned against the old lease, so every publish
     # after a hand push refused remote_moved and the item could only be dropped.
@@ -256,24 +312,88 @@ def test_a_publish_retry_leases_on_the_branch_the_operator_pushed(tmp_path):
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
     git_in(pair.work, "push", "-q", "origin", "feat")
-    item = run.items[0]
-    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
+    item = _retry(run)
     assert item.remote_sha == remote_tip(pair.origin, "feat")
     assert item.published_sha == ""
     assert item.status is batch.model.ItemStatus.QUEUED
     assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).ok
 
 
-def test_a_publish_retry_keeps_the_lease_when_somebody_else_pushed(tmp_path):
+def test_a_publish_retry_adopts_a_patch_equivalent_rebase(tmp_path):
     pair = remote_and_clone(tmp_path)
     run = _remote_moved_run(pair)
-    item = run.items[0]
-    planned = item.remote_sha
+    planned = run.items[0].remote_sha
+    (pair.work / "scratch.txt").write_text("untracked\n")
+    _equivalent_rebase(pair)
+    assert _head(pair.work) != remote_tip(pair.origin, "feat")
+    item = _retry(run)
+    _assert_adopted(item, pair, planned)
+    assert (pair.work / "scratch.txt").read_text() == "untracked\n"
+
+
+def test_a_publish_retry_adopts_a_fast_forward_remote(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    run = _remote_moved_run(pair)
+    planned = run.items[0].remote_sha
     advance(pair.seed, "feat", "colleague")
-    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
-    assert item.remote_sha == planned
+    item = _retry(run)
+    _assert_adopted(item, pair, planned)
+
+
+def test_a_publish_retry_keeps_the_lease_when_a_local_commit_is_unique(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    run = _remote_moved_run(pair)
+    planned = run.items[0].remote_sha
+    (pair.work / "fix.txt").write_text("fix\n")
+    commit_all(pair.work, "fix: local")
+    head = _head(pair.work)
+    advance(pair.seed, "feat", "colleague")
+    item = _retry(run)
+    _assert_refused(item, pair, planned, head)
     assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).refusal is \
         Refusal.REMOTE_MOVED
+
+
+def test_a_publish_retry_keeps_the_lease_when_a_rebase_has_a_unique_local_commit(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    run = _remote_moved_run(pair)
+    planned = run.items[0].remote_sha
+    _equivalent_rebase(pair)
+    (pair.work / "fix.txt").write_text("fix\n")
+    commit_all(pair.work, "fix: local")
+    head = _head(pair.work)
+    item = _retry(run)
+    _assert_refused(item, pair, planned, head)
+
+
+def test_a_publish_retry_keeps_the_lease_when_a_conflict_resolved_differently(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    run = _remote_moved_run(pair)
+    planned = run.items[0].remote_sha
+    git_in(pair.seed, "checkout", "-q", "main")
+    (pair.seed / "feat.txt").write_text("main\n")
+    commit_all(pair.seed, "chore: touch feat")
+    git_in(pair.seed, "push", "-q", "origin", "main")
+    _rebase_feat_resolving(pair.seed, "remote\n")
+    git_in(pair.seed, "push", "-q", "--force", "origin", "feat")
+    _rebase_feat_resolving(pair.work, "local\n")
+    head = _head(pair.work)
+    item = _retry(run)
+    _assert_refused(item, pair, planned, head)
+
+
+def test_a_publish_retry_keeps_the_lease_when_a_tracked_file_is_dirty(tmp_path):
+    # reset --keep would succeed: feat.txt's blob is the same on both sides,
+    # and the remote only added a new file. The explicit clean check must refuse.
+    pair = remote_and_clone(tmp_path)
+    run = _remote_moved_run(pair)
+    planned = run.items[0].remote_sha
+    head = _head(pair.work)
+    (pair.work / "feat.txt").write_text("dirty\n")
+    advance(pair.seed, "feat", "colleague")
+    item = _retry(run)
+    _assert_refused(item, pair, planned, head)
+    assert (pair.work / "feat.txt").read_text() == "dirty\n"
 
 
 def test_publishing_a_fast_forward_moves_the_remote_and_the_lease(tmp_path):

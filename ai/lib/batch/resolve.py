@@ -11,7 +11,7 @@
 | `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` and its target lock released / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry also `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done` and its target lock released; local commits stay and nothing is pushed |
@@ -415,9 +415,15 @@ def apply(run: Run, request: Decide, *, pr_bin: str,
         # A publish refusal has no step to re-run, so a retry re-plans against
         # the same lease. Re-read the branch first: once the operator has pushed
         # the local branch by hand, that head is the lease, not a remote_moved
-        # refusal on every retry. It is not published_sha: the batch pushed nothing.
+        # refusal on every retry. A remote_moved retry also adopts a
+        # patch-equivalent remote (reset --keep) when the tree is clean of
+        # tracked changes and every local commit is already on it. It is not
+        # published_sha: the batch pushed nothing.
         after = (tree or batch.publish.read_tree)(item)
         if _moved_to_local(item, after):
+            item.remote_sha = after.remote
+        elif (decision.payload.get("reason") == batch.publish.Refusal.REMOTE_MOVED.value
+              and batch.publish.try_adopt_equivalent_remote(item, after)):
             item.remote_sha = after.remote
     run_cmd = command_runner(item, runner)
     if request.action in ("publish", "force-publish"):

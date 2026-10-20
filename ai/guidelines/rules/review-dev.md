@@ -12,7 +12,7 @@ paths:
 
 When adding or modifying a review phase, verify these integration points:
 - `review/types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
-- `review/merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_records()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
+- `review/merge.py`: iteration over `SEVERITIES` in `merge_records()` and `renumber_record()` — merging the group reviews into one document. Renumbering rewrites every visible finding and every reference together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
 - `review/reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review/reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
 - `review/registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
 - `review/grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
@@ -146,8 +146,9 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 
 | File | Survives success | Purpose |
 |------|-----------------|---------|
-| `review.md` | yes | Final review output |
-| `meta.json` | yes | PR metadata sidecar |
+| `review.json` | yes | Typed review record — the source of truth |
+| `review.md` | yes | Rendered from `review.json` + `meta.json`; never parsed back |
+| `meta.json` | yes | Run sidecar: SHAs, mode, status, dates, generator |
 | `session.jsonl` | yes | Agent cost/usage/errors |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |
 | `prior-findings.json` | yes | What became of each prior finding, and what settled it |

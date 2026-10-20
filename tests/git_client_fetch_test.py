@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -215,6 +216,15 @@ def test_wt_fetch_default_retries_on_the_same_pattern():
 
 # ── The race itself ─────────────────────────────────────────────────────────
 
+
+def _appears(path: Path) -> bool:
+    """Whether *path* exists within `_WAIT`, checked every 20ms."""
+    deadline = time.monotonic() + _WAIT
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return path.exists()
+
+
 # An upload-pack that forwards everything, but holds the server's first answer
 # to a client request — the ref advertisement — until RELEASE exists, having
 # created HOLDING. The refs are computed before the hold, so the fetch that
@@ -278,11 +288,7 @@ def test_a_stale_fetch_cannot_move_a_tracking_ref_backwards(tmp_path, monkeypatc
         "env": env, "config": {"remote.origin.uploadpack": str(stall)}})
     a.start()
     try:
-        for _ in range(int(_WAIT / 0.02)):
-            if holding.exists():
-                break
-            threading.Event().wait(0.02)
-        assert holding.exists(), "the stalled fetch never reached its advertisement"
+        assert _appears(holding), "the stalled fetch never reached its advertisement"
         git_in(pair.seed, "push", "-q", "-f", "origin", f"{s2}:refs/heads/feat")
         b = threading.Thread(target=fetch_into, args=("b", linked))
         b.start()

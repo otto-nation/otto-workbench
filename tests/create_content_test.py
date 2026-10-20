@@ -152,6 +152,11 @@ def test_resolve_issue_is_empty_when_nothing_matches():
     assert resolve_issue("isaac/feat/thing", "") == ""
 
 
+def test_missing_sections_accepts_crlf_bodies():
+    body = _ON_TEMPLATE.replace("\n", "\r\n")
+    assert missing_sections(_tpl(_WHAT_WHY), body) == []
+
+
 # ── missing_sections / template_refusal (bats) ──────────────────────────────
 
 
@@ -197,9 +202,31 @@ def test_extra_sections_beyond_the_template_are_allowed():
     assert missing_sections(_tpl(_WHAT_WHY), "## What\n\n## Why\n\n## Testing") == []
 
 
-def test_a_header_appearing_only_inside_prose_satisfies_the_template():
-    """Substring match, matching bash: a prose mention counts."""
+def test_a_header_mentioned_only_in_prose_does_not_satisfy_the_template():
     body = "## What\n\ntalked about ## Why without having one"
+    assert missing_sections(_tpl(_WHAT_WHY), body) == ["## Why"]
+
+
+def test_a_nested_heading_does_not_satisfy_the_required_header():
+    """`### Follow-ups` is not `## Follow-ups`; substring matching used to think it was."""
+    body = "## What\n\n### Follow-ups\n"
+    assert missing_sections(_tpl("## What\n\n## Follow-ups\n"), body) == ["## Follow-ups"]
+
+
+def test_a_header_with_trailing_spaces_still_counts():
+    body = "## What\n\n## Follow-ups   \n"
+    assert missing_sections(_tpl("## What\n\n## Follow-ups\n"), body) == []
+
+
+def test_a_heading_may_carry_text_after_the_header():
+    """`## Link ENG-123` still counts as the `## Link` section."""
+    body = "## What\n\n## Link ENG-123\n"
+    assert missing_sections(_tpl("## What\n\n## Link\n"), body) == []
+
+
+def test_a_heading_line_inside_a_fenced_code_block_still_counts():
+    """A line equal to the heading counts wherever it sits; fences are not special-cased."""
+    body = "## What\n\n```\n## Why\n```\n"
     assert missing_sections(_tpl(_WHAT_WHY), body) == []
 
 

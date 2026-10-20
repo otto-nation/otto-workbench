@@ -22,7 +22,13 @@ preamble and never attaches to a section. A section is optional when an HTML
 comment in its body says to delete or remove the section; ``headers`` lists every
 heading and ``required_headers`` the ones a body must still carry. ``pr create``
 and ``pr describe --body`` refuse a body that omits a required header, and the
-SessionStart line names optional sections after ``optional:``.
+SessionStart line names optional sections after ``optional:``. A required header
+is present only when a line of the body is that heading (``line_is_heading``):
+trailing whitespace is ignored, and a heading may carry extra text after the
+header (``## Link ENG-123`` still counts as ``## Link``). A mention in prose, or
+a nested heading such as ``### Follow-ups`` for ``## Follow-ups``, does not
+count. A line equal to the heading counts wherever it sits, including inside a
+fenced code block.
 
 Bash reads through the CLI below rather than globbing for itself, the same way
 it asks ``config_cli.py`` for a config value instead of parsing YAML twice. The
@@ -113,6 +119,26 @@ class TemplateSection:
     header: str
     body: str
     required: bool
+
+
+def line_is_heading(line: str, header: str) -> bool:
+    """True when *line* is *header* as a markdown heading.
+
+    Trailing whitespace on the line is ignored. The line matches when it
+    equals the header, or when it starts with the header followed by
+    whitespace (so ``## Link ENG-123`` still counts as ``## Link``). A
+    deeper heading such as ``### Follow-ups`` does not match ``## Follow-ups``.
+    The line is not unindented and fences are not special-cased: a line
+    equal to the heading counts wherever it sits.
+    """
+    stripped = line.rstrip()
+    if stripped == header:
+        return True
+    return (
+        stripped.startswith(header)
+        and len(stripped) > len(header)
+        and stripped[len(header)].isspace()
+    )
 
 
 def _is_deletable(body: str) -> bool:

@@ -1017,13 +1017,15 @@ def seed_review(reviews_dir: Path, name: str = "widget-42",
     moves. `meta.json` is written only when a caller passes attribution, so the
     default stands in for a review predating the sidecar.
     """
+    from review.types import ReviewMeta, review_meta_from_dict
+    from review_record_support import store_review
     d = reviews_dir / name
     d.mkdir()
-    (d / "review.md").write_text(
-        "## Must fix\n- **[M1]** a.py:1 — bug\n" if body is None else body,
+    text = "## Must fix\n- **[M1]** a.py:1 — bug\n" if body is None else body
+    store_review(
+        d / "review.md", text,
+        review_meta_from_dict(meta) if meta else ReviewMeta(),
     )
-    if meta:
-        (d / "meta.json").write_text(json.dumps(meta))
     return d
 
 
@@ -1037,10 +1039,9 @@ def written_review(directory: Path) -> Path:
     creates any missing parents, since callers here build ad hoc paths rather
     than seeding into an existing `reviews_dir`.
     """
+    from review_record_support import store_review
     directory.mkdir(parents=True, exist_ok=True)
-    f = directory / "review.md"
-    f.write_text("## Must fix\n- **[M1]** boom\n")
-    return f
+    return store_review(directory / "review.md", "## Must fix\n- **[M1]** boom\n")
 
 
 def supersession_verdict(*signals):

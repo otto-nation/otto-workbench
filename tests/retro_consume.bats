@@ -37,15 +37,22 @@ teardown() {
 _make_review() {
   local name="$1" reviewed_at="${2:-}"
   mkdir -p "$REVIEWS/$name"
-  cat > "$REVIEWS/$name/review.md" <<EOF
-# Self-Review: otto-nation/$name — branch
-
-## Should fix
-- [ ] **[S1]** \`a.py:1\` — something worth saying about tests and mocks
-EOF
-  if [[ -n "$reviewed_at" ]]; then
-    printf '{"reviewed_at": "%s"}\n' "$reviewed_at" > "$REVIEWS/$name/meta.json"
-  fi
+  python3 - "$REPO_ROOT/ai/lib" "$REVIEWS/$name/review.md" "$name" "$reviewed_at" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from review.ingest import ingest_review
+from review.store import write_review
+from review.types import ReviewMeta, review_meta_from_dict
+lib, path, name, reviewed_at = sys.argv[1:5]
+text = (
+    f"# Self-Review: otto-nation/{name} — branch\n\n"
+    "## Should fix\n"
+    "- [ ] **[S1]** `a.py:1` — something worth saying about tests and mocks\n"
+)
+meta = review_meta_from_dict({"reviewed_at": reviewed_at}) if reviewed_at else ReviewMeta()
+write_review(Path(path), ingest_review(text, strict=False), meta)
+PY
 }
 
 # _make_scannable_home — a home whose registry resolves to one real GitHub

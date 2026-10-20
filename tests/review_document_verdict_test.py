@@ -221,8 +221,12 @@ class TestResolveVerdict:
     def test_the_counts_come_from_the_document_it_was_handed(self, tmp_path):
         """One document, read once — the verdict cannot be resolved against
         counts from a file the caller re-read in between."""
+        from review_record_support import store_review
         document = ReviewDocument.read(
-            _write(tmp_path, "## Should fix\n- **[S1]** a.py:1 — improvement\n\n## Verdict\nApprove — fine.\n"),
+            store_review(
+                tmp_path / "review.md",
+                "## Should fix\n- **[S1]** a.py:1 — improvement\n\n## Verdict\nApprove — fine.\n",
+            ),
         )
         assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
 

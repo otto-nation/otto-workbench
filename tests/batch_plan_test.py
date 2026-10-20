@@ -13,6 +13,8 @@ import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
 import pr.target  # noqa: E402
 from batch.model import Step  # noqa: E402
+from review.types import ReviewMeta  # noqa: E402
+from review_record_support import store_review  # noqa: E402
 from pr.comments_fix import CloseoutDebt, FixSummary  # noqa: E402
 
 
@@ -53,14 +55,14 @@ def test_review_needed_when_no_file(tmp_path):
 
 def test_review_needed_when_head_moved(tmp_path):
     f = tmp_path / "review.md"
-    f.write_text("<!-- head_sha: 1111111 -->\n# Review\n")
+    store_review(f, "# Review\n", ReviewMeta(head_sha="1111111"))
     n = batch.plan.review_need(f, "2222222aaaa")
     assert n.needed is True and "1111111" in n.reason
 
 
 def test_review_not_needed_at_same_head_even_abbreviated(tmp_path):
     f = tmp_path / "review.md"
-    f.write_text("<!-- head_sha: abcdef0 -->\n# Review\n")
+    store_review(f, "# Review\n", ReviewMeta(head_sha="abcdef0"))
     assert batch.plan.review_need(f, "abcdef0123456").needed is False
 
 
@@ -159,7 +161,7 @@ def test_graphql_wraps_ok_payload_with_errors(monkeypatch):
 
 def _review_at(tmp_path, sha):
     f = tmp_path / "review.md"
-    f.write_text(f"<!-- head_sha: {sha} -->\n# Review\n")
+    store_review(f, "# Review\n", ReviewMeta(head_sha=sha))
     return f
 
 
@@ -289,7 +291,7 @@ def test_a_row_carries_the_closeout_pr_says_is_owed(monkeypatch):
 def test_review_short_prefix_is_not_current(tmp_path):
     """A header shorter than MIN_SHA_PREFIX is not evidence of the same commit."""
     f = tmp_path / "review.md"
-    f.write_text("<!-- head_sha: abc -->\n# Review\n")
+    store_review(f, "# Review\n", ReviewMeta(head_sha="abc"))
     assert batch.plan.review_need(f, "abcdef0123456").needed is True
 
 

@@ -700,24 +700,29 @@ class TestSection:
 
 class TestRead:
     def test_a_document_on_disk_reads_back_parsed(self, tmp_path):
-        review = _write(tmp_path, "# Review: acme/widget#42\n<!-- head_sha: abc -->\n\n## Summary\nx\n")
+        from review.types import ReviewMeta
+        from review_record_support import store_review
+        review = store_review(
+            tmp_path / "review.md", "## Summary\nx\n", ReviewMeta(head_sha="abc"),
+        )
         document = ReviewDocument.read(review)
         assert document is not None
         assert document.header.head_sha == "abc"
         assert document.section("Summary") == "x"
 
     def test_a_review_nobody_wrote_is_not_an_empty_one(self, tmp_path):
-        """The distinction every caller of `read` turns on: absent is None, and
-        an empty file is a document that declares nothing."""
+        """The distinction every caller of `read` turns on: absent and stale
+        are None, including a bare review.md with no review.json."""
         assert ReviewDocument.read(tmp_path / "nonexistent.md") is None
         assert ReviewDocument.read(None) is None
-        assert ReviewDocument.read(_write(tmp_path, "")) == ReviewDocument()
+        assert ReviewDocument.read(_write(tmp_path, "")) is None
 
     def test_a_path_that_is_not_a_file_has_no_document(self, tmp_path):
         assert ReviewDocument.read(tmp_path) is None
 
     def test_a_path_given_as_a_string_reads_the_same(self, tmp_path):
-        review = _write(tmp_path, "## Summary\nx\n")
+        from review_record_support import store_review
+        review = store_review(tmp_path / "review.md", "## Summary\nx\n")
         assert ReviewDocument.read(str(review)) == ReviewDocument.read(review)
 
 

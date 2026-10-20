@@ -61,7 +61,7 @@ from review.dedup import (
     check_review_already_posted, REVIEW_BODY_DEDUP_THRESHOLD,
 )
 from review.posting import (
-    DEFAULT_CHUNK_SIZE, HEAD_SHA_RE, _CHUNK_PATTERN,
+    DEFAULT_CHUNK_SIZE, _CHUNK_PATTERN,
     _post_and_track, _post_as_comment, _print_dry_run,
     _chunk_comments, _post_chunked_review, post_review,
     _submit_review, write_post_tracking, _format_submit_command,

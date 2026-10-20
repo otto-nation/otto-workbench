@@ -115,11 +115,10 @@ def _read_review(path: Path | None) -> str | None:
 def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewSummaryReport:
     """Build a review summary for a review."""
     review_path = Path(review_file) if review_file else None
-    # The document the summary reports on and the text it carries verbatim are
-    # one file, read once: `review_content` is what was on disk, not what
-    # re-rendering the parse would produce.
+    # `review_content` is still the on-disk markdown for display; findings and
+    # the verdict come from the record, so a stale directory reports none.
     review_content = _read_review(review_path)
-    doc = ReviewDocument.parse(review_content) if review_content is not None else None
+    doc = ReviewDocument.read(review_path)
 
     by_key = open_counts(doc)
     counts = {s.json_key: by_key[s.key] for s in SEVERITIES}

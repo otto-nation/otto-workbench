@@ -12,6 +12,11 @@ if str(LIB_DIR) not in sys.path:
 # The module the `rp` fixture returns, imported so bin/local/select-pytest maps
 # this suite to the code it reaches through `rp`.
 import cli.review_post  # noqa: E402,F401
+from review.ingest import ingest_review  # noqa: E402
+
+
+def _sections(rp, text):
+    return rp.ReviewSections.from_record(ingest_review(text, strict=False))
 
 
 class TestReviewSections:
@@ -40,23 +45,23 @@ class TestReviewSections:
         "Request changes — M1 is a blocker.\n"
     )
 
-    def test_from_text_extracts_known_sections(self, rp):
-        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+    def test_from_record_extracts_known_sections(self, rp):
+        sections = _sections(rp, self.REVIEW_TEXT)
         assert sections.get("summary") == "Clean refactor with good test coverage."
         assert "Request changes" in sections.get("verdict")
         assert "Nesting depth" in sections.get("static_analysis")
 
-    def test_from_text_ignores_severity_headers(self, rp):
-        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+    def test_from_record_ignores_severity_headers(self, rp):
+        sections = _sections(rp, self.REVIEW_TEXT)
         assert sections.get("must_fix") == ""
         assert sections.get("should_fix") == ""
 
     def test_get_returns_empty_for_absent(self, rp):
-        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW_TEXT)
         assert sections.get("nonexistent") == ""
 
     def test_before_findings_returns_ordered_pairs(self, rp):
-        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW_TEXT)
         before = sections.before_findings()
         keys = [cfg.key for cfg, _ in before]
         assert "summary" in keys
@@ -64,7 +69,7 @@ class TestReviewSections:
         assert keys.index("summary") < keys.index("verdict")
 
     def test_after_findings_returns_passthrough(self, rp):
-        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW_TEXT)
         after = sections.after_findings()
         keys = [cfg.key for cfg, _ in after]
         assert "static_analysis" in keys
@@ -87,7 +92,7 @@ class TestReviewSections:
             "\n"
             "- **[M1]** **`a.go:1`** — bug\n"
         )
-        sections = rp.ReviewSections.from_text(text)
+        sections = _sections(rp, text)
         assert sections.get("performance_notes") == "Consider caching the DB query."
         after = sections.after_findings()
         keys = [cfg.key for cfg, _ in after]
@@ -102,7 +107,7 @@ class TestReviewSections:
             "\n"
             "- **[M1]** **`a.go:1`** — bug\n"
         )
-        sections = rp.ReviewSections.from_text(text)
+        sections = _sections(rp, text)
         assert sections.get("file_triage") == ""
         assert sections.after_findings() == []
 
@@ -116,16 +121,16 @@ class TestReviewSections:
             "\n"
             "- **[M1]** **`a.go:1`** — bug\n"
         )
-        sections = rp.ReviewSections.from_text(text)
+        sections = _sections(rp, text)
         assert sections.get("prior_findings") == ""
         assert sections.after_findings() == []
 
     def test_before_findings_omits_empty(self, rp):
         text = "## Must fix\n\n- **[M1]** **`a.go:1`** — bug\n"
-        sections = rp.ReviewSections.from_text(text)
+        sections = _sections(rp, text)
         assert sections.before_findings() == []
 
     def test_severity_alias_nits_ignored(self, rp):
         text = "## Nits\n\n- **[N1]** **`a.go:1`** — nit\n"
-        sections = rp.ReviewSections.from_text(text)
+        sections = _sections(rp, text)
         assert sections.get("nits") == ""

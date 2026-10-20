@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import commit_all, git_out, init_repo  # noqa: E402
+from review_record_support import store_review  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.publish  # noqa: E402
@@ -118,7 +119,7 @@ def test_comment_items_reads_only_owed_outcomes_and_marks_synthetic_ids(monkeypa
 
 def test_open_findings_reads_unchecked_findings(tmp_path, monkeypatch):
     f = tmp_path / "review.md"
-    f.write_text(REVIEW_WITH_ONE_OPEN_ONE_CHECKED)
+    store_review(f, REVIEW_WITH_ONE_OPEN_ONE_CHECKED)
     monkeypatch.setattr(batch.outcomes.review.paths, "self_review_file_path", lambda repo, branch: f)
     assert batch.outcomes.open_findings(ITEM) == [
         {"severity": "should-fix", "title": OPEN_TITLE, "declined": False},

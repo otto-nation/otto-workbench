@@ -17,6 +17,8 @@ if str(LIB_DIR) not in sys.path:
 from pr.state import PostedAs, PostTracking
 from core.serde import from_dict as serde_from_dict
 import review.dedup
+from review.types import ReviewMeta, review_meta_from_dict
+from review_record_support import store_review
 
 
 class TestShaDriftReverify:
@@ -38,12 +40,12 @@ class TestShaDriftReverify:
         "- **[M1]** **`file.go:5`** — Fix this bug\n"
     )
 
-    def _make_args(self, tmp_path, repo="org/repo", pr="1"):
+    def _make_args(self, tmp_path, repo="org/repo", pr="1", head_sha="aaa1111bbb2222"):
         import argparse
         review_dir = tmp_path / "review"
         review_dir.mkdir(exist_ok=True)
         review_file = review_dir / "review.md"
-        review_file.write_text(self.REVIEW_TEXT)
+        store_review(review_file, self.REVIEW_TEXT, ReviewMeta(head_sha=head_sha, repo=repo))
         args = argparse.Namespace()
         args.repo = repo
         args.pr = pr
@@ -132,9 +134,8 @@ class TestShaDriftReverify:
     def _run_with_finding(self, rp, tmp_path, head_sha, header_sha=None, trail=None):
         """Run run_post with one inline finding; return the post tracking it saved."""
         trail = trail or MagicMock()
-        args, review_file = self._make_args(tmp_path)
-        if header_sha:
-            review_file.write_text(self.REVIEW_TEXT.replace("aaa1111bbb2222", header_sha))
+        args, review_file = self._make_args(
+            tmp_path, head_sha=header_sha or "aaa1111bbb2222")
         sidecar = rp.ReviewMeta(repo="org/repo")
         pr_data = rp.PRData(
             viewer_login="bot",
@@ -236,14 +237,13 @@ class TestDryRunIntegration:
         " echo hello\n"
     )
 
-    def _setup_review(self, tmp_path):
-        """Write the review markdown and sidecar meta.json into tmp_path."""
+    def _setup_review(self, tmp_path, text=None, **meta):
+        """Write the review through the store into tmp_path."""
         review_dir = tmp_path / "test-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(self.REVIEW_MD)
-        meta = {"repo": "test/repo", "head_sha": "abc123def456"}
-        (review_dir / "meta.json").write_text(json.dumps(meta))
+        payload = {"repo": "test/repo", "head_sha": "abc123def456", **meta}
+        store_review(review_file, text or self.REVIEW_MD, review_meta_from_dict(payload))
         return review_file
 
     @classmethod
@@ -351,9 +351,8 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "no-repo-meta"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(self.REVIEW_MD)
         # meta.json present but missing the 'repo' field
-        (review_dir / "meta.json").write_text(json.dumps({"head_sha": "abc123"}))
+        store_review(review_file, self.REVIEW_MD, ReviewMeta(head_sha="abc123"))
         result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode != 0
         assert "repo" in result.stderr.lower() or "meta" in result.stderr.lower()
@@ -369,8 +368,7 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "foreign-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(self.REVIEW_MD)
-        (review_dir / "meta.json").write_text(json.dumps({
+        store_review(review_file, self.REVIEW_MD, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
             "head_ref": "someone-else/feat/x",
         }))
@@ -387,8 +385,7 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "own-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(self.REVIEW_MD)
-        (review_dir / "meta.json").write_text(json.dumps({
+        store_review(review_file, self.REVIEW_MD, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
             "head_ref": "isaac/feat/mine",
         }))
@@ -412,15 +409,18 @@ class TestDryRunIntegration:
         # A prose reference is what `resolve_permalinks` rewrites, and it only
         # runs with both refs in hand — the stock fixture has neither, so it
         # renders no permalink at all and could not see a wrong forge.
-        review_file.write_text(self.REVIEW_MD.replace(
-            "- **[M1]** **`handler.go:11`** — missing error check",
-            "- **[M1]** **`handler.go:11`** — missing error check, see handler.go:11",
-        ))
-        (review_dir / "meta.json").write_text(json.dumps({
-            "repo": "test/repo", "head_sha": "abc123def456",
-            "head_ref": "feat/x", "base_ref": "main",
-            "host": "ghe.acme.com",
-        }))
+        store_review(
+            review_file,
+            self.REVIEW_MD.replace(
+                "- **[M1]** **`handler.go:11`** — missing error check",
+                "- **[M1]** **`handler.go:11`** — missing error check, see handler.go:11",
+            ),
+            review_meta_from_dict({
+                "repo": "test/repo", "head_sha": "abc123def456",
+                "head_ref": "feat/x", "base_ref": "main",
+                "host": "ghe.acme.com",
+            }),
+        )
 
         result = self._run_dry_run(review_file, tmp_path)
 
@@ -449,8 +449,7 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "unclaimed"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(self.REVIEW_MD)
-        (review_dir / "meta.json").write_text(json.dumps({
+        store_review(review_file, self.REVIEW_MD, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
             "head_ref": "someone-else/feat/x",
         }))
@@ -485,9 +484,9 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "sa-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(review_with_sa)
-        meta = {"repo": "test/repo", "head_sha": "abc123def456"}
-        (review_dir / "meta.json").write_text(json.dumps(meta))
+        store_review(review_file, review_with_sa, review_meta_from_dict({
+            "repo": "test/repo", "head_sha": "abc123def456",
+        }))
         result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
@@ -517,9 +516,9 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "autodiscovery-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(review_with_custom)
-        meta = {"repo": "test/repo", "head_sha": "abc123def456"}
-        (review_dir / "meta.json").write_text(json.dumps(meta))
+        store_review(review_file, review_with_custom, review_meta_from_dict({
+            "repo": "test/repo", "head_sha": "abc123def456",
+        }))
         result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
@@ -554,7 +553,10 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         review_dir = tmp_path / "review"
         review_dir.mkdir(exist_ok=True)
         review_file = review_dir / "review.md"
-        review_file.write_text(review_text or self.REVIEW_TEXT)
+        store_review(
+            review_file, review_text or self.REVIEW_TEXT,
+            ReviewMeta(head_sha="aaa1111bbb2222"),
+        )
 
         args = argparse.Namespace()
         args.repo = "org/repo"
@@ -634,7 +636,7 @@ class TestDuplicateFindingsAreNotReposted:
         review_dir = tmp_path / "review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        review_file.write_text(self.REVIEW_TEXT)
+        store_review(review_file, self.REVIEW_TEXT, ReviewMeta(head_sha="aaa1111bbb2222"))
 
         args = argparse.Namespace(
             repo="org/repo", pr="1", review_file=str(review_file),

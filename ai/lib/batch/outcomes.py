@@ -283,9 +283,9 @@ def comment_items(item: Item) -> list[dict]:
 
 def open_findings(item: Item) -> list[dict]:
     path = review.paths.self_review_file_path(item.repo, item.branch)
-    if not path.is_file():
+    doc = review.document.ReviewDocument.read(path)
+    if doc is None:
         return []
-    doc = review.document.ReviewDocument.parse(path.read_text())
     # Finding stores the description in `body`, not `title`. The payload key stays `title`.
     return [{"severity": severity_by_key(f.severity).label, "title": f.body,
              "declined": f.declined} for f in doc.open_findings]

@@ -44,3 +44,13 @@ def copy_tree(dest: Path) -> Path:
     for path in sorted(dest.rglob("*.txt"), reverse=True):
         path.rename(path.with_suffix(""))
     return dest
+
+
+def store_review(review_file, text: str, meta=None):
+    """A review directory as the pipeline leaves it: review.json, meta.json, review.md."""
+    from review.ingest import ingest_review
+    from review.store import write_review
+    from review.types import ReviewMeta
+    review_file = Path(review_file)
+    write_review(review_file, ingest_review(text, strict=False), meta or ReviewMeta())
+    return review_file

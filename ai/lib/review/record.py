@@ -289,9 +289,13 @@ def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewReco
         return None
     try:
         raw = json.loads(path.read_text())
-        version = raw.get("schema_version")
-    except (OSError, ValueError, AttributeError):
-        raw, version = None, None
+    except (OSError, ValueError):
+        core.log.warn(f"{path} could not be read — treating the review as stale")
+        return None
+    if not isinstance(raw, dict):
+        core.log.warn(f"{path} could not be read — treating the review as stale")
+        return None
+    version = raw.get("schema_version")
     if version != SCHEMA_VERSION:
         core.log.warn(f"{path} is schema {version!r}, not {SCHEMA_VERSION} — treating the review as stale")
         return None

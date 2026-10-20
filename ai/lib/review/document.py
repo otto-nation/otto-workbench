@@ -683,22 +683,15 @@ class ReviewDocument:
 
     @classmethod
     def read(cls, path: str | Path | None) -> ReviewDocument | None:
-        """The document at `path`, or None when there is no readable one there.
-
-        An absent review is not an empty one. A caller handed a document either
-        way would report a review with no findings and nothing to say where in
-        fact no review was ever written, so the two answers stay distinct and
-        the caller decides what an absent one means.
-        """
+        """The stored review beside `path`, or None when there is none or it is stale."""
         if not path:
             return None
-        file = Path(path)
-        if not file.is_file():
-            return None
-        try:
-            return cls.parse(file.read_text())
-        except OSError:
-            return None
+        # Imported here: `review.store` renders through `review.render`, which
+        # imports this module for the header and title.
+        from review.store import read_review
+
+        stored = read_review(Path(path))
+        return cls.from_stored(stored) if stored else None
 
     def section(self, header: str) -> str:
         """The body of the `## <header>` section, stripped, or "" when absent.

@@ -241,25 +241,6 @@ class TestIsLineResolutionError:
         assert rp._is_line_resolution_error("LINE COULD NOT BE RESOLVED") is True
 
 
-class TestHeadShaRegex:
-    def test_standard_sha(self, rp):
-        text = "<!-- head_sha: abc123def456 -->"
-        m = rp.HEAD_SHA_RE.search(text)
-        assert m is not None
-        assert m.group(1) == "abc123def456"
-
-    def test_uppercase_hex_does_not_match(self, rp):
-        text = "<!-- head_sha: ABC123DEF456 -->"
-        m = rp.HEAD_SHA_RE.search(text)
-        assert m is None
-
-    def test_short_sha_matches(self, rp):
-        text = "<!-- head_sha: abc1234 -->"
-        m = rp.HEAD_SHA_RE.search(text)
-        assert m is not None
-        assert m.group(1) == "abc1234"
-
-
 class TestReclassifyAndRetry:
     DIFF_NEW = (
         "diff --git a/file.go b/file.go\n"

@@ -15,6 +15,7 @@ from review.summary import (
     build_review_summary, format_findings_line, format_usage, format_verdict,
     json_summary,
 )
+from review_record_support import store_review
 
 # cr is a pytest fixture: imported by name so tests here can request it.
 from review_entry_support import cr
@@ -282,7 +283,7 @@ def test_no_json_summary_leaves_stdout_alone(cr, capfd):
 
 def test_json_summary_with_findings(cr, tmp_path):
     review = tmp_path / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Must fix\n- **[M1]** path:1 — bug\n"
         "## Should fix\n- **[S1]** path:2 — improvement\n- **[S2]** path:3 — improvement\n"
         "## Nit\n- **[N1]** path:4 — style\n"
@@ -303,7 +304,7 @@ def test_json_summary_with_findings(cr, tmp_path):
 
 def test_json_summary_needs_discussion_no_must_fix(cr, tmp_path):
     review = tmp_path / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Should fix\n- **[S1]** path:1 — improvement\n"
         "## Nit\n- **[N1]** path:2 — style\n"
     )
@@ -315,7 +316,7 @@ def test_json_summary_needs_discussion_no_must_fix(cr, tmp_path):
 
 def test_json_summary_approve_no_blocking_findings(cr, tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Nit\n- **[N1]** path:2 — style\n")
+    store_review(review, "## Nit\n- **[N1]** path:2 — style\n")
     result = json_summary("org/repo", "10", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["verdict"] == ReviewVerdict.APPROVE.value
@@ -325,7 +326,7 @@ def test_json_summary_includes_metadata(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "org-repo-42"
     review_dir.mkdir(parents=True)
     review = review_dir / "review.md"
-    review.write_text("## Should fix\n- **[S1]** path:1 — improvement\n")
+    store_review(review, "## Should fix\n- **[S1]** path:1 — improvement\n")
     meta = review_dir / "meta.json"
     meta.write_text(json.dumps({
         "head_sha": "abc123def456",
@@ -343,7 +344,7 @@ def test_json_summary_includes_metadata(cr, tmp_path):
 
 def test_json_summary_null_metadata_without_meta_json(cr, tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Should fix\n- **[S1]** path:1 — improvement\n")
+    store_review(review, "## Should fix\n- **[S1]** path:1 — improvement\n")
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["head_sha"] is None
@@ -362,7 +363,7 @@ def test_json_summary_missing_review_file(cr, tmp_path):
 
 def test_json_summary_self_review_no_pr(cr, tmp_path):
     review = tmp_path / "self-review.md"
-    review.write_text("## Must fix\n- **[M1]** path:1 — bug\n")
+    store_review(review, "## Must fix\n- **[M1]** path:1 — bug\n")
     result = json_summary("org/repo", "", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["pr_number"] is None
@@ -373,7 +374,7 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-42"
     review_dir.mkdir(parents=True)
     review = review_dir / "review.md"
-    review.write_text("## Nit\n- **[N1]** path:1 — style\n")
+    store_review(review, "## Nit\n- **[N1]** path:1 — style\n")
     _make_session_log(
         str(review_dir / "session.jsonl"),
         cost=5.25, input_tokens=1000, output_tokens=2000, duration_ms=90000,
@@ -390,7 +391,7 @@ def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-42"
     review_dir.mkdir(parents=True)
     review = review_dir / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Must fix\n- **[M1]** path:1 — bug\n\n"
         "## Verdict\nDisapprove — fundamentally wrong approach.\n"
     )
@@ -402,7 +403,7 @@ def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
 def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
     """Prose cannot under-report findings that block — the counts win."""
     review = tmp_path / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Must fix\n- **[M1]** path:1 — bug\n\n"
         "## Verdict\nApprove — looks fine.\n"
     )
@@ -414,7 +415,7 @@ def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
 def test_json_summary_verdict_keeps_stronger_prose(cr, tmp_path):
     """Counts cannot discard a stronger call the agent stated."""
     review = tmp_path / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Nit\n- **[N1]** path:1 — style\n\n"
         "## Verdict\nRequest changes — the approach needs rework.\n"
     )
@@ -427,7 +428,7 @@ def _self_review_dir(tmp_path, review_type: str) -> Path:
     """A self-review with one must-fix finding and no verdict of its own."""
     review_dir = tmp_path / "reviews" / "test-repo-self"
     review_dir.mkdir(parents=True)
-    (review_dir / "review.md").write_text(
+    store_review(review_dir / "review.md", 
         "# Review\n<!-- head_sha: abc -->\n"
         "## Must Fix\n- **[M1]** `a.py:1` — broken\n"
     )
@@ -501,7 +502,7 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-repo-1"
     review_dir.mkdir(parents=True)
     review_file = review_dir / "review.md"
-    review_file.write_text("# Review\n<!-- head_sha: abc -->\n## Summary\nNo findings.\n")
+    store_review(review_file, "# Review\n<!-- head_sha: abc -->\n## Summary\nNo findings.\n")
     pipeline = review_dir / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
@@ -518,14 +519,14 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
 
 def test_format_findings_line_no_findings(tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove\n")
+    store_review(review, "## Summary\nLooks good.\n\n## Verdict\nApprove\n")
     report = build_review_summary("org/repo", "1", str(review))
     assert format_findings_line(report) == ""
 
 
 def test_format_findings_line_nits_only(tmp_path):
     review = tmp_path / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Nit\n"
         "- **[N1]** `file.py:10` — style\n"
         "- **[N2]** `file.py:20` — naming\n"
@@ -537,7 +538,7 @@ def test_format_findings_line_nits_only(tmp_path):
 
 def test_format_findings_line_mixed(tmp_path):
     review = tmp_path / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Must fix\n"
         "- **[M1]** `file.py:10` — bug\n"
         "\n## Should fix\n"
@@ -558,14 +559,14 @@ def test_format_findings_line_nonexistent_file():
 
 def test_format_verdict_approve(tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Verdict\nApprove\n")
+    store_review(review, "## Verdict\nApprove\n")
     report = build_review_summary("org/repo", "1", str(review))
     assert format_verdict(report) == "Approve"
 
 
 def test_format_verdict_with_must_fix(tmp_path):
     review = tmp_path / "review.md"
-    review.write_text(
+    store_review(review, 
         "## Must fix\n- **[M1]** `file.py:10` — bug\n\n## Verdict\nApprove\n"
     )
     report = build_review_summary("org/repo", "1", str(review))
@@ -574,7 +575,7 @@ def test_format_verdict_with_must_fix(tmp_path):
 
 def test_format_verdict_explicit_disapprove(tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Verdict\nDisapprove\n")
+    store_review(review, "## Verdict\nDisapprove\n")
     report = build_review_summary("org/repo", "1", str(review))
     assert format_verdict(report) == "Disapprove"
 
@@ -586,7 +587,7 @@ def test_format_verdict_nonexistent_file():
 
 def test_json_summary_status_completed_no_pipeline(cr, tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Nit\n- **[N1]** path:1 — style\n")
+    store_review(review, "## Nit\n- **[N1]** path:1 — style\n")
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["status"] == ReviewStatus.COMPLETED.value
@@ -596,7 +597,7 @@ def test_json_summary_status_error_synthesis_failed(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-42"
     review_dir.mkdir(parents=True)
     review = review_dir / "review.md"
-    review.write_text("## Nit\n- **[N1]** path:1 — style\n")
+    store_review(review, "## Nit\n- **[N1]** path:1 — style\n")
     pipeline = review_dir / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],

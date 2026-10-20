@@ -1210,7 +1210,7 @@ leads that tell group reviewers exactly where to focus investigation.
 
 Config-driven section registry with auto-discovery for review posting.
 
-Defines section configs declaratively and extracts them from review markdown.
+Defines section configs declaratively and extracts them from the review record.
 Replaces per-section parameter threading across the posting pipeline.
 
 ### review/state.py

@@ -408,3 +408,34 @@ teardown() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"Run the inner command first"* ]]
 }
+
+# ── subagent publishing ─────────────────────────────────────────────────────
+# PreToolUse input carries a non-empty agent_id when the call comes from a
+# subagent. A subagent reports deferrals to its parent; it does not file or
+# edit a PR. The command half is the same set oneshot-publish-guard refuses.
+
+_run_guard_agent() {
+  local payload
+  payload=$(python3 -c '
+import json, sys
+agent = None if sys.argv[2] == "null" else sys.argv[2]
+print(json.dumps({"tool_input": {"command": sys.argv[1]}, "agent_id": agent}))
+' "$1" "$2")
+  run _run_guard "$payload"
+}
+
+@test "subagent publish hook: denies gh issue create" {
+  _run_guard_agent 'gh issue create --title x --body y' 'a7175461c26907157'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"subagent"* ]]
+}
+
+@test "subagent publish hook: allows gh issue create in the main session" {
+  _run_guard_agent 'gh issue create --title x --body y' 'null'
+  [ "$status" -eq 0 ]
+}
+
+@test "subagent publish hook: allows gh pr view" {
+  _run_guard_agent 'gh pr view 1' 'a7175461c26907157'
+  [ "$status" -eq 0 ]
+}

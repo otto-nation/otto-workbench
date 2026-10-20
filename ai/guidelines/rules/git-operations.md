@@ -46,6 +46,10 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 - A subagent cannot discover any of this by observing that its commands succeed — they do succeed, somewhere else. So confirm the run landed where it was meant to before believing its result: have the wrapper echo `pwd` and the branch, or compare a suite's test count against a known-good run. A count taken against the wrong tree is usually close enough to the right one to pass unnoticed
 - Where a repo's own convention says to invoke its scripts by a path relative to the repo root, a subagent is the exception to it: relative paths resolve against whatever cwd the call actually starts in. Use the absolute path, and accept whatever that costs under the harness's permission model
 
+## Subagent Publishing
+
+- A dispatched subagent never files issues, posts to a PR, or edits a PR description. Report the deferral and any proposed PR text to the parent; the parent owns those writes, and the guards enforce it
+
 ## PR Creation
 
 - Always use `pr create --draft` to create a PR — `--draft` ensures PRs go through review before being marked ready. To see the title and body it would use without pushing or creating anything, add `--dry-run`. `--no-issue` is still accepted but inert now that nothing prompts. It stays accepted rather than removed because it is already written into invocations outside this repo, where rejecting it would fail the PR over a flag that asks for the behaviour now on by default

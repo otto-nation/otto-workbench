@@ -21,6 +21,7 @@ description: "Issue trackers — how the provider resolves, and per-provider CLI
 - Prefer sub-issues over expanding a single issue's scope when the work has distinct deliverables. A parent issue should describe the initiative; sub-issues should each be independently completable. Don't nest sub-issues more than one level
 - Always assign the issue to its creator — unassigned issues get lost
 - Nothing is truly out of scope. Work a change defers is filed as its own issue, linked from the one deferring it, rather than described in a section and forgotten
+- A dispatched subagent does not file: it reports the deferral (what, why, suggested title) to its parent, which files or asks
 - An issue filed as follow-up work — deferred from a PR, split out of a plan's out-of-scope section, or carved off an issue whose scope grew — carries the labels in `issues.labels`, which is `follow-up` unless the repo says otherwise. Read the resolved list with `otto-workbench config get issues.labels`; a repo that has opted out spells it `labels: []` and you label nothing
 - Create the label when the tracker does not have one. Both CLIs resolve every label before they open the create call and fail the whole filing on one they cannot find, so an unknown label costs the issue rather than the label — `gh label list`/`gh label create`, `linear label list --all --json`/`linear label create --name X --team KEY`. The scripts do this themselves; it is only yours to do when you are filing by hand
 

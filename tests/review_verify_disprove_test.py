@@ -2,7 +2,8 @@
 drops findings from a finished review.
 
 The disprove gate is tested by reading an agent's verdicts back and applying
-them; the span both gates cut is tested by running one table through each.
+them; evidence verification still cuts spans. The table below runs the same
+cases through each production path.
 """
 
 import sys
@@ -17,15 +18,17 @@ if str(LIB_DIR) not in sys.path:
 
 import review.spans
 from review.ingest import ingest_review
+from review.render import render_body
 from review.verify import DisproveResult, apply_disprove, parse_disprove_output
 
 
-# ── What both gates take out ─────────────────────────────────────────────────
+# ── What each gate takes out ─────────────────────────────────────────────────
 #
-# Evidence verification and the disprove gate each drop findings from a
-# finished review, and they used to measure a finding's body for themselves.
-# The table below is run through both, asserting the same bytes each time, so a
-# reading that drifts into one of them fails here rather than passing twice.
+# Evidence verification drops findings by cutting spans in the finished
+# review. The disprove gate used to share that cut; it now marks FALSIFIED on
+# the record and render_body omits them. The table runs both, each against the
+# bytes it actually produces, so a reading that drifts in either path fails
+# here rather than passing twice on the same function.
 
 
 def _by_evidence_gate(text: str, ids: list[str]) -> str:
@@ -34,13 +37,14 @@ def _by_evidence_gate(text: str, ids: list[str]) -> str:
 
 
 def _by_disprove_gate(text: str, ids: list[str]) -> str:
-    """The span cut both gates share; the production path now marks FALSIFIED."""
-    return review.spans.drop_findings(text, ids)
+    """What apply_disprove leaves in the rendered body after falsifying `ids`."""
+    results = [DisproveResult(fid, "FALSIFIED", "x") for fid in ids]
+    return render_body(apply_disprove(ingest_review(text, strict=False), results).record)
 
 
 GATES = [
-    pytest.param(_by_evidence_gate, id="evidence"),
-    pytest.param(_by_disprove_gate, id="disprove"),
+    pytest.param(_by_evidence_gate, 0, id="evidence"),
+    pytest.param(_by_disprove_gate, 1, id="disprove"),
 ]
 
 DROP_CASES = [
@@ -52,6 +56,8 @@ DROP_CASES = [
         ["M1"],
         "## Must fix\n"
         "- **[M2]** **`b.go:2`** — two\n",
+        "## Must fix\n\n"
+        "- **[M2]** **`b.go:2`** — two\n",
         id="a-flat-bullet-is-the-finding's-own-body",
     ),
     pytest.param(
@@ -61,6 +67,9 @@ DROP_CASES = [
         "- **[M3]** **`c.go:3`** — three\n",
         ["M1"],
         "## Must fix\n"
+        "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
+        "- **[M3]** **`c.go:3`** — three\n",
+        "## Must fix\n\n"
         "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
         "- **[M3]** **`c.go:3`** — three\n",
         id="a-resolved-finding-below-a-dropped-one-survives",
@@ -76,6 +85,10 @@ DROP_CASES = [
         "### Group A\n"
         "### Group B\n"
         "- **[M2]** **`b.go:2`** — two\n",
+        "## Must fix\n\n"
+        "### Group A\n"
+        "### Group B\n"
+        "- **[M2]** **`b.go:2`** — two\n",
         id="a-sub-heading-below-a-dropped-finding-survives",
     ),
     pytest.param(
@@ -87,6 +100,9 @@ DROP_CASES = [
         "## Must fix\n"
         "  - **[M2]** **`b.go:2`** — nested declaration\n"
         "- **[M3]** **`c.go:3`** — three\n",
+        "## Must fix\n\n"
+        "- **[M2]** **`b.go:2`** — nested declaration\n"
+        "- **[M3]** **`c.go:3`** — three\n",
         id="an-indented-declaration-is-a-declaration",
     ),
     pytest.param(
@@ -97,6 +113,9 @@ DROP_CASES = [
         ["M1"],
         "## Must fix\n"
         "## Prior findings\n"
+        "- **[M1]** `old.go` — Fixed\n",
+        "## Must fix\n\n"
+        "## Prior findings\n\n"
         "- **[M1]** `old.go` — Fixed\n",
         id="a-ledger-entry-whose-id-collides-is-left-alone",
     ),
@@ -111,6 +130,8 @@ DROP_CASES = [
         ["M1"],
         "## Must fix\n"
         "- **[M2]** **`b.go:2`** — two\n",
+        "## Must fix\n\n"
+        "- **[M2]** **`b.go:2`** — two\n",
         id="an-evidence-block-goes-with-the-finding-that-quotes-it",
     ),
     pytest.param(
@@ -123,6 +144,8 @@ DROP_CASES = [
         # a review whose last finding goes loses its trailing newline with it.
         "## Must fix\n"
         "## Nit",
+        "## Must fix\n\n"
+        "## Nit\n",
         id="every-named-finding-goes-at-once",
     ),
     pytest.param(
@@ -131,15 +154,20 @@ DROP_CASES = [
         ["S9"],
         "## Must fix\n"
         "- **[M1]** **`a.go:1`** — one\n",
+        "## Must fix\n\n"
+        "- **[M1]** **`a.go:1`** — one\n",
         id="an-id-the-review-does-not-declare-changes-nothing",
     ),
 ]
 
 
-@pytest.mark.parametrize("gate", GATES)
-@pytest.mark.parametrize("text,ids,expected", DROP_CASES)
-class TestBothGatesCutTheSameSpan:
-    def test_the_gate_leaves_exactly_this(self, gate, text, ids, expected):
+@pytest.mark.parametrize("gate,expected_idx", GATES)
+@pytest.mark.parametrize("text,ids,evidence_expected,disprove_expected", DROP_CASES)
+class TestEachGateLeavesExactlyThis:
+    def test_the_gate_leaves_exactly_this(
+        self, gate, expected_idx, text, ids, evidence_expected, disprove_expected,
+    ):
+        expected = (evidence_expected, disprove_expected)[expected_idx]
         assert gate(text, ids) == expected
 
 

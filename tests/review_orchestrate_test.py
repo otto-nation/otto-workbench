@@ -128,10 +128,23 @@ class TestStaticAnalysisIntegration:
         "}\n"
     )
 
+    _REVIEW_TEXT = "## Summary\nLooks good.\n\n## Verdict\nApprove"
+
+    def _seed(self, review_file):
+        from review.ingest import ingest_review
+        from review.store import write_review
+        from review.types import ReviewMeta
+        write_review(
+            Path(review_file),
+            ingest_review(self._REVIEW_TEXT, strict=False),
+            ReviewMeta(),
+        )
+
     def _job(self, tmp_path, review_file, changed_files):
         """A job in the two fields the injector reads, plus the one it writes."""
         job = MagicMock()
         job.review_file = str(review_file)
+        job.artifact_dir = str(Path(review_file).parent)
         job.wt_path = str(tmp_path)
         job.pr.files = changed_files
         job.static_results = []
@@ -139,7 +152,7 @@ class TestStaticAnalysisIntegration:
 
     def test_static_analysis_injected_into_review(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
         (tmp_path / "deep.sh").write_text(self.DEEP)
 
         changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
@@ -159,7 +172,7 @@ class TestStaticAnalysisIntegration:
         described, so the two could disagree about what is wrong with the code.
         """
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
         (tmp_path / "deep.sh").write_text(self.DEEP)
 
         changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
@@ -185,8 +198,8 @@ class TestStaticAnalysisIntegration:
         finished and on disk.
         """
         review_file = tmp_path / "review.md"
-        original = "## Summary\nLooks good.\n\n## Verdict\nApprove"
-        review_file.write_text(original)
+        self._seed(review_file)
+        original = review_file.read_text()
         (tmp_path / "deep.sh").write_text(self.DEEP)
 
         def _boom(*_a, **_k):
@@ -202,8 +215,8 @@ class TestStaticAnalysisIntegration:
 
     def test_static_analysis_skipped_when_no_applicable_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
-        original = "## Summary\nLooks good.\n\n## Verdict\nApprove"
-        review_file.write_text(original)
+        self._seed(review_file)
+        original = review_file.read_text()
 
         changed_files = [{"path": "README.md", "additions": 5, "deletions": 0}]
         job = self._job(tmp_path, review_file, changed_files)
@@ -214,7 +227,7 @@ class TestStaticAnalysisIntegration:
 
     def test_static_analysis_clean_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
 
         clean_script = tmp_path / "clean.sh"
         clean_script.write_text("#!/bin/bash\necho hello\n")
@@ -234,7 +247,7 @@ class TestStaticAnalysisIntegration:
         base resolution was skipped, only `_static_items`'s later, violation-
         gated warning."""
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
         (tmp_path / "clean.sh").write_text("#!/bin/bash\necho hello\n")
 
         job = self._job(

@@ -51,12 +51,13 @@ the same reading the poster uses, and is resolved with the poster's
 the poster does, and the tracked tree only when the diff has no match — so a
 finding is not placed against one file and verified against another.
 
-Where a finding's body ends is `review.spans`'s. Both gates walk the review
-through `finding_spans` and remove what they drop through `drop_findings`,
-because two gates that measured a finding themselves measured it differently:
-one of them took the resolved finding below a dropped one out with it, and
-neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
-which findings this gate checks; it reads a location only where the poster can
+Where a finding's body ends is `review.spans`'s. Evidence verification walks
+the review through `finding_spans` and removes what it drops through
+`drop_findings`, because measuring a finding itself used to take the resolved
+finding below a dropped one out with it, and did not leave a `### ` sub-heading
+standing. The disprove gate marks each falsified finding `FALSIFIED` on the
+record instead: kept, never rendered. `VERIFY_FINDING_RE` selects which
+findings this gate checks; it reads a location only where the poster can
 place none, and never says where one stops.
 """
 

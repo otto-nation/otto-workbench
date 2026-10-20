@@ -16,7 +16,7 @@ import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import agent.diagnosis
@@ -48,9 +48,6 @@ import core.proc
 import pr.target
 from agent.registry import phase_skips
 from core.phases import Effort, Mode
-from review.document import (
-    SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
-)
 from review.paths import (
     read_review_meta, stamp_reviewed,
 )
@@ -64,7 +61,7 @@ from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
-from review.store import read_prior
+from review.store import read_prior, read_review, update_review
 from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
@@ -151,8 +148,7 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
     `job.static_results` agree: this run measured nothing and claims nothing.
     The next run with a real delta writes both.
     """
-    review_path = Path(job.review_file)
-    if not review_path.is_file():
+    if read_review(Path(job.review_file)) is None:
         return None
     changed_files = [f["path"] for f in job.pr.files]
     # Against the PR or stack base, the same ref `job.pr.files` was collected
@@ -185,9 +181,7 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
     if not section:
         return None
     job.static_results = results
-    review_path.write_text(set_section(
-        review_path.read_text(), SECTION_STATIC_ANALYSIS, section, before=SECTION_VERDICT,
-    ))
+    update_review(Path(job.review_file), lambda record: replace(record, static_analysis=section))
     return {
         "checkers_run": len(results),
         "files_checked": sum(r.files_checked for r in results),

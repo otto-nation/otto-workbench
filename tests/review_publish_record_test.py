@@ -244,3 +244,16 @@ def test_the_synthesis_fallback_stamps_the_same_status_on_meta_and_header(tmp_pa
     job = _job(tmp_path)
     outcome._write_mechanical_fallback(job, 2, _merged())
     _assert_meta_status_matches_header(job)
+
+
+def test_static_analysis_is_a_record_field(tmp_path, monkeypatch):
+    import review.orchestrate as orch
+    job = _job(tmp_path)
+    outcome._write_clean_review(job, 1, _merged())
+    monkeypatch.setattr(orch, "run_static_analysis", lambda *a, **k: [])
+    monkeypatch.setattr(orch, "format_static_analysis", lambda results, declined: "All checks passed.")
+    monkeypatch.setattr(orch, "added_lines", lambda *a, **k: None)
+    orch._inject_static_analysis_section(job)
+    assert read_review(Path(job.review_file)).record.static_analysis == "All checks passed."
+    text = Path(job.review_file).read_text()
+    assert text.index("## Static Analysis") < text.index("## Verdict")

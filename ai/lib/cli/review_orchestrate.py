@@ -59,9 +59,6 @@ import pr.target
 from pr.context import detect_repo
 from agent.registry import add_phase_skip_flags, phase_skips
 from core.phases import Effort, Mode
-from review.document import (
-    SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
-)
 from review.paths import (
     FILENAME_SESSION, read_review_meta, review_artifact_path, stamp_reviewed,
 )

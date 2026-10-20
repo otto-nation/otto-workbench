@@ -74,6 +74,12 @@ class TestTheSettledRule:
         comments = [_comment("kgn", BEFORE), _comment("me", AFTER)]
         assert _settled(record, comments) == {"t1"}
 
+    def test_an_unknown_login_counts_every_comment_as_theirs(self):
+        """No login to exclude: our own later reply reopens (the safe direction)."""
+        comments = [_comment("me", AFTER)]
+        assert pr.comments.spoken_since(comments, "", BEFORE) is True
+        assert pr.comments.spoken_since(comments, "me", BEFORE) is False
+
     def test_an_outcome_still_owed_is_never_settled(self):
         for owed in (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN, FixOutcome.DECLINED):
             record = FixRecord(items=[_outcome(outcome=owed)])

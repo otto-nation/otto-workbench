@@ -4,7 +4,9 @@ One GraphQL search covers every repo. The only nested connections are the ones
 the comments need requires — review threads, and the newest reviews and
 PR comments, each bounded and never paged — so a plan over dozens of PRs costs a
 few points of the hourly GraphQL budget. Thread comments, the connection whose
-cost would scale with discussion length, are never asked for.
+cost would scale with discussion length, are read only as far as the newest few
+per thread (`_THREAD_COMMENTS`), enough to see whether anyone spoke after a
+settlement.
 
 The plan fetches only the origin branches rows need into a private
 `refs/pr-batch/<hex>` namespace, claimed under the batch state root before
@@ -53,6 +55,7 @@ PLAN_SCHEMA_VERSION = 1
 # ceiling: a PR whose only unanswered feedback is older than its newest 100
 # reviews (or PR comments) plans no comments step; page them, as `pr comments`
 # does, once a PR carries that much top-level traffic.
+
 # The newest comments on each review thread, which is all `settlement.settled_ids`
 # reads: whether anyone spoke after a settlement was recorded. Unlike the two
 # connections above this one is nested under the threads, so its parents are

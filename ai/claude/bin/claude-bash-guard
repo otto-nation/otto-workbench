@@ -201,6 +201,76 @@ stage_is_filter() {
   [[ "|$STATUS_FILTERS|" == *"|$_STAGE_NAME|"* ]]
 }
 
+# True when STATEMENT files an issue or writes to a PR. Own function so other
+# agent_id checks stay theirs — this one is only the publishing command set.
+_statement_publishes() {
+  local statement="$1"
+  local re_gh_issue='^[[:space:]]*gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
+  local re_linear='^[[:space:]]*linear[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
+  local re_gh_pr='^[[:space:]]*gh[[:space:]]+pr[[:space:]]+(edit|comment|review|create)([[:space:]]|$)'
+  local re_pr_create='^[[:space:]]*pr[[:space:]]+create([[:space:]]|$)'
+  local re_pr_comments='^[[:space:]]*pr[[:space:]]+comments([[:space:]]|$)'
+  local re_pr_describe='^[[:space:]]*pr[[:space:]]+describe([[:space:]]|$)'
+  local re_post='(^|[[:space:]])--post([[:space:]]|$)'
+  [[ "$statement" =~ $re_gh_issue ]] && return 0
+  [[ "$statement" =~ $re_linear ]] && return 0
+  [[ "$statement" =~ $re_gh_pr ]] && return 0
+  [[ "$statement" =~ $re_pr_create ]] && return 0
+  if [[ "$statement" =~ $re_pr_comments && "$statement" =~ $re_post ]]; then
+    return 0
+  fi
+  if [[ "$statement" =~ $re_pr_describe && "$statement" =~ $re_post ]]; then
+    return 0
+  fi
+  _gh_api_publishes "$statement" && return 0
+  return 1
+}
+
+# True when STATEMENT is `gh api` with a mutating method on an issues/pulls path.
+_gh_api_publishes() {
+  local statement="$1" word method=""
+  local -a tokens
+  local -i i touches=0
+  read -ra tokens <<<"$statement"
+  (( ${#tokens[@]} >= 3 )) || return 1
+  [[ "${tokens[0]}" == gh && "${tokens[1]}" == api ]] || return 1
+  for ((i = 2; i < ${#tokens[@]}; i++)); do
+    word="${tokens[$i]}"
+    case "$word" in
+      -X|--method)
+        method="${tokens[i+1]:-}"
+        i=$((i + 1))
+        ;;
+      --method=*)
+        method="${word#--method=}"
+        ;;
+      -X?*)
+        method="${word#-X}"
+        ;;
+      *)
+        if [[ "$word" =~ (^|/)(issues|pulls)(/|$) ]]; then
+          touches=1
+        fi
+        ;;
+    esac
+  done
+  [[ "$touches" -eq 1 ]] || return 1
+  case "${method^^}" in
+    POST|PATCH|PUT|DELETE) return 0 ;;
+  esac
+  return 1
+}
+
+# True when any scanned statement publishes. Reads SCAN_STATEMENTS, the same
+# split every other rule in this file uses.
+_command_publishes() {
+  local statement
+  for statement in "${SCAN_STATEMENTS[@]}"; do
+    _statement_publishes "$statement" && return 0
+  done
+  return 1
+}
+
 # The one fork left on the hot path, and it stays.
 #
 # A bash-native extractor was measured at 0.27 ms against jq's 5.7 ms, and
@@ -549,6 +619,13 @@ _scan() {
 }
 
 _scan "$cmd"
+
+# A dispatched subagent reports deferrals to its parent; it does not file or
+# edit. Same command set as ai/pi/extensions/oneshot-publish-guard. Empty
+# agent_id is the main session and is left to the rules below.
+if [[ -n "$agent_id" ]] && _command_publishes; then
+  block 'A dispatched subagent does not file issues or post to a PR — report the deferral (what, why, suggested title) and any proposed PR text to the parent, which files or edits. See git-operations.md § Subagent Publishing.'
+fi
 
 # ── Whole-command rules ──────────────────────────────────────────────────────
 # These scan the command as written. Order is by specificity: the first rule to

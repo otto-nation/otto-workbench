@@ -71,6 +71,16 @@ JSON
   [ "$status" -eq 0 ]
   run jq -c '.packages[0].extensions' "$LIVE"
   [ "$output" = '["!extensions/linear/**"]' ]
+  run jq -r '.packages[0].source' "$LIVE"
+  [ "$output" = 'git:github.com/usemaximum/pi-extensions@v1.2.3' ]
+}
+
+@test "no warning when an object entry already excludes linear among other filters" {
+  echo '{"packages":[{"source":"git:github.com/usemaximum/pi-extensions","extensions":["!extensions/x/**","!extensions/linear/**"]}]}' > "$LIVE"
+
+  _run_migration
+  [ "$status" -eq 3 ]
+  [[ "$output" != *WARN* ]]
 }
 
 @test "leaves an object entry with the operator's own filters alone" {

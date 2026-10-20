@@ -30,7 +30,7 @@ migration_20261020_pi_extensions_drop_linear() {
   [[ -n "$live" ]] || return "$MIGRATION_NOOP"
 
   if [[ "$(jq -r 'type' <<< "$live")" == "object" ]]; then
-    [[ "$(jq -cS . <<< "$live")" == "$(jq -cS . <<< "$wanted")" ]] && return "$MIGRATION_NOOP"
+    jq -e '(.extensions // []) | index("!extensions/linear/**")' <<< "$live" > /dev/null && return "$MIGRATION_NOOP"
     warn "Pi's pi-extensions entry in $PI_SETTINGS_FILE carries its own filters — add \"!extensions/linear/**\" to its \"extensions\" by hand"
     return "$MIGRATION_NOOP"
   fi
@@ -38,9 +38,10 @@ migration_20261020_pi_extensions_drop_linear() {
   # Sibling temp file and rename, so a failure mid-write leaves the original.
   local tmp="$PI_SETTINGS_FILE.tmp.$$"
   if ! jq --arg id "$ident" --argjson wanted "$wanted" '
-      .packages |= map(if type == "string" and sub("@[^@/:]+$"; "") == $id then $wanted else . end)
+      .packages |= map(if type == "string" and sub("@[^@/:]+$"; "") == $id then . as $live | ($wanted | .source = $live) else . end)
     ' "$PI_SETTINGS_FILE" > "$tmp"; then
     rm -f "$tmp"
+    warn "Could not rewrite the pi-extensions entry in $PI_SETTINGS_FILE; left unchanged"
     return 1
   fi
   mv "$tmp" "$PI_SETTINGS_FILE"

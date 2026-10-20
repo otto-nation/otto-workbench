@@ -228,8 +228,53 @@ def run_ids() -> list[str]:
 
 
 def latest_run_id() -> str | None:
+    """The newest saved run on this machine, finished included."""
     ids = run_ids()
     return ids[-1] if ids else None
+
+
+def _try_load(run_id: str) -> Run | None:
+    """`load`, or None for a run that is unreadable or reaped since `run_ids()` listed it."""
+    try:
+        return load(run_id)
+    except (RunNotFound, ValueError, KeyError, TypeError, OSError):
+        return None
+
+
+def _covering_runs(repo: str) -> list[Run]:
+    """Readable runs with an item whose repo matches *repo*, case-folded, oldest first."""
+    wanted = repo.casefold()
+    runs = (_try_load(run_id) for run_id in run_ids())
+    return [run for run in runs
+            if run and any(item.repo.casefold() == wanted for item in run.items)]
+
+
+def ids_covering(repo: str) -> list[str]:
+    """Run ids with an item whose repo matches *repo*, case-folded, oldest first.
+
+    A run whose state cannot be read is skipped, as it is by `unfinished_covering`.
+    """
+    return [run.id for run in _covering_runs(repo)]
+
+
+def unfinished_covering(repo: str) -> list[str]:
+    """`ids_covering(repo)` narrowed to runs not yet finished, oldest first."""
+    return [run.id for run in _covering_runs(repo) if run.status not in FINISHED_RUN]
+
+
+def default_run_id(repo: str | None) -> str | None:
+    """The run a no-id `pr batch` read should show.
+
+    Newest unfinished run covering *repo*; else the newest covering *repo*;
+    else `latest_run_id()`. *repo* None, empty, or unmatched is the last arm.
+    """
+    if not repo:
+        return latest_run_id()
+    covering = _covering_runs(repo)
+    unfinished = [run.id for run in covering if run.status not in FINISHED_RUN]
+    if unfinished:
+        return unfinished[-1]
+    return covering[-1].id if covering else latest_run_id()
 
 
 def state_mtime(run_id: str) -> float:

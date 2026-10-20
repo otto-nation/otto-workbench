@@ -126,6 +126,7 @@ def _ceiling_counts(repo: str) -> dict | None:
     except json.JSONDecodeError:
         return None
 
+
 def _issues_line(repo: str) -> str:
     """Where this repo files issues, as a line the agent reads in context.
 
@@ -147,6 +148,7 @@ def _issues_line(repo: str) -> str:
             f" {config.workbench_config.ISSUE_PROVIDER_KEY} PROVIDER"
         )
     return f"Issue tracker: {provider}"
+
 
 def _pr_template_line(repo: str) -> str:
     """Which PR template this repo ships, and what sections it requires.
@@ -197,6 +199,7 @@ def _instructions_line(repo: str) -> str | None:
     """
     hint = core.project_context.migration_hint(core.project_context.resolve(Path(repo)))
     return f"Instructions file: {hint}" if hint else None
+
 
 def run() -> None:
     lines: list[str] = []

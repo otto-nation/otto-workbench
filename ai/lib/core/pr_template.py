@@ -87,7 +87,8 @@ _HEADER_PREFIX = "## "
 # HTML comments only: a required section that says "Optionally add" or
 # "If low risk" in prose must stay required. The inner pattern is the one
 # templates actually write ("delete section if no issue", "Remove this section
-# if none").
+# if none"). Other phrasings ("delete the section") do not match, so those
+# sections stay required, which fails safe.
 _HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.DOTALL)
 _DELETABLE_SECTION = re.compile(r"(?i)(?:delete|remove)(?: this)? section")
 

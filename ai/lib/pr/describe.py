@@ -134,8 +134,10 @@ def _build_prompt(
     return f"""You are revising the description of an open pull request so it matches \
 {origin} and the work the branch actually contains.
 
-PR template — {core.pr_template.DELETABLE_SECTION_RULE} Do not add or rename
-headers:
+{core.pr_template.DELETABLE_SECTION_RULE}
+Do not add or rename headers.
+
+PR template:
 {template}
 
 Current PR title:

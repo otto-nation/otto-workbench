@@ -5292,6 +5292,25 @@ One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
 
+### core/strict.py
+
+Strict reading of a dataclass from JSON someone else wrote.
+
+`core.serde.from_dict` is lenient on purpose: the files it reads are caches
+and state this workbench wrote itself, and a value that will not coerce is
+better dropped to its default than allowed to fail a run. A document an agent
+wrote is the opposite case. Dropping what does not fit is a silent repair, and
+the reader has to say exactly what is wrong so the agent can fix it.
+
+`load_strict` checks a parsed JSON value against a dataclass and reports every
+disagreement by JSON path (`$.findings[2].id`). Only once there are none does
+it build the instance, through the same `from_dict`. Both readers dispatch on
+`core.serde.classify`, so the two cannot disagree about what a hint means.
+
+`example_json` renders an instance the way `to_dict` writes it. A prompt that
+shows an agent the shape to write shows it with this, so the example and the
+reader are one schema.
+
 ### core/suite_watch.py
 
 Supervise a test-suite child and say what it is doing.

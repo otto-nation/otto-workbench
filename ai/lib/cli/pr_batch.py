@@ -8,6 +8,8 @@
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
+Omitting RUN_ID on resume/status/next/cancel picks this checkout's newest unfinished covering run, else its newest covering, else the latest on the machine. cancel without an id refuses when more than one unfinished run covers this checkout.
+
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
@@ -39,6 +41,7 @@ import config.workbench_config
 import core.report
 import core.run_lock
 import core.serde
+import pr.target
 from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step
 from batch.requests import Cancel, Decide, Outcome
 from batch.store import Role
@@ -86,6 +89,10 @@ by `pr batch next`) says why, names any prep, and lists the
 without asking.
 """
 
+_DEFAULT_RUN = (
+    "this repo's newest unfinished covering run, else its newest covering, else the latest"
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pr batch", description=__doc__.split("\n")[0])
@@ -123,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(it is always in the run's logs/)")
 
     m = sub.add_parser("resume", help="Continue a run")
-    m.add_argument("run_id", nargs="?", help="Run to continue (default: the latest)")
+    m.add_argument("run_id", nargs="?", help=f"Run to continue (default: {_DEFAULT_RUN})")
     m.add_argument("--verbose", action="store_true",
                    help="Also stream each step's stderr as step_log events")
 
@@ -137,11 +144,11 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--commit", default="", help="Commit that settles the decision, for actions that cite one")
 
     c = sub.add_parser("cancel", help="Stop the run; a recorded cancel is final")
-    c.add_argument("run_id", nargs="?", help="Run to cancel (default: the latest)")
+    c.add_argument("run_id", nargs="?", help=f"Run to cancel (default: {_DEFAULT_RUN})")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
 
     s = sub.add_parser("status", help="Print a run's report: what needs action, and why (JSON)")
-    s.add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
+    s.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
     view = s.add_mutually_exclusive_group()
     view.add_argument("--full", action="store_true",
                       help="Print the raw run state instead of the report")
@@ -150,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     _offline(s)
 
     n = sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)")
-    n.add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
+    n.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
     _offline(n)
     return parser
 
@@ -168,8 +175,25 @@ def _err(message: str) -> int:
     return 1
 
 
+def _cwd_repo() -> str | None:
+    identity = pr.target.repo_identity_from_origin(os.getcwd())
+    return identity.label if identity else None
+
+
+def _warn_other_active(chosen: str) -> None:
+    for run_id in batch.store.run_ids():
+        if run_id != chosen and _active(run_id):
+            print(f"pr batch: other active run {run_id} is being driven", file=sys.stderr)
+
+
 def _run_id(given: str | None) -> str | None:
-    return given or batch.store.latest_run_id()
+    """*given*, or `default_run_id` for this checkout; names other live drivers on stderr."""
+    if given:
+        return given
+    chosen = batch.store.default_run_id(_cwd_repo())
+    if chosen:
+        _warn_other_active(chosen)
+    return chosen
 
 
 def _cfg(dirs: list[str]):
@@ -532,7 +556,17 @@ def _cmd_resolve(args, bin_dir: Path) -> int:
     return EXIT_OK if applied else 1
 
 
+def _unfinished_covering(repo: str) -> list[str]:
+    return [run_id for run_id in batch.store.ids_covering(repo)
+            if batch.store.load(run_id).status not in FINISHED_RUN]
+
+
 def _cmd_cancel(args, bin_dir: Path) -> int:
+    if not args.run_id and (repo := _cwd_repo()):
+        candidates = _unfinished_covering(repo)
+        if len(candidates) > 1:
+            return _err("more than one unfinished run covers this repo "
+                        f"({', '.join(candidates)}); pass a run id")
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to cancel")

@@ -908,7 +908,7 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to continue (default: the latest). |
+| `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
 | `--verbose` | Also stream each step's stderr as step_log events. |
 
 **`pr batch resolve`** — Answer one decision
@@ -926,14 +926,14 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to cancel (default: the latest). |
+| `[<run-id>]` | Run to cancel (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
 | `--kill` | Also terminate running steps. |
 
 **`pr batch status`** — Print a run's report: what needs action, and why (JSON)
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to show (default: the latest). |
+| `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
 | `--full` | Print the raw run state instead of the report. Not with `--decision`. |
 | `--decision` `<id>` | Print one decision with its full payload and log tail. Not with `--full`. |
 | `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
@@ -942,7 +942,7 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to show (default: the latest). |
+| `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
 | `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
 
 **`pr gc`** — Clean up stale PR artifacts

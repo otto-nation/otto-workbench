@@ -19,6 +19,7 @@ from batch.requests import Cancel, Decide  # noqa: E402
 import cli.pr  # noqa: E402
 import core.tool_parser  # noqa: E402
 import cli.pr_batch  # noqa: E402
+import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch_session_support import holding, open_session, seed, stops_at  # noqa: E402
 from cli.registry import COMMANDS  # noqa: E402
@@ -110,6 +111,21 @@ def _saved_run_with_decisions(n=1, *, kind=batch.model.DecisionKind.OPEN_FINDING
 
 def _saved_run_with_decision():
     return _saved_run_with_decisions(1)
+
+
+def _origin(monkeypatch, label):
+    monkeypatch.setattr(
+        pr.target, "repo_identity_from_origin",
+        lambda cwd=None: pr.target.RepoIdentity(label=label, key="r", host="github.com"))
+
+
+def _seeded(run_id, *, repo="o/r", status=batch.model.RunStatus.WAITING):
+    run = _run_with_decisions(1)
+    run.id = run_id
+    run.items[0].repo = repo
+    run.items[0].key = f"{repo}#1"
+    run.status = status
+    return seed(run)
 
 
 def test_resolve_applies_directly_when_no_scheduler_holds_the_run(capsys):
@@ -223,6 +239,46 @@ def test_status_defaults_to_the_latest_run(capsys):
     run = _saved_run_with_decision()
     assert _main(["batch", "status"]) == 0
     assert json.loads(capsys.readouterr().out)["run"]["id"] == run.id
+
+
+def test_status_defaults_to_this_repos_waiting_run(monkeypatch, capsys):
+    waiting = _seeded("20261001T120000-wait", repo="o/r")
+    _seeded("20261002T120000-done", repo="other/r", status=batch.model.RunStatus.DONE)
+    _origin(monkeypatch, "o/r")
+    assert _main(["batch", "status", "--offline"]) == 0
+    assert json.loads(capsys.readouterr().out)["run"]["id"] == waiting.id
+
+
+def test_status_names_other_active_runs_on_stderr(monkeypatch, capsys):
+    waiting = _seeded("20261001T120000-wait", repo="o/r")
+    other = _seeded("20261002T120000-live", repo="other/r")
+    _origin(monkeypatch, "o/r")
+    with holding(other.id, "driver", "pr batch resume"):
+        assert _main(["batch", "status", "--offline"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["run"]["id"] == waiting.id
+    assert f"other active run {other.id}" in captured.err
+
+
+def test_cancel_without_id_refuses_two_unfinished_matching_runs(monkeypatch, capsys):
+    older = _seeded("20261001T120000-aaaa", repo="o/r")
+    newer = _seeded("20261002T120000-bbbb", repo="o/r")
+    _origin(monkeypatch, "o/r")
+    assert _main(["batch", "cancel"]) == 1
+    err = capsys.readouterr().err
+    assert older.id in err and newer.id in err
+    assert batch.store.load(older.id).status is batch.model.RunStatus.WAITING
+    assert batch.store.load(newer.id).status is batch.model.RunStatus.WAITING
+
+
+def test_cancel_without_id_picks_the_unfinished_matching_run(monkeypatch, capsys):
+    waiting = _seeded("20261001T120000-wait", repo="o/r")
+    done = _seeded("20261002T120000-done", repo="o/r", status=batch.model.RunStatus.DONE)
+    _origin(monkeypatch, "o/r")
+    assert _main(["batch", "cancel"]) == 0
+    assert json.loads(capsys.readouterr().out)["run"] == waiting.id
+    assert batch.store.load(waiting.id).status is batch.model.RunStatus.CANCELLED
+    assert batch.store.load(done.id).status is batch.model.RunStatus.DONE
 
 
 def test_cancel_an_idle_run_marks_it_cancelled(capsys):

@@ -228,8 +228,31 @@ def run_ids() -> list[str]:
 
 
 def latest_run_id() -> str | None:
+    """The newest saved run on this machine, finished included."""
     ids = run_ids()
     return ids[-1] if ids else None
+
+
+def ids_covering(repo: str) -> list[str]:
+    """Run ids with an item whose repo matches *repo*, case-folded, oldest first."""
+    wanted = repo.casefold()
+    return [run_id for run_id in run_ids()
+            if any(item.repo.casefold() == wanted for item in load(run_id).items)]
+
+
+def default_run_id(repo: str | None) -> str | None:
+    """The run a no-id `pr batch` read should show.
+
+    Newest unfinished run covering *repo*; else the newest covering *repo*;
+    else `latest_run_id()`. *repo* None, empty, or unmatched is the last arm.
+    """
+    if not repo:
+        return latest_run_id()
+    covering = ids_covering(repo)
+    if not covering:
+        return latest_run_id()
+    unfinished = [run_id for run_id in covering if load(run_id).status not in FINISHED_RUN]
+    return (unfinished or covering)[-1]
 
 
 def state_mtime(run_id: str) -> float:

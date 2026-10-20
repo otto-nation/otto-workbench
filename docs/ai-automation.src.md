@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 622 -->
+<!-- doc-budget: 624 -->
 
 # AI Automation
 
@@ -169,7 +169,9 @@ next write overwrites the edit; nothing reads it back.
 - **A review directory with no `review.json`** — one written before the record
   existed — is stale. The next `pr review` regenerates it from scratch; a
   re-review of it runs full rather than incremental.
-- `pr review --repair` re-ingests the group files and renders the review again.
+- `pr review --repair` re-syncs the recorded summary when `review.json` already
+  loads. It rebuilds from the group files only when there is no readable
+  `review.json` (stale or missing).
 
 ### How a review's verdict is decided
 

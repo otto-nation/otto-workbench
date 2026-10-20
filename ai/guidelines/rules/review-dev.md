@@ -151,6 +151,8 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 | `meta.json` | yes | Run sidecar: SHAs, mode, status, dates, generator |
 | `session.jsonl` | yes | Agent cost/usage/errors |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |
+| `prior.json` | yes | Prior round's record — what a re-review reads |
+| `prior-meta.json` | yes | Prior round's sidecar, copied when a re-review archives |
 | `prior-findings.json` | yes | What became of each prior finding, and what settled it |
 | `prompt-*.md` | no (kept on failure) | Full prompts sent to agents |
 | `pipeline.json` | no | Resume state for multi-phase |

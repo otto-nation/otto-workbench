@@ -89,7 +89,7 @@ def test_an_agent_review_is_post_processed_and_stamped(tmp_path):
 
 def test_the_unchanged_review_carries_the_prior_record(tmp_path):
     prior = StoredReview(ingest_review(fixture_text("synthesis_pr", "input.md")), fixture_meta("synthesis_pr"))
-    job = _job(tmp_path, prior_review="unused")
+    job = _job(tmp_path)
     job.prior = prior
     job.preflight = PreflightData(diff="", commit_log="", file_contents={}, file_permissions={},
                                   instructions_md="", architecture_md="", delta_files=[],
@@ -226,7 +226,7 @@ def test_an_unchanged_review_does_not_resurrect_a_falsified_finding(tmp_path):
         [DisproveResult("S1", "FALSIFIED", "not reachable")],
     )
     prior = StoredReview(applied.record, fixture_meta("synthesis_pr"))
-    job = _job(tmp_path, prior_review="unused")
+    job = _job(tmp_path)
     job.prior = prior
     job.preflight = PreflightData(
         diff="", commit_log="", file_contents={}, file_permissions={},

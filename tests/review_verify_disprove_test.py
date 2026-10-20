@@ -16,7 +16,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review.spans
 from review.ingest import ingest_review
 from review.render import render_body
 from review.verify import DisproveResult, apply_disprove, parse_disprove_output
@@ -31,11 +30,6 @@ from review.verify import DisproveResult, apply_disprove, parse_disprove_output
 # here rather than passing twice on the same function.
 
 
-def _by_evidence_gate(text: str, ids: list[str]) -> str:
-    """What evidence verification leaves behind when it drops `ids`."""
-    return review.spans.drop_findings(text, ids)
-
-
 def _by_disprove_gate(text: str, ids: list[str]) -> str:
     """What apply_disprove leaves in the rendered body after falsifying `ids`."""
     results = [DisproveResult(fid, "FALSIFIED", "x") for fid in ids]
@@ -43,7 +37,6 @@ def _by_disprove_gate(text: str, ids: list[str]) -> str:
 
 
 GATES = [
-    pytest.param(_by_evidence_gate, 0, id="evidence"),
     pytest.param(_by_disprove_gate, 1, id="disprove"),
 ]
 
@@ -169,43 +162,6 @@ class TestEachGateLeavesExactlyThis:
     ):
         expected = (evidence_expected, disprove_expected)[expected_idx]
         assert gate(text, ids) == expected
-
-
-class TestRemoveDroppedFindings:
-    def test_remove_single(self):
-        text = (
-            "## Must fix\n"
-            "- **[M1]** **`file.go:1`** — issue one\n"
-            "- **[M2]** **`file.go:5`** — issue two\n"
-        )
-        result = _by_evidence_gate(text, ["M1"])
-        assert "issue one" not in result
-        assert "issue two" in result
-
-    def test_remove_with_continuation(self):
-        text = (
-            "- **[M1]** **`file.go:1`** — issue one\n"
-            "  continuation line\n"
-            "  more detail\n"
-            "- **[M2]** **`file.go:5`** — issue two\n"
-        )
-        result = _by_evidence_gate(text, ["M1"])
-        assert "issue one" not in result
-        assert "continuation line" not in result
-        assert "issue two" in result
-
-    def test_empty_dropped_list(self):
-        text = "- **[M1]** **`file.go:1`** — issue\n"
-        assert _by_evidence_gate(text, []) == text
-
-    def test_remove_last_finding(self):
-        text = (
-            "## Must fix\n"
-            "- **[M1]** **`file.go:1`** — only finding\n"
-        )
-        result = _by_evidence_gate(text, ["M1"])
-        assert "only finding" not in result
-        assert "## Must fix" in result
 
 
 # ── Disprove-it gate ─────────────────────────────────────────────────────────

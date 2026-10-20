@@ -19,7 +19,7 @@ Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
 carries its extent. Deduplication walks those records and drops a repeat by
 `FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
 record that never reaches the merged document rather than a span cut out of
-it. This module does not import `review.spans`.
+it.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -71,7 +71,7 @@ import re
 from dataclasses import dataclass, replace
 
 from review.grammar import (
-    FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
+    SEVERITY_KEY, TRIAGE_LINE_RE,
     DedupKey, FindingIdentity, parse_ledger_line,
 )
 from review.record import RecordFinding, ReviewRecord, SeveritySection
@@ -101,11 +101,10 @@ _REFERENCE_CUES = (
 
 
 # Every way a review names a finding: `[M1]`, and a cited bare `M1`. One pattern
-# over every prefix rather than one per prefix, because a rewrite may move a
-# reference from one severity to another — a duplicate filed under the wrong one
-# is merged into a survivor that carries the right one — and a pass per prefix
-# would then hand what it just wrote to the next pass. Which prefixes those are
-# is `review.grammar`'s `SEVERITY_KEY`, the same class every reader of a finding
+# over every prefix rather than one per prefix, because a rewrite may retarget a
+# reference onto a survivor of the same severity — and a pass per prefix would
+# then hand what it just wrote to the next pass. Which prefixes those are is
+# `review.grammar`'s `SEVERITY_KEY`, the same class every reader of a finding
 # ID goes through.
 _ID_REFERENCE_RE = re.compile(
     rf"\[({SEVERITY_KEY})(\d+)\]"
@@ -128,28 +127,6 @@ class FindingId:
 
     def __str__(self) -> str:
         return f"{self.prefix}{self.number}"
-
-
-def _declaration(line: str) -> FindingId | None:
-    """The ID `line` declares, or None when it declares none.
-
-    A finding declares its ID at the head of its own list item; every other
-    occurrence is a reference to a declaration. Only declarations get numbers,
-    because a reference can name a finding that evidence verification or
-    deduplication has since taken out of the review.
-    """
-    m = FINDING_ID_RE.match(line.strip())
-    return FindingId(m.group(2), int(m.group(3))) if m else None
-
-
-def _declared_ids(text: str, prefix: str) -> list[int]:
-    """The IDs `text` declares under `prefix`, in the order they first appear."""
-    ids: list[int] = []
-    for line in text.split("\n"):
-        declared = _declaration(line)
-        if declared and declared.prefix == prefix and declared.number not in ids:
-            ids.append(declared.number)
-    return ids
 
 
 def _declared_order(findings, key: str) -> list[int]:
@@ -213,32 +190,6 @@ def _renumbering(
             moves.setdefault(gone, moves[survivor])
             prefixes.add(gone.prefix)
     return _Renumbering(moves, frozenset(prefixes))
-
-
-def _gap_renumbering(
-    text: str, merged_into: dict[FindingId, FindingId],
-) -> _Renumbering:
-    """Where each ID `text` declares lands once the gaps between them close.
-
-    Every severity is read over the whole text rather than section by section:
-    a reference need not sit in the section that declares what it names, and a
-    declaration filed under the wrong severity is still a declaration — a map
-    that missed it would rewrite the declaration itself to `[removed]`.
-    """
-    declared = {
-        severity.key: _declared_ids(text, severity.key) for severity in SEVERITIES
-    }
-    return _renumbering(declared, merged_into)
-
-
-def renumber_findings(text: str) -> str:
-    """Close the gaps in every severity's IDs, taking every reference along.
-
-    References are rewritten through the same map as the declarations, so a
-    finding that cites another one still cites the same one afterwards, and one
-    that names a finding nothing declares any more becomes `[removed]`.
-    """
-    return _gap_renumbering(text, {}).rewrite(text)
 
 
 def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRecord:
@@ -362,7 +313,7 @@ class _DedupedRecords:
     Dedup keys on `(severity, dedup_key)`, so a same-issue finding at another
     severity is kept and the survivor always carries the same prefix. It is
     kept apart from `findings` because the gaps close across every severity at
-    once, after every section has been deduped.
+    once, after every finding has been deduped.
     """
 
     findings: tuple[RecordFinding, ...]

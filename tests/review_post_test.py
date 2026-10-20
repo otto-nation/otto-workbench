@@ -316,7 +316,7 @@ class TestDryRunIntegration:
     def test_dry_run_omits_prior_findings_from_body(self, tmp_path):
         """A ledger reaching review-post unstripped stays out of the posted body.
 
-        The full pipeline strips it in `post_process_findings`, so this covers
+        The full pipeline strips it in `post_process_record`, so this covers
         the path that skips that pass: a review written by the agent protocol
         directly, or a `--post` of a file never post-processed. Its IDs number
         the prior review, so posting them beside this review's findings shows a

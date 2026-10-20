@@ -17,7 +17,7 @@ When adding or modifying a review phase, verify these integration points:
 - `review/registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
 - `review/grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
 - `review/document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
-- `review/spans.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`, `drop_findings()`, `cut_spans()`. A pass that walks a review a finding at a time asks these rather than recognising the next head itself, and keeps only its own selection pattern (which findings it wants) over `FindingSpan.line`. Six passes once measured a body for themselves and cut the same review four different ways, one of them deleting the resolved finding below a dropped one
+- `review/ingest.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`. A pass that walks agent markdown a finding at a time asks these rather than recognising the next head itself. Ingest is the only remaining walker; finished reviews are records.
 - `review-post`: `renumber_for_posting()`, `classify_findings()` posting routing. `posted_id` is positional — reassigned on every round from the diff order — so nothing that has to survive to the next round may key on it. What survives is `FindingIdentity.stable_id`, which `format_inline_comment` writes into the posted comment as a `<!-- sid: -->` marker and `_match_thread_to_finding` reads back out. A pass comparing the words of a posted comment strips it first, the way `review_dedup` does; the fresh finding it is scored against carries none
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
@@ -73,7 +73,7 @@ optimistic half.
 The ledger is unioned across groups by `merge_records()` — where the strongest
 verdict wins, in `PriorDisposition.precedence` order (`Declined` beats
 `Still open` beats `Fixed`) — copied through by the synthesis templates, and
-stripped in `post_process_findings()` before renumbering, since its IDs number
+stripped in `post_process_record()` before renumbering, since its IDs number
 the prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`,
 `PriorDisposition`, the merge, the synthesis templates, or
 `_build_prior_section()`'s instruction means checking the others.
@@ -126,7 +126,7 @@ posting normally precedes any fix pass — so both marks arrive only on a review
 posted after one, which is the run these two answers exist for.
 
 `*(skipped — reason)*` is the second annotation vocabulary, written by the fix
-pass rather than by a review, and `is_skipped()` is its single owner. It is
+pass rather than by a review, and `Disposition.SKIPPED` is its single owner. It is
 what `review.fix._apply_outcomes` writes back for a `needs a person` outcome,
 the way it writes `*(declined — reason)*` for a declined one and ticks the box
 for a fix. A skip still belongs to the work set — the next `--fix` retries it —

@@ -1,11 +1,11 @@
 """What a review claims, checked against the tree it claims it about.
 
-`post_process_findings` is that check as a whole pass: a caller hands it a
-finished review file and gets back what verification did to it. Evidence
-checking, evidence stripping and the reconciliation are steps of that pass
-rather than a menu — run in another order they leave a review whose prose
-describes findings by IDs it no longer uses — so they are private and the pass
-is what callers reach for.
+`post_process_record` is that check as a whole pass: a caller hands it a
+finished review record and gets back what verification did to it. Evidence
+checking and the reconciliation are steps of that pass rather than a menu —
+run in another order they leave a review whose prose describes findings by
+IDs it no longer uses — so they are private and the pass is what callers
+reach for.
 
 Two gates run over a finished review and both only ever remove findings.
 
@@ -19,20 +19,21 @@ file does not carry, and stripping only the quote leaves the file holding text
 the quote no longer has, which makes a verbatim quote fail to match itself.
 
 The disprove gate is adversarial. Each must-fix and should-fix finding is
-challenged by an agent, and one that cannot survive the challenge is dropped
-before the review is posted. Reading that agent's verdicts back and applying
-them is here; whether the gate runs at all is `review.phases`'.
+challenged by an agent, and one that cannot survive the challenge is marked
+`FALSIFIED` on the record — kept, never rendered. Reading that agent's
+verdicts back and applying them is `apply_disprove`; whether the gate runs at
+all is `review.phases`'.
 
-The synthesis agent wrote the ``## Summary`` and the ``## Verdict`` before
-either gate ran, so both can describe findings that are no longer in the file.
-Regenerating them would cost the agent's qualitative assessment, which is the
-part of a review a reader cannot reconstruct from counts. So the prose stays
-and the review says what left it:
+The synthesis agent wrote the Summary and the Verdict before either gate ran,
+so both can describe findings that are no longer visible. Regenerating them
+would cost the agent's qualitative assessment, which is the part of a review
+a reader cannot reconstruct from counts. So the prose stays and the review
+says what left it:
 
-* A blockquote at the end of ``## Summary`` names each dropped finding by
+* A blockquote at the end of the Summary names each dropped finding by
   severity and path — not by ID, since renumbering has already reassigned
   those — and why it was dropped.
-* ``## Verdict`` is rewritten when the surviving counts no longer support the
+* The Verdict is rewritten when the surviving counts no longer support the
   stated action. A drop can only remove findings, so this only ever lowers a
   verdict: ``Request changes`` → ``Needs discussion`` → ``Approve``. A verdict
   the remaining findings still support is left exactly as written, and
@@ -45,20 +46,11 @@ re-running post-processing does not stack notes or re-lower a verdict.
 Which verdict a tally supports in the first place is `review.verdict`'s. The
 finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from `finding_location`,
-the same reading the poster uses, and is resolved with the poster's
+checks. It does not read the location: the path comes from the record, the
+same reading the poster uses, and is resolved with the poster's
 `review.format.resolve_path` — against the files the diff changed first, as
 the poster does, and the tracked tree only when the diff has no match — so a
 finding is not placed against one file and verified against another.
-
-Where a finding's body ends is `review.spans`'s. Evidence verification walks
-the review through `finding_spans` and removes what it drops through
-`drop_findings`, because measuring a finding itself used to take the resolved
-finding below a dropped one out with it, and did not leave a `### ` sub-heading
-standing. The disprove gate marks each falsified finding `FALSIFIED` on the
-record instead: kept, never rendered. `VERIFY_FINDING_RE` selects which
-findings this gate checks; it reads a location only where the poster can
-place none, and never says where one stops.
 """
 
 # doc-group: findings
@@ -74,21 +66,15 @@ from pathlib import Path
 import core.log
 import git.client
 from pr.domains import ReviewVerdict
-from review.document import (
-    SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, section_span, strip_sections,
-)
 from review.grammar import (
-    VERIFY_FINDING_RE, strip_line_suffix, strip_sid_markers,
+    VERIFY_FINDING_RE, strip_line_suffix,
 )
 from review.format import resolve_path
-from review.ingest import split_evidence
-from review.merge import renumber_findings, renumber_record
+from review.merge import renumber_record
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.render import finding_line
-from review.spans import drop_findings, finding_spans
 from review.types import (
-    SEVERITY_MUST, SEVERITY_SHOULD, FindingSpan, severity_by_key,
+    SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key,
 )
 from review.verdict import counts_prose, verdict_from_counts
 from core.text import plural
@@ -277,55 +263,6 @@ def _match_evidence(
     return detail
 
 
-def _verification_body(span: FindingSpan, head: str, text: str) -> str:
-    """The finding's own words: what follows the em dash, and the lines below it.
-
-    Read off the span, so the evidence a finding is checked against is the
-    evidence written under that finding and nothing written under the next.
-    """
-    below = [line.rstrip() for line in span.text_of(text).split("\n")[1:] if line.strip()]
-    return "\n".join([head, *below] if head else below)
-
-
-def _verification_finding(span: FindingSpan, text: str) -> dict | None:
-    """What this gate checks about one finding, or None when it checks none.
-
-    `VERIFY_FINDING_RE` decides *which* declarations are checked. The path
-    checked is the one `finding_spans` already read with `finding_location` —
-    the reading the poster places the comment with — so the evidence is matched
-    against the file the finding will be posted about. This gate used to read
-    the location a second time with its own pattern; every way the two
-    readings drifted (`:64,82`, `:_short`, `:~690`) stat'd a path no
-    filesystem holds and dropped a correct finding as "file not found".
-
-    A declaration naming no location the poster can place — `Makefile:3`,
-    which has neither an extension nor a slash, or `C:/src/x.py` — is checked
-    against the span it wrote, minus a line suffix. Skipping it instead would
-    let a must-fix with a quote nobody can find through the gate whenever its
-    file happens to have such a name. The two readings cannot disagree here:
-    the poster places no comment against this finding, so there is no file it
-    would be posted on for the gate to contradict. A declaration in the
-    prior-findings ledger is skipped — it reports the last review's finding,
-    and the file it names was quoted against a commit this one is not looking
-    at.
-    """
-    m = VERIFY_FINDING_RE.match(span.line)
-    if not m or span.reported:
-        return None
-    written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
-    return {
-        "id": f"{m.group(1)}{m.group(2)}",
-        "severity": m.group(1),
-        "path": span.finding.path or written,
-        "body": _verification_body(span, m.group(5), text),
-    }
-
-
-def _parse_findings_for_verification(text: str) -> list[dict]:
-    checked = (_verification_finding(span, text) for span in finding_spans(text))
-    return [finding for finding in checked if finding]
-
-
 def _verification_detail(
     finding: dict, evidence: str | None, wt_path: str,
     tracked: Callable[[], Collection[str]] = _no_tracked_files,
@@ -342,34 +279,6 @@ def _drop_reason(detail: dict) -> str:
     if detail.get("longest_match_prefix") is not None:
         reason += f" at char {detail['longest_match_prefix']}"
     return reason
-
-
-def _verify_findings(
-    text: str, wt_path: str, changed: Collection[str] = (),
-) -> tuple[str, dict]:
-    findings = _parse_findings_for_verification(text)
-    dropped: list[str] = []
-    details: list[dict] = []
-    tracked = functools.cache(lambda: _tracked_files(wt_path))
-    for f in findings:
-        if f["severity"] not in (SEVERITY_MUST, SEVERITY_SHOULD):
-            continue
-        evidence = _extract_evidence(f["body"])
-        detail = _verification_detail(f, evidence, wt_path, tracked, changed)
-        details.append(detail)
-        if not detail["match_result"]:
-            dropped.append(f["id"])
-            core.log.info(f"Dropping {f['id']} ({f['path']}): {_drop_reason(detail)}")
-    result = {
-        "findings_checked": len(details),
-        "findings_passed": len(details) - len(dropped),
-        "findings_dropped": len(dropped),
-        "dropped": dropped,
-        "details": details,
-    }
-    if dropped:
-        text = drop_findings(text, dropped)
-    return text, result
 
 
 @dataclass(frozen=True)
@@ -411,10 +320,6 @@ def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str])
     })
 
 
-def _strip_evidence_blocks(text: str) -> str:
-    return "\n".join(split_evidence(text.split("\n")).body)
-
-
 # ── Reconciling prose against dropped findings ───────────────────────────────
 
 _DROP_NOTE_MARKER = "<!-- verification-drops -->"
@@ -423,7 +328,7 @@ _DROP_NOTE_MARKER = "<!-- verification-drops -->"
 def _drop_note(details: list[dict], dropped: list[str]) -> str:
     """A blockquote naming every dropped finding and why it went.
 
-    Identified by severity and path rather than by ID: `renumber_findings` runs
+    Identified by severity and path rather than by ID: `renumber_record` runs
     after the drop, so the IDs the verification recorded no longer point at the
     findings that survived.
     """
@@ -438,23 +343,6 @@ def _drop_note(details: list[dict], dropped: list[str]) -> str:
     return "\n".join([_DROP_NOTE_MARKER, header, *lines])
 
 
-def _insert_drop_note(text: str, note: str) -> str:
-    span = section_span(text, SECTION_SUMMARY)
-    if span is None:
-        # No Summary to correct — the mechanical paths build theirs from this
-        # text afterwards, so the note goes above the findings it explains and
-        # ends up directly beneath the summary they generate.
-        first = re.search(r"^## ", text, re.MULTILINE)
-        if first is None:
-            return f"{text.rstrip()}\n\n{note}\n"
-        return f"{text[:first.start()]}{note}\n\n{text[first.start():]}"
-
-    body = span.body_of(text).rstrip()
-    return (
-        f"{text[:span.start]}{body}\n\n{note}\n\n{text[span.end:].lstrip(chr(10))}"
-    )
-
-
 def _revised_verdict(verdict: str, counts: dict[str, int], n_dropped: int) -> str:
     stated = ReviewVerdict.stated_in(verdict)
     supported = verdict_from_counts(counts)
@@ -462,36 +350,6 @@ def _revised_verdict(verdict: str, counts: dict[str, int], n_dropped: int) -> st
         return verdict
     return (f"{supported.prose} — {counts_prose(counts) or 'no findings'} after "
             f"evidence verification removed {n_dropped} finding{plural(n_dropped)}.")
-
-
-def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
-    """Lower a verdict the surviving findings no longer support.
-
-    Dropping only ever removes findings, so a stale verdict can only overstate
-    — the revision lowers, never raises, and leaves an unranked verdict alone.
-    """
-    span = section_span(text, SECTION_VERDICT)
-    if span is None:
-        return text
-    body = span.body_of(text)
-    revised = _revised_verdict(body, counts, n_dropped)
-    if revised == body:
-        return text
-    return f"{text[:span.start]}\n{revised}\n\n{text[span.end:].lstrip(chr(10))}"
-
-
-def _reconcile_dropped_findings(text: str, verification: dict) -> str:
-    """Make a review's prose account for the findings verification removed.
-
-    Runs after renumbering, so the counts it reads are the ones the finished
-    file reports.
-    """
-    dropped = verification.get("dropped") or []
-    if not dropped or _DROP_NOTE_MARKER in text:
-        return text
-
-    text = _revise_verdict(text, ReviewDocument(body=text).open_counts, len(dropped))
-    return _insert_drop_note(text, _drop_note(verification.get("details") or [], dropped))
 
 
 def _reconciled_record(record: ReviewRecord, verification: dict) -> ReviewRecord:
@@ -554,52 +412,12 @@ def apply_disprove(record: ReviewRecord, results: list[DisproveResult]) -> Dispr
 
 # ── The whole pass over a finished review ────────────────────────────────────
 
-def post_process_findings(
-    review_file: str, wt_path: str = "", changed_files: Collection[str] = (),
-) -> dict | None:
-    """Every gate and cleanup a finished review needs, run over it in place.
-
-    The verification report, or None when `review_file` does not exist — the
-    guard covers all of the sub-steps, so a caller gets no partial result from
-    a review that was never written. Without `wt_path` there is no tree to
-    check evidence against, so verification is skipped and only the cleanups
-    run; the report is None then too. `changed_files` are the paths the diff
-    changed: a bare or partial location resolves against them before the
-    tracked tree, as the poster resolves it.
-
-    The order is the contract rather than an implementation detail. The prior
-    findings ledger goes before renumbering because its IDs number the
-    *previous* review — left in, they both mislead a reader and skew the
-    renumbering of the findings this review actually has. The reconciliation
-    goes after, because it reads the counts the finished file reports and must
-    not name findings by IDs renumbering has since reassigned.
-    """
-    path = Path(review_file)
-    if not path.exists():
-        return None
-    text = path.read_text()
-    verification: dict | None = None
-    if wt_path:
-        text, verification = _verify_findings(text, wt_path, changed_files)
-        dropped = verification["dropped"]
-        if dropped:
-            core.log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
-    text = _strip_evidence_blocks(text)
-    text = strip_sid_markers(text)
-    text = strip_sections(text, [SECTION_PRIOR_FINDINGS])
-    text = renumber_findings(text)
-    if verification:
-        text = _reconcile_dropped_findings(text, verification)
-    path.write_text(text)
-    return verification
-
-
 def post_process_record(
     record: ReviewRecord, wt_path: str = "", changed_files: Collection[str] = (),
 ) -> PostProcessed:
     """Every gate and cleanup a finished review needs, as one record transform.
 
-    The order is `post_process_findings`'s, and still the contract: the ledger
+    The order is the contract: the ledger
     numbers the prior review, so it goes before renumbering; the drop note reads
     the finished counts, so it goes after.
     """

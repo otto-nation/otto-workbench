@@ -22,7 +22,6 @@ from core.proc import CmdResult
 import git.client
 import review.collect
 from gh.types import PRContext, PRMetadata
-from review.document import ReviewHeader
 from review.ingest import ingest_review
 from review.store import StoredReview
 from review.types import DeltaAttribution, ReviewJob, ReviewMeta
@@ -31,7 +30,7 @@ from review.types import DeltaAttribution, ReviewJob, ReviewMeta
 # ── _collect_delta ──────────────────────────────────────────────────────────
 
 
-def _delta_job(head_sha: str, prior_review: str = "") -> ReviewJob:
+def _delta_job(head_sha: str, prior_sha: str | None = None) -> ReviewJob:
     pr = PRMetadata(
         title="test",
         body="",
@@ -51,13 +50,11 @@ def _delta_job(head_sha: str, prior_review: str = "") -> ReviewJob:
         wt_path="/tmp/fake",
         review_file="/tmp/review.md",
         session_log="/tmp/session.log",
-        prior_review=prior_review,
     )
-    if prior_review:
-        header = ReviewHeader.parse(prior_review)
+    if prior_sha is not None:
         job.prior = StoredReview(
-            ingest_review(prior_review, strict=False),
-            ReviewMeta(head_sha=header.head_sha),
+            ingest_review("## Summary\nprior\n", strict=False),
+            ReviewMeta(head_sha=prior_sha),
         )
     return job
 
@@ -73,33 +70,31 @@ class TestCollectDeltaSameSha:
 
     def test_prior_sha_equals_head_sha_returns_empty(self):
         sha = "abc1234def5678901234567890abcdef12345678"
-        prior_review = f"<!-- head_sha: {sha} -->\nsome review content"
-        job = _delta_job(head_sha=sha, prior_review=prior_review)
+        job = _delta_job(head_sha=sha, prior_sha=sha)
         assert review.collect._collect_delta(job) == review.collect.DeltaScope()
 
     def test_abbreviated_prior_header_on_current_head_returns_empty(self):
         sha = "abc1234def5678901234567890abcdef12345678"
-        prior_review = f"<!-- head_sha: {sha[:7]} -->\nsome review content"
-        job = _delta_job(head_sha=sha, prior_review=prior_review)
+        job = _delta_job(head_sha=sha, prior_sha=sha[:7])
         assert review.collect._collect_delta(job) == review.collect.DeltaScope()
 
     def test_no_prior_review_returns_empty(self):
-        job = _delta_job(head_sha="abc123", prior_review="")
+        job = _delta_job(head_sha="abc123", prior_sha=None)
         assert review.collect._collect_delta(job) == review.collect.DeltaScope()
 
     def test_prior_review_without_sha_returns_empty(self):
-        job = _delta_job(head_sha="abc123", prior_review="no sha marker here")
+        job = _delta_job(head_sha="abc123", prior_sha="")
         assert review.collect._collect_delta(job) == review.collect.DeltaScope()
 
     def test_an_empty_prior_sidecar_names_the_sidecar(self, capsys):
-        job = _delta_job(head_sha="abc123", prior_review="no sha marker here")
+        job = _delta_job(head_sha="abc123", prior_sha="")
         assert review.collect._prior_sha_for_delta(job) == ""
         err = capsys.readouterr().err
         assert "sidecar" in err
         assert "SHA marker" not in err
 
     def test_a_full_review_has_no_delta_to_attribute(self):
-        delta = review.collect._collect_delta(_delta_job(head_sha="abc123", prior_review=""))
+        delta = review.collect._collect_delta(_delta_job(head_sha="abc123", prior_sha=None))
         assert delta.attribution is DeltaAttribution.NONE
         assert delta.proven_empty is False
 
@@ -124,7 +119,7 @@ class TestCollectDeltaMode:
         repo, prior_sha = self._repo_with_prior_commit(tmp_path)
         job = _delta_job(
             head_sha=git_out(repo, "rev-parse", "HEAD").strip(),
-            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
+            prior_sha=prior_sha,
         )
         return replace(job, wt_path=str(repo), mode=mode)
 
@@ -160,7 +155,7 @@ class TestCollectDeltaMode:
         job = replace(
             _delta_job(
                 head_sha="a-later-commit-this-worktree-does-not-hold",
-                prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
+                prior_sha=prior_sha,
             ),
             wt_path=str(repo), mode="self",
         )
@@ -204,7 +199,7 @@ class TestCollectDeltaSurface:
         repo, prior_sha = self._repo(tmp_path)
         job = _delta_job(
             head_sha=git_out(repo, "rev-parse", "HEAD").strip(),
-            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
+            prior_sha=prior_sha,
         )
         return replace(
             job, wt_path=str(repo), pr=replace(job.pr, files=files),
@@ -297,7 +292,7 @@ class TestCollectDeltaAncestry:
     def _job(repo: Path, prior_sha: str, files: list[str]) -> ReviewJob:
         job = _delta_job(
             head_sha=git_out(repo, "rev-parse", "HEAD").strip(),
-            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
+            prior_sha=prior_sha,
         )
         surface = [{"path": p, "additions": 1, "deletions": 0} for p in files]
         return replace(
@@ -560,7 +555,7 @@ class TestCollectDeltaEndsAtTheStampedHead:
 
         job = _delta_job(
             head_sha=stamped if head_sha is None else head_sha,
-            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
+            prior_sha=prior_sha,
         )
         surface = [
             {"path": p, "additions": 1, "deletions": 0}

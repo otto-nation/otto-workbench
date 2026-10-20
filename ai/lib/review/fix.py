@@ -274,8 +274,8 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit - 1].rstrip() + "\u2026"
 
 
-def _annotated(line: str, note: str) -> str:
-    """`line` with `note` appended, and nothing on it left to misread.
+def _annotated_static_line(line: str, note: str) -> str:
+    """A Static Analysis line with `note` appended, and nothing on it left to misread.
 
     Every annotation this module writes goes through here, because the hazard
     belongs to the append and not to any one caller. The patterns that read an
@@ -350,10 +350,10 @@ def _escape_annotation(detail: str) -> str:
     return " ".join(detail.replace("*(", "* (").split())
 
 
-def _fixed_line(
+def _fixed_static_line(
     line: str, outcome: ItemOutcome, pattern: re.Pattern[str] = FINDING_ID_RE,
 ) -> str:
-    """The declaration a landed fix leaves behind: ticked, and hedged if owed.
+    """The Static Analysis declaration a landed fix leaves behind: ticked, and hedged if owed.
 
     The tick and the caveat are one decision rather than two, so they are made
     in one place — a caller that ticked the box and then asked separately
@@ -386,7 +386,7 @@ def _fixed_line(
     if detail is None:
         return ticked
     caveat = f"unverified — {_escape_annotation(detail)}" if detail else "unverified"
-    return _annotated(ticked, f"*({caveat})*")
+    return _annotated_static_line(ticked, f"*({caveat})*")
 
 
 def _fixed_entry(described: str, outcome: ItemOutcome) -> str:
@@ -603,9 +603,9 @@ def apply_static_outcomes(section: str, outcomes: list[ItemOutcome]) -> str:
             continue
         outcome = by_id[match.group(2)]
         if outcome.outcome.counts_as_fixed:
-            lines[n] = _fixed_line(line, outcome, STATIC_ID_RE)
+            lines[n] = _fixed_static_line(line, outcome, STATIC_ID_RE)
         elif note := _annotation(outcome):
-            lines[n] = _annotated(line, note)
+            lines[n] = _annotated_static_line(line, note)
     return "\n".join(lines)
 
 

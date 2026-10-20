@@ -683,11 +683,9 @@ class ReviewJob:
     host: str = ""
     issue_link: str = ""
     issue_context: str = ""
-    prior_review: str = ""
     # The prior round as data. Annotated as a string for the reason `PRState`
     # is: `review.store` imports this module, so naming `StoredReview` here
-    # would close the cycle. `prior_review` is the record rendered for any
-    # prompt that still quotes it whole; Task 17 drops the field.
+    # would close the cycle.
     prior: "StoredReview | None" = None
     mode: Mode = Mode.PR
     generator_version: str = ""

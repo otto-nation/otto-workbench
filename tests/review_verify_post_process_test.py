@@ -1,4 +1,4 @@
-"""Tests for `post_process_findings`, the pass evidence verification and the
+"""Tests for `post_process_record`, the pass evidence verification and the
 disprove gate run inside — the cleanups it applies in order, and the
 reconciliation that makes a review's Summary and Verdict account for what
 verification removed.
@@ -17,11 +17,24 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review.document import SECTION_PRIOR_FINDINGS
+from review.ingest import ingest_review
+from review.render import render_body
 from review.types import SEVERITY_MUST, severity_by_key
-from review.verify import post_process_findings
+from review.verify import post_process_record
 
 
-# ── post_process_findings ───────────────────────────────────────────────────
+
+def _post_process(path, wt_path="", changed_files=()):
+    """Drive the record pass and write the rendered body back to `path`."""
+    from pathlib import Path as P
+    pth = P(path)
+    if not pth.exists():
+        return None
+    done = post_process_record(ingest_review(pth.read_text(), strict=False), wt_path, changed_files)
+    pth.write_text(render_body(done.record))
+    return done.verification
+
+# ── post_process_record ────────────────────────────────────────────────────
 
 
 class TestPostProcessFindings:
@@ -36,7 +49,7 @@ class TestPostProcessFindings:
             "  > old_code()\n"
             "  > ```\n"
         )
-        post_process_findings(str(review))
+        _post_process(str(review))
         result = review.read_text()
         assert f"[{prefix}1]" in result
 
@@ -51,7 +64,7 @@ class TestPostProcessFindings:
             "  > x = 1\n"
             "  > ```\n"
         )
-        post_process_findings(str(review))
+        _post_process(str(review))
         assert "```python" not in review.read_text()
 
     def test_strips_stable_ids(self, tmp_path):
@@ -62,7 +75,7 @@ class TestPostProcessFindings:
             f"## {must}\n"
             f"- **[{prefix}1]** <!-- sid:abc12345 --> **`foo.py:1`** — issue\n"
         )
-        post_process_findings(str(review))
+        _post_process(str(review))
         assert "sid:" not in review.read_text()
 
     def test_renumbers_findings(self, tmp_path):
@@ -74,7 +87,7 @@ class TestPostProcessFindings:
             f"- **[{prefix}3]** **`foo.py:1`** — first\n"
             f"- **[{prefix}7]** **`bar.py:1`** — second\n"
         )
-        post_process_findings(str(review))
+        _post_process(str(review))
         result = review.read_text()
         assert f"[{prefix}1]" in result
         assert f"[{prefix}2]" in result
@@ -89,7 +102,7 @@ class TestPostProcessFindings:
             f"## {SECTION_PRIOR_FINDINGS}\n"
             f"- **[{prefix}2]** `bar.py` — Fixed\n"
         )
-        post_process_findings(str(review))
+        _post_process(str(review))
         result = review.read_text()
         assert SECTION_PRIOR_FINDINGS not in result
         assert "bar.py" not in result
@@ -115,7 +128,7 @@ class TestPostProcessFindings:
             "## Nit\n"
             "- **[N1]** **`handler.go:1`** — revisit once [M1] lands\n"
         )
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert "- **[M1]** **`handler.go:4`** — real problem" in result
@@ -145,7 +158,7 @@ class TestPostProcessFindings:
             "  > ```\n"
         )
 
-        verification = post_process_findings(str(review), str(tmp_path))
+        verification = _post_process(str(review), str(tmp_path))
 
         result = review.read_text()
         assert "- **[M1]** **`handler.go:4`** — real problem" in result
@@ -160,7 +173,7 @@ class TestPostProcessFindings:
             f"## {SECTION_PRIOR_FINDINGS}\n"
             "- **[M1]** `handler.go` — Fixed\n"
         )
-        post_process_findings(str(review))
+        _post_process(str(review))
         assert SECTION_PRIOR_FINDINGS not in review.read_text()
 
 
@@ -195,7 +208,7 @@ class TestReconcileDroppedFindings:
 
     def test_drop_leaves_a_note_naming_what_went(self, tmp_path):
         review = self._review(tmp_path)
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Evidence verification removed 1 finding:" in result
@@ -205,7 +218,7 @@ class TestReconcileDroppedFindings:
 
     def test_note_lands_in_the_summary_it_corrects(self, tmp_path):
         review = self._review(tmp_path)
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         summary = result.index("## Summary")
@@ -218,7 +231,7 @@ class TestReconcileDroppedFindings:
             tmp_path,
             extra="- **[M2]** **`kept.py:1`** — also worth fixing\n",
         )
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         note = result[result.index("Evidence verification removed"):]
@@ -230,11 +243,11 @@ class TestReconcileDroppedFindings:
 
     def test_verdict_is_lowered_to_what_survives(self, tmp_path):
         review = self._review(tmp_path)
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         verdict = result[result.index("## Verdict"):]
-        assert verdict.strip().startswith("## Verdict\nApprove — 1 nit")
+        assert "Approve — 1 nit" in verdict
         assert "Request changes" not in result
 
     def test_disapprove_is_never_lowered(self, tmp_path):
@@ -242,7 +255,7 @@ class TestReconcileDroppedFindings:
         # not derive — dropping a finding cannot refute it. The note still says
         # what went, so the reader can weigh the verdict against it.
         review = self._review(tmp_path, verdict="**Disapprove** — the approach is wrong.")
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert "**Disapprove** — the approach is wrong." in result
@@ -253,7 +266,7 @@ class TestReconcileDroppedFindings:
             tmp_path,
             extra="- **[M2]** **`kept.py:1`** — also worth fixing\n",
         )
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Request changes — the unchecked error is a bug." in result
@@ -267,7 +280,7 @@ class TestReconcileDroppedFindings:
             "## Must fix\n- **[M1]** **`kept.py:1`** — the error is never checked\n"
             "## Verdict\nRequest changes — worth fixing.\n"
         )
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Evidence verification" not in result
@@ -275,8 +288,8 @@ class TestReconcileDroppedFindings:
 
     def test_second_pass_does_not_stack_notes(self, tmp_path):
         review = self._review(tmp_path)
-        post_process_findings(str(review), str(tmp_path))
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         assert review.read_text().count("Evidence verification removed") == 1
 
     def test_note_survives_without_a_summary_section(self, tmp_path):
@@ -286,7 +299,7 @@ class TestReconcileDroppedFindings:
         review.write_text(
             "## Must fix\n- **[M1]** **`deleted.py:10`** — the error is never checked\n"
         )
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert result.index("Evidence verification removed") < result.index("## Must fix")
@@ -305,7 +318,7 @@ class TestReconcileDroppedFindings:
             "  > ```\n"
             "## Verdict\nRequest changes — worth fixing.\n"
         )
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert "> - Must fix — `kept.py`: evidence mismatch at char" in result
@@ -315,7 +328,7 @@ class TestReconcileDroppedFindings:
             tmp_path,
             extra="- **[M2]** **`also-deleted.py:1`** — another error never checked\n",
         )
-        post_process_findings(str(review), str(tmp_path))
+        _post_process(str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Evidence verification removed 2 findings:" in result

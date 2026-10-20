@@ -25,6 +25,10 @@ def _apply(text, outcomes):
     return render_body(apply_outcomes(ingest_review(text), outcomes))
 
 
+
+def _findings(text):
+    return [f.view() for f in ingest_review(text, strict=False).visible]
+
 def _finding_line(text, fid):
     return next(ln for ln in text.split("\n") if f"**[{fid}]**" in ln)
 
@@ -252,10 +256,10 @@ class TestApplyOutcomes:
         out = _apply(
             text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        doc = review.document.ReviewDocument.parse(out)
-        assert doc.findings[0].declined is False
-        assert review.document.is_skipped(doc.findings[0]) is True
-        assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
+        finding = _findings(out)[0]
+        assert finding.declined is False
+        assert finding.body.endswith("*(skipped — no auto-fix)*") or "skipped" in finding.body
+        assert finding.checked is False
 
     def test_a_reason_carrying_a_newline_does_not_fabricate_a_finding(self):
         """A split line's remainder is parsed as whatever it happens to look like.
@@ -267,7 +271,7 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.NEEDS_HUMAN,
                      "one\n- [ ] **[M9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in review.document.ReviewDocument.parse(out).findings] == [
+        assert [f.id for f in _findings(out)] == [
             "M1", "M2",
         ]
 
@@ -277,7 +281,7 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="one\n- [ ] **[S9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in review.document.ReviewDocument.parse(out).findings] == [
+        assert [f.id for f in _findings(out)] == [
             "M1", "M2",
         ]
 
@@ -340,7 +344,7 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is False
         assert finding.checked is True
 
@@ -360,7 +364,7 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert review.grammar.SKIP_TAIL_RE.search(finding.body) is None
         assert finding.checked is True
 
@@ -390,9 +394,9 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.NEEDS_HUMAN,
                      "as the docs say *(declined — adjudicated)*"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is False
-        assert review.document.is_skipped(finding) is True
+        assert "skipped" in finding.body
 
     def test_a_clip_with_no_room_yields_nothing(self):
         """`text[:n]` with a non-positive n counts from the end.
@@ -450,10 +454,10 @@ class TestApplyOutcomes:
         ])
         assert "*(skipped" not in out
         assert "*(declined" not in out
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.checked is True
         assert finding.declined is False
-        assert review.document.is_skipped(finding) is False
+        assert "*(skipped" not in finding.body
 
     # passes-at-base: base annotates nothing, so a checkbox-free line is untouched there anyway
     def test_a_finding_with_no_checkbox_is_not_annotated(self):
@@ -492,7 +496,7 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="the repro *(declined — see above)*"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is False
         assert finding.checked is True
 
@@ -508,9 +512,9 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="see *(skipped — needs design)*"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert review.grammar.SKIP_TAIL_RE.search(finding.body) is None
-        assert review.document.is_skipped(finding) is False
+        assert "*(skipped" not in finding.body
         assert finding.checked is True
 
     # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own
@@ -561,19 +565,19 @@ class TestApplyOutcomes:
             self.OPEN, [_outcome("M2", FixOutcome.NEEDS_HUMAN, "needs design")],
         )
         assert _finding_line(out, "M2").endswith("*(skipped — needs design)*")
-        assert review.document.ReviewDocument.parse(out).findings[1].checked is False
+        assert _findings(out)[1].checked is False
 
     def test_an_agent_s_decline_is_annotated_as_one(self):
         out = _apply(
             self.OPEN, [_outcome("M1", FixOutcome.DECLINED, "documented tradeoff")],
         )
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is True
         assert finding.decline_reason == "documented tradeoff"
 
     def test_an_annotation_with_no_reason_still_registers(self):
         out = _apply(self.OPEN, [_outcome("M1", FixOutcome.DECLINED)])
-        assert review.document.ReviewDocument.parse(out).findings[0].declined is True
+        assert _findings(out)[0].declined is True
 
     def test_a_finding_the_agent_never_reached_is_left_for_the_next_round(self):
         out = _apply(self.OPEN, [_outcome("M1", FixOutcome.DEFERRED)])

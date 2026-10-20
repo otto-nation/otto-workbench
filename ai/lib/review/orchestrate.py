@@ -61,7 +61,6 @@ from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
-from review.render import render_review
 from review.store import read_prior, read_review, update_review
 from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
@@ -456,12 +455,6 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         include_generated=args.generated,
     )
     job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
-    # A prior from before review.json is stale: the re-review runs full rather
-    # than parsing prior.md back.
-    if job.prior is not None:
-        job.prior_review = render_review(
-            job.prior.record, job.prior.meta, banner=False,
-        )
 
     job.throttle = QuotaThrottle()
     # Handed to us, not derived: --repo-dir may be a detached review worktree,

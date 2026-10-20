@@ -1,6 +1,4 @@
-"""Tests for the findings `ReviewDocument` reads out of a review's text — every
-reader takes them from `ReviewDocument.parse(text).findings`.
-"""
+"""Tests for the findings `ReviewDocument` reads off a stored review's record."""
 
 import sys
 from pathlib import Path
@@ -9,12 +7,17 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from review.document import ReviewDocument
+from review.ingest import ingest_review
 from review.types import Finding
+
+
+def _doc(text: str) -> ReviewDocument:
+    return ReviewDocument(record=ingest_review(text, strict=False))
 
 
 def _findings(text: str) -> list[Finding]:
     """The findings a review's text declares, read the way every reader does."""
-    return ReviewDocument.parse(text).findings
+    return _doc(text).findings
 
 
 class TestFindings:
@@ -294,7 +297,7 @@ class TestFindings:
     def test_a_checked_finding_is_declared_though_open_counts_omits_it(self):
         """The two readings differ deliberately: `open_counts` reports what is
         still outstanding, `findings` reports every declaration."""
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- [x] **[M1]** **`a.go:1`** — done\n"
             "- [ ] **[M2]** **`b.go:2`** — open\n"

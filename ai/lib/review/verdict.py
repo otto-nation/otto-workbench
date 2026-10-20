@@ -6,7 +6,7 @@ prose, whether the run states a verdict at all, and the body a mechanically
 merged review carries when no synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
-a judgement — a review file parses the same way whatever this module decides.
+a judgement — a stored review reads the same way whatever this module decides.
 
 A review where no group reported — every agent failed, so its header says
 `status: error` — records no verdict: its empty tally means nothing was read,
@@ -23,7 +23,7 @@ from dataclasses import replace
 
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
-from review.document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
+from review.document import ReviewDocument
 from review.record import ReviewRecord
 from review.types import SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
 from core.text import plural
@@ -39,7 +39,9 @@ def open_counts(doc: ReviewDocument | None) -> dict[str, int]:
     reader that does have a separate answer, and takes the same nullable
     document to give it.
     """
-    return doc.open_counts if doc else ReviewDocument().open_counts
+    if doc is None:
+        return {s.key: 0 for s in SEVERITIES}
+    return doc.open_counts
 
 
 def verdict_from_counts(counts: dict[str, int]) -> ReviewVerdict:
@@ -171,7 +173,7 @@ NO_RUN_VERDICT = (
 
 
 # What the Summary says when no synthesis agent wrote the review — the
-# `summary_note` a caller of `build_mechanical_body` hands in. Each names why
+# `summary_note` a caller of `build_mechanical_record` hands in. Each names why
 # synthesis did not produce the document, because a reader who cannot tell a
 # failed agent from one nobody asked to run reads the same review two ways.
 FALLBACK_SUMMARY = "Synthesis agent failed — findings below are from individual group reviews."
@@ -185,60 +187,6 @@ NO_CHANGES_SUMMARY = (
     "No agent ran — the author has committed nothing since the prior review. "
     "Its findings are carried forward below unchanged."
 )
-
-
-def build_mechanical_body(
-    merged_content: str,
-    *,
-    group_count: int,
-    summary_note: str,
-    include_verdict: bool = True,
-    verdict: str = "",
-    file_count: int = 0,
-    groups_reported: int | None = None,
-) -> str:
-    """A whole review body around findings no synthesis agent read.
-
-    `merged_content` is the sections as merged — the file triage every group
-    wrote and whatever findings they reported; `summary_note` is the caller's
-    one sentence on why synthesis was skipped, which is the only part of the
-    summary that is not derived from the findings themselves. `file_count` of 0
-    leaves the file scope out rather than writing a zero.
-
-    `include_verdict=False` writes no verdict section at all, for a path that
-    reaches no verdict — the two that ship group output after the operator or
-    the budget stopped the run. `verdict` overrides what a verdict section
-    says, defaulting to the one `mechanical_verdict` derives from the tally.
-
-    `groups_reported` is how many groups came back, where `group_count` is how
-    many were dispatched. When they differ the scope says so — "in 2 of 3
-    groups" — because a count of what was sent out reads as a count of what
-    was examined, and that sentence sits directly above findings the missing
-    group never contributed to. `None` means they agree.
-
-    There is deliberately no file counterpart. `PipelineState` records group
-    names, not the files behind each one, so a "9 of 16 files" would have to
-    be estimated — and a fabricated number in the sentence that exists to stop
-    fabricated confidence is worse than the group figure alone.
-
-    Every path that reaches the review file without a synthesis agent composes
-    here, so which sections such a review carries has one answer. A caller that
-    assembles its own body decides that question again, which is how a clean
-    run came to drop the triage its groups had already merged.
-    """
-    counts = ReviewDocument(body=merged_content).open_counts
-    lead = _summary_lead(
-        counts, group_count=group_count, summary_note=summary_note,
-        file_count=file_count, groups_reported=groups_reported,
-    )
-    body = (
-        f"## {SECTION_SUMMARY}\n"
-        f"{lead}\n\n"
-        f"{merged_content}\n"
-    )
-    if not include_verdict:
-        return body
-    return f"{body}\n## {SECTION_VERDICT}\n{verdict or mechanical_verdict(counts)}"
 
 
 def _summary_lead(counts: dict[str, int], *, group_count: int, summary_note: str,
@@ -275,7 +223,7 @@ def build_mechanical_record(
     include_verdict: bool = True, verdict: str = "", file_count: int = 0,
     groups_reported: int | None = None,
 ) -> ReviewRecord:
-    """`merged` as a whole review no synthesis agent read — `build_mechanical_body`'s record.
+    """`merged` as a whole review no synthesis agent read.
 
     Text already on `merged.summary` (a verification drop note) follows the
     scope sentence, inside the Summary, which is where the text pipeline put it.

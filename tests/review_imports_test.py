@@ -66,7 +66,6 @@ SHARED_LIB_MODULES = [
     "review.grammar",
     "review.paths",
     "review.reconcile",
-    "review.spans",
     "review.verdict",
 ]
 

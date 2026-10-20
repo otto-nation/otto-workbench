@@ -62,17 +62,15 @@ class TestDocument:
         from review.document import ReviewHeader
         assert "skipped_groups" not in ReviewHeader.from_meta(meta).render()
 
-    def _incremental(self, ro, tmp_path, prior_review=""):
-        job = self._job(ro, tmp_path, prior_review=prior_review)
-        if prior_review:
-            from review.document import ReviewHeader
+    def _incremental(self, ro, tmp_path, *, prior_date=""):
+        job = self._job(ro, tmp_path)
+        if prior_date:
             from review.ingest import ingest_review
             from review.store import StoredReview
             from review.types import ReviewMeta
-            header = ReviewHeader.parse(prior_review)
             job.prior = StoredReview(
-                ingest_review(prior_review, strict=False),
-                ReviewMeta(date=header.date, head_sha=header.head_sha),
+                ingest_review("## Summary\nprior\n", strict=False),
+                ReviewMeta(date=prior_date, head_sha="def456"),
             )
         job.preflight = ro.PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
@@ -82,13 +80,8 @@ class TestDocument:
         return job
 
     def test_an_incremental_review_dates_itself_against_the_prior_one(self, ro, tmp_path):
-        prior = (
-            "# Review: org/repo#42\n"
-            "<!-- date: 2026-08-20 -->\n"
-            "<!-- head_sha: old -->\n"
-        )
         meta = ro._review_meta(
-            self._incremental(ro, tmp_path, prior),
+            self._incremental(ro, tmp_path, prior_date="2026-08-20"),
             skipped_groups=1, total_groups=4,
         )
         assert meta.prior_date == "2026-08-20"

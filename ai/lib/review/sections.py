@@ -33,7 +33,7 @@ for _s in SEVERITIES:
 # reviewer claims about the code. They are excluded here because this is the
 # last point before the body is posted, and neither reaches it the same way:
 # File Triage is never stripped upstream, and the prior-findings ledger is
-# stripped only on the pipeline that runs `post_process_findings` (see its
+# stripped only on the pipeline that runs `post_process_record` (see its
 # docstring for why the ledger's IDs cannot be posted beside this review's).
 _INTERNAL_HEADERS: set[str] = {
     SECTION_FILE_TRIAGE.lower(),

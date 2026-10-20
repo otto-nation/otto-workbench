@@ -185,7 +185,8 @@ text = '''## Must fix
 - **[N3]** finding f
 ## Idioms
 - **[I1]** finding g'''
-counts = mod.ReviewDocument(body=text).open_counts
+from review.ingest import ingest_review
+counts = ingest_review(text, strict=False).open_counts
 print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
 ")
   [ "$result" = "M=2,S=1,N=3,I=1" ]

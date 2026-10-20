@@ -84,7 +84,9 @@ def load_state(path: Path) -> CommentsState | None:
     """The recorded thread state, or None when there is no usable file.
 
     A file with any unreadable entry is discarded whole: every field is
-    re-fetched on the next run, so there is nothing in it worth keeping apart.
+    re-fetched on the next run. The one cost is a short fetch made while the file
+    is discarded: ``sync_threads`` seeds from this ledger, so threads the fetch
+    did not reach are absent from that write until the next complete fetch.
     """
     return core.serde.load_file(CommentsState, path)
 

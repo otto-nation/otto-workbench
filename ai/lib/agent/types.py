@@ -59,6 +59,9 @@ _NO_FINDINGS_ARTIFACT = frozenset(
     {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX, Phase.FIX_VERIFY},
 )
 _INDEXED = frozenset({Phase.GROUP, Phase.FIX_VERIFY})
+# ceiling: empty while phases still write markdown. Upgrade trigger: once every
+# review phase has joined, delete the set and the markdown suffix.
+_JSON_ARTIFACT: frozenset[Phase] = frozenset()
 
 
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -325,4 +328,7 @@ class PhaseSpec:
         place, and ``fix_verify`` answers on the fix engine's checklist. Raises
         for a phase outside the review domain, as ``log_filename`` does.
         """
-        return "" if self.phase in _NO_FINDINGS_ARTIFACT else f"{self._stem}.md"
+        if self.phase in _NO_FINDINGS_ARTIFACT:
+            return ""
+        suffix = "json" if self.phase in _JSON_ARTIFACT else "md"
+        return f"{self._stem}.{suffix}"

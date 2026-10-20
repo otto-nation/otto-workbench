@@ -18,14 +18,17 @@ and walks each finding's body here (`finding_spans`).
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Generic, Protocol, TypeVar
 
 import core.log
+import core.strict
 from agent.diagnosis import Diagnosis, DiagnosisKind
 
 from review.document import (
@@ -294,6 +297,65 @@ class IngestOutcome:
     @property
     def ok(self) -> bool:
         return self.record is not None
+
+
+class Artifact(Protocol):
+    """An agent artifact type: strict-loadable, and able to name its own problems."""
+
+    def problems(self) -> tuple[IngestError, ...]: ...
+
+
+A = TypeVar("A", bound=Artifact)
+
+
+@dataclass(frozen=True)
+class ArtifactOutcome(Generic[A]):
+    """What ingesting an agent's JSON produced, after at most one repair turn.
+
+    The same contract as `IngestOutcome`, for a typed artifact instead of a
+    record.
+    """
+
+    artifact: A | None
+    errors: tuple[IngestError, ...] = ()
+    repaired: bool = False
+    diagnosis: Diagnosis | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.artifact is not None
+
+
+def _decode_error(text: str, exc: json.JSONDecodeError) -> IngestError:
+    detail = exc.msg
+    if text.lstrip().startswith("```"):
+        detail += " — the file starts with a code fence; write only the JSON document"
+    return IngestError(IngestErrorKind.INVALID_JSON, exc.lineno, detail, column=exc.colno)
+
+
+def load_artifact(path: str, kind: type[A]) -> A:
+    """The artifact the JSON at `path` holds. Raises `IngestRejected` when it is malformed.
+
+    Three gates, in order, each one only reached when the last passed:
+    `json.loads` (line and column), the strict schema (JSON path), and the
+    artifact's own `problems()` (JSON path).
+    """
+    text = Path(path).read_text()
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise IngestRejected((_decode_error(text, exc),)) from None
+    try:
+        artifact = core.strict.load_strict(kind, raw)
+    except core.strict.SchemaRejected as exc:
+        raise IngestRejected(tuple(
+            IngestError(IngestErrorKind.SCHEMA_VIOLATION, 0, v.detail, at=v.at)
+            for v in exc.violations
+        )) from None
+    problems = artifact.problems()
+    if problems:
+        raise IngestRejected(problems)
+    return artifact
 
 
 @dataclass(frozen=True)
@@ -663,39 +725,50 @@ def repair_prompt(prompt: str, path: str, errors: tuple[IngestError, ...]) -> st
     """Re-send `prompt` with the ingest errors the agent must fix in `path`."""
     listed = "\n".join(f"- {e.render()}" for e in errors)
     return (
-        f"{prompt}\n\n## Your review was rejected\n\n"
-        f"The review you wrote to `{path}` cannot be read:\n\n{listed}\n\n"
-        "Edit that file in place and fix only the entries named above. "
-        "Do not rewrite anything else."
+        f"{prompt}\n\n## Your output was rejected\n\n"
+        f"What you wrote to `{path}` cannot be read:\n\n{listed}\n\n"
+        "Fix that file in place — only what is named above — so it is the format "
+        "the Output section asks for. Do not rewrite anything else."
     )
+
+
+def _with_repair(path, prompt, invoke, read, wrap, diagnose):
+    """Read `path` with `read`, giving the agent one turn to fix a rejection.
+
+    `wrap` builds the outcome type the caller expects. A second rejection is
+    returned, not raised. A repair turn that itself fails — a non-zero exit, or
+    a cause `diagnose` names — is that failure, not a malformed-output rejection.
+    """
+    try:
+        return wrap(read())
+    except IngestRejected as exc:
+        errors = exc.errors
+    core.log.warn(f"{path} rejected ({len(errors)} error(s)) — one repair turn")
+    rc = invoke(repair_prompt(prompt, path, errors), REPAIR_MAX_TURNS)
+    try:
+        return wrap(read(), repaired=True)
+    except IngestRejected as exc:
+        if rc == 0:
+            return wrap(None, exc.errors, repaired=True)
+        failure = diagnose() if diagnose is not None else Diagnosis(
+            DiagnosisKind.AGENT_ERROR, detail=f"exited with code {rc}",
+        )
+        return wrap(None, repaired=True, diagnosis=failure)
 
 
 def ingest_with_repair(
     path: str, prompt: str, invoke: Callable[[str, int], int],
     *, diagnose: Callable[[], Diagnosis] | None = None,
 ) -> IngestOutcome:
-    """Ingest the agent's output at `path`, giving the agent one turn to fix a rejection.
+    """Ingest the agent's markdown at `path`, with one repair turn (see `_with_repair`)."""
+    return _with_repair(path, prompt, invoke,
+                        lambda: ingest_review(Path(path).read_text()), IngestOutcome, diagnose)
 
-    A second rejection is returned, not raised: the caller handles it as the
-    agent failure it is, the way a missing output is handled today. A repair
-    turn that itself fails — non-zero exit, or a cause `diagnose` names — is
-    that failure, not a malformed-output rejection.
-    """
-    try:
-        return IngestOutcome(ingest_review(Path(path).read_text()))
-    except IngestRejected as exc:
-        errors = exc.errors
-    core.log.warn(f"{path} rejected ({len(errors)} error(s)) — one repair turn")
-    rc = invoke(repair_prompt(prompt, path, errors), REPAIR_MAX_TURNS)
-    try:
-        return IngestOutcome(ingest_review(Path(path).read_text()), repaired=True)
-    except IngestRejected as exc:
-        if rc != 0:
-            failure = (
-                diagnose() if diagnose is not None
-                else Diagnosis(
-                    DiagnosisKind.AGENT_ERROR, detail=f"exited with code {rc}",
-                )
-            )
-            return IngestOutcome(None, repaired=True, diagnosis=failure)
-        return IngestOutcome(None, exc.errors, repaired=True)
+
+def ingest_artifact(
+    path: str, prompt: str, invoke: Callable[[str, int], int], kind: type[A],
+    *, diagnose: Callable[[], Diagnosis] | None = None,
+) -> ArtifactOutcome:
+    """Load the agent's JSON at `path` as a `kind`, with one repair turn (see `_with_repair`)."""
+    return _with_repair(path, prompt, invoke,
+                        lambda: load_artifact(path, kind), ArtifactOutcome, diagnose)

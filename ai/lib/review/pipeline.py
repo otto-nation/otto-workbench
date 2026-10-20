@@ -73,7 +73,7 @@ from review.steps import (
     _run_holistic_phase, _run_synthesis_or_fallback,
 )
 from review.retry import GroupFailure, _has_output, _render_reason, _retry_missing_output
-from review.state import PipelineState, _resolve_recovery, _write_pipeline_state
+from review.state import PIPELINE_SCHEMA_VERSION, PipelineState, _resolve_recovery, _write_pipeline_state
 
 DEFAULT_MAX_COST = 20.0
 
@@ -346,6 +346,7 @@ def run_multi_phase(
             review_type=ReviewType.of(incremental),
             prior_sha=job.preflight.prior_head_sha if incremental else "",
             skipped_groups=sorted(incremental_skips),
+            schema_version=PIPELINE_SCHEMA_VERSION,
         )
         _write_pipeline_state(job, state)
 

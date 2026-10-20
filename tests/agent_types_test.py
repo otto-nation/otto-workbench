@@ -15,6 +15,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import agent.types
+from agent.registry import PHASES
 from agent.types import ItemScaling, PhaseSpec
 from core.phases import Mode, Phase, PhaseDomain, PhaseShape
 
@@ -153,3 +155,10 @@ class TestPhaseSpecTemplates:
         spec = self._review(Phase.SINGLE, declared)
         declared[Mode.PR] = "other.md"
         assert spec.template_for(Mode.PR) == "a.md"
+
+
+def test_a_phase_in_the_json_set_names_a_json_artifact(monkeypatch):
+    monkeypatch.setattr(agent.types, "_JSON_ARTIFACT", frozenset({Phase.SCOUT}))
+    assert PHASES[Phase.SCOUT].output_filename == "scout.json"
+    assert PHASES[Phase.HOLISTIC].output_filename == "holistic.md"
+    assert PHASES[Phase.GROUP].output_filename == "group-{}.md"

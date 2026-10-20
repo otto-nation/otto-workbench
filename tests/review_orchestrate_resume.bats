@@ -40,7 +40,7 @@ PYEOF
 @test "_resolve_recovery: auto-resumes when valid incomplete pipeline state exists" {
   mkdir -p "$TMPDIR/test"
   cat > "$TMPDIR/test/pipeline.json" <<'EOF'
-{"head_sha": "abc123", "group_names": ["g1", "g2"], "done": ["holistic"], "groups_done": [1]}
+{"head_sha": "abc123", "group_names": ["g1", "g2"], "done": ["holistic"], "groups_done": [1], "schema_version": 1}
 EOF
   result=$(_py_here <<PYEOF
 job = mod.ReviewJob(
@@ -63,7 +63,7 @@ PYEOF
 @test "_resolve_recovery: starts fresh when SHA differs" {
   mkdir -p "$TMPDIR/stale"
   cat > "$TMPDIR/stale/pipeline.json" <<'EOF'
-{"head_sha": "old_sha", "group_names": ["g1"], "done": ["holistic"], "groups_done": [1]}
+{"head_sha": "old_sha", "group_names": ["g1"], "done": ["holistic"], "groups_done": [1], "schema_version": 1}
 EOF
   result=$(_py_here <<PYEOF
 job = mod.ReviewJob(
@@ -100,6 +100,7 @@ state_data = {
     "groups_failed": {"2": "agent error: model not available"},
     "done": ["holistic", "synthesis"],
     "failed": {"synthesis": "mechanical fallback (no output)"},
+    "schema_version": 1,
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -141,6 +142,7 @@ state_data = {
     "groups_failed": {},
     "done": ["holistic", "synthesis", "disprove"],
     "failed": {},
+    "schema_version": 1,
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -174,6 +176,7 @@ state_data = {
     "groups_failed": {},
     "done": ["holistic", "synthesis"],
     "failed": {"synthesis": "mechanical fallback (no output)"},
+    "schema_version": 1,
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -213,6 +216,7 @@ state_data = {
     "groups_failed": {},
     "done": ["holistic"],
     "failed": {},
+    "schema_version": 1,
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -339,6 +343,7 @@ with contextlib.redirect_stdout(io.StringIO()):
         head_sha='abc123',
         group_names=['services', 'tests'],
         done={mod.Phase.HOLISTIC}, groups_done=[1],
+        schema_version=1,
     )
     groups = [mod.Group('services', ['a.go'], 10), mod.Group('tests', ['b_test.go'], 5)]
     valid = mod._validate_resume_state(state, 'abc123', groups)
@@ -354,6 +359,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     state = mod.PipelineState(
         head_sha='old_sha',
         group_names=['services', 'tests'],
+        schema_version=1,
     )
     groups = [mod.Group('services', ['a.go'], 10), mod.Group('tests', ['b_test.go'], 5)]
     valid = mod._validate_resume_state(state, 'new_sha', groups)
@@ -369,6 +375,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     state = mod.PipelineState(
         head_sha='abc',
         group_names=['services', 'tests'],
+        schema_version=1,
     )
     groups = [mod.Group('services', ['a.go'], 10), mod.Group('infra', ['c.go'], 5)]
     valid = mod._validate_resume_state(state, 'abc', groups)

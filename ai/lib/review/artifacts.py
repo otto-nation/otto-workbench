@@ -30,7 +30,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, replace
 from enum import Enum, StrEnum
-from typing import TYPE_CHECKING, get_type_hints
+from typing import get_type_hints
 
 import core.log
 import core.serde
@@ -41,10 +41,8 @@ from pr.domains import ReviewVerdict
 from review.grammar import SEVERITY_KEY, FindingIdentity, strip_line_suffix
 from review.ingest import IngestError, IngestErrorKind
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord, TriageEntry
+from review.store import StoredReview
 from review.types import SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, PriorDisposition
-
-if TYPE_CHECKING:
-    from review.store import StoredReview
 
 # A finding ID: a severity key, then a number from 1. The key class is the one
 # every reader of a finding ID uses, built from `SEVERITIES`.
@@ -117,7 +115,7 @@ class AgentFinding:
 
     def problems(self, at: str) -> list[IngestError]:
         out = _location_problems(self.path, self.line, self.end_line, at)
-        if not _ID_RE.match(self.id):
+        if not _ID_RE.fullmatch(self.id):
             out.append(_error(IngestErrorKind.UNKNOWN_SEVERITY, f"{at}.id",
                               f"{self.id!r} is not a severity key ({_KEYS}) and a number from 1"))
         if not self.body.strip():
@@ -137,8 +135,11 @@ class AgentFinding:
         """
         path, body, sid = self.path or "", self.body.strip(), self.sid.strip()
         declined = self.declined.strip()
-        if declined and sid not in declinable:
-            core.log.warn(f"{self.id}: declined, but {sid or 'no sid'} names no prior finding — kept open")
+        if declined and (not sid or sid not in declinable):
+            if not sid:
+                core.log.warn(f"{self.id}: declined without a sid — kept open")
+            else:
+                core.log.warn(f"{self.id}: declined, but {sid} names no prior finding — kept open")
             declined = ""
         return RecordFinding(
             id=self.id, severity=self.severity, path=path, line=self.line,
@@ -165,7 +166,7 @@ def _triage_problems(triage: tuple[TriageEntry, ...], at: str) -> list[IngestErr
 def _ledger_problems(lines: tuple[LedgerLine, ...], at: str) -> list[IngestError]:
     out: list[IngestError] = []
     for i, entry in enumerate(lines):
-        if not _ID_RE.match(entry.id):
+        if not _ID_RE.fullmatch(entry.id):
             out.append(_error(IngestErrorKind.UNKNOWN_SEVERITY, f"{at}[{i}].id",
                               f"{entry.id!r} is not a prior finding's ID"))
         if entry.path is not None and not entry.path.strip():
@@ -387,7 +388,7 @@ class DisproveArtifact:
     def problems(self) -> tuple[IngestError, ...]:
         out: list[IngestError] = []
         for i, v in enumerate(self.verdicts):
-            if not _CHALLENGED_RE.match(v.id):
+            if not _CHALLENGED_RE.fullmatch(v.id):
                 out.append(_error(IngestErrorKind.UNKNOWN_SEVERITY, f"$.verdicts[{i}].id",
                                   f"{v.id!r} is not a must-fix or should-fix finding ID"))
             if not v.reason.strip():

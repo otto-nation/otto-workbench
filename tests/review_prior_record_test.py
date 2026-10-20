@@ -123,6 +123,11 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
             delta_files=["src/auth.go"], prior_head_sha="0ldc0de",
         ),
     )
+    from review.state import PIPELINE_SCHEMA_VERSION
+    written = []
+    real_write = review.pipeline._write_pipeline_state
+    monkeypatch.setattr(review.pipeline, "_write_pipeline_state",
+                        lambda job, state: written.append(state) or real_write(job, state))
     review.pipeline.run_multi_phase(job, disprove=False)
     merged = captured["merged"]
     assert [f.id for f in merged.record.findings] == ["M2"]
@@ -130,3 +135,6 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     assert any(
         s.note == "### Carried forward: docker" for s in merged.record.severity_sections
     )
+    # A fresh run stamps the version where it constructs the state; a resume
+    # refuses any state file without it (X8).
+    assert written and written[0].schema_version == PIPELINE_SCHEMA_VERSION

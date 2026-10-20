@@ -489,7 +489,7 @@ def _is_bare(body: str, fence: re.Match) -> bool:
     return line.strip() == "```"
 
 
-def _narrated_write_contents(records: list[dict]) -> list[str]:
+def _narrated_write_contents(records: list[dict], *, json_mode: bool = False) -> list[str]:
     """Documents an agent typed into its reply instead of calling a tool with.
 
     A third lost-write shape, and the one neither other reader sees. The model
@@ -516,11 +516,11 @@ def _narrated_write_contents(records: list[dict]) -> list[str]:
     contents = []
     for record in records:
         for message in _assistant_messages(record):
-            contents.extend(_text_documents(message))
+            contents.extend(_text_documents(message, json_mode=json_mode))
     return contents
 
 
-def _text_documents(message: dict) -> list[str]:
+def _text_documents(message: dict, *, json_mode: bool = False) -> list[str]:
     """Every candidate document in one assistant message's text blocks."""
     contents = []
     for block in message.get("content") or []:
@@ -529,15 +529,14 @@ def _text_documents(message: dict) -> list[str]:
         text = block.get("text") or ""
         if (decoded := _json_call_content(text)) is not None:
             contents.append(decoded)
-            continue
-        fenced = _fenced_documents(text)
-        # Trimmed on both branches: a fenced document can still carry the
-        # narration's own preamble inside the fence, and a bare one usually
-        # does.
-        contents.extend(
-            _strip_call_syntax(_from_first_heading(c))
-            for c in (fenced or [text])
-        )
+        elif json_mode:
+            contents.extend(_json_documents(text))
+        else:
+            fenced = _fenced_documents(text)
+            # Trimmed on both branches: a fenced document can still carry the
+            # narration's own preamble inside the fence, and a bare one usually
+            # does.
+            contents.extend(_strip_call_syntax(_from_first_heading(c)) for c in (fenced or [text]))
     return contents
 
 
@@ -552,7 +551,9 @@ def _json_call_content(text: str) -> str | None:
     Only a reply that is entirely one JSON object qualifies, and only when it
     carries a `content` string: a reply merely containing a JSON snippet is a
     document that quotes JSON, not a narrated call. None means "not this
-    shape", leaving the text to the other readers.
+    shape", leaving the text to the other readers. No agent artifact has a
+    `content` key, so a narrated artifact falls through to `_json_documents`
+    rather than being read as a call.
     """
     stripped = text.strip()
     if not stripped.startswith("{") or not stripped.endswith("}"):
@@ -563,6 +564,36 @@ def _json_call_content(text: str) -> str | None:
         return None
     content = call.get("content") if isinstance(call, dict) else None
     return content if isinstance(content, str) and content.strip() else None
+
+
+def _json_object(text: str) -> dict | None:
+    """`text` parsed as one JSON object, or None when it is not one."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+_JSON_FENCE = re.compile(r"```(?:json)?[^\S\n]*\n(.*?)\n[^\S\n]*```", re.DOTALL)
+
+
+def _json_documents(text: str) -> list[str]:
+    """The JSON objects one reply carries, as text.
+
+    Fenced blocks first. A JSON string escapes its newlines, so a fence quoted
+    inside a value cannot close the block early. With no fence, the span from
+    the first `{` to the last `}` is the candidate: narration around a JSON
+    document is prose before it and after it, never inside it.
+    """
+    fenced = [m.group(1).strip() for m in _JSON_FENCE.finditer(text)]
+    if fenced:
+        return [doc for doc in fenced if _json_object(doc) is not None]
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end < start:
+        return []
+    span = text[start:end + 1]
+    return [span] if _json_object(span) is not None else []
 
 
 # A markdown heading, capturing its `#` run so the level can be compared.
@@ -645,19 +676,30 @@ def try_recover_output(log_path: str, output_path: str) -> bool:
     the weakest claim. A real write attempt is better evidence than a reply
     that merely looks like one, so narration only wins when neither other
     source produced a candidate that qualifies.
+
+    A `.json` deliverable is held to being one JSON object, and narration around
+    it is cut at the object's braces rather than at a heading: a markdown heading
+    inside a JSON string is part of a value, not the document's start.
     """
     if not log_path or not Path(log_path).is_file():
         return False
+    # ceiling: suffix picks the salvage filter while some phases still write
+    # markdown. Upgrade trigger: once every review deliverable is `.json`, drop
+    # json_mode and the heading filter.
+    json_mode = output_path.endswith(".json")
     records = read_jsonl(log_path)
     candidates = (
-        _narrated_write_contents(records)
+        _narrated_write_contents(records, json_mode=json_mode)
         + _collect_denied_contents(records)
         + _pi_write_attempts(records, output_path)
     )
+    # A JSON deliverable is a JSON object; a markdown one has a heading.
     for content in reversed(candidates):
-        if "## " not in content:
+        if json_mode and _json_object(content.strip()) is None:
             continue
-        Path(output_path).write_text(content + "\n")
+        if not json_mode and "## " not in content:
+            continue
+        Path(output_path).write_text(content.strip() + "\n" if json_mode else content + "\n")
         core.log.warn(f"Recovered review from the session log — saved to {output_path}")
         return True
     return False

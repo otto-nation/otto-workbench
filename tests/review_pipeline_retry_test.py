@@ -282,6 +282,7 @@ def _write_state(tmp_path: Path, **overrides) -> Path:
         "head_sha": _PINNED_SHA, "group_names": ["g1", "g2"],
         "done": ["holistic"], "failed": {},
         "groups_done": [], "groups_failed": {"0": "quota"},
+        "schema_version": 1,
     }
     path.write_text(json.dumps({**state, **overrides}))
     return path

@@ -313,6 +313,7 @@ class TestTheDisproveGateRecordsItsOwnOutcome:
         Path(review.state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
             "groups_done": [1, 2], "done": ["synthesis"],
+            "schema_version": 1,
         }))
 
     def test_a_gate_that_declined_to_run_still_records_itself(self, job, run):
@@ -395,6 +396,7 @@ class TestRecoverDeclinesTheWorkItShould:
         Path(review.state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
             "groups_done": [1, 2], "done": ["synthesis", "disprove"],
+            "schema_version": 1,
         }))
 
         assert run(job).phases == []

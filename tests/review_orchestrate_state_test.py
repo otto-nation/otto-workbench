@@ -15,7 +15,10 @@ import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
 from review.render import failures_body
-from review.state import failures_of
+from review.state import (
+    PIPELINE_SCHEMA_VERSION, PipelineState, _validate_resume_state, failures_of,
+)
+from review.types import Group
 
 
 def _failures_md(state):
@@ -400,3 +403,12 @@ class TestInjectFailuresAndStatus:
 
         content = review_file.read_text()
         assert content.count("<!-- status:") == 1
+
+
+def test_a_pipeline_state_from_before_json_artifacts_is_stale():
+    """X8: a run interrupted before the upgrade is not resumed onto .md artifacts."""
+    groups = [Group(name="g1", files=["a.py"], lines=1)]
+    old = PipelineState(head_sha="abc", group_names=["g1"])
+    new = PipelineState(head_sha="abc", group_names=["g1"], schema_version=PIPELINE_SCHEMA_VERSION)
+    assert not _validate_resume_state(old, "abc", groups)
+    assert _validate_resume_state(new, "abc", groups)

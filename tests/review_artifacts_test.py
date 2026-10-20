@@ -120,6 +120,7 @@ def _group(**finding) -> dict:
 @pytest.mark.parametrize("doc, kind, at", [
     (_group(id="X1"), IngestErrorKind.UNKNOWN_SEVERITY, "$.findings[0].id"),
     (_group(id="M0"), IngestErrorKind.UNKNOWN_SEVERITY, "$.findings[0].id"),
+    (_group(id="M1\n"), IngestErrorKind.UNKNOWN_SEVERITY, "$.findings[0].id"),
     (_group(body="  "), IngestErrorKind.EMPTY_FIELD, "$.findings[0].body"),
     (_group(path="a.py:3"), IngestErrorKind.LINE_IN_PATH, "$.findings[0].path"),
     (_group(path=""), IngestErrorKind.BAD_LOCATION, "$.findings[0].path"),
@@ -189,11 +190,19 @@ def test_a_declined_carry_of_a_prior_finding_converts_to_a_declined_finding():
     assert (r.disposition, r.reason, r.sid) == (Disposition.DECLINED, "documented", "3f9a2c1d")
 
 
-def test_a_decline_naming_no_prior_finding_stays_open():
+def test_a_decline_naming_no_prior_finding_stays_open(capsys):
     """D19: an agent cannot decline a finding of its own on its say-so."""
     f = AgentFinding(id="S1", path="a.py", body="b", sid="3f9a2c1d", declined="documented")
     r = f.to_record(checkbox=False, declinable=frozenset({"00000000"}))
     assert (r.disposition, r.reason) == (Disposition.OPEN, "")
+    assert "declined, but 3f9a2c1d names no prior finding — kept open" in capsys.readouterr().err
+
+
+def test_a_sidless_decline_stays_open_even_when_the_empty_sid_is_declinable(capsys):
+    f = AgentFinding(id="S1", path="a.py", body="b", declined="documented")
+    r = f.to_record(checkbox=False, declinable=frozenset({""}))
+    assert (r.disposition, r.reason) == (Disposition.OPEN, "")
+    assert "declined without a sid — kept open" in capsys.readouterr().err
 
 
 def test_the_declinable_sids_are_every_prior_finding_s_identities():

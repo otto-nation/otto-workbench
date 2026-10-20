@@ -48,6 +48,7 @@ from agent.templates import build_execution_claim_guard, build_output_block
 from agent.types import EFFORT_PRESETS
 from core.phases import Mode, Phase
 from pr.domains import ReviewVerdict
+from review.artifacts import output_format
 from review.budget import (
     FileFit, MIN_DIFF_BYTES,
     fit_files, fixed_preflight_bytes, model_window_tokens,
@@ -131,10 +132,16 @@ class PromptBuilder:
             self._vars[key] = getattr(self._common, key)
         return self
 
-    def output(self, output_path: str, *, stdout_warning: bool = False) -> "PromptBuilder":
-        return self.set(
-            "output_block", build_output_block(output_path, stdout_warning=stdout_warning),
-        )
+    def output(
+        self, output_path: str, *, stdout_warning: bool = False, output_format: str = "",
+    ) -> "PromptBuilder":
+        """How the agent saves its file, then — for a JSON artifact — the shape it writes.
+
+        The write recipe is `agent.templates`' and is not changed here. The
+        format follows it so the agent reads where to write before what to write.
+        """
+        block = build_output_block(output_path, stdout_warning=stdout_warning)
+        return self.set("output_block", f"{block}\n\n{output_format}" if output_format else block)
 
     def execution_claim_guard(self, *, cross_cutting_step: int | None = None) -> "PromptBuilder":
         """The ban on claiming a command was run, for a write-first template.
@@ -815,6 +822,16 @@ def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
         b.set(key, value)
 
 
+def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False) -> str:
+    """The Output section's JSON example and field guide, or "" for a phase still on markdown.
+
+    `rereview` is whether this prompt carries prior findings to account for.
+    Only then does the example show the fields that carry one forward (D20).
+    """
+    kind = extra.get("artifact")
+    return output_format(kind, job.mode, rereview=rereview) if kind is not None else ""
+
+
 def _prompt_single(job, common, extra, output):
     """The one-agent review, of an open PR or of the working branch.
 
@@ -837,7 +854,7 @@ def _prompt_single(job, common, extra, output):
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
     b.execution_claim_guard()
-    b.output(output, stdout_warning=True)
+    b.output(output, stdout_warning=True, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
     b.fit(job)
     return BuiltPrompt(b, "")
 
@@ -870,7 +887,7 @@ def _prompt_synthesis(job, common, extra, output):
     b.execution_claim_guard(
         cross_cutting_step=_SYNTHESIS_CROSS_CUTTING_STEP[job.mode],
     )
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra, rereview=job.prior is not None))
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
     b.fit(job, skip_file_contents=True, min_diff=0)
@@ -892,7 +909,7 @@ def _survey_prompt(job, common, extra, output):
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("all_files_formatted", job.pr.all_files_formatted)
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra))
     b.fit(job)
     return BuiltPrompt(b, "")
 
@@ -929,7 +946,7 @@ def _prompt_group(job, common, extra, output):
     b.set("group_name", extra["group_name"])
     b.set("group_files_formatted", extra["group_files_formatted"])
     b.execution_claim_guard()
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
     b.fit(job, file_filter=file_filter, skip_project_context=True)
     return BuiltPrompt(b, str(extra["group_idx"]))
 
@@ -938,7 +955,7 @@ def _prompt_disprove(job, common, extra, output):
     b = PromptBuilder(common)
     b.shared("max_turns")
     b.set("review_content", extra.get("review_content", ""))
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra))
     return BuiltPrompt(b, "")
 
 

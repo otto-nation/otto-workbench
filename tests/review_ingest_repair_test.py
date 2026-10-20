@@ -1,14 +1,21 @@
 """One repair turn: the agent is shown exactly what was rejected, once."""
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from review.ingest import REPAIR_MAX_TURNS, IngestError, IngestErrorKind, ingest_with_repair
+from review.artifacts import GroupArtifact
+from review.ingest import (
+    REPAIR_MAX_TURNS, IngestError, IngestErrorKind, IngestRejected,
+    ingest_artifact, ingest_with_repair, load_artifact,
+)
 
 BAD = "## Nit\n- **[N1]** `a` — x\n- **[N1]** `b` — y\n"
 GOOD = "## Nit\n- **[N1]** `a` — x\n- **[N2]** `b` — y\n"
@@ -138,7 +145,7 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
             "type": "result", "subtype": "success", "num_turns": 3,
         }) + "\n")
         Path(inv.output_path).write_text(
-            GOOD if "Your review was rejected" in inv.prompt else BAD
+            GOOD if "Your output was rejected" in inv.prompt else BAD
         )
         return 0
 
@@ -161,7 +168,7 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
     assert failed is None
     assert "**[N2]**" in Path(group_output).read_text()
     assert any(
-        p.startswith("PROMPT") and "Your review was rejected" in p for p in prompts
+        p.startswith("PROMPT") and "Your output was rejected" in p for p in prompts
     )
 
 
@@ -173,7 +180,7 @@ def test_a_group_whose_repair_hits_quota_is_not_malformed(tmp_path, monkeypatch)
     from review.types import Group, ReviewJob
 
     def fake_invoke(inv, throttle=None):
-        if "Your review was rejected" in inv.prompt:
+        if "Your output was rejected" in inv.prompt:
             Path(inv.session_log).write_text(json.dumps({
                 "type": "system", "subtype": "api_retry", "error_status": 429,
             }) + "\n")
@@ -222,7 +229,7 @@ def test_repair_starts_from_the_overflow_rebuilt_prompt(tmp_path, monkeypatch):
     def fake_invoke(inv, throttle=None):
         prompts.append(inv.prompt)
         Path(inv.session_log).write_text("{}\n")
-        if "Your review was rejected" in inv.prompt:
+        if "Your output was rejected" in inv.prompt:
             Path(inv.output_path).write_text(GOOD)
         elif inv.prompt == "SMALL":
             Path(inv.output_path).write_text(BAD)
@@ -251,10 +258,10 @@ def test_repair_starts_from_the_overflow_rebuilt_prompt(tmp_path, monkeypatch):
     )
     review.pipeline.run_single_agent(job, disprove=False)
     assert any(
-        p.startswith("SMALL") and "Your review was rejected" in p for p in prompts
+        p.startswith("SMALL") and "Your output was rejected" in p for p in prompts
     )
     assert not any(
-        p.startswith("BIG-AND-LONGER") and "Your review was rejected" in p
+        p.startswith("BIG-AND-LONGER") and "Your output was rejected" in p
         for p in prompts
     )
 
@@ -289,7 +296,7 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
         prompts.append(inv.prompt)
         Path(inv.session_log).write_text("")
         Path(job.review_file).write_text(
-            GOOD_SYNTH if "Your review was rejected" in inv.prompt else BAD_SYNTH
+            GOOD_SYNTH if "Your output was rejected" in inv.prompt else BAD_SYNTH
         )
         return 0
 
@@ -306,7 +313,7 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
     assert FALLBACK_SUMMARY not in written
     assert "**[N2]**" in written
     assert any(
-        p.startswith("PROMPT") and "Your review was rejected" in p for p in prompts
+        p.startswith("PROMPT") and "Your output was rejected" in p for p in prompts
     )
 
 
@@ -354,3 +361,60 @@ def test_an_error_names_its_json_path_or_its_line_and_column():
     assert IngestError(IngestErrorKind.INVALID_JSON, 3, "Expecting ','", column=7).render() == \
         "line 3, column 7: invalid_json — Expecting ','"
     assert IngestError(IngestErrorKind.DUPLICATE_ID, 4, "x").render() == "line 4: duplicate_id — x"
+
+
+GOOD_JSON = json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]})
+BAD_JSON = json.dumps({"findings": [{"id": "N1", "path": "a.py:1", "body": "x"}]})
+
+
+def _rejected(tmp_path, text: str):
+    path = tmp_path / "group-1.json"
+    path.write_text(text)
+    with pytest.raises(IngestRejected) as exc:
+        load_artifact(str(path), GroupArtifact)
+    return exc.value.errors
+
+
+def test_text_that_is_not_json_names_the_decoder_s_line_and_column(tmp_path):
+    (e,) = _rejected(tmp_path, '{\n  "findings": [\n')
+    assert (e.kind, e.line, e.column) == (IngestErrorKind.INVALID_JSON, 3, 1)
+
+
+def test_a_fenced_document_is_told_to_drop_the_fence(tmp_path):
+    (e,) = _rejected(tmp_path, "```json\n{}\n```")
+    assert e.kind is IngestErrorKind.INVALID_JSON and "code fence" in e.detail
+
+
+def test_a_schema_violation_names_its_json_path(tmp_path):
+    (e,) = _rejected(tmp_path, json.dumps({"findings": [{"id": "N1", "body": 3}]}))
+    assert (e.kind, e.at) == (IngestErrorKind.SCHEMA_VIOLATION, "$.findings[0].body")
+
+
+def test_a_semantic_problem_is_rejected_after_the_schema_passes(tmp_path):
+    (e,) = _rejected(tmp_path, BAD_JSON)
+    assert (e.kind, e.at) == (IngestErrorKind.LINE_IN_PATH, "$.findings[0].path")
+
+
+def test_a_valid_document_loads_as_its_artifact(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(GOOD_JSON)
+    assert load_artifact(str(path), GroupArtifact).findings[0].path == "a.py"
+
+
+def test_a_rejected_artifact_gets_one_turn_with_the_errors_quoted(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(BAD_JSON)
+    agent = FakeAgent(path, GOOD_JSON)
+    outcome = ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
+    assert outcome.ok and outcome.repaired
+    (text, turns), = agent.calls
+    assert "line_in_path" in text and "$.findings[0].path" in text and turns == REPAIR_MAX_TURNS
+
+
+def test_a_second_artifact_rejection_is_a_failure_not_another_turn(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(BAD_JSON)
+    agent = FakeAgent(path, BAD_JSON)
+    outcome = ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
+    assert not outcome.ok and len(agent.calls) == 1
+    assert outcome.errors[0].kind is IngestErrorKind.LINE_IN_PATH

@@ -50,6 +50,11 @@ class PhaseScan:
 class ReviewPhase:
     build: Callable[..., BuiltPrompt]
     scan: PhaseScan | None = None
+    # The JSON artifact this phase's agent writes. Its example is what the
+    # prompt's Output section shows; None while the phase still writes markdown.
+    # ceiling: optional until every phase writes JSON. Upgrade trigger: once
+    # every ReviewPhase names an artifact, drop the default and the markdown path.
+    artifact: type | None = None
 
 
 def _scout_leads(raw: str) -> str:
@@ -122,6 +127,10 @@ def build_prompt(
         raise ValueError(f"{phase} renders no review prompt")
 
     spec = PHASES[phase]
+    # The builder renders the format: only it knows whether it built a prior
+    # section, which decides whether the carry fields are shown (D20).
+    if entry.artifact is not None:
+        extra = {**extra, "artifact": entry.artifact}
     # A phase that names an artifact of its own is told that path; the rest
     # write the review document. `group_idx` is the only index in play, and
     # `phase_output_path` rejects it for a phase that writes one artifact.

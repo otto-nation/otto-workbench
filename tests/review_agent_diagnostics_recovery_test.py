@@ -428,3 +428,44 @@ class TestRecoveringAStrayWriteFromTheLog:
         )
         assert agent.session.try_recover_output(log_path, str(output)) is True
         assert "denied" in output.read_text()
+
+
+class TestRecoveringAJsonArtifact:
+    """A `.json` deliverable is salvaged as a JSON object, never trimmed as markdown."""
+
+    DOC = json.dumps({"summary": "## Summary inside a string", "findings": []})
+
+    def test_a_narrated_json_document_is_recovered_verbatim(self, tmp_path):
+        output = tmp_path / "synthesis.json"
+        output.write_text("")
+        log_path = _write_log(tmp_path, _pi_text(f"Here is the file:\n{self.DOC}\nDone."),
+                              _pi_result(subtype="success"))
+        assert agent.session.try_recover_output(log_path, str(output)) is True
+        assert json.loads(output.read_text()) == json.loads(self.DOC)
+
+    def test_a_fenced_json_document_is_unwrapped(self, tmp_path):
+        output = tmp_path / "scout.json"
+        output.write_text("")
+        log_path = _write_log(tmp_path, _pi_text(f"```json\n{self.DOC}\n```"),
+                              _pi_result(subtype="success"))
+        assert agent.session.try_recover_output(log_path, str(output)) is True
+        assert json.loads(output.read_text()) == json.loads(self.DOC)
+
+    def test_markdown_is_not_a_json_deliverable(self, tmp_path):
+        output = tmp_path / "group-1.json"
+        output.write_text("")
+        log_path = _write_log(tmp_path, _pi_tool("write", path=str(output), content="## Must fix\n- x\n"),
+                              _pi_result(subtype="success"))
+        assert agent.session.try_recover_output(log_path, str(output)) is False
+
+    # No `## ` anywhere in it: the markdown filter recovers only content holding
+    # a heading, so this document is one base cannot recover (session.py:657-660).
+    PLAIN = json.dumps({"summary": "no heading in here", "findings": []})
+
+    def test_a_real_json_write_is_recovered(self, tmp_path):
+        output = tmp_path / "group-1.json"
+        output.write_text("")
+        log_path = _write_log(tmp_path, _pi_tool("write", path="group-1.json", content=self.PLAIN),
+                              _pi_result(subtype="success"))
+        assert agent.session.try_recover_output(log_path, str(output)) is True
+        assert json.loads(output.read_text()) == json.loads(self.PLAIN)

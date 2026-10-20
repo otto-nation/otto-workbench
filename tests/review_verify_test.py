@@ -28,7 +28,7 @@ if str(LIB_DIR) not in sys.path:
 from conftest import git_in, init_repo  # noqa: E402
 import review.verify  # noqa: E402
 from review.ingest import ingest_review  # noqa: E402
-from review.record import RecordFinding, ReviewRecord  # noqa: E402
+from review.record import Disposition, RecordFinding, ReviewRecord  # noqa: E402
 from review.render import render_body  # noqa: E402
 from review.verify import post_process_record  # noqa: E402
 
@@ -565,3 +565,15 @@ def test_raw_evidence_is_matched_against_the_file(tmp_path):
     done = post_process_record(ReviewRecord(findings=(good, bad)), str(tmp_path))
     assert [x.id for x in done.record.visible] == ["M1"]
     assert done.verification["dropped"] == ["S1"]
+
+
+def test_checked_finding_is_not_returned(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    f = RecordFinding(
+        id="M1", severity="M", path="a.py", line=1, body="done",
+        evidence="not in the file", checkbox=True,
+        disposition=Disposition.FIXED,
+    )
+    done = post_process_record(ReviewRecord(findings=(f,)), str(tmp_path))
+    assert [x.id for x in done.record.visible] == ["M1"]
+    assert done.verification["findings_checked"] == 0

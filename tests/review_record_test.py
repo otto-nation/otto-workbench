@@ -19,7 +19,7 @@ from review.store import read_prior
 from review.record import (
     SCHEMA_VERSION, AgentFailure, Disposition, ProseSection, RecordFinding,
     ReviewRecord, SeveritySection, TriageEntry, defuse_first_line, load_record,
-    save_record,
+    save_record, unquote_evidence,
 )
 from review.types import ReviewMeta, ReviewType, review_meta_from_dict
 from review_record_support import copy_tree
@@ -249,3 +249,25 @@ def test_a_schema_1_prior_is_upgraded_too(tmp_path):
 def test_an_unknown_schema_is_stale(tmp_path, version):
     (tmp_path / FILENAME_RECORD).write_text(json.dumps({"schema_version": version, "summary": "s"}))
     assert load_record(tmp_path) is None
+
+
+INLINE_EVIDENCE = "  > `raise DiagramError(...) from None`"
+TWO_FENCE_EVIDENCE = "  > ```\n  > first\n  > ```\n  > ```\n  > second\n  > ```"
+
+
+@pytest.mark.parametrize("quoted, raw", [
+    (INLINE_EVIDENCE, ""),
+    (TWO_FENCE_EVIDENCE, "first"),
+])
+def test_unquote_evidence_reads_the_first_fenced_block(quoted, raw):
+    assert unquote_evidence(quoted) == raw
+
+
+@pytest.mark.parametrize("quoted, raw", [
+    (INLINE_EVIDENCE, ""),
+    (TWO_FENCE_EVIDENCE, "first"),
+])
+def test_upgrade_v1_unwraps_each_evidence_shape(tmp_path, quoted, raw):
+    payload = {**V1, "findings": [{**V1["findings"][0], "evidence": quoted}]}
+    (tmp_path / FILENAME_RECORD).write_text(json.dumps(payload))
+    assert load_record(tmp_path).findings[0].evidence == raw

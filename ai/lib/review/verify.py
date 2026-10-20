@@ -254,13 +254,19 @@ def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str])
     """Drop each must-fix and should-fix finding whose evidence is not in its file.
 
     A finding with no path names no file to check, so it is not checked: a
-    label such as `**Documentation**` is not a file the gate can open.
+    label such as `**Documentation**` is not a file the gate can open. A
+    finding already marked FIXED is not checked: its evidence quotes the
+    pre-fix code.
     """
     dropped: list[str] = []
     details: list[dict] = []
     tracked = functools.cache(lambda: _tracked_files(wt_path))
     for f in record.visible:
-        if f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD) or not f.path:
+        if (
+            f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD)
+            or not f.path
+            or f.disposition is Disposition.FIXED
+        ):
             continue
         detail = _match_evidence(f.path, f.evidence or None, wt_path, tracked, changed)
         detail.update(id=f.id, severity=f.severity)

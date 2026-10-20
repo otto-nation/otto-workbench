@@ -273,16 +273,24 @@ def _field_dropped(written, loaded, hint) -> bool:
 
 
 def unquote_evidence(evidence: str) -> str:
-    """Blockquoted evidence — `  > ` lines inside a fence — as the code it quotes.
+    """The code of the first fenced block in blockquoted evidence.
 
-    The quote markers, the fence lines and blank quoted lines go; the code's
-    own indentation after the marker stays.
+    Quote markers, fence lines and blank quoted lines go; the code's own
+    indentation after the marker stays. A finding with no fence has no
+    evidence and passes the gate, as the markdown-era extractor treated it.
     """
+    inside = False
     code = []
     for raw in evidence.split("\n"):
         text = raw.lstrip()
         text = text[2:] if text.startswith("> ") else text.removeprefix(">")
-        if text.strip() and not text.lstrip().startswith("```"):
+        fence = text.lstrip().startswith("```")
+        if fence and inside:
+            break
+        if fence:
+            inside = True
+            continue
+        if inside and text.strip():
             code.append(text.rstrip())
     return "\n".join(code)
 

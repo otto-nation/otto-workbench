@@ -2,6 +2,7 @@
 deviations the plan accepts (D1–D10), each pinned."""
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -31,11 +32,15 @@ def test_rendering_the_ingested_review_reproduces_todays_document(case):
     assert canonical(rendered) == canonical(expected_text(case))
 
 
-def test_the_banner_is_the_only_line_rendering_adds():
-    source = fixture_text("synthesis_pr", "input.md")
-    rendered = render_review(ingest_review(source), fixture_meta("synthesis_pr"))
-    added = set(rendered.splitlines()) - set(source.splitlines())
-    assert BANNER in added
+@pytest.mark.parametrize("case", PARITY_CASES)
+def test_the_banner_is_the_only_line_rendering_adds(case):
+    source = fixture_text(case, "input.md")
+    rendered = render_review(ingest_review(source), fixture_meta(case))
+    x1 = re.sub(r"\*\*(`[^`\n]+`)\*\*", r"\1", source)
+    added = set(rendered.splitlines()) - set(x1.splitlines())
+    assert added - {""} == {BANNER}
+    lost = set(x1.splitlines()) - set(rendered.splitlines())
+    assert lost - {""} == set()
 
 
 def test_prompt_text_omits_the_banner():

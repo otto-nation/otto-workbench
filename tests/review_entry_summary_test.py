@@ -12,8 +12,8 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.summary import (
-    build_review_summary, format_findings_line, format_usage, format_verdict,
-    json_summary,
+    ReviewSummaryReport, build_review_summary, format_findings_line,
+    format_usage, format_verdict, json_summary,
 )
 from review_record_support import store_review
 
@@ -553,8 +553,8 @@ def test_format_findings_line_mixed(tmp_path):
 
 
 def test_format_findings_line_nonexistent_file():
-    report = build_review_summary("org/repo", "1", "/nonexistent/review.md")
-    assert format_findings_line(report) == ""
+    assert build_review_summary("org/repo", "1", "/nonexistent/review.md") is None
+    assert format_findings_line(ReviewSummaryReport()) == ""
 
 
 def test_format_verdict_approve(tmp_path):
@@ -581,8 +581,8 @@ def test_format_verdict_explicit_disapprove(tmp_path):
 
 
 def test_format_verdict_nonexistent_file():
-    report = build_review_summary("org/repo", "1", "/nonexistent/review.md")
-    assert format_verdict(report) == ""
+    assert build_review_summary("org/repo", "1", "/nonexistent/review.md") is None
+    assert format_verdict(ReviewSummaryReport()) == ""
 
 
 def test_json_summary_status_completed_no_pipeline(cr, tmp_path):

@@ -73,6 +73,15 @@ def post(argv: list[str], ctx: pr.context.ResolvedContext, *,
     return core.publishing.call_entry_point("cli.review_post:main", post_argv)
 
 
+def _sync_recorded_review(ctx: pr.context.ResolvedContext, pr_num: str,
+                          review_path: Path) -> None:
+    """Stamp the domain from a stored review; a stale directory is a no-op."""
+    report = build_review_summary(ctx.repo, pr_num, str(review_path))
+    if report is None:
+        return
+    sync_review_domain(ctx, report)
+
+
 def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
            bin_dir: Path, **_kw) -> int:
     """Repair broken review artifacts via summary or rebuild."""
@@ -83,7 +92,7 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
 
     review_path = find_review_file(ctx.repo, pr_num)
     if review_path:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review_path)))
+        _sync_recorded_review(ctx, pr_num, review_path)
         return 0
 
     core.log.info("No review file found, trying rebuild...")
@@ -107,7 +116,7 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
     # the same thing `repair` does above when a review file already exists.
     review_path = find_review_file(ctx.repo, pr_num)
     if review_path:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review_path)))
+        _sync_recorded_review(ctx, pr_num, review_path)
     return 0
 
 

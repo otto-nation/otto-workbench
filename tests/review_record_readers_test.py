@@ -96,10 +96,7 @@ _MD_LIE = "## Must fix\n- **[M9]** path:9 — from md\n"
 def test_summary_of_a_stale_dir_ignores_review_md(tmp_path):
     review = tmp_path / "review.md"
     review.write_text(_MD_LIE)
-    report = build_review_summary("org/repo", "42", str(review))
-    assert report.head_sha is None
-    assert report.findings["must_fix"] == 0
-    assert report.findings["total"] == 0
+    assert build_review_summary("org/repo", "42", str(review)) is None
 
 
 def test_summary_answers_from_review_json(tmp_path):

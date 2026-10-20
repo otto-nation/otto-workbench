@@ -479,8 +479,7 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
     """A lost summary is a cache miss, not a failed review — but never silent."""
     import pr.state
 
-    review_file = tmp_path / "review.md"
-    review_file.write_text("## Findings\n")
+    review_file = written_review(tmp_path / "review")
 
     def _boom(*args, **kwargs):
         raise OSError("read-only file system")

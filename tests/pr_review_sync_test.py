@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,9 +13,11 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import make_ctx
+import cli.review_modes
 import pr.state
-from pr.domains import ReviewStatus, ReviewVerdict
+from pr.domains import ReviewStatus, ReviewSummary, ReviewVerdict
 from pr.review_sync import sync_review_domain
+import review.completion
 from review.summary import ReviewSummaryReport, build_review_summary, json_summary
 from review_record_support import store_review
 
@@ -140,26 +143,63 @@ def test_review_summary_report_to_json_matches_the_legacy_dict(tmp_path):
     )
 
 
-def test_a_stale_dir_summary_does_not_sync_as_current(tmp_path):
-    """A review.md + meta.json without review.json is not a current review.
-
-    `pr review --repair` used to sync meta.json's head_sha into state.json and
-    `pr status` then showed a clean review of that commit.
-    """
+def _stale_review_md(tmp_path: Path) -> Path:
     review = tmp_path / "review.md"
     review.write_text("## Nit\n- **[N1]** path:1 — style\n")
     (tmp_path / "meta.json").write_text(json.dumps({"head_sha": "abc123def456"}))
+    return review
 
-    report = build_review_summary("org/repo", "42", str(review))
-    assert report.head_sha is None
-    assert report.findings["total"] == 0
+
+def _assert_review_unchecked(target_dir: Path) -> None:
+    state = pr.state.load_state(target_dir)
+    domain = state.review if state is not None else ReviewSummary()
+    assert not domain.updated_at
+    assert domain.status != ReviewStatus.COMPLETED.value
+    assert domain.readiness(state).unchecked == ("review",)
+
+
+def test_record_domain_on_a_stale_dir_leaves_review_unchecked(tmp_path):
+    """A review.md + meta.json without review.json is not a completed snapshot.
+
+    Syncing the empty completed report `build_review_summary` used to return
+    stamped updated_at, and `pr status` then showed a present, current, clean
+    review — the same as a directory with no review.md must not.
+    """
+    review_file = _stale_review_md(tmp_path)
+    assert build_review_summary("org/repo", "42", str(review_file)) is None
 
     ctx = make_ctx(
         repo="org/repo", branch="feat/x", pr_number=42,
         worktree_root=tmp_path / "wt", head_sha="abc123def456",
         target_dir=tmp_path / "pr" / "feat",
     )
-    written = sync_review_domain(ctx, report)
-    assert written is not None
-    assert written.head_sha == ""
-    assert not written.describes(ctx.head_sha)
+    review.completion.record_domain(ctx, review_file, trail=MagicMock())
+    _assert_review_unchecked(ctx.target_dir)
+
+
+def test_repair_on_a_stale_dir_leaves_review_unchecked(tmp_path):
+    review = _stale_review_md(tmp_path)
+    ctx = make_ctx(
+        repo="org/repo", branch="feat/x", pr_number=42,
+        worktree_root=tmp_path / "wt", head_sha="abc123def456",
+        target_dir=tmp_path / "pr" / "feat",
+    )
+    with patch("cli.review_modes.find_review_file", return_value=review):
+        rc = cli.review_modes.repair([], ctx, bin_dir=tmp_path)
+    assert rc == 0
+    _assert_review_unchecked(ctx.target_dir)
+
+
+def test_record_domain_syncs_a_stored_review(tmp_path):
+    review_file = store_review(tmp_path / "review.md", "## Nit\n- **[N1]** path:1 — style\n")
+    ctx = make_ctx(
+        repo="org/repo", branch="feat/x", pr_number=42,
+        worktree_root=tmp_path / "wt", head_sha="abc123def456",
+        target_dir=tmp_path / "pr" / "feat",
+    )
+    review.completion.record_domain(ctx, review_file, trail=MagicMock())
+    state = pr.state.load_state(ctx.target_dir)
+    assert state is not None
+    assert state.review.status == ReviewStatus.COMPLETED.value
+    assert state.review.updated_at
+    assert state.review.readiness(state).unchecked == ()

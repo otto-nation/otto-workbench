@@ -109,23 +109,27 @@ def _read_review(path: Path | None) -> str | None:
         return None
 
 
-def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewSummaryReport:
-    """Build a review summary for a review."""
+def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewSummaryReport | None:
+    """The summary of a stored review, or None when there is no usable record.
+
+    A directory with review.md (and even meta.json) but no review.json is
+    stale — the same answer as a missing file — so callers that persist the
+    report skip it rather than stamp a completed snapshot.
+    """
     review_path = Path(review_file) if review_file else None
     # `review_content` is still the on-disk markdown for display; findings and
     # the verdict come from the record, so a stale directory reports none.
     review_content = _read_review(review_path)
     doc = ReviewDocument.read(review_path)
+    if doc is None:
+        return None
 
     by_key = open_counts(doc)
     counts = {s.json_key: by_key[s.key] for s in SEVERITIES}
     total = sum(by_key.values())
 
     review_dir = Path(review_file).parent if review_file else None
-    # Meta rides with the record. A directory without review.json is stale even
-    # when meta.json still names a head_sha; reading it here would let
-    # `pr review --repair` stamp that SHA into state.json as a current review.
-    meta = doc.meta if doc is not None and doc.meta is not None else ReviewMeta()
+    meta = doc.meta if doc.meta is not None else ReviewMeta()
 
     resolved = resolve_review_verdict(doc, mode=meta.mode)
     verdict = resolved.value if resolved else ""
@@ -162,8 +166,14 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
 
 def json_summary(repo: str, pr_number: str, review_file: str) -> str:
     """Build a REVIEW_SUMMARY:{json} string for a review."""
-    data = build_review_summary(repo, pr_number, review_file).to_json()
-    return f"REVIEW_SUMMARY:{json.dumps(data)}"
+    report = build_review_summary(repo, pr_number, review_file)
+    if report is None:
+        report = ReviewSummaryReport(
+            repo=repo,
+            pr_number=int(pr_number) if pr_number else None,
+            review_file=review_file,
+        )
+    return f"REVIEW_SUMMARY:{json.dumps(report.to_json())}"
 
 
 def format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:

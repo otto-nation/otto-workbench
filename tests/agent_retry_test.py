@@ -329,6 +329,9 @@ _RETRY_POLICY = {
     # one — `pr review --recover` re-runs the phase, which is a different lever.
     DiagnosisKind.ALL_GROUPS_FAILED: (False, "", _TURNS),
     DiagnosisKind.MECHANICAL_FALLBACK: (False, "", _TURNS),
+    # The ingest repair turn was the retry; nothing here re-invokes the agent.
+    # `pr review --recover` re-runs the phase, which is a different lever.
+    DiagnosisKind.MALFORMED_OUTPUT: (False, "", _TURNS),
     DiagnosisKind.UNKNOWN: (False, "", _TURNS),
 }
 

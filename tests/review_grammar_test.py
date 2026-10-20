@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 from review.grammar import (  # noqa: E402
     BODY_FINDING_RE, BOLD_FINDING_ID_RE, FINDING_ID_RE, SID_MARKER_RE,
     FindingIdentity, _FIRST_FILE_RE, extract_body_text, finding_location,
-    finding_tag, has_sid_marker, location_ref, parse_finding_line, posted_finding_tag,
-    sid_marker, strip_line_suffix, strip_sid_markers,
+    finding_tag, has_sid_marker, location_ref, parse_finding_line, parse_ledger_line,
+    posted_finding_tag, sid_marker, strip_line_suffix, strip_sid_markers,
 )
 from review.types import SEVERITIES  # noqa: E402
 
@@ -570,3 +570,11 @@ def test_location_ref_spells_the_three_shapes():
     assert location_ref("a.py", None, None) == "`a.py`"
     assert location_ref("a.py", 3, None) == "`a.py:3`"
     assert location_ref("a.py", 3, 5) == "`a.py:3-5`"
+
+
+def test_a_ledger_line_with_no_verdict_is_not_an_entry():
+    assert parse_ledger_line("- **[M1]** `handler.go` — moved to a follow-up") is None
+
+
+def test_a_glued_joiner_on_the_verdict_is_not_an_entry():
+    assert parse_ledger_line("- **[M1]** `handler.go` — Fixed-up later") is None

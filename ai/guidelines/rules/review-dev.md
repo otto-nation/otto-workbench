@@ -96,12 +96,12 @@ against the tree. That one type answers both the dedup key and the stable ID,
 so two findings cannot be duplicates for one pass and distinct for the other.
 
 What none of them settles is undecided, and `UndecidedReason` says which kind:
-an unreadable ledger verdict and a location nothing could parse are defects
-here, `NOT_CHECKABLE` is a check there was nothing to run, and only
-`NOT_MENTIONED` is the review passing a finding by. `_report()` prints them
-grouped in that order rather than as one list — run together they all read as
-the last one — and the whole reconciliation, settled and not, is written to
-`prior-findings.json`.
+a location nothing could parse is a defect here, `NOT_CHECKABLE` is a check
+there was nothing to run, and only `NOT_MENTIONED` is the review passing a
+finding by. An unreadable ledger line is dropped rather than recorded, and the
+finding falls to the tree check. `_report()` prints them grouped in that order
+rather than as one list — run together they all read as the last one — and the
+whole reconciliation, settled and not, is written to `prior-findings.json`.
 
 Because the ledger is stripped, `Declined` also has to survive on the finding
 line itself: a declined finding is carried forward annotated

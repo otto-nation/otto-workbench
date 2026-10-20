@@ -184,9 +184,8 @@ class PriorRecord:
     """One prior finding, what became of it, and how that was settled.
 
     `disposition` is None when nothing settled it, and `reason` then says which
-    kind of nothing — the ledger naming the finding without a verdict this can
-    read is a different failure from the review never mentioning it, and only
-    the second is the review's.
+    kind of nothing. An unreadable ledger line is dropped rather than recorded,
+    so it never settles from the ledger; the finding falls to the tree check.
     """
 
     ref: FindingRef = field(default_factory=FindingRef)
@@ -498,10 +497,10 @@ def _report(reconciliation: Reconciliation, sidecar: str = "") -> None:
     the reader to skip it.
 
     The undecided are then printed by `UndecidedReason` rather than as one
-    list, because they are not one thing: a line this could not read is a
-    defect here and says what shape would have parsed, while a finding the
-    review passed by is a defect there. Run together they read as the second,
-    which is how six unreadable verdicts once reported as six omissions.
+    list, because they are not one thing: a location this could not parse is a
+    defect here, while a finding the review passed by is a defect there. Run
+    together they read as the second. An unreadable ledger line is dropped
+    rather than recorded, and the finding falls to the tree check.
     """
     if not reconciliation.records:
         return

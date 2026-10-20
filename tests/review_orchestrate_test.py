@@ -283,6 +283,7 @@ class TestCleanupScope:
         it away, since what most of these tests read is the directory.
         """
         import fix.engine  # the `ro` fixture has already put `ai/lib` on the path
+        from review.reply_threads import ReplyThreads
 
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir(exist_ok=True)
@@ -325,6 +326,10 @@ class TestCleanupScope:
         monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)
         monkeypatch.setattr(ro, "run_static_analysis", lambda *a, **k: [])
         monkeypatch.setattr(ro, "run_fix_pass", _fix)
+        monkeypatch.setattr(
+            ro, "fetch_reply_threads",
+            lambda *a, **k: ReplyThreads([], {}),
+        )
 
         args = self._args(ro, review_file, tmp_path, **arg_overrides)
         with contextlib.redirect_stdout(out if out is not None else io.StringIO()):

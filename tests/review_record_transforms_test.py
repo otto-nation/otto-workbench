@@ -41,6 +41,17 @@ class TestPostProcess:
         assert done.verification is None and done.record.ledger == ""
         assert [(f.id, f.sid) for f in done.record.findings] == [("N1", "")]
 
+    def test_a_drop_note_without_a_summary_gets_one(self, tmp_path):
+        tree = copy_tree(tmp_path / "tree")
+        record = ingest_review(
+            "## Must fix\n- **[M1]** **`src/cli.py:5`** — `--timeout` is compared as a string.\n"
+            "  > ```python\n  > if str(args.timeout) > elapsed:\n  > ```\n"
+        )
+        done = post_process_record(record, str(tree), ["src/cli.py"])
+        assert done.verification["dropped"] == ["M1"]
+        assert done.record.summary
+        assert "verification-drops" in done.record.summary
+
 
 class TestDisprove:
     def test_a_falsified_finding_is_kept_but_hidden(self):

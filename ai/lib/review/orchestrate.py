@@ -64,6 +64,7 @@ from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
+from review.store import read_prior
 from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
@@ -145,7 +146,7 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
 
     Not reached on the no-op re-review path, which returns above — and that
     stays consistent rather than leaving a gap. No agent runs there, the fix
-    pass is never called, and `_carried_findings` drops `## Static Analysis`
+    pass is never called, and `_carried_record` drops `## Static Analysis`
     from the document it carries forward, so the section and the empty
     `job.static_results` agree: this run measured nothing and claims nothing.
     The next run with a real delta writes both.
@@ -214,7 +215,7 @@ def _is_no_op_rereview(job) -> bool:
     return bool(
         review.prompt_sections._is_incremental(job)
         and job.preflight.delta_proven_empty
-        and job.prior_review
+        and job.prior is not None
     )
 
 
@@ -463,6 +464,7 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         skip_phases=phase_skips(args),
         include_generated=args.generated,
     )
+    job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
 
     job.throttle = QuotaThrottle()
     # Handed to us, not derived: --repo-dir may be a detached review worktree,

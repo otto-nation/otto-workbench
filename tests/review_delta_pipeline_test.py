@@ -88,7 +88,7 @@ def _job(tmp_path, *, prior_review="", **pr_overrides) -> ReviewJob:
         "changed_files": 1, "files": [{"path": "a.py", "additions": 10, "deletions": 0}],
     }
     pr_fields.update(pr_overrides)
-    return ReviewJob(
+    job = ReviewJob(
         repo="org/repo", pr_number="42", pr=PRMetadata(**pr_fields),
         ctx=PRContext(), wt_path=str(tmp_path),
         review_file=str(tmp_path / "review.md"),
@@ -96,6 +96,16 @@ def _job(tmp_path, *, prior_review="", **pr_overrides) -> ReviewJob:
         generator_version="1.0.0", effort=Effort.MEDIUM,
         prior_review=prior_review,
     )
+    if prior_review:
+        from review.ingest import ingest_review
+        from review.store import StoredReview
+        from review.types import ReviewMeta
+        header = ReviewHeader.parse(prior_review)
+        job.prior = StoredReview(
+            ingest_review(prior_review, strict=False),
+            ReviewMeta(date=header.date or "2026-01-01", head_sha=header.head_sha),
+        )
+    return job
 
 
 def _preflight(**overrides) -> PreflightData:

@@ -72,6 +72,35 @@ def _seeded_review_dir(tmp_path, *, pipeline_state=True):
     return d
 
 
+def test_a_resumed_run_does_not_rearchive_the_prior_record(tmp_path):
+    """`--recover` keeps reading the existing prior.json; it must not archive again."""
+    from review.ingest import ingest_review
+    from review.paths import FILENAME_PRIOR_RECORD, FILENAME_RECORD
+    from review.store import write_review
+    from review.types import ReviewMeta
+
+    review_dir = _seeded_review_dir(tmp_path)
+    (review_dir / "prior.md").write_text("## Must fix\n- **[M1]** from the failed run\n")
+    write_review(
+        review_dir / "review.md",
+        ingest_review("## Summary\nthis round\n", strict=False),
+        ReviewMeta(head_sha="abc1234", date="2026-10-19"),
+    )
+    # Simulate a prior archive already sitting beside the in-flight review.
+    (review_dir / FILENAME_PRIOR_RECORD).write_text(
+        (review_dir / FILENAME_RECORD).read_text().replace("this round", "prior round")
+    )
+    prior_before = (review_dir / FILENAME_PRIOR_RECORD).read_text()
+
+    resolved = review.run.resolve_prior_review(
+        review_dir / "review.md", str(review_dir / "session.jsonl"), True,
+    )
+
+    assert resolved == str(review_dir / "prior.md")
+    assert (review_dir / FILENAME_RECORD).is_file(), "resuming must not move review.json"
+    assert (review_dir / FILENAME_PRIOR_RECORD).read_text() == prior_before
+
+
 def test_a_resumed_run_reuses_the_prior_review_rather_than_rotating_it(tmp_path):
     """The load-bearing half: `resume` is what makes the call non-destructive.
 

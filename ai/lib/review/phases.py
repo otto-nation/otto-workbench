@@ -50,6 +50,7 @@ from review.paths import (
     phase_output_path,
 )
 from review.document import SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument
+from review.record import ReviewRecord
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.registry import PhaseScan, build_prompt, for_phase
@@ -244,8 +245,8 @@ def _touch(path: str) -> None:
     Path(path).touch(exist_ok=True)
 
 
-def _synthesis_max_turns(merged_content: str) -> int:
-    counts = ReviewDocument(body=merged_content).open_counts
+def _synthesis_max_turns(merged: ReviewRecord) -> int:
+    counts = merged.open_counts
     total = sum(counts.values())
     scaled = PHASES[Phase.SYNTHESIS].max_turns + max(0, total - 20) // 10
     return min(scaled, RETRY_MAX_TURNS_GROUP)

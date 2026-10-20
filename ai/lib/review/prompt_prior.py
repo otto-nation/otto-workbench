@@ -31,6 +31,7 @@ from review.document import (
 )
 from review.grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE, SID_MARKER_RE
 from review.merge import annotate_prior_with_stable_ids
+from review.render import BANNER
 from review.reply_threads import ReplyThreads
 from review.spans import finding_spans
 from review.types import (
@@ -202,6 +203,11 @@ def _build_prior_section(
     if not prior_review:
         return ""
     review_text = _strip_internal_sections(annotate_prior_with_stable_ids(prior_review))
+    # Until Task 15 replaces this quote, a BANNER line in prior.md would trip
+    # ingest's RENDERED_INPUT refusal if the agent echoed it into its output.
+    review_text = "\n".join(
+        line for line in review_text.splitlines() if line.strip() != BANNER
+    )
     if file_filter:
         review_text = _scope_prior_review(review_text, file_filter)
     if not review_text:

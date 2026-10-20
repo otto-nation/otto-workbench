@@ -98,7 +98,12 @@ def render_findings(record: ReviewRecord, *, sids: bool = False, evidence: bool 
 
 
 def render_review(record: ReviewRecord, meta: ReviewMeta, *, sids: bool = False,
-                  omit: frozenset[str] = frozenset()) -> str:
-    """The whole review.md: title and header from `meta`, banner, then the body."""
+                  omit: frozenset[str] = frozenset(), banner: bool = True) -> str:
+    """The whole review.md: title and header from `meta`, banner, then the body.
+
+    Prompt text passes `banner=False` so an agent quoting a rendered review
+    cannot echo the line ingest refuses as RENDERED_INPUT.
+    """
     header = ReviewHeader.from_meta(meta).render()
-    return f"{review_title(meta)}\n\n{header}{BANNER}\n\n{render_body(record, sids=sids, omit=omit)}"
+    mark = f"{BANNER}\n" if banner else ""
+    return f"{review_title(meta)}\n\n{header}{mark}\n{render_body(record, sids=sids, omit=omit)}"

@@ -37,6 +37,14 @@ def test_the_banner_is_the_only_line_rendering_adds():
     assert added - {""} == {BANNER}
 
 
+def test_prompt_text_omits_the_banner():
+    rendered = render_review(
+        ingest_review("## Summary\nx\n"), ReviewMeta(repo="a/b", pr_number=1),
+        banner=False,
+    )
+    assert BANNER not in rendered
+
+
 def test_the_header_is_meta_json_s():
     """D6: a key an agent typed into its header is not on the rendered page."""
     record = ingest_review("# T\n<!-- weird: 1 -->\n\n## Summary\nx\n")

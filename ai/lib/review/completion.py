@@ -29,6 +29,7 @@ import review.invoke
 import review.publish
 from review.document import ReviewDocument
 from review.paths import FILENAME_PIPELINE_STATE, FILENAME_PRIOR, archive_review
+from review.store import archive_prior, clear_prior
 from review.summary import build_review_summary, print_summary
 
 
@@ -77,7 +78,9 @@ def resolve_prior_review(review_file: Path, session_log: str, resume: bool) -> s
         if prior.is_file():
             return str(prior)
         return ""
-    return archive_review(review_file, session_log)
+    path = archive_review(review_file, session_log)
+    archive_prior(review_dir)
+    return path
 
 
 def cleanup_prior_review(review_file: Path, prior_path: str) -> None:
@@ -91,6 +94,7 @@ def cleanup_prior_review(review_file: Path, prior_path: str) -> None:
             os.unlink(prior_path)
         except OSError:
             pass
+        clear_prior(review_file.parent)
 
 
 def summarise(

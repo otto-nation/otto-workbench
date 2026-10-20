@@ -27,7 +27,7 @@ result = mod._phase_merge([], [
     mod.GroupFailure("svc-card", mod.Diagnosis(
         mod.DiagnosisKind.MAX_TURNS, num_turns=10)),
 ])
-print(result)
+print(result.text)
 PYEOF
 )
   [[ "$result" == *"- orc-card: agent error: model not available"* ]]

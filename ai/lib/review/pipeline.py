@@ -59,7 +59,8 @@ from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
 from review.overflow import run_with_overflow_recovery
-from review.outcome import _post_process_review, _write_review_sidecar, is_complete_review
+from review.ingest import IngestRejected, ingest_review
+from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
 from review.prompt_sections import _is_incremental
@@ -192,8 +193,13 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     if _should_disprove(job, disprove):
         _phase_disprove(job)
 
-    _post_process_review(job)
-    _write_review_sidecar(job)
+    try:
+        record = ingest_review(Path(job.review_file).read_text())
+    except IngestRejected as exc:
+        core.log.error(f"review agent output rejected: {exc}")
+        core.log.dim(f"Session log: {job.session_log}")
+        sys.exit(1)
+    _post_process_review(job, record)
 
 
 def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
@@ -364,10 +370,11 @@ def run_multi_phase(
             cost_so_far += group_phase.cost
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
-    merged_content = _phase_merge(group_outputs[:], failed_groups)
+    merged = _phase_merge(group_outputs[:], failed_groups)
 
     if carried_forward:
-        merged_content += "\n" + carried_forward
+        # Interim; Task 15 replaces the source.
+        merged = merged.carry(ingest_review(carried_forward, strict=False), carried_forward)
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
@@ -380,7 +387,7 @@ def run_multi_phase(
     else:
         synthesis = _run_synthesis_or_fallback(
             job, state, holistic.content, group_count,
-            merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
+            merged, failed_groups, n_skipped, cost_so_far, max_cost,
         )
     cost_so_far += synthesis.cost
 

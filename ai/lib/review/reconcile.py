@@ -51,12 +51,13 @@ from pathlib import Path
 import git.client
 import core.log
 import core.serde
-from review.document import SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader
+from review.document import ReviewHeader
 from review.grammar import (
     ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, SID_MARKER_RE, FindingIdentity,
     parse_ledger_line,
 )
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
+from review.record import ReviewRecord
 from review.spans import finding_spans
 from review.types import (
     DISPOSITION_TAIL_BREAKS, DISPOSITION_TAIL_WORD_JOINERS, FindingRef,
@@ -84,10 +85,19 @@ def _stable_ids(text: str) -> set[str]:
 
 # ── Reading the prior review ─────────────────────────────────────────────────
 
-def _parse_ledger(review_text: str) -> list[LedgerEntry]:
-    """The entries of the review's prior-findings ledger, in order."""
-    section = ReviewDocument.parse(review_text).section(SECTION_PRIOR_FINDINGS)
-    entries = (parse_ledger_line(raw) for raw in section.split("\n"))
+def _record_stable_ids(review: ReviewRecord) -> set[str]:
+    """Every prior-finding identity the review carries: markers, finding identities,
+    and any finding-shaped line in its prose — the same set `_stable_ids` read off text."""
+    ids = {f.sid for f in review.findings if f.sid} | {f.stable_id for f in review.findings if f.stable_id}
+    texts = [review.ledger, review.summary, review.verdict, *(e.body for e in review.extra),
+             *(f.body for f in review.findings)]
+    for text in texts:
+        ids |= _stable_ids(text)
+    return ids
+
+
+def _record_ledger(review: ReviewRecord) -> list[LedgerEntry]:
+    entries = (parse_ledger_line(raw) for raw in review.ledger.split("\n"))
     return [entry for entry in entries if entry]
 
 
@@ -424,25 +434,25 @@ def _settle(
 
 def reconcile(
     prior_text: str,
-    review_text: str,
+    review: ReviewRecord,
     wt_path: str = "",
     head_sha: str = "",
 ) -> Reconciliation:
-    """What `review_text` made of every finding the prior review reported.
+    """What `review` made of every finding the prior review reported.
 
     `wt_path` is the worktree the review was written against. Without it
     nothing is inferred and the review's own account stands alone, which is
     what a caller reconciling two documents rather than a run wants.
     """
     return _reconcile_findings(
-        _parse_prior_findings(prior_text), prior_text, review_text, wt_path, head_sha,
+        _parse_prior_findings(prior_text), prior_text, review, wt_path, head_sha,
     )
 
 
 def _reconcile_findings(
     findings: list[PriorFinding],
     prior_text: str,
-    review_text: str,
+    review: ReviewRecord,
     wt_path: str,
     head_sha: str,
 ) -> Reconciliation:
@@ -451,8 +461,8 @@ def _reconcile_findings(
     Split out so `passed_over()` can reuse the one parse of `prior_text`
     instead of paying for a second one just to get the findings back.
     """
-    carried = _stable_ids(review_text)
-    ledger = _parse_ledger(review_text)
+    carried = _record_stable_ids(review)
+    ledger = _record_ledger(review)
     prior = ReviewHeader.parse(prior_text)
     tree = _Tree(wt_path, prior.head_sha)
     return Reconciliation(
@@ -464,9 +474,9 @@ def _reconcile_findings(
 
 
 def passed_over(
-    prior_text: str, review_text: str, wt_path: str = "", head_sha: str = "",
+    prior_text: str, review: ReviewRecord, wt_path: str = "", head_sha: str = "",
 ) -> list[PriorFinding]:
-    """The prior findings `review_text` left out that the tree at `wt_path` still holds.
+    """The prior findings `review` left out that the tree at `wt_path` still holds.
 
     Findings rather than records: a `PriorRecord` says what became of a
     finding, and a caller asking for a disposition needs the finding itself —
@@ -488,7 +498,7 @@ def passed_over(
     if not prior_text:
         return []
     findings = _parse_prior_findings(prior_text)
-    reconciliation = _reconcile_findings(findings, prior_text, review_text, wt_path, head_sha)
+    reconciliation = _reconcile_findings(findings, prior_text, review, wt_path, head_sha)
     return [
         finding
         for finding, record in zip(findings, reconciliation.records, strict=True)
@@ -583,19 +593,19 @@ _VERDICT_SHAPE = (
 def record_prior_findings(
     review_file: str,
     prior_text: str,
+    review: ReviewRecord,
     wt_path: str = "",
 ) -> Reconciliation | None:
-    """Reconcile the review at `review_file` against `prior_text` and record it.
+    """Reconcile `review` against `prior_text` and record it beside `review_file`.
 
-    Runs before post-processing strips the ledger, which is the only window in
+    Runs before post-processing clears the ledger, which is the only window in
     which the review still says what it made of the prior findings. Returns
-    None when there is nothing to reconcile — no prior review, no review file,
-    or a prior review that reported no findings.
+    None when there is nothing to reconcile — no prior review, or a prior
+    review that reported no findings. `review_file` is the sidecar path only.
     """
-    path = Path(review_file)
-    if not prior_text or not path.exists():
+    if not prior_text:
         return None
-    reconciliation = reconcile(prior_text, path.read_text(), wt_path)
+    reconciliation = reconcile(prior_text, review, wt_path)
     if not reconciliation.records:
         return None
     _report(reconciliation, _write(review_file, reconciliation))

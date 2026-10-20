@@ -220,3 +220,10 @@ class TestStripInternalSections:
 
     def test_build_prior_section_empty_when_only_internal(self):
         assert _build_prior_section("## File Triage\n- `a.py` — **Tier 1**\n") == ""
+
+    def test_a_rendered_banner_is_stripped_from_the_quoted_prior(self):
+        from review.render import BANNER
+        prior = f"## Must fix\n{BANNER}\n- **[M1]** `a.py:1` — bug\n"
+        result = _build_prior_section(prior)
+        assert BANNER not in result
+        assert "**[M1]**" in result

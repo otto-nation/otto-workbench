@@ -147,6 +147,16 @@ def test_nested_headers_are_not_sections(tmp_path):
     assert core.pr_template.load(tmp_path).headers == ["## What", "## Why"]
 
 
+def test_line_is_heading_matches_the_line_not_a_substring():
+    is_heading = core.pr_template.line_is_heading
+    assert is_heading("## Follow-ups", "## Follow-ups")
+    assert is_heading("## Follow-ups   ", "## Follow-ups")
+    assert is_heading("## Link ENG-123", "## Link")
+    assert not is_heading("### Follow-ups", "## Follow-ups")
+    assert not is_heading("talked about ## Why without having one", "## Why")
+    assert is_heading("## Why", "## Why")
+
+
 def test_a_template_with_no_headers_requires_no_sections(tmp_path):
     _write(tmp_path, ".github/pull_request_template.md", "just prose\n")
     template = core.pr_template.load(tmp_path)

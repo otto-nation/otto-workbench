@@ -101,10 +101,20 @@ def resolve_issue(branch: str, override: str) -> str:
 
 
 def missing_sections(template: PRTemplate, body: str) -> list[str]:
-    """Required headers the body still owes. Empty when the repo ships no template."""
+    """Required headers the body still owes. Empty when the repo ships no template.
+
+    A header is present only when some line of the body is that heading
+    (see ``core.pr_template.line_is_heading``). A mention in prose, or a
+    nested heading such as ``### Follow-ups`` for ``## Follow-ups``, does
+    not count.
+    """
     if not template.found:
         return []
-    return [header for header in template.required_headers if header not in body]
+    lines = body.splitlines()
+    return [
+        header for header in template.required_headers
+        if not any(core.pr_template.line_is_heading(line, header) for line in lines)
+    ]
 
 
 def template_refusal(template: PRTemplate, missing: list[str]) -> str:

@@ -152,6 +152,11 @@ def test_resolve_issue_is_empty_when_nothing_matches():
     assert resolve_issue("isaac/feat/thing", "") == ""
 
 
+def test_missing_sections_accepts_crlf_bodies():
+    body = _ON_TEMPLATE.replace("\n", "\r\n")
+    assert missing_sections(_tpl(_WHAT_WHY), body) == []
+
+
 # ── missing_sections / template_refusal (bats) ──────────────────────────────
 
 

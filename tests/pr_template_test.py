@@ -155,6 +155,9 @@ def test_line_is_heading_matches_the_line_not_a_substring():
     assert not is_heading("### Follow-ups", "## Follow-ups")
     assert not is_heading("talked about ## Why without having one", "## Why")
     assert is_heading("## Why", "## Why")
+    assert not is_heading("## Linkage", "## Link")
+    assert is_heading("## Why not", "## Why")  # documented tradeoff
+    assert not is_heading(" ## Why", "## Why")  # indentation intentionally rejected
 
 
 def test_a_template_with_no_headers_requires_no_sections(tmp_path):

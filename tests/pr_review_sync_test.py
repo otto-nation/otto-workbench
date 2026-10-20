@@ -190,9 +190,28 @@ def test_repair_on_a_stale_dir_leaves_review_unchecked(tmp_path, capsys):
     with patch("cli.review_modes.find_review_file", return_value=review):
         rc = cli.review_modes.repair([], ctx, bin_dir=tmp_path)
     assert rc != 0
-    assert "No group finding files" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "No group finding files" in err
+    assert f"{review} predates review.json" in err
+    assert "No review file found" not in err
     _assert_review_unchecked(ctx.target_dir)
     assert not (tmp_path / FILENAME_RECORD).exists()
+
+
+def test_repair_with_no_review_file_says_none_was_found(tmp_path, capsys):
+    ctx = make_ctx(
+        repo="org/repo", branch="feat/x", pr_number=42,
+        worktree_root=tmp_path / "wt", head_sha="abc123def456",
+        target_dir=tmp_path / "pr" / "feat",
+    )
+    with patch("cli.review_modes.find_review_file", return_value=None), \
+         patch("cli.review_modes.review_file_path",
+               return_value=tmp_path / "absent" / "review.md"):
+        rc = cli.review_modes.repair([], ctx, bin_dir=tmp_path)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "No review file found, trying rebuild..." in err
+    assert "predates review.json" not in err
 
 
 def test_repair_on_a_stale_dir_with_group_files_rebuilds_and_syncs(tmp_path):

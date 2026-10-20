@@ -99,7 +99,10 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
         _sync_recorded_review(ctx, pr_num, review_path)
         return 0
 
-    core.log.info("No review file found, trying rebuild...")
+    if review_path:
+        core.log.info(f"{review_path} predates review.json — rebuilding...")
+    else:
+        core.log.info("No review file found, trying rebuild...")
     review_dir = (
         review_path.parent if review_path
         else review_file_path(ctx.repo, pr_num).parent

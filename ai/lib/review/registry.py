@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import core.log
 from agent.backend import selected_backend
@@ -29,7 +30,8 @@ from review.prompt import (
     _survey_prompt,
 )
 from review.prompt_fit import fit_rendered_prompt
-from review.scout import format_leads_block, parse_scout_output
+from review.artifacts import DisproveArtifact, HolisticArtifact, ScoutArtifact
+from review.scout import holistic_context, scout_context
 from review.types import ReviewJob
 
 
@@ -38,12 +40,13 @@ class PhaseScan:
     """How a phase's output is read before the run moves on.
 
     `without` is what the log says when the output is missing and the run
-    continues anyway; `read` extracts whatever the next phase needs, or None
-    when the raw output is what it needs.
+    continues anyway; `read` renders the phase's typed artifact as the
+    context the next phase reads, or is None when the next step takes the
+    artifact itself (disprove).
     """
 
     without: str
-    read: Callable[[str], str] | None = None
+    read: Callable[[Any], str] | None = None
 
 
 @dataclass(frozen=True)
@@ -57,32 +60,35 @@ class ReviewPhase:
     artifact: type | None = None
 
 
-def _scout_leads(raw: str) -> str:
-    """A scout scan as the leads block a group prompt embeds.
+def _scout_context(scan: ScoutArtifact) -> str:
+    """A scout scan as the block a group prompt embeds, with its tally logged.
 
-    Reports the tally as it goes, so a resumed run says what it recovered from
-    the file rather than reaching the group phases having logged nothing.
+    Logged here so a resumed run says what it recovered from the file rather
+    than reaching the group phases having logged nothing.
     """
-    leads, no_scrutiny = parse_scout_output(raw)
-    core.log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
-    return format_leads_block(leads, no_scrutiny)
+    core.log.info(f"Scout found {len(scan.leads)} investigation leads, "
+                  f"{len(scan.no_scrutiny)} no-scrutiny files")
+    return scout_context(scan)
 
 
 _PHASES: dict[Phase, ReviewPhase] = {
     Phase.SINGLE: ReviewPhase(build=_prompt_single),
     Phase.HOLISTIC: ReviewPhase(
         build=_survey_prompt,
-        scan=PhaseScan("continuing without it"),
+        scan=PhaseScan("continuing without it", read=holistic_context),
+        artifact=HolisticArtifact,
     ),
     Phase.SCOUT: ReviewPhase(
         build=_survey_prompt,
-        scan=PhaseScan("continuing without leads", read=_scout_leads),
+        scan=PhaseScan("continuing without leads", read=_scout_context),
+        artifact=ScoutArtifact,
     ),
     Phase.GROUP: ReviewPhase(build=_prompt_group),
     Phase.SYNTHESIS: ReviewPhase(build=_prompt_synthesis),
     Phase.DISPROVE: ReviewPhase(
         build=_prompt_disprove,
         scan=PhaseScan("keeping all findings"),
+        artifact=DisproveArtifact,
     ),
 }
 

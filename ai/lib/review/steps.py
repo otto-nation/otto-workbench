@@ -48,7 +48,7 @@ from review.prompt_prior import _scoped, _with_sids
 from review.reconcile import passed_over
 from review.record import ProseSection, ReviewRecord, SeveritySection
 from review.registry import build_prompt
-from review.render import render_body, render_findings, render_review
+from review.render import render_body, render_findings
 from review.retry import GroupFailure, _has_output, _retry_missing_output
 from review.state import (
     PipelineState, _inject_failures_and_status, _write_pipeline_state,
@@ -58,7 +58,7 @@ from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
 )
 from review.verdict import BUDGET_SUMMARY, SKIPPED_SUMMARY, open_counts
-from review.verify import apply_disprove, parse_disprove_output
+from review.verify import apply_disprove
 from core.text import plural
 
 DISPROVE_MIN_FINDINGS = 3
@@ -152,7 +152,7 @@ def _run_holistic_phase(
         core.log.info(f"Phase 1: {label} skipped (exists)")
         return PhaseResult(
             log=phase_log_path(job.review_file, phase),
-            content=read_scan(phase, Path(output).read_text()),
+            content=read_scan(phase, output),
             output=output,
         )
 
@@ -450,19 +450,21 @@ def _build_group_skips(
     return skips
 
 
-def _phase_disprove(job: ReviewJob, record: ReviewRecord, review_content: str) -> DisproveRun:
+def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
     counts = record.open_counts
     ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
         core.log.info(f"{label} skipped — no must-fix or should-fix findings")
         return DisproveRun(PhaseResult(), record)
+    # The gate reads the record rendered with its evidence: the findings it
+    # challenges, their locations, and the code each one quotes.
     result = run_phase(job, Phase.DISPROVE,
                        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
-                       review_content=review_content)
-    if not result.content:
+                       review_content=render_body(record, evidence=True))
+    if result.artifact is None:
         return DisproveRun(result, record)
-    applied = apply_disprove(record, parse_disprove_output(result.content))
+    applied = apply_disprove(record, result.artifact)
     if applied.summary.get("falsified", 0) > 0:
         core.log.info(f"{label}: {applied.summary['survived']} survived, {applied.summary['falsified']} falsified")
         _log_disprove_falsified(applied.summary)
@@ -509,7 +511,7 @@ def _run_disprove_gate(
         counts = open_counts(ReviewDocument.from_stored(stored) if stored else None)
         ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
         if stored and (disprove is True or ms_count >= DISPROVE_MIN_FINDINGS):
-            run = _phase_disprove(job, stored.record, render_review(stored.record, stored.meta))
+            run = _phase_disprove(job, stored.record)
             write_review(Path(job.review_file), run.record, stored.meta)
             result, failure = run.result, run.result.diagnosis
         else:

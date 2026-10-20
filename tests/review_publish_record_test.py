@@ -28,7 +28,8 @@ from review.state import PipelineState
 from review.steps import DisproveRun, _phase_disprove, _run_disprove_gate
 from review.store import StoredReview, read_review, write_review
 from review.types import DeltaAttribution, PreflightData, ReviewJob
-from review.verify import DisproveResult, apply_disprove
+from review.artifacts import DisproveArtifact, DisproveOutcome, DisproveVerdict
+from review.verify import apply_disprove
 
 from review_record_support import FIXTURES, copy_tree, canonical, expected_text, fixture_meta, fixture_text
 
@@ -197,9 +198,12 @@ def test_a_disprove_after_failures_keeps_both(tmp_path, monkeypatch):
                           failed={Phase.DISPROVE: Diagnosis(DiagnosisKind.OUTPUT_MISSING)})
     review.state._inject_failures_and_status(job.review_file, state)
     from review.phases import PhaseResult
-    monkeypatch.setattr(review.steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
+    monkeypatch.setattr(review.steps, "run_phase", lambda *a, **k: PhaseResult(
+        artifact=DisproveArtifact(verdicts=(
+            DisproveVerdict("S1", DisproveOutcome.FALSIFIED, "no"),)),
+    ))
     stored = read_review(Path(job.review_file))
-    run = _phase_disprove(job, stored.record, "unused")
+    run = _phase_disprove(job, stored.record)
     assert isinstance(run, DisproveRun)
     assert [f.id for f in run.record.findings if f.disposition is Disposition.FALSIFIED] == ["S1"]
     assert run.record.finding("S1") is None
@@ -214,7 +218,10 @@ def test_the_disprove_gate_hides_a_falsified_finding(tmp_path, monkeypatch):
         fixture_meta("synthesis_pr"),
     )
     from review.phases import PhaseResult
-    monkeypatch.setattr(review.steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
+    monkeypatch.setattr(review.steps, "run_phase", lambda *a, **k: PhaseResult(
+        artifact=DisproveArtifact(verdicts=(
+            DisproveVerdict("S1", DisproveOutcome.FALSIFIED, "no"),)),
+    ))
     state = PipelineState(head_sha=HEAD, group_names=["a"], done={Phase.SYNTHESIS})
     _run_disprove_gate(job, state, disprove=True, cost_so_far=0.0, max_cost=20.0)
     assert read_review(Path(job.review_file)).record.finding("S1") is None
@@ -223,7 +230,8 @@ def test_the_disprove_gate_hides_a_falsified_finding(tmp_path, monkeypatch):
 def test_an_unchanged_review_does_not_resurrect_a_falsified_finding(tmp_path):
     applied = apply_disprove(
         ingest_review(fixture_text("synthesis_pr", "input.md")),
-        [DisproveResult("S1", "FALSIFIED", "not reachable")],
+        DisproveArtifact(verdicts=(
+            DisproveVerdict("S1", DisproveOutcome.FALSIFIED, "not reachable"),)),
     )
     prior = StoredReview(applied.record, fixture_meta("synthesis_pr"))
     job = _job(tmp_path)

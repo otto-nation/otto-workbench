@@ -3,7 +3,6 @@ You are completing the final review of PR #${pr_number} in ${repo}.
 ${pr_header}
 ${state_context}
 
-## Holistic assessment (from Phase 1)
 ${holistic_content}
 
 ## Detailed findings (from Phase 2, merged across ${group_count} file groups)

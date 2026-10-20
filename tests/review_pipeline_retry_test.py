@@ -243,13 +243,15 @@ class TestSingleAgentCleanup:
         return job
 
     def test_disprove_artifacts_do_not_survive(self, tmp_path, monkeypatch):
-        (tmp_path / "disprove.md").write_text("- [M1] SURVIVES — real\n")
+        (tmp_path / "disprove.json").write_text(
+            '{"verdicts": [{"id": "M1", "outcome": "survives", "reason": "real"}]}'
+        )
         (tmp_path / "disprove.jsonl").write_text(_result("success") + "\n")
         (tmp_path / "prompt-single.md").write_text("PROMPT")
 
         self._run(tmp_path, monkeypatch)
 
-        assert not (tmp_path / "disprove.md").exists()
+        assert not (tmp_path / "disprove.json").exists()
         assert not (tmp_path / "disprove.jsonl").exists()
         assert not (tmp_path / "prompt-single.md").exists()
 

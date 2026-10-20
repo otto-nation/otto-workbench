@@ -341,11 +341,11 @@ class TestPhaseOutputNames:
     def test_preserves_current_filenames(self):
         expected = {
             Phase.SINGLE: "",
-            Phase.HOLISTIC: "holistic.md",
-            Phase.SCOUT: "scout.md",
+            Phase.HOLISTIC: "holistic.json",
+            Phase.SCOUT: "scout.json",
             Phase.GROUP: "group-{}.md",
             Phase.SYNTHESIS: "",
-            Phase.DISPROVE: "disprove.md",
+            Phase.DISPROVE: "disprove.json",
             Phase.FIX: "",
             Phase.FIX_VERIFY: "",
         }
@@ -380,6 +380,5 @@ class TestPhaseOutputNames:
         ]
         assert specs
         for spec in specs:
-            assert spec.log_filename.removesuffix(".jsonl") == (
-                spec.output_filename.removesuffix(".md")
-            )
+            stem = spec.output_filename.removesuffix(".md").removesuffix(".json")
+            assert spec.log_filename.removesuffix(".jsonl") == stem

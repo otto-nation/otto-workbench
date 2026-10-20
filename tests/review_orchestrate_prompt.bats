@@ -206,7 +206,7 @@ job = mod.ReviewJob(
 result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
-    holistic_content="Watch for API mismatches",
+    holistic_content="## Holistic context\nWatch for API mismatches",
 )
 print("FOUND" if "Holistic context" in result else "MISSING")
 ')

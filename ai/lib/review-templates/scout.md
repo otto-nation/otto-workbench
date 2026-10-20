@@ -22,29 +22,14 @@ ${env_section}
 ## Output
 ${output_block}
 
-Format your output with exactly these two sections:
-
-```
-## Investigation Leads
-- **`path/to/file.py:42`** — Error return value ignored after db.Query
-  Severity hint: must-fix. No error check between query and result usage.
-
-- **`path/to/handler.go:118-125`** — Enum case added but sibling switch not updated
-  Severity hint: should-fix. The new FooType value is handled here but not in bar_handler.go.
-
-## No Scrutiny Needed
-- `path/to/generated.pb.go` — generated code, no custom logic
-- `path/to/rename_test.go` — pure file rename, no logic change
-```
-
 Rules:
-- Every lead must have a specific file path and line (or line range)
-- Every lead must explain the concern in one sentence after the em-dash
-- Add a severity hint (must-fix, should-fix, nit) and a brief "why" on the next line
-- No-scrutiny entries need a one-line reason
-- If nothing looks suspicious, write "No investigation leads." under ## Investigation Leads
+- Every lead names its file in `path`, and the line or range it is about in `line` and `end_line`
+- `concern` is one sentence on what looks wrong; `why` says why it matters
+- `severity_hint` is your guess at how serious it is — the deep reviewer decides
+- Every `no_scrutiny` entry needs a one-line `reason`
+- If nothing looks suspicious, leave `leads` empty
 - Do NOT write per-file findings — those come from the detailed review phase
-- If the overall approach looks wrong — not just buggy but fundamentally misguided — add a `## Direction Concern` section explaining why and what the alternative should be
+- If the overall approach looks wrong — not just buggy but fundamentally misguided — set `direction_concern` to why, and to what the alternative should be; otherwise leave it ""
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write your leads file within the first few turns. For files listed under "Files not pre-collected," read only those critical to spotting concerns.

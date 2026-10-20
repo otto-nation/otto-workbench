@@ -1137,10 +1137,13 @@ the order those checks run in.
 
 ### review/scout.py
 
-Lead scout: parse structured investigation leads from scout phase output.
+Phase 1's context: the scout's leads or the holistic assessment, as prompt text.
 
-The scout phase replaces the holistic phase's prose output with structured
-leads that tell group reviewers exactly where to focus investigation.
+Phase 1 runs one of two scans over the whole PR. Its agent writes a
+`ScoutArtifact` or a `HolisticArtifact` (`review.artifacts`). The phases after
+it never read that file: they read the block rendered here, which every group
+prompt embeds and synthesis is shown. Each block opens with its own heading, so
+a reader needs no sentinel to tell the two apart.
 
 ### review/sections.py
 
@@ -1641,9 +1644,9 @@ the quote no longer has, which makes a verbatim quote fail to match itself.
 
 The disprove gate is adversarial. Each must-fix and should-fix finding is
 challenged by an agent, and one that cannot survive the challenge is marked
-`FALSIFIED` on the record — kept, never rendered. Reading that agent's
-verdicts back and applying them is `apply_disprove`; whether the gate runs at
-all is `review.phases`'.
+`FALSIFIED` on the record — kept, never rendered. The agent writes a
+`DisproveArtifact`; `apply_disprove` reads those verdicts onto the record.
+Whether the gate runs at all is `review.phases`'.
 
 The synthesis agent wrote the Summary and the Verdict before either gate ran,
 so both can describe findings that are no longer visible. Regenerating them

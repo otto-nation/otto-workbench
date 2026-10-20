@@ -3,7 +3,6 @@ You are completing the final self-review of changes on branch ${branch_name} in 
 ${pr_header}
 ${state_context}
 
-## Holistic assessment (from Phase 1)
 ${holistic_content}
 
 ## Detailed findings (from Phase 2, merged across ${group_count} file groups)

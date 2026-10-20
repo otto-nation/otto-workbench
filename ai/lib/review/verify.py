@@ -21,9 +21,9 @@ the quote no longer has, which makes a verbatim quote fail to match itself.
 
 The disprove gate is adversarial. Each must-fix and should-fix finding is
 challenged by an agent, and one that cannot survive the challenge is marked
-`FALSIFIED` on the record — kept, never rendered. Reading that agent's
-verdicts back and applying them is `apply_disprove`; whether the gate runs at
-all is `review.phases`'.
+`FALSIFIED` on the record — kept, never rendered. The agent writes a
+`DisproveArtifact`; `apply_disprove` reads those verdicts onto the record.
+Whether the gate runs at all is `review.phases`'.
 
 The synthesis agent wrote the Summary and the Verdict before either gate ran,
 so both can describe findings that are no longer visible. Regenerating them
@@ -68,6 +68,7 @@ import git.client
 from pr.domains import ReviewVerdict
 from review.format import resolve_path
 from review.merge import renumber_record
+from review.artifacts import DisproveArtifact, DisproveOutcome
 from review.record import Disposition, ReviewRecord
 from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key,
@@ -327,48 +328,23 @@ def _reconciled_record(record: ReviewRecord, verification: dict) -> ReviewRecord
 # ── Disprove-it gate ─────────────────────────────────────────────────────────
 
 
-@dataclass
-class DisproveResult:
-    finding_id: str
-    verdict: str  # "SURVIVES" or "FALSIFIED"
-    reason: str
-
-
-_RESULT_RE = re.compile(
-    r"^- \[([A-Z]\d+)\]\s+(SURVIVES|FALSIFIED)\s*(?:—|--)\s*(.+)",
-)
-
-
-def parse_disprove_output(text: str) -> list[DisproveResult]:
-    results: list[DisproveResult] = []
-    for line in text.splitlines():
-        m = _RESULT_RE.match(line.strip())
-        if m:
-            results.append(DisproveResult(
-                finding_id=m.group(1),
-                verdict=m.group(2),
-                reason=m.group(3).strip(),
-            ))
-    return results
-
-
 @dataclass(frozen=True)
 class DisproveApplied:
     record: ReviewRecord
     summary: dict
 
 
-def apply_disprove(record: ReviewRecord, results: list[DisproveResult]) -> DisproveApplied:
+def apply_disprove(record: ReviewRecord, artifact: DisproveArtifact) -> DisproveApplied:
     """Mark each finding the gate falsified; kept on the record, never rendered."""
-    falsified = {r.finding_id for r in results if r.verdict == "FALSIFIED"}
-    reasons = {r.finding_id: r.reason for r in results if r.verdict == "FALSIFIED"}
+    falsified = {v.id: v.reason for v in artifact.verdicts if v.outcome is DisproveOutcome.FALSIFIED}
     marked = tuple(
         replace(f, disposition=Disposition.FALSIFIED) if f.visible and f.id in falsified else f
         for f in record.findings
     )
     return DisproveApplied(replace(record, findings=marked), {
-        "total_challenged": len(results), "survived": len(results) - len(falsified),
-        "falsified": len(falsified), "falsified_ids": sorted(falsified), "reasons": reasons,
+        "total_challenged": len(artifact.verdicts),
+        "survived": len(artifact.verdicts) - len(falsified),
+        "falsified": len(falsified), "falsified_ids": sorted(falsified), "reasons": falsified,
     })
 
 

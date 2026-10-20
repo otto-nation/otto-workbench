@@ -46,7 +46,7 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
     d = reviews_dir / "test-repo-300"
     d.mkdir()
     (d / "review.md").write_text("## Summary")
-    for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl"):
+    for f_name in ("group-1.md", "group-1.jsonl", "holistic.json", "holistic.jsonl"):
         p = d / f_name
         p.write_text("{}")
         os.utime(str(p), (1622505600, 1622505600))
@@ -56,7 +56,7 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
     assert (d / "review.md").exists()
     assert not (d / "group-1.md").exists()
     assert not (d / "group-1.jsonl").exists()
-    assert not (d / "holistic.md").exists()
+    assert not (d / "holistic.json").exists()
     assert not (d / "holistic.jsonl").exists()
 
 
@@ -84,13 +84,13 @@ def test_gc_preserves_recent_intermediates(cr, reviews_dir):
     d = reviews_dir / "test-repo-350"
     d.mkdir()
     (d / "review.md").write_text("## Summary")
-    for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
+    for f_name in ("group-1.md", "group-1.jsonl", "holistic.json", "holistic.jsonl", "synthesis.jsonl"):
         (d / f_name).write_text("{}")
 
     review.gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
-    for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
+    for f_name in ("group-1.md", "group-1.jsonl", "holistic.json", "holistic.jsonl", "synthesis.jsonl"):
         assert (d / f_name).exists()
 
 
@@ -500,12 +500,12 @@ def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
 
 
 def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path):
-    # The pattern list used to be hand-copied and never grew scout.md or
-    # disprove.md. Derived from Phase, a new phase's artifact is
+    # The pattern list used to be hand-copied and never grew scout.json or
+    # disprove.json. Derived from Phase, a new phase's artifact is
     # collected without editing review.gc.
     d = tmp_path / "review-dir"
     d.mkdir()
-    stale = ("holistic.md", "scout.md", "group-1.md", "disprove.md")
+    stale = ("holistic.json", "scout.json", "group-1.md", "disprove.json")
     for name in stale:
         f = d / name
         f.write_text("findings")
@@ -541,7 +541,7 @@ def _finished_review(tmp_path):
     d = tmp_path / "review-dir"
     d.mkdir()
     (d / "review.md").write_text("review")
-    (d / "disprove.md").write_text("findings")
+    (d / "disprove.json").write_text("findings")
     (d / "fix.jsonl").write_text("{}")
     (d / "prompt-single.md").write_text("PROMPT")
     return d
@@ -563,7 +563,7 @@ def test_cleaned_on_success_keeps_everything_after_an_exception(cr, tmp_path):
         with review.gc.cleaned_on_success(d):
             raise RuntimeError("phase blew up")
 
-    assert (d / "disprove.md").exists()
+    assert (d / "disprove.json").exists()
     assert (d / "fix.jsonl").exists()
 
 
@@ -576,7 +576,7 @@ def test_cleaned_on_success_propagates_a_non_zero_exit(cr, tmp_path):
             sys.exit(1)
 
     assert exc.value.code == 1
-    assert (d / "disprove.md").exists()
+    assert (d / "disprove.json").exists()
 
 
 def test_cleaned_on_success_keeps_a_partial_run_for_recover(cr, tmp_path):
@@ -591,7 +591,7 @@ def test_cleaned_on_success_keeps_a_partial_run_for_recover(cr, tmp_path):
         pass
 
     assert (d / "pipeline.json").exists()
-    assert (d / "disprove.md").exists()
+    assert (d / "disprove.json").exists()
 
 
 def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, capsys, monkeypatch):
@@ -603,7 +603,7 @@ def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, ca
     d = _finished_review(tmp_path)
 
     def _explode(review_dir):
-        raise OSError(30, "Read-only file system", str(review_dir / "disprove.md"))
+        raise OSError(30, "Read-only file system", str(review_dir / "disprove.json"))
 
     monkeypatch.setattr(review.gc, "cleanup_intermediates", _explode)
 
@@ -612,4 +612,4 @@ def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, ca
 
     err = capsys.readouterr().err
     assert "could not sweep" in err
-    assert "disprove.md" in err
+    assert "disprove.json" in err

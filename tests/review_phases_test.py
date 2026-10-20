@@ -18,6 +18,7 @@ import review.steps
 from agent.registry import REVIEW_PHASES
 from core.phases import AgentKind, Effort, Phase, Thinking
 import agent.backend
+from review_phases_support import _job, _omitted_job
 
 
 class TestPhaseLogPath:
@@ -54,7 +55,7 @@ class TestPhaseOutputPath:
     def test_derives_into_the_review_directory(self, tmp_path):
         review_file = str(tmp_path / "review.md")
         assert review.paths.phase_output_path(review_file, Phase.HOLISTIC) == str(
-            tmp_path / "holistic.md"
+            tmp_path / "holistic.json"
         )
 
     def test_group_carries_its_index(self, tmp_path):
@@ -80,31 +81,6 @@ class TestPhaseOutputPath:
         for phase in (Phase.SYNTHESIS, Phase.SINGLE, Phase.FIX):
             with pytest.raises(ValueError):
                 review.paths.phase_output_path(str(tmp_path / "review.md"), phase)
-
-
-def _job(tmp_path, effort=Effort.MEDIUM):
-    from gh.types import PRContext, PRMetadata
-    from review.types import ReviewJob
-
-    return ReviewJob(
-        repo="org/repo", pr_number="42",
-        pr=PRMetadata("t", "", "head", "main", "abc123", 100, 5, 3, []),
-        ctx=PRContext(), wt_path=str(tmp_path),
-        review_file=str(tmp_path / "review.md"),
-        session_log=str(tmp_path / "session.jsonl"),
-        effort=effort,
-    )
-
-
-def _omitted_job(tmp_path, omitted=(), effort=Effort.MEDIUM):
-    from review.types import PreflightData
-
-    job = _job(tmp_path, effort)
-    job.preflight = PreflightData(
-        diff="", commit_log="", file_contents={}, file_permissions={},
-        instructions_md="", architecture_md="", omitted_files=list(omitted),
-    )
-    return job
 
 
 class TestPhaseRunnerResolution:
@@ -494,7 +470,7 @@ class TestExecutorsUseTheResolvedBudget:
         from review.ingest import ingest_review
         record = ingest_review(text, strict=False)
         inv = self._first_invocation(
-            monkeypatch, lambda: review.steps._phase_disprove(job, record, text),
+            monkeypatch, lambda: review.steps._phase_disprove(job, record),
         )
         assert inv.max_turns == review.phases.PHASES[Phase.DISPROVE].max_turns
 
@@ -636,7 +612,7 @@ class TestApiOverflowRecoversInPhase:
             prompts.append(inv.prompt)
             Path(inv.session_log).write_text("{}\n")
             if inv.prompt == "SMALL":
-                Path(inv.output_path).write_text("ok")
+                Path(inv.output_path).write_text("{}")
             return 0
 
         monkeypatch.setattr(review.phases, "build_prompt", fake_build)
@@ -708,41 +684,24 @@ class TestApiOverflowRecoversInPhase:
 
 
 class TestReadScan:
-    """`read_scan`'s three outcomes: transformed, verbatim, and refused.
+    """`read_scan` loads the file a resume finds, or refuses a phase with no scan."""
 
-    `PhaseScan.read` defaults to `None` rather than to an identity function —
-    `None` means the raw artifact *is* what the next phase needs, not that the
-    scan forgot to declare a reader. `read_scan` is the only thing that has to
-    know the difference, so it is the only thing this class pins.
-    """
-
-    def test_a_scan_with_a_reader_transforms_the_raw_text(self):
-        """SCOUT is the one real phase whose scan supplies a `read`."""
-        raw = "## Investigation leads\n- **`app.py:10`** — a real concern\n"
-        result = review.phases.read_scan(Phase.SCOUT, raw)
+    def test_a_scan_with_a_reader_renders_the_file(self, tmp_path):
+        output = tmp_path / "scout.json"
+        output.write_text('{"leads": [{"path": "app.py", "line": 10, "concern": "c"}]}')
+        result = review.phases.read_scan(Phase.SCOUT, str(output))
         assert "Investigation leads from scout scan" in result
-        assert "app.py:10" in result
-        assert result != raw
+        assert "`app.py:10`" in result
 
-    def test_a_scan_with_no_reader_returns_the_raw_text_unchanged(self):
-        """HOLISTIC's scan declares no `read` of its own.
+    def test_a_malformed_file_is_read_as_nothing(self, tmp_path):
+        output = tmp_path / "holistic.json"
+        output.write_text("not json")
+        assert review.phases.read_scan(Phase.HOLISTIC, str(output)) == ""
 
-        A real phase rather than a hand-built `PhaseScan`: HOLISTIC already
-        exercises the `read is None` branch in production, so nothing here
-        needs to be synthetic to pin what `None` means.
-        """
-        raw = "Whatever the holistic scan wrote, unparsed."
-        assert review.phases.read_scan(Phase.HOLISTIC, raw) == raw
-
-    def test_a_phase_with_no_scan_of_its_own_raises(self):
-        """SINGLE has a registry entry but declares no scan at all.
-
-        `read_scan` only reaches the table when `raw` is non-empty — an empty
-        artifact returns `""` regardless of phase, which is why this passes
-        real content rather than relying on that short-circuit.
-        """
+    def test_a_phase_with_no_scan_of_its_own_raises(self, tmp_path):
+        """SINGLE has a registry entry but declares no scan at all."""
         with pytest.raises(ValueError, match="declares no scan of its own"):
-            review.phases.read_scan(Phase.SINGLE, "some content")
+            review.phases.read_scan(Phase.SINGLE, str(tmp_path / "missing.json"))
 
 
 class TestGroupWorkerSlots:

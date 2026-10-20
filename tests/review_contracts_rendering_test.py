@@ -440,9 +440,9 @@ class TestOutputBlockContract:
     # artifact is caught here instead of agreeing with itself. `build_prompt`
     # derives them from the same `review_file` every job here carries.
     _OUTPUT_BLOCKS = [
-        ((Phase.HOLISTIC, Mode.PR), "/tmp/reviews/holistic.md", False),
-        ((Phase.SCOUT, Mode.PR), "/tmp/reviews/scout.md", False),
-        ((Phase.DISPROVE, Mode.PR), "/tmp/reviews/disprove.md", False),
+        ((Phase.HOLISTIC, Mode.PR), "/tmp/reviews/holistic.json", False),
+        ((Phase.SCOUT, Mode.PR), "/tmp/reviews/scout.json", False),
+        ((Phase.DISPROVE, Mode.PR), "/tmp/reviews/disprove.json", False),
         ((Phase.GROUP, Mode.PR), "/tmp/reviews/group-1.md", False),
         ((Phase.SYNTHESIS, Mode.PR), "/tmp/reviews/review.md", False),
         ((Phase.SYNTHESIS, Mode.SELF), "/tmp/reviews/review.md", False),

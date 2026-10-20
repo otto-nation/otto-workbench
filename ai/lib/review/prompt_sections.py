@@ -31,7 +31,6 @@ from review.budget import (
 )
 from review.collect import scope_diff, truncate_diff
 from review.reply_threads import ReplyThreads
-from review.scout import format_leads_block, is_scout_output, parse_scout_output
 from review.types import PreflightData, ReplyState, ReviewJob
 
 
@@ -392,28 +391,6 @@ def _classify_failure_items(group, pr_files: set[str]) -> tuple[list[str], int]:
         else:
             outside += 1
     return in_pr, outside
-
-
-def _build_holistic_block(
-    holistic_content: str, changed_files: int,
-) -> str:
-    if not holistic_content:
-        return ""
-
-    if is_scout_output(holistic_content):
-        leads, no_scrutiny = parse_scout_output(holistic_content)
-        block = format_leads_block(leads, no_scrutiny)
-        if block:
-            return f"\n## Scout context\n{block}"
-        return ""
-
-    return (
-        f"\n## Holistic context\n"
-        f"The following assessment was produced by scanning all "
-        f"{changed_files} files in this PR.\n"
-        f"Use it to inform your detailed review — especially the flags section.\n\n"
-        f"{holistic_content}"
-    )
 
 
 def _delta_file_list(heading: str, paths: list[str]) -> list[str]:

@@ -78,7 +78,7 @@ class TestPhaseSpecArtifactNames:
     def test_both_names_share_the_phase_as_their_stem(self):
         spec = self._review(Phase.HOLISTIC)
         assert spec.log_filename == "holistic.jsonl"
-        assert spec.output_filename == "holistic.md"
+        assert spec.output_filename == "holistic.json"
 
     def test_the_fan_out_phase_carries_an_index(self):
         spec = self._review(Phase.GROUP)

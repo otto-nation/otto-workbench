@@ -8,9 +8,9 @@ For each Must-fix [M] and Should-fix [S] finding in the review:
    - The deleted code is genuinely dead (no callers, no side effects)
    - The pattern flagged is actually correct for this codebase's conventions
    - The concern is about code on main, not code introduced by this PR
-3. Classify the finding as SURVIVES or FALSIFIED
+3. Classify the finding as `survives` or `falsified`
 
-Default to SURVIVES when uncertain. Only mark FALSIFIED when you have a concrete, verifiable reason.
+Default to `survives` when uncertain. Only mark `falsified` when you have a concrete, verifiable reason.
 
 ## Review to challenge
 ${review_content}
@@ -18,20 +18,12 @@ ${review_content}
 ## Output
 ${output_block}
 
-Format — one line per finding:
-```
-- [M1] SURVIVES — could not find error handling for the db.Query return value
-- [S2] FALSIFIED — the nil check exists in the caller at handler.go:47, so this path is safe
-- [M3] SURVIVES — the sibling switch statement genuinely misses the new enum case
-- [S4] FALSIFIED — this code is on main, not introduced by this PR (stale-base artifact)
-```
-
 Rules:
-- Only challenge [M] and [S] findings — skip [N] and [I]
-- Every verdict needs a concrete reason after the em-dash
-- When FALSIFIED, cite the specific file and line that disproves the concern
-- When SURVIVES, briefly state why you couldn't disprove it
-- If a finding ID from the review doesn't appear in your output, it survives by default
+- Only challenge must-fix [M] and should-fix [S] findings — skip [N] and [I]
+- Every verdict needs a concrete `reason`
+- When `falsified`, cite the specific file and line that disproves the concern
+- When `survives`, briefly state why you couldn't disprove it
+- A finding you leave out of `verdicts` survives by default
 
 ## Turn budget
 You have ${max_turns} turns. Read the review carefully, then investigate each finding against the actual codebase. Write your verdicts file as your final action — do not spend turns idling once your verdicts are settled.

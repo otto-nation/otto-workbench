@@ -211,10 +211,9 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
             core.log.error(f"review agent output rejected: {listed}")
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
-    raw = Path(job.review_file).read_text()
     record = outcome.record
     if _should_disprove(job, disprove):
-        record = _phase_disprove(job, record, raw).record
+        record = _phase_disprove(job, record).record
     _post_process_review(job, record)
 
 

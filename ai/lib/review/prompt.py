@@ -59,7 +59,7 @@ from review.collect import (
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt_prior import _build_prior_section, _build_unaccounted_section
 from review.prompt_sections import (
-    _build_delta_section, _build_env_section, _build_holistic_block,
+    _build_delta_section, _build_env_section,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
     _build_reply_threads_section, _build_reviews_section,
     _build_state_context_section, _is_incremental,
@@ -880,7 +880,7 @@ def _prompt_synthesis(job, common, extra, output):
     b.set("prior_section", _build_unaccounted_section(extra.get("unaccounted_prior") or []))
     b.set("group_count", extra["group_count"])
     b.set("verdict_options", VERDICT_OPTIONS)
-    b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
+    b.set("holistic_content", extra.get("holistic_content") or "## Phase 1 context\n_No holistic assessment available._")
     b.set("merged_content", extra["merged_content"])
     # The step that authors new cross-cutting findings is numbered by the
     # template, and the two modes number it differently.
@@ -927,9 +927,7 @@ def _prompt_group(job, common, extra, output):
         file_filter=file_filter,
         reply_threads=job.reply_threads,
     )
-    holistic_block = _build_holistic_block(
-        extra.get("holistic_content", ""), job.pr.changed_files,
-    )
+    holistic = extra.get("holistic_content", "")
     b = PromptBuilder(common)
     b.shared("issue_section", "env_section", "omitted_guidance", "max_turns")
     b.set("pr_number", job.pr_number)
@@ -939,7 +937,7 @@ def _prompt_group(job, common, extra, output):
     ))
     b.set("reply_threads", _build_reply_threads_section(job.reply_threads, file_filter=file_filter))
     b.set("project_context", build_project_context(job.preflight, file_filter=file_filter) if job.preflight else "")
-    b.set("holistic_block", holistic_block)
+    b.set("holistic_block", f"\n{holistic}" if holistic else "")
     b.set("prior_section", prior_section)
     b.set("group_idx", extra["group_idx"])
     b.set("group_count", extra["group_count"])

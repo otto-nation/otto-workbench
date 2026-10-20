@@ -14,7 +14,8 @@ from review.record import Disposition
 from review.render import render_review
 from review.state import PipelineState, apply_failures, failures_of
 from review.verdict import CLEAN_SUMMARY, CLEAN_VERDICT, PARTIAL_VERDICT, build_mechanical_record
-from review.verify import DisproveResult, apply_disprove, post_process_record
+from review.artifacts import DisproveArtifact, DisproveOutcome, DisproveVerdict
+from review.verify import apply_disprove, post_process_record
 
 from review_record_support import canonical, copy_tree, expected_text, fixture_meta, fixture_text
 
@@ -65,8 +66,10 @@ class TestPostProcess:
 class TestDisprove:
     def test_a_falsified_finding_is_kept_but_hidden(self):
         record = ingest_review(fixture_text("synthesis_pr", "input.md"))
-        applied = apply_disprove(record, [DisproveResult("S1", "FALSIFIED", "not reachable"),
-                                          DisproveResult("S2", "SURVIVES", "ok")])
+        applied = apply_disprove(record, DisproveArtifact(verdicts=(
+            DisproveVerdict("S1", DisproveOutcome.FALSIFIED, "not reachable"),
+            DisproveVerdict("S2", DisproveOutcome.SURVIVES, "ok"),
+        )))
         assert applied.record.finding("S1") is None
         assert next(f for f in applied.record.findings if f.id == "S1").disposition is Disposition.FALSIFIED
         assert applied.summary == {"total_challenged": 2, "survived": 1, "falsified": 1,

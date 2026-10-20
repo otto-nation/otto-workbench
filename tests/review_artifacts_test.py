@@ -131,6 +131,8 @@ def _group(**finding) -> dict:
     ({"triage": [{"path": " ", "note": "x"}]}, IngestErrorKind.EMPTY_FIELD, "$.triage[0].path"),
     ({"prior_findings": [{"id": "Q1", "disposition": "Fixed"}]},
      IngestErrorKind.UNKNOWN_SEVERITY, "$.prior_findings[0].id"),
+    ({"prior_findings": [{"id": "M1\n", "disposition": "Fixed"}]},
+     IngestErrorKind.UNKNOWN_SEVERITY, "$.prior_findings[0].id"),
     (_group(declined="documented"), IngestErrorKind.BAD_CARRY, "$.findings[0].declined"),
 ])
 def test_each_group_rejection_names_its_kind_and_place(doc, kind, at):
@@ -149,6 +151,13 @@ def test_each_group_rejection_names_its_kind_and_place(doc, kind, at):
 def test_an_empty_required_text_is_rejected(kind, doc, at):
     problems = load_strict(kind, doc).problems()
     assert [(p.kind, p.at) for p in problems] == [(IngestErrorKind.EMPTY_FIELD, at)]
+
+
+def test_a_trailing_newline_on_a_disprove_id_is_rejected():
+    doc = {"verdicts": [{"id": "M1\n", "outcome": "survives", "reason": "r"}]}
+    problems = load_strict(DisproveArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [
+        (IngestErrorKind.UNKNOWN_SEVERITY, "$.verdicts[0].id")]
 
 
 def test_disprove_challenges_only_must_and_should_fix():

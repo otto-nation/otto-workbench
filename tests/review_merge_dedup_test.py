@@ -131,8 +131,8 @@ class TestDedupFindings:
         assert other.id == "M2"
         assert "[M1]" in other.body
 
-    def test_a_duplicate_filed_under_the_wrong_severity_still_declares_an_id(self):
-        # Same path+desc under two ID prefixes: each severity keeps its own copy.
+    def test_a_same_issue_at_another_severity_is_kept(self):
+        # D10: severity follows the ID prefix, so dedup does not collapse across it.
         merged = merge_records([ingest_review(
             "## Should fix\n"
             "- **[S1]** **`file.go:1`** — same issue\n"
@@ -173,10 +173,9 @@ class TestDedupSections:
         )
         assert "blocked on [removed]" in merged.findings[0].body
 
-    def test_a_citation_of_a_misfiled_duplicate_follows_the_survivor(self):
-        # The second copy carries a Must-fix ID under Should fix. Each severity
-        # keeps its own statement of the issue; the citation still names a real
-        # finding after the gaps close.
+    def test_a_citation_of_a_same_issue_at_another_severity_still_names_it(self):
+        # D10: severity follows the ID prefix, so both copies stay and the citation
+        # still names a real finding after the gaps close.
         merged = merge_records([ingest_review(
             "## Must fix\n"
             "- **[M1]** **`other.go:2`** — see [M4] for context\n"

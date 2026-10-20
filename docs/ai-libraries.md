@@ -1473,10 +1473,11 @@ review is `review.document`'s job, checking findings against the tree is
 consumer that only holds findings needs none of this. Deciding what became of
 a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review.spans`'s. Deduplication and the
-prior-review reading both walk `finding_spans`, and a repeat is removed with
-`cut_spans`, so a duplicate takes exactly the lines out of the merged document
-that a falsified finding does. Neither says where one stops.
+Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
+carries its extent. Deduplication walks those records and drops a repeat by
+`FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
+record that never reaches the merged document rather than a span cut out of
+it. This module does not import `review.spans`.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs

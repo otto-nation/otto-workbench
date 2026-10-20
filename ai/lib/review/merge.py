@@ -15,10 +15,11 @@ review is `review.document`'s job, checking findings against the tree is
 consumer that only holds findings needs none of this. Deciding what became of
 a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review.spans`'s. Deduplication and the
-prior-review reading both walk `finding_spans`, and a repeat is removed with
-`cut_spans`, so a duplicate takes exactly the lines out of the merged document
-that a falsified finding does. Neither says where one stops.
+Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
+carries its extent. Deduplication walks those records and drops a repeat by
+`FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
+record that never reaches the merged document rather than a span cut out of
+it. This module does not import `review.spans`.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -242,8 +243,7 @@ def renumber_findings(text: str) -> str:
     return _gap_renumbering(text, {}).rewrite(text)
 
 
-def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering,
-                    ids: bool = True) -> ReviewRecord:
+def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRecord:
     """`record` with every visible finding moved and every reference rewritten.
 
     The prior-review ledger is held out: those IDs belong to the previous
@@ -252,7 +252,7 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering,
     def moved(f: RecordFinding) -> RecordFinding:
         if not f.visible:
             return f
-        new_id = renumbering.moves.get(FindingId(f.severity, f.seq)) if ids else None
+        new_id = renumbering.moves.get(FindingId(f.severity, f.seq))
         return replace(
             f, id=str(new_id) if new_id else f.id,
             lead=renumbering.rewrite(f.lead), body=renumbering.rewrite(f.body),
@@ -354,18 +354,17 @@ def _shift_record(group: ReviewRecord, offsets: dict[str, int]) -> ReviewRecord:
     return shifted
 
 
-# Typed, not a tuple — `_Deduped` is the text form's precedent.
 @dataclass(frozen=True)
 class _DedupedRecords:
-    """One severity's findings with the repeats dropped, and where they went.
+    """Every severity's findings with the repeats dropped, and where they went.
 
     `merged_into` maps each dropped ID to the copy that survived it, so the
     renumbering that follows can move references onto the survivor instead of
-    marking them `[removed]`. Both halves are whole IDs rather than numbers,
-    because a duplicate filed under the wrong severity still declares one and
-    the copy that survives it need not carry the same prefix. It is kept apart
-    from `findings` because the gaps close across every severity at once, after
-    every section has been deduped.
+    marking them `[removed]`. Both halves are whole IDs rather than numbers.
+    Dedup keys on `(severity, dedup_key)`, so a same-issue finding at another
+    severity is kept and the survivor always carries the same prefix. It is
+    kept apart from `findings` because the gaps close across every severity at
+    once, after every section has been deduped.
     """
 
     findings: tuple[RecordFinding, ...]

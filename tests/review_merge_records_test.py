@@ -14,7 +14,7 @@ from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.render import render_body
 from review.types import PriorDisposition
 
-from review_record_support import FIXTURES, canonical, fixture_text
+from review_record_support import FIXTURES, canonical, finding, fixture_text, record
 
 
 def _groups():
@@ -28,6 +28,22 @@ def _groups():
 def test_merging_the_fixture_groups_matches_todays_merge():
     rendered = render_body(merge_records(_groups()), sids=True, evidence=True)
     assert canonical(rendered) == canonical(fixture_text("merged", "input.md"))
+
+
+def test_an_empty_severity_section_renders_no_placeholder():
+    """X13: a group with no Must-fix finding cannot leave a placeholder above another group's M1.
+
+    GroupArtifact has no field for prose under a severity heading, so the empty
+    group is just a record with no must-fix finding.
+    """
+    empty = record(finding("S1", "should only"))
+    has_m = record(finding("M1", "a real must-fix"))
+    rendered = render_body(merge_records([empty, has_m]))
+    must = rendered.split("## Must fix", 1)[1].split("## ", 1)[0]
+    lines = [line for line in must.splitlines() if line.strip()]
+    assert lines and all(line.startswith("- ") for line in lines)
+    assert "(none)" not in rendered
+    assert "**[M1]**" in must
 
 
 def test_a_repeat_across_groups_is_kept_once():

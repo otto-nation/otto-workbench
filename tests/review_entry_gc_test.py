@@ -502,7 +502,7 @@ def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
 def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path):
     # Derived from Phase, so a new phase's artifact is collected without
     # editing review.gc. group-1.json is the current group artifact; leftover
-    # markdown names are a separate sweep.
+    # markdown names are X10's subject, not this test's.
     d = tmp_path / "review-dir"
     d.mkdir()
     stale = ("holistic.json", "scout.json", "group-1.json", "disprove.json")

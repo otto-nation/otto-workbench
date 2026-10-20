@@ -29,7 +29,7 @@ from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import GroupArtifact
 from review.ingest import (
-    IngestError, IngestOutcome, IngestRejected, ingest_review, ingest_with_repair,
+    IngestError, IngestOutcome, IngestRejected, ingest_with_repair,
     load_artifact,
 )
 from review.merge import merge_records

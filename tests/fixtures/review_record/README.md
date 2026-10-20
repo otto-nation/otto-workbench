@@ -16,8 +16,8 @@ scratch script that drove today's writers directly:
 
 `groups/group-{1,2}.json` replaced the markdown group files. The merged `input.md`
 regenerated from them drops the empty `Must fix` `(none)` line the markdown
-ingest used to keep; `as_group_artifact` has no field for an empty severity
-section.
+ingest used to keep; the group artifact has no field for prose under a
+severity heading (X13).
 
 Each record case also has `record.json` (and `evidence_dropped/raw.json`, `fix_annotated/before.json`): the same review, written at schema 2 by `save_record` over today's ingest of the markdown beside it. Until the markdown is deleted, `review_render_test.py::test_every_fixture_record_is_its_markdown_ingested` holds the two equal.
 

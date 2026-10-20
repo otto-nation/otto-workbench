@@ -318,12 +318,11 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
     )
 
 
-def test_a_banner_group_file_becomes_a_malformed_gap(tmp_path):
-    from review.render import BANNER
+def test_a_rejected_group_file_becomes_a_malformed_gap(tmp_path):
     from review.steps import _phase_merge
 
     path = tmp_path / "group-1.json"
-    path.write_text(f"{BANNER}\n## Nit\n- **[N1]** `a` — x\n")
+    path.write_text('{"findings": [{"id": "M1"}]}')
     merged = _phase_merge([str(path)], [], group_names=("g1",), declinable=frozenset())
     assert any(
         "output rejected by ingest" in section.body for section in merged.record.extra
@@ -331,23 +330,21 @@ def test_a_banner_group_file_becomes_a_malformed_gap(tmp_path):
 
 
 def test_a_rejection_past_the_group_names_falls_back_to_a_numbered_label(tmp_path):
-    from review.render import BANNER
     from review.steps import _phase_merge
 
     path = tmp_path / "group-1.json"
-    path.write_text(f"{BANNER}\n## Nit\n- **[N1]** `a` — x\n")
+    path.write_text('{"findings": [{"id": "M1"}]}')
     merged = _phase_merge([str(path)], [], group_names=(), declinable=frozenset())
     assert any("group-1" in section.body for section in merged.record.extra)
 
 
 def test_an_already_failed_group_is_not_a_second_gap_row(tmp_path):
     from agent.diagnosis import Diagnosis, DiagnosisKind
-    from review.render import BANNER
     from review.retry import GroupFailure
     from review.steps import _phase_merge
 
     path = tmp_path / "group-1.json"
-    path.write_text(f"{BANNER}\n## Nit\n- **[N1]** `a` — x\n")
+    path.write_text('{"findings": [{"id": "M1"}]}')
     existing = GroupFailure("g1", Diagnosis(DiagnosisKind.OUTPUT_MISSING))
     merged = _phase_merge([str(path)], [existing], group_names=("g1",), declinable=frozenset())
     gaps = "\n".join(section.body for section in merged.record.extra)

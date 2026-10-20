@@ -637,3 +637,12 @@ def test_a_started_run_takes_over_its_plans_namespace_from_the_claim(monkeypatch
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "run", "--checkout", "/r"]) == 0
     assert seen == {"claim": None, "owner": plan.ref_namespace}
+
+
+def test_resume_without_id_refuses_two_unfinished_matching_runs(monkeypatch, capsys):
+    older = _seeded("20261001T120000-aaaa", repo="o/r")
+    newer = _seeded("20261002T120000-bbbb", repo="o/r")
+    _origin(monkeypatch, "o/r")
+    assert _main(["batch", "resume"]) == 1
+    err = capsys.readouterr().err
+    assert older.id in err and newer.id in err

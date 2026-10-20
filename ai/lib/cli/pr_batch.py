@@ -8,7 +8,7 @@
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
-Omitting RUN_ID on resume/status/next/cancel picks this checkout's newest unfinished covering run, else its newest covering, else the latest on the machine. cancel without an id refuses when more than one unfinished run covers this checkout.
+Omitting RUN_ID on resume/status/next/cancel picks this checkout's newest unfinished covering run, else its newest covering, else the latest on the machine. cancel and resume without an id refuse when more than one unfinished run covers this checkout.
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
@@ -463,6 +463,8 @@ def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool) -> R
 
 
 def _cmd_resume(args, bin_dir: Path) -> int:
+    if refusal := _ambiguous(args.run_id):
+        return _err(refusal)
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to resume")
@@ -556,17 +558,20 @@ def _cmd_resolve(args, bin_dir: Path) -> int:
     return EXIT_OK if applied else 1
 
 
-def _unfinished_covering(repo: str) -> list[str]:
-    return [run_id for run_id in batch.store.ids_covering(repo)
-            if batch.store.load(run_id).status not in FINISHED_RUN]
+def _ambiguous(given: str | None) -> str | None:
+    """The refusal for a mutating no-id call when several unfinished runs cover this repo."""
+    if given or not (repo := _cwd_repo()):
+        return None
+    candidates = batch.store.unfinished_covering(repo)
+    if len(candidates) > 1:
+        return ("more than one unfinished run covers this repo "
+                f"({', '.join(candidates)}); pass a run id")
+    return None
 
 
 def _cmd_cancel(args, bin_dir: Path) -> int:
-    if not args.run_id and (repo := _cwd_repo()):
-        candidates = _unfinished_covering(repo)
-        if len(candidates) > 1:
-            return _err("more than one unfinished run covers this repo "
-                        f"({', '.join(candidates)}); pass a run id")
+    if refusal := _ambiguous(args.run_id):
+        return _err(refusal)
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to cancel")

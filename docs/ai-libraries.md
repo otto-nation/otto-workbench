@@ -7010,7 +7010,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
-Omitting RUN_ID on resume/status/next/cancel picks this checkout's newest unfinished covering run, else its newest covering, else the latest on the machine. cancel without an id refuses when more than one unfinished run covers this checkout.
+Omitting RUN_ID on resume/status/next/cancel picks this checkout's newest unfinished covering run, else its newest covering, else the latest on the machine. cancel and resume without an id refuse when more than one unfinished run covers this checkout.
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 

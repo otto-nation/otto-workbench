@@ -432,8 +432,7 @@ pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` if a holder will apply it
 ```
 
-Omitting `RUN_ID` on `status`, `next`, `resume`, and `cancel` picks this checkout's newest unfinished covering run, else its newest covering run, else the latest run on the machine. `cancel` without an id refuses when more than one unfinished run covers this checkout.
-
+Omitting `RUN_ID` on `status`, `next`, `resume`, and `cancel` picks this checkout's newest unfinished covering run, else its newest covering run, else the latest run on the machine. `cancel` and `resume` without an id refuse when more than one unfinished run covers this checkout.
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no

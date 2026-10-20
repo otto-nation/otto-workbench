@@ -137,3 +137,12 @@ def test_attempt_log_path_numbers_each_attempt_of_a_step():
     assert first == batch.store.logs_dir(RID) / "o__r-1-publish-0.log"
     assert batch.store.attempt_log_path(RID, "o/r", 1, "publish").name == "o__r-1-publish-1.log"
     assert batch.store.attempt_log_path(RID, "o/r", 12, "publish").name == "o__r-12-publish-0.log"
+
+
+def test_ids_covering_and_default_skip_an_unreadable_run():
+    seed(_run("20261001T120000-aaaa", repo="o/r"))
+    seed(_run("20261002T120000-bbbb", repo="o/r"))
+    (batch.store.run_dir("20261002T120000-bbbb") / batch.store.STATE_FILE).write_text("{not json")
+    assert batch.store.ids_covering("o/r") == ["20261001T120000-aaaa"]
+    assert batch.store.unfinished_covering("o/r") == ["20261001T120000-aaaa"]
+    assert batch.store.default_run_id("o/r") == "20261001T120000-aaaa"

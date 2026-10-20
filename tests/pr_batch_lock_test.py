@@ -182,7 +182,7 @@ def test_two_concurrent_runs_exactly_one_proceeds(tmp_path):
     assert first.returncode == 0, first_err
 
 
-# ── every item's target, for the life of the run ─────────────────────────────
+# ── every item's target, until that item is terminal ─────────────────────────
 
 
 def _row(repo, n, branch):

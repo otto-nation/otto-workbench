@@ -208,6 +208,10 @@ stage_is_filter() {
 # expansions stage_command_name uses to dequote a token. Not a second
 # tokenizer: a quoted method (`-X "POST"`) or command (`"gh" issue create`)
 # has to match the Pi side, which reads tokenize().value.
+#
+# Each end is stripped independently, so a mixed token like `"POST'` is
+# dequoted though a real tokenizer would not call it a word. Same as
+# stage_command_name; harmless since it only widens what counts as a match.
 _statement_words() {
   local tok
   local -a raw

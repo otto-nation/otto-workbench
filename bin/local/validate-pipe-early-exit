@@ -36,7 +36,7 @@ from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 EXIT_TOKEN = re.compile(r'(?<![\w$])exit(?![\w])')
 PIPE_AWK = re.compile(r'(?<!\|)\|\s*awk\b')
-HEREDOC_START = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+HEREDOC_START = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_]\w*)\1")
 BASH_SHEBANG = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
 WHY = (
     'awk exit in a pipeline SIGPIPEs the producer under pipefail; '
@@ -116,20 +116,26 @@ def join_continuations(lines: list[str]) -> list[Statement]:
     return result
 
 
+def _heredoc_delimiter(line: str) -> str | None:
+    """Delimiter of a heredoc opened on `line`, ignoring `<<` inside quotes."""
+    match = HEREDOC_START.search(line)
+    if not match or not _quotes_closed(line[:match.start()]):
+        return None
+    return match.group(2)
+
+
 def blank_heredoc_bodies(lines: list[str]) -> list[str]:
     """Blank heredoc body lines (keeping line numbers): they are text, not commands."""
     result: list[str] = []
     delimiter: str | None = None
     for line in lines:
-        if delimiter is not None:
-            if line.strip() == delimiter:
-                delimiter = None
-            result.append('\n')
+        if delimiter is None:
+            result.append(line)
+            delimiter = _heredoc_delimiter(line)
             continue
-        result.append(line)
-        match = HEREDOC_START.search(line)
-        if match:
-            delimiter = match.group(2)
+        if line.strip() == delimiter:
+            delimiter = None
+        result.append('\n')
     return result
 
 

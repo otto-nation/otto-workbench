@@ -111,6 +111,25 @@ S
   [ "$status" -eq 0 ]
 }
 
+@test "here-string and quoted << do not start a heredoc" {
+  _check <<'S'
+#!/usr/bin/env bash
+echo "a <<EOF" > /dev/null
+cat <<< word
+cmd | awk '{ print; exit }'
+EOF
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "accepts awk exit with dash followed by a file" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd | awk '{ print; exit }' - file.txt
+S
+  [ "$status" -eq 0 ]
+}
+
 @test "accepts awk exit when reading a file argument" {
   local f
   f=$(_write_script "file-arg.sh" <<'SCRIPT'

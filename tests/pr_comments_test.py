@@ -244,9 +244,7 @@ def test_sync_new_thread_no_prior_state():
     result = sync_threads(ThreadSet(threads), prior_threads, "isaacg")
     assert "T_abc" in result
     assert result["T_abc"].state == ThreadState.NEW
-    # The carried record's reviewer is "stale"; the fetched comment's is "alice".
     assert result["T_abc"].reviewer == "alice"
-    assert result["T_abc"].reviewer != _recorded("stale").reviewer
 
 
 def test_sync_detects_new_reply_updates_state():
@@ -322,9 +320,8 @@ def test_reviewer_verdicts_are_dated():
 # ── An incomplete fetch must not erase what it could not see ────────────────
 #
 # The prior ledger is the only record of threads on pages the fetch did not
-# read. sync_threads builds its result from the
-# threads it was handed, so a short fetch silently dropped the records for
-# every thread it missed. The pair below is the whole argument: the flag is
+# read. sync_threads builds its result from the threads it was handed, so a
+# short fetch silently dropped the records for every thread it missed. The pair below is the whole argument: the flag is
 # what lets the carry-forward happen without also resurrecting threads that
 # were really deleted.
 
@@ -376,7 +373,6 @@ def test_sync_prefers_the_fetched_record_over_the_carried_one():
     assert result["T_abc"].state == ThreadState.RESOLVED
     # The carried record's reviewer is "stale"; the fetched comment's is "alice".
     assert result["T_abc"].reviewer == "alice"
-    assert result["T_abc"].reviewer != _recorded("stale").reviewer
 
 
 # ── The two fetch paths must date a comment the same way ────────────────────

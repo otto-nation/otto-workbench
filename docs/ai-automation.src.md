@@ -458,7 +458,7 @@ tracked, or a closeout is owed — with `--track-all` when the owed part is
 a tracking issue. A commit `--finish` pushes becomes the lease.
 `force-publish` answers only `not_incorporated_remote` for the listed
 commits (a hand `--fork-point` rebase: the skipped ones); a new one refuses again.
-A publish `retry` leases on a remote pushed to exactly the local branch, or — on `remote_moved` — a patch-equivalent remote after `git reset --keep` when tracked files are clean and local has no unique commits. `--auto-publish STEPS` resolves that
+A publish `retry` leases on a remote pushed to exactly the local branch, or — on `remote_moved` — a patch-equivalent remote after `git reset --keep` when tracked files are clean and local has no unique commits. The adopted remote may carry extra commits beyond local's. `--auto-publish STEPS` resolves that
 decision when the item closes with no open decision and every drafted
 step is listed and `done`; an owed closeout counts as `comments`.
 `--watch-ci` re-checks CI once after a push and reopens on red;

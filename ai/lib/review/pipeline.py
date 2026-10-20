@@ -60,7 +60,7 @@ from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
 from review.overflow import run_with_overflow_recovery
-from review.ingest import ingest_review, ingest_with_repair
+from review.ingest import ingest_with_repair
 from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
@@ -314,7 +314,7 @@ def run_multi_phase(
 
     incremental = _is_incremental(job)
     incremental_skips: set[int] = set()
-    carried_forward = ""
+    carried = None
 
     if incremental:
         incremental_skips = _identify_incremental_skips(
@@ -326,8 +326,8 @@ def run_multi_phase(
                 f"Incremental: {affected}/{group_count} groups affected, "
                 f"{len(incremental_skips)} unchanged (findings carried forward)"
             )
-            carried_forward = _carry_forward_prior_findings(
-                job.prior_review, groups, incremental_skips,
+            carried = _carry_forward_prior_findings(
+                job.prior, groups, incremental_skips,
             )
 
     recovery = _resolve_recovery(job, groups)
@@ -391,9 +391,8 @@ def run_multi_phase(
         group_names=tuple(g.name for g in groups),
     )
 
-    if carried_forward:
-        # Interim; Task 15 replaces the source.
-        merged = merged.carry(ingest_review(carried_forward, strict=False), carried_forward)
+    if carried:
+        merged = merged.carry(carried.record, carried.text)
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)

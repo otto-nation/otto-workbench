@@ -13,14 +13,20 @@ if str(LIB_DIR) not in sys.path:
 from review_threads_support import _no_published_summary  # noqa: E402
 from review.document import SECTION_PRIOR_FINDINGS
 from review.grammar import FindingIdentity, sid_marker
+from review.ingest import ingest_review
 from review.reply_threads import ReplyThreads
-from review.types import ReplyState
+from review.store import StoredReview
+from review.types import ReplyState, ReviewMeta
 from review.prompt_prior import (
-    _annotate_with_thread_state, _build_prior_section, _strip_internal_sections,
+    _annotate_with_thread_state, _build_prior_section, _prior_text,
 )
 
 
-# ── _strip_internal_sections ─────────────────────────────────────────────────
+def _stored(text: str) -> StoredReview:
+    return StoredReview(ingest_review(text, strict=False), ReviewMeta())
+
+
+# ── omitted bookkeeping sections ─────────────────────────────────────────────
 
 PRIOR_WITH_INTERNAL = (
     "## File Triage\n"
@@ -84,13 +90,12 @@ class TestThreadStateFollowsTheIdentityNotTheNumber:
     def test_the_prior_review_is_stamped_with_the_ids_the_comments_carry(self):
         """End to end, on a prior review that carries no markers of its own.
 
-        `_build_prior_section` runs `annotate_prior_with_stable_ids` over the
-        review before annotating it, so the hash a posted comment carries and
-        the hash that stamps have to be the same one — this is the test that
-        they are.
+        `_prior_text` stamps `sid=f.sid or f.stable_id` before annotating, so
+        the hash a posted comment carries and the hash that stamps have to be
+        the same one — this is the test that they are.
         """
-        line = "- **[M9]** `a.py:10` — Missing error check"
-        prior = f"## Must fix\n{line}\n"
+        line = "- **[M9]** **`a.py:10`** — Missing error check"
+        prior = _stored(f"## Must fix\n{line}\n")
         identity = FindingIdentity.of(line)
         # Both sides carrying "" would match each other and prove nothing.
         assert identity.stable_id
@@ -143,7 +148,7 @@ class TestAnnotateWithThreadState:
 
 class TestBuildPriorSectionWithThreads:
     def test_without_threads_unchanged(self):
-        result = _build_prior_section("## Must-fix\n- **[M1]** `a.py:10` — Issue")
+        result = _build_prior_section(_stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"))
         assert "[CONTESTED]" not in result
         assert "Prior review" in result
 
@@ -152,26 +157,26 @@ class TestBuildPriorSectionWithThreads:
             {"finding_id": "M1", "state": ReplyState.CONTESTED},
         ], summary={})
         result = _build_prior_section(
-            "## Must-fix\n- **[M1]** `a.py:10` — Issue",
+            _stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"),
             reply_threads=threads,
         )
         assert "[CONTESTED]" in result
 
     def test_empty_prior_returns_empty(self):
-        assert _build_prior_section("", reply_threads=ReplyThreads(threads=[], summary={})) == ""
+        assert _build_prior_section(None, reply_threads=ReplyThreads(threads=[], summary={})) == ""
 
 
 class TestBuildPriorSectionLedger:
     def test_asks_for_the_ledger_alongside_the_context(self):
         result = _build_prior_section(
-            "## Must fix\n- **[M1]** `a.py:10` — Issue",
+            _stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"),
             "This is a re-review.",
         )
         assert "This is a re-review." in result
         assert f"## {SECTION_PRIOR_FINDINGS}" in result
 
     def test_ledger_asked_for_without_a_context(self):
-        result = _build_prior_section("## Must fix\n- **[M1]** `a.py:10` — Issue")
+        result = _build_prior_section(_stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"))
         assert f"## {SECTION_PRIOR_FINDINGS}" in result
 
     def test_prior_ledger_not_shown_back_to_the_agent(self):
@@ -179,15 +184,17 @@ class TestBuildPriorSectionLedger:
         # older generator can still carry one — it dispositions findings from
         # the review before last, which is noise here.
         result = _build_prior_section(
-            "## Must fix\n- **[M1]** `a.py:10` — Issue\n"
-            f"## {SECTION_PRIOR_FINDINGS}\n- **[M9]** `gone.py` — Fixed\n"
+            _stored(
+                "## Must fix\n- **[M1]** **`a.py:10`** — Issue\n"
+                f"## {SECTION_PRIOR_FINDINGS}\n- **[M9]** `gone.py` — Fixed\n"
+            )
         )
         assert "gone.py" not in result
 
 
-class TestStripInternalSections:
+class TestPriorTextOmitsBookkeeping:
     def test_drops_triage_and_static_analysis(self):
-        result = _strip_internal_sections(PRIOR_WITH_INTERNAL)
+        result = _prior_text(_stored(PRIOR_WITH_INTERNAL), None)
         assert "File Triage" not in result
         assert "Tier 2" not in result
         assert "Static Analysis" not in result
@@ -195,35 +202,43 @@ class TestStripInternalSections:
         assert "<details>" not in result
 
     def test_keeps_findings_and_verdict(self):
-        result = _strip_internal_sections(PRIOR_WITH_INTERNAL)
+        result = _prior_text(_stored(PRIOR_WITH_INTERNAL), None)
         assert "**[M1]**" in result
         assert "## Must fix" in result
         assert "Request changes." in result
 
     def test_section_after_excluded_one_resumes(self):
-        # Verdict follows Static Analysis — exclusion must reset at its header
-        assert _strip_internal_sections(PRIOR_WITH_INTERNAL).endswith("Request changes.")
+        assert "Request changes." in _prior_text(_stored(PRIOR_WITH_INTERNAL), None)
 
-    def test_unaffected_text_passes_through(self):
+    def test_findings_survive_render(self):
         text = "## Must fix\n- **[M1]** **`a.py:1`** — bug"
-        assert _strip_internal_sections(text) == text
+        assert "**[M1]**" in _prior_text(_stored(text), None)
 
     def test_only_internal_sections_yields_empty(self):
-        assert _strip_internal_sections("## File Triage\n- `a.py` — **Tier 1**\n") == ""
+        assert _prior_text(_stored("## File Triage\n- `a.py` — **Tier 1**\n"), None) == ""
 
     def test_build_prior_section_omits_internal_sections(self):
-        result = _build_prior_section(PRIOR_WITH_INTERNAL)
+        result = _build_prior_section(_stored(PRIOR_WITH_INTERNAL))
         assert "Prior review" in result
         assert "**[M1]**" in result
         assert "File Triage" not in result
         assert "Nesting depth" not in result
 
     def test_build_prior_section_empty_when_only_internal(self):
-        assert _build_prior_section("## File Triage\n- `a.py` — **Tier 1**\n") == ""
+        assert _build_prior_section(_stored("## File Triage\n- `a.py` — **Tier 1**\n")) == ""
 
-    def test_a_rendered_banner_is_stripped_from_the_quoted_prior(self):
+    def test_a_record_rendered_prompt_has_no_banner(self):
         from review.render import BANNER
-        prior = f"## Must fix\n{BANNER}\n- **[M1]** `a.py:1` — bug\n"
-        result = _build_prior_section(prior)
+        result = _build_prior_section(_stored("## Must fix\n- **[M1]** **`a.py:1`** — bug\n"))
         assert BANNER not in result
         assert "**[M1]**" in result
+
+    def test_carried_findings_are_stamped_with_their_stable_id(self):
+        line = "- **[M1]** **`handler.go:42`** — missing error check"
+        result = _prior_text(_stored(f"## Must fix\n{line}\n"), None)
+        assert "<!-- sid:" in result
+        assert "**[M1]**" in result
+        assert "handler.go:42" in result
+        identity = FindingIdentity.of(line)
+        assert identity.stable_id in result
+        assert _prior_text(_stored(f"## Must fix\n{line}\n"), None) == result

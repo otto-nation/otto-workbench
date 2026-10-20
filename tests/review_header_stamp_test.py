@@ -258,6 +258,15 @@ class TestAnIncrementalReviewSaysSo:
         job.prior_review = (
             "# Review: org/repo#1 — t\n<!-- date: 2026-01-01 -->\n\n## Summary\nPrior.\n"
         )
+        from review.document import ReviewHeader
+        from review.ingest import ingest_review
+        from review.store import StoredReview
+        from review.types import ReviewMeta
+        header = ReviewHeader.parse(job.prior_review)
+        job.prior = StoredReview(
+            ingest_review(job.prior_review, strict=False),
+            ReviewMeta(date=header.date, head_sha=header.head_sha),
+        )
         return job
 
     def test_the_single_agent_document_states_its_review_type(

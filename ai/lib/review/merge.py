@@ -71,8 +71,8 @@ import re
 from dataclasses import dataclass, replace
 
 from review.grammar import (
-    ANNOTATE_FINDING_RE, FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
-    DedupKey, FindingIdentity, has_sid_marker, parse_ledger_line, sid_marker,
+    FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
+    DedupKey, FindingIdentity, parse_ledger_line,
 )
 from review.record import RecordFinding, ReviewRecord, SeveritySection
 from review.render import finding_line
@@ -420,24 +420,3 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
         ledger=_dedup_ledger("\n".join(ledgers)).strip() if ledgers else "",
     )
     return renumber_record(merged, deduped.merged_into)
-
-
-# ── Stable IDs for carry-forward ─────────────────────────────────────────────
-
-def _annotate_finding_line(line: str, m: re.Match) -> str:
-    identity = FindingIdentity.of(line)
-    if identity is None:
-        return line
-    return f"{m.group(1)}{sid_marker(identity.stable_id)} {line[m.end():]}"
-
-
-def annotate_prior_with_stable_ids(review_text: str) -> str:
-    lines = review_text.split("\n")
-    result: list[str] = []
-    for line in lines:
-        m = ANNOTATE_FINDING_RE.match(line)
-        if m and not has_sid_marker(line):
-            result.append(_annotate_finding_line(line, m))
-        else:
-            result.append(line)
-    return "\n".join(result)

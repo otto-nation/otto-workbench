@@ -61,6 +61,7 @@ from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
+from review.render import render_review
 from review.store import read_prior, read_review, update_review
 from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
@@ -432,10 +433,6 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     )
     pr_number, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
-    prior_review = ""
-    if args.prior_review and Path(args.prior_review).exists():
-        prior_review = Path(args.prior_review).read_text()
-
     # Read separately from `repo` because `--repo` may name a repo the cwd is
     # not: the slug can be handed in, the host can only be read off the remote.
     # Taken only when the origin names the same repo the run is reviewing — the
@@ -452,13 +449,19 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         wt_path=args.repo_dir, review_file=args.review_file,
         session_log=session_log,
         issue_link=args.issue, issue_context=args.issue_context,
-        prior_review=prior_review, mode=args.mode,
+        mode=args.mode,
         generator_version=args.generator_version,
         model=args.model, effort=resolve_effort(args.effort),
         skip_phases=phase_skips(args),
         include_generated=args.generated,
     )
     job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
+    # A prior from before review.json is stale: the re-review runs full rather
+    # than parsing prior.md back.
+    if job.prior is not None:
+        job.prior_review = render_review(
+            job.prior.record, job.prior.meta, banner=False,
+        )
 
     job.throttle = QuotaThrottle()
     # Handed to us, not derived: --repo-dir may be a detached review worktree,
@@ -478,7 +481,7 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
             job.viewer_role = ViewerRole.REVIEWER
 
     core.log.info("Collecting file data...")
-    if prior_review and args.pr:
+    if job.prior is not None and args.pr:
         with ThreadPoolExecutor(max_workers=2) as pool:
             pf_future = pool.submit(collect_preflight_data, job)
             rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)

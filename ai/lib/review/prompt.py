@@ -823,7 +823,7 @@ def _prompt_single(job, common, extra, output):
     read, and is not asked for a verdict.
     """
     prior_section = _build_prior_section(
-        job.prior_review,
+        job.prior,
         _incremental_prior_ctx(job, _REREVIEW_CTX[job.mode]),
         reply_threads=job.reply_threads,
     )
@@ -906,7 +906,7 @@ def _prompt_group(job, common, extra, output):
         "severity sections."
     ))
     prior_section = _build_prior_section(
-        job.prior_review, prior_ctx,
+        job.prior, prior_ctx,
         file_filter=file_filter,
         reply_threads=job.reply_threads,
     )

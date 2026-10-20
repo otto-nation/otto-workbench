@@ -20,7 +20,7 @@ from datetime import date
 from pathlib import Path
 
 from pr.domains import ReviewStatus
-from review.document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
+from review.document import SECTION_SUMMARY, SECTION_VERDICT
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
@@ -68,12 +68,8 @@ def _job_meta(job: ReviewJob) -> ReviewMeta:
 
 
 def _prior_date(job: ReviewJob) -> str:
-    """The prior round's date — from its sidecar, or (until Task 15) its text header."""
-    if job.prior is not None:
-        return job.prior.meta.date
-    if job.prior_review:
-        return ReviewDocument.parse(job.prior_review).header.date
-    return ""
+    """The prior round's date, from its sidecar."""
+    return job.prior.meta.date if job.prior else ""
 
 
 def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int = 0,
@@ -179,7 +175,7 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
 
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     # Reconciliation reads the ledger, which post-processing then clears.
-    record_prior_findings(job.review_file, job.prior_review, record, job.wt_path)
+    record_prior_findings(job.review_file, job.prior, record, job.wt_path)
     done = post_process_record(record, job.wt_path, [f["path"] for f in job.pr.files])
     job.verification = done.verification
     return done.record

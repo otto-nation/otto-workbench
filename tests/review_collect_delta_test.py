@@ -22,7 +22,10 @@ from core.proc import CmdResult
 import git.client
 import review.collect
 from gh.types import PRContext, PRMetadata
-from review.types import DeltaAttribution, ReviewJob
+from review.document import ReviewHeader
+from review.ingest import ingest_review
+from review.store import StoredReview
+from review.types import DeltaAttribution, ReviewJob, ReviewMeta
 
 
 # ── _collect_delta ──────────────────────────────────────────────────────────
@@ -40,7 +43,7 @@ def _delta_job(head_sha: str, prior_review: str = "") -> ReviewJob:
         changed_files=1,
         files=[],
     )
-    return ReviewJob(
+    job = ReviewJob(
         repo="owner/repo",
         pr_number="1",
         pr=pr,
@@ -50,6 +53,13 @@ def _delta_job(head_sha: str, prior_review: str = "") -> ReviewJob:
         session_log="/tmp/session.log",
         prior_review=prior_review,
     )
+    if prior_review:
+        header = ReviewHeader.parse(prior_review)
+        job.prior = StoredReview(
+            ingest_review(prior_review, strict=False),
+            ReviewMeta(head_sha=header.head_sha),
+        )
+    return job
 
 
 class TestCollectDeltaSameSha:

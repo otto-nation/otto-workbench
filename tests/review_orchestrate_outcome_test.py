@@ -64,6 +64,16 @@ class TestDocument:
 
     def _incremental(self, ro, tmp_path, prior_review=""):
         job = self._job(ro, tmp_path, prior_review=prior_review)
+        if prior_review:
+            from review.document import ReviewHeader
+            from review.ingest import ingest_review
+            from review.store import StoredReview
+            from review.types import ReviewMeta
+            header = ReviewHeader.parse(prior_review)
+            job.prior = StoredReview(
+                ingest_review(prior_review, strict=False),
+                ReviewMeta(date=header.date, head_sha=header.head_sha),
+            )
         job.preflight = ro.PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
             instructions_md="", architecture_md="",

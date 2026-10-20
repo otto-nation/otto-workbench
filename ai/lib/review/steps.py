@@ -30,7 +30,7 @@ from review.grouping import HOLISTIC_MIN_GROUPS
 from review.ingest import (
     IngestError, IngestOutcome, IngestRejected, ingest_review, ingest_with_repair,
 )
-from review.merge import annotate_prior_with_stable_ids, merge_records
+from review.merge import merge_records
 from review.outcome import (
     _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
     _post_process_review, _publish, _reconcile_and_verify, _write_clean_review,
@@ -44,16 +44,16 @@ from review.phases import (
 )
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
-from review.prompt_prior import _scope_prior_review
+from review.prompt_prior import _scoped, _with_sids
 from review.reconcile import passed_over
 from review.record import ProseSection, ReviewRecord
 from review.registry import build_prompt
-from review.render import render_body, render_review
+from review.render import render_body, render_findings, render_review
 from review.retry import GroupFailure, _has_output, _retry_missing_output
 from review.state import (
     PipelineState, _inject_failures_and_status, _write_pipeline_state,
 )
-from review.store import read_review, write_review
+from review.store import StoredReview, read_review, write_review
 from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
 )
@@ -294,7 +294,7 @@ def _phase_synthesis(
     # The same reconciliation the run ends with, asked one phase early, while
     # there is still an agent that can act on the answer. Afterwards the only
     # thing left to do about a prior finding nobody accounted for is report it.
-    unaccounted = passed_over(job.prior_review, merged.record, job.wt_path, job.pr.head_sha)
+    unaccounted = passed_over(job.prior, merged.record, job.wt_path, job.pr.head_sha)
     if unaccounted:
         core.log.dim(
             f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "
@@ -390,24 +390,23 @@ def _phase_synthesis(
 
 
 def _carry_forward_prior_findings(
-    prior_review: str, groups: list[Group], skip_indices: set[int],
-) -> str:
+    prior: StoredReview | None, groups: list[Group], skip_indices: set[int],
+) -> Merged | None:
     """Extract prior findings for skipped groups and return as merged content."""
-    if not prior_review or not skip_indices:
-        return ""
-
-    annotated = annotate_prior_with_stable_ids(prior_review)
-    parts: list[str] = []
+    if prior is None or not skip_indices:
+        return None
+    carried = ReviewRecord()
+    texts = []
     for i, grp in enumerate(groups, 1):
         if i not in skip_indices:
             continue
-        scoped = _scope_prior_review(annotated, grp.files)
-        if scoped:
-            parts.append(f"### Carried forward: {grp.name}\n{scoped}")
-
-    if not parts:
-        return ""
-    return "\n\n".join(parts) + "\n"
+        scoped = _with_sids(_scoped(prior.record, grp.files))
+        if scoped.findings:
+            carried = replace(carried, findings=carried.findings + scoped.findings)
+            texts.append(
+                f"### Carried forward: {grp.name}\n{render_findings(scoped, sids=True)}"
+            )
+    return Merged(carried, "\n\n".join(texts) + "\n") if texts else None
 
 
 def _identify_incremental_skips(

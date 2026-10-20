@@ -49,31 +49,6 @@ class TestComputeStableId:
         assert _stable_id("f.go", desc_80) == _stable_id("f.go", desc_100)
 
 
-class TestAnnotatePriorWithStableIds:
-    def test_inserts_sid_comment(self):
-        text = '- **[M1]** **`handler.go:42`** — missing error check\n'
-        result = review.merge.annotate_prior_with_stable_ids(text)
-        assert "<!-- sid:" in result
-        assert "**[M1]**" in result
-        assert "handler.go:42" in result
-
-    def test_checkbox_format(self):
-        text = '- [ ] **[S1]** `handler.go:42` — missing check\n'
-        result = review.merge.annotate_prior_with_stable_ids(text)
-        assert "<!-- sid:" in result
-
-    def test_non_finding_lines_unchanged(self):
-        text = "## Summary\nThis is a summary.\n"
-        result = review.merge.annotate_prior_with_stable_ids(text)
-        assert result == text
-
-    def test_deterministic_ids(self):
-        text = '- **[M1]** **`handler.go:42`** — missing error check\n'
-        a = review.merge.annotate_prior_with_stable_ids(text)
-        b = review.merge.annotate_prior_with_stable_ids(text)
-        assert a == b
-
-
 class TestPriorDisposition:
     def test_parses_the_word_the_prompt_asks_for(self):
         assert PriorDisposition.parse("Fixed") is PriorDisposition.FIXED

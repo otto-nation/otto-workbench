@@ -368,6 +368,13 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
             f"# Review: org/repo#42 — t\n<!-- head_sha: {prior_sha} -->\n"
             f"## Must fix\n{prior_review}\n"
         )
+        from review.ingest import ingest_review
+        from review.store import StoredReview
+        from review.types import ReviewMeta
+        job.prior = StoredReview(
+            ingest_review(job.prior_review, strict=False),
+            ReviewMeta(head_sha=prior_sha),
+        )
         return job
 
     def _extras(self, ro, tmp_path, monkeypatch, merged, prior_review=PRIOR_LINE):

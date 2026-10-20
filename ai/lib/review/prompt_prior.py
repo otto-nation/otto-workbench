@@ -5,10 +5,9 @@ stripped of the sections that were bookkeeping rather than findings, annotated
 with what the author said in reply to each finding, and followed by the
 instruction that asks for a disposition for every finding it carries.
 
-Scoping the prior review to a group's files cuts it a finding at a time, and
-where a finding stops is `review.spans`'s `finding_spans` — the same measure
-the gates that trim a finished review use. A section that measured it here
-would quote evidence belonging to a finding the agent was never shown.
+Scoping the prior review to a group's files keeps findings that name a line of
+one of those files. A finding without a line is file-level and is not in any
+group's slice.
 
 `_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
 an agent; both sections here interpolate it rather than restating it, and
@@ -22,89 +21,62 @@ which sections a phase asks for is `review.prompt`'s.
 
 from __future__ import annotations
 
-import bisect
-from dataclasses import dataclass, field
+from dataclasses import replace
 
 from review.document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS, strip_sections,
+    SECTION_STATIC_ANALYSIS,
 )
-from review.grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE, SID_MARKER_RE
-from review.merge import annotate_prior_with_stable_ids
-from review.render import BANNER
+from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
+from review.record import ReviewRecord
+from review.render import render_body, render_findings, render_review
 from review.reply_threads import ReplyThreads
-from review.spans import finding_spans
+from review.store import StoredReview
 from review.types import (
     DISPOSITION_TAIL_PROSE, PriorDisposition, PriorFinding, ReplyState,
 )
 from core.text import join_or
 
 
-def _in_scope(line: str, filter_set: set[str]) -> bool:
-    """Whether the finding line names a file the scoped review is about."""
-    m = SCOPED_FINDING_RE.match(line)
-    return bool(m) and m.group(1) in filter_set
+def _with_sids(record: ReviewRecord) -> ReviewRecord:
+    """Stamp each finding with the sid a later round recognises it by."""
+    return replace(
+        record,
+        findings=tuple(replace(f, sid=f.sid or f.stable_id) for f in record.findings),
+    )
 
 
-@dataclass
-class _ScopedSection:
-    """One `## ` heading of the prior review and the in-scope findings under it.
-
-    Not frozen: `_collect_scoped_sections` builds every section up front and
-    fills `lines` as it walks the findings, so the sections outlive their own
-    construction by design.
-    """
-
-    header: str
-    lines: list[str] = field(default_factory=list)
-
-
-def _collect_scoped_sections(
-    prior_text: str, filter_set: set[str],
-) -> list[_ScopedSection]:
-    """Each `## ` section of `prior_text` and the in-scope findings under it.
-
-    `SCOPED_FINDING_RE` picks the findings; `finding_spans` says how much of the
-    text each one brings with it, so a finding kept for its path keeps the
-    evidence quoted under it and nothing quoted under its neighbour. Sections
-    come back in document order, empty ones included — the caller decides
-    whether a heading with no findings left is worth printing.
-    """
-    lines = prior_text.split("\n")
-    headers = [i for i, line in enumerate(lines) if line.strip().startswith("## ")]
-    sections = [_ScopedSection(lines[i]) for i in headers]
-    for span in finding_spans(prior_text):
-        owner = bisect.bisect_right(headers, span.start) - 1
-        if owner < 0 or not _in_scope(span.line, filter_set):
-            continue
-        sections[owner].lines.extend(span.text_of(prior_text).split("\n"))
-    return sections
-
-
-def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
-    filter_set = set(file_filter)
-    sections = _collect_scoped_sections(prior_text, filter_set)
-
-    parts: list[str] = []
-    for section in sections:
-        if section.lines:
-            parts.append(section.header)
-            parts.extend(section.lines)
-    return "\n".join(parts).strip()
+def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:
+    """The prior record cut to findings that name a line of one of `files`."""
+    keep = set(files)
+    return replace(
+        record,
+        findings=tuple(
+            f for f in record.findings if f.line is not None and f.path in keep
+        ),
+        severity_sections=(),
+    )
 
 
 # Coverage bookkeeping and machine-generated output, not prior reviewer claims.
-# The scoped path drops both already (their lines carry no finding ID), so
-# stripping here keeps the unscoped prompts consistent with it.
-_PRIOR_EXCLUDED_SECTIONS = {
-    SECTION_FILE_TRIAGE.lower(),
-    SECTION_PRIOR_FINDINGS.lower(),
-    SECTION_STATIC_ANALYSIS.lower(),
-}
+_PRIOR_EXCLUDED_SECTIONS = frozenset({
+    SECTION_FILE_TRIAGE,
+    SECTION_PRIOR_FINDINGS,
+    SECTION_STATIC_ANALYSIS,
+})
 
 
-def _strip_internal_sections(prior_text: str) -> str:
-    return strip_sections(prior_text, _PRIOR_EXCLUDED_SECTIONS).strip()
+def _prior_text(prior: StoredReview, file_filter: list[str] | None) -> str:
+    """What a re-review is shown of its predecessor; carried findings keep their sid."""
+    record = _with_sids(prior.record)
+    if file_filter:
+        return render_findings(_scoped(record, file_filter), sids=True)
+    body = render_body(record, sids=True, omit=_PRIOR_EXCLUDED_SECTIONS).strip()
+    if not body:
+        return ""
+    return render_review(
+        record, prior.meta, sids=True, omit=_PRIOR_EXCLUDED_SECTIONS, banner=False,
+    ).strip()
 
 
 _STATE_LABELS = {
@@ -195,21 +167,14 @@ a prior finding missing from it is reported as unaccounted for."""
 
 
 def _build_prior_section(
-    prior_review: str,
+    prior: StoredReview | None,
     context: str = "",
     file_filter: list[str] | None = None,
     reply_threads: ReplyThreads | None = None,
 ) -> str:
-    if not prior_review:
+    if prior is None:
         return ""
-    review_text = _strip_internal_sections(annotate_prior_with_stable_ids(prior_review))
-    # Until Task 15 replaces this quote, a BANNER line in prior.md would trip
-    # ingest's RENDERED_INPUT refusal if the agent echoed it into its output.
-    review_text = "\n".join(
-        line for line in review_text.splitlines() if line.strip() != BANNER
-    )
-    if file_filter:
-        review_text = _scope_prior_review(review_text, file_filter)
+    review_text = _prior_text(prior, file_filter)
     if not review_text:
         return ""
     # A frozen dataclass is truthy even with an empty `threads` list, unlike the

@@ -29,9 +29,9 @@ can decide them, rather than after the document is written and the only thing
 left to do is warn.
 
 The record is a sidecar in the review directory rather than a section of the
-review. Reconciliation parses its input for finding-shaped lines, so a
-reconciliation written into the review would come back to the next round
-looking like a fresh set of prior findings.
+review. Reconciliation walks the prior round's record, so a reconciliation
+written into the review would come back to the next round looking like a
+fresh set of prior findings.
 
 The ledger this module reads is not the only account of what became of a
 prior finding. Every finding posted inline opened a review thread,

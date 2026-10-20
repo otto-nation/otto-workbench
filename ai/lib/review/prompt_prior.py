@@ -27,9 +27,9 @@ from review.document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 )
-from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
-from review.record import ReviewRecord
-from review.render import render_body, render_findings, render_review
+from review.grammar import BOLD_FINDING_ID_RE, FindingIdentity, SID_MARKER_RE
+from review.record import RecordFinding, ReviewRecord
+from review.render import finding_line, render_body, render_findings, render_review
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
 from review.types import (
@@ -46,14 +46,37 @@ def _with_sids(record: ReviewRecord) -> ReviewRecord:
     )
 
 
+def _scoping_location(finding: RecordFinding) -> tuple[str, int | None]:
+    """Where the old scoped-prior reader would place this finding.
+
+    Ingest stores `path`/`line` from `finding_location` alone, so a bare
+    `src/auth.go:10` or an extensionless `` `Dockerfile:50` `` arrives with
+    path ''. Scoping still has to keep those: it re-reads the declaration
+    through `FindingIdentity.of`, which includes `_fallback_location`. A
+    ticked `[x]` is opened for that read only — identity skips checked
+    lines, and the old `SCOPED_FINDING_RE` did not.
+    """
+    line = finding_line(finding).split("\n", 1)[0]
+    if line.startswith("- [x] "):
+        line = "- [ ] " + line[6:]
+    identity = FindingIdentity.of(line)
+    if identity is None:
+        return "", None
+    return identity.path, identity.line
+
+
+def _in_group(finding: RecordFinding, files: set[str]) -> bool:
+    """Whether `finding` names a line of one of `files`."""
+    path, line = _scoping_location(finding)
+    return line is not None and path in files
+
+
 def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:
     """The prior record cut to findings that name a line of one of `files`."""
     keep = set(files)
     return replace(
         record,
-        findings=tuple(
-            f for f in record.findings if f.line is not None and f.path in keep
-        ),
+        findings=tuple(f for f in record.findings if _in_group(f, keep)),
         severity_sections=(),
     )
 

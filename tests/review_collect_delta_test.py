@@ -91,6 +91,13 @@ class TestCollectDeltaSameSha:
         job = _delta_job(head_sha="abc123", prior_review="no sha marker here")
         assert review.collect._collect_delta(job) == review.collect.DeltaScope()
 
+    def test_an_empty_prior_sidecar_names_the_sidecar(self, capsys):
+        job = _delta_job(head_sha="abc123", prior_review="no sha marker here")
+        assert review.collect._prior_sha_for_delta(job) == ""
+        err = capsys.readouterr().err
+        assert "sidecar" in err
+        assert "SHA marker" not in err
+
     def test_a_full_review_has_no_delta_to_attribute(self):
         delta = review.collect._collect_delta(_delta_job(head_sha="abc123", prior_review=""))
         assert delta.attribution is DeltaAttribution.NONE

@@ -46,7 +46,7 @@ from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _with_sids
 from review.reconcile import passed_over
-from review.record import ProseSection, ReviewRecord
+from review.record import ProseSection, ReviewRecord, SeveritySection
 from review.registry import build_prompt
 from review.render import render_body, render_findings, render_review
 from review.retry import GroupFailure, _has_output, _retry_missing_output
@@ -402,7 +402,20 @@ def _carry_forward_prior_findings(
             continue
         scoped = _with_sids(_scoped(prior.record, grp.files))
         if scoped.findings:
-            carried = replace(carried, findings=carried.findings + scoped.findings)
+            # D5: non-finding text in a severity section renders above that
+            # section's findings. The heading used to live only in `text`;
+            # mechanical-fallback review.md is rendered from the record.
+            notes = tuple(
+                SeveritySection(
+                    severity=sev, note=f"### Carried forward: {grp.name}",
+                )
+                for sev in dict.fromkeys(f.severity for f in scoped.findings)
+            )
+            carried = replace(
+                carried,
+                findings=carried.findings + scoped.findings,
+                severity_sections=carried.severity_sections + notes,
+            )
             texts.append(
                 f"### Carried forward: {grp.name}\n{render_findings(scoped, sids=True)}"
             )

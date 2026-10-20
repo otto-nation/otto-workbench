@@ -83,11 +83,11 @@ print(mod._validate_group_output('$TMPDIR/triage.md', 'triage-group'))
 from review.ingest import ingest_review
 from review.render import render_findings
 prior = ingest_review("""## Must fix
-- [ ] **[M1]** **`src/auth.go:10`** — auth bug
-- [ ] **[M2]** **`src/db.go:20`** — db bug
+- [ ] **[M1]** src/auth.go:10 — auth bug
+- [ ] **[M2]** src/db.go:20 — db bug
 
 ## Should fix
-- [ ] **[S1]** **`src/auth.go:30`** — cleanup
+- [ ] **[S1]** src/auth.go:30 — cleanup
 """, strict=False)
 scoped = mod._scoped(prior, ['src/auth.go'])
 print(render_findings(scoped))
@@ -104,7 +104,7 @@ PYEOF
   result=$(_py_here <<'PYEOF'
 from review.ingest import ingest_review
 prior = ingest_review("""## Must fix
-- [ ] **[M1]** **`src/auth.go:10`** — auth bug
+- [ ] **[M1]** src/auth.go:10 — auth bug
 """, strict=False)
 scoped = mod._scoped(prior, ['src/unrelated.go'])
 print([f.id for f in scoped.findings])
@@ -118,9 +118,9 @@ PYEOF
 from review.ingest import ingest_review
 from review.render import render_findings
 prior = ingest_review("""## Must fix
-- [ ] **[M1]** **`src/auth.go:10`** — auth bug
+- [ ] **[M1]** src/auth.go:10 — auth bug
   This is a continuation line with more detail
-- [ ] **[M2]** **`src/db.go:20`** — db bug
+- [ ] **[M2]** src/db.go:20 — db bug
 """, strict=False)
 scoped = mod._scoped(prior, ['src/auth.go'])
 print(render_findings(scoped))
@@ -153,8 +153,8 @@ job = mod.ReviewJob(
 job.prior = StoredReview(
     ingest_review(
         '## Must fix\n'
-        '- [ ] **[M1]** **`src/auth.go:10`** — auth bug\n'
-        '- [ ] **[M2]** **`src/db.go:20`** — db bug',
+        '- [ ] **[M1]** src/auth.go:10 — auth bug\n'
+        '- [ ] **[M2]** src/db.go:20 — db bug',
         strict=False,
     ),
     ReviewMeta(),

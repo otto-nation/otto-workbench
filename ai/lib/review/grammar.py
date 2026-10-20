@@ -149,12 +149,12 @@ BOLD_FINDING_ID_RE = re.compile(rf"\*\*\[({SEVERITY_KEY}\d+)\]{_POSTED_LABEL}\*\
 # resolved. It ends the body above it and opens nothing.
 STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
 
-# The head as the stable-ID annotator requires it, with the head itself
-# captured so a `<!-- sid: -->` marker can be written after it. Stricter than
-# `FINDING_ID_RE` on purpose: the closing `**` is required and a checked or
-# struck-through finding is passed over, because carry-forward is about
-# findings still open. The marker is deliberately outside the match — the
-# annotator asks whether the line already carries one before it writes another.
+# The declaration head `FindingIdentity.of` requires, with the head itself
+# captured so the remainder is the location. Stricter than `FINDING_ID_RE`
+# on purpose: the closing `**` is required and a checked or struck-through
+# finding is passed over, because identity is how open findings are compared.
+# The marker is deliberately outside the match — a sid already on the line
+# is not part of the location that follows.
 ANNOTATE_FINDING_RE = re.compile(
     rf"^(- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*)\s+"
 )

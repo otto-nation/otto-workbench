@@ -18,7 +18,7 @@ from review.reply_threads import ReplyThreads
 from review.store import StoredReview
 from review.types import ReplyState, ReviewMeta
 from review.prompt_prior import (
-    _annotate_with_thread_state, _build_prior_section, _prior_text,
+    _annotate_with_thread_state, _build_prior_section, _prior_text, _scoped,
 )
 
 
@@ -242,3 +242,25 @@ class TestPriorTextOmitsBookkeeping:
         identity = FindingIdentity.of(line)
         assert identity.stable_id in result
         assert _prior_text(_stored(f"## Must fix\n{line}\n"), None) == result
+
+
+class TestScopingReadsTheDeclarationNotIngestLocation:
+    """Ingest path/line stay as finding_location set them; scoping re-reads."""
+
+    def test_a_bare_unbackticked_path_stays_in_the_group(self):
+        prior = ingest_review(
+            "## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n",
+            strict=False,
+        )
+        assert prior.findings[0].path == ""
+        scoped = _scoped(prior, ["src/auth.go"])
+        assert [f.id for f in scoped.findings] == ["M1"]
+
+    def test_an_extensionless_dockerfile_stays_in_the_group(self):
+        prior = ingest_review(
+            "## Must fix\n- [ ] **[M1]** **`Dockerfile:50`** — no USER\n",
+            strict=False,
+        )
+        assert prior.findings[0].path == ""
+        scoped = _scoped(prior, ["Dockerfile"])
+        assert [f.id for f in scoped.findings] == ["M1"]

@@ -665,7 +665,7 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
         return ""
     prior_sha = job.prior.meta.head_sha
     if not prior_sha:
-        core.log.info("Prior review has no SHA marker — running full review")
+        core.log.info("Prior sidecar has no head SHA — running full review")
         return ""
     if covers(prior_sha, job.pr.head_sha):
         core.log.info("Prior review is on current HEAD — running full review")

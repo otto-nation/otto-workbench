@@ -12,9 +12,9 @@ unless `--track` names it or `--track-all` is passed, and nothing is published
 unless the publishing gate is open. Filing posts under the operator's name and
 a deferral is a per-finding judgement, so neither is a sensible default.
 
-What it does not do is decide *which* findings are filable. That is
-`ReviewMeta.open_findings`, written by the fix pass, because a deferred finding
-leaves no trace on the document to read back.
+What is filable now comes from the record's dispositions, not
+`ReviewMeta.open_findings`: a skip or an unreached finding the last fix pass
+left open, that nobody has filed yet.
 """
 
 # doc-group: publishing
@@ -30,16 +30,18 @@ import pr.target
 import review.issue
 from review.deferred_issue import TRACK_ALL
 from review.issue import IssueResult
-from review.paths import read_review_meta, write_review_meta
-from review.types import OpenFinding, ReviewJob
+from review.paths import FILENAME_REVIEW
+from review.record import Disposition, RecordFinding, load_record
+from review.store import update_review
+from review.types import ReviewJob
 
-from dataclasses import replace
 from pathlib import Path
 
 # The columns a person triaging the backlog needs. Not the review document's
 # severity ordering: by the time this is read the findings are a list of
 # deferred work, and where each one was matters more than how it was ranked.
 _TABLE_COLUMNS = ("Finding", "Location", "Why it is still open")
+_LEFT_OPEN = (Disposition.SKIPPED, Disposition.UNREACHED)
 
 
 def _branch_of(job: ReviewJob) -> str:
@@ -51,14 +53,12 @@ def _branch_of(job: ReviewJob) -> str:
     return getattr(job.pr, "head", "") or ""
 
 
-def filable(review_dir: Path) -> list[OpenFinding]:
-    """The findings the last fix pass left open, in document order.
-
-    Read from the sidecar rather than the review document: a deferral writes no
-    annotation, so an unreached finding and a finding the pass never had look
-    identical on disk.
-    """
-    return list(read_review_meta(review_dir).open_findings)
+def filable(review_dir: Path) -> list[RecordFinding]:
+    """The findings the last fix pass left open and nobody has filed, in document order."""
+    record = load_record(review_dir)
+    if record is None:
+        return []
+    return [f for f in record.visible if f.disposition in _LEFT_OPEN and not f.filed]
 
 
 def validate_track(review_dir: Path, track) -> bool:
@@ -77,7 +77,7 @@ def validate_track(review_dir: Path, track) -> bool:
     return False
 
 
-def build_body(findings: list[OpenFinding], job: ReviewJob) -> str:
+def build_body(findings: list[RecordFinding], job: ReviewJob) -> str:
     """The tracking issue's body — a table of what was left, and where.
 
     Written and never read back, so it carries what a person needs to pick the
@@ -105,18 +105,27 @@ def build_body(findings: list[OpenFinding], job: ReviewJob) -> str:
         core.markdown.table_divider(len(_TABLE_COLUMNS)),
     ]
     for finding in findings:
+        location = _location_of(finding)
         parts.append(core.markdown.render_row([
-            core.markdown.escape_cell(finding.summary or finding.id),
-            f"`{finding.location}`" if finding.location else "—",
+            core.markdown.escape_cell(_summary_of(finding) or finding.id),
+            f"`{location}`" if location else "—",
             core.markdown.escape_cell(finding.reason or _default_reason(finding)),
         ]))
     parts.append("")
     return "\n".join(parts)
 
 
-def _default_reason(finding: OpenFinding) -> str:
+def _summary_of(f: RecordFinding) -> str:
+    return f.body.split("\n", 1)[0] if f.body else f.path
+
+
+def _location_of(f: RecordFinding) -> str:
+    return f"{f.path}:{f.line}" if f.path and f.line else f.path
+
+
+def _default_reason(f: RecordFinding) -> str:
     """What to say when the pass recorded no reason of its own."""
-    if finding.outcome == "needs_human":
+    if f.disposition is Disposition.SKIPPED:
         return "needs a person"
     return "not reached by the fix pass"
 
@@ -209,18 +218,13 @@ def note_on_parent(
                    data={"url": url})
 
 
-def clear_filed(review_dir: Path, filed_ids: set[str]) -> None:
-    """Drop the filed findings from the sidecar.
-
-    So a second `--track-all` on the same review does not open a second issue
-    for work already tracked. The findings stay on the review document, which
-    is what the next round reads; this list is only the queue of what has not
-    reached a tracker yet.
-    """
-    meta = read_review_meta(review_dir)
-    remaining = tuple(f for f in meta.open_findings if f.id not in filed_ids)
-    if len(remaining) != len(meta.open_findings):
-        write_review_meta(review_dir, replace(meta, open_findings=remaining))
+def clear_filed(review_dir: Path, filed_ids: set[str], issue_id: str) -> None:
+    """Mark the filed findings with their issue, so a second `--track-all` files nothing twice."""
+    def mark(record):
+        for fid in filed_ids:
+            record = record.with_finding(fid, filed=issue_id)
+        return record
+    update_review(review_dir / FILENAME_REVIEW, mark)
 
 
 def file_and_link(
@@ -254,7 +258,7 @@ def file_and_link(
         provider, review.issue.extract_issue_id(provider, _branch_of(job)) or "",
         result, job, trail,
     )
-    clear_filed(review_dir, {f.id for f in selected})
+    clear_filed(review_dir, {f.id for f in selected}, result.issue.id)
     report_unfiled(review_dir, track)
     return True
 

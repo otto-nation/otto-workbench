@@ -230,13 +230,19 @@ class ReviewRecord:
         return next((f for f in self.visible if f.id == finding_id), None)
 
     def with_finding(self, finding_id: str, **changes) -> ReviewRecord:
-        """This record with the first visible finding `finding_id` changed."""
+        """This record with the first visible finding `finding_id` changed.
+
+        Raises KeyError when no visible finding has that id — unknown or
+        falsified — so a caller cannot silently miss and re-file the same issue.
+        """
         done = False
         out = []
         for f in self.findings:
             if not done and f.visible and f.id == finding_id:
                 f, done = replace(f, **changes), True
             out.append(f)
+        if not done:
+            raise KeyError(finding_id)
         return replace(self, findings=tuple(out))
 
 

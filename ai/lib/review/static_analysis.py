@@ -382,7 +382,7 @@ def format_static_analysis(
 
     Empty when no checker ran at all — there is nothing to report, rather than
     nothing to report *yet*. The heading and where the section sits belong to
-    `review.document.set_section`.
+    `review.render._sections`.
 
     `declined` is what earlier rounds adjudicated, by site, so a violation
     somebody already ruled on says so instead of reading as new.

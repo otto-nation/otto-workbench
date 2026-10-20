@@ -2640,9 +2640,9 @@ unless `--track` names it or `--track-all` is passed, and nothing is published
 unless the publishing gate is open. Filing posts under the operator's name and
 a deferral is a per-finding judgement, so neither is a sensible default.
 
-What it does not do is decide *which* findings are filable. That is
-`ReviewMeta.open_findings`, written by the fix pass, because a deferred finding
-leaves no trace on the document to read back.
+What is filable now comes from the record's dispositions, not
+`ReviewMeta.open_findings`: a skip or an unreached finding the last fix pass
+left open, that nobody has filed yet.
 
 ### review/issue.py
 

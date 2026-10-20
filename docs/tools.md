@@ -81,7 +81,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-prose-refs` | Fails when agent, skill, rule or doc prose names a slash command no skill or hook answers, or a CLI command or flag the tool's own parser does not accept |
 | `validate-import-form` | Validates that every ai/lib module is imported as `import pkg.mod` and named through its package |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
-| `validate-pipe-early-exit` | Validates that awk in a pipeline drains stdin instead of exiting after the first match — an early exit SIGPIPEs the producer under pipefail |
+| `validate-pipe-early-exit` | Validates that a pipeline does not use an early-exit consumer (awk exit, head, grep -q/-m/-l, sed q) which SIGPIPEs the producer under pipefail — capture the producer first |
 | `validate-bats-version` | Validates that a bats suite using flags on run declares bats_require_minimum_version 1.5.0 |
 | `validate-pi-extension-clones` | Validates that every pi extension package clone on this machine can serve the installed pi, in both skew directions and against the pi-ai floor each package declares — a clone predating pi 0.86's transcript contract silently strips the agent's tools and lets it fabricate their output |
 | `validate-tmpdir-isolation` | Validates that a bats suite pins $TMPDIR to bats-owned scratch and never removes it by hand, so parallel cases do not share one directory and a failed setup cannot wipe the real temp directory |

@@ -100,7 +100,8 @@ done <<< "$git_log_output"
 # ─── Render ───────────────────────────────────────────────────────────────────
 
 # Date range header
-since_date="$(git log --format="%ai" --since="$SINCE" "$UNTIL" --reverse 2>/dev/null | head -1 | cut -d' ' -f1)"
+_log=$(git log --format="%ai" --since="$SINCE" "$UNTIL" --reverse 2>/dev/null) || true
+since_date="$(head -1 <<<"$_log" | cut -d' ' -f1)"
 until_date="$(git log --format="%ai" "$UNTIL" -1 2>/dev/null | cut -d' ' -f1)"
 echo "# Changelog"
 echo

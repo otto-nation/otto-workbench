@@ -44,7 +44,8 @@ _deploy_zsh_layer() {
     name=$(basename "$item")
     dst_file="$dst/$name"
 
-    req_cmd=$(sed -n 's/^# requires-cmd:[[:space:]]*//p' "$item" 2>/dev/null | head -1)
+    req_cmd=$(sed -n 's/^# requires-cmd:[[:space:]]*//p' "$item" 2>/dev/null)
+    req_cmd=$(head -1 <<<"$req_cmd")
     if [[ -n "$req_cmd" ]] && ! command -v "$req_cmd" >/dev/null 2>&1; then
       echo -e "  ${DIM}⊘ $name (requires $req_cmd — install it, then: otto-workbench sync zsh)${NC}"
       # Remove previously deployed file so it doesn't activate a missing tool
@@ -203,10 +204,12 @@ _zshrc_check_duplicates() {
   local -a dupes=()
   local snip pat label rel
   while IFS= read -r snip; do
-    pat=$(sed -n 's/^# duplicate-check:[[:space:]]*//p' "$snip" 2>/dev/null | head -1)
+    pat=$(sed -n 's/^# duplicate-check:[[:space:]]*//p' "$snip" 2>/dev/null)
+    pat=$(head -1 <<<"$pat")
     [[ -z "$pat" ]] && continue
     grep -qE "$pat" "$ZSHRC_FILE" 2>/dev/null || continue
-    label=$(sed -n 's/^# duplicate-check-label:[[:space:]]*//p' "$snip" 2>/dev/null | head -1)
+    label=$(sed -n 's/^# duplicate-check-label:[[:space:]]*//p' "$snip" 2>/dev/null)
+    label=$(head -1 <<<"$label")
     [[ -z "$label" ]] && label=$(basename "$snip" .zsh)
     rel="${snip#"$ZSH_CONFIG_SRC_DIR/"}"
     dupes+=("${label}  →  $(basename "$ZSH_CONFIG_SRC_DIR")/${rel}")

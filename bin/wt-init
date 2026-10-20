@@ -107,7 +107,9 @@ _relocate_claude_worktrees() {
 _ensure_default_branch_worktree() {
   local default_branch
   default_branch=$(_detect_default_branch)
-  git worktree list | grep -q "\[$default_branch\]" && return 0
+  local list
+  list=$(git worktree list) || true
+  grep -q "\[$default_branch\]" <<<"$list" && return 0
   echo
   if [[ "$dry_run" == "true" ]]; then
     info "Missing worktree for $default_branch (run without --dry-run to create)"

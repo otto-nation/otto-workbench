@@ -111,7 +111,8 @@ done
 for script in "${BIN_GLOBS[@]}"; do
   [[ -f "$script" ]] || continue
   name="$(basename "$script")"
-  head -1 "$script" | grep -q 'bash' || continue
+  first_line=$(head -1 "$script")
+  grep -q 'bash' <<<"$first_line" || continue
   grep -q 'add_argument' "$script" 2>/dev/null && continue
 
   SCRIPTS_CHECKED=$(( SCRIPTS_CHECKED + 1 ))

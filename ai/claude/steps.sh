@@ -549,7 +549,9 @@ step_claude_worktrunk_plugin() {
     return 0
   }
 
-  if wt config plugins list 2>/dev/null | grep -q "claude"; then
+  local plugins
+  plugins=$(wt config plugins list 2>/dev/null) || true
+  if grep -q "claude" <<<"$plugins"; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Worktrunk Claude plugin already installed" || true
     return
   fi

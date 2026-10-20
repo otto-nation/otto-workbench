@@ -487,13 +487,14 @@ report_missing_xdist() {
 resolve_pytest() {
   local -n __bin=$1
   local -n __xdist=$2
-  local first="" candidate=""
+  local first="" candidate="" vv=""
   __bin=""
   __xdist=0
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
     [[ -n "$first" ]] || first="$candidate"
-    "$candidate" -VV 2>/dev/null | grep -q xdist || continue
+    vv=$("$candidate" -VV 2>/dev/null) || true
+    grep -q xdist <<<"$vv" || continue
     [[ "$candidate" == "$first" ]] || info "pytest: skipping $first (no xdist); using $candidate" >&2
     __bin="$candidate"
     __xdist=1

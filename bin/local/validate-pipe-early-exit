@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Validate that awk in a pipeline does not exit before draining stdin.
+"""Validate that a pipeline does not use an early-exit consumer.
 
 Usage: bin/local/validate-pipe-early-exit [--quiet] [file...]
 
-An awk program that `exit`s while it is the consuming side of a pipeline (`cmd | awk`)
-closes the pipe while the producer still has a later write to make. Under
-`set -o pipefail` that SIGPIPE fails the pipeline — `git worktree list
---porcelain | awk '... exit'` is the shape that took `wt switch -c` with it.
+A consumer that stops before draining stdin (`awk '... exit'`, `head`, `grep
+-q/-m/-l`, `sed` with `q`/`Q`) closes the pipe while the producer still has a
+later write to make. Under `set -o pipefail` that SIGPIPE fails the pipeline —
+`git worktree list --porcelain | awk '... exit'` is the shape that took
+`wt switch -c` with it, and `git worktree list | head -1` fails the same way.
 
-The fix is to drain the input and print only the first match (`!found &&
-condition { print; found = 1 }`), not to `exit` after it.
+For awk, drain the input and print only the first match (`!found &&
+condition { print; found = 1 }`), not `exit` after it. For head/grep/sed,
+capture the producer's output first, then test it:
+`out=$(git worktree list) && grep -q pat <<<"$out"` — which also keeps the
+producer's own failure visible.
 
 awk reading a FILE argument (`awk '...exit' "$file"`) is not this: there is
-no producer on a pipe to SIGPIPE. `|| awk` is not a pipeline.
+no producer on a pipe to SIGPIPE. `|| awk` is not a pipeline. A pipeline whose
+first stage is `echo` or `printf` (one small write) or a here-string feeding
+the first command cannot SIGPIPE that way either.
 
 When no files are given, discovers tracked shell files (bash shebang or .sh),
 skipping tests/.
@@ -35,13 +41,41 @@ from ansi import DIM, GREEN, NC, RED  # noqa: E402
 from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 EXIT_TOKEN = re.compile(r'(?<![\w$])exit(?![\w])')
-PIPE_AWK = re.compile(r'(?<!\|)\|\s*awk\b')
 HEREDOC_START = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_]\w*)\1")
 BASH_SHEBANG = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
-WHY = (
-    'awk exit in a pipeline SIGPIPEs the producer under pipefail; '
-    'drain the input and print the first match instead'
+ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
+FUNC_DEF = re.compile(r'^[A-Za-z_][A-Za-z0-9_-]*\s*\(\s*\)\s*')
+SED_Q = re.compile(
+    r'(?:^|[;{\n])\s*(?:'
+    r'[qQ](?:\s|[0-9]|}|;|$)'
+    r'|[0-9]+\s*[qQ](?:\s|[0-9]|}|;|$)'
+    r'|\$\s*[qQ](?:\s|[0-9]|}|;|$)'
+    r'|/[^/\n]*/[qQ](?:\s|[0-9]|}|;|$)'
+    r')'
 )
+SKIP_WORDS = frozenset({
+    'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done',
+    'time', '!', '{', '}', 'function', 'command', 'builtin',
+})
+GREP_EARLY_LONG = frozenset({
+    '--quiet', '--max-count', '--files-with-matches',
+})
+GREP_VALUE_SHORT = frozenset('efABCD')
+CAPTURE_WHY = (
+    'head/grep/sed in a pipeline SIGPIPEs the producer under pipefail; '
+    "capture the producer's output into a variable first, then test it, e.g. "
+    'out=$(git worktree list) && grep -q pat <<<"$out", which also keeps the '
+    "producer's own failure visible"
+)
+WHY = {
+    'awk': (
+        'awk exit in a pipeline SIGPIPEs the producer under pipefail; '
+        'drain the input and print the first match instead'
+    ),
+    'head': CAPTURE_WHY,
+    'grep': CAPTURE_WHY,
+    'sed': CAPTURE_WHY,
+}
 
 
 @dataclass(frozen=True)
@@ -50,7 +84,11 @@ class Statement:
     text: str
 
 
-Violation = Statement  # same shape: line number plus the statement's first line
+@dataclass(frozen=True)
+class Violation:
+    line: int
+    text: str
+    kind: str
 
 
 @dataclass(frozen=True)
@@ -292,37 +330,337 @@ def _awk_program_and_rest(after_awk: str) -> AwkCall:
 
 def _rest_is_file_argument(rest: str) -> bool:
     rest = rest.strip()
-    if not rest:
-        return False
-    if rest == '-':
-        return False
-    if rest.startswith(('>', '<', '2>', '1>', '&>')):
-        return False
-    return True
+    return bool(rest) and rest != '-' and not rest.startswith(('>', '<', '2>', '1>', '&>'))
 
 
-def find_pipeline_awk_exits(statement: str) -> bool:
-    """True when a `| awk` consumer's program contains the token `exit`."""
-    cleaned = strip_unquoted_comment(statement)
-    for match in PIPE_AWK.finditer(cleaned):
-        awk = _awk_program_and_rest(cleaned[match.end():])
-        if _rest_is_file_argument(awk.rest):
+def _pipe_len(text: str, i: int) -> int:
+    if i >= len(text) or text[i] != '|' or (i + 1 < len(text) and text[i + 1] == '|'):
+        return 0
+    return 2 if i + 1 < len(text) and text[i + 1] == '&' else 1
+
+
+def _cmd_sep_len(text: str, i: int) -> int:
+    if i >= len(text):
+        return 0
+    c = text[i]
+    if c in ';\n':
+        return 1
+    if c == '&':
+        prev = text[i - 1] if i else ''
+        if prev in '><|':
+            return 0
+        if i + 1 < len(text) and text[i + 1] == '&':
+            return 2
+        return 1
+    if c == '|' and i + 1 < len(text) and text[i + 1] == '|':
+        return 2
+    return 0
+
+
+def _nest_open_len(text: str, i: int, unquoted: bool) -> int:
+    if text.startswith('$(', i) or text.startswith('<(', i) or text.startswith('>(', i):
+        return 2
+    if text[i] == '`':
+        return 1
+    if unquoted and text[i] == '(':
+        return 1
+    return 0
+
+
+def _feed(buf: list[str], chunk: str) -> None:
+    for i, _ in enumerate(buf):
+        buf[i] += chunk
+
+
+def _feed_parents(buf: list[str], chunk: str) -> None:
+    for i in range(len(buf) - 1):
+        buf[i] += chunk
+
+
+def _close_pipeline(
+    found: list[list[str]], stages: list[list[str]], buf: list[str],
+) -> None:
+    current = list(stages[-1])
+    if buf[-1].strip() or current:
+        current.append(buf[-1])
+    if len(current) >= 2:
+        found.append(current)
+    stages[-1] = []
+    buf[-1] = ''
+
+
+def _pipelines(text: str) -> list[list[str]]:
+    """Pipeline stages at every nesting level, skipping quoted and $(( ))."""
+    found: list[list[str]] = []
+    stages: list[list[str]] = [[]]
+    buf: list[str] = ['']
+    kinds: list[str] = ['root']
+    saved_quotes: list[tuple[bool, bool]] = []
+    arith = 0
+    state = QuoteState(0, False, False)
+
+    while state.index < len(text):
+        i = state.index
+        ch = text[i]
+        if arith:
+            _feed(buf, ch)
+            arith = max(0, arith + (ch == '(') - (ch == ')'))
+            state = _advance_quote(text, state)
             continue
-        if EXIT_TOKEN.search(awk.program):
+        if state.in_single:
+            _feed(buf, ch)
+            state = _advance_quote(text, state)
+            continue
+        if text.startswith('$((', i):
+            _feed(buf, '$((')
+            arith = 2
+            state = QuoteState(i + 3, state.in_single, state.in_double)
+            continue
+        if state.closed and text.startswith('()', i):
+            _feed(buf, '()')
+            state = QuoteState(i + 2, False, False)
+            continue
+        pipe = _pipe_len(text, i) if state.closed else 0
+        if pipe:
+            stages[-1].append(buf[-1])
+            buf[-1] = ''
+            _feed_parents(buf, text[i:i + pipe])
+            state = QuoteState(i + pipe, False, False)
+            continue
+        sep = _cmd_sep_len(text, i) if state.closed else 0
+        if sep:
+            _close_pipeline(found, stages, buf)
+            _feed_parents(buf, text[i:i + sep])
+            state = QuoteState(i + sep, False, False)
+            continue
+        closing_tick = ch == '`' and kinds[-1] == 'tick'
+        closing_paren = ch == ')' and kinds[-1] == 'paren' and state.closed
+        if closing_tick or closing_paren:
+            _close_pipeline(found, stages, buf)
+            stages.pop()
+            buf.pop()
+            kinds.pop()
+            in_s, in_d = saved_quotes.pop()
+            _feed(buf, ch)
+            state = QuoteState(i + 1, in_s, in_d)
+            continue
+        nest = _nest_open_len(text, i, state.closed)
+        if nest:
+            _feed(buf, text[i:i + nest])
+            saved_quotes.append((state.in_single, state.in_double))
+            stages.append([])
+            buf.append('')
+            kinds.append('tick' if ch == '`' else 'paren')
+            state = QuoteState(i + nest, False, False)
+            continue
+        _feed(buf, ch)
+        state = _advance_quote(text, state)
+
+    while stages:
+        _close_pipeline(found, stages, buf)
+        stages.pop()
+        buf.pop()
+        kinds.pop()
+        if saved_quotes:
+            saved_quotes.pop()
+    return found
+
+
+def _skip_redirect(text: str, i: int) -> int:
+    while i < len(text) and text[i] in '<>&012':
+        i += 1
+    return _skip_flag_value(text, i)
+
+
+def _command_and_rest(stage: str) -> tuple[str, str]:
+    i = 0
+    while True:
+        i = _skip_ws(stage, i)
+        if i >= len(stage):
+            return '', ''
+        if stage[i] in '<>':
+            i = _skip_redirect(stage, i)
+            continue
+        token = _read_word(stage, i)
+        if not token.text:
+            return '', stage[i:]
+        if ASSIGNMENT.match(token.text) or token.text in SKIP_WORDS:
+            i = token.end
+            continue
+        name = os.path.basename(token.text.strip('\'"'))
+        return name, stage[token.end:]
+
+
+def _has_here_string(text: str) -> bool:
+    state = QuoteState(0, False, False)
+    while state.index < len(text):
+        if state.closed and text.startswith('<<<', state.index):
+            return True
+        state = _advance_quote(text, state)
+    return False
+
+
+def _short_grep_early(cluster: str) -> bool:
+    """True when a short-option cluster contains q, l, or m."""
+    for ch in cluster:
+        if ch in 'qlm':
+            return True
+        if ch in GREP_VALUE_SHORT:
+            return False
+    return False
+
+
+def _grep_exits_early(after: str) -> bool:
+    i = 0
+    while True:
+        i = _skip_ws(after, i)
+        if i >= len(after) or after[i] in ';|&)<>':
+            return False
+        token = _read_word(after, i)
+        if not token.text:
+            return False
+        i = token.end
+        t = token.text
+        if t == '--':
+            return False
+        if t.startswith('--') and t.split('=', 1)[0] in GREP_EARLY_LONG:
+            return True
+        if t.startswith('--') or not t.startswith('-') or t == '-':
+            continue
+        if _short_grep_early(t[1:]):
+            return True
+        if t[1:] and t[1] in GREP_VALUE_SHORT and len(t) == 2:
+            i = _skip_flag_value(after, i)
+    return False
+
+
+def _take_sed_script(after: str, i: int) -> Token:
+    i = _skip_ws(after, i)
+    if i < len(after) and after[i] in "'\"":
+        return _read_quoted(after, i) or Token('', i)
+    return _read_word(after, i)
+
+
+def _sed_programs(after: str) -> list[str]:
+    i = 0
+    programs: list[str] = []
+    seen_e = False
+    positional: str | None = None
+    while True:
+        i = _skip_ws(after, i)
+        if _is_redirect_start(after, i):
+            break
+        if after[i] in "'\"":
+            token = _read_quoted(after, i) or Token('', i)
+            positional = positional or (None if seen_e else token.text)
+            i = token.end
+            continue
+        token = _read_word(after, i)
+        if not token.text:
+            break
+        t = token.text
+        i = token.end
+        if t.startswith('--expression='):
+            seen_e = True
+            programs.append(t.split('=', 1)[1])
+            continue
+        if t in ('-e', '--expression'):
+            seen_e = True
+            script = _take_sed_script(after, i)
+            programs.append(script.text)
+            i = script.end
+            continue
+        file_flag = t in ('-f', '--file') or t.startswith('--file=')
+        if file_flag and '=' not in t:
+            i = _skip_flag_value(after, i)
+            continue
+        if file_flag:
+            continue
+        if t.startswith('-') and t != '-':
+            continue
+        if positional is None:
+            positional = t.strip('\'"')
+    if seen_e:
+        return programs
+    if positional:
+        return [positional]
+    return []
+
+
+def _sed_quits(rest: str) -> bool:
+    for program in _sed_programs(rest):
+        if SED_Q.search(program):
             return True
     return False
 
 
+def _stage_kind(stage: str) -> str | None:
+    name, rest = _command_and_rest(stage)
+    if name == 'head':
+        return 'head'
+    if name == 'grep' and _grep_exits_early(rest):
+        return 'grep'
+    if name == 'sed' and _sed_quits(rest):
+        return 'sed'
+    if name != 'awk':
+        return None
+    awk = _awk_program_and_rest(rest)
+    if _rest_is_file_argument(awk.rest):
+        return None
+    if EXIT_TOKEN.search(awk.program):
+        return 'awk'
+    return None
+
+
+def _first_consumer_kind(stages: list[str]) -> str | None:
+    for stage in stages:
+        kind = _stage_kind(stage)
+        if kind:
+            return kind
+    return None
+
+
+def _producer_stage(first: str) -> str:
+    """Drop a leading `func()` / ` {` so exemption sees the command that writes."""
+    text = FUNC_DEF.sub('', first.lstrip(), count=1).lstrip()
+    if text.startswith('{'):
+        text = text[1:]
+    return text
+
+
+def _pipeline_kind(stages: list[str]) -> str | None:
+    if len(stages) < 2:
+        return None
+    first = _producer_stage(stages[0])
+    if _has_here_string(stages[0]) or _has_here_string(first):
+        return None
+    name, _rest = _command_and_rest(first)
+    if name in {'echo', 'printf'}:
+        return None
+    return _first_consumer_kind(stages[1:])
+
+
+def find_early_exit(statement: str) -> str | None:
+    """Kind of the first early-exit consumer in a non-exempt pipeline, if any."""
+    cleaned = strip_unquoted_comment(statement)
+    for stages in _pipelines(cleaned):
+        kind = _pipeline_kind(stages)
+        if kind:
+            return kind
+    return None
+
+
 def check_file(filepath: str) -> list[Violation]:
-    """Return violations of pipeline awk that exits before draining stdin."""
+    """Return violations of pipeline consumers that exit before draining stdin."""
     with open(filepath, errors='replace') as f:
         lines = f.readlines()
 
     violations: list[Violation] = []
     for stmt in join_statements(blank_heredoc_bodies(lines)):
-        if find_pipeline_awk_exits(stmt.text):
+        kind = find_early_exit(stmt.text)
+        if kind:
             preview = stmt.text.strip().split('\n', 1)[0]
-            violations.append(Violation(stmt.line, preview))
+            violations.append(Violation(stmt.line, preview, kind))
     return violations
 
 
@@ -361,26 +699,26 @@ def discover_scripts(repo_root: str) -> list[str]:
 
 
 def _report_violations(relpath: str, violations: list[Violation]) -> None:
-    print(f'{RED}✗{NC} {relpath}: awk exit in a pipeline', file=sys.stderr)
+    print(f'{RED}✗{NC} {relpath}: early-exit consumer in a pipeline', file=sys.stderr)
     for violation in violations:
         print(f'      line {violation.line}: {violation.text}', file=sys.stderr)
-    print(f'    {DIM}{WHY}{NC}', file=sys.stderr)
+        print(f'    {DIM}{WHY[violation.kind]}{NC}', file=sys.stderr)
 
 
 def _print_summary(files_checked: int, errors: int) -> None:
     print()
     if errors == 0:
-        print(f'{GREEN}✓{NC} {files_checked} files checked, no pipeline awk early-exit')
+        print(f'{GREEN}✓{NC} {files_checked} files checked, no pipeline early-exit')
     else:
         print(
-            f'{RED}✗{NC} {errors} of {files_checked} files exit awk in a pipeline',
+            f'{RED}✗{NC} {errors} of {files_checked} files have a pipeline early-exit',
             file=sys.stderr,
         )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description='Validate that pipeline awk drains stdin instead of exiting early.',
+        description='Validate that pipeline consumers drain stdin instead of exiting early.',
     )
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
     parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')

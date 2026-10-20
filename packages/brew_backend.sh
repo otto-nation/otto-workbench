@@ -97,7 +97,9 @@ pkg_backend_finish() {
   fi
 
   # brew autoupdate (DomT4/autoupdate tap) schedules brew update/upgrade via launchd.
-  if brew autoupdate status 2>/dev/null | grep -q "not running"; then
+  local autoupdate_status
+  autoupdate_status=$(brew autoupdate status 2>/dev/null) || true
+  if grep -q "not running" <<<"$autoupdate_status"; then
     echo
     info "Homebrew autoupdate is not running."
     echo -e "  ${DIM}Upgrades all formulae and casks every 12 hours and on every system boot.${NC}"

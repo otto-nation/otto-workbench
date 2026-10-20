@@ -439,7 +439,9 @@ _ssh_github_insert() {
 # than rewritten.
 _ssh_github_warn_unmanaged() {
   local file="$1"
-  if _ssh_github_strip "$file" | grep -qiE '^[[:space:]]*host([[:space:]]|=)+github\.com([[:space:]]|$)'; then
+  local unmanaged
+  unmanaged=$(_ssh_github_strip "$file") || true
+  if grep -qiE '^[[:space:]]*host([[:space:]]|=)+github\.com([[:space:]]|$)' <<<"$unmanaged"; then
     warn "$file declares Host github.com outside the managed block — ssh keeps the first value it reads, so that entry decides the connection"
   fi
 }

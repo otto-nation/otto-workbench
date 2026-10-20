@@ -6,7 +6,7 @@ scratch script that drove today's writers directly:
 | Case | Produced by |
 |---|---|
 | synthesis_pr, self_incremental_fixed | handwritten in the shape of real synthesis / incremental self-reviews (fictional content) |
-| merged | `review.merge.merge_reviews(groups/group-1.md, groups/group-2.md)` |
+| merged | `review.merge.merge_records` over `groups/group-1.md`, `groups/group-2.md` |
 | mechanical_fallback | `review.outcome._write_mechanical_fallback` + `review.state._inject_failures_and_status` |
 | clean | `review.outcome._write_clean_review` |
 | unchanged | `review.outcome.write_unchanged_review` with `synthesis_pr` as the prior review |

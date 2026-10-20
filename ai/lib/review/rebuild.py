@@ -81,7 +81,7 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
         # --repair exists to salvage, and the operator's run already failed.
         records = [ingest_review(Path(p).read_text(), strict=False) for p in group_files]
         merged = merge_records(records)
-        trail.info("merge_reviews", "merged group outputs", data={"group_count": len(group_files)})
+        trail.info("merge_records", "merged group outputs", data={"group_count": len(group_files)})
         done = post_process_record(merged)
         record = build_mechanical_record(
             done.record, group_count=len(group_files), summary_note=REBUILD_SUMMARY,

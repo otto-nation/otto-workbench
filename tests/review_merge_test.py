@@ -15,6 +15,14 @@ if LIB_DIR not in sys.path:
 
 import review.merge
 from review.document import SECTION_PRIOR_FINDINGS
+from review.ingest import ingest_review
+from review.merge import merge_records
+from review.render import render_body
+
+
+def _merged_text(paths):
+    records = [ingest_review(Path(p).read_text()) for p in paths if Path(p).exists()]
+    return render_body(merge_records(records), sids=True, evidence=True)
 
 
 class TestCleanSectionText:
@@ -71,7 +79,7 @@ class TestMergeReviewsCleanup:
             "## Idioms\n"
             "_(none)_\n"
         )
-        result = review.merge.merge_reviews([str(g1)])
+        result = _merged_text([str(g1)])
         assert "_None._" not in result
         assert "_(none)_" not in result
         assert "## Must fix" not in result
@@ -92,11 +100,11 @@ class TestMergeReviewsCleanup:
             "- **[N1]** **`file.go:10`** — finding\n"
             "---\n"
         )
-        result = review.merge.merge_reviews([str(g1)])
+        result = _merged_text([str(g1)])
         assert "---" not in result
 
 
-# ── 7. merge_reviews ────────────────────────────────────────────────────────
+# ── 7. merge_records ────────────────────────────────────────────────────────
 
 
 class TestMergeReviews:
@@ -117,7 +125,7 @@ class TestMergeReviews:
             "## Nit\n_None._\n"
             "## Idioms\n_None._\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
         assert "[M1]" in result
         assert "[S1]" in result
         assert "`a.go`" in result
@@ -136,7 +144,7 @@ class TestMergeReviews:
             "## Must fix\n- **[M1]** **`a.go:1`** — same issue\n"
             "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
         # Dedup should remove duplicate finding
         assert result.count("same issue") == 1
 
@@ -155,7 +163,7 @@ class TestMergeReviews:
             "## Should fix\n- **[S1]** **`b.go:5`** — issue b\n"
             "## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
         assert "[S1]" in result
         assert "[S2]" in result
 
@@ -179,7 +187,7 @@ class TestMergeReviews:
             "- **[S2]** **`b.go:2`** — issue d, see S1 above\n"
             "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
 
         assert "- **[S2]** **`a.go:2`** — issue b, related to [S1]" in result
         assert "- **[S4]** **`b.go:2`** — issue d, see S3 above" in result
@@ -206,7 +214,7 @@ class TestMergeReviews:
             "## Nit\n- **[N1]** **`b.go:3`** — issue f, see S1 above\n"
             "## Idioms\n_None._\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
 
         assert "- **[S3]** **`b.go:2`** — issue e" in result
         assert "- **[M2]** **`b.go:1`** — issue d, blocked on [S3]" in result
@@ -228,7 +236,7 @@ class TestMergeReviews:
             "## Nit\n_None._\n## Idioms\n_None._\n"
         )
         order = (citing, declaring) if citing_first else (declaring, citing)
-        return review.merge.merge_reviews([str(path) for path in order])
+        return _merged_text([str(path) for path in order])
 
     def test_merge_does_not_point_a_dangling_reference_at_another_group(self, tmp_path):
         # No group can name another group's finding — every group numbers from
@@ -261,7 +269,7 @@ class TestMergeReviews:
             "## Should fix\n- **[S1]** **`b.go:1`** — issue c\n"
             "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
 
         # Offsetting by the count would put issue c on S3, where issue b already
         # sits; the gaps close afterwards, so all three come out distinct.
@@ -283,7 +291,7 @@ class TestMergeReviews:
             "- **[M3]** `a.go` — Fixed\n"
             "- **[S2]** `b.go` — Still open\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
         assert result.count("**[M3]** `a.go` — Fixed") == 1
         assert "**[S2]** `b.go` — Still open" in result
         # Ledger IDs name the prior review, so the merge must not renumber them
@@ -301,7 +309,7 @@ class TestMergeReviews:
             "## File Triage\n- `a.go` — reviewed\n"
             f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Still open\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
         assert "**[M3]** `a.go` — Still open" in result
         assert "Fixed" not in result
 
@@ -315,7 +323,7 @@ class TestMergeReviews:
                 f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — {verdict}\n"
             )
             paths.append(str(path))
-        return review.merge.merge_reviews(paths)
+        return _merged_text(paths)
 
     def test_merge_does_not_reopen_a_declined_finding(self, tmp_path):
         """Still-open used to overwrite whatever was kept, declined included."""
@@ -336,7 +344,7 @@ class TestMergeReviews:
             "## File Triage\n- `a.go` — reviewed\n"
             "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
         )
-        assert SECTION_PRIOR_FINDINGS not in review.merge.merge_reviews([str(g1)])
+        assert SECTION_PRIOR_FINDINGS not in _merged_text([str(g1)])
 
     def test_missing_file_skipped(self, tmp_path):
         g1 = tmp_path / "g1.md"
@@ -345,13 +353,13 @@ class TestMergeReviews:
             "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
             "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(tmp_path / "missing.md")])
+        result = _merged_text([str(g1), str(tmp_path / "missing.md")])
         assert "[M1]" in result
 
     def test_empty_group_file(self, tmp_path):
         g1 = tmp_path / "g1.md"
         g1.write_text("")
-        result = review.merge.merge_reviews([str(g1)])
+        result = _merged_text([str(g1)])
         assert "## File Triage" in result
 
     def test_merge_strips_narrative_from_triage(self, tmp_path):
@@ -368,7 +376,7 @@ class TestMergeReviews:
             "\n"
             "This file has a simple handler implementation.\n"
         )
-        result = review.merge.merge_reviews([str(g1)])
+        result = _merged_text([str(g1)])
         assert "`a.go`" in result
         assert "Both files" not in result
         assert "### a.go" not in result
@@ -383,7 +391,7 @@ class TestMergeReviews:
         g2.write_text(
             "## File Triage\n- `shared.go` — Tier 1\n- `b.go` — Tier 2\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
         assert result.count("`shared.go`") == 1
 
     def test_merge_strips_separators_from_triage(self, tmp_path):
@@ -394,7 +402,7 @@ class TestMergeReviews:
             "## File Triage\n- `b.go` — Tier 2\n"
             "\n---\n\nSome paragraph about the files above.\n"
         )
-        assert "---" not in review.merge.merge_reviews([str(g1), str(g2)])
+        assert "---" not in _merged_text([str(g1), str(g2)])
 
     def test_merge_closes_the_gap_a_cross_group_duplicate_leaves(self, tmp_path):
         # Four declarations, one of them a duplicate of another group's. The
@@ -413,7 +421,7 @@ class TestMergeReviews:
             "- **[M1]** **`a.go:20`** — Duplicate finding across groups\n"
             "- **[M2]** **`b.go:5`** — Second unique finding\n"
         )
-        result = review.merge.merge_reviews([str(g1), str(g2)])
+        result = _merged_text([str(g1), str(g2)])
         assert result.count("Duplicate finding") == 1
         assert "[M1]" in result
         assert "[M2]" in result
@@ -428,13 +436,13 @@ class TestMergeReviews:
             "## Must Fix\n- **[M1]** **`a.go:10`** — bug\n"
             "## NIT\n- **[N1]** **`a.go:20`** — style\n"
         )
-        result = review.merge.merge_reviews([str(g1)])
+        result = _merged_text([str(g1)])
         assert "[M1]" in result
         assert "[N1]" in result
 
 
 class TestReaderToleranceForIncrementalWrites:
-    """A6b's net: merge_reviews already accepts a short complete doc, an
+    """A6b's net: merge_records already accepts a short complete doc, an
     empty doc, and a rewrite of the file between calls. Do not tighten this.
     """
 
@@ -443,11 +451,11 @@ class TestReaderToleranceForIncrementalWrites:
         "## Must fix\n- **[M1]** **`a.py:1`** — issue\n"
     )
 
-    # passes-at-base: merge_reviews already section-merges a short complete doc
+    # passes-at-base: merge_records already section-merges a short complete doc
     def test_a_short_complete_group_doc_merges(self, tmp_path):
         g = tmp_path / "group-1.md"
         g.write_text(self._SHORT)
-        result = review.merge.merge_reviews([str(g)])
+        result = _merged_text([str(g)])
         assert "## File Triage" in result
         assert "[M1]" in result
 
@@ -455,20 +463,20 @@ class TestReaderToleranceForIncrementalWrites:
     def test_an_empty_group_doc_merges(self, tmp_path):
         g = tmp_path / "group-1.md"
         g.write_text("")
-        result = review.merge.merge_reviews([str(g)])
+        result = _merged_text([str(g)])
         assert "## File Triage" in result
         assert "[M1]" not in result
 
-    # passes-at-base: merge_reviews reads the path at call time, so a rewrite is a later read
+    # passes-at-base: _merged_text reads the path at call time, so a rewrite is a later read
     def test_a_doc_rewritten_mid_run_merges_the_current_bytes(self, tmp_path):
         g = tmp_path / "group-1.md"
         g.write_text(self._SHORT)
-        first = review.merge.merge_reviews([str(g)])
+        first = _merged_text([str(g)])
         g.write_text(
             self._SHORT
             + "## Should fix\n- **[S1]** **`a.py:2`** — later finding\n"
         )
-        second = review.merge.merge_reviews([str(g)])
+        second = _merged_text([str(g)])
         assert "[M1]" in first
         assert "[S1]" not in first
         assert "[M1]" in second

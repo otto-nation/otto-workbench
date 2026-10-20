@@ -69,15 +69,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 from review.grammar import (
     ANNOTATE_FINDING_RE, FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
     DedupKey, FindingIdentity, has_sid_marker, parse_ledger_line, sid_marker,
 )
-from review.ingest import ingest_review
 from review.record import RecordFinding, ReviewRecord, SeveritySection
-from review.render import finding_line, render_body
+from review.render import finding_line
 from review.types import (
     SEVERITIES, FindingRef, LedgerEntry,
     disposition_precedence,
@@ -389,7 +387,7 @@ def _dedup_records(findings: list[RecordFinding]) -> _DedupedRecords:
 
 
 def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
-    """The group reviews folded into one record, in the order `merge_reviews` always used."""
+    """The group reviews folded into one record, in group order."""
     offsets = {s.key: 0 for s in SEVERITIES}
     findings: list[RecordFinding] = []
     triage: list = []
@@ -422,16 +420,6 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
         ledger=_dedup_ledger("\n".join(ledgers)).strip() if ledgers else "",
     )
     return renumber_record(merged, deduped.merged_into)
-
-
-def merge_reviews(group_files: list[str]) -> str:
-    """Interim text form of `merge_records` for callers not yet holding records."""
-    records = [
-        ingest_review(Path(p).read_text(), strict=False)
-        for p in group_files if Path(p).exists()
-    ]
-    # Sids and evidence kept: the merged text is what synthesis is shown.
-    return render_body(merge_records(records), sids=True, evidence=True)
 
 
 # ── Stable IDs for carry-forward ─────────────────────────────────────────────

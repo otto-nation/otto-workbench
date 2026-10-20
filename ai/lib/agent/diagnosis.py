@@ -56,6 +56,9 @@ class DiagnosisKind(StrEnum):
     # output, and a synthesis that degraded to the mechanical merge.
     ALL_GROUPS_FAILED = "all_groups_failed"
     MECHANICAL_FALLBACK = "mechanical_fallback"
+    # Agent output that ingest refused twice. Recoverable: the default for a
+    # non-marker kind — `--recover` re-runs the phase with a fresh agent.
+    MALFORMED_OUTPUT = "malformed_output"
     # Only reachable by reading a pipeline state file written before failures
     # were structured. `detail` holds that file's rendered message verbatim.
     UNKNOWN = "unknown"
@@ -88,6 +91,7 @@ _DIAGNOSIS_MESSAGES = {
     DiagnosisKind.OUTPUT_MISSING: "output missing",
     DiagnosisKind.ALL_GROUPS_FAILED: "all groups failed",
     DiagnosisKind.MECHANICAL_FALLBACK: "mechanical fallback",
+    DiagnosisKind.MALFORMED_OUTPUT: "output rejected by ingest",
 }
 
 # Every constant message, reversed. A state file written before a message was a

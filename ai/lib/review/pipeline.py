@@ -59,7 +59,7 @@ from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
 from review.overflow import run_with_overflow_recovery
-from review.ingest import IngestRejected, ingest_review
+from review.ingest import ingest_review, ingest_with_repair
 from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
@@ -160,11 +160,15 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     _touch(job.review_file)
 
     # `rc` tracks the latest attempt so the failure message below reports the
-    # retry's exit code, not the first attempt's.
+    # retry's exit code, not the first attempt's. `sent` is the prompt the last
+    # invocation actually ran — an overflow rebuild replaces it, and repair
+    # must quote that text rather than the original.
     rc = 0
+    sent = prompt
 
     def invoke(text: str, turns: int) -> int:
-        nonlocal rc
+        nonlocal rc, sent
+        sent = text
         rc = runner.invoke(text, turns)
         return rc
 
@@ -190,13 +194,14 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
 
-    raw = Path(job.review_file).read_text()
-    try:
-        record = ingest_review(raw)
-    except IngestRejected as exc:
-        core.log.error(f"review agent output rejected: {exc}")
+    outcome = ingest_with_repair(job.review_file, sent, invoke)
+    if not outcome.ok:
+        listed = "; ".join(e.render() for e in outcome.errors)
+        core.log.error(f"review agent output rejected: {listed}")
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
+    raw = Path(job.review_file).read_text()
+    record = outcome.record
     if _should_disprove(job, disprove):
         record = _phase_disprove(job, record, raw).record
     _post_process_review(job, record)
@@ -370,7 +375,10 @@ def run_multi_phase(
             cost_so_far += group_phase.cost
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
-    merged = _phase_merge(group_outputs[:], failed_groups)
+    merged = _phase_merge(
+        group_outputs[:], failed_groups,
+        group_names=tuple(g.name for g in groups),
+    )
 
     if carried_forward:
         # Interim; Task 15 replaces the source.

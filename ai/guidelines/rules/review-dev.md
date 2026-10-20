@@ -12,7 +12,7 @@ paths:
 
 When adding or modifying a review phase, verify these integration points:
 - `review/types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
-- `review/merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
+- `review/merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_records()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
 - `review/reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review/reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
 - `review/registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
 - `review/grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
@@ -70,7 +70,7 @@ when it comes first and ends the line or breaks with one of
 `DISPOSITION_TAIL_PUNCTUATION`; a comma is deliberately not on that list, so
 "Fixed, but only on the happy path" reaches no verdict rather than its
 optimistic half.
-The ledger is unioned across groups by `merge_reviews()` — where the strongest
+The ledger is unioned across groups by `merge_records()` — where the strongest
 verdict wins, in `PriorDisposition.precedence` order (`Declined` beats
 `Still open` beats `Fixed`) — copied through by the synthesis templates, and
 stripped in `post_process_findings()` before renumbering, since its IDs number

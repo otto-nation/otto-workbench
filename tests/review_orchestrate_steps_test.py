@@ -174,7 +174,10 @@ class TestPhaseSynthesis:
         result = ro._phase_synthesis(job, "", 3, _merged(merged))
 
         assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
-        assert result.diagnosis == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
+        assert result.diagnosis == ro.Diagnosis(
+            ro.DiagnosisKind.MECHANICAL_FALLBACK,
+            detail="line 1: rendered_input — this is a rendered review.md; only agent output is ingested",
+        )
 
     def test_an_unpromptable_synthesis_falls_back_to_the_merge(
         self, ro, tmp_path, monkeypatch,

@@ -19,8 +19,12 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
+
+import core.log
 
 from review.document import (
     SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
@@ -80,6 +84,23 @@ class IngestRejected(Exception):
     def __init__(self, errors: tuple[IngestError, ...]) -> None:
         self.errors = errors
         super().__init__("; ".join(e.render() for e in errors))
+
+
+# ceiling: a fixed repair budget rather than one scaled to the error count.
+# Upgrade when repair turns regularly end with errors left that a larger budget
+# would have reached — the trail records every second rejection.
+REPAIR_MAX_TURNS = 10
+
+
+@dataclass(frozen=True)
+class IngestOutcome:
+    record: ReviewRecord | None
+    errors: tuple[IngestError, ...] = ()
+    repaired: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.record is not None
 
 
 @dataclass(frozen=True)
@@ -415,8 +436,8 @@ def ingest_review(text: str, *, strict: bool = True) -> ReviewRecord:
     """The record `text` declares. Raises `IngestRejected` when it is malformed.
 
     The title and header are not read — they are `meta.json`'s. `strict=False`
-    keeps what it can and drops the errors; callers ingesting agent output
-    before the repair turn exists (merge, rebuild, test helpers).
+    keeps what it can and drops the errors; callers ingesting recovery artifacts
+    and test helpers that are not agent output.
     Text carrying `BANNER` is refused whatever `strict` says.
     """
     if BANNER in text:
@@ -435,3 +456,31 @@ def ingest_review(text: str, *, strict: bool = True) -> ReviewRecord:
     if strict and errors:
         raise IngestRejected(tuple(sorted(errors, key=lambda e: e.line)))
     return builder.record([_finding(span, lines) for span in spans])
+
+
+def repair_prompt(prompt: str, path: str, errors: tuple[IngestError, ...]) -> str:
+    listed = "\n".join(f"- {e.render()}" for e in errors)
+    return (
+        f"{prompt}\n\n## Your review was rejected\n\n"
+        f"The review you wrote to `{path}` cannot be read:\n\n{listed}\n\n"
+        "Edit that file in place and fix only the entries named above. "
+        "Do not rewrite anything else."
+    )
+
+
+def ingest_with_repair(path: str, prompt: str, invoke: Callable[[str, int], int]) -> IngestOutcome:
+    """Ingest the agent's output at `path`, giving the agent one turn to fix a rejection.
+
+    A second rejection is returned, not raised: the caller handles it as the
+    agent failure it is, the way a missing output is handled today.
+    """
+    try:
+        return IngestOutcome(ingest_review(Path(path).read_text()))
+    except IngestRejected as exc:
+        errors = exc.errors
+    core.log.warn(f"{path} rejected ({len(errors)} error(s)) — one repair turn")
+    invoke(repair_prompt(prompt, path, errors), REPAIR_MAX_TURNS)
+    try:
+        return IngestOutcome(ingest_review(Path(path).read_text()), repaired=True)
+    except IngestRejected as exc:
+        return IngestOutcome(None, exc.errors, repaired=True)

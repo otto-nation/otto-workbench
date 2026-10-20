@@ -27,7 +27,9 @@ from core.phases import Phase
 from agent.session import _parse_session_cost
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
-from review.ingest import IngestRejected, ingest_review
+from review.ingest import (
+    IngestError, IngestOutcome, IngestRejected, ingest_review, ingest_with_repair,
+)
 from review.merge import annotate_prior_with_stable_ids, merge_records
 from review.outcome import (
     _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
@@ -323,11 +325,15 @@ def _phase_synthesis(
     core.log.blank()
 
     # `rc` tracks the latest attempt so the fallback warning below reports the
-    # retry's exit code, not the first attempt's.
+    # retry's exit code, not the first attempt's. `sent` is the prompt the last
+    # invocation actually ran — an overflow rebuild replaces it, and repair
+    # must quote that text rather than the original.
     rc = 0
+    sent = prompt
 
     def invoke(text: str, turns: int) -> int:
-        nonlocal rc
+        nonlocal rc, sent
+        sent = text
         rc = runner.invoke(text, turns)
         return rc
 
@@ -352,14 +358,14 @@ def _phase_synthesis(
         ),
     )
 
-    record = None
-    if agent_output_complete(job.review_file):
-        try:
-            record = ingest_review(Path(job.review_file).read_text())
-        except IngestRejected as exc:
-            core.log.warn(f"Synthesis output rejected ({exc}) — falling back to mechanical merge")
-    if record is not None:
-        _post_process_review(job, record, skipped_groups=skipped_groups, total_groups=group_count)
+    outcome = (
+        ingest_with_repair(job.review_file, sent, invoke)
+        if agent_output_complete(job.review_file) else IngestOutcome(None)
+    )
+    if outcome.ok:
+        _post_process_review(
+            job, outcome.record, skipped_groups=skipped_groups, total_groups=group_count,
+        )
         diagnosis = None
     else:
         reason = "no output" if not _has_output(job.review_file) else "incomplete output"
@@ -368,7 +374,10 @@ def _phase_synthesis(
         _write_mechanical_fallback(
             job, group_count, merged.record, skipped_groups=skipped_groups,
         )
-        diagnosis = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
+        rendered = "; ".join(e.render() for e in outcome.errors)
+        diagnosis = Diagnosis(
+            DiagnosisKind.MECHANICAL_FALLBACK, detail=rendered,
+        ) if outcome.errors else Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
 
     # Charged whether the agent produced a review or the mechanical fallback
     # did: a synthesis that fell back still spent whatever its log records.
@@ -500,12 +509,58 @@ def _run_disprove_gate(
     return result
 
 
-def _phase_merge(group_outputs: list[str], failed_groups: list[GroupFailure]) -> Merged:
+def _phase_merge(
+    group_outputs: list[str], failed_groups: list[GroupFailure],
+    group_names: tuple[str, ...] = (),
+) -> Merged:
     core.log.info("Phase 3: Merging findings...")
-    records = [ingest_review(Path(p).read_text(), strict=False) for p in group_outputs if Path(p).exists()]
-    record = merge_records(records)
-    if failed_groups:
-        gaps = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
-            f"- {f.group}: {f.diagnosis.message}" for f in failed_groups)
-        record = replace(record, extra=record.extra + (ProseSection("Review gaps", gaps),))
+    ingested = _ingest_group_outputs(group_outputs, failed_groups, group_names)
+    record = merge_records(list(ingested.records))
+    if ingested.gaps:
+        listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
+            f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
+        record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
     return Merged(record, render_body(record, sids=True, evidence=True))
+
+
+@dataclass(frozen=True)
+class _GroupIngest:
+    records: tuple[ReviewRecord, ...]
+    gaps: tuple[GroupFailure, ...]
+
+
+def _malformed_gap(
+    name: str, failed_names: set[str], errors: tuple[IngestError, ...],
+) -> GroupFailure | None:
+    if name in failed_names:
+        return None
+    return GroupFailure(name, Diagnosis(
+        DiagnosisKind.MALFORMED_OUTPUT,
+        detail="; ".join(e.render() for e in errors),
+    ))
+
+
+def _ingest_group_outputs(
+    group_outputs: list[str], failed_groups: list[GroupFailure],
+    group_names: tuple[str, ...],
+) -> _GroupIngest:
+    # group_outputs lists every group's path, so a rejected file is usually an
+    # already-failed group rather than stale recovery output. A rejection whose
+    # group is not already in failed_groups is a gap of its own.
+    records: list[ReviewRecord] = []
+    gaps = list(failed_groups)
+    failed_names = {f.group for f in gaps}
+    for i, path in enumerate(group_outputs):
+        if not Path(path).exists():
+            continue
+        try:
+            records.append(ingest_review(Path(path).read_text()))
+        except IngestRejected as exc:
+            core.log.warn(f"{path} rejected ({exc}) — excluding from merge")
+            name = group_names[i] if i < len(group_names) else Path(path).stem
+            gap = _malformed_gap(name, failed_names, exc.errors)
+            if gap is None:
+                continue
+            gaps.append(gap)
+            failed_names.add(name)
+    return _GroupIngest(tuple(records), tuple(gaps))

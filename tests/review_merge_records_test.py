@@ -8,11 +8,11 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from review.ingest import ingest_review
-from review.merge import merge_records, merge_reviews, renumber_record
+from review.merge import merge_records, renumber_record
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.render import render_body
 
-from review_record_support import FIXTURES, canonical, fixture_text
+from review_record_support import canonical, fixture_text
 
 
 def _groups():
@@ -22,11 +22,6 @@ def _groups():
 def test_merging_the_fixture_groups_matches_todays_merge():
     rendered = render_body(merge_records(_groups()), sids=True, evidence=True)
     assert canonical(rendered) == canonical(fixture_text("merged", "input.md"))
-
-
-def test_the_interim_text_merge_is_the_record_merge_rendered():
-    files = [str(FIXTURES / "groups" / f"group-{i}.md") for i in (1, 2)]
-    assert canonical(merge_reviews(files)) == canonical(fixture_text("merged", "input.md"))
 
 
 def test_a_repeat_across_groups_is_kept_once():

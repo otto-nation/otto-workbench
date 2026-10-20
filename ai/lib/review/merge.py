@@ -67,19 +67,18 @@ pooled map answers with whichever group happens to have declared that number.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from review.document import (
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument,
-)
 from review.grammar import (
     ANNOTATE_FINDING_RE, FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
     DedupKey, FindingIdentity, has_sid_marker, parse_ledger_line, sid_marker,
 )
-from review.spans import cut_spans, finding_spans
+from review.ingest import ingest_review
+from review.record import RecordFinding, ReviewRecord, SeveritySection
+from review.render import finding_line, render_body
 from review.types import (
-    SEVERITIES, FindingRef, FindingSpan, LedgerEntry,
+    SEVERITIES, FindingRef, LedgerEntry,
     disposition_precedence,
 )
 
@@ -154,9 +153,13 @@ def _declared_ids(text: str, prefix: str) -> list[int]:
     return ids
 
 
-def _joined(sections: dict[str, str]) -> str:
-    """The severity sections as one text, in the order the review prints them."""
-    return "\n".join(sections[severity.key] for severity in SEVERITIES)
+def _declared_order(findings, key: str) -> list[int]:
+    """The IDs `findings` declare under `key`, in the order they first appear."""
+    seen: list[int] = []
+    for f in findings:
+        if f.severity == key and f.seq not in seen:
+            seen.append(f.seq)
+    return seen
 
 
 @dataclass(frozen=True)
@@ -189,6 +192,30 @@ class _Renumbering:
         return f"{cue}[{new}]" if bracketed else f"{cue}{new}"
 
 
+def _renumbering(
+    declared: dict[str, list[int]], merged_into: dict[FindingId, FindingId],
+) -> _Renumbering:
+    """Where each declared ID lands once the gaps between them close.
+
+    Only the severities declared here: at merge-wide scope an undeclared one
+    belongs to some other document, so `_Renumbering` has to leave it alone.
+    A deduplicated finding was not dropped, it was merged: its references
+    belong on the copy that survived, which says the same thing. The survivor
+    is always declared here — it is the copy dedup kept — but guard anyway, so
+    a map built from other text cannot quietly point a reference somewhere new.
+    """
+    moves: dict[FindingId, FindingId] = {}
+    for severity in SEVERITIES:
+        for new, old in enumerate(declared[severity.key], 1):
+            moves[FindingId(severity.key, old)] = FindingId(severity.key, new)
+    prefixes = {old.prefix for old in moves}
+    for gone, survivor in merged_into.items():
+        if survivor in moves:
+            moves.setdefault(gone, moves[survivor])
+            prefixes.add(gone.prefix)
+    return _Renumbering(moves, frozenset(prefixes))
+
+
 def _gap_renumbering(
     text: str, merged_into: dict[FindingId, FindingId],
 ) -> _Renumbering:
@@ -199,36 +226,10 @@ def _gap_renumbering(
     declaration filed under the wrong severity is still a declaration — a map
     that missed it would rewrite the declaration itself to `[removed]`.
     """
-    moves: dict[FindingId, FindingId] = {}
-    for severity in SEVERITIES:
-        for new, old in enumerate(_declared_ids(text, severity.key), 1):
-            moves[FindingId(severity.key, old)] = FindingId(severity.key, new)
-    # Only the severities declared here: at merge-wide scope an undeclared one
-    # belongs to some other document, so `_Renumbering` has to leave it alone.
-    prefixes = {old.prefix for old in moves}
-    # A deduplicated finding was not dropped, it was merged: its references
-    # belong on the copy that survived, which says the same thing. The survivor
-    # is always declared here — it is the copy dedup kept — but guard anyway, so
-    # a map built from other text cannot quietly point a reference somewhere new.
-    for gone, survivor in merged_into.items():
-        if survivor in moves:
-            moves.setdefault(gone, moves[survivor])
-            prefixes.add(gone.prefix)
-    return _Renumbering(moves, frozenset(prefixes))
-
-
-def _close_gaps(
-    sections: dict[str, str], merged_into: dict[FindingId, FindingId],
-) -> dict[str, str]:
-    """Close the gaps in every severity's IDs, taking every reference along.
-
-    The map is built from all the sections at once and applied to all of them,
-    so a reference reaching across severities lands on the finding it named
-    rather than on whatever ended up at that number. `merged_into` says which
-    IDs deduplication folded into which survivor.
-    """
-    renumbering = _gap_renumbering(_joined(sections), merged_into)
-    return {key: renumbering.rewrite(text) for key, text in sections.items()}
+    declared = {
+        severity.key: _declared_ids(text, severity.key) for severity in SEVERITIES
+    }
+    return _renumbering(declared, merged_into)
 
 
 def renumber_findings(text: str) -> str:
@@ -239,6 +240,44 @@ def renumber_findings(text: str) -> str:
     that names a finding nothing declares any more becomes `[removed]`.
     """
     return _gap_renumbering(text, {}).rewrite(text)
+
+
+def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering,
+                    ids: bool = True) -> ReviewRecord:
+    """`record` with every visible finding moved and every reference rewritten.
+
+    The prior-review ledger is held out: those IDs belong to the previous
+    review, not this one, and must survive merging unchanged.
+    """
+    def moved(f: RecordFinding) -> RecordFinding:
+        if not f.visible:
+            return f
+        new_id = renumbering.moves.get(FindingId(f.severity, f.seq)) if ids else None
+        return replace(
+            f, id=str(new_id) if new_id else f.id,
+            lead=renumbering.rewrite(f.lead), body=renumbering.rewrite(f.body),
+        )
+    return replace(
+        record,
+        findings=tuple(moved(f) for f in record.findings),
+        summary=renumbering.rewrite(record.summary),
+        verdict=renumbering.rewrite(record.verdict),
+        severity_sections=tuple(
+            replace(s, note=renumbering.rewrite(s.note)) for s in record.severity_sections
+        ),
+        extra=tuple(replace(e, body=renumbering.rewrite(e.body)) for e in record.extra),
+    )
+
+
+def renumber_record(
+    record: ReviewRecord, merged_into: dict[FindingId, FindingId] | None = None,
+) -> ReviewRecord:
+    """Close the gaps in every severity's visible IDs, taking every reference along."""
+    declared = {
+        severity.key: _declared_order(record.visible, severity.key)
+        for severity in SEVERITIES
+    }
+    return _rewrite_record(record, _renumbering(declared, merged_into or {}))
 
 
 # ── Triage and deduplication ─────────────────────────────────────────────────
@@ -252,96 +291,6 @@ _EMPTY_SECTION_LINE_RE = re.compile(
 def _clean_section_text(text: str) -> str:
     lines = [line for line in text.split("\n") if not _EMPTY_SECTION_LINE_RE.match(line.strip())]
     return "\n".join(lines).strip()
-
-
-def _clean_triage(text: str) -> str:
-    return "\n".join(
-        line for line in text.split("\n")
-        if TRIAGE_LINE_RE.match(line)
-    )
-
-
-def _record_merge(
-    merged_into: dict[FindingId, FindingId],
-    survivor: FindingId | None,
-    dup: FindingId | None,
-) -> None:
-    """Remember that `dup`'s references should end up on `survivor`."""
-    if survivor is None or dup is None:
-        return
-    merged_into[dup] = survivor
-
-
-@dataclass(frozen=True)
-class _Deduped:
-    """One severity's findings with the repeats dropped, and where they went.
-
-    `merged_into` maps each dropped ID to the copy that survived it, so the
-    renumbering that follows can move references onto the survivor instead of
-    marking them `[removed]`. Both halves are whole IDs rather than numbers,
-    because a duplicate filed under the wrong severity still declares one and
-    the copy that survives it need not carry the same prefix. It is kept apart
-    from `text` because the gaps close across every severity at once, after
-    every section has been deduped.
-    """
-
-    text: str
-    merged_into: dict[FindingId, FindingId] = field(default_factory=dict)
-
-
-def _dedup_findings(text: str) -> _Deduped:
-    """One severity's text with the repeats removed, and where each one went.
-
-    `FindingIdentity` chooses which declarations are candidates; how much of
-    the text a dropped one takes with it is `finding_spans`', so a repeat and a
-    finding the disprove gate falsifies lose exactly the same lines.
-    """
-    seen: dict[DedupKey, FindingId | None] = {}
-    merged_into: dict[FindingId, FindingId] = {}
-    repeats: list[FindingSpan] = []
-    for span in finding_spans(text):
-        identity = FindingIdentity.of(span.line)
-        if identity is None:
-            continue
-        key = identity.dedup_key
-        if key in seen:
-            repeats.append(span)
-            _record_merge(merged_into, seen[key], _declaration(span.line))
-            continue
-        seen[key] = _declaration(span.line)
-    return _Deduped(cut_spans(text, repeats), merged_into)
-
-
-def _dedup_sections(sections: dict[str, str]) -> dict[str, str]:
-    """Drop each severity's repeated findings, then close the gaps they leave.
-
-    Two findings are duplicates only within one severity — the same problem
-    reported as a Must-fix by one group and a Nit by another is a disagreement,
-    not a repeat — but the numbering closes over all four sections together, so
-    a reference from one severity to another survives the drop.
-    """
-    deduped = {
-        severity.key: _dedup_findings(sections[severity.key])
-        for severity in SEVERITIES
-    }
-    merged_into: dict[FindingId, FindingId] = {}
-    for entry in deduped.values():
-        merged_into.update(entry.merged_into)
-    return _close_gaps(
-        {key: entry.text for key, entry in deduped.items()}, merged_into,
-    )
-
-
-def _dedup_triage(triage: str) -> str:
-    seen: set[str] = set()
-    lines = []
-    for line in triage.split("\n"):
-        m = TRIAGE_LINE_RE.match(line)
-        key = m.group(1) if m else line
-        if key not in seen:
-            seen.add(key)
-            lines.append(line)
-    return "\n".join(lines)
 
 
 def _dedup_ledger(ledger: str) -> str:
@@ -384,98 +333,106 @@ def _keep_strongest_disposition(
         lines[index] = entry.text
 
 
-@dataclass
-class _Merge:
-    """The one document the group reviews are being folded into.
+def _shift_record(group: ReviewRecord, offsets: dict[str, int]) -> ReviewRecord:
+    """One group's IDs moved past the groups before it; foreign references become `[removed]`.
 
-    Severity text is held per severity because each gets its own heading in the
-    output, but renumbering spans all of them at once: a finding may cite one of
-    another severity, and a pass that read each section alone left that citation
-    on whatever number the other groups had put there.
+    Every severity is answered for, so a reference to one this group declares
+    nothing of becomes `[removed]` here rather than being left for the
+    merge-wide pass. Groups number from `[M1]` independently and each sees only
+    its own files, so a reference can only mean a finding its own group
+    declared — and this is the last pass that knows which group a line came
+    from.
+    """
+    declared = {s.key: _declared_order(group.findings, s.key) for s in SEVERITIES}
+    moves = {
+        FindingId(key, old): FindingId(key, old + offsets[key])
+        for key, ids in declared.items() for old in ids
+    }
+    shifted = _rewrite_record(group, _Renumbering(moves, frozenset(declared)))
+    for key, ids in declared.items():
+        offsets[key] += max(ids, default=0)
+    return shifted
 
-    `offsets` is the highest ID each severity is already using, and a group's
-    IDs are shifted clear of it. Counting the findings before them instead would
-    under-shift any group whose agent skipped a number — nothing closes those
-    gaps before the merge — and two groups would land on the same ID.
+
+# Typed, not a tuple — `_Deduped` is the text form's precedent.
+@dataclass(frozen=True)
+class _DedupedRecords:
+    """One severity's findings with the repeats dropped, and where they went.
+
+    `merged_into` maps each dropped ID to the copy that survived it, so the
+    renumbering that follows can move references onto the survivor instead of
+    marking them `[removed]`. Both halves are whole IDs rather than numbers,
+    because a duplicate filed under the wrong severity still declares one and
+    the copy that survives it need not carry the same prefix. It is kept apart
+    from `findings` because the gaps close across every severity at once, after
+    every section has been deduped.
     """
 
-    sections: dict[str, str] = field(
-        default_factory=lambda: {s.key: "" for s in SEVERITIES})
-    offsets: dict[str, int] = field(
-        default_factory=lambda: {s.key: 0 for s in SEVERITIES})
-    triage: str = ""
-    ledger: str = ""
+    findings: tuple[RecordFinding, ...]
+    merged_into: dict[FindingId, FindingId]
 
-    def add(self, content: str) -> None:
-        """Fold one group review in, its IDs shifted past the groups before it."""
-        doc = ReviewDocument.parse(content)
-        triage = _clean_triage(doc.section(SECTION_FILE_TRIAGE))
-        if triage:
-            self.triage += triage + "\n"
-        # Kept out of the renumbering below: these IDs belong to the prior
-        # review, and each group only dispositions the prior findings for its
-        # own files, so the merged ledger is the union of what every group
-        # accounted for.
-        ledger = _clean_section_text(doc.section(SECTION_PRIOR_FINDINGS))
-        if ledger:
-            self.ledger += ledger + "\n"
-        group = {
-            s.key: _clean_section_text(doc.section(s.section)) for s in SEVERITIES
-        }
-        for key, text in self._shift(group).items():
-            if text:
-                self.sections[key] += text + "\n"
 
-    def _shift(self, group: dict[str, str]) -> dict[str, str]:
-        """One group's sections with every ID moved past what is already in use.
+def _dedup_records(findings: list[RecordFinding]) -> _DedupedRecords:
+    """Drop a finding another of its severity already states; remember where it went."""
+    seen: dict[tuple[str, DedupKey], FindingId] = {}
+    merged_into: dict[FindingId, FindingId] = {}
+    kept: list[RecordFinding] = []
+    for f in findings:
+        identity = FindingIdentity.of(finding_line(f, sids=True).split("\n", 1)[0])
+        key = (f.severity, identity.dedup_key) if identity else None
+        if key is not None and key in seen:
+            merged_into[FindingId(f.severity, f.seq)] = seen[key]
+            continue
+        if key is not None:
+            seen[key] = FindingId(f.severity, f.seq)
+        kept.append(f)
+    return _DedupedRecords(tuple(kept), merged_into)
 
-        Every severity is answered for, so a reference to one this group
-        declares nothing of becomes `[removed]` here rather than being left for
-        `_close_gaps`. Groups are told to number from `[M1]`, `[S1]`, `[N1]`,
-        `[I1]` independently and each sees only its own files, so a reference
-        can only mean a finding its own group declared — and this is the last
-        pass that knows which group a line came from. Left alone, such a
-        reference would resolve through the pooled map onto a real finding of
-        another group's, in a different file about a different problem.
-        """
-        joined = _joined(group)
-        declared = {
-            severity.key: _declared_ids(joined, severity.key)
-            for severity in SEVERITIES
-        }
-        moves = {
-            FindingId(key, old): FindingId(key, old + self.offsets[key])
-            for key, ids in declared.items() for old in ids
-        }
-        # Every severity, declared here or not: at group scope an undeclared one
-        # is a reference to nothing, which `_Renumbering` marks.
-        renumbering = _Renumbering(moves, frozenset(declared))
-        shifted = {key: renumbering.rewrite(text) for key, text in group.items()}
-        for key, ids in declared.items():
-            self.offsets[key] += max(ids, default=0)
-        return shifted
 
-    def document(self) -> str:
-        """The merged review: the triage, each severity, then the union ledger."""
-        sections = _dedup_sections(self.sections)
-        parts = [f"## {SECTION_FILE_TRIAGE}\n{_dedup_triage(self.triage)}"]
-        for severity in SEVERITIES:
-            if sections[severity.key]:
-                parts.append(f"## {severity.section}\n{sections[severity.key]}")
-        if self.ledger:
-            parts.append(
-                f"## {SECTION_PRIOR_FINDINGS}\n{_dedup_ledger(self.ledger)}"
-            )
-        return "\n".join(parts)
+def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
+    """The group reviews folded into one record, in the order `merge_reviews` always used."""
+    offsets = {s.key: 0 for s in SEVERITIES}
+    findings: list[RecordFinding] = []
+    triage: list = []
+    ledgers: list[str] = []
+    notes: list[SeveritySection] = []
+    for group in groups:
+        shifted = _shift_record(group, offsets)
+        triage += [e for e in (shifted.triage or ()) if TRIAGE_LINE_RE.match(e.text)]
+        if (ledger := _clean_section_text(shifted.ledger)):
+            ledgers.append(ledger)
+        notes += [
+            replace(s, note=_clean_section_text(s.note)) for s in shifted.severity_sections
+            if _clean_section_text(s.note)
+        ]
+        # `_None._` / `---` lines that landed in a finding body are stripped
+        # the way the text merge stripped them from the section as a whole.
+        findings += [replace(f, body=_clean_section_text(f.body)) for f in shifted.findings]
+    by_severity = sorted(findings, key=lambda f: [s.key for s in SEVERITIES].index(f.severity))
+    deduped = _dedup_records(by_severity)
+    seen_paths: set[str] = set()
+    unique_triage = []
+    for entry in triage:
+        key = entry.path or entry.text
+        if key not in seen_paths:
+            seen_paths.add(key)
+            unique_triage.append(entry)
+    merged = ReviewRecord(
+        triage=tuple(unique_triage), findings=deduped.findings,
+        severity_sections=tuple(notes),
+        ledger=_dedup_ledger("\n".join(ledgers)).strip() if ledgers else "",
+    )
+    return renumber_record(merged, deduped.merged_into)
 
 
 def merge_reviews(group_files: list[str]) -> str:
-    merge = _Merge()
-    for path in group_files:
-        p = Path(path)
-        if p.exists():
-            merge.add(p.read_text())
-    return merge.document()
+    """Interim text form of `merge_records` for callers not yet holding records."""
+    records = [
+        ingest_review(Path(p).read_text(), strict=False)
+        for p in group_files if Path(p).exists()
+    ]
+    # Sids and evidence kept: the merged text is what synthesis is shown.
+    return render_body(merge_records(records), sids=True, evidence=True)
 
 
 # ── Stable IDs for carry-forward ─────────────────────────────────────────────

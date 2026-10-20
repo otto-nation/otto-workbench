@@ -65,6 +65,9 @@ _abort() {
 # FETCH_RETRYABLE is the same pattern; a test holds the two in agreement.
 FETCH_RETRYABLE='cannot lock ref .* but expected|did not send all necessary objects|not our ref|fatal: bad object refs/'
 
+# Unlike the Python client this takes no fetch mutex, so it can still race a
+# workbench Python fetch into the same repository; the retry below covers it.
+#
 # _fetch ARGS... — `git fetch ARGS...`, retried once on a race's leftovers.
 #
 # Maintenance is off for the same reason the Python client turns it off: the

@@ -272,6 +272,8 @@ _FETCH_CONFIG = {"maintenance.auto": "false", "gc.auto": "0"}
 # itself bounded by `TRANSFER`, so a longer wait means a queue, not a fetch.
 _FETCH_WAIT = core.timeouts.TRANSFER
 _FETCH_POLL = 0.05
+# Pause before the retry, so a racer still running has a chance to finish.
+_FETCH_RETRY_DELAY = 0.2
 
 
 def _run_once(
@@ -300,6 +302,15 @@ def _mutex_path(cwd: str | Path | None, env: dict[str, str] | None) -> Path | No
     return Path(cwd or os.getcwd()) / common / FETCH_MUTEX
 
 
+def _try_lock(fd: int) -> bool:
+    """One non-blocking `LOCK_EX` attempt on *fd*."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
 def _acquire(fd: int) -> bool:
     """Take `LOCK_EX` on *fd* within `_FETCH_WAIT`, polling rather than blocking.
 
@@ -307,14 +318,11 @@ def _acquire(fd: int) -> bool:
     running fetches off the main thread.
     """
     deadline = time.monotonic() + _FETCH_WAIT
-    while True:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(_FETCH_POLL)
+    while not _try_lock(fd):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_FETCH_POLL)
+    return True
 
 
 @contextlib.contextmanager
@@ -355,7 +363,7 @@ def _fetch_mutex(cwd: str | Path | None, env: dict[str, str] | None) -> Iterator
 
 def _fetch(
     args: tuple[str, ...], cwd: str | Path | None, config: dict[str, str] | None,
-    env: dict[str, str] | None, relay: TextIO | None,
+    env: dict[str, str] | None, relay: TextIO | None, input_text: str | None,
 ) -> CmdResult:
     """A fetch under the repository's mutex, retried once on a race's leftovers."""
     settings = {**_FETCH_CONFIG, **(config or {})}
@@ -366,14 +374,15 @@ def _fetch(
                 f"timed out after {_FETCH_WAIT:.0f}s waiting for another fetch "
                 f"into this repository to finish",
             )
-        r = _run_once(args, cwd, settings, env, relay, None)
+        r = _run_once(args, cwd, settings, env, relay, input_text)
         if r.ok or not FETCH_RETRYABLE.search(r.combined_output):
             return r
         # Retried silently: these failures mean a fetch outside the mutex — a
         # bare `git fetch`, an editor's background fetch — touched the same
         # refs, and the second attempt is the answer the caller wanted. A second
         # failure is returned as it stands.
-        return _run_once(args, cwd, settings, env, relay, None)
+        time.sleep(_FETCH_RETRY_DELAY)
+        return _run_once(args, cwd, settings, env, relay, input_text)
 
 
 def run(
@@ -416,7 +425,7 @@ def run(
     expired bound.
     """
     if args and args[0] == "fetch":
-        return _fetch(args, cwd, config, env, relay)
+        return _fetch(args, cwd, config, env, relay, input_text)
     return _run_once(args, cwd, config, env, relay, input_text)
 
 

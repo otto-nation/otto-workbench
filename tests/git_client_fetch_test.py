@@ -271,15 +271,11 @@ def test_a_stale_fetch_cannot_move_a_tracking_ref_backwards(tmp_path, monkeypatc
     env = {**os.environ, "HOLDING": str(holding), "RELEASE": str(release)}
     results: dict[str, CmdResult] = {}
 
-    def fetch_a():
-        results["a"] = git.client.run(
-            "fetch", "-q", "origin", spec, cwd=pair.work, env=env,
-            config={"remote.origin.uploadpack": str(stall)})
+    def fetch_into(key, cwd, **kwargs):
+        results[key] = git.client.run("fetch", "-q", "origin", spec, cwd=cwd, **kwargs)
 
-    def fetch_b():
-        results["b"] = git.client.run("fetch", "-q", "origin", spec, cwd=linked)
-
-    a = threading.Thread(target=fetch_a)
+    a = threading.Thread(target=fetch_into, args=("a", pair.work), kwargs={
+        "env": env, "config": {"remote.origin.uploadpack": str(stall)}})
     a.start()
     try:
         for _ in range(int(_WAIT / 0.02)):
@@ -288,7 +284,7 @@ def test_a_stale_fetch_cannot_move_a_tracking_ref_backwards(tmp_path, monkeypatc
             threading.Event().wait(0.02)
         assert holding.exists(), "the stalled fetch never reached its advertisement"
         git_in(pair.seed, "push", "-q", "-f", "origin", f"{s2}:refs/heads/feat")
-        b = threading.Thread(target=fetch_b)
+        b = threading.Thread(target=fetch_into, args=("b", linked))
         b.start()
         # Without the mutex B finishes here, before A's stale write; with it
         # B is still queued behind A when the wait runs out.

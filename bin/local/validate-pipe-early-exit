@@ -620,7 +620,6 @@ def _first_consumer_kind(stages: list[str]) -> str | None:
     return None
 
 
-
 def _producer_stage(first: str) -> str:
     """Drop a leading `func()` / ` {` so exemption sees the command that writes."""
     text = FUNC_DEF.sub('', first.lstrip(), count=1).lstrip()

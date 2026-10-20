@@ -448,7 +448,9 @@ def triage_the_round(
 
     `has_unaccounted` is measured here rather than by the caller: it compares
     the PR's own open threads against the ids both sides gave a disposition to,
-    and both halves of that comparison are this function's.
+    and both halves of that comparison are this function's. A thread triage
+    left out because the fix record settles it is accounted for — its row
+    comes from that record — so it does not leave the round owed.
     """
     threads = classify_entries(triage_result.threads, trail=trail)
     items = classify_entries(triage_result.comment_items, trail=trail)
@@ -471,7 +473,9 @@ def triage_the_round(
     return TriagedRound(
         threads=threads,
         items=items,
-        has_unaccounted=bool(open_ids - (threads.ids() | items.ids())),
+        has_unaccounted=bool(
+            open_ids - (threads.ids() | items.ids() | set(triage_result.settled))
+        ),
     )
 
 

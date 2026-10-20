@@ -29,10 +29,12 @@ from core.phases import Phase
 from core.trail import Trail
 import pr.domains
 import pr.permalinks
+import pr.settlement
 import pr.state
 import pr.thread_context
 import pr.triage_prompt
 from pr.comments_state import ThreadState
+from pr.fix import decision_stamp
 from pr.thread_models import (
     CommentItem, CommentSourceKind, Complexity, PRReport, TriageResult, TriageStats,
     Verification, triage_result_from_dict,
@@ -190,20 +192,80 @@ def downgrade_unsupported_verdicts(
     return downgraded
 
 
+def recorded_settlements(report: PRReport, ctx_args: dict) -> set[str]:
+    """The threads on *report* that the saved fix record already settles.
+
+    GitHub cannot say this on its own. A settlement stays local until
+    `--finish` publishes its reply — `--settle` posts nothing, and a held fix
+    round posts nothing either — so the thread reads as unanswered right up to
+    the closeout. `pr.settlement.settled_ids` is the rule; this hands it the
+    record and each thread's conversation. No target directory means no saved
+    record, and nothing settled.
+    """
+    target_dir = ctx_args.get("target_dir")
+    state = pr.state.load_state(target_dir) if target_dir else None
+    if state is None:
+        return set()
+    return pr.settlement.settled_ids(
+        state.fix.fix, {t.id: t.comments for t in report.threads}, report.my_login,
+    )
+
+
+def _drop_settled(
+    triage_result: TriageResult, settled: set[str], trail: Trail | None,
+) -> None:
+    """Take any verdict on a settled thread back out of *triage_result*, in place.
+
+    The prompt never names those threads, so a verdict on one is the model
+    answering about an id it was not asked about. Leaving it would put a
+    settled thread in a bucket — where the agent can commit against it and the
+    record merge replaces its outcome — which is what keeping it out of the
+    prompt was for.
+    """
+    stray = [t.id for t in triage_result.threads if t.id in settled]
+    if not stray:
+        return
+    triage_result.threads = [t for t in triage_result.threads if t.id not in settled]
+    if trail:
+        trail.info("triage_drop_settled",
+                   f"dropped {len(stray)} verdict(s) on settled threads",
+                   data={"threads": stray})
+
+
 def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
                trail: Trail | None = None) -> tuple[TriageResult | None, int]:
     """Classify non-resolved threads and decompose top-level comments via AI.
 
+    A thread the saved fix record settles is left out — see
+    `recorded_settlements` — and named in `TriageResult.settled` so the round
+    counts it as accounted for. One the reviewer has spoken on since its
+    settlement is triaged like any other.
+
     Returns (triage_result, exit_code). Caller handles stdout output.
     """
-    non_resolved = [
+    # Before the model is asked: every verdict is decided against the
+    # conversation as fetched, so a reply arriving mid-triage is after it.
+    read_at = decision_stamp()
+    settled = recorded_settlements(report, ctx_args)
+    open_threads = [
         t for t in report.threads
         if t.state not in (ThreadState.RESOLVED, ThreadState.ADDRESSED)
     ]
+    non_resolved = [t for t in open_threads if t.id not in settled]
+    skipped = sorted(t.id for t in open_threads if t.id in settled)
+    if skipped:
+        core.log.info(f"Skipping {len(skipped)} thread(s) already settled in the fix record")
+        if trail:
+            trail.decision(
+                "triage_skip_settled",
+                f"left {len(skipped)} settled thread(s) out of triage",
+                reason="a recorded settlement nobody has replied to since needs no new verdict",
+                data={"threads": skipped},
+            )
     unseen_comments = collect_unseen_comments(report)
 
     if not non_resolved and not unseen_comments:
-        return TriageResult(), 0
+        return TriageResult(settled=skipped), 0
 
     code_context = pr.thread_context.gather_code_context(non_resolved, repo_dir)
     prompt = pr.triage_prompt.build_triage_prompt(
@@ -249,7 +311,11 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     raw = json.loads(extract_json(stdout))
 
     triage_result = triage_result_from_dict(raw)
+    triage_result.settled = skipped
+    _drop_settled(triage_result, settled, trail)
     assign_item_ids(triage_result.comment_items)
+    for entry in (*triage_result.threads, *triage_result.comment_items):
+        entry.decided_at = read_at
 
     downgrade_unsupported_verdicts(triage_result.threads, repo_dir, trail)
     downgrade_unsupported_verdicts(triage_result.comment_items, repo_dir, trail)

@@ -53,6 +53,7 @@ every other phase flag alongside it (the argparse layer in `cli.review_threads`)
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,7 +72,7 @@ import pr.thread_replies
 from pr.comments_state import ThreadState
 from pr.fix import (
     RECONCILED_REASON, SETTLED_REASON, FixOutcome, FixRecord, ItemOutcome,
-    SettledBy,
+    SettledBy, decision_stamp,
 )
 from pr.thread_models import (
     CommentItem, CommentSourceKind, ReportThread, finding_location,
@@ -109,6 +110,45 @@ UNSETTLED_OUTCOMES = (
 # their alternation from the kinds rather than restating it.
 _SOURCE_ANCHOR_RE = re.compile(
     r"#(?:" + "|".join(re.escape(a) for a in CommentSourceKind.anchors()) + r")-(\d+)")
+
+
+def settled_ids(
+    record: FixRecord, comments_by_thread: Mapping[str, list[dict]], my_login: str,
+) -> set[str]:
+    """The ids whose recorded outcome still settles them, so nothing owes them a look.
+
+    The one answer to "is this thread settled?" for every reader that asks it:
+    triage leaves these out of its round, the fix pass never hands them to the
+    agent, and `pr batch` does not count them as feedback owed. Before there
+    was one, the planner read the record and triage read only GitHub — so a
+    thread settled by `--settle`, or by a fix round whose reply a hold kept
+    back, still looked unanswered and was re-triaged, re-fixed, and its
+    recorded outcome replaced.
+
+    Settled means a terminal outcome (`SETTLE_OUTCOMES`) that nobody has
+    spoken against since: a reply or an edit by anyone but us after the
+    outcome's `decided_at` reopens it, because that is a conversation the
+    decision never read. A thread with no comments listed for it has nothing
+    to reopen it.
+
+    An outcome with no `decided_at` — one recorded before the field existed —
+    is never settled. The record's `updated_at` is no substitute: it is the
+    time of a write that came after the decision, so a reply in between would
+    read as already answered. A needless second look costs an agent pass, and
+    the triage it gets stamps the outcome; a false close loses the reviewer's
+    demand.
+    """
+    settled: set[str] = set()
+    for outcome in record.items:
+        if not outcome.id or outcome.outcome not in SETTLE_OUTCOMES:
+            continue
+        if not outcome.decided_at:
+            continue
+        comments = comments_by_thread.get(outcome.id, [])
+        if comments and pr.comments.spoken_since(comments, my_login, outcome.decided_at):
+            continue
+        settled.add(outcome.id)
+    return settled
 
 
 def _our_verdict(thread: ReportThread) -> FixOutcome | None:
@@ -343,6 +383,7 @@ def adopt_settled_threads(
         state.fix.fix.items.append(ItemOutcome(
             id=thread.id,
             outcome=settlement,
+            decided_at=decision_stamp(),
             settled_by=SettledBy.RECONCILIATION,
             reason=RECONCILED_REASON,
             summary=core.text.summarize_comment_body(str(root.get("body", ""))),
@@ -613,6 +654,7 @@ def record_settlement(
     before = (outcome.outcome, outcome.reason, outcome.commit_sha)
     outcome.outcome = kind
     outcome.settled_by = SettledBy.OPERATOR
+    outcome.decided_at = decision_stamp()
     # The operator's words for a dismissal, because that is the one settlement
     # whose reply is an argument the reviewer may answer. The other two render
     # from the summary, so their reason says what the provenance field records.

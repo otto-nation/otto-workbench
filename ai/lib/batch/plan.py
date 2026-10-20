@@ -1,10 +1,12 @@
 """Pre-flight: which of my open PRs need which batch steps.
 
 One GraphQL search covers every repo. The only nested connections are the ones
-the comments need requires — review threads, and the newest reviews and
-PR comments, each bounded and never paged — so a plan over dozens of PRs costs a
-few points of the hourly GraphQL budget. Thread comments, the connection whose
-cost would scale with discussion length, are never asked for.
+the comments need requires — review threads, the newest few comments on each,
+and the newest reviews and PR comments, each bounded and never paged. The
+per-PR connections cost a few points of the hourly GraphQL budget; the thread
+comments are priced per thread, about a point per hundred threads in the search,
+and are read only as far as `_THREAD_COMMENTS` — enough to see whether anyone
+spoke after a settlement.
 
 The plan fetches only the origin branches rows need into a private
 `refs/pr-batch/<hex>` namespace, claimed under the batch state root before
@@ -53,18 +55,33 @@ PLAN_SCHEMA_VERSION = 1
 # ceiling: a PR whose only unanswered feedback is older than its newest 100
 # reviews (or PR comments) plans no comments step; page them, as `pr comments`
 # does, once a PR carries that much top-level traffic.
+
+# The newest comments on each review thread, which is all `settlement.settled_ids`
+# reads: whether anyone spoke after a settlement was recorded. Unlike the two
+# connections above this one is nested under the threads, so its parents are
+# every thread on every PR in the search and it costs about a point per hundred
+# threads rather than one in total.
+# ceiling: a reply older than a thread's newest five comments, posted after the
+# thread was settled, leaves the PR planned with no comments step; raise this
+# once a thread is seen to carry that much traffic between two plans.
+_THREAD_COMMENTS = 5
+
 _PR_FIELDS = """
   number title isDraft headRefName headRefOid mergeStateStatus
   baseRefName isCrossRepository
   repository { nameWithOwner }
-  reviewThreads(first: 100) { nodes { id isResolved } }
+  reviewThreads(first: 100) {
+    nodes { id isResolved comments(last: %(thread_comments)d) {
+      nodes { createdAt lastEditedAt author { login } } } }
+  }
   reviews(last: %(reviews)d) {
     nodes { databaseId state body minimizedReason lastEditedAt author { login } }
   }
   comments(last: %(comments)d) { nodes { databaseId lastEditedAt author { login __typename } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 """ % {"reviews": gh.pr_pages.GQL_REVIEWS_LIMIT,
-       "comments": gh.pr_pages.GQL_ISSUE_COMMENTS_LIMIT}
+       "comments": gh.pr_pages.GQL_ISSUE_COMMENTS_LIMIT,
+       "thread_comments": _THREAD_COMMENTS}
 
 # ceiling: search first:100 and reviewThreads first:100 are unpaginated; upgrade
 # to pagination if a user has >100 open PRs in the scope or a PR has >100 threads.
@@ -412,7 +429,8 @@ def comments_need(node: dict, viewer: str, state: pr.state.PRState | None) -> St
         issue_comments=(node.get("comments") or {}).get("nodes") or [],
     )
     owed = pr.owed_feedback.owed_feedback(
-        data, _settled_from(state), state.comments if state is not None else None)
+        data, _settled_from(state, data.review_threads, viewer),
+        state.comments if state is not None else None)
     if not owed.owed:
         return StepNeed(False, "no unresolved threads or unanswered comments")
     return StepNeed(True, owed.describe())
@@ -448,20 +466,23 @@ def _pr_state(repo_dir: str, branch: str) -> pr.state.PRState | None:
     return pr.state.load_state(pr.target.target_dir(key, branch)) if key else None
 
 
-def settled_ids(repo_dir: str, branch: str) -> set[str]:
-    return _settled_from(_pr_state(repo_dir, branch))
-
-
-def _settled_from(state: pr.state.PRState | None) -> set[str]:
+def _settled_from(
+    state: pr.state.PRState | None, threads: list[dict], viewer: str,
+) -> set[str]:
+    """The threads *state* settles, by the rule `pr comments` triages on."""
     if state is None:
         return set()
-    return {i.id for i in state.fix.fix.items if i.outcome in pr.settlement.SETTLE_OUTCOMES}
+    comments = {
+        t["id"]: (t.get("comments") or {}).get("nodes") or []
+        for t in threads if t.get("id")
+    }
+    return pr.settlement.settled_ids(state.fix.fix, comments, viewer)
 
 
 def closeout_debt(repo_dir: str, branch: str) -> CloseoutDebt:
     """What `pr comments` recorded as owed to *branch*'s PR and never delivered.
 
-    Read from saved state only, like `settled_ids`: no fetch. Publish pays it
+    Read from saved state only: no fetch. Publish pays it
     with `CloseoutDebt.command`; a finished run's report prints that command.
     """
     return _closeout_from(_pr_state(repo_dir, branch))

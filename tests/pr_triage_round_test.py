@@ -323,7 +323,7 @@ class TestHasItemsCountsEveryBucket:
 class TestTheRoundIsMeasuredAgainstThePrsOwnThreads:
     """`has_unaccounted` compares the PR's open threads against what was disposed of."""
 
-    def _triaged(self, *, triaged_ids, report_threads):
+    def _triaged(self, *, triaged_ids, report_threads, settled=()):
         entries = [
             CommentItem(id=tid, file="f.go", line=1, summary="s",
                         classification="actionable_suggestion",
@@ -337,7 +337,8 @@ class TestTheRoundIsMeasuredAgainstThePrsOwnThreads:
              patch.object(git.topology, "default_branch_cached",
                           return_value="main"):
             return pr.triage_round.triage_the_round(
-                TriageResult(threads=entries), report, "/tmp/wt", ctx)
+                TriageResult(threads=entries, settled=list(settled)), report,
+                "/tmp/wt", ctx)
 
     def test_every_open_thread_disposed_of_is_accounted(self, publishing_on):
         round_ = self._triaged(
@@ -351,6 +352,15 @@ class TestTheRoundIsMeasuredAgainstThePrsOwnThreads:
             report_threads=[ReportThread(id="t1", state=ThreadState.NEW),
                             ReportThread(id="t2", state=ThreadState.NEW)])
         assert round_.has_unaccounted is True
+
+    def test_a_thread_the_fix_record_settles_is_accounted(self, publishing_on):
+        """Left out of triage on purpose; its row comes from the record."""
+        round_ = self._triaged(
+            triaged_ids=["t1"],
+            report_threads=[ReportThread(id="t1", state=ThreadState.NEW),
+                            ReportThread(id="t2", state=ThreadState.NEW)],
+            settled=["t2"])
+        assert round_.has_unaccounted is False
 
     def test_a_resolved_thread_is_not_owed_a_disposition(self, publishing_on):
         """Already settled on GitHub — this round has nothing to say about it."""

@@ -311,6 +311,11 @@ already carried it. An unknown id is refused, not skipped: the run lists every
 settleable item as `<id>  <outcome>` plus `"<finding>"` when the item has a
 finding (and the commit SHA when it has one). Then continue to Step 4.
 
+A settled thread stays out of later `--triage` and `--fix` runs, so the agent
+never commits against it and its recorded outcome is kept. If the reviewer
+replies to it, or edits a comment on it, after it was settled, it is triaged
+again like any other thread.
+
 ### Step 4: Present drafts and get approval
 
 Two paths reach this step, and they satisfy its approval gate differently.

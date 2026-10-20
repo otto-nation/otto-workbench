@@ -34,7 +34,7 @@ def _threads_node(*threads):
 
 
 def test_comments_need_counts_unresolved_unsettled_threads(monkeypatch):
-    monkeypatch.setattr(batch.plan, "_settled_from", lambda state: {"T2"})
+    monkeypatch.setattr(batch.plan, "_settled_from", lambda state, threads, viewer: {"T2"})
     node = _threads_node({"id": "T1", "isResolved": False}, {"id": "T2", "isResolved": False},
                          {"id": "T3", "isResolved": True})
     assert batch.plan.comments_need(node, "me", None) == \
@@ -42,7 +42,7 @@ def test_comments_need_counts_unresolved_unsettled_threads(monkeypatch):
 
 
 def test_comments_not_needed_when_every_open_thread_is_settled(monkeypatch):
-    monkeypatch.setattr(batch.plan, "_settled_from", lambda state: {"T1"})
+    monkeypatch.setattr(batch.plan, "_settled_from", lambda state, threads, viewer: {"T1"})
     node = _threads_node({"id": "T1", "isResolved": False})
     assert batch.plan.comments_need(node, "me", None).needed is False
 
@@ -265,10 +265,9 @@ def test_closeout_debt_is_nothing_without_saved_state(monkeypatch, tmp_path):
     assert batch.plan.closeout_debt(str(tmp_path), "b") == CloseoutDebt()
 
 
-def test_a_checkout_that_is_gone_has_no_debt_and_no_settled_ids(tmp_path):
+def test_a_checkout_that_is_gone_has_no_debt(tmp_path):
     gone = str(tmp_path / "removed")
     assert batch.plan.closeout_debt(gone, "b") == CloseoutDebt()
-    assert batch.plan.settled_ids(gone, "b") == set()
 
 
 def test_a_row_carries_the_closeout_pr_says_is_owed(monkeypatch):

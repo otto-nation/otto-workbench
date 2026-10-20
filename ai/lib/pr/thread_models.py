@@ -265,6 +265,10 @@ class CommentItem:
     # not tell" — see `ItemOutcome.verified`, which this mirrors.
     verified: bool | None = None
     verify_detail: str = ""
+    # When the verdict was reached — see `ItemOutcome.decided_at`. Stamped when
+    # triage's round is read, and carried through the record so a replay does
+    # not move it later than the conversation it was decided against.
+    decided_at: str = ""
 
     def __post_init__(self) -> None:
         self.line = int(self.line or 0)
@@ -334,6 +338,7 @@ class CommentItem:
             evidence_line=self.evidence_line,
             verified=self.verified,
             verify_detail=self.verify_detail,
+            decided_at=self.decided_at,
         )
 
     @classmethod
@@ -372,6 +377,7 @@ class CommentItem:
             settled_by=outcome.settled_by,
             verified=outcome.verified,
             verify_detail=outcome.verify_detail,
+            decided_at=outcome.decided_at,
             **{reason_field: outcome.reason},
         )
 
@@ -442,6 +448,10 @@ class TriageResult:
     threads: list[CommentItem] = field(default_factory=list)
     comment_items: list[CommentItem] = field(default_factory=list)
     stats: TriageStats = field(default_factory=TriageStats)
+    # Open threads left out of the round because the fix record already
+    # settles them. Not the model's output: `run_triage` sets it, and the round
+    # counts these as accounted for rather than as threads nobody disposed of.
+    settled: list[str] = field(default_factory=list)
 
 
 class Disposition(StrEnum):

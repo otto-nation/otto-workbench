@@ -97,6 +97,16 @@ class PublishPlan:
         return self.refusal is None
 
 
+def _cherry_plus(cwd: str, upstream: str, head: str, limit: str = "",
+                 *, verbose: bool = False) -> tuple[str, ...] | None:
+    """Commits on *head* with no patch-equivalent on *upstream*; None when unreadable."""
+    args = (("-v",) if verbose else ()) + (upstream, head) + ((limit,) if limit else ())
+    r = git.client.run("cherry", *args, cwd=cwd)
+    if not r.ok:
+        return None
+    return tuple(line[2:] for line in r.stdout.splitlines() if line.startswith("+ "))
+
+
 def _unincorporated(item: Item, cwd: str, upstream: str = "") -> tuple[str, ...] | None:
     """Remote commits since the base with no patch-equivalent in *upstream*; None when unreadable.
 
@@ -104,11 +114,8 @@ def _unincorporated(item: Item, cwd: str, upstream: str = "") -> tuple[str, ...]
     """
     limit = git.client.out("merge-base", f"refs/remotes/origin/{item.base_ref}",
                            item.remote_sha, cwd=cwd) if item.base_ref else ""
-    r = git.client.run("cherry", "-v", upstream or f"refs/heads/{item.branch}", item.remote_sha,
-                       *([limit] if limit else []), cwd=cwd)
-    if not r.ok:
-        return None
-    return tuple(line[2:] for line in r.stdout.splitlines() if line.startswith("+ "))
+    return _cherry_plus(cwd, upstream or f"refs/heads/{item.branch}", item.remote_sha,
+                        limit, verbose=True)
 
 
 def _start_incorporated(item: Item, cwd: str) -> bool:
@@ -150,6 +157,32 @@ def _has_staged(wt: str) -> bool:
     if not wt or not Path(wt).is_dir():
         return False
     return git.client.run("diff", "--cached", "--quiet", cwd=wt).returncode == 1
+
+
+def _tracked_clean(wt: str) -> bool:
+    """Whether *wt* has no staged or unstaged changes to tracked files.
+
+    Untracked files are allowed. Unreadable is not clean.
+    """
+    return (git.client.run("diff", "--quiet", cwd=wt).ok
+            and git.client.run("diff", "--cached", "--quiet", cwd=wt).ok)
+
+
+def try_adopt_equivalent_remote(item: Item, tree: TreeState) -> bool:
+    """`git reset --keep` *tree.remote* when every local commit is already on it.
+
+    Tracked files must be clean; untracked files are allowed. Fails closed on a
+    missing worktree, an unreadable comparison, any unique local commit, or a
+    reset that does not land. Does not write the lease — the caller does.
+    """
+    if not tree.fetched or not tree.remote or tree.remote == item.remote_sha:
+        return False
+    wt = item.worktree
+    if not wt or not Path(wt).is_dir() or not _tracked_clean(wt):
+        return False
+    if _cherry_plus(wt, tree.remote, "HEAD") != ():
+        return False
+    return git.client.run("reset", "--keep", tree.remote, cwd=wt).ok
 
 
 def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> PublishPlan:

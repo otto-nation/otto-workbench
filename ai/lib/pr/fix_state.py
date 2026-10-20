@@ -59,20 +59,27 @@ def fix_record_for(
     upstream, since the writer is a no-op on an entry that already names a
     commit. The others were not landed by this commit, and a SHA on them would
     read as if they had been.
+
+    An entry reaching here without a `decided_at` takes the record's own
+    stamp: the decision was made no later than the write that records it.
     """
     for outcome, entries in by_outcome.items():
         if outcome.may_cite_a_commit:
             pr.attribution.stamp_pass_commit(entries, commit_sha)
+    updated_at = pr.state.now_iso()
+    items = [
+        entry.to_outcome(outcome)
+        for outcome, entries in by_outcome.items()
+        for entry in entries
+    ]
+    for item in items:
+        item.decided_at = item.decided_at or updated_at
     return FixRecord(
-        items=[
-            entry.to_outcome(outcome)
-            for outcome, entries in by_outcome.items()
-            for entry in entries
-        ],
+        items=items,
         commit_sha=commit_sha,
         commit_status=commit_status,
         head_sha=head_sha,
-        updated_at=pr.state.now_iso(),
+        updated_at=updated_at,
     )
 
 

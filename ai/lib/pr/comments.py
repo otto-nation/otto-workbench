@@ -207,6 +207,36 @@ def _rewritten_since_my_reply(comments: list[dict], my_login: str) -> bool:
     )
 
 
+def spoken_since(comments: list[dict], my_login: str, stamp: str) -> bool:
+    """Whether anyone but us posted or edited a comment on the thread after *stamp*.
+
+    The question a settled thread is reopened on: a decision recorded at
+    *stamp* answered the conversation up to then, and a reviewer who has
+    replied — or rewritten their comment — since is owed a fresh look.
+
+    Both of a comment's stamps count, for the reason `_rewritten_since_my_reply`
+    gives: an edit posts nothing, and a demand added by one would otherwise
+    read as answered. Compared as instants, for the same reason.
+
+    A *stamp* that cannot be read places nothing, so every thread reads as
+    spoken on — reopening is the direction that loses no demand. Our own
+    comments never count: the reply that announces a settlement must not
+    undo it.
+    """
+    since = _instant(stamp)
+    if since is None:
+        return True
+    mine = my_login.lower()
+    theirs = [
+        c for c in comments
+        if not mine or ((c.get("author") or {}).get("login") or "").lower() != mine
+    ]
+    return any(
+        (at := _instant(c.get(key))) is not None and at > since
+        for c in theirs for key in ("createdAt", "lastEditedAt")
+    )
+
+
 def compute_thread_state(
     comments: list[dict],
     is_resolved: bool,

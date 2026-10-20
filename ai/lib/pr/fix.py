@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace as dataclass_replace
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from git.land import CommitStatus
@@ -253,6 +254,18 @@ class ItemOutcome:
     # whether or not the gate could reach a verdict, since "no runnable check"
     # is the part an operator needs to see on an unverified row.
     verify_detail: str = ""
+    # When this outcome was decided, as an ISO stamp — the conversation it was
+    # decided against is everything on the thread up to here. A settled outcome
+    # stays out of the next triage round only until someone else speaks on the
+    # thread after this instant; see `settlement.settled_ids`. Empty on a record
+    # written before the field existed, which falls back to the record's own
+    # `updated_at`.
+    decided_at: str = ""
+
+
+def decision_stamp() -> str:
+    """The stamp `ItemOutcome.decided_at` takes for a decision made now."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass
@@ -323,5 +336,6 @@ class FixRecord:
             item.outcome = settlement
             item.settled_by = SettledBy.RECONCILIATION
             item.reason = RECONCILED_REASON
+            item.decided_at = decision_stamp()
             flipped += 1
         return flipped

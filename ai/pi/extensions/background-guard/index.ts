@@ -26,8 +26,11 @@ import {
   isToolCallEventType,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { isDetachedBackground } from "./detect.ts";
-import { jobStartIsActive, waitBlockReason } from "../_shared/wait-guidance.ts";
+import {
+  isDetachedBackground,
+  jobStartIsActive,
+  waitBlockReason,
+} from "./detect.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {

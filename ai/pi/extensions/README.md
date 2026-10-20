@@ -41,9 +41,16 @@ Code shared *between* the extensions here goes in a `_`-prefixed directory, as
 entry point is not reported as a fault every sync — and a shared module that
 later grows a `package.json` for its own dependencies still does not start
 loading as an extension. The extensions import it by relative path
-(`../_shared/statements.ts`); Node resolves that from the extension's real path
-in the checkout, not from its installed symlink, so only the extension
-directories need to reach `~/.pi/agent/extensions/`.
+(`../_shared/statements.ts`) — but only from a module their entry point imports,
+never from `index.ts` itself. Pi loads the entry point by its installed symlink
+path, so a `../_shared` import written in `index.ts` resolves beside the symlink
+in `~/.pi/agent/extensions/`, where nothing is installed, and the extension fails
+to load in every new session. A module `index.ts` imports is loaded from its real
+path in the checkout, where `../_shared` resolves. So shared code reaches an
+entry point through its sibling `detect.ts`, which re-exports what `index.ts`
+needs, and only the extension directories have to reach
+`~/.pi/agent/extensions/`. `tests/pi_extensions_install.bats` fails on an entry
+point that imports a shared module directly.
 
 `wait-guidance.ts` is the refusal alternative sleep-guard and background-guard
 share: `job_start` when `getActiveTools()` lists it, otherwise a foreground bash

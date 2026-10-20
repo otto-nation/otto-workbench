@@ -23,8 +23,12 @@ import {
   isToolCallEventType,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { sleepSeconds, THRESHOLD_SECONDS } from "./detect.ts";
-import { jobStartIsActive, waitBlockReason } from "../_shared/wait-guidance.ts";
+import {
+  jobStartIsActive,
+  sleepSeconds,
+  THRESHOLD_SECONDS,
+  waitBlockReason,
+} from "./detect.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {

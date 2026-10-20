@@ -3,8 +3,15 @@
  *
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
- * file imports nothing, which is what lets tests/pi_extensions_tokenize.bats run it under
- * plain `node` and assert the shapes it does and does not match.
+ * file pulls in nothing but ../_shared, which imports nothing itself, so
+ * tests/pi_extensions_tokenize.bats can run it under plain `node` and assert the
+ * shapes it does and does not match.
+ *
+ * It also re-exports the shared refusal wording for index.ts. Pi loads the
+ * entry point by its installed symlink path, so a `../_shared` import written in
+ * index.ts resolves beside the symlink, where nothing is installed. A module
+ * index.ts imports is loaded from its real path in the checkout, so the same
+ * import resolves here. See ../README.md § What does not go here.
  *
  * What counts as backgrounding here is meant to match the `re_background` and
  * `re_nohup` rules in ai/claude/bin/claude-bash-guard decision for decision:
@@ -22,6 +29,8 @@
  * which is why both sides are tested rather than just the operator.
  */
 const BACKGROUND = /(^|[^&>|;])&([^&>]|$)/;
+
+export { jobStartIsActive, waitBlockReason } from "../_shared/wait-guidance.ts";
 
 /** `nohup` as the command being run, rather than the word appearing in an argument. */
 const NOHUP = /(^|[;&|]\s*)nohup\s/;

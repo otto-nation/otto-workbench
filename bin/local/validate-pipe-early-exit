@@ -3,7 +3,7 @@
 
 Usage: bin/local/validate-pipe-early-exit [--quiet] [file...]
 
-An awk program that `exit`s is the consuming side of a pipeline (`cmd | awk`)
+An awk program that `exit`s while it is the consuming side of a pipeline (`cmd | awk`)
 closes the pipe while the producer still has a later write to make. Under
 `set -o pipefail` that SIGPIPE fails the pipeline — `git worktree list
 --porcelain | awk '... exit'` is the shape that took `wt switch -c` with it.

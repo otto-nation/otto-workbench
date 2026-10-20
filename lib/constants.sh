@@ -30,8 +30,9 @@ fi
 _main_worktree() {
   local dir="$1"
   [[ "$(git -C "$dir" config --get core.bare 2>/dev/null)" == "true" ]] || return 0
-  # awk drains the listing: exiting after the first match SIGPIPEs git under
-  # pipefail once the repo has enough worktrees to fill the pipe buffer.
+  # awk drains the listing: exiting after the match closes the pipe while git
+  # may still have a write to make, and under pipefail that SIGPIPE fails the
+  # caller.
   git -C "$dir" worktree list 2>/dev/null | awk '!found && /\[main\]/ { print $1; found = 1 }'
 }
 

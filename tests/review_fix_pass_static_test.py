@@ -15,7 +15,8 @@ if LIB_DIR not in sys.path:
 import review.fix
 import review.paths
 from pr.fix import FixOutcome
-from review.fix import apply_static_outcomes
+from review.fix import apply_outcomes, apply_static_outcomes
+from review.record import RecordFinding, ReviewRecord
 from review.static_analysis import (
     CheckerResult, StaticViolation, format_static_analysis,
 )
@@ -454,27 +455,29 @@ class TestApplyStaticOutcomes:
         the violation it quoted stayed open, so one pass corrupted a finding
         and reported its own fix as undone.
         """
-        quoted = (
-            "- [ ] **[M1]** `t.py:1` — the fixture quotes a declaration:\n"
-            "  - [ ] **[SA1]** **`src.py:9`** — depth 5 exceeds limit 4\n"
+        quoted = "- [ ] **[SA1]** **`src.py:9`** — depth 5 exceeds limit 4"
+        finding = RecordFinding(
+            id="M1", severity="M", path="t.py", line=1,
+            lead="`t.py:1` — ",
+            body=f"the fixture quotes a declaration:\n  {quoted}",
+            checkbox=True,
         )
-        # Production hands this function `record.static_analysis`, never the
-        # finding body, so a quotation of the same shape cannot match.
-        out = apply_static_outcomes(
-            self.SECTION, [_outcome("SA1", FixOutcome.FIXED)],
-        )
-        assert quoted not in out
-        assert self._line(out, "SA1").startswith("- [x] **[SA1]**")
+        record = ReviewRecord(findings=(finding,), static_analysis=self.SECTION)
+        outcomes = [_outcome("SA1", FixOutcome.FIXED)]
+        answered = apply_outcomes(record, outcomes)
+        static = apply_static_outcomes(answered.static_analysis, outcomes)
+        assert answered.finding("M1").body == finding.body
+        assert self._line(static, "SA1").startswith("- [x] **[SA1]**")
 
     def test_a_document_with_no_section_is_returned_unchanged(self):
-        """Nothing to scope to is nothing to rewrite."""
+        """A field with no violation declarations is left as it was handed."""
         text = "## Must fix\n- [ ] **[M1]** `a.py:1` — Missing guard\n"
         assert apply_static_outcomes(
             text, [_outcome("SA1", FixOutcome.FIXED)],
         ) == text
 
     def test_the_rest_of_the_document_survives_the_rewrite(self):
-        """The scoping splices the section back between what surrounded it."""
+        """Lines that are not violation declarations stay as they were."""
         text = self.SECTION + "\n## Verdict\n\nRequest changes\n"
         out = apply_static_outcomes(
             text, [_outcome("SA1", FixOutcome.FIXED)],
@@ -496,7 +499,7 @@ class TestApplyStaticOutcomes:
     ):
         """Asserted through `run_fix_pass`, not by calling the rewriter.
 
-        Every case above calls `_apply_static_outcomes` directly, so all of them
+        Every case above calls `apply_static_outcomes` directly, so all of them
         keep passing with the call site disconnected — which is the whole defect
         this rewriter exists to fix, reappearing as a unit test that cannot see
         it. This one reads the file the pass actually wrote.

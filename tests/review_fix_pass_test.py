@@ -260,6 +260,23 @@ class TestTheCommitScope:
 
         assert spec.paths == {"helper.py"}
 
+    def test_a_missing_record_warns_that_dispositions_were_not_written(
+        self, git_wt, tmp_path, capsys,
+    ):
+        """Edits still commit; without review.json the answers have nowhere to land."""
+        job = _make_job(git_wt, tmp_path, "")
+        Path(job.review_file).write_text(
+            "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n",
+        )
+        adapter = review.fix.ReviewFixAdapter(job, [_finding("M1")])
+        adapter.changed = set()
+        adapter.record(fix.engine.FixRun(
+            outcomes=[_outcome("M1", FixOutcome.FIXED)],
+        ))
+        err = capsys.readouterr().err
+        assert job.review_file in err
+        assert "dispositions not recorded" in err
+
     def test_an_out_of_branch_edit_is_dropped_from_the_commit(
         self, git_wt, tmp_path, capsys,
     ):

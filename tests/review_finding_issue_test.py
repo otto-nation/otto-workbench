@@ -64,7 +64,8 @@ def test_the_open_findings_come_from_the_record_not_the_document(tmp_path):
     assert [f.id for f in review.finding_issue.filable(tmp_path)] == ["M1", "S2"]
 
 
-def test_a_review_with_no_sidecar_offers_nothing(tmp_path):
+def test_a_review_with_no_record_offers_nothing(tmp_path):
+    """Nothing to file when the directory has no review.json."""
     assert review.finding_issue.filable(tmp_path) == []
 
 

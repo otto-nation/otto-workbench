@@ -320,9 +320,7 @@ class TestApplyOutcomes:
             f"## Must fix\n{line}\n",
             [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        doc = review.document.ReviewDocument.parse(out)
-        assert review.document.is_skipped(doc.findings[0]) is True
-        assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
+        assert _finding_line(out, "M1") == line
 
     # passes-at-base: base appends nothing after the quotation, so it stays mid-line
     def test_prose_quoting_an_annotation_is_not_turned_into_one(self):
@@ -381,9 +379,10 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        assert "- [x]" not in out
-        assert "- [ ] **[M1]**" not in out or "- **[M1]**" in out
-        assert "`- [ ] **[M1]**`" in out
+        assert _finding_line(out, "M1") == (
+            "- **[M1]** **`a.py:1`** — the template writes `- [ ] **[M1]**` "
+            "with no box"
+        )
 
     def test_a_skip_reason_quoting_a_decline_stays_a_skip(self):
         """`reason` is the gate's own prose, by way of the engine's verdict."""
@@ -531,9 +530,9 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        line = _finding_line(out, "M1")
-        assert line.startswith("- [x] **[M1]**")
-        assert line.count("*(unverified") == 1
+        assert _finding_line(out, "M1") == (
+            "- [x] **[M1]** `a.py:1` — x *(unverified — no runnable check)*"
+        )
 
     def test_an_unverified_fix_with_no_detail_is_annotated_bare(self):
         out = _apply(

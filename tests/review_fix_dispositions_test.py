@@ -62,7 +62,12 @@ def test_an_earlier_verdict_outranks_this_pass():
     assert out.finding("N1").disposition is Disposition.DECLINED
 
 
-def test_a_later_pass_replaces_the_unreached_queue():
+def test_a_deferred_finding_can_be_fixed_by_a_later_pass():
+    """Held by the UNREACHED→OPEN reset *and* UNREACHED staying off `_STICKY`.
+
+    Putting UNREACHED on `_STICKY` alone cannot fail this: the reset runs first.
+    Removing the reset and adding UNREACHED to `_STICKY` together is the revert.
+    """
     record = apply_outcomes(ingest_review("## Nit\n- [ ] **[N1]** `a` — x\n"),
                             [ItemOutcome(id="N1", outcome=FixOutcome.DEFERRED)])
     again = apply_outcomes(record, [ItemOutcome(id="N1", outcome=FixOutcome.FIXED, verified=True)])

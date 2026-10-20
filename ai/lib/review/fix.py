@@ -479,9 +479,27 @@ _STICKY = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPED)
 
 
 def _answered(f: RecordFinding, outcome: ItemOutcome) -> RecordFinding:
-    """`f` as this outcome leaves it. Verdicts reached before the pass outrank it."""
+    """`f` as this outcome leaves it. Verdicts reached before the pass outrank it.
+
+    A body already ending in an unverified tail is a prior round's hedge still
+    sitting in the prose because ingest only lifts that tail off a ticked line.
+    A skip or decline leaves the finding unchanged; a fix ticks and keeps the
+    carried caveat, so it renders once rather than beside a defused copy.
+    """
     if f.disposition in _STICKY:
         return f
+    carried = UNVERIFIED_TAIL_RE.search(f.body)
+    if carried is not None and outcome.outcome in (
+            FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN):
+        return f
+    if carried is not None and outcome.outcome.counts_as_fixed:
+        if not f.checkbox:
+            return f
+        return replace(
+            f, disposition=Disposition.FIXED, unverified=True,
+            reason=(carried.group(1) or "").strip(),
+            body=f.body[:carried.start()].rstrip(),
+        )
     if outcome.outcome.counts_as_fixed:
         if not f.checkbox:
             # A PR-mode finding has no box; the tick was always a no-op there.
@@ -820,10 +838,18 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             # claim a SHA and still stand.
             outcomes = [o for o in outcomes if not o.outcome.counts_as_fixed]
         self._persist_static_declines(outcomes)
-        update_review(Path(self.job.review_file), lambda record: replace(
+        # A stale directory has no review.json, so update_review writes nothing
+        # while the commit still landed. Say so — a silent drop of dispositions
+        # is how the next round retries work already done.
+        stored = update_review(Path(self.job.review_file), lambda record: replace(
             apply_outcomes(record, outcomes),
             static_analysis=apply_static_outcomes(record.static_analysis, outcomes),
         ))
+        if stored is None:
+            core.log.warn(
+                f"{self.job.review_file} has no review.json — "
+                "dispositions not recorded"
+            )
 
     def _persist_static_declines(self, outcomes: list[ItemOutcome]) -> None:
         """Keep this pass's static declines where the next round can read them.

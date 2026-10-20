@@ -316,7 +316,7 @@ def _choose_pipeline(
 def _file_open_findings(args, job, trail) -> None:
     """File the findings the pass left open, for the ones `--track` named.
 
-    After `run_fix_pass`, which is what writes them to the sidecar. Nothing is
+    After `run_fix_pass`, which is what writes them to the record. Nothing is
     filed without a `--track`, and `create_issue` drafts without `--post`, so
     the default of both flags is to record the findings and file nothing.
 

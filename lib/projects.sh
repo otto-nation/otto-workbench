@@ -734,10 +734,12 @@ _project_seed_roots() {
   if [[ -z "$branch" ]]; then
     return 0
   fi
+  # awk drains the listing: exiting after the first match SIGPIPEs git under
+  # pipefail once the repo has enough worktrees to fill the pipe buffer.
   git --git-dir="$candidate/.git" worktree list --porcelain 2>/dev/null | awk -v \
     want="branch refs/heads/$branch" '
       /^worktree /   { path = substr($0, 10) }
-      $0 == want     { print path; exit }
+      !found && $0 == want { print path; found = 1 }
     '
 }
 

@@ -501,3 +501,48 @@ YML
 
   [ "$(dirname "$report")" = "$(dirname "$archive")" ]
 }
+
+@test "sourcing constants.sh drains a padded worktree listing under pipefail" {
+  git init --quiet --bare --initial-branch=main "$TMPDIR/wb.git"
+  git clone --quiet "$TMPDIR/wb.git" "$TMPDIR/wb-seed" 2>/dev/null
+  git -C "$TMPDIR/wb-seed" config user.email "test@example.com"
+  git -C "$TMPDIR/wb-seed" config user.name "Test"
+  echo one > "$TMPDIR/wb-seed/a.txt"
+  git -C "$TMPDIR/wb-seed" add -A
+  git -C "$TMPDIR/wb-seed" commit --quiet -m "one"
+  git -C "$TMPDIR/wb-seed" push --quiet origin main
+  git -C "$TMPDIR/wb.git" worktree add --quiet "$TMPDIR/wb-main" main
+
+  local real dir
+  real="$(command -v git)"
+  dir="$TMPDIR/padded-git"
+  mkdir -p "$dir"
+  cat > "$dir/git" <<EOF
+#!/usr/bin/env bash
+real="$real"
+for ((i=1; i<=\$#; i++)); do
+  if [[ "\${!i}" == "worktree" ]]; then
+    n=\$((i+1))
+    if [[ "\${!n}" == "list" ]]; then
+      "\$real" "\$@"
+      yes padding | head -c 1048576
+      exit
+    fi
+  fi
+done
+exec "\$real" "\$@"
+EOF
+  chmod +x "$dir/git"
+  export PATH="$dir:$PATH"
+
+  run bash -c '
+    set -euo pipefail
+    export WORKBENCH_DIR="$1"
+    unset WORKBENCH_STABLE_DIR
+    . "$2/lib/constants.sh"
+    printf "%s" "$WORKBENCH_STABLE_DIR"
+  ' _ "$TMPDIR/wb.git" "$REPO_ROOT"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/wb-main" ]
+}

@@ -197,11 +197,13 @@ PY
 
 # _target_key_count REPORT FIELD — read one number out of the trailing tally.
 _target_key_count() {
+  # awk drains the report: exiting after the first match SIGPIPEs printf under
+  # pipefail when the tally is not the last write.
   printf '%s\n' "$1" | awk -F'\t' -v want="$2" '
     $1 == "TALLY" {
       for (i = 2; i <= NF; i++) {
         split($i, kv, "=")
-        if (kv[1] == want) { print kv[2]; exit }
+        if (kv[1] == want && !found) { print kv[2]; found = 1 }
       }
     }
   '

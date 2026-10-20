@@ -70,6 +70,39 @@ _sha() {
   git -C "$TMPDIR/proj/main" rev-parse "$1"
 }
 
+# _padded_git — real git, except `worktree list --porcelain` is followed by 1MB
+# of extra stdout so an awk that exits after the first match SIGPIPEs the
+# producer. Everything else is exec'd through so fetch/merge still work.
+_padded_git() {
+  local dir="$TMPDIR/padded-git"
+  local real
+  real="$(command -v git)"
+  mkdir -p "$dir"
+  cat > "$dir/git" <<EOF
+#!/usr/bin/env bash
+real="$real"
+for ((i=1; i<=\$#; i++)); do
+  if [[ "\${!i}" == "worktree" ]]; then
+    n=\$((i+1))
+    if [[ "\${!n}" == "list" ]]; then
+      porcelain=false
+      for ((j=1; j<=\$#; j++)); do
+        [[ "\${!j}" == "--porcelain" ]] && porcelain=true
+      done
+      if \$porcelain; then
+        "\$real" "\$@"
+        yes padding | head -c 1048576
+        exit
+      fi
+    fi
+  fi
+done
+exec "\$real" "\$@"
+EOF
+  chmod +x "$dir/git"
+  export PATH="$dir:$PATH"
+}
+
 # ── No worktree holds the default branch ─────────────────────────────────────
 
 @test "advances the default branch when no worktree holds it" {
@@ -142,6 +175,19 @@ _sha() {
   [ "$status" -eq 0 ]
   [ "$(_sha main)" = "$(_sha origin/main)" ]
   [ "$(_sha feat/work)" != "$(_sha origin/main)" ]
+}
+
+@test "drains a padded worktree listing instead of SIGPIPEing" {
+  _make_container
+  _advance_origin
+  _padded_git
+
+  cd "$TMPDIR/proj/main" || return 1
+  run "$SCRIPT" main
+
+  [ "$status" -eq 0 ]
+  [ "$(_sha main)" = "$(_sha origin/main)" ]
+  [ "$(_sha HEAD)" = "$(_sha origin/main)" ]
 }
 
 @test "fails loudly when the held default branch cannot fast-forward" {

@@ -182,8 +182,8 @@ class TestProcRows:
         ticks = os.sysconf("SC_CLK_TCK")
         rows = agent.stall._process_rows(proc_root=tmp_path)
         assert set(rows) == {
-            (10, 1, 75 / ticks),
-            (20, 10, 100 / ticks),
+            agent.stall.ProcRow(10, 1, 75 / ticks),
+            agent.stall.ProcRow(20, 10, 100 / ticks),
         }
 
     def test_an_empty_proc_scan_falls_back_to_ps(self, tmp_path, monkeypatch):
@@ -196,7 +196,7 @@ class TestProcRows:
         monkeypatch.setattr(core.proc, "run", fake_run)
         rows = agent.stall._process_rows(proc_root=tmp_path)
         assert seen
-        assert rows == [(7, 1, 1.25)]
+        assert rows == [agent.stall.ProcRow(7, 1, 1.25)]
 
 
 class TestLinuxFallbackWarning:

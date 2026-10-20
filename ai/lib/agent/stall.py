@@ -223,22 +223,29 @@ def _parse_time(field_text: str) -> float:
     return seconds
 
 
-def _parse_proc_stat(
-    pid_text: str, text: str, ticks: int,
-) -> tuple[int, int, float]:
-    """`(pid, ppid, cpu_seconds)` from one `/proc/<pid>/stat` body."""
+@dataclass(frozen=True)
+class ProcRow:
+    """One process in the table: its pid, its parent's, and the CPU it has used."""
+
+    pid: int
+    ppid: int
+    cpu_seconds: float
+
+
+def _parse_proc_stat(pid_text: str, text: str, ticks: int) -> ProcRow:
+    """The row one `/proc/<pid>/stat` body describes."""
     try:
         rest = text.rsplit(")", 1)[1].split()
         ppid = int(rest[1])
         cpu = (int(rest[11]) + int(rest[12])) / ticks
     except (IndexError, ValueError, ZeroDivisionError) as exc:
         raise ValueError("unreadable /proc stat") from exc
-    return int(pid_text), ppid, cpu
+    return ProcRow(int(pid_text), ppid, cpu)
 
 
 def _read_proc_pid(
     proc_root: str, name: str, ticks: int,
-) -> tuple[int, int, float] | None:
+) -> ProcRow | None:
     """One `/proc/<pid>/stat` row, or None if that pid cannot be read."""
     if not name.isdigit():
         return None
@@ -250,8 +257,8 @@ def _read_proc_pid(
         return None
 
 
-def _proc_stat_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[int, int, float]]:
-    """Every process under *proc_root* as `(pid, ppid, cpu_seconds)`.
+def _proc_stat_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[ProcRow]:
+    """Every process under *proc_root*.
 
     Empty if *proc_root* cannot be listed or yields no readable pids. A pid
     that vanishes or cannot be read mid-scan is skipped, not a failed reading.
@@ -264,7 +271,7 @@ def _proc_stat_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[i
     if ticks <= 0:
         return []
     root = os.fspath(proc_root)
-    rows: list[tuple[int, int, float]] = []
+    rows: list[ProcRow] = []
     for name in names:
         row = _read_proc_pid(root, name, ticks)
         if row is not None:
@@ -275,8 +282,8 @@ def _proc_stat_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[i
 _warned_coarse_fallback = False
 
 
-def _process_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[int, int, float]]:
-    """Every process as `(pid, ppid, cpu_seconds)`, or empty if the reading failed.
+def _process_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[ProcRow]:
+    """Every process, or empty if the reading failed.
 
     Linux reads `/proc/<pid>/stat`: utime+stime ticks at `SC_CLK_TCK` (10 ms
     at the usual 100 Hz). macOS has no `/proc`, so this falls back to `ps`,
@@ -300,8 +307,8 @@ def _process_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[int
     return _ps_rows()
 
 
-def _ps_rows() -> list[tuple[int, int, float]]:
-    """Every process as `(pid, ppid, cpu_seconds)` from `ps`, or empty on failure.
+def _ps_rows() -> list[ProcRow]:
+    """Every process from `ps`, or empty on failure.
 
     `ps -A -o pid=,ppid=,time=` is the POSIX spelling and is used rather than
     any per-group selector on purpose. `-g` is the trap: it selects by process
@@ -317,13 +324,13 @@ def _ps_rows() -> list[tuple[int, int, float]]:
     )
     if not result.ok:
         return []
-    rows = []
+    rows: list[ProcRow] = []
     for line in result.stdout.splitlines():
         fields = line.split()
         if len(fields) < 3:
             continue
         try:
-            rows.append((int(fields[0]), int(fields[1]), _parse_time(fields[2])))
+            rows.append(ProcRow(int(fields[0]), int(fields[1]), _parse_time(fields[2])))
         except ValueError:
             continue
     return rows
@@ -340,10 +347,10 @@ def sample_subtree(root_pid: int) -> Sample:
     """
     rows = _process_rows()
     children: dict[int, list[int]] = {}
-    for pid, ppid, _ in rows:
-        children.setdefault(ppid, []).append(pid)
+    for row in rows:
+        children.setdefault(row.ppid, []).append(row.pid)
     seen = _walk(root_pid, children)
-    return Sample(cpu_by_pid={pid: cpu for pid, _, cpu in rows if pid in seen})
+    return Sample(cpu_by_pid={r.pid: r.cpu_seconds for r in rows if r.pid in seen})
 
 
 def _walk(root_pid: int, children: dict[int, list[int]]) -> set[int]:
@@ -391,7 +398,8 @@ def shows_work(
     counted = (after.pids - baseline) | ({root_pid} if root_pid else set())
     burned = after.cpu_over(counted) - before.cpu_over(counted)
     # CPU is /proc ticks on Linux and `ps` hundredths on macOS, so a comparison
-    # against a threshold expressed in the same units lands on a float boundary; the tolerance is below one tick
+    # against a threshold expressed in the same units lands on a float
+    # boundary; the tolerance is below one tick
     # and cannot admit a reading that is genuinely idle.
     return burned > (CPU_FLOOR - 0.001)
 

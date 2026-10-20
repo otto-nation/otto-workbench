@@ -8,7 +8,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from review.ingest import REPAIR_MAX_TURNS, IngestErrorKind, ingest_with_repair
+from review.ingest import REPAIR_MAX_TURNS, IngestError, IngestErrorKind, ingest_with_repair
 
 BAD = "## Nit\n- **[N1]** `a` — x\n- **[N1]** `b` — y\n"
 GOOD = "## Nit\n- **[N1]** `a` — x\n- **[N2]** `b` — y\n"
@@ -346,3 +346,11 @@ def test_an_already_failed_group_is_not_a_second_gap_row(tmp_path):
     assert gaps.count("g1:") == 1
     assert "output missing" in gaps
     assert "output rejected by ingest" not in gaps
+
+
+def test_an_error_names_its_json_path_or_its_line_and_column():
+    assert IngestError(IngestErrorKind.SCHEMA_VIOLATION, 0, "is required", at="$.summary").render() == \
+        "$.summary: schema_violation — is required"
+    assert IngestError(IngestErrorKind.INVALID_JSON, 3, "Expecting ','", column=7).render() == \
+        "line 3, column 7: invalid_json — Expecting ','"
+    assert IngestError(IngestErrorKind.DUPLICATE_ID, 4, "x").render() == "line 4: duplicate_id — x"

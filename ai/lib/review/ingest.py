@@ -232,16 +232,34 @@ class IngestErrorKind(StrEnum):
     UNKNOWN_SEVERITY = "unknown_severity"
     DUPLICATE_ID = "duplicate_id"
     MISSING_ANCHOR = "missing_anchor"
+    INVALID_JSON = "invalid_json"
+    SCHEMA_VIOLATION = "schema_violation"
+    EMPTY_FIELD = "empty_field"
+    LINE_IN_PATH = "line_in_path"
+    BAD_LOCATION = "bad_location"
+    BAD_CARRY = "bad_carry"
 
 
 @dataclass(frozen=True)
 class IngestError:
+    """One entry ingest will not represent, and where it is.
+
+    A markdown error names its `line`. A JSON decode error names `line` and
+    `column`. A schema or semantic error names the JSON path `at`, because a
+    parsed document has no lines left to point at.
+    """
+
     kind: IngestErrorKind
     line: int
     detail: str
+    column: int = 0
+    at: str = ""
 
     def render(self) -> str:
-        return f"line {self.line}: {self.kind.value} — {self.detail}"
+        where = self.at or (
+            f"line {self.line}, column {self.column}" if self.column else f"line {self.line}"
+        )
+        return f"{where}: {self.kind.value} — {self.detail}"
 
 
 class IngestRejected(Exception):

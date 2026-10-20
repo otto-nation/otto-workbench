@@ -1260,6 +1260,29 @@ lookup, no `~/git` walk, and no `gh`. The slug-to-clone path is `find_repo_root`
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.
 
+### review/artifacts.py
+
+What a review agent writes: one JSON document per phase, each a frozen dataclass.
+
+Scout, holistic, group, single, synthesis and disprove each write one of the
+types here. The prompt shows the agent `example()` as `core.serde.to_dict` writes
+it, followed by `FIELD_NOTES` for every field, so what
+the prompt asks for and what `review.ingest` accepts are one schema. A test
+holds each example to the strict reader and to `problems()`, and holds the
+notes to the fields.
+
+The types are narrower than the record on purpose. `ReviewRecord` carries what
+the harness decides — dispositions, stable IDs, failures, static analysis,
+checkboxes — and an agent must not be able to write any of it. The strict
+reader rejects an unknown key, so a harness field in an agent's document is a
+named error rather than a value silently taken. `to_record` is the one
+conversion, and `as_group_artifact` is its inverse for the one prompt that
+shows a merged record back to an agent (synthesis).
+
+A finding's severity is its ID's first letter, so the two cannot disagree.
+`TriageEntry` and `LedgerLine` are the record's own types: what an agent
+writes there is exactly what the record keeps.
+
 ### review/dedup.py
 
 Deduplication of findings against already-posted PR comments.

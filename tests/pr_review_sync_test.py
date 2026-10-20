@@ -13,11 +13,14 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import make_ctx
+from agent.registry import PHASES
 import cli.review_modes
+from core.phases import Phase
 import pr.state
 from pr.domains import ReviewStatus, ReviewSummary, ReviewVerdict
 from pr.review_sync import sync_review_domain
 import review.completion
+from review.paths import FILENAME_RECORD, ReviewMeta, write_review_meta
 from review.summary import ReviewSummaryReport, build_review_summary, json_summary
 from review_record_support import store_review
 
@@ -177,7 +180,7 @@ def test_record_domain_on_a_stale_dir_leaves_review_unchecked(tmp_path):
     _assert_review_unchecked(ctx.target_dir)
 
 
-def test_repair_on_a_stale_dir_leaves_review_unchecked(tmp_path):
+def test_repair_on_a_stale_dir_leaves_review_unchecked(tmp_path, capsys):
     review = _stale_review_md(tmp_path)
     ctx = make_ctx(
         repo="org/repo", branch="feat/x", pr_number=42,
@@ -186,8 +189,33 @@ def test_repair_on_a_stale_dir_leaves_review_unchecked(tmp_path):
     )
     with patch("cli.review_modes.find_review_file", return_value=review):
         rc = cli.review_modes.repair([], ctx, bin_dir=tmp_path)
-    assert rc == 0
+    assert rc != 0
+    assert "No group finding files" in capsys.readouterr().err
     _assert_review_unchecked(ctx.target_dir)
+    assert not (tmp_path / FILENAME_RECORD).exists()
+
+
+def test_repair_on_a_stale_dir_with_group_files_rebuilds_and_syncs(tmp_path):
+    review = _stale_review_md(tmp_path)
+    write_review_meta(tmp_path, ReviewMeta(
+        repo="org/repo", pr_number=42, head_sha="abc123def456",
+    ))
+    group = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
+    group.write_text("## Nit\n- **[N1]** **`a.py:1`** — x\n")
+    ctx = make_ctx(
+        repo="org/repo", branch="feat/x", pr_number=42,
+        worktree_root=tmp_path / "wt", head_sha="abc123def456",
+        target_dir=tmp_path / "pr" / "feat",
+    )
+    with patch("cli.review_modes.find_review_file", return_value=review):
+        rc = cli.review_modes.repair([], ctx, bin_dir=tmp_path)
+    assert rc == 0
+    assert (tmp_path / FILENAME_RECORD).is_file()
+    state = pr.state.load_state(ctx.target_dir)
+    assert state is not None
+    assert state.review.status == ReviewStatus.COMPLETED.value
+    assert state.review.updated_at
+    assert state.review.readiness(state).unchecked == ()
 
 
 def test_record_domain_syncs_a_stored_review(tmp_path):

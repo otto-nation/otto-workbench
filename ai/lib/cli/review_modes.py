@@ -41,6 +41,7 @@ from pr.review_sync import sync_review_domain
 from pr.target import display_repo
 import review.listing
 from review.paths import find_review_file, review_file_path
+from review.store import read_review
 from review.summary import build_review_summary, json_summary
 
 
@@ -91,12 +92,18 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
         return 1
 
     review_path = find_review_file(ctx.repo, pr_num)
-    if review_path:
+    # A directory with review.md but no review.json is stale: the store
+    # answers None, the same as a missing review. Rebuild rather than
+    # returning 0 with nothing written.
+    if review_path and read_review(review_path) is not None:
         _sync_recorded_review(ctx, pr_num, review_path)
         return 0
 
     core.log.info("No review file found, trying rebuild...")
-    review_dir = review_file_path(ctx.repo, pr_num).parent
+    review_dir = (
+        review_path.parent if review_path
+        else review_file_path(ctx.repo, pr_num).parent
+    )
     if not review_dir.is_dir():
         core.log.error(f"No review directory found: {review_dir}")
         return 1

@@ -118,7 +118,8 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
     """
     review_path = Path(review_file) if review_file else None
     # `review_content` is still the on-disk markdown for display; findings and
-    # the verdict come from the record, so a stale directory reports none.
+    # the verdict come from the record. A stale directory has no record, so
+    # this returns None rather than an empty report.
     review_content = _read_review(review_path)
     doc = ReviewDocument.read(review_path)
     if doc is None:

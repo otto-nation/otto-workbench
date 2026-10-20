@@ -123,7 +123,8 @@ def _build_prompt(
     """Build the revision prompt.
 
     The template's own section headers are the contract — a repo that ships one
-    expects exactly those sections, so the prompt forbids inventing others.
+    expects those required sections, so the prompt forbids inventing others.
+    A section the template marks deletable may be omitted when empty.
     """
     origin = (
         "the repo's checked-in PR template"
@@ -133,8 +134,10 @@ def _build_prompt(
     return f"""You are revising the description of an open pull request so it matches \
 {origin} and the work the branch actually contains.
 
-PR template — its section headers are required, and you must not add, rename, or
-drop any of them:
+{core.pr_template.DELETABLE_SECTION_RULE}
+Do not add or rename headers.
+
+PR template:
 {template}
 
 Current PR title:

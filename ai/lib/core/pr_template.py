@@ -17,6 +17,13 @@ answers, and it is wrong the moment someone adds, moves, or deletes the file.
 The rediscovery this module exists to stop was never the automation's — it was
 the agent's, and the SessionStart line is what settles that.
 
+The text is also parsed into ``## `` sections. Prose before the first heading is
+preamble and never attaches to a section. A section is optional when an HTML
+comment in its body says to delete or remove the section; ``headers`` lists every
+heading and ``required_headers`` the ones a body must still carry. ``pr create``
+and ``pr describe --body`` refuse a body that omits a required header, and the
+SessionStart line names optional sections after ``optional:``.
+
 Bash reads through the CLI below rather than globbing for itself, the same way
 it asks ``config_cli.py`` for a config value instead of parsing YAML twice. The
 record it prints is:
@@ -35,6 +42,7 @@ first one has to handle that rather than reading the path as the body.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,6 +84,55 @@ FALLBACK_TEMPLATE = "## Summary\n\n## Changes\n\n## Testing"
 # never asked to reproduce one.
 _HEADER_PREFIX = "## "
 
+# HTML comments only: a required section that says "Optionally add" or
+# "If low risk" in prose must stay required. The inner pattern is the one
+# templates actually write ("delete section if no issue", "Remove this section
+# if none"). Other phrasings ("delete the section") do not match, so those
+# sections stay required, which fails safe.
+_HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.DOTALL)
+_DELETABLE_SECTION = re.compile(r"(?i)(?:delete|remove)(?: this)? section")
+
+# Shared by the create and describe fill prompts so they cannot disagree about
+# which sections a body may drop.
+DELETABLE_SECTION_RULE = (
+    "A section the template marks deletable — an HTML comment in its body "
+    "saying to delete or remove the section — may be omitted when it has "
+    "nothing to say. Required section headers must stay."
+)
+
+
+@dataclass(frozen=True)
+class TemplateSection:
+    """One ``## `` heading and the body that follows it, up to the next heading.
+
+    ``required`` is False when an HTML comment in that body says to delete or
+    remove the section. Preamble text is never a section, so a comment there
+    cannot flip the first heading.
+    """
+
+    header: str
+    body: str
+    required: bool
+
+
+def _is_deletable(body: str) -> bool:
+    return any(_DELETABLE_SECTION.search(comment) for comment in _HTML_COMMENT.findall(body))
+
+
+def _parse_sections(text: str) -> list[TemplateSection]:
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.startswith(_HEADER_PREFIX)]
+    sections: list[TemplateSection] = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(lines)
+        body = "\n".join(lines[start + 1:end])
+        sections.append(TemplateSection(
+            header=lines[start].strip(),
+            body=body,
+            required=not _is_deletable(body),
+        ))
+    return sections
+
 
 @dataclass(frozen=True)
 class PRTemplate:
@@ -95,13 +152,19 @@ class PRTemplate:
         return bool(self.path)
 
     @property
+    def sections(self) -> list[TemplateSection]:
+        """``## `` headings in order, each with the body that follows it."""
+        return _parse_sections(self.text)
+
+    @property
     def headers(self) -> list[str]:
+        """Every ``## `` section heading, required or not."""
+        return [section.header for section in self.sections]
+
+    @property
+    def required_headers(self) -> list[str]:
         """The section headers a body using this template must carry."""
-        return [
-            line.strip()
-            for line in self.text.splitlines()
-            if line.startswith(_HEADER_PREFIX)
-        ]
+        return [section.header for section in self.sections if section.required]
 
 
 def load(root: Path) -> PRTemplate:

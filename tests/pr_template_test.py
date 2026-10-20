@@ -152,6 +152,47 @@ def test_a_template_with_no_headers_requires_no_sections(tmp_path):
     template = core.pr_template.load(tmp_path)
     assert template.found
     assert template.headers == []
+    assert template.required_headers == []
+
+
+def _from_text(text: str) -> core.pr_template.PRTemplate:
+    return core.pr_template.PRTemplate(text=text, path="t.md")
+
+
+def test_required_headers_excludes_a_delete_section_comment():
+    template = _from_text(
+        "## What\n\nprose\n\n## Link\n\n<!-- ENG-XXX or delete section if no issue -->\n"
+    )
+    assert template.headers == ["## What", "## Link"]
+    assert template.required_headers == ["## What"]
+
+
+def test_a_remove_this_section_comment_makes_the_section_optional():
+    template = _from_text(
+        "## What\n\n## Follow-ups\n\n<!-- Known gaps. Remove this section if none. -->\n"
+    )
+    assert template.required_headers == ["## What"]
+
+
+def test_a_preamble_comment_does_not_make_the_first_section_optional():
+    template = _from_text(
+        "<!-- delete section if unused -->\n\n## What\n\nprose\n\n## Why\n"
+    )
+    assert template.required_headers == ["## What", "## Why"]
+
+
+def test_optional_in_prose_or_a_comment_without_delete_section_stays_required():
+    """Bare 'optional' / 'if none' are not markers — they fire on real templates.
+
+    A required Risk section that says 'If low risk' and a Notes section that
+    says 'Optionally add …' must stay required.
+    """
+    template = _from_text(
+        "## Risk\n\n<!-- If low risk, say so. -->\n\n"
+        "## Notes\n\nOptionally add extra context.\n\n"
+        "## Extra\n\n<!-- optional: fill in if none of the above apply -->\n"
+    )
+    assert template.required_headers == ["## Risk", "## Notes", "## Extra"]
 
 
 # ── the record bash reads ───────────────────────────────────────────────────

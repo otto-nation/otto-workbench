@@ -339,6 +339,23 @@ def test_prompt_says_so_when_the_repo_ships_no_template(worktree):
     assert "this repo ships none" in prompt.call_args[0][0]
 
 
+def test_prompt_allows_omitting_a_deletable_section(worktree):
+    (worktree / ".github").mkdir()
+    (worktree / ".github" / "pull_request_template.md").write_text(
+        "## Why\n\n<!-- delete section if empty -->\n",
+    )
+    with mock.patch.object(pr.describe, "_fetch_pr_body",
+                           return_value=("feat: x", "old body")), \
+         mock.patch.object(pr.describe, "_git", return_value=""), \
+         mock.patch.object(pr.describe, "_apply_body", return_value=True), \
+         mock.patch.object(agent.backend, "prompt",
+                           return_value=(_wrapped("B"), 0)) as prompt:
+        pr.describe.run_describe(_ctx(worktree))
+    text = prompt.call_args[0][0]
+    assert "may be omitted when it has nothing to say" in text
+    assert "Required section headers must stay" in text
+
+
 # ── follow-up projection ────────────────────────────────────────────────────
 
 

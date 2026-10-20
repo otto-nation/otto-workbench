@@ -203,6 +203,19 @@ def test_a_header_appearing_only_inside_prose_satisfies_the_template():
     assert missing_sections(_tpl(_WHAT_WHY), body) == []
 
 
+_WITH_OPTIONAL = (
+    "## What\n\n## Link\n\n<!-- ENG-XXX or delete section if no issue -->\n"
+)
+
+
+def test_an_omitted_optional_section_is_not_missing():
+    assert missing_sections(_tpl(_WITH_OPTIONAL), "## What\n\ndid a thing\n") == []
+
+
+def test_an_omitted_required_section_is_listed():
+    assert missing_sections(_tpl(_WITH_OPTIONAL), "## Link\n") == ["## What"]
+
+
 # ── generate: template discovery ────────────────────────────────────────────
 
 
@@ -303,11 +316,13 @@ def test_single_commit_with_template_uses_subject_and_ai_body(tmp_path, monkeypa
     _feature(wt)
     _empty(wt, "feat: one")
     logs: list[str] = []
-    _stub(monkeypatch, _desc(_ON_TEMPLATE))
+    calls = _stub(monkeypatch, _desc(_ON_TEMPLATE))
     result = _generate(wt, _req(), log=logs.append)
     assert result.title == "feat: one"
     assert result.body == _ON_TEMPLATE
     assert any("AI filling template" in line for line in logs)
+    assert "may be omitted when it has nothing to say" in calls[0]["prompt"]
+    assert "Required section headers must stay" in calls[0]["prompt"]
 
 
 def test_single_commit_with_template_and_body_skips_the_ai_call(tmp_path, monkeypatch):
@@ -359,10 +374,12 @@ def test_multi_commit_extracts_title_and_body_from_markers(tmp_path, monkeypatch
     _feature(wt)
     _empty(wt, "feat: one")
     _empty(wt, "feat: two")
-    _stub(monkeypatch, _both("feat: generated", "## Summary\n\nhello"))
+    calls = _stub(monkeypatch, _both("feat: generated", "## Summary\n\nhello"))
     result = _generate(wt, _req())
     assert result.title == "feat: generated"
     assert result.body == "## Summary\n\nhello"
+    assert "may be omitted when it has nothing to say" in calls[0]["prompt"]
+    assert "Required section headers must stay" in calls[0]["prompt"]
 
 
 def test_multi_commit_prompt_contains_the_issue_scraped_from_the_branch(

@@ -531,33 +531,6 @@ def parse_disprove_output(text: str) -> list[DisproveResult]:
     return results
 
 
-def apply_disprove_results(
-    review_text: str, results: list[DisproveResult],
-) -> tuple[str, dict]:
-    falsified_ids = {
-        r.finding_id for r in results if r.verdict == "FALSIFIED"
-    }
-    reason_map = {r.finding_id: r.reason for r in results if r.verdict == "FALSIFIED"}
-
-    if not falsified_ids:
-        return review_text, {
-            "total_challenged": len(results),
-            "survived": len(results),
-            "falsified": 0,
-            "falsified_ids": [],
-            "reasons": {},
-        }
-
-    survived = len(results) - len(falsified_ids)
-    return drop_findings(review_text, falsified_ids), {
-        "total_challenged": len(results),
-        "survived": survived,
-        "falsified": len(falsified_ids),
-        "falsified_ids": sorted(falsified_ids),
-        "reasons": reason_map,
-    }
-
-
 @dataclass(frozen=True)
 class DisproveApplied:
     record: ReviewRecord

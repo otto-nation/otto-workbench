@@ -9,14 +9,23 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import core.serde
 import review.outcome as outcome
+import review.state
+from agent.diagnosis import Diagnosis, DiagnosisKind
+from core.phases import Phase
 from gh.types import PRContext, PRMetadata
+from pr.domains import ReviewStatus
 from review.ingest import ingest_review
 from review.merge import merge_records
 from review.paths import FILENAME_RECORD
+from review.record import Disposition
 from review.render import BANNER
-from review.store import StoredReview, read_review
+from review.state import PipelineState
+from review.steps import DisproveRun, _phase_disprove, _run_disprove_gate
+from review.store import StoredReview, read_review, write_review
 from review.types import DeltaAttribution, PreflightData, ReviewJob
+from review.verify import DisproveResult, apply_disprove
 
 from review_record_support import copy_tree, canonical, expected_text, fixture_meta, fixture_text
 
@@ -135,6 +144,7 @@ def test_no_synthesis_paths_reconcile_and_verify(tmp_path, skip_synthesis, cost_
     _run_synthesis_or_fallback(job, state, "", 1, merged, [], 0, cost_so_far, 20.0)
     assert job.verification is not None and job.verification["dropped"] == ["S1"]
     assert "verification-drops" in Path(job.review_file).read_text()
+    _assert_meta_status_matches_header(job)
 
 
 def test_a_new_round_keeps_the_static_declines_an_earlier_round_recorded(tmp_path):
@@ -152,3 +162,85 @@ def test_a_new_round_keeps_the_static_declines_an_earlier_round_recorded(tmp_pat
     assert meta.head_sha == HEAD
     # The previous round's fix commit belongs to that round, not this one.
     assert meta.fix_commit_sha == ""
+
+
+def _assert_meta_status_matches_header(job):
+    stored = read_review(Path(job.review_file))
+    assert stored is not None and stored.meta.status is not None
+    assert f"<!-- status: {stored.meta.status.value} -->" in Path(job.review_file).read_text()
+
+
+def test_failures_and_status_land_in_record_and_meta(tmp_path):
+    job = _job(tmp_path)
+    outcome._write_clean_review(job, 2, _merged())
+    state = PipelineState(head_sha=HEAD, group_names=["app", "cli"],
+                          groups_failed={2: Diagnosis(DiagnosisKind.OUTPUT_MISSING)})
+    core.serde.write_json(Path(job.review_file).parent / "pipeline.json", core.serde.to_dict(state))
+    review.state._inject_failures_and_status(job.review_file, state)
+    stored = read_review(Path(job.review_file))
+    assert stored.record.failures[0].agent == "group-2: cli"
+    assert stored.meta.status is ReviewStatus.PARTIAL
+    assert "<!-- status: partial -->" in Path(job.review_file).read_text()
+
+
+def test_a_disprove_after_failures_keeps_both(tmp_path, monkeypatch):
+    job = _job(tmp_path)
+    write_review(
+        Path(job.review_file),
+        ingest_review(fixture_text("synthesis_pr", "input.md")),
+        fixture_meta("synthesis_pr"),
+    )
+    state = PipelineState(head_sha=HEAD, group_names=["a"],
+                          failed={Phase.DISPROVE: Diagnosis(DiagnosisKind.OUTPUT_MISSING)})
+    review.state._inject_failures_and_status(job.review_file, state)
+    from review.phases import PhaseResult
+    import review.steps as steps
+    monkeypatch.setattr(steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
+    stored = read_review(Path(job.review_file))
+    run = _phase_disprove(job, stored.record, "unused")
+    assert isinstance(run, DisproveRun)
+    assert [f.id for f in run.record.findings if f.disposition is Disposition.FALSIFIED] == ["S1"]
+    assert run.record.finding("S1") is None
+    assert run.record.failures, "the failures table must survive the disprove write"
+
+
+def test_the_disprove_gate_hides_a_falsified_finding(tmp_path, monkeypatch):
+    job = _job(tmp_path)
+    write_review(
+        Path(job.review_file),
+        ingest_review(fixture_text("synthesis_pr", "input.md")),
+        fixture_meta("synthesis_pr"),
+    )
+    from review.phases import PhaseResult
+    import review.steps as steps
+    monkeypatch.setattr(steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
+    state = PipelineState(head_sha=HEAD, group_names=["a"], done={Phase.SYNTHESIS})
+    _run_disprove_gate(job, state, disprove=True, cost_so_far=0.0, max_cost=20.0)
+    assert read_review(Path(job.review_file)).record.finding("S1") is None
+
+
+def test_an_unchanged_review_does_not_resurrect_a_falsified_finding(tmp_path):
+    applied = apply_disprove(
+        ingest_review(fixture_text("synthesis_pr", "input.md")),
+        [DisproveResult("S1", "FALSIFIED", "not reachable")],
+    )
+    prior = StoredReview(applied.record, fixture_meta("synthesis_pr"))
+    job = _job(tmp_path, prior_review="unused")
+    job.prior = prior
+    job.preflight = PreflightData(
+        diff="", commit_log="", file_contents={}, file_permissions={},
+        instructions_md="", architecture_md="", delta_files=[],
+        prior_head_sha=prior.meta.head_sha,
+        delta_attribution=DeltaAttribution.ATTRIBUTED,
+    )
+    outcome.write_unchanged_review(job)
+    stored = read_review(Path(job.review_file))
+    assert stored.record.finding("S1") is None
+    assert next(f for f in stored.record.findings if f.id == "S1").disposition is Disposition.FALSIFIED
+    assert "**[S1]**" not in Path(job.review_file).read_text()
+
+
+def test_the_synthesis_fallback_stamps_the_same_status_on_meta_and_header(tmp_path):
+    job = _job(tmp_path)
+    outcome._write_mechanical_fallback(job, 2, _merged())
+    _assert_meta_status_matches_header(job)

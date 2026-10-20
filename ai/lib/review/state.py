@@ -28,17 +28,13 @@ from agent.registry import SCAN_PHASES
 from core.phases import Phase
 from pr.domains import ReviewStatus
 from agent.session import _parse_session_cost
-from review.document import (
-    SECTION_FAILURES, SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument,
-    set_section, set_status,
-)
 from review.paths import (
     FILENAME_PIPELINE_STATE,
     phase_log_path,
     review_artifact_path,
 )
 from review.record import AgentFailure, ReviewRecord
-from review.render import failures_body
+from review.store import update_review
 from review.types import Group, ReviewJob, ReviewType
 from core.text import plural
 
@@ -236,7 +232,7 @@ def _any_recoverable(state: "PipelineState") -> bool:
 def build_recoverable(review_dir: Path | None) -> bool:
     """Whether `pr review --recover` could do better than the run in *review_dir*.
 
-    The same question `build_failures_body` answers when it decides whether to
+    The same question `render.failures_body` answers when it decides whether to
     print the recover hint, exposed for the state file so a consumer that reads
     the summary rather than the review document gets the identical verdict. A
     run with nothing failed answers False: there is nothing to retry.
@@ -340,8 +336,8 @@ def failures_of(state: "PipelineState") -> tuple[AgentFailure, ...]:
 def apply_failures(record: ReviewRecord, state: "PipelineState") -> ReviewRecord:
     """`record` reporting `state`'s failures, its verdict withheld when the run was partial.
 
-    The reasoning is `_withhold_verdict_if_partial`'s: a verdict synthesised over
-    files no agent opened is the line a reader acts on without reading further.
+    A verdict synthesised over files no agent opened is the line a reader acts
+    on without reading further.
     """
     from review.verdict import PARTIAL_VERDICT
 
@@ -351,58 +347,11 @@ def apply_failures(record: ReviewRecord, state: "PipelineState") -> ReviewRecord
     return replace(record, verdict=PARTIAL_VERDICT.strip())
 
 
-def build_failures_body(state: "PipelineState") -> str:
-    """What the Agent Failures section says about `state`, heading excluded.
-
-    Empty when nothing failed, which is what removes the section from a review
-    whose rerun fixed it. The heading and where the section sits belong to
-    `review.document.set_section` — see `set_failures_section`.
-    """
-    return failures_body(rows) if (rows := failures_of(state)) else ""
-
-
-def set_failures_section(content: str, state: "PipelineState") -> str:
-    """`content` with its Agent Failures section reporting `state`.
-
-    The one place a review learns what failed, whether the review is being
-    assembled — the mechanical fallback builds its body and asks here — or
-    already on disk. Replacing rather than leaving the first version in place is
-    what lets a phase that failed *after* the section was written appear in it
-    at all: the disprove gate runs last, so it is always writing into a review
-    synthesis has already had its say about.
-    """
-    return set_section(content, SECTION_FAILURES, build_failures_body(state), before=SECTION_SUMMARY)
-
-
-def _withhold_verdict_if_partial(content: str, state: "PipelineState") -> str:
-    """Replace a stated verdict when part of the review did not run.
-
-    A synthesis agent writes its verdict from the findings it was handed, and
-    a group that produced nothing hands it none — so a run whose source group
-    died synthesises "Approve" over files no agent opened. That line is the
-    one a reader may act on without opening the rest, and it sat directly
-    above an accurate Agent Failures table that was read second.
-
-    Only a *partial* run is rewritten. Where every group failed synthesis does
-    not run, and `_build_mechanical_fallback` states `NO_RUN_VERDICT` itself.
-    """
-    from review.verdict import PARTIAL_VERDICT
-
-    if not state.partial:
-        return content
-    if not ReviewDocument(body=content).section(SECTION_VERDICT):
-        return content
-    return set_section(content, SECTION_VERDICT, PARTIAL_VERDICT)
-
-
 def _inject_failures_and_status(review_file: str, state: "PipelineState") -> None:
-    """Insert Agent Failures section and status metadata into an existing review."""
+    """Report `state`'s failures in the stored review and record how the run ended."""
     path = Path(review_file)
-    if not path.exists():
-        return
-    content = set_failures_section(path.read_text(), state)
-    content = _withhold_verdict_if_partial(content, state)
-    path.write_text(set_status(content, pipeline_status(path.parent)))
+    update_review(path, lambda record: apply_failures(record, state),
+                  status=pipeline_status(path.parent))
 
 
 @dataclass

@@ -46,16 +46,17 @@ from review.prompt_prior import _scope_prior_review
 from review.reconcile import passed_over
 from review.record import ProseSection, ReviewRecord
 from review.registry import build_prompt
-from review.render import render_body
+from review.render import render_body, render_review
 from review.retry import GroupFailure, _has_output, _retry_missing_output
 from review.state import (
     PipelineState, _inject_failures_and_status, _write_pipeline_state,
 )
+from review.store import read_review, write_review
 from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
 )
 from review.verdict import BUDGET_SUMMARY, SKIPPED_SUMMARY, open_counts
-from review.verify import apply_disprove_results, parse_disprove_output
+from review.verify import apply_disprove, parse_disprove_output
 from core.text import plural
 
 DISPROVE_MIN_FINDINGS = 3
@@ -68,6 +69,12 @@ class GroupPhaseResult:
     outputs: list[str]
     failures: list[GroupFailure]
     cost: float
+
+
+@dataclass(frozen=True)
+class DisproveRun:
+    result: PhaseResult
+    record: ReviewRecord
 
 
 @dataclass(frozen=True)
@@ -417,34 +424,25 @@ def _build_group_skips(
     return skips
 
 
-def _phase_disprove(job: ReviewJob) -> PhaseResult:
-    review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-    counts = ReviewDocument(body=review_content).open_counts
+def _phase_disprove(job: ReviewJob, record: ReviewRecord, review_content: str) -> DisproveRun:
+    counts = record.open_counts
     ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
         core.log.info(f"{label} skipped — no must-fix or should-fix findings")
-        return PhaseResult()
-
-    result = run_phase(
-        job, Phase.DISPROVE,
-        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
-        review_content=review_content,
-    )
+        return DisproveRun(PhaseResult(), record)
+    result = run_phase(job, Phase.DISPROVE,
+                       f"{label} — challenging {ms_count} must-fix/should-fix findings...",
+                       review_content=review_content)
     if not result.content:
-        return result
-
-    results = parse_disprove_output(result.content)
-    updated_text, summary = apply_disprove_results(review_content, results)
-    falsified = summary.get("falsified", 0)
-    if falsified > 0:
-        Path(job.review_file).write_text(updated_text)
-        core.log.info(f"{label}: {summary['survived']} survived, {falsified} falsified")
-        _log_disprove_falsified(summary)
+        return DisproveRun(result, record)
+    applied = apply_disprove(record, parse_disprove_output(result.content))
+    if applied.summary.get("falsified", 0) > 0:
+        core.log.info(f"{label}: {applied.summary['survived']} survived, {applied.summary['falsified']} falsified")
+        _log_disprove_falsified(applied.summary)
     else:
-        core.log.info(f"{label}: all {summary['survived']} findings survived")
-
-    return result
+        core.log.info(f"{label}: all {applied.summary['survived']} findings survived")
+    return DisproveRun(result, applied.record)
 
 
 def _log_disprove_falsified(summary: dict) -> None:
@@ -481,14 +479,13 @@ def _run_disprove_gate(
         )
         failure = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
     else:
-        counts = open_counts(ReviewDocument.read(job.review_file))
+        stored = read_review(Path(job.review_file))
+        counts = open_counts(ReviewDocument.from_stored(stored) if stored else None)
         ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
-        if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
-            result = _phase_disprove(job)
-            # None when the gate declined inside `_phase_disprove` for want of
-            # findings to challenge; a diagnosis only when its agent ran and
-            # came back with nothing.
-            failure = result.diagnosis
+        if stored and (disprove is True or ms_count >= DISPROVE_MIN_FINDINGS):
+            run = _phase_disprove(job, stored.record, render_review(stored.record, stored.meta))
+            write_review(Path(job.review_file), run.record, stored.meta)
+            result, failure = run.result, run.result.diagnosis
         else:
             core.log.info(
                 f"Skipping disprove — only {ms_count} M/S findings "

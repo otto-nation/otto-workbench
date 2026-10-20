@@ -14,6 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
+from review.render import failures_body
+from review.state import failures_of
+
+
+def _failures_md(state):
+    rows = failures_of(state)
+    return failures_body(rows) if rows else ""
 
 
 class TestPipelineStateFailureRoundTrip:
@@ -106,42 +113,40 @@ class TestPipelineStateFailureRoundTrip:
         assert state.done == set()
         assert state.failed == {}
         assert state.scanned is False
-        assert ro.build_failures_body(state) == ""
+        assert _failures_md(state) == ""
 
     def test_a_legacy_reason_still_renders_verbatim(self, ro, tmp_path):
         state = self._state(ro, {
             1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="quota exhausted (429)"),
         })
-        assert "quota exhausted (429)" in ro.build_failures_body(state)
+        assert "quota exhausted (429)" in _failures_md(state)
 
 
 class TestBuildFailuresBody:
     def test_no_failures_returns_empty(self):
         from review.state import PipelineState
-        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
             done={Phase.SYNTHESIS},
         )
-        assert build_failures_body(state) == ""
+        assert _failures_md(state) == ""
 
     def test_a_pipe_in_a_reason_cannot_break_its_row(self):
         """A quoted stderr line is free text; one `|` shifted the Status cell."""
         from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.state import PipelineState, build_failures_body
+        from review.state import PipelineState
         state = PipelineState(
             group_names=["a"],
             groups_failed={1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="error: a | b")},
         )
-        row = build_failures_body(state).splitlines()[2]
+        row = _failures_md(state).splitlines()[2]
         assert "a \\| b" in row
         assert row.endswith("| failed |")
 
     def test_group_failures_produce_table(self):
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState
-        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["ui-components", "api-routes", "tests"],
             groups_done=[1], groups_failed={
@@ -150,7 +155,7 @@ class TestBuildFailuresBody:
             },
             done={Phase.SYNTHESIS},
         )
-        result = build_failures_body(state)
+        result = _failures_md(state)
         assert "## Agent Failures" not in result
         assert "group-2: api-routes" in result
         assert "quota exhausted (429)" in result
@@ -162,14 +167,13 @@ class TestBuildFailuresBody:
     def test_synthesis_fallback_in_table(self):
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState
-        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
             done={Phase.SYNTHESIS},
             failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
-        result = build_failures_body(state)
+        result = _failures_md(state)
         assert "synthesis" in result
         assert "fallback" in result
 
@@ -181,7 +185,6 @@ class TestBuildFailuresBody:
         """
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState
-        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[],
@@ -190,14 +193,13 @@ class TestBuildFailuresBody:
             },
             done={Phase.SYNTHESIS},
         )
-        result = build_failures_body(state)
+        result = _failures_md(state)
         assert "agent error: permission denied" in result
         assert "pr review --recover" not in result
 
     def test_recover_hint_survives_one_recoverable_failure(self):
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState
-        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[],
@@ -207,46 +209,43 @@ class TestBuildFailuresBody:
             },
             done={Phase.SYNTHESIS},
         )
-        assert "pr review --recover" in build_failures_body(state)
+        assert "pr review --recover" in _failures_md(state)
 
     def test_no_recover_hint_when_every_group_is_unrecoverable(self):
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState
-        from review.state import build_failures_body
         denial = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied")
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[], groups_failed={1: denial, 2: denial},
             done={Phase.SYNTHESIS},
         )
-        assert "pr review --recover" not in build_failures_body(state)
+        assert "pr review --recover" not in _failures_md(state)
 
     def test_recover_hint_offered_for_max_turns(self):
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState
-        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[], groups_failed={1: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5)},
             done={Phase.SYNTHESIS},
         )
-        assert "pr review --recover" in build_failures_body(state)
+        assert "pr review --recover" in _failures_md(state)
 
     def test_synthesis_failure_alone_stays_recoverable(self):
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState
-        from review.state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
             done={Phase.SYNTHESIS},
             failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
-        assert "pr review --recover" in build_failures_body(state)
+        assert "pr review --recover" in _failures_md(state)
 
 
 class TestFailuresSectionInReview:
-    """`set_failures_section` — what the body says, and where it lands."""
+    """`apply_failures` + render — what the body says, and where it lands."""
 
     @staticmethod
     def _state():
@@ -268,10 +267,16 @@ class TestFailuresSectionInReview:
             done={Phase.SYNTHESIS},
         )
 
+    @staticmethod
+    def _body(text, state):
+        from review.ingest import ingest_review
+        from review.render import render_body
+        from review.state import apply_failures
+        return render_body(apply_failures(ingest_review(text, strict=False), state))
+
     def test_mechanical_fallback_includes_failures(self):
         """When synthesis falls back, the review includes ## Agent Failures."""
-        from review.state import set_failures_section
-        result = set_failures_section("## Summary\n\nnote\n", self._state())
+        result = self._body("## Summary\n\nnote\n", self._state())
         assert "## Agent Failures" in result
         assert "group-2: api" in result
         assert "quota exhausted" in result
@@ -279,22 +284,22 @@ class TestFailuresSectionInReview:
         assert "fallback" in result
 
     def test_the_section_sits_above_the_summary(self):
-        from review.state import set_failures_section
-        result = set_failures_section("## Summary\n\nnote\n\n## Verdict\n\nApprove\n", self._state())
+        result = self._body("## Summary\n\nnote\n\n## Verdict\n\nApprove\n", self._state())
         assert result.index("## Agent Failures") < result.index("## Summary")
 
     def test_a_review_with_no_summary_still_gets_the_section(self):
         """A run that never reached synthesis has no Summary to sit above, and
         the failures are the only account of why."""
-        from review.state import set_failures_section
-        result = set_failures_section("## Must fix\n\n- **[M1]** a.py:1 — bug\n", self._state())
+        result = self._body("## Must fix\n\n- **[M1]** **`a.py:1`** — bug\n", self._state())
         assert "## Agent Failures" in result
-        assert result.index("## Must fix") < result.index("## Agent Failures")
+        assert result.index("## Agent Failures") < result.index("## Must fix")
 
     def test_a_rerun_that_failed_nothing_drops_the_section(self):
-        from review.state import set_failures_section
-        review = "## Agent Failures\n\nold table\n\n## Summary\n\nnote\n"
-        assert set_failures_section(review, self._clean_state()).startswith("## Summary")
+        result = self._body(
+            "## Agent Failures\n\nold table\n\n## Summary\n\nnote\n", self._clean_state(),
+        )
+        assert "## Agent Failures" not in result
+        assert "## Summary" in result
 
 
 class TestInjectFailuresAndStatus:
@@ -317,24 +322,28 @@ class TestInjectFailuresAndStatus:
         }
         (tmp_path / "pipeline.json").write_text(json.dumps(data))
 
+    def _seed(self, tmp_path, status=None):
+        from pr.domains import ReviewStatus
+        from review.ingest import ingest_review
+        from review.store import write_review
+        from review.types import ReviewMeta
+        review_file = tmp_path / "review.md"
+        write_review(
+            review_file,
+            ingest_review("## Summary\n\nAll good.\n", strict=False),
+            ReviewMeta(status=status if status is not None else ReviewStatus.COMPLETED),
+        )
+        return review_file
+
     def test_replaces_existing_status_line(self, tmp_path):
         """I1: status already present as 'completed' is updated to 'partial' on synthesis failure."""
         from agent.diagnosis import Diagnosis, DiagnosisKind
+        from pr.domains import ReviewStatus
         from review.state import PipelineState
         from review.state import _inject_failures_and_status
 
-        # Write a review file that already has a 'completed' status line
-        review_file = tmp_path / "review.md"
-        review_file.write_text(
-            "<!-- status: completed -->\n"
-            "<!-- generator: review v1 -->\n"
-            "\n"
-            "## Summary\n\nAll good.\n"
-        )
-
-        # Pipeline state says synthesis failed — status should be 'partial'
+        review_file = self._seed(tmp_path, ReviewStatus.COMPLETED)
         self._make_pipeline_json(tmp_path, failure_reason="budget exceeded")
-
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1], groups_failed={},
@@ -348,20 +357,20 @@ class TestInjectFailuresAndStatus:
         assert "<!-- status: completed -->" not in content
 
     def test_inserts_status_when_absent(self, tmp_path):
-        """Status line is inserted before the generator line when not already present."""
-        from agent.diagnosis import Diagnosis, DiagnosisKind
+        """Status line is inserted when the stored sidecar carried none."""
         from review.state import PipelineState
         from review.state import _inject_failures_and_status
+        from review.types import ReviewMeta
+        from review.ingest import ingest_review
+        from review.store import write_review
 
         review_file = tmp_path / "review.md"
-        review_file.write_text(
-            "<!-- generator: review v1 -->\n"
-            "\n"
-            "## Summary\n\nAll good.\n"
+        write_review(
+            review_file,
+            ingest_review("## Summary\n\nAll good.\n", strict=False),
+            ReviewMeta(),
         )
-
         self._make_pipeline_json(tmp_path, failure_reason="")
-
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
@@ -375,19 +384,12 @@ class TestInjectFailuresAndStatus:
     def test_replaces_status_not_duplicated(self, tmp_path):
         """Replacing an existing status line does not add a second status line."""
         from agent.diagnosis import Diagnosis, DiagnosisKind
+        from pr.domains import ReviewStatus
         from review.state import PipelineState
         from review.state import _inject_failures_and_status
 
-        review_file = tmp_path / "review.md"
-        review_file.write_text(
-            "<!-- status: completed -->\n"
-            "<!-- generator: review v1 -->\n"
-            "\n"
-            "## Summary\n\nAll good.\n"
-        )
-
+        review_file = self._seed(tmp_path, ReviewStatus.COMPLETED)
         self._make_pipeline_json(tmp_path, failure_reason="mechanical fallback")
-
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1], groups_failed={},

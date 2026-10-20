@@ -16,6 +16,7 @@ import pr.state
 from pr.domains import ReviewStatus, ReviewVerdict
 from pr.review_sync import sync_review_domain
 from review.summary import ReviewSummaryReport, build_review_summary, json_summary
+from review_record_support import store_review
 
 
 def test_sync_review_domain_is_the_writer(tmp_path):
@@ -105,8 +106,7 @@ def test_review_summary_report_to_json_matches_the_legacy_dict(tmp_path):
     REVIEW_SUMMARY consumers and the golden json_summary tests keep passing.
     """
     content = "## Nit\n- **[N1]** path:1 — style\n"
-    review = tmp_path / "review.md"
-    review.write_text(content)
+    review = store_review(tmp_path / "review.md", content)
 
     report = build_review_summary("org/repo", "42", str(review))
     expected = {
@@ -117,7 +117,7 @@ def test_review_summary_report_to_json_matches_the_legacy_dict(tmp_path):
         "base_ref": None,
         "review_type": None,
         "review_file": str(review),
-        "review_content": content,
+        "review_content": review.read_text(),
         "findings": {
             "must_fix": 0, "should_fix": 0, "nit": 1, "idiom": 0, "total": 1,
         },
@@ -138,3 +138,28 @@ def test_review_summary_report_to_json_matches_the_legacy_dict(tmp_path):
     assert json_summary("org/repo", "42", str(review)) == (
         "REVIEW_SUMMARY:" + json.dumps(expected)
     )
+
+
+def test_a_stale_dir_summary_does_not_sync_as_current(tmp_path):
+    """A review.md + meta.json without review.json is not a current review.
+
+    `pr review --repair` used to sync meta.json's head_sha into state.json and
+    `pr status` then showed a clean review of that commit.
+    """
+    review = tmp_path / "review.md"
+    review.write_text("## Nit\n- **[N1]** path:1 — style\n")
+    (tmp_path / "meta.json").write_text(json.dumps({"head_sha": "abc123def456"}))
+
+    report = build_review_summary("org/repo", "42", str(review))
+    assert report.head_sha is None
+    assert report.findings["total"] == 0
+
+    ctx = make_ctx(
+        repo="org/repo", branch="feat/x", pr_number=42,
+        worktree_root=tmp_path / "wt", head_sha="abc123def456",
+        target_dir=tmp_path / "pr" / "feat",
+    )
+    written = sync_review_domain(ctx, report)
+    assert written is not None
+    assert written.head_sha == ""
+    assert not written.describes(ctx.head_sha)

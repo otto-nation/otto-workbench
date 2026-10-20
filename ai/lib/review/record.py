@@ -290,8 +290,7 @@ def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewReco
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError):
-        core.log.warn(f"{path} could not be read — treating the review as stale")
-        return None
+        raw = None
     if not isinstance(raw, dict):
         core.log.warn(f"{path} could not be read — treating the review as stale")
         return None

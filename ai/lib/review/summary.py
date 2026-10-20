@@ -23,10 +23,7 @@ from pathlib import Path
 from agent.usage import format_tokens, parse_session_log
 import core.log
 from pr.domains import ReviewVerdict
-from review.paths import (
-    aggregate_session_usage,
-    read_review_meta,
-)
+from review.paths import aggregate_session_usage
 from review.document import ReviewDocument
 from review.state import (
     build_failure_detail, build_recoverable, read_pipeline_status,
@@ -125,7 +122,10 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
     total = sum(by_key.values())
 
     review_dir = Path(review_file).parent if review_file else None
-    meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
+    # Meta rides with the record. A directory without review.json is stale even
+    # when meta.json still names a head_sha; reading it here would let
+    # `pr review --repair` stamp that SHA into state.json as a current review.
+    meta = doc.meta if doc is not None and doc.meta is not None else ReviewMeta()
 
     resolved = resolve_review_verdict(doc, mode=meta.mode)
     verdict = resolved.value if resolved else ""

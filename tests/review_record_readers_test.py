@@ -1,20 +1,26 @@
 """Every reader answers from review.json and meta.json; a directory without the record is stale."""
 
+import argparse
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import batch.outcomes
 import core.log
+import review.post_file
 from review.document import ReviewDocument
 from review.paths import FILENAME_RECORD
 from review.record import load_record
 from review.recover import read_review_sha
 from review.sections import ReviewSections
+from review.summary import build_review_summary
+from review.types import ReviewMeta
 
 from review_record_support import fixture_meta, fixture_text, store_review
 
@@ -81,3 +87,79 @@ def test_retro_skips_a_directory_without_review_json(tmp_path):
     scan = scan_local_reviews(tmp_path / "reviews", [], {})
     assert scan.consumed == []
     assert scan.repos == []
+
+
+_STORE_TEXT = "## Should fix\n- **[S1]** path:1 — from json\n"
+_MD_LIE = "## Must fix\n- **[M9]** path:9 — from md\n"
+
+
+def test_summary_of_a_stale_dir_ignores_review_md(tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text(_MD_LIE)
+    report = build_review_summary("org/repo", "42", str(review))
+    assert report.head_sha is None
+    assert report.findings["must_fix"] == 0
+    assert report.findings["total"] == 0
+
+
+def test_summary_answers_from_review_json(tmp_path):
+    path = store_review(tmp_path / "review.md", _STORE_TEXT)
+    path.write_text(_MD_LIE)
+    report = build_review_summary("org/repo", "42", str(path))
+    assert report.findings["must_fix"] == 0
+    assert report.findings["should_fix"] == 1
+    assert report.findings["total"] == 1
+
+
+def test_open_findings_of_a_stale_dir_is_empty(tmp_path, monkeypatch):
+    path = tmp_path / "review.md"
+    path.write_text(_MD_LIE)
+    monkeypatch.setattr(
+        batch.outcomes.review.paths, "self_review_file_path", lambda repo, branch: path,
+    )
+    item = SimpleNamespace(repo="o/r", branch="b")
+    assert batch.outcomes.open_findings(item) == []
+
+
+def test_open_findings_answers_from_review_json(tmp_path, monkeypatch):
+    path = store_review(tmp_path / "review.md", _STORE_TEXT)
+    path.write_text(_MD_LIE)
+    monkeypatch.setattr(
+        batch.outcomes.review.paths, "self_review_file_path", lambda repo, branch: path,
+    )
+    item = SimpleNamespace(repo="o/r", branch="b")
+    found = batch.outcomes.open_findings(item)
+    assert found == [
+        {"severity": "should-fix", "title": "path:1 — from json", "declined": False},
+    ]
+
+
+def _post_args():
+    return argparse.Namespace(
+        severity="M,S,N,I", dry_run=True, pr="1", chunk_size=30,
+    )
+
+
+def test_run_post_stale_dir_returns_1_and_logs_predates(tmp_path):
+    path = tmp_path / "review.md"
+    path.write_text(_MD_LIE)
+    logged = []
+    with patch.object(core.log, "error", side_effect=logged.append):
+        rc = review.post_file.run_post(
+            MagicMock(), _post_args(), "org/repo", ReviewMeta(), path,
+        )
+    assert rc == 1
+    assert any("predates review.json" in msg for msg in logged)
+
+
+def test_run_post_answers_from_review_json(tmp_path, capsys):
+    path = store_review(tmp_path / "review.md", _STORE_TEXT)
+    path.write_text(_MD_LIE)
+    with patch.object(review.post_file, "_get_diff", return_value=""):
+        rc = review.post_file.run_post(
+            MagicMock(), _post_args(), "org/repo", ReviewMeta(), path,
+        )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "from json" in out
+    assert "from md" not in out

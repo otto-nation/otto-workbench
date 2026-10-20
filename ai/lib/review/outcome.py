@@ -21,6 +21,7 @@ from pathlib import Path
 
 from pr.domains import ReviewStatus
 from review.document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
+from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
 from review.record import ReviewRecord
@@ -77,8 +78,15 @@ def _prior_date(job: ReviewJob) -> str:
 
 def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int = 0,
                  status: ReviewStatus | None = None) -> ReviewMeta:
-    """This run's sidecar, header facts included — the one thing review.md's header renders from."""
-    meta = _job_meta(job)
+    """This run's sidecar, header facts included — the one thing review.md's header renders from.
+
+    Built from the job, except `static_declined`: it accumulates across rounds
+    (see `ReviewMeta.static_declined`), so it is carried from the sidecar
+    already on disk. Rebuilding it from the job alone erased every earlier
+    decline before `_inject_static_analysis_section` could read it.
+    """
+    carried = read_review_meta(Path(job.artifact_dir)).static_declined
+    meta = replace(_job_meta(job), static_declined=dict(carried))
     if meta.review_type != ReviewType.INCREMENTAL:
         return replace(meta, date=date.today().isoformat(), status=status)
     return replace(

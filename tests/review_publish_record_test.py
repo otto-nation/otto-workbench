@@ -135,3 +135,20 @@ def test_no_synthesis_paths_reconcile_and_verify(tmp_path, skip_synthesis, cost_
     _run_synthesis_or_fallback(job, state, "", 1, merged, [], 0, cost_so_far, 20.0)
     assert job.verification is not None and job.verification["dropped"] == ["S1"]
     assert "verification-drops" in Path(job.review_file).read_text()
+
+
+def test_a_new_round_keeps_the_static_declines_an_earlier_round_recorded(tmp_path):
+    from review.paths import read_review_meta, write_review_meta
+    from review.types import ReviewMeta
+    job = _job(tmp_path)
+    review_dir = Path(job.review_file).parent
+    write_review_meta(review_dir, ReviewMeta(
+        head_sha="0" * 40, static_declined={"a1b2c3d4": "generated file"},
+        fix_commit_sha="f" * 40,
+    ))
+    outcome._publish(job, _merged())
+    meta = read_review_meta(review_dir)
+    assert meta.static_declined == {"a1b2c3d4": "generated file"}
+    assert meta.head_sha == HEAD
+    # The previous round's fix commit belongs to that round, not this one.
+    assert meta.fix_commit_sha == ""

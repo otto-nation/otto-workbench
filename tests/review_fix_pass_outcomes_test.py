@@ -350,11 +350,11 @@ class TestApplyOutcomes:
 
     # passes-at-base: base appends nothing after the quotation, so it stays mid-line
     def test_prose_quoting_a_skip_is_not_turned_into_one(self):
-        """Asserted against the skip pattern, which `is_skipped` cannot answer.
+        """Asserted against the skip pattern, not the disposition alone.
 
-        `is_skipped` short-circuits on a checked finding, so it reports False
-        for any tick however the body reads — including one this append just
-        turned into a skip annotation.
+        A FIXED finding is not SKIPPED even when its body quotes a skip
+        annotation, so the quotation surviving into the document is what
+        this has to hold.
         """
         text = (
             "## Must fix\n"
@@ -444,9 +444,8 @@ class TestApplyOutcomes:
     def test_an_unverified_tick_is_still_a_fix_to_the_parser(self):
         """The caveat is for the reader; it must not read back as a skip or decline.
 
-        Asserted on the wording rather than only on `is_skipped`, which
-        short-circuits on a checked finding and so answers False for any tick
-        however the annotation reads.
+        Asserted on the wording rather than only on disposition, which is
+        FIXED for any tick however the annotation reads.
         """
         out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
@@ -502,11 +501,11 @@ class TestApplyOutcomes:
 
     # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
     def test_a_detail_quoting_a_skip_does_not_become_one(self):
-        """Asserted against the skip pattern itself, not `is_skipped`.
+        """Asserted against the skip pattern itself, not the disposition.
 
-        `is_skipped` short-circuits on a checked finding, so it answers False
-        for any tick however the annotation reads — it cannot see whether the
-        quotation survived into the document.
+        A FIXED finding is not SKIPPED even when verify_detail quotes a skip,
+        so only the pattern can see whether the quotation survived into the
+        document.
         """
         out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,

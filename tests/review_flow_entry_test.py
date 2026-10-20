@@ -29,10 +29,10 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from conftest import make_ctx, written_review  # noqa: E402
+from conftest import make_ctx  # noqa: E402
 from pr.domains import ReviewStatus  # noqa: E402
 from review.types import ReviewMeta  # noqa: E402
-from review_record_support import store_review  # noqa: E402
+from review_record_support import store_review, written_review  # noqa: E402
 
 import review.completion  # noqa: E402
 import review.invoke  # noqa: E402

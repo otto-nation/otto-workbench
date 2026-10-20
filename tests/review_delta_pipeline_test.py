@@ -340,10 +340,9 @@ class TestTheEmptyDeltaFastPath:
     def test_the_review_reaches_one_verdict(self, tmp_path, run_phases):
         """The prior review's own verdict is not carried in beside the new one.
 
-        `section_span` and `ReviewDocument.verdict` both read the *first*
-        matching heading, so a body holding the prior document whole reports
-        the prior run's call — and states a fresh one further down that nothing
-        reads.
+        A body that held the prior document whole used to report the prior
+        run's call from the first `## Verdict` and state a fresh one further
+        down that nothing read. The pipeline now writes one of each.
         """
         job = self._merge_only(tmp_path)
 

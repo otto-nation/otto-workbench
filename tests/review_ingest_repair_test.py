@@ -91,7 +91,7 @@ def test_a_group_whose_repair_fails_is_a_group_failure(tmp_path, monkeypatch):
     """Drive `_review_group` the way `review_pipeline_retry_test` stubs invoke."""
     import json
 
-    import review.phases as phases
+    import review.phases
     from gh.types import PRContext, PRMetadata
     from review.types import Group, ReviewJob
 
@@ -102,8 +102,8 @@ def test_a_group_whose_repair_fails_is_a_group_failure(tmp_path, monkeypatch):
         }) + "\n")
         return 0
 
-    monkeypatch.setattr(phases, "run_agent", fake_invoke)
-    monkeypatch.setattr(phases, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", fake_invoke)
+    monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
     job = ReviewJob(
         repo="org/repo", pr_number="1",
         pr=PRMetadata(
@@ -114,7 +114,7 @@ def test_a_group_whose_repair_fails_is_a_group_failure(tmp_path, monkeypatch):
         review_file=str(tmp_path / "review.md"),
         session_log=str(tmp_path / "session.jsonl"),
     )
-    _, _, failed = phases._review_group(
+    _, _, failed = review.phases._review_group(
         1, Group(name="g1", files=["a.py"], lines=10),
         job, 1, "holistic",
     )
@@ -126,7 +126,7 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
     """First output is rejected; the repair turn writes valid output."""
     import json
 
-    import review.phases as phases
+    import review.phases
     from gh.types import PRContext, PRMetadata
     from review.types import Group, ReviewJob
 
@@ -142,8 +142,8 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
         )
         return 0
 
-    monkeypatch.setattr(phases, "run_agent", fake_invoke)
-    monkeypatch.setattr(phases, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", fake_invoke)
+    monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
     job = ReviewJob(
         repo="org/repo", pr_number="1",
         pr=PRMetadata(
@@ -154,7 +154,7 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
         review_file=str(tmp_path / "review.md"),
         session_log=str(tmp_path / "session.jsonl"),
     )
-    _, group_output, failed = phases._review_group(
+    _, group_output, failed = review.phases._review_group(
         1, Group(name="g1", files=["a.py"], lines=10),
         job, 1, "holistic",
     )
@@ -168,7 +168,7 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
 def test_a_group_whose_repair_hits_quota_is_not_malformed(tmp_path, monkeypatch):
     import json
 
-    import review.phases as phases
+    import review.phases
     from gh.types import PRContext, PRMetadata
     from review.types import Group, ReviewJob
 
@@ -185,8 +185,8 @@ def test_a_group_whose_repair_hits_quota_is_not_malformed(tmp_path, monkeypatch)
         }) + "\n")
         return 0
 
-    monkeypatch.setattr(phases, "run_agent", fake_invoke)
-    monkeypatch.setattr(phases, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", fake_invoke)
+    monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
     job = ReviewJob(
         repo="org/repo", pr_number="1",
         pr=PRMetadata(
@@ -197,7 +197,7 @@ def test_a_group_whose_repair_hits_quota_is_not_malformed(tmp_path, monkeypatch)
         review_file=str(tmp_path / "review.md"),
         session_log=str(tmp_path / "session.jsonl"),
     )
-    _, _, failed = phases._review_group(
+    _, _, failed = review.phases._review_group(
         1, Group(name="g1", files=["a.py"], lines=10),
         job, 1, "holistic",
     )

@@ -19,7 +19,7 @@ import review.types  # noqa: E402
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import seed_review  # noqa: E402
+from review_record_support import seed_review  # noqa: E402
 
 _REVIEW_MD = """## Must fix
 - **[M1]** a.py:1 — bug

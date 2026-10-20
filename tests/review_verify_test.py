@@ -3,7 +3,7 @@ against the tree it reviewed.
 
 It is tested from both ends: the pieces — pulling the quote off a finding,
 normalizing each side of the comparison, reading the finding lines the check
-walks — and the whole, which is what `_verify_findings` reports.
+walks — and the whole, which is what `_verify_record` reports.
 
 The comment-stripping cases carry the most weight, because the regression they
 guard is one only the whole comparison shows: stripping the quote and not the
@@ -27,9 +27,8 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import git_in, init_repo  # noqa: E402
 import review.verify  # noqa: E402
-from review.grammar import VERIFY_FINDING_RE, strip_line_suffix  # noqa: E402
 from review.ingest import ingest_review  # noqa: E402
-from review.render import finding_line, render_body  # noqa: E402
+from review.render import render_body  # noqa: E402
 
 
 def _verifies(path: str, evidence: str | None, wt_path: str) -> bool:
@@ -47,14 +46,9 @@ def _headed(text: str) -> str:
 def _parse_findings_for_verification(text: str) -> list[dict]:
     out = []
     for f in ingest_review(_headed(text), strict=False).visible:
-        m = VERIFY_FINDING_RE.match(finding_line(f, sids=True).split("\n", 1)[0])
-        if not m:
-            continue
-        written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
-        out.append({
-            "id": f.id, "path": f.path or written, "severity": f.severity,
-            "body": review.verify._verification_text(f, m.group(5)),
-        })
+        finding = review.verify._verification_finding(f)
+        if finding is not None:
+            out.append(finding)
     return out
 
 
@@ -321,6 +315,14 @@ class TestParseVerificationStripsLine:
         findings = _parse_findings_for_verification(text)
         assert findings[0]["path"] == "handler.go"
 
+    def test_an_escaped_underscore_in_the_written_path_is_unescaped(self):
+        from review.record import RecordFinding
+        finding = review.verify._verification_finding(RecordFinding(
+            id="M1", severity="M",
+            lead="**`pkg/foo\\_bar.py`** — ", body="gap",
+        ))
+        assert finding["path"] == "pkg/foo_bar.py"
+
 
 class TestParseVerificationReadsThePostersLocation:
     """Verification checks the file the poster will place the finding on.
@@ -373,7 +375,7 @@ class TestParseVerificationReadsThePostersLocation:
 
 
 class TestVerifyFindsTheFileThePosterWould:
-    """`_verify_findings` resolves a location with the poster's rule.
+    """`_verify_record` resolves a location with the poster's rule.
 
     End to end through the seam the run uses, against a real worktree, so the
     finding that was dropped in production is the subject.

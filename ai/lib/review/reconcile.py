@@ -84,19 +84,19 @@ def _stable_ids(text: str) -> set[str]:
 
 # ── Reading the prior review ─────────────────────────────────────────────────
 
-def _record_stable_ids(review: ReviewRecord) -> set[str]:
+def _record_stable_ids(record: ReviewRecord) -> set[str]:
     """Every prior-finding identity the review carries: markers, finding identities,
     and any finding-shaped line in its prose — the same set `_stable_ids` read off text."""
-    ids = {f.sid for f in review.findings if f.sid} | {f.stable_id for f in review.findings if f.stable_id}
-    texts = [review.ledger, review.summary, review.verdict, *(e.body for e in review.extra),
-             *(f.body for f in review.findings)]
+    ids = {f.sid for f in record.findings if f.sid} | {f.stable_id for f in record.findings if f.stable_id}
+    texts = [record.ledger, record.summary, record.verdict, *(e.body for e in record.extra),
+             *(f.body for f in record.findings)]
     for text in texts:
         ids |= _stable_ids(text)
     return ids
 
 
-def _record_ledger(review: ReviewRecord) -> list[LedgerEntry]:
-    entries = (parse_ledger_line(raw) for raw in review.ledger.split("\n"))
+def _record_ledger(record: ReviewRecord) -> list[LedgerEntry]:
+    entries = (parse_ledger_line(raw) for raw in record.ledger.split("\n"))
     return [entry for entry in entries if entry]
 
 

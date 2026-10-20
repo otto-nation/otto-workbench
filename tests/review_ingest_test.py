@@ -143,6 +143,18 @@ class TestWhatIsRead:
         assert not f.body.startswith("—")
         assert (f.disposition, f.reason) == (Disposition.SKIPPED, "r")
 
+    def test_a_bare_skip_with_no_reason_is_skipped(self):
+        (f,) = ingest_review(
+            "## Should fix\n- [ ] **[S1]** `a.py:1` — body *(skipped)*\n"
+        ).findings
+        assert (f.disposition, f.reason) == (Disposition.SKIPPED, "")
+
+    def test_a_head_position_skip_on_the_declaration_takes_the_reason(self):
+        (f,) = ingest_review(
+            "## Should fix\n- [ ] **[S1]** `a.py:1` — *(skipped — r)* — body\n"
+        ).findings
+        assert (f.disposition, f.reason) == (Disposition.SKIPPED, "r")
+
     def test_a_tail_annotation_with_an_em_dash_is_not_the_body_separator(self):
         (f,) = ingest_review(
             "## Should fix\n- [ ] **[S1]** `a.py:1` text *(declined — x)*\n"

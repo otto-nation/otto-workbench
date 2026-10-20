@@ -127,12 +127,12 @@ posted after one, which is the run these two answers exist for.
 
 `*(skipped — reason)*` is the second annotation vocabulary, written by the fix
 pass rather than by a review, and `Disposition.SKIPPED` is its single owner. It is
-what `review.fix._apply_outcomes` writes back for a `needs a person` outcome,
-the way it writes `*(declined — reason)*` for a declined one and ticks the box
-for a fix. A skip still belongs to the work set — the next `--fix` retries it —
-but a line already carrying either annotation is left exactly as it is: that
-verdict was reached before this pass ran, and a second annotation on one line
-leaves the document saying two things about one finding.
+what `review.fix.apply_outcomes` records for a `needs a person` outcome,
+the way it records `Disposition.DECLINED` for a declined one and
+`Disposition.FIXED` for a fix. A skip still belongs to the work set — the next
+`--fix` retries it — but a finding that already carries either disposition is
+left as it is: that verdict was reached before this pass ran, and a second
+annotation on one finding leaves the document saying two things about it.
 
 The pass itself is `fix_engine`'s: `ReviewFixAdapter` supplies the open
 findings, the path-scoped commit and the re-render, and the batching, the

@@ -139,8 +139,8 @@ def _collect_bare_underscore_refs(tree: ast.Module) -> set[str]:
 def _collect_function_locals(func_node: ast.AST) -> set[str]:
     """Collect names defined locally within a function (params, assignments, imports).
 
-    Only walks the immediate function body — stops at nested function
-    boundaries so inner locals don't mask outer module-level references.
+    Only walks the immediate function body — stops at nested function and
+    lambda boundaries so inner locals don't mask outer module-level references.
 
     A function-local import binds a local name, which is how a module breaks an
     import cycle with a peer it cannot import at module level.
@@ -154,8 +154,10 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
         local_names.add(func_node.args.kwarg.arg)
 
     def _walk_shallow(node: ast.AST):
-        """Walk AST children but don't descend into nested functions."""
+        """Walk AST children but don't descend into nested functions or lambdas."""
         for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.Lambda):
+                continue
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child is not func_node:
                 local_names.add(child.name)
                 continue
@@ -174,8 +176,10 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
 
 
 def _walk_excluding_nested_functions(node: ast.AST):
-    """Yield all descendant nodes, stopping at nested function boundaries."""
+    """Yield all descendant nodes, stopping at nested function and lambda boundaries."""
     for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.Lambda):
+            continue
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child is not node:
             continue
         yield child
@@ -203,8 +207,8 @@ def _collect_bare_refs(tree: ast.Module) -> set[str]:
 
     Walks both top-level functions and class method bodies. Excludes
     names locally defined (params, assignments, loop vars) within their
-    enclosing function. Stops at nested function boundaries so inner
-    function references don't leak into the outer scope.
+    enclosing function. Stops at nested function and lambda boundaries so
+    inner-scope references don't leak into the outer scope.
     """
     refs: set[str] = set()
 
@@ -643,6 +647,17 @@ def _find_missing_cross_module_imports(
         missing.append((ref, _PEER_DEFS[ref]))
     return missing
 
+
+
+def test_lambda_arguments_are_a_nested_scope():
+    """A lambda parameter is not a module-level name of the enclosing function.
+
+    Production uses `lambda record: ...` in review.fix / orchestrate / state.
+    `record` is also `agent.usage.record`; walking into the lambda treated the
+    parameter as a bare peer-module ref.
+    """
+    tree = ast.parse("def f():\n    return lambda record: record.id\n")
+    assert "record" not in _collect_bare_refs(tree)
 
 
 @pytest.mark.parametrize(

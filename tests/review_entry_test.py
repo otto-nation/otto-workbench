@@ -26,7 +26,8 @@ import review.publish
 import review.run
 import review.worktree
 
-from conftest import make_ctx, run_checked, written_review
+from conftest import make_ctx, run_checked
+from review_record_support import written_review
 
 import core.prompt
 import gh.client

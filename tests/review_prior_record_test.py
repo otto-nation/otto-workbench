@@ -58,12 +58,12 @@ def test_a_stale_prior_means_no_prior_section():
 
 
 def test_the_delta_is_measured_from_the_prior_sidecar(monkeypatch):
-    import review.collect as collect
+    import review.collect
     from types import SimpleNamespace
-    job = SimpleNamespace(prior=_prior(), prior_review="ignored",
+    job = SimpleNamespace(prior=_prior(),
                           pr=SimpleNamespace(head_sha="ffff"), wt_path="/nowhere")
-    monkeypatch.setattr(collect.git.client, "out", lambda *a, **k: "commit")
-    assert collect._prior_sha_for_delta(job) == "2cb613ec084559a9590f074eabde546c44b284a3"
+    monkeypatch.setattr(review.collect.git.client, "out", lambda *a, **k: "commit")
+    assert review.collect._prior_sha_for_delta(job) == "2cb613ec084559a9590f074eabde546c44b284a3"
 
 
 _BARE = "## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n"
@@ -99,7 +99,7 @@ def test_carry_forward_keeps_an_extensionless_dockerfile_on_the_record():
 def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     monkeypatch, tmp_path,
 ):
-    import review.pipeline as pipeline
+    import review.pipeline
     from gh.types import PRContext, PRMetadata
     from review.types import ReviewJob
 
@@ -109,18 +109,18 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
         captured["merged"] = merged
         return PhaseResult()
 
-    monkeypatch.setattr(pipeline, "_run_synthesis_or_fallback", _capture)
-    monkeypatch.setattr(pipeline, "_run_disprove_gate", lambda *a, **k: PhaseResult())
-    monkeypatch.setattr(pipeline, "_group_merge_cap", lambda job: 10**9)
+    monkeypatch.setattr(review.pipeline, "_run_synthesis_or_fallback", _capture)
+    monkeypatch.setattr(review.pipeline, "_run_disprove_gate", lambda *a, **k: PhaseResult())
+    monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda job: 10**9)
     monkeypatch.setattr(
-        pipeline, "group_files",
+        review.pipeline, "group_files",
         lambda pr: [
             Group(name="auth", files=["src/auth.go"], lines=250),
             Group(name="docker", files=["Dockerfile"], lines=250),
         ],
     )
     monkeypatch.setattr(
-        pipeline, "merge_smallest_groups", lambda groups, *a, **k: groups,
+        review.pipeline, "merge_smallest_groups", lambda groups, *a, **k: groups,
     )
 
     prior = StoredReview(
@@ -153,7 +153,7 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
             delta_files=["src/auth.go"], prior_head_sha="0ldc0de",
         ),
     )
-    pipeline.run_multi_phase(job, disprove=False)
+    review.pipeline.run_multi_phase(job, disprove=False)
     merged = captured["merged"]
     assert [f.id for f in merged.record.findings] == ["M2"]
     assert all(f.sid for f in merged.record.findings)

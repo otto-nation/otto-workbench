@@ -10,8 +10,8 @@ import pytest
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import make_ctx, seed_review
-from review_record_support import store_review
+from conftest import make_ctx
+from review_record_support import seed_review, store_review
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"

@@ -9,7 +9,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import review.finding_issue as finding_issue
+import review.finding_issue
 from gh.types import PRContext, PRMetadata
 from pr.fix import FixOutcome, ItemOutcome
 from review.fix import apply_outcomes, apply_static_outcomes
@@ -76,9 +76,9 @@ def test_a_deferred_finding_can_be_fixed_by_a_later_pass():
 
 def test_filable_findings_are_the_ones_left_open_and_not_yet_filed(tmp_path):
     write_review(tmp_path / "review.md", _answered(), fixture_meta("fix_annotated"))
-    assert [f.id for f in finding_issue.filable(tmp_path)] == ["N1", "N2"]
-    finding_issue.clear_filed(tmp_path, {"N1"}, "ENG-9")
-    assert [f.id for f in finding_issue.filable(tmp_path)] == ["N2"]
+    assert [f.id for f in review.finding_issue.filable(tmp_path)] == ["N1", "N2"]
+    review.finding_issue.clear_filed(tmp_path, {"N1"}, "ENG-9")
+    assert [f.id for f in review.finding_issue.filable(tmp_path)] == ["N2"]
     assert read_review(tmp_path / "review.md").record.finding("N1").filed == "ENG-9"
 
 
@@ -86,7 +86,7 @@ def test_the_issue_body_names_why_each_is_open(tmp_path):
     from types import SimpleNamespace
     write_review(tmp_path / "review.md", _answered(), fixture_meta("fix_annotated"))
     job = SimpleNamespace(pr_number="", host="", repo="acme/widget", pr=SimpleNamespace(head="feat/retry"))
-    body = finding_issue.build_body(finding_issue.filable(tmp_path), job)
+    body = review.finding_issue.build_body(review.finding_issue.filable(tmp_path), job)
     assert "needs a product call" in body and "not reached by the fix pass" in body
     assert "`src/util.py:1`" in body
 
@@ -99,7 +99,7 @@ def test_a_skipped_finding_stays_filable_across_passes(tmp_path):
     )
     later = apply_outcomes(record, [])
     write_review(tmp_path / "review.md", later, fixture_meta("fix_annotated"))
-    assert [f.id for f in finding_issue.filable(tmp_path)] == ["N1"]
+    assert [f.id for f in review.finding_issue.filable(tmp_path)] == ["N1"]
     assert later.finding("N1").disposition is Disposition.SKIPPED
 
 
@@ -110,7 +110,7 @@ def test_a_deferral_not_repeated_is_no_longer_filable(tmp_path):
     )
     later = apply_outcomes(record, [])
     write_review(tmp_path / "review.md", later, fixture_meta("fix_annotated"))
-    assert [f.id for f in finding_issue.filable(tmp_path)] == []
+    assert [f.id for f in review.finding_issue.filable(tmp_path)] == []
     assert later.finding("N1").disposition is Disposition.OPEN
 
 

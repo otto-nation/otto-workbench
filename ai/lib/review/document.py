@@ -45,8 +45,9 @@ class MetaKey(StrEnum):
     """A key in a review document's metadata header.
 
     The values are the strings on disk. They stay as they are so a review
-    written by an earlier version still parses, and so the templates that ask
-    the review agent for `<!-- date: ... -->` keep naming a key this reads.
+    written by an earlier version still renders the same header, and so the
+    templates that ask the review agent for `<!-- date: ... -->` keep naming
+    a key this module owns.
     """
 
     DATE = "date"

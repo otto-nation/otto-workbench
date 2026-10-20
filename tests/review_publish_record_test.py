@@ -11,8 +11,10 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import core.serde
-import review.outcome as outcome
+import review.orchestrate
+import review.outcome
 import review.state
+import review.steps
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Phase
 from gh.types import PRContext, PRMetadata
@@ -64,7 +66,7 @@ def _same_as_fixture(job, case):
 def test_the_synthesis_fallback_publishes_a_record(tmp_path):
     """The failures half of this path is Task 10's; here, the record and its summary."""
     job = _job(tmp_path)
-    outcome._write_mechanical_fallback(job, 2, _merged())
+    review.outcome._write_mechanical_fallback(job, 2, _merged())
     stored = read_review(Path(job.review_file))
     assert stored is not None and BANNER in Path(job.review_file).read_text()
     assert stored.record.summary.startswith("4 findings across 3 files in 2 groups.")
@@ -74,7 +76,7 @@ def test_the_synthesis_fallback_publishes_a_record(tmp_path):
 
 def test_the_clean_review_is_published_as_a_record(tmp_path):
     job = _job(tmp_path)
-    outcome._write_clean_review(job, 2, ingest_review("## File Triage\n- `src/app.py` — reviewed; nothing to report.\n"))
+    review.outcome._write_clean_review(job, 2, ingest_review("## File Triage\n- `src/app.py` — reviewed; nothing to report.\n"))
     assert (Path(job.review_file).parent / FILENAME_RECORD).is_file()
     assert _same_as_fixture(job, "clean")
 
@@ -82,7 +84,7 @@ def test_the_clean_review_is_published_as_a_record(tmp_path):
 def test_an_agent_review_is_post_processed_and_stamped(tmp_path):
     job = _job(tmp_path)
     record = ingest_review(fixture_text("evidence_dropped", "raw.md"))
-    outcome._post_process_review(job, record)
+    review.outcome._post_process_review(job, record)
     assert _same_as_fixture(job, "evidence_dropped")
     assert job.verification["dropped"] == ["M1"]
 
@@ -95,7 +97,7 @@ def test_the_unchanged_review_carries_the_prior_record(tmp_path):
                                   instructions_md="", architecture_md="", delta_files=[],
                                   prior_head_sha=prior.meta.head_sha,
                                   delta_attribution=DeltaAttribution.ATTRIBUTED)
-    outcome.write_unchanged_review(job)
+    review.outcome.write_unchanged_review(job)
     stored = read_review(Path(job.review_file))
     assert stored.meta.prior_date == "2026-10-15"
     assert [f.id for f in stored.record.findings] == ["S1", "S2", "N1", "N2", "I1"]
@@ -104,13 +106,13 @@ def test_the_unchanged_review_carries_the_prior_record(tmp_path):
 def test_completeness_is_read_off_the_record(tmp_path):
     job = _job(tmp_path)
     Path(job.review_file).write_text("## Summary\nraw agent text\n")
-    assert outcome.agent_output_complete(job.review_file)
-    assert not outcome.is_complete_review(job.review_file)
+    assert review.outcome.agent_output_complete(job.review_file)
+    assert not review.outcome.is_complete_review(job.review_file)
 
 
 def test_the_sidecar_and_the_header_cannot_disagree(tmp_path):
     job = _job(tmp_path)
-    outcome._write_clean_review(job, 1, ingest_review("## File Triage\n"))
+    review.outcome._write_clean_review(job, 1, ingest_review("## File Triage\n"))
     stored = read_review(Path(job.review_file))
     assert stored.meta.head_sha == HEAD
     assert f"<!-- head_sha: {HEAD} -->" in Path(job.review_file).read_text()
@@ -157,7 +159,7 @@ def test_a_new_round_keeps_the_static_declines_an_earlier_round_recorded(tmp_pat
         head_sha="0" * 40, static_declined={"a1b2c3d4": "generated file"},
         fix_commit_sha="f" * 40,
     ))
-    outcome._publish(job, _merged())
+    review.outcome._publish(job, _merged())
     meta = read_review_meta(review_dir)
     assert meta.static_declined == {"a1b2c3d4": "generated file"}
     assert meta.head_sha == HEAD
@@ -173,7 +175,7 @@ def _assert_meta_status_matches_header(job):
 
 def test_failures_and_status_land_in_record_and_meta(tmp_path):
     job = _job(tmp_path)
-    outcome._write_clean_review(job, 2, _merged())
+    review.outcome._write_clean_review(job, 2, _merged())
     state = PipelineState(head_sha=HEAD, group_names=["app", "cli"],
                           groups_failed={2: Diagnosis(DiagnosisKind.OUTPUT_MISSING)})
     core.serde.write_json(Path(job.review_file).parent / "pipeline.json", core.serde.to_dict(state))
@@ -195,8 +197,7 @@ def test_a_disprove_after_failures_keeps_both(tmp_path, monkeypatch):
                           failed={Phase.DISPROVE: Diagnosis(DiagnosisKind.OUTPUT_MISSING)})
     review.state._inject_failures_and_status(job.review_file, state)
     from review.phases import PhaseResult
-    import review.steps as steps
-    monkeypatch.setattr(steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
+    monkeypatch.setattr(review.steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
     stored = read_review(Path(job.review_file))
     run = _phase_disprove(job, stored.record, "unused")
     assert isinstance(run, DisproveRun)
@@ -213,8 +214,7 @@ def test_the_disprove_gate_hides_a_falsified_finding(tmp_path, monkeypatch):
         fixture_meta("synthesis_pr"),
     )
     from review.phases import PhaseResult
-    import review.steps as steps
-    monkeypatch.setattr(steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
+    monkeypatch.setattr(review.steps, "run_phase", lambda *a, **k: PhaseResult(content="- [S1] FALSIFIED — no"))
     state = PipelineState(head_sha=HEAD, group_names=["a"], done={Phase.SYNTHESIS})
     _run_disprove_gate(job, state, disprove=True, cost_so_far=0.0, max_cost=20.0)
     assert read_review(Path(job.review_file)).record.finding("S1") is None
@@ -234,7 +234,7 @@ def test_an_unchanged_review_does_not_resurrect_a_falsified_finding(tmp_path):
         prior_head_sha=prior.meta.head_sha,
         delta_attribution=DeltaAttribution.ATTRIBUTED,
     )
-    outcome.write_unchanged_review(job)
+    review.outcome.write_unchanged_review(job)
     stored = read_review(Path(job.review_file))
     assert stored.record.finding("S1") is None
     assert next(f for f in stored.record.findings if f.id == "S1").disposition is Disposition.FALSIFIED
@@ -243,18 +243,17 @@ def test_an_unchanged_review_does_not_resurrect_a_falsified_finding(tmp_path):
 
 def test_the_synthesis_fallback_stamps_the_same_status_on_meta_and_header(tmp_path):
     job = _job(tmp_path)
-    outcome._write_mechanical_fallback(job, 2, _merged())
+    review.outcome._write_mechanical_fallback(job, 2, _merged())
     _assert_meta_status_matches_header(job)
 
 
 def test_static_analysis_is_a_record_field(tmp_path, monkeypatch):
-    import review.orchestrate as orch
     job = _job(tmp_path)
-    outcome._write_clean_review(job, 1, _merged())
-    monkeypatch.setattr(orch, "run_static_analysis", lambda *a, **k: [])
-    monkeypatch.setattr(orch, "format_static_analysis", lambda results, declined: "All checks passed.")
-    monkeypatch.setattr(orch, "added_lines", lambda *a, **k: None)
-    orch._inject_static_analysis_section(job)
+    review.outcome._write_clean_review(job, 1, _merged())
+    monkeypatch.setattr(review.orchestrate, "run_static_analysis", lambda *a, **k: [])
+    monkeypatch.setattr(review.orchestrate, "format_static_analysis", lambda results, declined: "All checks passed.")
+    monkeypatch.setattr(review.orchestrate, "added_lines", lambda *a, **k: None)
+    review.orchestrate._inject_static_analysis_section(job)
     assert read_review(Path(job.review_file)).record.static_analysis == "All checks passed."
     text = Path(job.review_file).read_text()
     assert text.index("## Static Analysis") < text.index("## Verdict")

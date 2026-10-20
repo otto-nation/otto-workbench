@@ -294,6 +294,18 @@ def _verification_text(f: RecordFinding, head: str) -> str:
     return "\n".join([head, *below] if head else below)
 
 
+def _verification_finding(f: RecordFinding) -> dict | None:
+    """The finding as evidence verification walks it, or None if it is not a finding line."""
+    m = VERIFY_FINDING_RE.match(finding_line(f, sids=True).split("\n", 1)[0])
+    if not m:
+        return None
+    written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
+    return {
+        "id": f.id, "severity": f.severity, "path": f.path or written,
+        "body": _verification_text(f, m.group(5)),
+    }
+
+
 def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str]) -> PostProcessed:
     dropped: list[str] = []
     details: list[dict] = []
@@ -301,12 +313,10 @@ def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str])
     for f in record.visible:
         if f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD):
             continue
-        m = VERIFY_FINDING_RE.match(finding_line(f, sids=True).split("\n", 1)[0])
-        if not m:
+        finding = _verification_finding(f)
+        if finding is None:
             continue
-        written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
-        finding = {"id": f.id, "severity": f.severity, "path": f.path or written}
-        evidence = _extract_evidence(_verification_text(f, m.group(5)))
+        evidence = _extract_evidence(finding["body"])
         detail = _verification_detail(finding, evidence, wt_path, tracked, changed)
         details.append(detail)
         if not detail["match_result"]:

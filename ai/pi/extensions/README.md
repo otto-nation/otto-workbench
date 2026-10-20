@@ -53,9 +53,11 @@ needs, and only the extension directories have to reach
 point that imports a shared module directly.
 
 `wait-guidance.ts` is the refusal alternative sleep-guard and background-guard
-share: `job_start` when `getActiveTools()` lists it, otherwise a foreground bash
-call bounded by the tool's timeout, so a session without that tool is not told
-to use one.
+share: `job_start` when `getActiveTools()` lists it *and* the session is not
+json/print, otherwise a foreground bash call bounded by the tool's timeout.
+A json/print process exits at the end of the turn, so naming `job_start` there
+— even when the tool is listed, as it is in a default subagent — points at work
+that cannot outlive the process.
 
 ## Overriding one
 

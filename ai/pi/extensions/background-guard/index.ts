@@ -7,8 +7,9 @@
  * owns it, so stopping it means hunting a pid. The observed failure is a rebase
  * launched with `nohup ... > ignore/rebase.json &`, followed by a sleep, a poll,
  * and a turn ending in "ping me and I'll check" — for a job that had already
- * finished. The reason names `job_start` only when `getActiveTools()` lists it;
- * otherwise the alternative is a foreground bash call. See ../_shared/wait-guidance.ts.
+ * finished. The reason names `job_start` only when `shouldAdviseJobStart` says
+ * so — the tool is listed and the session is not json/print. Otherwise the
+ * alternative is a foreground bash call. See ../_shared/wait-guidance.ts.
  *
  * Claude Code gets the same rule from ai/claude/bin/claude-bash-guard, where it
  * also prevents a permission prompt; that hook does not run under Pi. The two
@@ -28,12 +29,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   isDetachedBackground,
-  jobStartIsActive,
+  shouldAdviseJobStart,
   waitBlockReason,
 } from "./detect.ts";
 
 export default function (pi: ExtensionAPI) {
-  pi.on("tool_call", async (event) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return;
     if (!isDetachedBackground(event.input.command)) return;
 
@@ -43,7 +44,7 @@ export default function (pi: ExtensionAPI) {
       block: true,
       reason: waitBlockReason(
         "background",
-        jobStartIsActive(pi.getActiveTools()),
+        shouldAdviseJobStart(pi.getActiveTools(), ctx.mode),
       ),
     };
   });

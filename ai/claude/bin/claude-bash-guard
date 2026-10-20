@@ -218,8 +218,25 @@ stage_is_filter() {
 # and 5.7 ms does not buy a decoder.
 #
 # Fail open: a malformed payload must not block every Bash call.
-cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
+#
+# The same single call reads every other field a rule needs, so this stays the
+# only fork: its first line is `run_in_background<TAB>agent_id`, the rest is the
+# command verbatim. agent_id is non-empty only when the call comes from a
+# subagent — the main session sends null or nothing. It goes last because tab
+# is IFS whitespace: `read` strips an empty leading field, which would shift
+# run_in_background into agent_id.
+payload_fields=$(jq -r '"\(.tool_input.run_in_background == true)\t\(.agent_id // "" | tostring)",
+  (.tool_input.command // "")' 2>/dev/null) || exit 0
+IFS=$'\t' read -r run_in_background agent_id <<<"${payload_fields%%$'\n'*}"
+cmd=""
+[[ "$payload_fields" == *$'\n'* ]] && cmd=${payload_fields#*$'\n'}
 [[ -n "$cmd" ]] || exit 0
+
+# A subagent's end of turn returns to its parent, so a run_in_background Bash
+# call there is abandoned the same way a detached shell is.
+if [[ -n "$agent_id" && "$run_in_background" == true ]]; then
+  block 'A subagent cannot start background work — ending the turn ends the subagent and abandons the job. Run the command in the foreground bounded by the Bash tool'\''s own timeout and do not end the turn while the work is outstanding. See general.md § Waiting on Background Work.'
+fi
 
 # ── Normalize the command for scanning ───────────────────────────────────────
 # Every rule below reads one of these instead of $cmd directly.

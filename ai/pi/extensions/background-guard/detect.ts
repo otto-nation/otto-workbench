@@ -30,7 +30,11 @@
  */
 const BACKGROUND = /(^|[^&>|;])&([^&>]|$)/;
 
-export { jobStartIsActive, waitBlockReason } from "../_shared/wait-guidance.ts";
+export {
+  jobStartIsActive,
+  shouldAdviseJobStart,
+  waitBlockReason,
+} from "../_shared/wait-guidance.ts";
 
 /** `nohup` as the command being run, rather than the word appearing in an argument. */
 const NOHUP = /(^|[;&|]\s*)nohup\s/;

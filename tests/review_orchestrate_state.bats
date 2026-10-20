@@ -214,7 +214,7 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
   echo "slog" > "$TMPDIR/scout.jsonl"
   echo "holistic" > "$TMPDIR/holistic.json"
   echo "log" > "$TMPDIR/holistic.jsonl"
-  echo "group" > "$TMPDIR/group-1.md"
+  echo "group" > "$TMPDIR/group-1.json"
   echo "glog" > "$TMPDIR/group-1.jsonl"
   echo "glog2" > "$TMPDIR/group-2.jsonl"
   echo "synth" > "$TMPDIR/synthesis.jsonl"
@@ -227,7 +227,7 @@ import os, pathlib
 mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
 remaining = []
 for f in ['scout.json', 'scout.jsonl', 'holistic.json', 'holistic.jsonl',
-          'group-1.md', 'group-1.jsonl', 'group-2.jsonl', 'synthesis.jsonl',
+          'group-1.json', 'group-1.jsonl', 'group-2.jsonl', 'synthesis.jsonl',
           'disprove.json', 'disprove.jsonl', 'pipeline.json']:
     if os.path.exists('$TMPDIR/' + f):
         remaining.append(f)

@@ -1,5 +1,6 @@
 """review.prompt_prior: the unaccounted-prior section and the ledger instruction."""
 
+import json
 import re
 import string
 import sys
@@ -21,7 +22,11 @@ from core.phases import Phase
 
 from review.grammar import parse_ledger_line
 from review.prompt import build_common_sections
-from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
+from core.strict import load_strict
+from review.prompt_prior import (
+    _LEDGER_FIELDS_INSTRUCTION, _LEDGER_INSTRUCTION, _build_unaccounted_section,
+)
+from review.record import LedgerLine
 import review.registry
 
 from review_prompt_support import MAX_PROMPT_BYTES, _make_preflight, _make_job
@@ -167,3 +172,15 @@ class TestLedgerInstructionNamesEveryBreak:
             "the parser breaks a verdict on characters the instruction never "
             f"names: {sorted(accepted - set(DISPOSITION_TAIL_PROSE))}"
         )
+
+
+class TestLedgerFieldsInstruction:
+    """The JSON ledger the prompt asks for is the ledger the reader accepts."""
+
+    def test_the_example_entry_is_a_ledger_line(self):
+        example = re.search(r"Example entry: (\{.*\})", _LEDGER_FIELDS_INSTRUCTION).group(1)
+        assert load_strict(LedgerLine, json.loads(example)).disposition is PriorDisposition.FIXED
+
+    def test_every_disposition_is_offered_by_its_exact_value(self):
+        for d in PriorDisposition:
+            assert f'"{d.value}"' in _LEDGER_FIELDS_INSTRUCTION

@@ -103,7 +103,7 @@ def test_a_group_whose_repair_fails_is_a_group_failure(tmp_path, monkeypatch):
     from review.types import Group, ReviewJob
 
     def fake_invoke(inv, throttle=None):
-        Path(inv.output_path).write_text(BAD)
+        Path(inv.output_path).write_text(BAD_JSON)
         Path(inv.session_log).write_text(json.dumps({
             "type": "result", "subtype": "success", "num_turns": 3,
         }) + "\n")
@@ -145,7 +145,7 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
             "type": "result", "subtype": "success", "num_turns": 3,
         }) + "\n")
         Path(inv.output_path).write_text(
-            GOOD if "Your output was rejected" in inv.prompt else BAD
+            GOOD_JSON if "Your output was rejected" in inv.prompt else BAD_JSON
         )
         return 0
 
@@ -166,7 +166,8 @@ def test_a_group_whose_repair_succeeds_is_done(tmp_path, monkeypatch):
         job, 1, "holistic",
     )
     assert failed is None
-    assert "**[N2]**" in Path(group_output).read_text()
+    assert group_output.endswith("group-1.json")
+    assert json.loads(Path(group_output).read_text())["findings"][0]["id"] == "N1"
     assert any(
         p.startswith("PROMPT") and "Your output was rejected" in p for p in prompts
     )
@@ -184,9 +185,9 @@ def test_a_group_whose_repair_hits_quota_is_not_malformed(tmp_path, monkeypatch)
             Path(inv.session_log).write_text(json.dumps({
                 "type": "system", "subtype": "api_retry", "error_status": 429,
             }) + "\n")
-            Path(inv.output_path).write_text(BAD)
+            Path(inv.output_path).write_text(BAD_JSON)
             return 1
-        Path(inv.output_path).write_text(BAD)
+        Path(inv.output_path).write_text(BAD_JSON)
         Path(inv.session_log).write_text(json.dumps({
             "type": "result", "subtype": "success", "num_turns": 3,
         }) + "\n")
@@ -321,9 +322,9 @@ def test_a_banner_group_file_becomes_a_malformed_gap(tmp_path):
     from review.render import BANNER
     from review.steps import _phase_merge
 
-    path = tmp_path / "group-1.md"
+    path = tmp_path / "group-1.json"
     path.write_text(f"{BANNER}\n## Nit\n- **[N1]** `a` — x\n")
-    merged = _phase_merge([str(path)], [], group_names=("g1",))
+    merged = _phase_merge([str(path)], [], group_names=("g1",), declinable=frozenset())
     assert any(
         "output rejected by ingest" in section.body for section in merged.record.extra
     )
@@ -333,9 +334,9 @@ def test_a_rejection_past_the_group_names_falls_back_to_a_numbered_label(tmp_pat
     from review.render import BANNER
     from review.steps import _phase_merge
 
-    path = tmp_path / "group-1.md"
+    path = tmp_path / "group-1.json"
     path.write_text(f"{BANNER}\n## Nit\n- **[N1]** `a` — x\n")
-    merged = _phase_merge([str(path)], [], group_names=())
+    merged = _phase_merge([str(path)], [], group_names=(), declinable=frozenset())
     assert any("group-1" in section.body for section in merged.record.extra)
 
 
@@ -345,10 +346,10 @@ def test_an_already_failed_group_is_not_a_second_gap_row(tmp_path):
     from review.retry import GroupFailure
     from review.steps import _phase_merge
 
-    path = tmp_path / "group-1.md"
+    path = tmp_path / "group-1.json"
     path.write_text(f"{BANNER}\n## Nit\n- **[N1]** `a` — x\n")
     existing = GroupFailure("g1", Diagnosis(DiagnosisKind.OUTPUT_MISSING))
-    merged = _phase_merge([str(path)], [existing], group_names=("g1",))
+    merged = _phase_merge([str(path)], [existing], group_names=("g1",), declinable=frozenset())
     gaps = "\n".join(section.body for section in merged.record.extra)
     assert gaps.count("g1:") == 1
     assert "output missing" in gaps

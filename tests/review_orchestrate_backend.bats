@@ -79,13 +79,11 @@ print("--model" in cmd, cmd[cmd.index("--model") + 1] if "--model" in cmd else "
   should_prefix="S"
 
   mkdir -p "$TMPDIR/review"
-  cat > "$TMPDIR/review/group-1.md" <<EOF
-## $must_section
-- **[${must_prefix}1]** **\`foo.py:10\`** — missing error check
+  cat > "$TMPDIR/review/group-1.json" <<EOF
+{"findings":[{"id":"${must_prefix}1","path":"foo.py","line":10,"body":"missing error check"}]}
 EOF
-  cat > "$TMPDIR/review/group-2.md" <<EOF
-## $should_section
-- **[${should_prefix}1]** **\`bar.py:5\`** — unused import
+  cat > "$TMPDIR/review/group-2.json" <<EOF
+{"findings":[{"id":"${should_prefix}1","path":"bar.py","line":5,"body":"unused import"}]}
 EOF
   cat > "$TMPDIR/review/meta.json" <<'EOF'
 {"repo":"org/repo","pr_number":"42","head_sha":"abc123","head_ref":"feat/test","base_ref":"main","review_type":"full","title":"Test PR","changed_files":3,"mode":"pr"}
@@ -108,9 +106,8 @@ EOF
   nit_prefix="N"
 
   mkdir -p "$TMPDIR/review"
-  cat > "$TMPDIR/review/group-1.md" <<EOF
-## $nit_section
-- **[${nit_prefix}1]** **\`foo.py:1\`** — style nit
+  cat > "$TMPDIR/review/group-1.json" <<EOF
+{"findings":[{"id":"${nit_prefix}1","path":"foo.py","line":1,"body":"style nit"}]}
 EOF
   cat > "$TMPDIR/review/meta.json" <<'EOF'
 {"repo":"org/repo","pr_number":"","head_sha":"abc","head_ref":"feat/self","base_ref":"main","review_type":"full","mode":"self"}
@@ -138,9 +135,8 @@ EOF
   must_prefix="M"
 
   mkdir -p "$TMPDIR/review"
-  cat > "$TMPDIR/review/group-1.md" <<EOF
-## $must_section
-- **[${must_prefix}1]** **\`foo.py:10\`** — bug
+  cat > "$TMPDIR/review/group-1.json" <<EOF
+{"findings":[{"id":"${must_prefix}1","path":"foo.py","line":10,"body":"bug"}]}
 EOF
   cat > "$TMPDIR/review/meta.json" <<'EOF'
 {"repo":"org/repo"}
@@ -160,9 +156,8 @@ EOF
   must_prefix="M"
 
   mkdir -p "$TMPDIR/no-meta"
-  cat > "$TMPDIR/no-meta/group-1.md" <<EOF
-## $must_section
-- **[${must_prefix}1]** **\`foo.py:1\`** — bug
+  cat > "$TMPDIR/no-meta/group-1.json" <<EOF
+{"findings":[{"id":"${must_prefix}1","path":"foo.py","line":1,"body":"bug"}]}
 EOF
 
   run "$REPO_ROOT/ai/bin/review-rebuild" \

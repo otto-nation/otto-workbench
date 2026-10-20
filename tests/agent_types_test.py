@@ -83,7 +83,7 @@ class TestPhaseSpecArtifactNames:
     def test_the_fan_out_phase_carries_an_index(self):
         spec = self._review(Phase.GROUP)
         assert spec.log_filename == "group-{}.jsonl"
-        assert spec.output_filename == "group-{}.md"
+        assert spec.output_filename == "group-{}.json"
 
     def test_single_names_no_log_of_its_own(self):
         # It writes to the job's log, which the caller may point anywhere.

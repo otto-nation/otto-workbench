@@ -46,7 +46,7 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
     d = reviews_dir / "test-repo-300"
     d.mkdir()
     (d / "review.md").write_text("## Summary")
-    for f_name in ("group-1.md", "group-1.jsonl", "holistic.json", "holistic.jsonl"):
+    for f_name in ("group-1.json", "group-1.jsonl", "holistic.json", "holistic.jsonl"):
         p = d / f_name
         p.write_text("{}")
         os.utime(str(p), (1622505600, 1622505600))
@@ -54,7 +54,7 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
     review.gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
-    assert not (d / "group-1.md").exists()
+    assert not (d / "group-1.json").exists()
     assert not (d / "group-1.jsonl").exists()
     assert not (d / "holistic.json").exists()
     assert not (d / "holistic.jsonl").exists()
@@ -84,13 +84,13 @@ def test_gc_preserves_recent_intermediates(cr, reviews_dir):
     d = reviews_dir / "test-repo-350"
     d.mkdir()
     (d / "review.md").write_text("## Summary")
-    for f_name in ("group-1.md", "group-1.jsonl", "holistic.json", "holistic.jsonl", "synthesis.jsonl"):
+    for f_name in ("group-1.json", "group-1.jsonl", "holistic.json", "holistic.jsonl", "synthesis.jsonl"):
         (d / f_name).write_text("{}")
 
     review.gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
-    for f_name in ("group-1.md", "group-1.jsonl", "holistic.json", "holistic.jsonl", "synthesis.jsonl"):
+    for f_name in ("group-1.json", "group-1.jsonl", "holistic.json", "holistic.jsonl", "synthesis.jsonl"):
         assert (d / f_name).exists()
 
 
@@ -487,7 +487,7 @@ def test_gc_dir_empty_and_long_abandoned(cr, tmp_path):
 def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
     d = tmp_path / "review-dir"
     d.mkdir()
-    for name in ("group-1.md", "group-1.jsonl", "synthesis.jsonl"):
+    for name in ("group-1.json", "group-1.jsonl", "synthesis.jsonl"):
         f = d / name
         f.write_text("{}")
         os.utime(str(f), (1622505600, 1622505600))
@@ -495,17 +495,17 @@ def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
 
     count = review.gc._clean_stale_intermediates(d)
     assert count == 3
-    assert not (d / "group-1.md").exists()
+    assert not (d / "group-1.json").exists()
     assert (d / "meta.json").exists()
 
 
 def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path):
-    # The pattern list used to be hand-copied and never grew scout.json or
-    # disprove.json. Derived from Phase, a new phase's artifact is
-    # collected without editing review.gc.
+    # Derived from Phase, so a new phase's artifact is collected without
+    # editing review.gc. group-1.json is the current group artifact; leftover
+    # markdown names are a separate sweep.
     d = tmp_path / "review-dir"
     d.mkdir()
-    stale = ("holistic.json", "scout.json", "group-1.md", "disprove.json")
+    stale = ("holistic.json", "scout.json", "group-1.json", "disprove.json")
     for name in stale:
         f = d / name
         f.write_text("findings")
@@ -525,12 +525,12 @@ def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path
 def test_gc_clean_stale_intermediates_preserves_recent(cr, tmp_path):
     d = tmp_path / "review-dir"
     d.mkdir()
-    for name in ("group-1.md", "holistic.jsonl"):
+    for name in ("group-1.json", "holistic.jsonl"):
         (d / name).write_text("{}")
 
     count = review.gc._clean_stale_intermediates(d)
     assert count == 0
-    assert (d / "group-1.md").exists()
+    assert (d / "group-1.json").exists()
 
 
 # ── cleaned_on_success ───────────────────────────────────────────────────────

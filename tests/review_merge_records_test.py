@@ -7,17 +7,22 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review.ingest import ingest_review
+from review.artifacts import GroupArtifact
+from review.ingest import ingest_review, load_artifact
 from review.merge import merge_records, renumber_record
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.render import render_body
 from review.types import PriorDisposition
 
-from review_record_support import canonical, fixture_text
+from review_record_support import FIXTURES, canonical, fixture_text
 
 
 def _groups():
-    return [ingest_review(fixture_text("groups", f"group-{i}.md"), strict=False) for i in (1, 2)]
+    return [
+        load_artifact(str(FIXTURES / "groups" / f"group-{i}.json"), GroupArtifact)
+        .to_record(declinable=frozenset())
+        for i in (1, 2)
+    ]
 
 
 def test_merging_the_fixture_groups_matches_todays_merge():

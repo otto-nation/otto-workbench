@@ -61,7 +61,7 @@ _NO_FINDINGS_ARTIFACT = frozenset(
 _INDEXED = frozenset({Phase.GROUP, Phase.FIX_VERIFY})
 # ceiling: empty while phases still write markdown. Upgrade trigger: once every
 # review phase has joined, delete the set and the markdown suffix.
-_JSON_ARTIFACT: frozenset[Phase] = frozenset({Phase.SCOUT, Phase.HOLISTIC, Phase.DISPROVE})
+_JSON_ARTIFACT: frozenset[Phase] = frozenset({Phase.SCOUT, Phase.HOLISTIC, Phase.DISPROVE, Phase.GROUP})
 
 
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0

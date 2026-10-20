@@ -26,55 +26,13 @@ result = mod._phase_merge([], [
         mod.DiagnosisKind.AGENT_ERROR, detail="model not available")),
     mod.GroupFailure("svc-card", mod.Diagnosis(
         mod.DiagnosisKind.MAX_TURNS, num_turns=10)),
-], ())
+], (), declinable=frozenset())
 print(result.text)
 PYEOF
 )
   [[ "$result" == *"- orc-card: agent error: model not available"* ]]
   [[ "$result" == *"- svc-card: agent hit max turns (10)"* ]]
 }
-
-@test "_validate_group_output: valid output with sections returns True" {
-  cat > "$TMPDIR/valid.md" <<'EOF'
-## Must fix
-- **[M1]** a.go:10 — bug
-EOF
-  result=$(_py "
-print(mod._validate_group_output('$TMPDIR/valid.md', 'test-group'))
-")
-  [ "$result" = "True" ]
-}
-
-@test "_validate_group_output: no sections warns and returns False" {
-  cat > "$TMPDIR/nosections.md" <<'EOF'
-I looked at all the files and found nothing notable.
-The code looks good overall.
-EOF
-  result=$(_py "
-print(mod._validate_group_output('$TMPDIR/nosections.md', 'test-group'))
-")
-  [ "$result" = "False" ]
-}
-
-@test "_validate_group_output: empty file returns True" {
-  : > "$TMPDIR/empty.md"
-  result=$(_py "
-print(mod._validate_group_output('$TMPDIR/empty.md', 'test-group'))
-")
-  [ "$result" = "True" ]
-}
-
-@test "_validate_group_output: File Triage section counts as valid" {
-  cat > "$TMPDIR/triage.md" <<'EOF'
-## File Triage
-- `a.go` — Tier 2
-EOF
-  result=$(_py "
-print(mod._validate_group_output('$TMPDIR/triage.md', 'triage-group'))
-")
-  [ "$result" = "True" ]
-}
-
 
 # ── _scoped ──────────────────────────────────────────────────────────────────
 

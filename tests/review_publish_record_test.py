@@ -51,7 +51,13 @@ def _job(tmp_path, **kw) -> ReviewJob:
 
 
 def _merged():
-    return merge_records([ingest_review(fixture_text("groups", f"group-{i}.md"), strict=False) for i in (1, 2)])
+    from review.artifacts import GroupArtifact
+    from review.ingest import load_artifact
+    return merge_records([
+        load_artifact(str(FIXTURES / "groups" / f"group-{i}.json"), GroupArtifact)
+        .to_record(declinable=frozenset())
+        for i in (1, 2)
+    ])
 
 
 def _same_as_fixture(job, case):
@@ -275,7 +281,7 @@ def test_rebuild_publishes_a_record_matching_todays_rebuild(tmp_path):
     rd = tmp_path / "rev"
     rd.mkdir()
     for i in (1, 2):
-        shutil.copy(FIXTURES / "groups" / f"group-{i}.md", rd / f"group-{i}.md")
+        shutil.copy(FIXTURES / "groups" / f"group-{i}.json", rd / f"group-{i}.json")
     write_review_meta(rd, ReviewMeta(repo="acme/widget", pr_number=38, head_sha=HEAD, head_ref="feat/retry",
                                      base_ref="main", title="feat: retry the flaky fetch", changed_files=3,
                                      generator_version="review 1.42.0 / otto-workbench 1.47.0 (6c990742)",

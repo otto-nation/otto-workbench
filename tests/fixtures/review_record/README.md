@@ -6,13 +6,18 @@ scratch script that drove today's writers directly:
 | Case | Produced by |
 |---|---|
 | synthesis_pr, self_incremental_fixed | handwritten in the shape of real synthesis / incremental self-reviews (fictional content) |
-| merged | `review.merge.merge_records` over `groups/group-1.md`, `groups/group-2.md` |
+| merged | `review.merge.merge_records` over `groups/group-1.json`, `groups/group-2.json` |
 | mechanical_fallback | `review.outcome._write_mechanical_fallback` + `review.state._inject_failures_and_status` |
 | clean | `review.outcome._write_clean_review` |
 | unchanged | `review.outcome.write_unchanged_review` with `synthesis_pr` as the prior review |
 | evidence_dropped | `review.outcome._post_process_review` over `raw.md` against `tree/` |
 | fix_annotated | captured from `review.fix._apply_outcomes` + `_apply_static_outcomes` over `before.md` (those helpers are gone; the same cases now go through `review.fix.apply_outcomes` / `apply_static_outcomes`) |
 | rebuild | `review.rebuild.rebuild` over `groups/` |
+
+`groups/group-{1,2}.json` replaced the markdown group files. The merged `input.md`
+regenerated from them drops the empty `Must fix` `(none)` line the markdown
+ingest used to keep; `as_group_artifact` has no field for an empty severity
+section.
 
 Each record case also has `record.json` (and `evidence_dropped/raw.json`, `fix_annotated/before.json`): the same review, written at schema 2 by `save_record` over today's ingest of the markdown beside it. Until the markdown is deleted, `review_render_test.py::test_every_fixture_record_is_its_markdown_ingested` holds the two equal.
 

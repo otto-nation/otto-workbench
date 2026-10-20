@@ -21,14 +21,17 @@ which sections a phase asks for is `review.prompt`'s.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+
+import core.serde
 
 from review.document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 )
 from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
-from review.record import RecordFinding, ReviewRecord
+from review.record import LedgerLine, RecordFinding, ReviewRecord
 from review.render import finding_line, render_body, render_findings, render_review
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
@@ -168,12 +171,39 @@ the happy path") is not read as a verdict at all.
 This section is bookkeeping — it is stripped before the review is published, and
 a prior finding missing from it is reported as unaccounted for."""
 
+# The ledger as a JSON field, for an agent writing a JSON artifact. The
+# dispositions are the enum's own values, which the strict reader validates
+# `disposition` against, and the example entry is a real `LedgerLine`
+# serialised — so the instruction cannot show a shape the reader rejects.
+_LEDGER_EXAMPLE = json.dumps(core.serde.to_dict(
+    LedgerLine("M1", PriorDisposition.FIXED, "path/to/file.py", "the guard now runs first"),
+))
+_LEDGER_FIELDS_INSTRUCTION = f"""
+Fill `prior_findings` with one entry for EVERY prior finding above, copying its
+`id` and `path` exactly as written there, and set `disposition` to:
+- "{PriorDisposition.FIXED.value}" when the change resolves it
+- "{PriorDisposition.STILL_OPEN.value}" when it does not — and carry the finding
+  forward into `findings` as well, with `sid` set to the value in its
+  `<!-- sid: … -->` marker
+- "{PriorDisposition.DECLINED.value}" when it was considered and rejected on the
+  merits — a documented tradeoff (a `ceiling:` marker, a commit message or a prior
+  reply explaining the choice), or something the prior review itself already
+  recorded as declined. Carry it forward too, with `sid` set as above and
+  `declined` set to a one-line reason, so it is not raised or auto-fixed again;
+  a decline without the prior finding's `sid` is not kept. A declined finding stays
+  declined: never downgrade one to "{PriorDisposition.STILL_OPEN.value}"
+Any explanation goes in `note`; `disposition` is exactly one of those three values.
+`prior_findings` is bookkeeping — it is stripped before the review is published,
+and a prior finding missing from it is reported as unaccounted for.
+Example entry: {_LEDGER_EXAMPLE}"""
+
 
 def _build_prior_section(
     prior: StoredReview | None,
     context: str = "",
     file_filter: list[str] | None = None,
     reply_threads: ReplyThreads | None = None,
+    ledger: str = _LEDGER_INSTRUCTION,
 ) -> str:
     if prior is None:
         return ""
@@ -187,7 +217,7 @@ def _build_prior_section(
     return f"""
 ## Prior review
 {context}
-{_LEDGER_INSTRUCTION}
+{ledger}
 
 <prior_review>
 {review_text}

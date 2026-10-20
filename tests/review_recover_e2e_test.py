@@ -45,7 +45,10 @@ _DENIED_RECORD = json.dumps({
 })
 _OK_RECORD = json.dumps({"type": "result", "subtype": "success", "num_turns": 3})
 
-_GROUP_FINDING = "## Nit\n- **[N1]** `a/one.py:1` — naming\n"
+_GROUP_FINDING = json.dumps({"findings": [{"id": "N1", "path": "a/one.py", "line": 1, "body": "naming"}]})
+_SCOUT_DOC = json.dumps({"leads": []})
+_HOLISTIC_DOC = json.dumps({"assessment": "ok"})
+_DISPROVE_DOC = json.dumps({"verdicts": []})
 _REVIEW_BODY = synthetic_review()
 _REVIEW_WITH_FINDING = synthetic_review(
     findings="## Must fix\n- **[M1]** `a/one.py:1` — bug\n",
@@ -95,7 +98,14 @@ class _Agent:
         if phase == "synthesis":
             Path(self.review_file).write_text(self.review_body)
         else:
-            log_path.with_suffix(".md").write_text(_GROUP_FINDING)
+            docs = {
+                "scout.json": _SCOUT_DOC,
+                "holistic.json": _HOLISTIC_DOC,
+                "disprove.json": _DISPROVE_DOC,
+            }
+            Path(invocation.output_path).write_text(
+                docs.get(Path(invocation.output_path).name, _GROUP_FINDING),
+            )
         return 0
 
     def _ok_record(self, phase: str) -> str:

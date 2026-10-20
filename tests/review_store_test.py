@@ -22,7 +22,7 @@ from review.types import ReviewMeta, SEVERITIES
 
 from review_record_support import FIXTURES, fixture_meta, fixture_text
 
-_INPUTS = ("input.md", "raw.md", "before.md", "group-1.md", "group-2.md")
+_INPUTS = ("input.md", "raw.md", "before.md")
 # Fixture inputs ingest must refuse. The parity test below skips these; the
 # dedicated reject test asserts each still raises, so a silent skip cannot drop.
 _KNOWN_REJECTED_INPUTS: tuple[tuple[str, str], ...] = ()

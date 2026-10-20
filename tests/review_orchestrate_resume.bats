@@ -242,7 +242,7 @@ PY
 }
 
 @test "_review_group: recovery skip returns early when output exists" {
-  echo "existing group review" > "$TMPDIR/group-1.md"
+  echo "existing group review" > "$TMPDIR/group-1.json"
 
   result=$(_py "
 import io, contextlib

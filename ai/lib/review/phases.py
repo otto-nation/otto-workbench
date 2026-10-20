@@ -45,15 +45,14 @@ from agent.session import (
     _parse_session_cost, build_add_dirs,
     diagnose_missing_output, try_recover_output,
 )
+from review.artifacts import GroupArtifact
 from review.paths import (
     phase_log_path,
     phase_output_path,
 )
-from review.document import SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument
 from review.record import ReviewRecord
 from review.ingest import (
-    Artifact, IngestOutcome, IngestRejected, ingest_artifact,
-    ingest_with_repair, load_artifact,
+    Artifact, ArtifactOutcome, IngestRejected, ingest_artifact, load_artifact,
 )
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
@@ -64,7 +63,7 @@ from review.retry import (
     _retry_hint_for, _retry_missing_output, _was_skipped,
 )
 from review.state import PipelineState, _update_group_done, _update_group_failed
-from review.types import SEVERITIES, Group, GroupSkip, ReviewJob
+from review.types import Group, GroupSkip, ReviewJob
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases
@@ -383,38 +382,10 @@ def run_phase(
 
 # ── Phase executors ──────────────────────────────────────────────────────────
 
-# Every heading a group agent may write. A group's output is merged section by
-# section, so one that carries none of these contributes nothing to the review
-# however much the agent wrote into it.
-_VALID_SECTION_HEADERS = (
-    {s.section.lower() for s in SEVERITIES}
-    | {SECTION_FILE_TRIAGE.lower(), SECTION_PRIOR_FINDINGS.lower()}
-)
-
-
-def _validate_group_output(output_path: str, group_name: str) -> bool:
-    """Whether a group's output carries a heading the merge will read.
-
-    Warns when it does not. An empty output is not a failure here — the caller
-    has already established the agent produced something, and a group with
-    nothing to say writes an empty file legitimately.
-    """
-    content = Path(output_path).read_text()
-    if not content.strip():
-        return True
-    has_section = any(
-        line.strip()[3:].strip().lower() in _VALID_SECTION_HEADERS
-        for line in content.split("\n")
-        if line.strip().startswith("## ")
-    )
-    if not has_section:
-        core.log.warn(f"Group {group_name} output has no recognized sections — findings may be lost")
-    return has_section
-
 
 def _malformed_group(
     i: int, grp: Group, job: ReviewJob, group_output: str,
-    outcome: IngestOutcome, pipeline_state: PipelineState | None,
+    outcome: ArtifactOutcome, pipeline_state: PipelineState | None,
 ) -> tuple[int, str, GroupFailure]:
     diagnosis = outcome.diagnosis or Diagnosis(
         DiagnosisKind.MALFORMED_OUTPUT,
@@ -525,17 +496,12 @@ def _review_group(
         if pipeline_state is not None:
             _update_group_failed(job, i, diagnosis, pipeline_state)
     else:
-        outcome = ingest_with_repair(
-            group_output, sent, invoke,
-            diagnose=lambda: diagnose_missing_output(
-                group_log, output_path=group_output,
-            ),
+        outcome = ingest_artifact(
+            group_output, sent, invoke, GroupArtifact,
+            diagnose=lambda: diagnose_missing_output(group_log, output_path=group_output),
         )
         if not outcome.ok:
-            return _malformed_group(
-                i, grp, job, group_output, outcome, pipeline_state,
-            )
-        _validate_group_output(group_output, grp.name)
+            return _malformed_group(i, grp, job, group_output, outcome, pipeline_state)
         core.log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
         if pipeline_state is not None:
             _update_group_done(job, i, pipeline_state)

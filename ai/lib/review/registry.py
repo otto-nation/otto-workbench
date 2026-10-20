@@ -30,7 +30,7 @@ from review.prompt import (
     _survey_prompt,
 )
 from review.prompt_fit import fit_rendered_prompt
-from review.artifacts import DisproveArtifact, HolisticArtifact, ScoutArtifact
+from review.artifacts import DisproveArtifact, GroupArtifact, HolisticArtifact, ScoutArtifact
 from review.scout import holistic_context, scout_context
 from review.types import ReviewJob
 
@@ -83,7 +83,7 @@ _PHASES: dict[Phase, ReviewPhase] = {
         scan=PhaseScan("continuing without leads", read=_scout_context),
         artifact=ScoutArtifact,
     ),
-    Phase.GROUP: ReviewPhase(build=_prompt_group),
+    Phase.GROUP: ReviewPhase(build=_prompt_group, artifact=GroupArtifact),
     Phase.SYNTHESIS: ReviewPhase(build=_prompt_synthesis),
     Phase.DISPROVE: ReviewPhase(
         build=_prompt_disprove,

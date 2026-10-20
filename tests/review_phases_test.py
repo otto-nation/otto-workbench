@@ -61,7 +61,7 @@ class TestPhaseOutputPath:
     def test_group_carries_its_index(self, tmp_path):
         review_file = str(tmp_path / "review.md")
         assert review.paths.phase_output_path(review_file, Phase.GROUP, 2) == str(
-            tmp_path / "group-2.md"
+            tmp_path / "group-2.json"
         )
 
     def test_group_without_an_index_raises(self, tmp_path):
@@ -813,29 +813,3 @@ class TestParallelFailFast:
         assert skipped
 
 
-class TestValidateGroupOutputTolerance:
-    """A6b's net: _validate_group_output already accepts a short complete
-    doc, an empty doc, and whatever is on disk at the call.
-    """
-
-    # passes-at-base: one known heading is already enough for the merge to read
-    def test_a_short_complete_group_doc_validates(self, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("## Must fix\n- **[M1]** **`a.py:1`** — issue\n")
-        assert review.phases._validate_group_output(str(f), "g") is True
-
-    # passes-at-base: empty output is already not a failure here
-    def test_an_empty_group_doc_validates(self, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("")
-        assert review.phases._validate_group_output(str(f), "g") is True
-
-    # passes-at-base: the function reads the path each call, so a rewrite is a later read
-    def test_a_doc_rewritten_mid_run_validates_the_current_bytes(self, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("## Must fix\n- **[M1]** finding\n")
-        assert review.phases._validate_group_output(str(f), "g") is True
-        f.write_text("not a document")
-        assert review.phases._validate_group_output(str(f), "g") is False
-        f.write_text("## Nit\n- **[N1]** nit\n")
-        assert review.phases._validate_group_output(str(f), "g") is True

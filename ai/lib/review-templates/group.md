@@ -20,14 +20,12 @@ ${reply_threads}
 ## Output
 ${output_block}
 
-Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit / ## Idioms sections, plus the ## Prior findings section when a Prior review section asks for one.
-Do NOT write a Summary or Verdict — those will be added in a synthesis step.
-Use finding IDs starting at [M1], [S1], [N1], [I1] — they will be renumbered during merge.
-Finding format: `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap the file path in backticks inside the bold markers.
-Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file proving the claim. Nit and idiom findings do not need evidence.
-Skip or downgrade to Nit any findings in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
+Use finding IDs starting at M1, S1, N1, I1 — they will be renumbered during merge.
+Do NOT write a summary or a verdict — those are added in a synthesis step.
+Must-fix and should-fix findings must carry `evidence`: the lines of the referenced file that prove the claim, copied verbatim. Nit and idiom findings do not need evidence.
+Skip or downgrade to a nit any finding in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
-A finding already annotated `*(declined — reason)*` was adjudicated — carry it forward with the annotation intact rather than re-raising it as open.
+A prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write a complete findings file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify specific concerns and rewrite the file.

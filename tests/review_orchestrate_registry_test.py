@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Mode, Phase
-from review.artifacts import DisproveArtifact, ReviewArtifact, output_format
+from review.artifacts import DisproveArtifact, GroupArtifact, ReviewArtifact, output_format
 from review.prompt import build_common_sections
 from review.store import StoredReview
 from review.types import ReviewMeta
@@ -383,5 +383,37 @@ def test_the_single_prompt_shows_the_carry_fields_only_with_a_prior_section():
     first = build(job, common, {"artifact": ReviewArtifact}, "/tmp/s.json").builder.vars["output_block"]
     job.prior = StoredReview(record(finding("M1", "still broken")), ReviewMeta())
     again = build(job, common, {"artifact": ReviewArtifact}, "/tmp/s.json").builder.vars["output_block"]
+    assert "`findings[].sid`" not in first and "`prior_findings`" not in first
+    assert "`findings[].sid`" in again and "`prior_findings`" in again
+
+
+def test_the_group_prompt_shows_the_carry_fields_only_for_a_prior_finding_in_its_files():
+    """D20: a prior finding outside the group's files builds no prior section, so no carry fields."""
+    job = _make_job(_make_preflight())
+    job.prior = StoredReview(record(finding("M1", "still broken", path="a.py", line=1)), ReviewMeta())
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    build = review.registry.for_phase(Phase.GROUP).build
+
+    def output_block(files: list[str]) -> str:
+        extra = {
+            "artifact": GroupArtifact, "group_idx": 1, "group_count": 1, "group_name": "g",
+            "group_files_formatted": "\n".join(files), "group_file_paths": files,
+        }
+        return build(job, common, extra, "/tmp/group-1.json").builder.vars["output_block"]
+
+    outside, inside = output_block(["b.py"]), output_block(["a.py"])
+    assert "`findings[].sid`" not in outside and "`prior_findings`" not in outside
+    assert "`findings[].sid`" in inside and "`prior_findings`" in inside
+
+
+def test_the_synthesis_prompt_shows_the_carry_fields_only_on_a_re_review():
+    """D20: synthesis has no `## Prior review` section to test; a prior round is what it carries."""
+    job = _make_job(_make_preflight())
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    build = review.registry.for_phase(Phase.SYNTHESIS).build
+    extra = {"artifact": ReviewArtifact, "group_count": 2, "merged_content": "```json\n{}\n```"}
+    first = build(job, common, extra, "/tmp/synthesis.json").builder.vars["output_block"]
+    job.prior = StoredReview(record(finding("M1", "still broken")), ReviewMeta())
+    again = build(job, common, extra, "/tmp/synthesis.json").builder.vars["output_block"]
     assert "`findings[].sid`" not in first and "`prior_findings`" not in first
     assert "`findings[].sid`" in again and "`prior_findings`" in again

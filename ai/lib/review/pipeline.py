@@ -59,6 +59,7 @@ from review.collect import diff_section_sizes, fetch_branch_metadata
 from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
+from review.artifacts import declinable_sids
 from review.overflow import run_with_overflow_recovery
 from review.ingest import ingest_with_repair
 from review.outcome import _post_process_review, is_complete_review
@@ -389,6 +390,7 @@ def run_multi_phase(
     merged = _phase_merge(
         group_outputs[:], failed_groups,
         group_names=tuple(g.name for g in groups),
+        declinable=declinable_sids(job.prior),
     )
 
     if carried:

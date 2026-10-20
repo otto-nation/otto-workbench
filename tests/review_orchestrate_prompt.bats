@@ -208,7 +208,7 @@ result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_files_formatted="  - a.go (+10 -5)",
     holistic_content="## Holistic context\nWatch for API mismatches",
 )
-print("FOUND" if "Holistic context" in result else "MISSING")
+print("FOUND" if "Watch for API mismatches" in result else "MISSING")
 ')
   [ "$result" = "FOUND" ]
 }

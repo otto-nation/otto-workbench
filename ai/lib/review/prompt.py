@@ -57,7 +57,9 @@ from review.collect import (
     PreflightBlock, build_project_context, format_preflight_data, trim_commit_log,
 )
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
-from review.prompt_prior import _build_prior_section, _build_unaccounted_section
+from review.prompt_prior import (
+    _LEDGER_FIELDS_INSTRUCTION, _build_prior_section, _build_unaccounted_section,
+)
 from review.prompt_sections import (
     _build_delta_section, _build_env_section,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
@@ -919,13 +921,13 @@ def _prompt_group(job, common, extra, output):
     file_filter = group_files or None
     prior_ctx = _incremental_prior_ctx(job, (
         "This is a re-review. Below are the prior findings for YOUR files. "
-        "Carry forward the ones still present; leave fixed ones out of the "
-        "severity sections."
+        "Carry forward the ones still present; leave fixed ones out of `findings`."
     ))
     prior_section = _build_prior_section(
         job.prior, prior_ctx,
         file_filter=file_filter,
         reply_threads=job.reply_threads,
+        ledger=_LEDGER_FIELDS_INSTRUCTION,
     )
     holistic = extra.get("holistic_content", "")
     b = PromptBuilder(common)

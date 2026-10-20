@@ -1491,10 +1491,12 @@ in the diff at all is skipped. `cli.review_positions` is the command over this;
 
 Rebuild a review record from its group finding files.
 
-Ingests the group-N.md outputs, merges the records, post-processes them and
-writes a new review through the store — the recovery path when synthesis
-drifted or the review file was corrupted. `cli.review_rebuild` is the command
-over this.
+Loads the `group-N.json` artifacts, merges their records, post-processes them
+and writes a new review through the store. It is the recovery path when
+synthesis drifted or the review file was corrupted; `cli.review_rebuild` is
+the command over it. A group file that no longer loads is skipped with a
+warning, because rebuilding exists to salvage. A directory holding only the
+`group-N.md` files of a run from before agents wrote JSON is refused by name.
 
 ### review/reconcile.py
 
@@ -7364,7 +7366,7 @@ Usage:
 
 Rebuild review.md from group finding files.
 
-Reads group-N.md files from the review directory, merges findings,
+Reads group-N.json files from the review directory, merges findings,
 post-processes them, and writes a new review.md. Used to recover from
 synthesis agent formatting drift or corrupted review files.
 

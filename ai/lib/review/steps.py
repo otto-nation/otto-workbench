@@ -27,8 +27,10 @@ from core.phases import Phase
 from agent.session import _parse_session_cost, diagnose_missing_output
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
+from review.artifacts import GroupArtifact
 from review.ingest import (
     IngestError, IngestOutcome, IngestRejected, ingest_review, ingest_with_repair,
+    load_artifact,
 )
 from review.merge import merge_records
 from review.outcome import (
@@ -531,9 +533,13 @@ def _run_disprove_gate(
 def _phase_merge(
     group_outputs: list[str], failed_groups: list[GroupFailure],
     group_names: tuple[str, ...],
+    *,
+    declinable: frozenset[str],
 ) -> Merged:
     core.log.info("Phase 3: Merging findings...")
-    ingested = _ingest_group_outputs(group_outputs, failed_groups, group_names)
+    ingested = _ingest_group_outputs(
+        group_outputs, failed_groups, group_names, declinable,
+    )
     record = merge_records(list(ingested.records))
     if ingested.gaps:
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
@@ -564,6 +570,7 @@ def _malformed_gap(
 def _ingest_group_outputs(
     group_outputs: list[str], failed_groups: list[GroupFailure],
     group_names: tuple[str, ...],
+    declinable: frozenset[str],
 ) -> _GroupIngest:
     # group_outputs lists every group's path, so a rejected file is usually an
     # already-failed group rather than stale recovery output. A rejection whose
@@ -575,7 +582,8 @@ def _ingest_group_outputs(
         if not Path(path).exists():
             continue
         try:
-            records.append(ingest_review(Path(path).read_text()))
+            # A carried decline is believed only for a finding the prior round held (D19).
+            records.append(load_artifact(path, GroupArtifact).to_record(declinable=declinable))
         except IngestRejected as exc:
             core.log.warn(f"{path} rejected ({exc}) — excluding from merge")
             _malformed_gap(

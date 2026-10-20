@@ -343,7 +343,7 @@ class TestPhaseOutputNames:
             Phase.SINGLE: "",
             Phase.HOLISTIC: "holistic.json",
             Phase.SCOUT: "scout.json",
-            Phase.GROUP: "group-{}.md",
+            Phase.GROUP: "group-{}.json",
             Phase.SYNTHESIS: "",
             Phase.DISPROVE: "disprove.json",
             Phase.FIX: "",

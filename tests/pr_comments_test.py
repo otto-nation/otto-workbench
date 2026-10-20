@@ -321,9 +321,9 @@ def test_reviewer_verdicts_are_dated():
 #
 # The prior ledger is the only record of threads on pages the fetch did not
 # read. sync_threads builds its result from the threads it was handed, so a
-# short fetch silently dropped the records for every thread it missed. The pair below is the whole argument: the flag is
-# what lets the carry-forward happen without also resurrecting threads that
-# were really deleted.
+# short fetch silently dropped the records for every thread it missed. The
+# pair below is the whole argument: the flag is what lets the carry-forward
+# happen without also resurrecting threads that were really deleted.
 
 
 _recorded = recorded_thread

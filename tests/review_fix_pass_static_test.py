@@ -15,6 +15,8 @@ if LIB_DIR not in sys.path:
 import review.fix
 import review.paths
 from pr.fix import FixOutcome
+from review.fix import apply_outcomes, apply_static_outcomes
+from review.record import RecordFinding, ReviewRecord
 from review.static_analysis import (
     CheckerResult, StaticViolation, format_static_analysis,
 )
@@ -368,13 +370,13 @@ class TestApplyStaticOutcomes:
         return next(ln for ln in text.split("\n") if f"**[{vid}]**" in ln)
 
     def test_a_fixed_violation_is_ticked(self):
-        out = review.fix._apply_static_outcomes(
+        out = apply_static_outcomes(
             self.SECTION, [_outcome("SA1", FixOutcome.FIXED)],
         )
         assert self._line(out, "SA1").startswith("- [x] **[SA1]**")
 
     def test_a_skipped_violation_carries_the_reason(self):
-        out = review.fix._apply_static_outcomes(self.SECTION, [
+        out = apply_static_outcomes(self.SECTION, [
             _outcome("SA1", FixOutcome.NEEDS_HUMAN, "needs an extracted helper"),
         ])
         line = self._line(out, "SA1")
@@ -382,7 +384,7 @@ class TestApplyStaticOutcomes:
         assert line.endswith("*(skipped — needs an extracted helper)*")
 
     def test_a_declined_violation_carries_the_reason(self):
-        out = review.fix._apply_static_outcomes(self.SECTION, [
+        out = apply_static_outcomes(self.SECTION, [
             _outcome("SA1", FixOutcome.DECLINED, "ceiling: documented tradeoff"),
         ])
         assert self._line(out, "SA1").endswith("*(declined — ceiling: documented tradeoff)*")
@@ -393,20 +395,20 @@ class TestApplyStaticOutcomes:
         A violation past the cap has no outcome, and annotating it would report
         a verdict the pass never reached.
         """
-        out = review.fix._apply_static_outcomes(
+        out = apply_static_outcomes(
             self.SECTION, [_outcome("SA1", FixOutcome.FIXED)],
         )
         assert self._line(out, "SA2") == self._line(self.SECTION, "SA2")
 
     def test_a_deferral_leaves_the_line_alone(self):
         """The agent never reached it, so the line still describes open work."""
-        out = review.fix._apply_static_outcomes(
+        out = apply_static_outcomes(
             self.SECTION, [_outcome("SA1", FixOutcome.DEFERRED)],
         )
         assert self._line(out, "SA1") == self._line(self.SECTION, "SA1")
 
     def test_an_unverified_fix_ticks_and_says_so(self):
-        out = review.fix._apply_static_outcomes(self.SECTION, [
+        out = apply_static_outcomes(self.SECTION, [
             _outcome("SA1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -416,7 +418,7 @@ class TestApplyStaticOutcomes:
 
     def test_an_already_ticked_line_is_not_annotated_twice(self):
         ticked = self.SECTION.replace("- [ ] **[SA1]**", "- [x] **[SA1]**")
-        out = review.fix._apply_static_outcomes(ticked, [
+        out = apply_static_outcomes(ticked, [
             _outcome("SA1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -435,7 +437,7 @@ class TestApplyStaticOutcomes:
             "## Static Analysis\n"
             "- [ ] **[SA1]** **`t.md:1`** — the line `- [ ] fixed` is malformed\n"
         )
-        out = review.fix._apply_static_outcomes(
+        out = apply_static_outcomes(
             section, [_outcome("SA1", FixOutcome.FIXED)],
         )
         line = self._line(out, "SA1")
@@ -444,42 +446,40 @@ class TestApplyStaticOutcomes:
         assert "`- [ ] fixed`" in line
 
     def test_a_declaration_quoted_outside_the_section_is_not_the_one_ticked(self):
-        """The rewrite is scoped to the section, not to the line's shape.
+        """The rewrite only ever sees the section field, not the line's shape.
 
         A finding quoting an `SA` line is a line of the same shape outside the
-        section — and a review of this repo quotes one, because the tests and
+        field — and a review of this repo quotes one, because the tests and
         docstrings here contain them verbatim. Unscoped, the first match in the
-        document won: the quotation inside the finding's body was ticked and
+        document won: the quotation inside a finding's body was ticked and
         the violation it quoted stayed open, so one pass corrupted a finding
         and reported its own fix as undone.
         """
-        text = (
-            "## Must fix\n"
-            "- [ ] **[M1]** `t.py:1` — the fixture quotes a declaration:\n"
-            "  - [ ] **[SA1]** **`src.py:9`** — depth 5 exceeds limit 4\n"
-            "\n"
-            + self.SECTION
+        quoted = "- [ ] **[SA1]** **`src.py:9`** — depth 5 exceeds limit 4"
+        finding = RecordFinding(
+            id="M1", severity="M", path="t.py", line=1,
+            lead="`t.py:1` — ",
+            body=f"the fixture quotes a declaration:\n  {quoted}",
+            checkbox=True,
         )
-        out = review.fix._apply_static_outcomes(
-            text, [_outcome("SA1", FixOutcome.FIXED)],
-        )
-        quoted, declared = [
-            ln for ln in out.split("\n") if "**[SA1]**" in ln
-        ]
-        assert quoted.strip().startswith("- [ ] **[SA1]**"), "the quotation was ticked"
-        assert declared.startswith("- [x] **[SA1]**"), "the declaration was not"
+        record = ReviewRecord(findings=(finding,), static_analysis=self.SECTION)
+        outcomes = [_outcome("SA1", FixOutcome.FIXED)]
+        answered = apply_outcomes(record, outcomes)
+        static = apply_static_outcomes(answered.static_analysis, outcomes)
+        assert answered.finding("M1").body == finding.body
+        assert self._line(static, "SA1").startswith("- [x] **[SA1]**")
 
     def test_a_document_with_no_section_is_returned_unchanged(self):
-        """Nothing to scope to is nothing to rewrite."""
+        """A field with no violation declarations is left as it was handed."""
         text = "## Must fix\n- [ ] **[M1]** `a.py:1` — Missing guard\n"
-        assert review.fix._apply_static_outcomes(
+        assert apply_static_outcomes(
             text, [_outcome("SA1", FixOutcome.FIXED)],
         ) == text
 
     def test_the_rest_of_the_document_survives_the_rewrite(self):
-        """The scoping splices the section back between what surrounded it."""
+        """Lines that are not violation declarations stay as they were."""
         text = self.SECTION + "\n## Verdict\n\nRequest changes\n"
-        out = review.fix._apply_static_outcomes(
+        out = apply_static_outcomes(
             text, [_outcome("SA1", FixOutcome.FIXED)],
         )
         assert "## Verdict" in out
@@ -489,7 +489,7 @@ class TestApplyStaticOutcomes:
     def test_a_finding_line_is_left_to_the_findings_rewriter(self):
         """The two streams must not rewrite each other's lines."""
         both = "## Must fix\n- [ ] **[M1]** `a.py:1` — Missing guard\n\n" + self.SECTION
-        out = review.fix._apply_static_outcomes(
+        out = apply_static_outcomes(
             both, [_outcome("M1", FixOutcome.FIXED)],
         )
         assert "- [ ] **[M1]**" in out
@@ -499,7 +499,7 @@ class TestApplyStaticOutcomes:
     ):
         """Asserted through `run_fix_pass`, not by calling the rewriter.
 
-        Every case above calls `_apply_static_outcomes` directly, so all of them
+        Every case above calls `apply_static_outcomes` directly, so all of them
         keep passing with the call site disconnected — which is the whole defect
         this rewriter exists to fix, reappearing as a unit test that cannot see
         it. This one reads the file the pass actually wrote.

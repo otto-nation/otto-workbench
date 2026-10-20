@@ -29,6 +29,7 @@ import review.invoke
 import review.publish
 from review.document import ReviewDocument
 from review.paths import FILENAME_PIPELINE_STATE, FILENAME_PRIOR, archive_review
+from review.store import archive_prior, clear_prior
 from review.summary import build_review_summary, print_summary
 
 
@@ -77,7 +78,9 @@ def resolve_prior_review(review_file: Path, session_log: str, resume: bool) -> s
         if prior.is_file():
             return str(prior)
         return ""
-    return archive_review(review_file, session_log)
+    path = archive_review(review_file, session_log)
+    archive_prior(review_dir)
+    return path
 
 
 def cleanup_prior_review(review_file: Path, prior_path: str) -> None:
@@ -91,6 +94,7 @@ def cleanup_prior_review(review_file: Path, prior_path: str) -> None:
             os.unlink(prior_path)
         except OSError:
             pass
+        clear_prior(review_file.parent)
 
 
 def summarise(
@@ -98,9 +102,11 @@ def summarise(
     *, pr_url: str = "", post_session_log: str = "", branch_name: str = "",
     wall_clock_ms: int | None = None,
 ) -> None:
+    report = build_review_summary(repo, pr_number, str(review_file))
+    if report is None:
+        return
     print_summary(
-        build_review_summary(repo, pr_number, str(review_file)),
-        session_log, pr_url, post_session_log, branch_name, wall_clock_ms,
+        report, session_log, pr_url, post_session_log, branch_name, wall_clock_ms,
     )
 
 
@@ -118,6 +124,8 @@ def record_domain(
     if not review_file or not review_file.is_file():
         return
     report = build_review_summary(ctx.repo, str(ctx.pr_number or ""), str(review_file))
+    if report is None:
+        return
     sync_review_domain(ctx, report, trail=trail)
 
 

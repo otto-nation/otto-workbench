@@ -96,8 +96,10 @@ def test_check_pending_review_delete_failure_warns(monkeypatch, capsys):
 
 
 def _write_review(tmp_path: Path, sha: str = "abc123") -> Path:
+    from review.types import ReviewMeta
+    from review_record_support import store_review
     review_file = tmp_path / "review.md"
-    review_file.write_text(f"# Review\n<!-- head_sha: {sha} -->\n## Summary\n")
+    store_review(review_file, "# Review\n## Summary\n", ReviewMeta(head_sha=sha))
     return review_file
 
 

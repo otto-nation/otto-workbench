@@ -33,7 +33,7 @@ import cli.review_orchestrate
 from core.phases import Effort, Mode
 from gh.types import PRContext, PRMetadata
 from pr.domains import ReviewVerdict
-from review.document import ReviewDocument, ReviewHeader
+from review.document import ReviewDocument
 from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
 
 # Derived from the preset the jobs here run at, so a changed threshold moves
@@ -88,14 +88,22 @@ def _job(tmp_path, *, prior_review="", **pr_overrides) -> ReviewJob:
         "changed_files": 1, "files": [{"path": "a.py", "additions": 10, "deletions": 0}],
     }
     pr_fields.update(pr_overrides)
-    return ReviewJob(
+    job = ReviewJob(
         repo="org/repo", pr_number="42", pr=PRMetadata(**pr_fields),
         ctx=PRContext(), wt_path=str(tmp_path),
         review_file=str(tmp_path / "review.md"),
         session_log=str(tmp_path / "session.jsonl"),
         generator_version="1.0.0", effort=Effort.MEDIUM,
-        prior_review=prior_review,
     )
+    if prior_review:
+        from review.ingest import ingest_review
+        from review.store import StoredReview
+        from review.types import ReviewMeta
+        job.prior = StoredReview(
+            ingest_review(prior_review, strict=False),
+            ReviewMeta(date="2026-01-01", head_sha="0ldc0de"),
+        )
+    return job
 
 
 def _preflight(**overrides) -> PreflightData:
@@ -298,15 +306,14 @@ class TestTheEmptyDeltaFastPath:
 
         run_phases(job)
 
-        written = Path(job.review_file).read_text()
-        assert ReviewHeader.parse(written).head_sha == job.pr.head_sha
+        assert ReviewDocument.read(job.review_file).header.head_sha == job.pr.head_sha
 
     def test_the_review_states_what_it_is_a_delta_against(self, tmp_path, run_phases):
         job = self._merge_only(tmp_path)
 
         run_phases(job)
 
-        header = ReviewHeader.parse(Path(job.review_file).read_text())
+        header = ReviewDocument.read(job.review_file).header
         assert header.prior_sha == "0ldc0de"
 
     def test_prior_findings_are_carried_forward(self, tmp_path, run_phases):
@@ -333,10 +340,9 @@ class TestTheEmptyDeltaFastPath:
     def test_the_review_reaches_one_verdict(self, tmp_path, run_phases):
         """The prior review's own verdict is not carried in beside the new one.
 
-        `section_span` and `ReviewDocument.verdict` both read the *first*
-        matching heading, so a body holding the prior document whole reports
-        the prior run's call — and states a fresh one further down that nothing
-        reads.
+        A body that held the prior document whole used to report the prior
+        run's call from the first `## Verdict` and state a fresh one further
+        down that nothing read. The pipeline now writes one of each.
         """
         job = self._merge_only(tmp_path)
 
@@ -360,7 +366,7 @@ class TestTheEmptyDeltaFastPath:
         run_phases(job)
 
         written = Path(job.review_file).read_text()
-        assert ReviewDocument.parse(written).verdict is ReviewVerdict.CHANGES_REQUESTED
+        assert ReviewDocument.read(job.review_file).verdict is ReviewVerdict.CHANGES_REQUESTED
         assert "the prior run's call" not in written
 
     def test_the_prior_runs_own_framing_is_not_carried_in(
@@ -440,6 +446,22 @@ class TestTheFastPathStaysShut:
         _, called, _ = run_phases(job)
 
         assert called, "an agent has to write the review the fast path did not"
+
+    def test_prior_review_text_without_a_prior_record_is_not_a_no_op(
+        self, tmp_path, run_phases,
+    ):
+        """Stale prior.md is not enough: the no-op path needs job.prior."""
+        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job.prior = None
+        job.preflight = _preflight(
+            delta_files=[], delta_weighted_lines=0,
+            delta_attribution=DeltaAttribution.ATTRIBUTED,
+            prior_head_sha="0ldc0de",
+        )
+
+        _, called, _ = run_phases(job)
+
+        assert called, "a stale prior.md must not take the no-op shortcut"
 
     def test_author_work_beside_a_merge_is_reviewed(self, tmp_path, run_phases):
         job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)

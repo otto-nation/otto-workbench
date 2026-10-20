@@ -69,15 +69,17 @@ import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
-from review.document import (
-    SECTION_STATIC_ANALYSIS, ReviewDocument, is_skipped, section_span,
-)
+from review.document import ReviewDocument
 from review.grammar import FINDING_ID_RE, UNVERIFIED_TAIL_RE
+from review.record import (
+    Disposition, RecordFinding, ReviewRecord, defuse, defuse_first_line,
+)
 from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
 )
+from review.store import update_review
 from review.retry import _has_output
-from review.types import Finding, OpenFinding, ReviewJob, severity_by_key
+from review.types import Finding, ReviewJob, severity_by_key
 from core.trail import Trail
 
 # The two outcomes that leave a finding open. A deferral is a finding the agent
@@ -272,8 +274,8 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit - 1].rstrip() + "\u2026"
 
 
-def _annotated(line: str, note: str) -> str:
-    """`line` with `note` appended, and nothing on it left to misread.
+def _annotated_static_line(line: str, note: str) -> str:
+    """A Static Analysis line with `note` appended, and nothing on it left to misread.
 
     Every annotation this module writes goes through here, because the hazard
     belongs to the append and not to any one caller. The patterns that read an
@@ -348,10 +350,10 @@ def _escape_annotation(detail: str) -> str:
     return " ".join(detail.replace("*(", "* (").split())
 
 
-def _fixed_line(
+def _fixed_static_line(
     line: str, outcome: ItemOutcome, pattern: re.Pattern[str] = FINDING_ID_RE,
 ) -> str:
-    """The declaration a landed fix leaves behind: ticked, and hedged if owed.
+    """The Static Analysis declaration a landed fix leaves behind: ticked, and hedged if owed.
 
     The tick and the caveat are one decision rather than two, so they are made
     in one place — a caller that ticked the box and then asked separately
@@ -384,7 +386,7 @@ def _fixed_line(
     if detail is None:
         return ticked
     caveat = f"unverified — {_escape_annotation(detail)}" if detail else "unverified"
-    return _annotated(ticked, f"*({caveat})*")
+    return _annotated_static_line(ticked, f"*({caveat})*")
 
 
 def _fixed_entry(described: str, outcome: ItemOutcome) -> str:
@@ -437,17 +439,6 @@ def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> No
         lines.extend(wrapped.splitlines())
 
 
-def _location_of(finding: Finding | None) -> str:
-    """Where a finding pointed, for a reader choosing what to file.
-
-    The id it is stored beside is a position in one rendering, so the location
-    is what still identifies the finding after the next review renumbers.
-    """
-    if finding is None or not finding.path:
-        return ""
-    return f"{finding.path}:{finding.line}" if finding.line else finding.path
-
-
 def _describe_finding(finding: Finding) -> str:
     """The first body line a fixed finding is reported under.
 
@@ -484,67 +475,116 @@ def _annotation(outcome: ItemOutcome) -> str:
     return f"*({word} — {reason})*" if reason else f"*({word})*"
 
 
-def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
-    """The review document with each finding's line rewritten to its outcome.
+_STICKY = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPED)
 
-    A fix ticks the box, a decline or a `needs a person` appends the annotation,
-    and anything else leaves the line alone — which is what hands a finding the
-    pass never answered to the next round unchanged.
 
-    A fix the gate could not stand behind ticks the box and says so beside it.
-    The tick is honest — an edit was made, and the pass committed it — but the
-    document is what a reviewer reads and what the next round reconciles
-    against, and a bare tick there is the pass vouching for an edit nothing
-    exercised. The annotation is not a verdict the parsers read back, so the
-    finding stays fixed to every reader that matters and carries the caveat for
-    the one who is deciding whether to trust it.
+def _answered(f: RecordFinding, outcome: ItemOutcome) -> RecordFinding:
+    """`f` as this outcome leaves it. Verdicts reached before the pass outrank it.
+
+    A body already ending in an unverified tail is a prior round's hedge still
+    sitting in the prose because ingest only lifts that tail off a ticked line.
+    A skip or decline leaves the finding unchanged; a fix ticks and keeps the
+    carried caveat, so it renders once rather than beside a defused copy.
+    """
+    if f.disposition in _STICKY:
+        return f
+    carried = UNVERIFIED_TAIL_RE.search(f.body)
+    if carried is not None and outcome.outcome in (
+            FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN):
+        return f
+    if carried is not None and outcome.outcome.counts_as_fixed:
+        if not f.checkbox:
+            return f
+        return replace(
+            f, disposition=Disposition.FIXED, unverified=True,
+            reason=(carried.group(1) or "").strip(),
+            body=f.body[:carried.start()].rstrip(),
+        )
+    if outcome.outcome.counts_as_fixed:
+        if not f.checkbox:
+            # A PR-mode finding has no box; the tick was always a no-op there.
+            return f
+        detail = _unverified_detail(outcome)
+        if detail is None:
+            return replace(f, disposition=Disposition.FIXED)
+        return replace(f, disposition=Disposition.FIXED, unverified=True,
+                       reason=_escape_annotation(detail), lead=defuse(f.lead),
+                       body=defuse_first_line(f.body))
+    if outcome.outcome in (FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN):
+        disposition = (
+            Disposition.DECLINED if outcome.outcome is FixOutcome.DECLINED
+            else Disposition.SKIPPED
+        )
+        return replace(f, disposition=disposition, reason=_escape_annotation(outcome.reason),
+                       lead=defuse(f.lead), body=defuse_first_line(f.body))
+    if outcome.outcome is FixOutcome.DEFERRED:
+        return replace(f, disposition=Disposition.UNREACHED, reason=outcome.reason)
+    return f
+
+
+def apply_outcomes(record: ReviewRecord, outcomes: list[ItemOutcome]) -> ReviewRecord:
+    """The record with each finding's disposition set from this pass's outcome.
+
+    A fix sets `Disposition.FIXED`, a decline `DECLINED`, a `needs a person`
+    `SKIPPED`, and anything else leaves the finding as it is — which is what
+    hands a finding the pass never answered to the next round unchanged.
+    Rendering turns those dispositions into the checkbox and annotation; this
+    function does not edit the line.
+
+    A fix the gate could not stand behind is still `FIXED`, with `unverified`
+    set and the caveat in `reason`. The disposition is honest — an edit was
+    made, and the pass committed it — but the document is what a reviewer reads
+    and what the next round reconciles against, and a bare fixed finding there
+    is the pass vouching for an edit nothing exercised. The caveat is not a
+    verdict the next round reads back, so the finding stays fixed to every
+    reader that matters and carries the warning for the one who is deciding
+    whether to trust it.
 
     A finding the review had already checked, declined or skipped keeps what it
-    has: those verdicts were reached before the agent ran and outrank it, and
-    appending a second annotation to a line that carries one leaves the document
-    saying two things about one finding.
+    has: those verdicts were reached before the agent ran and outrank it.
+
+    The deferred queue is this pass's alone: an earlier pass's `UNREACHED` is
+    reset to `OPEN` before the outcomes are applied, as `open_findings` was
+    replaced each pass. Matches go through `.visible` / `.finding()` /
+    `.with_finding()` so a falsified twin of the same id cannot take the
+    outcome.
     """
-    prior = {f.id: f for f in ReviewDocument.parse(text).findings}
     by_id = {o.id: o for o in outcomes}
     written: set[str] = set()
-    lines = text.split("\n")
-    for n, line in enumerate(lines):
-        match = FINDING_ID_RE.match(line.strip())
-        if not match:
+    for f in record.visible:
+        current = record.finding(f.id)
+        if current is None:
             continue
-        finding_id = f"{match.group(2)}{match.group(3)}"
-        finding = prior.get(finding_id)
-        outcome = by_id.get(finding_id)
-        if finding is None or outcome is None or finding_id in written:
+        if current.disposition is Disposition.UNREACHED:
+            record = record.with_finding(current.id, disposition=Disposition.OPEN, reason="")
+            current = record.finding(current.id)
+        outcome = by_id.get(current.id)
+        if outcome is None or current.id in written:
             continue
-        written.add(finding_id)
-        if finding.checked or finding.declined or is_skipped(finding):
-            continue
-        if outcome.outcome.counts_as_fixed:
-            lines[n] = _fixed_line(line, outcome)
-            continue
-        note = _annotation(outcome)
-        if note:
-            lines[n] = _annotated(line, note)
-    return "\n".join(lines)
+        written.add(current.id)
+        answered = _answered(current, outcome)
+        record = record.with_finding(
+            current.id,
+            disposition=answered.disposition, unverified=answered.unverified,
+            reason=answered.reason, lead=answered.lead, body=answered.body,
+        )
+    return record
 
 
-def _apply_static_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
-    """The `## Static Analysis` section with each violation rewritten to its outcome.
+def apply_static_outcomes(section: str, outcomes: list[ItemOutcome]) -> str:
+    """The Static Analysis text with each violation line rewritten to its outcome.
 
-    The same three spellings `_apply_outcomes` writes on a finding, for the same
+    The same three spellings `apply_outcomes` writes on a finding, for the same
     reason: without this the section still describes the tree the review
     measured, and a reader opening the PR after a fix pass sees a violation
     reported live at a line where it no longer exists.
 
-    Scoped to the section's own span, which is the whole of what makes the
-    rewrite safe. A declaration is matched by its shape, and that shape appears
-    outside the section too: a finding quoting an `SA` line — a review of this
-    repo does, because the tests and the docstrings here contain them verbatim
-    — is a line this would otherwise match. Unscoped, the first match in the
-    document won: the quotation inside a finding's body was ticked and the
-    violation it was quoting stayed open, so one pass corrupted a finding and
-    reported its own fix as undone.
+    Scoped to the section's own field, which is the whole of what makes the
+    rewrite safe — the function only ever sees that field, so a declaration of
+    the same shape quoted in a finding body cannot match. Unscoped, the first
+    match in the document won: the quotation inside a finding's body was ticked
+    and the violation it was quoting stayed open, so one pass corrupted a
+    finding and reported its own fix as undone.
 
     A violation past `_MAX_STATIC_ITEMS` has no outcome and is left exactly as
     rendered, which is what the document should say about work nothing answered.
@@ -553,31 +593,22 @@ def _apply_static_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     file today, but the finding side guards the same case, and the failure if it
     ever happens is a second annotation on a line that already carries one.
     """
-    span = section_span(text, SECTION_STATIC_ANALYSIS)
-    if span is None:
-        return text
-    head, body, tail = text[:span.start], span.body_of(text), text[span.end:]
     by_id = {o.id: o for o in outcomes}
     written: set[str] = set()
-    lines = body.split("\n")
+    lines = section.split("\n")
     for n, line in enumerate(lines):
         match = STATIC_ID_RE.match(line.strip())
-        if not match:
+        if not match or match.group(2) not in by_id or match.group(2) in written:
             continue
-        violation_id = match.group(2)
-        outcome = by_id.get(violation_id)
-        if outcome is None or violation_id in written:
-            continue
-        written.add(violation_id)
+        written.add(match.group(2))
         if match.group(1) == "x":
             continue
+        outcome = by_id[match.group(2)]
         if outcome.outcome.counts_as_fixed:
-            lines[n] = _fixed_line(line, outcome, STATIC_ID_RE)
-            continue
-        note = _annotation(outcome)
-        if note:
-            lines[n] = _annotated(line, note)
-    return head + "\n".join(lines) + tail
+            lines[n] = _fixed_static_line(line, outcome, STATIC_ID_RE)
+        elif note := _annotation(outcome):
+            lines[n] = _annotated_static_line(line, note)
+    return "\n".join(lines)
 
 
 def _bullet_paths(paths: set[str]) -> str:
@@ -808,41 +839,19 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             # fix the tree does not hold. Declined and deferred answers do not
             # claim a SHA and still stand.
             outcomes = [o for o in outcomes if not o.outcome.counts_as_fixed]
-        review_file = Path(self.job.review_file)
-        text = _apply_outcomes(review_file.read_text(), outcomes)
-        review_file.write_text(_apply_static_outcomes(text, outcomes))
         self._persist_static_declines(outcomes)
-        self._persist_open_findings(outcomes)
-
-    def _persist_open_findings(self, outcomes: list[ItemOutcome]) -> None:
-        """Record which findings this pass left open, so they can be filed later.
-
-        The document cannot answer this. A deferral writes no annotation at all,
-        so a finding the pass never reached reads exactly like one it never had
-        — and `pr review --track` runs in a later process, after these outcomes
-        have gone. Same reason `_persist_static_declines` exists one method up,
-        for the same kind of verdict the deliverable cannot carry.
-
-        Replaced rather than accumulated: a later pass reads the same findings
-        again, and an entry kept from an earlier round would offer to file work
-        that has since been fixed.
-        """
-        described = self._descriptions()
-        still_open = tuple(
-            OpenFinding(
-                id=o.id,
-                outcome=str(o.outcome),
-                summary=described.get(o.id, ""),
-                location=_location_of(self.findings.get(o.id)),
-                reason=o.reason,
+        # A stale directory has no review.json, so update_review writes nothing
+        # while the commit still landed. Say so — a silent drop of dispositions
+        # is how the next round retries work already done.
+        stored = update_review(Path(self.job.review_file), lambda record: replace(
+            apply_outcomes(record, outcomes),
+            static_analysis=apply_static_outcomes(record.static_analysis, outcomes),
+        ))
+        if stored is None:
+            core.log.warn(
+                f"{self.job.review_file} has no review.json — "
+                "dispositions not recorded"
             )
-            for o in outcomes
-            if o.outcome in _STILL_OPEN and o.id in self.findings
-        )
-        review_dir = Path(self.job.artifact_dir)
-        write_review_meta(
-            review_dir, replace(read_review_meta(review_dir), open_findings=still_open),
-        )
 
     def _persist_static_declines(self, outcomes: list[ItemOutcome]) -> None:
         """Keep this pass's static declines where the next round can read them.

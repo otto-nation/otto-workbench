@@ -17,21 +17,24 @@ file is `review.outcome`'s.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Phase
-from agent.session import _parse_session_cost
+from agent.session import _parse_session_cost, diagnose_missing_output
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
-from review.merge import annotate_prior_with_stable_ids, merge_reviews
+from review.ingest import (
+    IngestError, IngestOutcome, IngestRejected, ingest_review, ingest_with_repair,
+)
+from review.merge import merge_records
 from review.outcome import (
-    _build_mechanical_fallback, _document, _no_synthesis_body,
-    _post_process_review, _post_processed_body, _write_clean_review,
-    _write_mechanical_fallback, _write_review_sidecar, is_complete_review,
+    _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
+    _post_process_review, _publish, _reconcile_and_verify, _write_clean_review,
+    _write_mechanical_fallback, agent_output_complete,
 )
 from review.paths import phase_log_path, phase_output_path
 from review.phases import (
@@ -41,18 +44,21 @@ from review.phases import (
 )
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
-from review.prompt_prior import _scope_prior_review
+from review.prompt_prior import _scoped, _with_sids
 from review.reconcile import passed_over
+from review.record import ProseSection, ReviewRecord, SeveritySection
 from review.registry import build_prompt
+from review.render import render_body, render_findings, render_review
 from review.retry import GroupFailure, _has_output, _retry_missing_output
 from review.state import (
     PipelineState, _inject_failures_and_status, _write_pipeline_state,
 )
+from review.store import StoredReview, read_review, write_review
 from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
 )
 from review.verdict import BUDGET_SUMMARY, SKIPPED_SUMMARY, open_counts
-from review.verify import apply_disprove_results, parse_disprove_output
+from review.verify import apply_disprove, parse_disprove_output
 from core.text import plural
 
 DISPROVE_MIN_FINDINGS = 3
@@ -65,6 +71,33 @@ class GroupPhaseResult:
     outputs: list[str]
     failures: list[GroupFailure]
     cost: float
+
+
+@dataclass(frozen=True)
+class DisproveRun:
+    result: PhaseResult
+    record: ReviewRecord
+
+
+@dataclass(frozen=True)
+class Merged:
+    """The groups' findings as one record, and the text synthesis is shown.
+
+    Two forms of one merge: the record is what every writer publishes from;
+    the text is the record rendered (sids kept, as the merge always kept them)
+    plus anything carried forward, which is what the synthesis prompt quotes.
+    """
+
+    record: ReviewRecord
+    text: str
+
+    def carry(self, record: ReviewRecord, text: str) -> "Merged":
+        notes = self.record.severity_sections + record.severity_sections
+        return Merged(
+            replace(self.record, findings=self.record.findings + record.findings,
+                    severity_sections=notes),
+            f"{self.text}\n{text}" if text else self.text,
+        )
 
 
 def _holistic_skip_reason(
@@ -153,7 +186,7 @@ def _run_group_phase(
 def _run_synthesis_or_fallback(
     job: ReviewJob, state: PipelineState,
     holistic_content: str, group_count: int,
-    merged_content: str, failed_groups: "list[GroupFailure]",
+    merged: Merged, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
 ) -> PhaseResult:
     """The synthesis session log and what synthesis spent.
@@ -165,10 +198,10 @@ def _run_synthesis_or_fallback(
     """
     all_groups_failed = len(failed_groups) == group_count
 
-    if not ReviewDocument(body=merged_content).findings and not failed_groups:
+    if not merged.record.visible and not failed_groups:
         core.log.info("No findings from any group — writing clean review")
         _write_clean_review(
-            job, group_count, merged_content, skipped_groups=n_skipped,
+            job, group_count, merged.record, skipped_groups=n_skipped,
         )
         state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
@@ -184,27 +217,32 @@ def _run_synthesis_or_fallback(
         # Recorded before the fallback is built, not after: the meta header the
         # fallback carries reads the status back off this file, so a verdict
         # written afterwards leaves the document claiming the run completed.
+        # The all-groups-failed fallback is not post-processed: it is built
+        # with pipeline_state and published directly.
         state.done.add(Phase.SYNTHESIS)
         state.failed[Phase.SYNTHESIS] = why
         _write_pipeline_state(job, state)
-        _build_mechanical_fallback(
-            job, group_count, merged_content, skipped_groups=n_skipped,
-            pipeline_state=state,
-        ).write(job.review_file)
-        _write_review_sidecar(job)
+        _publish(
+            job,
+            _build_mechanical_fallback(
+                job, group_count, merged.record, skipped_groups=n_skipped,
+                pipeline_state=state,
+            ),
+            skipped_groups=n_skipped, total_groups=group_count,
+            status=_fallback_status(job),
+        )
         return PhaseResult()
 
     if Phase.SYNTHESIS in job.skipped:
         core.log.info("Synthesis skipped — using mechanical merge")
-        _document(
+        _publish(
             job,
-            _no_synthesis_body(
-                job, _post_processed_body(job, merged_content),
+            _no_synthesis_record(
+                job, _reconcile_and_verify(job, merged.record),
                 group_count, SKIPPED_SUMMARY,
             ),
             skipped_groups=n_skipped, total_groups=group_count,
-        ).write(job.review_file)
-        _write_review_sidecar(job)
+        )
         state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
@@ -217,15 +255,14 @@ def _run_synthesis_or_fallback(
         # prior-finding reconciliation are local reads that cost none of it.
         # Skipping them here shipped findings nothing had checked against the
         # tree, on the run least able to afford an unchecked claim.
-        _document(
+        _publish(
             job,
-            _no_synthesis_body(
-                job, _post_processed_body(job, merged_content),
+            _no_synthesis_record(
+                job, _reconcile_and_verify(job, merged.record),
                 group_count, BUDGET_SUMMARY,
             ),
             skipped_groups=n_skipped, total_groups=group_count,
-        ).write(job.review_file)
-        _write_review_sidecar(job)
+        )
         state.done.add(Phase.SYNTHESIS)
         state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
         _write_pipeline_state(job, state)
@@ -233,7 +270,7 @@ def _run_synthesis_or_fallback(
         return PhaseResult()
 
     result = _phase_synthesis(
-        job, holistic_content, group_count, merged_content,
+        job, holistic_content, group_count, merged,
         skipped_groups=n_skipped,
     )
     state.done.add(Phase.SYNTHESIS)
@@ -246,18 +283,18 @@ def _run_synthesis_or_fallback(
 
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
-    group_count: int, merged_content: str,
+    group_count: int, merged: Merged,
     skipped_groups: int = 0,
 ) -> PhaseResult:
     Path(job.review_file).write_text("")
 
-    max_turns = _synthesis_max_turns(merged_content)
+    max_turns = _synthesis_max_turns(merged.record)
     runner = PhaseRunner(job, Phase.SYNTHESIS)
     synthesis_log = runner.session_log
     # The same reconciliation the run ends with, asked one phase early, while
     # there is still an agent that can act on the answer. Afterwards the only
     # thing left to do about a prior finding nobody accounted for is report it.
-    unaccounted = passed_over(job.prior_review, merged_content, job.wt_path, job.pr.head_sha)
+    unaccounted = passed_over(job.prior, merged.record, job.wt_path, job.pr.head_sha)
     if unaccounted:
         core.log.dim(
             f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "
@@ -265,7 +302,7 @@ def _phase_synthesis(
         )
     synth_kwargs = dict(
         holistic_content=holistic_content, group_count=group_count,
-        merged_content=merged_content, unaccounted_prior=unaccounted,
+        merged_content=merged.text, unaccounted_prior=unaccounted,
     )
     try:
         prompt = build_prompt(
@@ -279,9 +316,8 @@ def _phase_synthesis(
         # phase's worth of work because its cover letter would not fit.
         core.log.warn(f"Synthesis cannot be prompted ({exc}) — falling back to mechanical merge")
         _write_mechanical_fallback(
-            job, group_count, merged_content, skipped_groups=skipped_groups,
+            job, group_count, merged.record, skipped_groups=skipped_groups,
         )
-        _write_review_sidecar(job)
         return PhaseResult.of(
             synthesis_log, diagnosis=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
         )
@@ -289,11 +325,15 @@ def _phase_synthesis(
     core.log.blank()
 
     # `rc` tracks the latest attempt so the fallback warning below reports the
-    # retry's exit code, not the first attempt's.
+    # retry's exit code, not the first attempt's. `sent` is the prompt the last
+    # invocation actually ran — an overflow rebuild replaces it, and repair
+    # must quote that text rather than the original.
     rc = 0
+    sent = prompt
 
     def invoke(text: str, turns: int) -> int:
-        nonlocal rc
+        nonlocal rc, sent
+        sent = text
         rc = runner.invoke(text, turns)
         return rc
 
@@ -303,7 +343,7 @@ def _phase_synthesis(
         return result
 
     # The result is intentionally ignored: success is judged below by
-    # `is_complete_review`, which also catches output that exists but is partial.
+    # `agent_output_complete`, which also catches output that exists but is partial.
     run_with_overflow_recovery(
         prompt,
         invoke=invoke_logged,
@@ -318,9 +358,18 @@ def _phase_synthesis(
         ),
     )
 
-    if is_complete_review(job.review_file):
+    outcome = (
+        ingest_with_repair(
+            job.review_file, sent, invoke,
+            diagnose=lambda: diagnose_missing_output(
+                synthesis_log, job.review_file,
+            ),
+        )
+        if agent_output_complete(job.review_file) else IngestOutcome(None)
+    )
+    if outcome.ok:
         _post_process_review(
-            job, skipped_groups=skipped_groups, total_groups=group_count,
+            job, outcome.record, skipped_groups=skipped_groups, total_groups=group_count,
         )
         diagnosis = None
     else:
@@ -328,35 +377,49 @@ def _phase_synthesis(
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
         core.log.warn(f"Synthesis agent {detail} — falling back to mechanical merge")
         _write_mechanical_fallback(
-            job, group_count, merged_content, skipped_groups=skipped_groups,
+            job, group_count, merged.record, skipped_groups=skipped_groups,
         )
-        diagnosis = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
+        rendered = "; ".join(e.render() for e in outcome.errors)
+        diagnosis = Diagnosis(
+            DiagnosisKind.MECHANICAL_FALLBACK, detail=rendered,
+        ) if outcome.errors else Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
 
-    _write_review_sidecar(job)
     # Charged whether the agent produced a review or the mechanical fallback
     # did: a synthesis that fell back still spent whatever its log records.
     return PhaseResult.of(synthesis_log, diagnosis=diagnosis)
 
 
 def _carry_forward_prior_findings(
-    prior_review: str, groups: list[Group], skip_indices: set[int],
-) -> str:
+    prior: StoredReview | None, groups: list[Group], skip_indices: set[int],
+) -> Merged | None:
     """Extract prior findings for skipped groups and return as merged content."""
-    if not prior_review or not skip_indices:
-        return ""
-
-    annotated = annotate_prior_with_stable_ids(prior_review)
-    parts: list[str] = []
+    if prior is None or not skip_indices:
+        return None
+    carried = ReviewRecord()
+    texts = []
     for i, grp in enumerate(groups, 1):
         if i not in skip_indices:
             continue
-        scoped = _scope_prior_review(annotated, grp.files)
-        if scoped:
-            parts.append(f"### Carried forward: {grp.name}\n{scoped}")
-
-    if not parts:
-        return ""
-    return "\n\n".join(parts) + "\n"
+        scoped = _with_sids(_scoped(prior.record, grp.files))
+        if scoped.findings:
+            # D5: non-finding text in a severity section renders above that
+            # section's findings. The heading used to live only in `text`;
+            # mechanical-fallback review.md is rendered from the record.
+            notes = tuple(
+                SeveritySection(
+                    severity=sev, note=f"### Carried forward: {grp.name}",
+                )
+                for sev in dict.fromkeys(f.severity for f in scoped.findings)
+            )
+            carried = replace(
+                carried,
+                findings=carried.findings + scoped.findings,
+                severity_sections=carried.severity_sections + notes,
+            )
+            texts.append(
+                f"### Carried forward: {grp.name}\n{render_findings(scoped, sids=True)}"
+            )
+    return Merged(carried, "\n\n".join(texts) + "\n") if texts else None
 
 
 def _identify_incremental_skips(
@@ -387,34 +450,25 @@ def _build_group_skips(
     return skips
 
 
-def _phase_disprove(job: ReviewJob) -> PhaseResult:
-    review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-    counts = ReviewDocument(body=review_content).open_counts
+def _phase_disprove(job: ReviewJob, record: ReviewRecord, review_content: str) -> DisproveRun:
+    counts = record.open_counts
     ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
         core.log.info(f"{label} skipped — no must-fix or should-fix findings")
-        return PhaseResult()
-
-    result = run_phase(
-        job, Phase.DISPROVE,
-        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
-        review_content=review_content,
-    )
+        return DisproveRun(PhaseResult(), record)
+    result = run_phase(job, Phase.DISPROVE,
+                       f"{label} — challenging {ms_count} must-fix/should-fix findings...",
+                       review_content=review_content)
     if not result.content:
-        return result
-
-    results = parse_disprove_output(result.content)
-    updated_text, summary = apply_disprove_results(review_content, results)
-    falsified = summary.get("falsified", 0)
-    if falsified > 0:
-        Path(job.review_file).write_text(updated_text)
-        core.log.info(f"{label}: {summary['survived']} survived, {falsified} falsified")
-        _log_disprove_falsified(summary)
+        return DisproveRun(result, record)
+    applied = apply_disprove(record, parse_disprove_output(result.content))
+    if applied.summary.get("falsified", 0) > 0:
+        core.log.info(f"{label}: {applied.summary['survived']} survived, {applied.summary['falsified']} falsified")
+        _log_disprove_falsified(applied.summary)
     else:
-        core.log.info(f"{label}: all {summary['survived']} findings survived")
-
-    return result
+        core.log.info(f"{label}: all {applied.summary['survived']} findings survived")
+    return DisproveRun(result, applied.record)
 
 
 def _log_disprove_falsified(summary: dict) -> None:
@@ -451,14 +505,13 @@ def _run_disprove_gate(
         )
         failure = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
     else:
-        counts = open_counts(ReviewDocument.read(job.review_file))
+        stored = read_review(Path(job.review_file))
+        counts = open_counts(ReviewDocument.from_stored(stored) if stored else None)
         ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
-        if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
-            result = _phase_disprove(job)
-            # None when the gate declined inside `_phase_disprove` for want of
-            # findings to challenge; a diagnosis only when its agent ran and
-            # came back with nothing.
-            failure = result.diagnosis
+        if stored and (disprove is True or ms_count >= DISPROVE_MIN_FINDINGS):
+            run = _phase_disprove(job, stored.record, render_review(stored.record, stored.meta))
+            write_review(Path(job.review_file), run.record, stored.meta)
+            result, failure = run.result, run.result.diagnosis
         else:
             core.log.info(
                 f"Skipping disprove — only {ms_count} M/S findings "
@@ -473,14 +526,57 @@ def _run_disprove_gate(
     return result
 
 
-def _phase_merge(group_outputs: list[str], failed_groups: list[GroupFailure]) -> str:
+def _phase_merge(
+    group_outputs: list[str], failed_groups: list[GroupFailure],
+    group_names: tuple[str, ...],
+) -> Merged:
     core.log.info("Phase 3: Merging findings...")
-    merged_content = merge_reviews(group_outputs)
+    ingested = _ingest_group_outputs(group_outputs, failed_groups, group_names)
+    record = merge_records(list(ingested.records))
+    if ingested.gaps:
+        listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
+            f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
+        record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
+    return Merged(record, render_body(record, sids=True, evidence=True))
 
-    if failed_groups:
-        merged_content += "\n## Review gaps\n"
-        merged_content += "The following file groups were not reviewed due to agent failure:\n"
-        for failed in failed_groups:
-            merged_content += f"- {failed.group}: {failed.diagnosis.message}\n"
 
-    return merged_content
+@dataclass(frozen=True)
+class _GroupIngest:
+    records: tuple[ReviewRecord, ...]
+    gaps: tuple[GroupFailure, ...]
+
+
+def _malformed_gap(
+    name: str, failed_names: set[str], errors: tuple[IngestError, ...],
+    gaps: list[GroupFailure],
+) -> None:
+    if name in failed_names:
+        return
+    gaps.append(GroupFailure(name, Diagnosis(
+        DiagnosisKind.MALFORMED_OUTPUT,
+        detail="; ".join(e.render() for e in errors),
+    )))
+    failed_names.add(name)
+
+
+def _ingest_group_outputs(
+    group_outputs: list[str], failed_groups: list[GroupFailure],
+    group_names: tuple[str, ...],
+) -> _GroupIngest:
+    # group_outputs lists every group's path, so a rejected file is usually an
+    # already-failed group rather than stale recovery output. A rejection whose
+    # group is not already in failed_groups is a gap of its own.
+    records: list[ReviewRecord] = []
+    gaps = list(failed_groups)
+    failed_names = {f.group for f in gaps}
+    for i, path in enumerate(group_outputs):
+        if not Path(path).exists():
+            continue
+        try:
+            records.append(ingest_review(Path(path).read_text()))
+        except IngestRejected as exc:
+            core.log.warn(f"{path} rejected ({exc}) — excluding from merge")
+            _malformed_gap(
+                group_names[i] if i < len(group_names) else f"group-{i + 1}",
+                failed_names, exc.errors, gaps)
+    return _GroupIngest(tuple(records), tuple(gaps))

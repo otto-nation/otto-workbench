@@ -198,7 +198,7 @@ def build_execution_claim_guard(
     investigating, so a claim drafted on that first write describes a command
     that has not executed and may never; only Must-fix and Should-fix findings
     have their evidence checked against the tree
-    (`review.verify._verify_findings`), so a claim in a nit or an idiom reaches
+    (`review.verify._verify_record`), so a claim in a nit or an idiom reaches
     the reader with no gate behind it. A fix pass is the sharper case: the
     `fixed` box asks for the test that fails without the change, so the form
     is itself a standing invitation to name a plausible test rather than a run

@@ -19,7 +19,10 @@ import git.push
 import review.fix
 from pr.fix import FixOutcome, ItemOutcome
 from gh.types import PRContext, PRMetadata
-from review.types import Finding, ReviewJob
+from review.ingest import ingest_review
+from review.paths import write_review_meta
+from review.record import save_record
+from review.types import Finding, ReviewJob, ReviewMeta
 import fix.verify
 
 # What the push owner answers when the fix pass's commit reached the remote.
@@ -79,6 +82,9 @@ def _make_job(
     review_file = tmp_path / "reviews" / "review.md"
     review_file.parent.mkdir(exist_ok=True)
     review_file.write_text(review_content)
+    if review_content.strip():
+        save_record(review_file.parent, ingest_review(review_content, strict=False))
+        write_review_meta(review_file.parent, ReviewMeta())
     file_dicts = [
         {"path": p, "additions": 1, "deletions": 0} for p in (files or [])
     ]

@@ -26,8 +26,8 @@ result = mod._phase_merge([], [
         mod.DiagnosisKind.AGENT_ERROR, detail="model not available")),
     mod.GroupFailure("svc-card", mod.Diagnosis(
         mod.DiagnosisKind.MAX_TURNS, num_turns=10)),
-])
-print(result)
+], ())
+print(result.text)
 PYEOF
 )
   [[ "$result" == *"- orc-card: agent error: model not available"* ]]
@@ -76,21 +76,23 @@ print(mod._validate_group_output('$TMPDIR/triage.md', 'triage-group'))
 }
 
 
-# ── _scope_prior_review ──────────────────────────────────────────────────────
+# ── _scoped ──────────────────────────────────────────────────────────────────
 
-@test "_scope_prior_review: keeps only findings for matching files" {
-  prior='## Must fix
+@test "_scoped: keeps only findings for matching files" {
+  result=$(_py_here <<'PYEOF'
+from review.ingest import ingest_review
+from review.render import render_findings
+prior = ingest_review("""## Must fix
 - [ ] **[M1]** src/auth.go:10 — auth bug
 - [ ] **[M2]** src/db.go:20 — db bug
 
 ## Should fix
-- [ ] **[S1]** src/auth.go:30 — cleanup'
-
-  result=$(_py "
-prior = '''$prior'''
-scoped = mod._scope_prior_review(prior, ['src/auth.go'])
-print(scoped)
-")
+- [ ] **[S1]** src/auth.go:30 — cleanup
+""", strict=False)
+scoped = mod._scoped(prior, ['src/auth.go'])
+print(render_findings(scoped))
+PYEOF
+)
   [[ "$result" == *"[M1]"* ]]
   [[ "$result" != *"[M2]"* ]]
   [[ "$result" == *"[S1]"* ]]
@@ -98,37 +100,42 @@ print(scoped)
   [[ "$result" == *"## Should fix"* ]]
 }
 
-@test "_scope_prior_review: no matches returns empty" {
-  prior='## Must fix
-- [ ] **[M1]** src/auth.go:10 — auth bug'
-
-  result=$(_py "
-prior = '''$prior'''
-scoped = mod._scope_prior_review(prior, ['src/unrelated.go'])
-print(repr(scoped))
-")
-  [ "$result" = "''" ]
+@test "_scoped: no matches returns empty" {
+  result=$(_py_here <<'PYEOF'
+from review.ingest import ingest_review
+prior = ingest_review("""## Must fix
+- [ ] **[M1]** src/auth.go:10 — auth bug
+""", strict=False)
+scoped = mod._scoped(prior, ['src/unrelated.go'])
+print([f.id for f in scoped.findings])
+PYEOF
+)
+  [ "$result" = "[]" ]
 }
 
-@test "_scope_prior_review: multiline finding continuation kept" {
-  prior='## Must fix
+@test "_scoped: multiline finding continuation kept" {
+  result=$(_py_here <<'PYEOF'
+from review.ingest import ingest_review
+from review.render import render_findings
+prior = ingest_review("""## Must fix
 - [ ] **[M1]** src/auth.go:10 — auth bug
   This is a continuation line with more detail
-- [ ] **[M2]** src/db.go:20 — db bug'
-
-  result=$(_py "
-prior = '''$prior'''
-scoped = mod._scope_prior_review(prior, ['src/auth.go'])
-print(scoped)
-")
+- [ ] **[M2]** src/db.go:20 — db bug
+""", strict=False)
+scoped = mod._scoped(prior, ['src/auth.go'])
+print(render_findings(scoped))
+PYEOF
+)
   [[ "$result" == *"[M1]"* ]]
   [[ "$result" == *"continuation line"* ]]
   [[ "$result" != *"[M2]"* ]]
 }
 
 @test "build_prompt: GROUP template gets scoped prior review" {
-  result=$(_py "
-import types
+  result=$(_py_here <<'PYEOF'
+from review.ingest import ingest_review
+from review.store import StoredReview
+from review.types import ReviewMeta
 pr = mod.PRMetadata(
     title='test', body='', base='main', head='feat', head_sha='abc123',
     additions=30, deletions=15, changed_files=2,
@@ -142,7 +149,15 @@ job = mod.ReviewJob(
     repo='org/repo', pr_number='1', pr=pr, ctx=ctx,
     wt_path='/tmp/wt', review_file='/tmp/review.md',
     session_log='/tmp/session.jsonl',
-    prior_review='## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n- [ ] **[M2]** src/db.go:20 — db bug',
+)
+job.prior = StoredReview(
+    ingest_review(
+        '## Must fix\n'
+        '- [ ] **[M1]** src/auth.go:10 — auth bug\n'
+        '- [ ] **[M2]** src/db.go:20 — db bug',
+        strict=False,
+    ),
+    ReviewMeta(),
 )
 result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_idx=1, group_count=2, group_name='auth',
@@ -150,7 +165,8 @@ result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     holistic_content='', group_file_paths=['src/auth.go'],
 )
 print('[M1]' in result and '[M2]' not in result)
-")
+PYEOF
+)
   [ "$result" = "True" ]
 }
 
@@ -169,7 +185,8 @@ text = '''## Must fix
 - **[N3]** finding f
 ## Idioms
 - **[I1]** finding g'''
-counts = mod.ReviewDocument(body=text).open_counts
+from review.ingest import ingest_review
+counts = ingest_review(text, strict=False).open_counts
 print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
 ")
   [ "$result" = "M=2,S=1,N=3,I=1" ]

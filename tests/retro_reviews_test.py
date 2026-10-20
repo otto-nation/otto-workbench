@@ -12,18 +12,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 from retro.reviews import scan_local_reviews  # noqa: E402
 from retro.rules import load_rules  # noqa: E402
 from retro_support import make_rules_dir  # noqa: E402
+from review_record_support import store_review  # noqa: E402
 
 
 # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_scan_local_reviews_returns_consumed_dir_names(tmp_path):
     reviews_dir = tmp_path / "state" / "reviews" / "myrepo-self-1"
     reviews_dir.mkdir(parents=True)
-    (reviews_dir / "review.md").write_text(
+    store_review(
+        reviews_dir / "review.md",
         "# Self-Review: myrepo — branch\n"
         "\n"
         "## Must fix\n"
         "\n"
-        "- [ ] **[M1]** `src/main.go` — Missing error handling for secret token write\n"
+        "- [ ] **[M1]** `src/main.go` — Missing error handling for secret token write\n",
     )
     make_rules_dir(tmp_path / "wb")
     rules = load_rules(tmp_path / "wb")

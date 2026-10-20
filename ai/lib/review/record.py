@@ -230,13 +230,19 @@ class ReviewRecord:
         return next((f for f in self.visible if f.id == finding_id), None)
 
     def with_finding(self, finding_id: str, **changes) -> ReviewRecord:
-        """This record with the first visible finding `finding_id` changed."""
+        """This record with the first visible finding `finding_id` changed.
+
+        Raises KeyError when no visible finding has that id — unknown or
+        falsified — so a caller cannot silently miss and re-file the same issue.
+        """
         done = False
         out = []
         for f in self.findings:
             if not done and f.visible and f.id == finding_id:
                 f, done = replace(f, **changes), True
             out.append(f)
+        if not done:
+            raise KeyError(finding_id)
         return replace(self, findings=tuple(out))
 
 
@@ -283,9 +289,12 @@ def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewReco
         return None
     try:
         raw = json.loads(path.read_text())
-        version = raw.get("schema_version")
-    except (OSError, ValueError, AttributeError):
-        raw, version = None, None
+    except (OSError, ValueError):
+        raw = None
+    if not isinstance(raw, dict):
+        core.log.warn(f"{path} could not be read — treating the review as stale")
+        return None
+    version = raw.get("schema_version")
     if version != SCHEMA_VERSION:
         core.log.warn(f"{path} is schema {version!r}, not {SCHEMA_VERSION} — treating the review as stale")
         return None

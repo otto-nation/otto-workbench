@@ -50,6 +50,8 @@ from review.paths import (
     phase_output_path,
 )
 from review.document import SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument
+from review.record import ReviewRecord
+from review.ingest import IngestOutcome, ingest_with_repair
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.registry import PhaseScan, build_prompt, for_phase
@@ -244,8 +246,8 @@ def _touch(path: str) -> None:
     Path(path).touch(exist_ok=True)
 
 
-def _synthesis_max_turns(merged_content: str) -> int:
-    counts = ReviewDocument(body=merged_content).open_counts
+def _synthesis_max_turns(merged: ReviewRecord) -> int:
+    counts = merged.open_counts
     total = sum(counts.values())
     scaled = PHASES[Phase.SYNTHESIS].max_turns + max(0, total - 20) // 10
     return min(scaled, RETRY_MAX_TURNS_GROUP)
@@ -384,6 +386,20 @@ def _validate_group_output(output_path: str, group_name: str) -> bool:
     return has_section
 
 
+def _malformed_group(
+    i: int, grp: Group, job: ReviewJob, group_output: str,
+    outcome: IngestOutcome, pipeline_state: PipelineState | None,
+) -> tuple[int, str, GroupFailure]:
+    diagnosis = outcome.diagnosis or Diagnosis(
+        DiagnosisKind.MALFORMED_OUTPUT,
+        detail="; ".join(e.render() for e in outcome.errors),
+    )
+    core.log.warn(f"Group {i} ({grp.name}) output rejected ({diagnosis.message})")
+    if pipeline_state is not None:
+        _update_group_failed(job, i, diagnosis, pipeline_state)
+    return (i, group_output, GroupFailure(grp.name, diagnosis))
+
+
 def _review_group(
     i: int, grp: Group, job: ReviewJob,
     group_count: int, holistic_content: str,
@@ -460,9 +476,16 @@ def _review_group(
             prefix=retry_hint, ladder_bytes=ladder, **group_kwargs,
         )
 
+    sent = group_prompt
+
+    def invoke(text: str, turns: int) -> int:
+        nonlocal sent
+        sent = text
+        return runner.invoke(text, turns, label=grp.name)
+
     diagnosis = run_with_overflow_recovery(
         group_prompt,
-        invoke=lambda text: runner.invoke(text, max_turns, label=grp.name),
+        invoke=lambda text: invoke(text, max_turns),
         after=_after,
         has_output=lambda: _has_output(group_output),
         rebuild=_rebuild,
@@ -476,6 +499,16 @@ def _review_group(
         if pipeline_state is not None:
             _update_group_failed(job, i, diagnosis, pipeline_state)
     else:
+        outcome = ingest_with_repair(
+            group_output, sent, invoke,
+            diagnose=lambda: diagnose_missing_output(
+                group_log, output_path=group_output,
+            ),
+        )
+        if not outcome.ok:
+            return _malformed_group(
+                i, grp, job, group_output, outcome, pipeline_state,
+            )
         _validate_group_output(group_output, grp.name)
         core.log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
         if pipeline_state is not None:

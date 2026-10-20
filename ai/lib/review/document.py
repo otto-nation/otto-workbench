@@ -1,84 +1,17 @@
-"""`review.md` — the artifact the review subsystem exists to produce.
+"""The header vocabulary of a review, and the read view of a stored one.
 
-A review document is a title, a block of HTML-comment metadata recording what
-produced it, and a body. This module owns all three: the keys the header may
-state, the sentence the title is, and where one ends and the next begins. A
-writer that assembles those itself is stating the document's format a second
-time, and the second statement is the one that drifts.
-
-Three things write a header and they do not write the same one. The pipeline
-renders the full block; `review-rebuild` renders the subset a `meta.json` can
-attest to; and on the synthesis and single-agent paths the review agent writes
-its own, following prose in its template. `ReviewHeader.parse` therefore reads
-keys wherever they appear and in whatever order, and `set_status` edits the line
-it is asked about rather than re-rendering the block — a field this module was
-never told about survives an edit instead of being dropped by it.
-
-None of it is the agent's to state. Every key here records something about the
-*run* — which commit it read, what it was a delta against, which tool produced
-it — and the agent can see none of that from inside its own prompt. What it
-typed instead was a template's placeholder: a literal `YYYY-MM-DD` on one path,
-and on every path no `review_type` at all, which `parse` reads back as `full`.
-An incremental review recorded as a full one is not a cosmetic defect: the next
-re-review asks the header what it is a delta against, so the answer decides
-whether that run reads the delta or re-reads the whole PR.
-
-`stamp_header` is the fix and the rule: the harness writes the header over
-whatever reached disk, on every path, after the agent has finished with the
-file. It is an edit and not a re-render, per key, so a marker the agent wrote
-and this module has never heard of survives being stamped — and because `parse`
-takes the first occurrence of a key, it replaces the first marker rather than
-adding a second one below it. `set_status` is the same primitive with one key,
-kept separate because a status is the last thing known about a run and is
-written by a caller holding no other part of the header.
-
-`ReviewDocument` is for a document being *built*: it renders the canonical form
-this module defines. Editing one that is already on disk is a different job and
-stays a text edit, because a header read back off disk states only what its
-writer chose to state — re-rendering it would add this module's defaults as
-claims the original never made. `set_status` and `set_section` are what such an
-edit asks instead, and `section_span` is what they are built on: the offsets of
-the section being rewritten, leaving every byte outside them alone. A pipeline
-that appends a section after the review is written — the Agent Failures table,
-the static-analysis report — states which section it is and what goes in it,
-and this module decides where that lands.
-
-Reading a document is the same one owner from the other side. What a review
-says — which sections it carries, which findings it declares, how many of each
-severity, and the call it reached — is answered off the parsed document rather
-than by a regex each caller brings, so two readers of one review cannot report
-different things about it.
-
-A finding declaration is part of that format, but not part of this module: the
-grammar of one — the ID at the head of a list item, the location after it, the
-body after that — is `review.grammar`'s, and this module reads a document
-through it. `parse_finding_line` is for a caller holding a single line that is
-not in a findings section — the prior-findings ledger is the one — and every
-other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
-onto a finding it left alone is the exception that stays: `is_skipped` is a
-question about a `Finding` this module has already parsed rather than about
-the line that declared it. Where a finding's body starts and stops is
-`review.spans`'s, and this module reads through `finding_spans` the same way
-it reads a single line through `review.grammar`.
-
-Counting them is that same parse, not a second grammar over the same text:
-`open_counts` tallies `open_findings`, so which findings a review is reported
-to have and how many it is reported to have are one answer. A tally written as
-its own regex is how a review came to report four findings it had none of —
-the ledger's lines look like declarations from anywhere but inside the parse.
-
-What a tally of them means — the verdict it supports, and the body a review
-carries when no synthesis agent wrote one — is `review.verdict`'s: a judgement
-over this module's shape rather than part of the shape itself.
+This module owns the keys a review header may state, the sentence the title is,
+and `ReviewDocument` as the read view of a stored review. `ReviewHeader.render`
+and `ReviewHeader.from_meta` write the header from the sidecar; `covers` is
+whether a header SHA covers a commit; `review_title` is the `# ...` line
+derived from the same sidecar. `ReviewDocument` answers sections, findings,
+open counts and the verdict off the record, never by parsing `review.md`.
 """
 
 # doc-group: pipeline
 
 from __future__ import annotations
 
-import re
-from collections import Counter
-from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -86,10 +19,9 @@ from pathlib import Path
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from pr.target import display_repo
-from review.grammar import SKIP_HEAD_RE, SKIP_TAIL_RE
 from review.record import ReviewRecord
-from review.spans import finding_spans
-from review.types import SEVERITIES, Finding, FindingScope, ReviewMeta, ReviewType, meta_enum
+from review.types import SEVERITIES, Finding, ReviewMeta, ReviewType
+
 
 # The headers a review is written with. `Summary` and `Verdict` are the two this
 # module reads by name; the rest are here because they name sections of the same
@@ -113,8 +45,9 @@ class MetaKey(StrEnum):
     """A key in a review document's metadata header.
 
     The values are the strings on disk. They stay as they are so a review
-    written by an earlier version still parses, and so the templates that ask
-    the review agent for `<!-- date: ... -->` keep naming a key this reads.
+    written by an earlier version still renders the same header, and so the
+    templates that ask the review agent for `<!-- date: ... -->` keep naming
+    a key this module owns.
     """
 
     DATE = "date"
@@ -132,35 +65,8 @@ class MetaKey(StrEnum):
     GENERATOR = "generator"
 
 
-_LINE_RE = re.compile(r"<!--\s*([a-z_]+):\s*(.*?)\s*-->")
-
-# The order a header's keys are written in, which is `MetaKey`'s declaration
-# order and therefore `render`'s. An inserted marker takes its place in it, so
-# a header the harness stamped key by key reads in the same order as one
-# rendered in a single pass — otherwise the two writers produce documents that
-# differ only in the arrangement of a block nobody meant to arrange twice.
-_KEY_ORDER = {key: i for i, key in enumerate(MetaKey)}
-
-# An unrecognised key sorts last. It is the review agent's invention or an
-# older version's, and nothing here knows where it belongs — leaving it at the
-# end keeps it from deciding where a key this module *does* know goes.
-_UNORDERED = len(_KEY_ORDER)
-
-
-def _key_re(key: MetaKey) -> re.Pattern[str]:
-    return re.compile(rf"<!--\s*{key}:[^>]*-->")
-
-
 def _line(key: MetaKey, value: object) -> str:
     return f"<!-- {key}: {value} -->"
-
-
-def _int(value: str | None) -> int | None:
-    """`value` read as an int, or None when it is absent or not a number."""
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
 
 
 @dataclass(frozen=True)
@@ -200,11 +106,9 @@ class ReviewHeader:
     def _markers(self) -> list[tuple[MetaKey, object | None]]:
         """Every key this header can state, paired with the value it states.
 
-        A `None` is a key this header has nothing to say about. One list, read
-        both by `render` (which drops those keys) and by `stamp_header` (which
-        leaves whatever is on disk for them alone), so the block a fresh render
-        produces and the block a stamp edits into place carry the same keys in
-        the same order.
+        A `None` is a key this header has nothing to say about. `render` drops
+        those keys, so the block a fresh render produces carries only what this
+        header attests to, in declaration order.
         """
         ratio = f"{self.skipped_groups}/{self.total_groups}" if self.total_groups else None
         return [
@@ -267,39 +171,6 @@ class ReviewHeader:
             generator_version=meta.generator_version,
         ), **overrides)
 
-    @classmethod
-    def parse(cls, text: str) -> ReviewHeader:
-        """The header `text` states, with every key it omits left at its default.
-
-        Keys are read wherever they appear and in whichever order, because the
-        review agent writes its own header from a template's prose rather than
-        from `render`. The first occurrence of a key wins.
-
-        A value that will not convert reads as absent. A header is a record of
-        a run that already happened; one garbled field is not a reason to
-        discard what the rest of it says.
-        """
-        found: dict[str, str] = {}
-        for match in _LINE_RE.finditer(text):
-            found.setdefault(match.group(1), match.group(2))
-        skipped, _, total = found.get(MetaKey.SKIPPED_GROUPS, "").partition("/")
-        return cls(
-            date=found.get(MetaKey.DATE, ""),
-            mode=meta_enum(Mode, found.get(MetaKey.MODE)),
-            pr_number=_int(found.get(MetaKey.PR)),
-            head_sha=found.get(MetaKey.HEAD_SHA, ""),
-            head_ref=found.get(MetaKey.HEAD_REF, ""),
-            base_ref=found.get(MetaKey.BASE_REF, ""),
-            review_type=meta_enum(ReviewType, found.get(MetaKey.REVIEW_TYPE)) or ReviewType.FULL,
-            prior_sha=found.get(MetaKey.PRIOR_SHA, ""),
-            prior_date=found.get(MetaKey.PRIOR_DATE, ""),
-            delta_files=_int(found.get(MetaKey.DELTA_FILES)),
-            skipped_groups=_int(skipped) or 0,
-            total_groups=_int(total) or 0,
-            status=meta_enum(ReviewStatus, found.get(MetaKey.STATUS)),
-            generator_version=found.get(MetaKey.GENERATOR, ""),
-        )
-
 
 # The shortest header SHA read as an abbreviation of the subject rather than a
 # coincidence. Seven is git's own floor in a small repository. A header the
@@ -325,224 +196,6 @@ def covers(reviewed_sha: str, sha: str) -> bool:
     return len(reviewed_sha) >= MIN_SHA_PREFIX and sha.startswith(reviewed_sha)
 
 
-# What ends the header block and starts the body: the first section heading.
-# An inserted marker goes above it rather than at the end of the document,
-# because `ReviewHeader.parse` reads the first occurrence of a key and a
-# marker below a section would lose to anything the agent wrote above it.
-_FIRST_SECTION = "## "
-
-
-def set_meta(content: str, key: MetaKey, value: object) -> str:
-    """`content` with its header stating `key: value`, given the line if it had none.
-
-    The one primitive under every header edit. An edit rather than a
-    re-render, because the header on disk may be the review agent's: rendering
-    a fresh block over it would drop whichever keys the agent wrote and this
-    caller does not hold.
-
-    An existing marker is replaced where it stands, so the header keeps its
-    order and a stamped key does not migrate to the bottom of the block. A key
-    the document does not carry is inserted at its place in `_KEY_ORDER`, and
-    a document with no header at all takes one above its first section
-    heading.
-    """
-    line = _line(key, value)
-    head, body = _split_header(content)
-    pattern = _key_re(key)
-    if pattern.search(head):
-        # A function replacement, not a string one: `re.sub` reads backslash
-        # escapes in the latter, and the value being written is not this
-        # module's to vouch for.
-        return pattern.sub(lambda _: line, head, count=1) + body
-    if (at := _insert_at(head, key)) is None:
-        # No header block to join. The line opens one directly above the body,
-        # which is where `parse` will look for it.
-        return f"{head}{line}\n\n{body}" if body else f"{head}{line}\n"
-    before = head[:at]
-    # A header whose last marker ends the text has no newline to insert after,
-    # so one is supplied. Without it the two markers are concatenated into a
-    # single line, which `_LINE_RE` then reads as one key — the inserted value
-    # would be on the page and invisible to the parser.
-    if before and not before.endswith("\n"):
-        before += "\n"
-    return f"{before}{line}\n{head[at:]}{body}"
-
-
-def _split_header(content: str) -> tuple[str, str]:
-    """`content` cut into its header block and everything from the first section on.
-
-    Every header edit is confined to the first half. A review's prose can
-    quote a metadata comment — a finding about this very module would — and an
-    edit that searched the whole document would rewrite that quotation instead
-    of the header, leaving the header without the key it was asked to state
-    and the finding saying something its author did not write.
-    """
-    match = re.search(rf"^{re.escape(_FIRST_SECTION)}", content, re.MULTILINE)
-    at = match.start() if match else len(content)
-    return content[:at], content[at:]
-
-
-def _insert_at(head: str, key: MetaKey) -> int | None:
-    """Where a `key` marker goes in the header block `head`, or None when it has none.
-
-    The offset of the first marker that belongs *after* `key`, so the inserted
-    line lands in canonical order; failing that, the line after the last
-    marker, so it lands at the end of the block rather than adrift in the body.
-    """
-    order = _KEY_ORDER[key]
-    end: int | None = None
-    for match in _LINE_RE.finditer(head):
-        if _KEY_ORDER.get(match.group(1), _UNORDERED) > order:
-            return match.start()
-        # Past the marker's own newline, so the inserted line lands as a line
-        # of its own. A header whose last marker ends the string has no
-        # newline to step over, and `set_meta` supplies one.
-        end = match.end()
-        end += 1 if head[end:end + 1] == "\n" else 0
-    return end
-
-
-def set_status(content: str, status: ReviewStatus) -> str:
-    """`content` with its header stating `status`, given one if it stated none.
-
-    An existing status is replaced rather than left alone — `completed` is
-    written before the disprove gate has had its say and has to become
-    `partial` when the gate fails.
-
-    Its own function rather than a `stamp_header` call because the moment is
-    its own: a status is the last thing known about a run and is written after
-    everything else, by a caller holding no other part of the header.
-    """
-    return set_meta(content, MetaKey.STATUS, status.value)
-
-
-def stamp_header(content: str, header: ReviewHeader) -> str:
-    """`content` with every key `header` states written over whatever it said.
-
-    What the harness knows about its own run, put on the page after the agent
-    has finished writing to the file. The agent cannot see any of it — which
-    commit was checked out, what the run is a delta against, which build of
-    the tool is running — so on the paths where the agent writes the document
-    the header is a template's placeholders until this runs over it.
-
-    Per key, and only the keys `header` states. A marker this module has never
-    heard of survives, and so does one the agent wrote for a key this
-    particular run has nothing to say about — stamping is the harness
-    correcting the record, not erasing it.
-    """
-    for key, value in header._markers():
-        if value is not None:
-            content = set_meta(content, key, value)
-    return content
-
-
-def set_title(content: str, title: str) -> str:
-    """`content` opening with `title`, replacing the `# ` line if it has one.
-
-    The title names the repo, the PR and the branch under review, all of which
-    the agent fills from prompt interpolation and none of which it can check.
-    Stamped with the header and for the same reason: `review_title` derives it
-    from the same sidecar, so the document and its sidecar cannot name the
-    review two ways.
-    """
-    lines = content.split("\n")
-    if lines and lines[0].startswith("# "):
-        lines[0] = title
-        return "\n".join(lines)
-    return f"{title}\n{content}"
-
-
-@dataclass(frozen=True)
-class SectionSpan:
-    """Where a section sits in the text it was found in.
-
-    Offsets into that text, in the order they appear: the heading, the body it
-    introduces, and the byte after the body. `text[span.start:span.end]` is the
-    section's contents and `text[span.heading_start:span.end]` is the whole
-    section, heading included — which is the slice an edit that removes or
-    replaces one has to name.
-    """
-
-    heading_start: int
-    start: int
-    end: int
-
-    def body_of(self, text: str) -> str:
-        """The section's contents, verbatim — leading and trailing blank lines
-        included, since an edit rewriting the section has to know what it is
-        replacing."""
-        return text[self.start:self.end]
-
-
-def section_span(text: str, header: str) -> SectionSpan | None:
-    """Where `text`'s `## <header>` section sits, or None when it has none.
-
-    The body opens at the end of the heading line and closes at the next `## `
-    or the end of the text, so the slice `body_of` names is the section's
-    contents with the heading excluded and the blank lines around it intact.
-
-    The one owner of where a section begins and ends. A reader after the
-    contents asks `ReviewDocument.section`; an edit rewriting one section of a
-    document already on disk asks here or `set_section`, because parsing and
-    re-rendering that document would restate a header its writer never wrote.
-    Headers are matched case-insensitively: the review agent writes its own, and
-    `## Must Fix` names the same section as `## Must fix`.
-    """
-    m = re.search(rf"^## {re.escape(header)}\s*$", text, re.MULTILINE | re.IGNORECASE)
-    if not m:
-        return None
-    start = m.end()
-    nxt = re.search(r"^## ", text[start:], re.MULTILINE)
-    return SectionSpan(m.start(), start, start + nxt.start() if nxt else len(text))
-
-
-def set_section(content: str, header: str, body: str, *, before: str = "") -> str:
-    """`content` with its `## <header>` section stating `body`, added if absent.
-
-    `body` is the section's contents without its heading — this owns the
-    heading, so a caller that renders one is spelling the document's format a
-    second time. An empty `body` removes the section, which is how a rerun that
-    fixed what failed drops the report of it.
-
-    A section already there is replaced where it stands. One that is not goes
-    above the `## <before>` section when the document has one, and at the end
-    when it does not — a document missing the anchor still receives the section
-    rather than silently discarding it, which is what a caller asking for a
-    section to be set means either way.
-    """
-    body = body.strip()
-    section = f"## {header}\n\n{body}\n\n" if body else ""
-    span = section_span(content, header)
-    if span:
-        return content[:span.heading_start] + section + content[span.end:]
-    if not section:
-        return content
-    anchor = section_span(content, before) if before else None
-    if anchor:
-        return content[:anchor.heading_start] + section + content[anchor.heading_start:]
-    preceding = f"{content.rstrip()}\n\n" if content.strip() else ""
-    return f"{preceding}{section.rstrip()}\n"
-
-
-def strip_sections(text: str, headers: Iterable[str]) -> str:
-    """`text` with each `## <header>` section in `headers` dropped, heading included.
-
-    For a caller holding a document written for one purpose and reading it for
-    another: the prompt that shows a re-review its predecessor drops the
-    sections that are bookkeeping rather than reviewer claims, and the prior
-    findings ledger is stripped before a review is published because its IDs
-    number the previous review.
-
-    Every occurrence of a header goes, not only the first — a document assembled
-    from group outputs carries one `## File Triage` per group until the merge
-    has run.
-    """
-    for header in headers:
-        while (span := section_span(text, header)) is not None:
-            text = text[:span.heading_start] + text[span.end:]
-    return text
-
-
 def review_title(meta: ReviewMeta) -> str:
     """The `# ...` line a review opens with, as the attribution in `meta` reads.
 
@@ -564,26 +217,6 @@ def review_title(meta: ReviewMeta) -> str:
     number = f"#{meta.pr_number}" if meta.pr_number is not None else ""
     title = f"# Review: {shown}{number}"
     return f"{title} — {meta.title}" if meta.title else title
-
-
-# ── Finding lines ────────────────────────────────────────────────────────────
-
-def is_skipped(finding: Finding) -> bool:
-    """Whether a previous fix pass recorded that it left this finding alone.
-
-    A checked finding is one the fix pass landed, so it is never skipped
-    however its body reads — the annotation only speaks for an open one.
-    """
-    if finding.checked:
-        return False
-    return bool(SKIP_HEAD_RE.match(finding.body) or SKIP_TAIL_RE.search(finding.body))
-
-
-def _parse_findings(text: str) -> list[Finding]:
-    return [
-        span.finding for span in finding_spans(text)
-        if span.scope is FindingScope.DECLARED
-    ]
 
 
 def _record_section(record: ReviewRecord, header: str) -> str:
@@ -614,19 +247,15 @@ def _record_section(record: ReviewRecord, header: str) -> str:
 
 @dataclass(frozen=True)
 class ReviewDocument:
-    """A review document being built: its title, its header, and its body.
+    """The read view of a stored review: its title, its header, and its record.
 
-    The body is whatever goes below the header, verbatim — findings, prose,
-    sections this module has never heard of. Only the frame is typed, because
-    the frame is the part every writer was spelling out for itself.
+    Sections, findings, open counts and the verdict are answered off the
+    record. A document with no record is an empty view — zeroes, no findings,
+    no verdict — which is what a review that was never written reads as.
     """
 
     title: str = ""
     header: ReviewHeader = field(default_factory=ReviewHeader)
-    body: str = ""
-    # Set when the document is the read view of a stored review. The read API
-    # answers from it; `body` is the legacy text form, removed once every
-    # caller reads through the store.
     record: ReviewRecord | None = None
     meta: ReviewMeta | None = None
 
@@ -638,97 +267,39 @@ class ReviewDocument:
             record=stored.record, meta=stored.meta,
         )
 
-    def render(self) -> str:
-        """The document as it goes on disk: title, header block, blank line, body.
-
-        A document with no title opens with its header, which is what a
-        mechanical merge written before synthesis has.
-        """
-        if self.record is not None:
-            raise TypeError(
-                "a record-backed ReviewDocument has no markdown body; "
-                "write it with review.store.write_review"
-            )
-        title = f"{self.title}\n" if self.title else ""
-        return f"{title}{self.header.render()}\n{self.body}"
-
-    def write(self, path: str | Path) -> None:
-        """Render the document to `path`."""
-        Path(path).write_text(self.render())
-
-    @classmethod
-    def parse(cls, text: str) -> ReviewDocument:
-        """The title, header and body `text` is made of.
-
-        The header is the run of metadata comments the document opens with,
-        blank lines included; the body is everything from the first line that is
-        neither. A metadata comment further down belongs to whatever section it
-        sits in and stays in the body, so rendering what was parsed does not
-        hoist it into the header.
-        """
-        lines = text.split("\n")
-        start = 0
-        title = ""
-        if lines and lines[0].startswith("# "):
-            title = lines[0].rstrip()
-            start = 1
-        end = start
-        while end < len(lines) and _is_header_line(lines[end]):
-            end += 1
-        return cls(
-            header=ReviewHeader.parse("\n".join(lines[start:end])),
-            title=title,
-            body="\n".join(lines[end:]),
-        )
-
     @classmethod
     def read(cls, path: str | Path | None) -> ReviewDocument | None:
-        """The document at `path`, or None when there is no readable one there.
-
-        An absent review is not an empty one. A caller handed a document either
-        way would report a review with no findings and nothing to say where in
-        fact no review was ever written, so the two answers stay distinct and
-        the caller decides what an absent one means.
-        """
+        """The stored review beside `path`, or None when there is none or it is stale."""
         if not path:
             return None
-        file = Path(path)
-        if not file.is_file():
-            return None
-        try:
-            return cls.parse(file.read_text())
-        except OSError:
-            return None
+        # Imported here: `review.store` renders through `review.render`, which
+        # imports this module for the header and title.
+        from review.store import read_review
+
+        stored = read_review(Path(path))
+        return cls.from_stored(stored) if stored else None
 
     def section(self, header: str) -> str:
         """The body of the `## <header>` section, stripped, or "" when absent.
 
-        Read off the body, so a metadata comment above it can never be mistaken
-        for the section's contents. A record-backed document raises
-        ``ValueError`` on a severity heading; those findings live on
+        A severity heading raises ``ValueError``; those findings live on
         ``.findings``.
         """
-        if self.record is not None:
-            return _record_section(self.record, header)
-        span = section_span(self.body, header)
-        return span.body_of(self.body).strip() if span else ""
+        if self.record is None:
+            return ""
+        return _record_section(self.record, header)
 
     @property
     def findings(self) -> list[Finding]:
         """The findings the document declares, in the order it declares them.
 
-        Read off the body, under the severity headings that declare findings —
-        a finding line written anywhere else is prose about a finding rather
-        than a declaration of one, and the prior-findings ledger is exactly
-        that. A caller holding such a line asks `parse_finding_line`.
-
         `open_findings` answers a narrower question over the same
         declarations: the ones still outstanding, so a finding the fix pass
         checked off is one of these and not one of those.
         """
-        if self.record is not None:
-            return [f.view() for f in self.record.visible]
-        return _parse_findings(self.body)
+        if self.record is None:
+            return []
+        return [f.view() for f in self.record.visible]
 
     @property
     def open_findings(self) -> list[Finding]:
@@ -748,25 +319,14 @@ class ReviewDocument:
 
         Keyed by severity key and always complete, so a caller can index the
         result rather than guarding every key.
-
-        Tallied over `open_findings`, so the parse decides what one is and no
-        second grammar can disagree with it: a struck-through finding is one
-        the review resolved, a checked one is a finding the fix pass fixed, and
-        a finding line under any other heading — the prior-findings ledger is
-        one — is prose about a finding rather than a declaration of one.
         """
         if self.record is not None:
             return self.record.open_counts
-        tally = Counter(f.severity for f in self.open_findings)
-        return {s.key: tally[s.key] for s in SEVERITIES}
+        return {s.key: 0 for s in SEVERITIES}
 
     @property
     def verdict(self) -> ReviewVerdict | None:
         """The verdict the `## Verdict` section states, if it states one."""
-        text = self.record.verdict if self.record is not None else self.section(SECTION_VERDICT)
-        return ReviewVerdict.stated_in(text)
-
-
-def _is_header_line(line: str) -> bool:
-    stripped = line.strip()
-    return not stripped or bool(_LINE_RE.fullmatch(stripped))
+        if self.record is None:
+            return None
+        return ReviewVerdict.stated_in(self.record.verdict)

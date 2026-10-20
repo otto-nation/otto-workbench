@@ -29,9 +29,9 @@ can decide them, rather than after the document is written and the only thing
 left to do is warn.
 
 The record is a sidecar in the review directory rather than a section of the
-review. Reconciliation parses its input for finding-shaped lines, so a
-reconciliation written into the review would come back to the next round
-looking like a fresh set of prior findings.
+review. Reconciliation walks the prior round's record, so a reconciliation
+written into the review would come back to the next round looking like a
+fresh set of prior findings.
 
 The ledger this module reads is not the only account of what became of a
 prior finding. Every finding posted inline opened a review thread,
@@ -51,16 +51,16 @@ from pathlib import Path
 import git.client
 import core.log
 import core.serde
-from review.document import SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader
 from review.grammar import (
-    ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, SID_MARKER_RE, FindingIdentity,
-    parse_ledger_line,
+    SID_MARKER_RE, FindingIdentity, parse_ledger_line,
 )
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
-from review.spans import finding_spans
+from review.record import Disposition, ReviewRecord
+from review.render import finding_line
+from review.store import StoredReview
 from review.types import (
     DISPOSITION_TAIL_BREAKS, DISPOSITION_TAIL_WORD_JOINERS, FindingRef,
-    FindingSpan, LedgerEntry, PriorDisposition, PriorFinding,
+    LedgerEntry, PriorDisposition, PriorFinding, ReviewMeta,
 )
 from core.text import join_or, plural
 
@@ -84,41 +84,36 @@ def _stable_ids(text: str) -> set[str]:
 
 # ── Reading the prior review ─────────────────────────────────────────────────
 
-def _parse_ledger(review_text: str) -> list[LedgerEntry]:
-    """The entries of the review's prior-findings ledger, in order."""
-    section = ReviewDocument.parse(review_text).section(SECTION_PRIOR_FINDINGS)
-    entries = (parse_ledger_line(raw) for raw in section.split("\n"))
+def _record_stable_ids(record: ReviewRecord) -> set[str]:
+    """Every prior-finding identity the review carries: markers, finding identities,
+    and any finding-shaped line in its prose — the same set `_stable_ids` read off text."""
+    ids = {f.sid for f in record.findings if f.sid} | {f.stable_id for f in record.findings if f.stable_id}
+    texts = [record.ledger, record.summary, record.verdict, *(e.body for e in record.extra),
+             *(f.body for f in record.findings)]
+    for text in texts:
+        ids |= _stable_ids(text)
+    return ids
+
+
+def _record_ledger(record: ReviewRecord) -> list[LedgerEntry]:
+    entries = (parse_ledger_line(raw) for raw in record.ledger.split("\n"))
     return [entry for entry in entries if entry]
 
 
-def _prior_finding(span: FindingSpan, prior_text: str) -> PriorFinding:
-    """One prior finding, read from its own line down to whatever ends it."""
-    line = span.line
-    identity = FindingIdentity.of(line)
-    label_m = BOLD_FINDING_ID_RE.search(line)
-    body = [raw.strip() for raw in span.text_of(prior_text).split("\n")]
-    return PriorFinding(
-        ref=FindingRef(
-            label_m.group(1) if label_m else "",
-            identity.path if identity else "",
-        ),
-        stable_id=identity.stable_id if identity else "",
-        text="\n".join(body).strip(),
-    )
-
-
-def _parse_prior_findings(prior_text: str) -> list[PriorFinding]:
-    """Every finding the prior review reported, each with the text reporting it.
-
-    `ANNOTATE_FINDING_RE` chooses which declarations count — the shape the
-    stable-ID annotator writes, which is what carry-forward matches on — and
-    `finding_spans` says how far down each one's text runs.
-    """
-    return [
-        _prior_finding(span, prior_text)
-        for span in finding_spans(prior_text)
-        if ANNOTATE_FINDING_RE.match(span.line)
-    ]
+def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
+    """Every finding the prior round still held open, with the text that reported it."""
+    out = []
+    for f in record.visible:
+        if f.disposition is Disposition.FIXED:
+            continue
+        line = finding_line(f)
+        identity = FindingIdentity.of(line.split("\n", 1)[0])
+        out.append(PriorFinding(
+            ref=FindingRef(f.id, identity.path if identity else ""),
+            stable_id=f.stable_id,
+            text="\n".join(raw.strip() for raw in line.split("\n")).strip(),
+        ))
+    return out
 
 
 # ── Reconciliation against the prior review ──────────────────────────────────
@@ -423,50 +418,50 @@ def _settle(
 
 
 def reconcile(
-    prior_text: str,
-    review_text: str,
+    prior: StoredReview,
+    review: ReviewRecord,
     wt_path: str = "",
     head_sha: str = "",
 ) -> Reconciliation:
-    """What `review_text` made of every finding the prior review reported.
+    """What `review` made of every finding the prior review reported.
 
     `wt_path` is the worktree the review was written against. Without it
     nothing is inferred and the review's own account stands alone, which is
     what a caller reconciling two documents rather than a run wants.
     """
     return _reconcile_findings(
-        _parse_prior_findings(prior_text), prior_text, review_text, wt_path, head_sha,
+        _prior_findings(prior.record), prior.meta, review, wt_path, head_sha,
     )
 
 
 def _reconcile_findings(
     findings: list[PriorFinding],
-    prior_text: str,
-    review_text: str,
+    prior_meta: ReviewMeta,
+    review: ReviewRecord,
     wt_path: str,
     head_sha: str,
 ) -> Reconciliation:
     """`reconcile()`'s body, taking the prior findings already parsed.
 
-    Split out so `passed_over()` can reuse the one parse of `prior_text`
+    Split out so `passed_over()` can reuse the one walk of `prior.record`
     instead of paying for a second one just to get the findings back.
     """
-    carried = _stable_ids(review_text)
-    ledger = _parse_ledger(review_text)
-    prior = ReviewHeader.parse(prior_text)
-    tree = _Tree(wt_path, prior.head_sha)
+    carried = _record_stable_ids(review)
+    ledger = _record_ledger(review)
+    tree = _Tree(wt_path, prior_meta.head_sha)
     return Reconciliation(
         prior_sha=tree.prior_sha,
-        prior_date=prior.date,
+        prior_date=prior_meta.date,
         head_sha=head_sha or (git.client.head_sha(wt_path) if wt_path else ""),
         records=[_settle(finding, carried, ledger, tree) for finding in findings],
     )
 
 
 def passed_over(
-    prior_text: str, review_text: str, wt_path: str = "", head_sha: str = "",
+    prior: StoredReview | None, review: ReviewRecord, wt_path: str = "",
+    head_sha: str = "",
 ) -> list[PriorFinding]:
-    """The prior findings `review_text` left out that the tree at `wt_path` still holds.
+    """The prior findings `review` left out that the tree at `wt_path` still holds.
 
     Findings rather than records: a `PriorRecord` says what became of a
     finding, and a caller asking for a disposition needs the finding itself —
@@ -485,10 +480,12 @@ def passed_over(
     zipped rather than matched on a label, which two findings in one file may
     share.
     """
-    if not prior_text:
+    if prior is None:
         return []
-    findings = _parse_prior_findings(prior_text)
-    reconciliation = _reconcile_findings(findings, prior_text, review_text, wt_path, head_sha)
+    findings = _prior_findings(prior.record)
+    reconciliation = _reconcile_findings(
+        findings, prior.meta, review, wt_path, head_sha,
+    )
     return [
         finding
         for finding, record in zip(findings, reconciliation.records, strict=True)
@@ -582,20 +579,20 @@ _VERDICT_SHAPE = (
 
 def record_prior_findings(
     review_file: str,
-    prior_text: str,
+    prior: StoredReview | None,
+    review: ReviewRecord,
     wt_path: str = "",
 ) -> Reconciliation | None:
-    """Reconcile the review at `review_file` against `prior_text` and record it.
+    """Reconcile `review` against `prior` and record it beside `review_file`.
 
-    Runs before post-processing strips the ledger, which is the only window in
+    Runs before post-processing clears the ledger, which is the only window in
     which the review still says what it made of the prior findings. Returns
-    None when there is nothing to reconcile — no prior review, no review file,
-    or a prior review that reported no findings.
+    None when there is nothing to reconcile — no prior review, or a prior
+    review that reported no findings. `review_file` is the sidecar path only.
     """
-    path = Path(review_file)
-    if not prior_text or not path.exists():
+    if prior is None:
         return None
-    reconciliation = reconcile(prior_text, path.read_text(), wt_path)
+    reconciliation = reconcile(prior, review, wt_path)
     if not reconciliation.records:
         return None
     _report(reconciliation, _write(review_file, reconciliation))

@@ -128,10 +128,23 @@ class TestStaticAnalysisIntegration:
         "}\n"
     )
 
+    _REVIEW_TEXT = "## Summary\nLooks good.\n\n## Verdict\nApprove"
+
+    def _seed(self, review_file):
+        from review.ingest import ingest_review
+        from review.store import write_review
+        from review.types import ReviewMeta
+        write_review(
+            Path(review_file),
+            ingest_review(self._REVIEW_TEXT, strict=False),
+            ReviewMeta(),
+        )
+
     def _job(self, tmp_path, review_file, changed_files):
         """A job in the two fields the injector reads, plus the one it writes."""
         job = MagicMock()
         job.review_file = str(review_file)
+        job.artifact_dir = str(Path(review_file).parent)
         job.wt_path = str(tmp_path)
         job.pr.files = changed_files
         job.static_results = []
@@ -139,7 +152,7 @@ class TestStaticAnalysisIntegration:
 
     def test_static_analysis_injected_into_review(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
         (tmp_path / "deep.sh").write_text(self.DEEP)
 
         changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
@@ -159,7 +172,7 @@ class TestStaticAnalysisIntegration:
         described, so the two could disagree about what is wrong with the code.
         """
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
         (tmp_path / "deep.sh").write_text(self.DEEP)
 
         changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
@@ -185,8 +198,8 @@ class TestStaticAnalysisIntegration:
         finished and on disk.
         """
         review_file = tmp_path / "review.md"
-        original = "## Summary\nLooks good.\n\n## Verdict\nApprove"
-        review_file.write_text(original)
+        self._seed(review_file)
+        original = review_file.read_text()
         (tmp_path / "deep.sh").write_text(self.DEEP)
 
         def _boom(*_a, **_k):
@@ -202,8 +215,8 @@ class TestStaticAnalysisIntegration:
 
     def test_static_analysis_skipped_when_no_applicable_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
-        original = "## Summary\nLooks good.\n\n## Verdict\nApprove"
-        review_file.write_text(original)
+        self._seed(review_file)
+        original = review_file.read_text()
 
         changed_files = [{"path": "README.md", "additions": 5, "deletions": 0}]
         job = self._job(tmp_path, review_file, changed_files)
@@ -214,7 +227,7 @@ class TestStaticAnalysisIntegration:
 
     def test_static_analysis_clean_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
 
         clean_script = tmp_path / "clean.sh"
         clean_script.write_text("#!/bin/bash\necho hello\n")
@@ -234,7 +247,7 @@ class TestStaticAnalysisIntegration:
         base resolution was skipped, only `_static_items`'s later, violation-
         gated warning."""
         review_file = tmp_path / "review.md"
-        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        self._seed(review_file)
         (tmp_path / "clean.sh").write_text("#!/bin/bash\necho hello\n")
 
         job = self._job(
@@ -283,9 +296,10 @@ class TestCleanupScope:
         it away, since what most of these tests read is the directory.
         """
         import fix.engine  # the `ro` fixture has already put `ai/lib` on the path
+        from review.reply_threads import ReplyThreads
 
         review_dir = tmp_path / "review-dir"
-        review_dir.mkdir()
+        review_dir.mkdir(exist_ok=True)
         review_file = review_dir / "review.md"
 
         pr_meta = ro.PRMetadata(
@@ -325,6 +339,10 @@ class TestCleanupScope:
         monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)
         monkeypatch.setattr(ro, "run_static_analysis", lambda *a, **k: [])
         monkeypatch.setattr(ro, "run_fix_pass", _fix)
+        monkeypatch.setattr(
+            ro, "fetch_reply_threads",
+            lambda *a, **k: ReplyThreads([], {}),
+        )
 
         args = self._args(ro, review_file, tmp_path, **arg_overrides)
         with contextlib.redirect_stdout(out if out is not None else io.StringIO()):
@@ -499,6 +517,39 @@ class TestCleanupScope:
             "mode": ro.Pipeline.SINGLE,
         }
         assert (review_dir / "disprove.jsonl").exists()
+
+    def test_a_prior_review_flag_loads_the_prior_record(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """`--prior-review` sets job.prior from prior.json, not from the text."""
+        from review.ingest import ingest_review
+        from review.store import archive_prior, write_review
+        from review.types import ReviewMeta
+
+        review_dir = tmp_path / "review-dir"
+        review_dir.mkdir()
+        write_review(
+            review_dir / "review.md",
+            ingest_review("## Summary\nprior round\n", strict=False),
+            ReviewMeta(head_sha="0ldc0de", date="2026-10-15"),
+        )
+        archive_prior(review_dir)
+        (review_dir / "prior.md").write_text("## Summary\nprior round\n")
+
+        seen = {}
+
+        def _capture(job, **_kwargs):
+            seen["prior"] = job.prior
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}")
+
+        self._run(
+            ro, monkeypatch, tmp_path, pipeline=_capture,
+            prior_review=str(review_dir / "prior.md"),
+        )
+        assert seen["prior"] is not None
+        assert seen["prior"].meta.head_sha == "0ldc0de"
+        assert seen["prior"].record.summary.startswith("prior round")
 
 
 class TestThePublishingGate:

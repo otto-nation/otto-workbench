@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 from conftest import add_self_origin, commit_all, git_out, init_repo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
@@ -11,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
 
+import review.phases
 import review.pipeline
 from review.budget import MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes
 from review.types import PreflightData
@@ -161,6 +164,35 @@ class TestFetchMetadataSelfMode:
 
         assert run_ctx.pr.base == "parent"
         assert [f["path"] for f in run_ctx.pr.files] == ["child.go"]
+
+
+class TestSingleAgentIngestRejection:
+    def test_rejected_single_agent_output_exits(self, ro, tmp_path, monkeypatch, capsys):
+        """BANNER in the agent's review.md is not a review: log and exit 1."""
+        from review.render import BANNER
+
+        job = _make_job(PreflightData(
+            diff="", commit_log="", file_contents={},
+            file_permissions={}, instructions_md="", architecture_md="",
+        ))
+        job.review_file = str(tmp_path / "review.md")
+        job.session_log = str(tmp_path / "session.jsonl")
+        job.wt_path = str(tmp_path)
+
+        def _agent(invocation, throttle=None) -> int:
+            Path(invocation.session_log).write_text("{}")
+            Path(job.review_file).write_text(
+                f"{BANNER}\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
+            )
+            return 0
+
+        monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.phases, "run_agent", _agent)
+        with pytest.raises(SystemExit) as exc:
+            review.pipeline.run_single_agent(job, disprove=False)
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "rejected" in err.lower()
 
 
 # ── merge cap ─────────────────────────────────────────────────────────

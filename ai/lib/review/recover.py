@@ -28,17 +28,15 @@ import core.log
 import pr.context
 import pr.domains
 import review.document
+import review.store
 import review.worktree
 from review.paths import FILENAME_PIPELINE_STATE
 from review.state import read_pipeline_status
 
 
 def read_review_sha(review_file: Path) -> str:
-    try:
-        text = review_file.read_text()
-    except OSError:
-        return ""
-    sha = review.document.ReviewHeader.parse(text).head_sha
+    stored = review.store.read_review(review_file)
+    sha = stored.meta.head_sha if stored else ""
     return sha if re.fullmatch(r"[a-f0-9]+", sha) else ""
 
 

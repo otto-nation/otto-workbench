@@ -61,7 +61,7 @@ from review.budget import (
     TEMPLATE_OVERHEAD_BYTES, collection_budget_bytes, fit_files,
     fixed_preflight_bytes,
 )
-from review.document import ReviewHeader, covers
+from review.document import covers
 from review.grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
@@ -660,12 +660,12 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
     commit already checked out, and one naming a commit this worktree cannot
     resolve.
     """
-    if not job.prior_review:
-        core.log.info("No prior review — running full review")
+    if job.prior is None:
+        core.log.info("No prior review record — running full review")
         return ""
-    prior_sha = ReviewHeader.parse(job.prior_review).head_sha
+    prior_sha = job.prior.meta.head_sha
     if not prior_sha:
-        core.log.info("Prior review has no SHA marker — running full review")
+        core.log.info("Prior sidecar has no head SHA — running full review")
         return ""
     if covers(prior_sha, job.pr.head_sha):
         core.log.info("Prior review is on current HEAD — running full review")

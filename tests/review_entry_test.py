@@ -27,6 +27,7 @@ import review.run
 import review.worktree
 
 from conftest import make_ctx, run_checked
+from review_record_support import written_review
 
 import core.prompt
 import gh.client
@@ -393,10 +394,7 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     callers_target = pr.target.target_dir(repo_key, "main")
     prs_target = pr.target.target_dir(repo_key, "feat/x")
 
-    review_dir = tmp_path / "review"
-    review_dir.mkdir()
-    review_file = review_dir / "review.md"
-    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+    review_file = written_review(tmp_path / "review")
 
     def _refuse(**kwargs):
         raise AssertionError("the run's identity is resolved once, at entry")
@@ -482,8 +480,7 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
     """A lost summary is a cache miss, not a failed review — but never silent."""
     import pr.state
 
-    review_file = tmp_path / "review.md"
-    review_file.write_text("## Findings\n")
+    review_file = written_review(tmp_path / "review")
 
     def _boom(*args, **kwargs):
         raise OSError("read-only file system")

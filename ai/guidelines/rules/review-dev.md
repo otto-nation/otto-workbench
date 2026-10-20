@@ -12,12 +12,12 @@ paths:
 
 When adding or modifying a review phase, verify these integration points:
 - `review/types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
-- `review/merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
+- `review/merge.py`: iteration over `SEVERITIES` in `merge_records()` and `renumber_record()` — merging the group reviews into one document. Renumbering rewrites every visible finding and every reference together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
 - `review/reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review/reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
 - `review/registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
 - `review/grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
 - `review/document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
-- `review/spans.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`, `drop_findings()`, `cut_spans()`. A pass that walks a review a finding at a time asks these rather than recognising the next head itself, and keeps only its own selection pattern (which findings it wants) over `FindingSpan.line`. Six passes once measured a body for themselves and cut the same review four different ways, one of them deleting the resolved finding below a dropped one
+- `review/ingest.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`. A pass that walks agent markdown a finding at a time asks these rather than recognising the next head itself. Ingest is the only remaining walker; finished reviews are records.
 - `review-post`: `renumber_for_posting()`, `classify_findings()` posting routing. `posted_id` is positional — reassigned on every round from the diff order — so nothing that has to survive to the next round may key on it. What survives is `FindingIdentity.stable_id`, which `format_inline_comment` writes into the posted comment as a `<!-- sid: -->` marker and `_match_thread_to_finding` reads back out. A pass comparing the words of a posted comment strips it first, the way `review_dedup` does; the fresh finding it is scored against carries none
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
@@ -70,10 +70,10 @@ when it comes first and ends the line or breaks with one of
 `DISPOSITION_TAIL_PUNCTUATION`; a comma is deliberately not on that list, so
 "Fixed, but only on the happy path" reaches no verdict rather than its
 optimistic half.
-The ledger is unioned across groups by `merge_reviews()` — where the strongest
+The ledger is unioned across groups by `merge_records()` — where the strongest
 verdict wins, in `PriorDisposition.precedence` order (`Declined` beats
 `Still open` beats `Fixed`) — copied through by the synthesis templates, and
-stripped in `post_process_findings()` before renumbering, since its IDs number
+stripped in `post_process_record()` before renumbering, since its IDs number
 the prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`,
 `PriorDisposition`, the merge, the synthesis templates, or
 `_build_prior_section()`'s instruction means checking the others.
@@ -126,13 +126,13 @@ posting normally precedes any fix pass — so both marks arrive only on a review
 posted after one, which is the run these two answers exist for.
 
 `*(skipped — reason)*` is the second annotation vocabulary, written by the fix
-pass rather than by a review, and `is_skipped()` is its single owner. It is
-what `review.fix._apply_outcomes` writes back for a `needs a person` outcome,
-the way it writes `*(declined — reason)*` for a declined one and ticks the box
-for a fix. A skip still belongs to the work set — the next `--fix` retries it —
-but a line already carrying either annotation is left exactly as it is: that
-verdict was reached before this pass ran, and a second annotation on one line
-leaves the document saying two things about one finding.
+pass rather than by a review, and `Disposition.SKIPPED` is its single owner. It is
+what `review.fix.apply_outcomes` records for a `needs a person` outcome,
+the way it records `Disposition.DECLINED` for a declined one and
+`Disposition.FIXED` for a fix. A skip still belongs to the work set — the next
+`--fix` retries it — but a finding that already carries either disposition is
+left as it is: that verdict was reached before this pass ran, and a second
+annotation on one finding leaves the document saying two things about it.
 
 The pass itself is `fix_engine`'s: `ReviewFixAdapter` supplies the open
 findings, the path-scoped commit and the re-render, and the batching, the
@@ -146,10 +146,13 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 
 | File | Survives success | Purpose |
 |------|-----------------|---------|
-| `review.md` | yes | Final review output |
-| `meta.json` | yes | PR metadata sidecar |
+| `review.json` | yes | Typed review record — the source of truth |
+| `review.md` | yes | Rendered from `review.json` + `meta.json`; never parsed back |
+| `meta.json` | yes | Run sidecar: SHAs, mode, status, dates, generator |
 | `session.jsonl` | yes | Agent cost/usage/errors |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |
+| `prior.json` | yes | Prior round's record — what a re-review reads |
+| `prior-meta.json` | yes | Prior round's sidecar, copied when a re-review archives |
 | `prior-findings.json` | yes | What became of each prior finding, and what settled it |
 | `prompt-*.md` | no (kept on failure) | Full prompts sent to agents |
 | `pipeline.json` | no | Resume state for multi-phase |

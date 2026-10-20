@@ -1,6 +1,6 @@
 """Config-driven section registry with auto-discovery for review posting.
 
-Defines section configs declaratively and extracts them from review markdown.
+Defines section configs declaratively and extracts them from the review record.
 Replaces per-section parameter threading across the posting pipeline.
 """
 
@@ -8,15 +8,16 @@ Replaces per-section parameter threading across the posting pipeline.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Literal
 
 from core.text import slugify
 from review.document import (
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
-    SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument,
+    SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
+    SECTION_STATIC_ANALYSIS, SECTION_SUMMARY, SECTION_VERDICT,
 )
+from review.record import ProseSection, ReviewRecord
+from review.render import failures_body
 from review.types import SEVERITIES
 
 POSITION_BEFORE = "before_findings"
@@ -32,7 +33,7 @@ for _s in SEVERITIES:
 # reviewer claims about the code. They are excluded here because this is the
 # last point before the body is posted, and neither reaches it the same way:
 # File Triage is never stripped upstream, and the prior-findings ledger is
-# stripped only on the pipeline that runs `post_process_findings` (see its
+# stripped only on the pipeline that runs `post_process_record` (see its
 # docstring for why the ledger's IDs cannot be posted beside this review's).
 _INTERNAL_HEADERS: set[str] = {
     SECTION_FILE_TRIAGE.lower(),
@@ -63,7 +64,21 @@ _KNOWN_BY_HEADER: dict[str, SectionConfig] = {
     cfg.header.lower(): cfg for cfg in KNOWN_SECTIONS
 }
 
-_SECTION_HEADER_RE = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
+
+def _config_for(heading: str) -> SectionConfig | None:
+    header_lower = heading.strip().lower()
+    if header_lower in _SEVERITY_HEADERS or header_lower in _INTERNAL_HEADERS:
+        return None
+    cfg = _KNOWN_BY_HEADER.get(header_lower)
+    if cfg is not None:
+        return cfg
+    original = heading.strip()
+    return SectionConfig(
+        key=slugify(original, sep="_"),
+        header=original,
+        position=POSITION_AFTER,
+        heading=f"## {original}",
+    )
 
 
 class ReviewSections:
@@ -78,44 +93,38 @@ class ReviewSections:
         self._order: list[str] = order or []
 
     @classmethod
-    def from_text(cls, text: str) -> ReviewSections:
+    def from_record(cls, record: ReviewRecord) -> ReviewSections:
+        sections: list[ProseSection] = [
+            ProseSection(SECTION_SUMMARY, record.summary),
+            ProseSection(
+                SECTION_FAILURES,
+                failures_body(record.failures) if record.failures else "",
+            ),
+            ProseSection(SECTION_VERDICT, record.verdict),
+            ProseSection(SECTION_STATIC_ANALYSIS, record.static_analysis),
+            *record.extra,
+        ]
+        return cls._from_pairs(sections)
+
+    @classmethod
+    def _from_pairs(cls, sections: list[ProseSection]) -> ReviewSections:
         entries: dict[str, str] = {}
         configs: dict[str, SectionConfig] = {}
         order: list[str] = []
-
-        doc = ReviewDocument.parse(text)
-        seen: dict[str, str] = {}
-        for m in _SECTION_HEADER_RE.finditer(doc.body):
-            raw = m.group(1).strip()
-            seen.setdefault(raw.lower(), raw)
-
-        for header_lower, original in seen.items():
-            if header_lower in _SEVERITY_HEADERS or header_lower in _INTERNAL_HEADERS:
-                continue
-
-            cfg = _KNOWN_BY_HEADER.get(header_lower)
-            if cfg is None:
-                cfg = SectionConfig(
-                    key=slugify(original, sep="_"),
-                    header=original,
-                    position=POSITION_AFTER,
-                    heading=f"## {original}",
-                )
-
-            content = doc.section(cfg.header)
-            if not content:
+        for section in sections:
+            cfg = _config_for(section.heading)
+            content = section.body.strip()
+            if cfg is None or not content:
                 continue
             entries[cfg.key] = content
             configs[cfg.key] = cfg
             if cfg.key not in order:
                 order.append(cfg.key)
-
         known_order = [c.key for c in KNOWN_SECTIONS]
         order.sort(key=lambda k: (
             known_order.index(k) if k in known_order else len(known_order),
             k,
         ))
-
         return cls(entries=entries, configs=configs, order=order)
 
     def get(self, key: str) -> str:

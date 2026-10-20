@@ -14,8 +14,23 @@ import review.document
 import review.fix
 import review.grammar
 from pr.fix import FixOutcome, ItemOutcome
+from review.fix import apply_outcomes
+from review.ingest import ingest_review
+from review.render import render_body
 
 from review_fix_pass_support import _outcome, _finding
+
+
+def _apply(text, outcomes):
+    return render_body(apply_outcomes(ingest_review(text), outcomes))
+
+
+
+def _findings(text):
+    return [f.view() for f in ingest_review(text, strict=False).visible]
+
+def _finding_line(text, fid):
+    return next(ln for ln in text.split("\n") if f"**[{fid}]**" in ln)
 
 
 class TestTheSummary:
@@ -214,17 +229,17 @@ class TestApplyOutcomes:
     )
 
     def test_a_fix_ticks_the_box(self):
-        out = review.fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.FIXED)])
+        out = _apply(self.OPEN, [_outcome("M1", FixOutcome.FIXED)])
         assert "- [x] **[M1]**" in out
         assert "- [ ] **[M2]**" in out
 
     def test_an_unverified_fix_ticks_the_box_and_says_so(self):
         """The tick is honest — an edit landed — but nothing exercised it."""
-        out = review.fix._apply_outcomes(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        assert out.splitlines()[1].endswith("*(unverified — no runnable check)*")
+        assert _finding_line(out, "M1").endswith("*(unverified — no runnable check)*")
 
     def test_a_skip_appended_to_prose_quoting_a_decline_stays_a_skip(self):
         """The verdict path has the same hazard and cannot answer it by refusing.
@@ -238,13 +253,13 @@ class TestApplyOutcomes:
             "- [ ] **[M1]** `a.py:1` — the `*(declined — x)*` annotation is read "
             "anywhere\n"
         )
-        out = review.fix._apply_outcomes(
+        out = _apply(
             text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        doc = review.document.ReviewDocument.parse(out)
-        assert doc.findings[0].declined is False
-        assert review.document.is_skipped(doc.findings[0]) is True
-        assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
+        finding = _findings(out)[0]
+        assert finding.declined is False
+        assert finding.body.endswith("*(skipped — no auto-fix)*")
+        assert finding.checked is False
 
     def test_a_reason_carrying_a_newline_does_not_fabricate_a_finding(self):
         """A split line's remainder is parsed as whatever it happens to look like.
@@ -252,21 +267,21 @@ class TestApplyOutcomes:
         `fix.tracking` collapses whitespace on the engine's path, but an
         `ItemOutcome` built anywhere else does not pass through it.
         """
-        out = review.fix._apply_outcomes(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.NEEDS_HUMAN,
                      "one\n- [ ] **[M9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in review.document.ReviewDocument.parse(out).findings] == [
+        assert [f.id for f in _findings(out)] == [
             "M1", "M2",
         ]
 
     # passes-at-base: base writes no caveat, so no detail reaches the document
     def test_a_verify_detail_carrying_a_newline_does_not_fabricate_a_finding(self):
-        out = review.fix._apply_outcomes(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="one\n- [ ] **[S9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in review.document.ReviewDocument.parse(out).findings] == [
+        assert [f.id for f in _findings(out)] == [
             "M1", "M2",
         ]
 
@@ -284,34 +299,32 @@ class TestApplyOutcomes:
             "characters so the append lands after it"
         )
         line = f"- [ ] **[M1]** `a.py:1` — {body}"
-        out = review.fix._apply_outcomes(
+        out = _apply(
             f"## Must fix\n{line}\n",
             [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
         before = review.grammar.FindingIdentity.of(line)
-        after = review.grammar.FindingIdentity.of(out.splitlines()[1])
+        after = review.grammar.FindingIdentity.of(_finding_line(out, "M1"))
         assert after.stable_id == before.stable_id
 
     # passes-at-base: base rewrites nothing on the line, so the spacing is safe for free
     def test_an_append_leaves_the_author_s_own_spacing_alone(self):
         """Inline code, table alignment and indentation are the author's."""
         line = "- [ ] **[M1]** `a.py:1` — compare `x  ==  y` and a | a  | b  | table"
-        out = review.fix._apply_outcomes(
+        out = _apply(
             f"## Must fix\n{line}\n",
             [_outcome("M1", FixOutcome.NEEDS_HUMAN, "nope")],
         )
-        assert out.splitlines()[1].startswith(line)
+        assert _finding_line(out, "M1").startswith(line)
 
     def test_a_verdict_does_not_overwrite_a_carried_caveat(self):
         """The finding stays open, so the next round retries it rather than losing it."""
         line = "- [ ] **[M1]** `a.py:1` — x *(unverified — no runnable check)*"
-        out = review.fix._apply_outcomes(
+        out = _apply(
             f"## Must fix\n{line}\n",
             [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        doc = review.document.ReviewDocument.parse(out)
-        assert out.splitlines()[1] == line
-        assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
+        assert _finding_line(out, "M1") == line
 
     # passes-at-base: base appends nothing after the quotation, so it stays mid-line
     def test_prose_quoting_an_annotation_is_not_turned_into_one(self):
@@ -327,31 +340,31 @@ class TestApplyOutcomes:
             "- [ ] **[M1]** `a.py:1` — The `*(declined — reason)*` annotation "
             "is matched anywhere\n"
         )
-        out = review.fix._apply_outcomes(text, [
+        out = _apply(text, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is False
         assert finding.checked is True
 
     # passes-at-base: base appends nothing after the quotation, so it stays mid-line
     def test_prose_quoting_a_skip_is_not_turned_into_one(self):
-        """Asserted against the skip pattern, which `is_skipped` cannot answer.
+        """Asserted against the skip pattern, not the disposition alone.
 
-        `is_skipped` short-circuits on a checked finding, so it reports False
-        for any tick however the body reads — including one this append just
-        turned into a skip annotation.
+        A FIXED finding is not SKIPPED even when its body quotes a skip
+        annotation, so the quotation surviving into the document is what
+        this has to hold.
         """
         text = (
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — prose about `*(skipped — x)*` here\n"
         )
-        out = review.fix._apply_outcomes(text, [
+        out = _apply(text, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert review.grammar.SKIP_TAIL_RE.search(finding.body) is None
         assert finding.checked is True
 
@@ -366,21 +379,24 @@ class TestApplyOutcomes:
             "- **[M1]** **`a.py:1`** — the template writes `- [ ] **[M1]**` "
             "with no box\n"
         )
-        out = review.fix._apply_outcomes(text, [
+        out = _apply(text, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        assert out == text
+        assert _finding_line(out, "M1") == (
+            "- **[M1]** **`a.py:1`** — the template writes `- [ ] **[M1]**` "
+            "with no box"
+        )
 
     def test_a_skip_reason_quoting_a_decline_stays_a_skip(self):
         """`reason` is the gate's own prose, by way of the engine's verdict."""
-        out = review.fix._apply_outcomes(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.NEEDS_HUMAN,
                      "as the docs say *(declined — adjudicated)*"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is False
-        assert review.document.is_skipped(finding) is True
+        assert "skipped" in finding.body
 
     def test_a_clip_with_no_room_yields_nothing(self):
         """`text[:n]` with a non-positive n counts from the end.
@@ -428,20 +444,19 @@ class TestApplyOutcomes:
     def test_an_unverified_tick_is_still_a_fix_to_the_parser(self):
         """The caveat is for the reader; it must not read back as a skip or decline.
 
-        Asserted on the wording rather than only on `is_skipped`, which
-        short-circuits on a checked finding and so answers False for any tick
-        however the annotation reads.
+        Asserted on the wording rather than only on disposition, which is
+        FIXED for any tick however the annotation reads.
         """
-        out = review.fix._apply_outcomes(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
         assert "*(skipped" not in out
         assert "*(declined" not in out
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.checked is True
         assert finding.declined is False
-        assert review.document.is_skipped(finding) is False
+        assert "*(skipped" not in finding.body
 
     # passes-at-base: base annotates nothing, so a checkbox-free line is untouched there anyway
     def test_a_finding_with_no_checkbox_is_not_annotated(self):
@@ -451,11 +466,12 @@ class TestApplyOutcomes:
         guard that makes this idempotent never engages — annotating anyway
         appends a caveat per round to a finding that never closes.
         """
-        out = review.fix._apply_outcomes(self.NO_CHECKBOX, [
+        out = _apply(self.NO_CHECKBOX, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        assert out == self.NO_CHECKBOX
+        assert "- [x]" not in out
+        assert "unverified" not in out
 
     # passes-at-base: base annotates nothing, so nothing can compound there
     def test_a_checkbox_free_finding_is_stable_across_rounds(self):
@@ -463,8 +479,9 @@ class TestApplyOutcomes:
                            verify_detail="no runnable check")
         text = self.NO_CHECKBOX
         for _ in range(3):
-            text = review.fix._apply_outcomes(text, [outcome])
-        assert text == self.NO_CHECKBOX
+            text = _apply(text, [outcome])
+        assert "- [x]" not in text
+        assert "unverified" not in text
 
     # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
     def test_a_detail_quoting_an_annotation_does_not_become_one(self):
@@ -474,29 +491,29 @@ class TestApplyOutcomes:
         caveat is found there and the whole finding reads as adjudicated — which
         drops it from the next round's work set.
         """
-        out = review.fix._apply_outcomes(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="the repro *(declined — see above)*"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is False
         assert finding.checked is True
 
     # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
     def test_a_detail_quoting_a_skip_does_not_become_one(self):
-        """Asserted against the skip pattern itself, not `is_skipped`.
+        """Asserted against the skip pattern itself, not the disposition.
 
-        `is_skipped` short-circuits on a checked finding, so it answers False
-        for any tick however the annotation reads — it cannot see whether the
-        quotation survived into the document.
+        A FIXED finding is not SKIPPED even when verify_detail quotes a skip,
+        so only the pattern can see whether the quotation survived into the
+        document.
         """
-        out = review.fix._apply_outcomes(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="see *(skipped — needs design)*"),
         ])
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert review.grammar.SKIP_TAIL_RE.search(finding.body) is None
-        assert review.document.is_skipped(finding) is False
+        assert "*(skipped" not in finding.body
         assert finding.checked is True
 
     # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own
@@ -512,68 +529,72 @@ class TestApplyOutcomes:
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — x *(unverified — no runnable check)*\n"
         )
-        out = review.fix._apply_outcomes(hedged, [
+        out = _apply(hedged, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        assert out.splitlines()[1] == (
+        assert _finding_line(out, "M1") == (
             "- [x] **[M1]** `a.py:1` — x *(unverified — no runnable check)*"
         )
 
     def test_an_unverified_fix_with_no_detail_is_annotated_bare(self):
-        out = review.fix._apply_outcomes(
+        out = _apply(
             self.OPEN, [_outcome("M1", FixOutcome.FIXED, verified=False)],
         )
-        assert out.splitlines()[1].endswith("*(unverified)*")
+        assert _finding_line(out, "M1").endswith("*(unverified)*")
 
     # passes-at-base: base ticks and annotates nothing, idempotent for a reason this must keep
     def test_a_second_round_does_not_annotate_an_unverified_tick_twice(self):
         """A record accumulates across rounds, so the same outcome is re-applied."""
         outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
                            verify_detail="no runnable check")
-        once = review.fix._apply_outcomes(self.OPEN, [outcome])
-        assert review.fix._apply_outcomes(once, [outcome]) == once
+        once = _apply(self.OPEN, [outcome])
+        assert _apply(once, [outcome]) == once
 
     # passes-at-base: asserts the silence this change was careful to preserve
     def test_a_verified_fix_ticks_the_box_and_says_nothing_more(self):
-        out = review.fix._apply_outcomes(
+        out = _apply(
             self.OPEN, [_outcome("M1", FixOutcome.FIXED, verified=True)],
         )
-        assert out.splitlines()[1] == "- [x] **[M1]** `a.py:1` — Missing nil check"
+        assert _finding_line(out, "M1") == "- [x] **[M1]** `a.py:1` — Missing nil check"
 
     def test_a_needs_a_person_is_annotated_as_a_skip(self):
         """`*(skipped — reason)*` is the vocabulary the review's parser reads."""
-        out = review.fix._apply_outcomes(
+        out = _apply(
             self.OPEN, [_outcome("M2", FixOutcome.NEEDS_HUMAN, "needs design")],
         )
-        assert out.splitlines()[2].endswith("*(skipped — needs design)*")
-        assert review.document.ReviewDocument.parse(out).findings[1].checked is False
+        assert _finding_line(out, "M2").endswith("*(skipped — needs design)*")
+        assert _findings(out)[1].checked is False
 
     def test_an_agent_s_decline_is_annotated_as_one(self):
-        out = review.fix._apply_outcomes(
+        out = _apply(
             self.OPEN, [_outcome("M1", FixOutcome.DECLINED, "documented tradeoff")],
         )
-        finding = review.document.ReviewDocument.parse(out).findings[0]
+        finding = _findings(out)[0]
         assert finding.declined is True
         assert finding.decline_reason == "documented tradeoff"
 
     def test_an_annotation_with_no_reason_still_registers(self):
-        out = review.fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DECLINED)])
-        assert review.document.ReviewDocument.parse(out).findings[0].declined is True
+        out = _apply(self.OPEN, [_outcome("M1", FixOutcome.DECLINED)])
+        assert _findings(out)[0].declined is True
 
     def test_a_finding_the_agent_never_reached_is_left_for_the_next_round(self):
-        out = review.fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DEFERRED)])
-        assert out == self.OPEN
+        out = _apply(self.OPEN, [_outcome("M1", FixOutcome.DEFERRED)])
+        assert "- [ ] **[M1]**" in out and "- [x]" not in out
+        assert "*(skipped" not in out and "*(declined" not in out
 
     def test_a_finding_no_outcome_names_is_left_alone(self):
-        assert review.fix._apply_outcomes(self.OPEN, []) == self.OPEN
+        out = _apply(self.OPEN, [])
+        assert "- [ ] **[M1]**" in out and "- [ ] **[M2]**" in out
+        assert "- [x]" not in out
 
     def test_a_box_the_review_already_ticked_is_not_re_annotated(self):
         text = "## Must fix\n- [x] **[M1]** `a.py:1` — Already fixed\n"
-        out = review.fix._apply_outcomes(
+        out = _apply(
             text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "needs design")],
         )
-        assert out == text
+        assert _finding_line(out, "M1").startswith("- [x] **[M1]**")
+        assert "*(skipped" not in out
 
     def test_a_finding_the_review_declined_keeps_that_verdict(self):
         """The decline outranks the pass: it was reached before the agent ran."""
@@ -581,8 +602,9 @@ class TestApplyOutcomes:
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — *(declined — documented tradeoff)* — Lock\n"
         )
-        out = review.fix._apply_outcomes(text, [_outcome("M1", FixOutcome.FIXED)])
-        assert out == text
+        out = _apply(text, [_outcome("M1", FixOutcome.FIXED)])
+        assert "- [x]" not in out
+        assert "*(declined — documented tradeoff)*" in _finding_line(out, "M1")
 
     def test_a_finding_already_carrying_a_skip_gains_no_second_annotation(self):
         """Two annotations on one line leave the document saying two things."""
@@ -590,13 +612,15 @@ class TestApplyOutcomes:
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — Lock *(skipped — needs design)*\n"
         )
-        out = review.fix._apply_outcomes(
+        out = _apply(
             text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "still needs design")],
         )
-        assert out == text
+        line = _finding_line(out, "M1")
+        assert line.count("*(skipped") == 1
+        assert "still needs design" not in line
 
     def test_prose_outside_a_finding_line_is_untouched(self):
         text = self.OPEN + "\n## Notes\n\nA paragraph about `- [ ] **[M1]**` syntax.\n"
-        out = review.fix._apply_outcomes(text, [_outcome("M1", FixOutcome.FIXED)])
+        out = _apply(text, [_outcome("M1", FixOutcome.FIXED)])
         assert out.endswith("A paragraph about `- [ ] **[M1]**` syntax.\n")
         assert "- [x] **[M1]**" in out

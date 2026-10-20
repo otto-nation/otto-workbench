@@ -16,7 +16,7 @@ from gh.types import PRContext, PRMetadata
 from review.types import ReviewJob
 
 
-def _make_job(head_sha: str, prior_review: str = "") -> ReviewJob:
+def _make_job(head_sha: str) -> ReviewJob:
     pr = PRMetadata(
         title="test",
         body="",
@@ -36,7 +36,6 @@ def _make_job(head_sha: str, prior_review: str = "") -> ReviewJob:
         wt_path="/tmp/fake",
         review_file="/tmp/review.md",
         session_log="/tmp/session.log",
-        prior_review=prior_review,
     )
 
 
@@ -44,12 +43,12 @@ class TestArtifactDir:
     """Where a review's files live is derived from the review file, not passed in."""
 
     def test_is_the_review_file_directory(self):
-        job = _make_job(head_sha="abc123", prior_review="")
+        job = _make_job(head_sha="abc123")
         job.review_file = "/tmp/reviews/owner-repo-42/review.md"
         assert job.artifact_dir == "/tmp/reviews/owner-repo-42"
 
     def test_is_not_the_reviews_root(self):
-        job = _make_job(head_sha="abc123", prior_review="")
+        job = _make_job(head_sha="abc123")
         job.review_file = "/tmp/reviews/owner-repo-42/review.md"
         assert job.artifact_dir != "/tmp/reviews"
 

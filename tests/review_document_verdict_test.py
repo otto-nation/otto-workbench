@@ -13,20 +13,27 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 import pytest
 from core.phases import Mode
-from pr.domains import ReviewVerdict
-from review.document import ReviewDocument
+from pr.domains import ReviewStatus, ReviewVerdict
+from review.document import ReviewDocument, ReviewHeader
+from review.ingest import ingest_review
 from review.verdict import (
     CLEAN_VERDICT, MECHANICAL_NOTE,
-    build_mechanical_body, counts_prose, mechanical_verdict,
+    counts_prose, mechanical_verdict,
     open_counts, resolve_review_verdict, states_verdict, verdict_from_counts,
 )
 
 from review_document_support import _write
 
+def _doc(text: str, *, status=None) -> ReviewDocument:
+    header = ReviewHeader(status=status) if status is not None else ReviewHeader()
+    return ReviewDocument(header=header, record=ingest_review(text, strict=False))
+
+
+
 
 class TestOpenCounts:
     def test_every_severity_is_counted(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- **[M1]** path:1 — description\n"
             "- **[M2]** path:2 — description\n"
@@ -36,7 +43,7 @@ class TestOpenCounts:
         assert document.open_counts == {"M": 2, "S": 1, "N": 0, "I": 0}
 
     def test_a_resolved_finding_is_no_longer_counted(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- **[M1]** path:1 — active\n"
             "- ~~**[M2]** path:2 — resolved~~\n"
@@ -44,7 +51,7 @@ class TestOpenCounts:
         assert document.open_counts["M"] == 1
 
     def test_the_fix_passes_checkbox_does_not_hide_a_finding(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- [ ] **[M1]** path:1 — with checkbox\n"
             "- **[M2]** path:2 — without checkbox\n"
@@ -52,7 +59,7 @@ class TestOpenCounts:
         assert document.open_counts["M"] == 2
 
     def test_a_finding_the_fix_pass_ticked_off_is_not_open(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- [x] **[M1]** path:1 — fixed\n"
             "- [ ] **[M2]** path:2 — still open\n"
@@ -63,7 +70,7 @@ class TestOpenCounts:
     def test_a_declined_finding_is_still_open(self):
         """Wider than the fix pass's predicate: the review judged this one, so
         it is not work, but nothing fixed it either."""
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- **[M1]** path:1 — *(declined — by design)*\n"
         )
@@ -71,7 +78,7 @@ class TestOpenCounts:
         assert document.open_counts["M"] == 1
 
     def test_an_indented_finding_is_counted(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "  - **[M1]** path:1 — indented under something\n"
         )
@@ -80,7 +87,7 @@ class TestOpenCounts:
     def test_a_finding_line_outside_a_severity_section_is_not_counted(self):
         """The prior-findings ledger declares nothing — it reports on the last
         review, and counting it inflated every tally taken over the whole body."""
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- **[M1]** path:1 — bug\n"
             "## Prior findings\n"
@@ -92,7 +99,7 @@ class TestOpenCounts:
     def test_two_findings_sharing_an_id_are_two_findings(self):
         """A tally over the parse counts declarations, not distinct IDs: a
         duplicate is a merge bug to see, not one to hide."""
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- **[M1]** a.py:1 — one\n"
             "- **[M1]** b.py:2 — two\n"
@@ -107,11 +114,11 @@ class TestOpenCounts:
         """The reader that has no separate answer for absent, unlike the
         verdict below."""
         assert open_counts(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
-        document = ReviewDocument.parse("## Must fix\n- **[M1]** a.py:1 — bug\n")
+        document = _doc("## Must fix\n- **[M1]** a.py:1 — bug\n")
         assert open_counts(document) == document.open_counts
 
     def test_a_reference_to_a_finding_is_not_a_second_finding(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n"
             "- **[M1]** path:1 — bug\n"
             "  - see [M1] above\n"
@@ -128,21 +135,21 @@ class TestVerdict:
         ("disapprove", ReviewVerdict.DISAPPROVE),
     ])
     def test_the_verdict_section_is_read_however_it_is_worded(self, prose, expected):
-        document = ReviewDocument.parse(f"## Verdict\n{prose} — rationale.\n")
+        document = _doc(f"## Verdict\n{prose} — rationale.\n")
         assert document.verdict is expected
 
     def test_wording_that_states_no_verdict_states_none(self):
-        assert ReviewDocument.parse("## Verdict\nLooks fine to me.\n").verdict is None
+        assert _doc("## Verdict\nLooks fine to me.\n").verdict is None
 
     def test_a_document_with_no_verdict_section_states_none(self):
         text = "## Summary\nSome findings.\n## Must fix\n- **[M1]** a:1 — bug\n"
-        assert ReviewDocument.parse(text).verdict is None
+        assert _doc(text).verdict is None
 
     def test_a_verdict_word_outside_the_section_is_not_the_verdict(self):
         """Prose elsewhere describes the review; only the Verdict section
         declares one."""
         text = "## Summary\nI would approve this once the tests land.\n"
-        assert ReviewDocument.parse(text).verdict is None
+        assert _doc(text).verdict is None
 
 
 class TestStatesVerdict:
@@ -166,32 +173,32 @@ class TestStatesVerdict:
 
 class TestResolveVerdict:
     def test_the_counts_speak_when_the_prose_does_not(self):
-        document = ReviewDocument.parse("## Should fix\n- **[S1]** a.py:1 — improvement\n")
+        document = _doc("## Should fix\n- **[S1]** a.py:1 — improvement\n")
         assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
 
     def test_prose_cannot_under_report_blocking_findings(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Must fix\n- **[M1]** a.py:1 — bug\n\n## Verdict\nApprove — looks fine.\n",
         )
         assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
 
     def test_counts_cannot_discard_a_stronger_call(self):
-        document = ReviewDocument.parse(
+        document = _doc(
             "## Nit\n- **[N1]** a.py:1 — style\n\n## Verdict\nRequest changes — rework it.\n",
         )
         assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
 
     def test_disapprove_survives_any_counts(self):
-        document = ReviewDocument.parse("## Verdict\nDisapprove — wrong approach.\n")
+        document = _doc("## Verdict\nDisapprove — wrong approach.\n")
         assert resolve_review_verdict(document) is ReviewVerdict.DISAPPROVE
 
     def test_a_self_review_is_advisory(self):
-        document = ReviewDocument.parse("## Must fix\n- **[M1]** a.py:1 — bug\n")
+        document = _doc("## Must fix\n- **[M1]** a.py:1 — bug\n")
         assert resolve_review_verdict(document, mode=Mode.SELF) is None
 
     def test_a_self_review_still_reports_disapprove(self):
         """Disapprove judges the approach, which holds with or without a PR."""
-        document = ReviewDocument.parse("## Verdict\nDisapprove — wrong approach.\n")
+        document = _doc("## Verdict\nDisapprove — wrong approach.\n")
         assert resolve_review_verdict(document, mode=Mode.SELF) is ReviewVerdict.DISAPPROVE
 
     def test_a_review_that_was_never_written_reaches_no_verdict(self):
@@ -208,21 +215,26 @@ class TestResolveVerdict:
         Counted as a review that found nothing, it was reported as `approve`
         by `--json-summary` and the listing alongside `status: error`.
         """
-        document = ReviewDocument.parse("<!-- status: error -->\n\n## Summary\nNo group reported.\n")
+        document = _doc("## Summary\nNo group reported.\n", status=ReviewStatus.ERROR)
         assert resolve_review_verdict(document) is None
 
     def test_a_partial_review_still_reaches_one(self):
         """The findings the surviving groups reported are real and still count."""
-        document = ReviewDocument.parse(
-            "<!-- status: partial -->\n\n## Must fix\n- **[M1]** a.py:1 — bug\n",
+        document = _doc(
+            "## Must fix\n- **[M1]** a.py:1 — bug\n",
+            status=ReviewStatus.PARTIAL,
         )
         assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
 
     def test_the_counts_come_from_the_document_it_was_handed(self, tmp_path):
         """One document, read once — the verdict cannot be resolved against
         counts from a file the caller re-read in between."""
+        from review_record_support import store_review
         document = ReviewDocument.read(
-            _write(tmp_path, "## Should fix\n- **[S1]** a.py:1 — improvement\n\n## Verdict\nApprove — fine.\n"),
+            store_review(
+                tmp_path / "review.md",
+                "## Should fix\n- **[S1]** a.py:1 — improvement\n\n## Verdict\nApprove — fine.\n",
+            ),
         )
         assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
 
@@ -287,105 +299,3 @@ class TestMechanicalVerdict:
         """The pipeline reads it back to record that synthesis did not run."""
         assert MECHANICAL_NOTE in mechanical_verdict({"M": 1})
         assert MECHANICAL_NOTE in mechanical_verdict({})
-
-
-class TestBuildMechanicalBody:
-    @staticmethod
-    def _must_fix_content(count=1):
-        lines = ["## Must fix"]
-        for i in range(1, count + 1):
-            lines.append(f"- **[M{i}]** **`f{i}.py`** — bug {i}")
-        return "\n".join(lines) + "\n"
-
-    def test_opens_with_the_summary_it_generates(self):
-        """The body starts at `## Summary` — the title and metadata header above
-        it belong to the document, not to the merge."""
-        result = build_mechanical_body(
-            self._must_fix_content(), group_count=2, summary_note="Test note.",
-        )
-        assert result.startswith("## Summary")
-        assert "1 finding" in result
-        assert "2 groups" in result
-        assert "Test note." in result
-
-    def test_includes_verdict_by_default(self):
-        result = build_mechanical_body(
-            self._must_fix_content(), group_count=1, summary_note="note",
-        )
-        assert "## Verdict" in result
-        assert "Request changes" in result
-
-    def test_excludes_verdict_when_disabled(self):
-        result = build_mechanical_body(
-            self._must_fix_content(), group_count=1, summary_note="note",
-            include_verdict=False,
-        )
-        assert "## Verdict" not in result
-
-    def test_a_stated_verdict_replaces_the_derived_one(self):
-        """A path that reached the review file without an agent but knows what
-        the call is says so — the clean run does, and its verdict carries no
-        mechanical note because nothing stood in for a synthesis."""
-        result = build_mechanical_body(
-            "## File Triage\n- `a.py` — tier 2\n", group_count=1,
-            summary_note="note", verdict=CLEAN_VERDICT,
-        )
-        assert "Approve — clean review." in result
-        assert MECHANICAL_NOTE not in result
-
-    def test_no_findings_verdict(self):
-        result = build_mechanical_body(
-            "## Must fix\n_none._\n", group_count=1, summary_note="note",
-        )
-        assert "No findings" in result
-        assert "Approve" in result
-
-    def test_file_count_in_scope(self):
-        result = build_mechanical_body(
-            self._must_fix_content(), group_count=2, summary_note="note", file_count=3,
-        )
-        assert "across 3 files in 2 groups" in result
-
-    def test_a_run_where_every_group_failed_does_not_claim_no_findings(self):
-        """Nothing reported is not nothing found, and the tally cannot tell.
-
-        Both are zero, so a summary derived from the tally alone says "No
-        findings" over source no agent opened — the one sentence a reader acts
-        on before reaching the failures table underneath it. Observed: a review
-        reporting "No findings across 13 files in 3 groups" for a run whose
-        every group hit its turn cap without writing.
-        """
-        result = build_mechanical_body(
-            "", group_count=3, summary_note="Synthesis failed.",
-            file_count=13, groups_reported=0,
-        )
-        assert "No findings" not in result
-        assert "No group reported" in result
-        assert "0 of 3 groups" in result
-
-    # passes-at-base: the partial case already worked; this bounds the new branch
-    def test_a_partly_failed_run_still_reports_its_findings(self):
-        """Some groups reported, so the findings are real — the scope narrows."""
-        result = build_mechanical_body(
-            self._must_fix_content(), group_count=3, summary_note="note",
-            file_count=13, groups_reported=2,
-        )
-        assert "1 finding across 13 files in 2 of 3 groups" in result
-
-    # passes-at-base: the full-coverage case, which this change preserves
-    def test_a_clean_run_still_reads_as_clean(self):
-        """The honest empty tally must keep its plain sentence."""
-        result = build_mechanical_body(
-            "## Must fix\n_none._\n", group_count=3, summary_note="note",
-            file_count=13,
-        )
-        assert "No findings across 13 files in 3 groups" in result
-
-    def test_the_prior_findings_ledger_does_not_inflate_the_count(self):
-        """The ledger reports the last review, so its lines are not findings
-        this one declares — counting them said `2 findings` where there is one."""
-        result = build_mechanical_body(
-            self._must_fix_content() + "## Prior findings\n- **[M1]** `old.go` — Fixed\n",
-            group_count=1, summary_note="note",
-        )
-        assert "1 finding across" in result

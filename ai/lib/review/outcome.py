@@ -20,22 +20,19 @@ from datetime import date
 from pathlib import Path
 
 from pr.domains import ReviewStatus
-from review.document import (
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
-    SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, ReviewHeader, review_title, set_title, stamp_header,
-    strip_sections,
-)
-from review.paths import write_review_meta
+from review.document import SECTION_SUMMARY, SECTION_VERDICT
+from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
-from review.state import PipelineState, pipeline_status, set_failures_section
+from review.record import ReviewRecord
+from review.state import PipelineState, apply_failures, pipeline_status
+from review.store import StoredReview, read_review, write_review
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
     CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
-    NO_RUN_VERDICT, PARTIAL_VERDICT, build_mechanical_body, states_verdict,
+    NO_RUN_VERDICT, PARTIAL_VERDICT, build_mechanical_record, states_verdict,
 )
-from review.verify import post_process_findings
+from review.verify import post_process_record
 
 
 def _job_meta(job: ReviewJob) -> ReviewMeta:
@@ -70,88 +67,63 @@ def _job_meta(job: ReviewJob) -> ReviewMeta:
     )
 
 
-def _write_review_sidecar(job: ReviewJob):
-    """Write the sidecar recording what this run is reviewing.
+def _prior_date(job: ReviewJob) -> str:
+    """The prior round's date, from its sidecar."""
+    return job.prior.meta.date if job.prior else ""
 
-    Called from every branch that reaches a review file, so the only timestamp
-    it can honestly stamp is the run's own start, which it carries rather than
-    takes. That a review came of the run is a separate claim, made once at the
-    end by `review.paths.stamp_reviewed` and only when the run got there.
+
+def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int = 0,
+                 status: ReviewStatus | None = None) -> ReviewMeta:
+    """This run's sidecar, header facts included — the one thing review.md's header renders from.
+
+    Built from the job, except `static_declined`: it accumulates across rounds
+    (see `ReviewMeta.static_declined`), so it is carried from the sidecar
+    already on disk. Rebuilding it from the job alone erased every earlier
+    decline before `_inject_static_analysis_section` could read it.
     """
-    write_review_meta(Path(job.artifact_dir), _job_meta(job))
-
-
-def _header(
-    job: ReviewJob, meta: ReviewMeta,
-    skipped_groups: int = 0, total_groups: int = 0,
-    status: ReviewStatus | None = None,
-) -> ReviewHeader:
-    """What this run states about itself, wherever the body came from.
-
-    The one place the pipeline decides a review's header, so the two kinds of
-    path cannot state it differently: `_document` renders this above a body it
-    built, and `_post_process_review` stamps this over a body the review agent
-    wrote. Before they shared it the agent path carried whatever the prompt
-    template had told the agent to type — which named no `review_type`, so
-    every agent-written incremental review read back as a full one.
-    """
-    header = ReviewHeader.from_meta(
-        meta,
-        date=date.today().isoformat(),
-        status=status,
-    )
+    carried = read_review_meta(Path(job.artifact_dir)).static_declined
+    meta = replace(_job_meta(job), static_declined=dict(carried))
     if meta.review_type != ReviewType.INCREMENTAL:
-        return header
-    # The prior review's own header is where its date comes from — a re-review
-    # states what it is a delta against, and only that document knows.
-    prior = ReviewDocument.parse(job.prior_review) if job.prior_review else None
+        return replace(meta, date=date.today().isoformat(), status=status)
     return replace(
-        header,
-        prior_date=(prior.header.date if prior else "") or "unknown",
-        skipped_groups=skipped_groups,
-        total_groups=total_groups,
+        meta, date=date.today().isoformat(), status=status,
+        prior_date=_prior_date(job) or "unknown",
+        skipped_groups=skipped_groups, total_groups=total_groups,
     )
 
 
-def _document(
-    job: ReviewJob, body: str,
-    skipped_groups: int = 0, total_groups: int = 0,
-    status: ReviewStatus | None = None,
-) -> ReviewDocument:
-    """`body` framed as this run's review document.
-
-    Title and header both come from `_job_meta`, so a document this writes
-    cannot disagree with the sidecar written beside it.
-    """
-    meta = _job_meta(job)
-    return ReviewDocument(
-        title=review_title(meta),
-        header=_header(job, meta, skipped_groups, total_groups, status),
-        body=body,
-    )
+def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
+             total_groups: int = 0, status: ReviewStatus | None = None) -> None:
+    """Write `record` and this run's sidecar, and render review.md from both."""
+    write_review(Path(job.review_file), record, _review_meta(
+        job, skipped_groups=skipped_groups, total_groups=total_groups, status=status,
+    ))
 
 
-def is_complete_review(review_file: str) -> bool:
-    """Whether `review_file` already carries a section every write path here produces.
-
-    A resumed run reads this to decide whether it can trust the file on disk:
-    the two sections are the last thing any path writes, so their absence
-    means whatever wrote the file died before finishing it.
-    """
-    if not Path(review_file).exists():
+def agent_output_complete(review_file: str) -> bool:
+    """Whether an agent's raw output carries a section every complete review has."""
+    path = Path(review_file)
+    if not path.exists():
         return False
-    content = Path(review_file).read_text()
+    content = path.read_text()
     return f"## {SECTION_SUMMARY}" in content or f"## {SECTION_VERDICT}" in content
 
 
-def _build_mechanical_fallback(
-    job: ReviewJob, group_count: int, merged_content: str,
-    skipped_groups: int = 0,
-    pipeline_state: "PipelineState | None" = None,
-) -> ReviewDocument:
-    review_dir = Path(job.review_file).parent
-    status = pipeline_status(review_dir) if review_dir.exists() else ReviewStatus.ERROR
+def is_complete_review(review_file: str) -> bool:
+    """Whether a finished review is stored — the resumed run's test for trusting the disk."""
+    stored = read_review(Path(review_file))
+    return bool(stored and (stored.record.summary or stored.record.verdict))
 
+
+def _fallback_status(job: ReviewJob) -> ReviewStatus:
+    review_dir = Path(job.review_file).parent
+    return pipeline_status(review_dir) if review_dir.exists() else ReviewStatus.ERROR
+
+
+def _build_mechanical_fallback(
+    job: ReviewJob, group_count: int, merged: ReviewRecord,
+    skipped_groups: int = 0, pipeline_state: PipelineState | None = None,
+) -> ReviewRecord:
     # What reported, not what was dispatched. A group that produced nothing
     # contributed no findings, so counting it in the scope tells the reader a
     # surface was examined when it was not — and that sentence sits directly
@@ -159,7 +131,6 @@ def _build_mechanical_fallback(
     # the same way: "Approve — clean review" over unread source is the one
     # line a reader acts on without opening the failures table below it.
     failed = len(pipeline_state.groups_failed) if pipeline_state else 0
-    partial = failed > 0 and failed < group_count
     # `None` says "every dispatched group reported", and only a run where none
     # failed may say it. The earlier test was `partial`, which is false both
     # when nothing failed and when *everything* did — so a run whose every
@@ -171,33 +142,22 @@ def _build_mechanical_fallback(
     # Every group gone — counted here or diagnosed by synthesis — leaves an
     # empty tally that `mechanical_verdict` would read as Approve.
     nothing_ran = bool(pipeline_state and pipeline_state.all_groups_failed)
-    if nothing_ran:
-        verdict = NO_RUN_VERDICT
-    elif partial:
-        verdict = PARTIAL_VERDICT
-    else:
-        verdict = ""
-    body = build_mechanical_body(
-        merged_content,
-        group_count=group_count,
-        summary_note=FALLBACK_SUMMARY,
-        include_verdict=states_verdict(job.mode),
-        verdict=verdict,
+    partial = bool(pipeline_state and pipeline_state.partial)
+    verdict = NO_RUN_VERDICT if nothing_ran else (PARTIAL_VERDICT if partial else "")
+    record = build_mechanical_record(
+        merged, group_count=group_count, summary_note=FALLBACK_SUMMARY,
+        include_verdict=states_verdict(job.mode), verdict=verdict,
         file_count=job.pr.changed_files,
         groups_reported=0 if nothing_ran else (None if failed == 0 else reported),
     )
     if pipeline_state:
-        body = set_failures_section(body, pipeline_state)
-    return _document(
-        job, body, skipped_groups=skipped_groups, total_groups=group_count,
-        status=status,
-    )
+        record = replace(record, failures=apply_failures(record, pipeline_state).failures)
+    return record
 
 
-def _no_synthesis_body(
-    job: ReviewJob, merged_content: str, group_count: int, summary_note: str,
-) -> str:
-    """`merged_content` under a Summary saying synthesis did not run, and why.
+def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
+                         summary_note: str) -> ReviewRecord:
+    """`merged` under a Summary saying synthesis did not run, and why. No verdict.
 
     The two paths that reach the review file with the group output and no agent
     — `--no-synthesis` and the budget cut-off — write through here so that both
@@ -209,147 +169,60 @@ def _no_synthesis_body(
     weighed, and a mechanical approve/request-changes from a run the operator
     stopped is a claim nobody made.
     """
-    return build_mechanical_body(
-        merged_content,
-        group_count=group_count,
-        summary_note=summary_note,
-        include_verdict=False,
-        file_count=job.pr.changed_files,
-    )
+    return build_mechanical_record(merged, group_count=group_count, summary_note=summary_note,
+                                   include_verdict=False, file_count=job.pr.changed_files)
 
 
-def _reconcile_and_verify(job: ReviewJob) -> None:
-    # Reconciliation reads the ledger, which post-processing then strips.
-    record_prior_findings(job.review_file, job.prior_review, job.wt_path)
-    job.verification = post_process_findings(
-        job.review_file, job.wt_path, [f["path"] for f in job.pr.files],
-    )
+def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    # Reconciliation reads the ledger, which post-processing then clears.
+    record_prior_findings(job.review_file, job.prior, record, job.wt_path)
+    done = post_process_record(record, job.wt_path, [f["path"] for f in job.pr.files])
+    job.verification = done.verification
+    return done.record
 
 
-# What a prior review states about the run that produced it rather than about
-# the code: its own framing, and the bookkeeping its groups wrote. A body
-# reusing its findings states all of this itself, so carrying these over would
-# be the new document making the old document's claims twice.
-_SUPERSEDED_SECTIONS = frozenset({
-    SECTION_SUMMARY.lower(),
-    SECTION_VERDICT.lower(),
-    SECTION_FILE_TRIAGE.lower(),
-    SECTION_PRIOR_FINDINGS.lower(),
-    SECTION_STATIC_ANALYSIS.lower(),
-})
+def _carried_record(prior: StoredReview) -> ReviewRecord:
+    """The prior round's claims about the code, without its claims about its own run."""
+    return replace(prior.record, summary="", verdict="", triage=None, ledger="", static_analysis="")
 
 
-def _carried_findings(prior_review: str) -> str:
-    """`prior_review`'s findings, ready to be some other document's body.
+def _post_process_review(job: ReviewJob, record: ReviewRecord,
+                         skipped_groups: int = 0, total_groups: int = 0) -> None:
+    """An agent-written review finished: reconciled, verified, and published.
 
-    The findings alone: the title and metadata header go with `ReviewDocument`'s
-    own parse, and every section stating something about the prior *run* is
-    dropped. What is left is the claims about the code, which nothing has
-    addressed and which therefore still stand.
-
-    Not `prompt_prior._strip_internal_sections`, which keeps `## Summary` and
-    `## Verdict` because a prompt wants a re-review to see the call its
-    predecessor reached. Embedding those in a new body gives the document two
-    of each, and both `section_span` and `ReviewDocument.verdict` read the
-    first — so the review reports the prior run's verdict while carrying a
-    fresh one below it, which inverts the answer when the prior run approved
-    and the carried findings do not.
+    The header is this run's, from `_review_meta` — the agent's own header was
+    never read (D6), so the stamp the text pipeline needed is gone with it.
     """
-    if not prior_review:
-        return ""
-    return strip_sections(
-        ReviewDocument.parse(prior_review).body, _SUPERSEDED_SECTIONS,
-    ).strip()
+    _publish(job, _reconcile_and_verify(job, record),
+             skipped_groups=skipped_groups, total_groups=total_groups)
 
 
-def _post_process_review(
-    job: ReviewJob, skipped_groups: int = 0, total_groups: int = 0,
-) -> None:
-    """The review file finished, for the paths where an agent wrote all of it.
-
-    A single-agent review and a completed synthesis are the two paths that
-    reach a review file without `_document` rendering its frame, so they are
-    the two where the title and header on disk are whatever the agent typed
-    from its template. Stamping the run's own header over them makes every
-    path record what `_job_meta` says, which is what the sidecar beside it
-    already carries.
-
-    This used to stamp the head SHA alone, on the reasoning that it was the
-    one key the agent could not know. It is not — the agent cannot know any of
-    them. What it wrote for the rest was its template's placeholder text: a
-    literal `YYYY-MM-DD` for the date on the single-agent path, and on both
-    paths no `review_type`, no `prior_sha` and no `base_ref` at all. The
-    missing `review_type` is the one with teeth, because it reads back as
-    `full`: `review.collect` asks the prior review's header what the last run
-    covered, so an incremental review recorded as full is a re-review that
-    re-reads the whole PR.
-
-    The group ratio is the caller's because only the synthesis path has one.
-    It used to be recorded only when synthesis *failed*, since the mechanical
-    fallback rendered a header and the agent did not — so the coverage of a
-    run that worked was the coverage nobody wrote down.
-
-    Last, after reconciliation and verification, because both rewrite the file:
-    the stamp is only authoritative if nothing writes over it afterwards.
-    """
-    _reconcile_and_verify(job)
-    path = Path(job.review_file)
-    if not path.exists():
-        return
-    meta = _job_meta(job)
-    content = set_title(path.read_text(), review_title(meta))
-    header = _header(job, meta, skipped_groups=skipped_groups, total_groups=total_groups)
-    path.write_text(stamp_header(content, header))
+def _write_mechanical_fallback(job: ReviewJob, group_count: int, merged: ReviewRecord,
+                               skipped_groups: int = 0) -> None:
+    # Today's `_write_mechanical_fallback` did not pass `pipeline_state`; Task
+    # 10's `_inject_failures_and_status` adds the failures. Keep that: this
+    # writer passes no state.
+    record = _build_mechanical_fallback(job, group_count, _reconcile_and_verify(job, merged),
+                                        skipped_groups=skipped_groups)
+    _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count,
+             status=_fallback_status(job))
 
 
-def _post_processed_body(job: ReviewJob, body: str) -> str:
-    """`body` written to the review file, post-processed, and read back.
-
-    Evidence verification and renumbering work on the file rather than on a
-    string, so a body has to reach disk before the document framing it can be
-    built out of what survived.
-    """
-    Path(job.review_file).write_text(body)
-    # Not `_post_process_review`: `body` is a bare body that `_document` has yet
-    # to render a header onto, and a head SHA stamped into it now would sit
-    # below that header as a second marker rather than being the one it states.
-    _reconcile_and_verify(job)
-    return Path(job.review_file).read_text()
-
-
-def _write_mechanical_fallback(
-    job: ReviewJob, group_count: int, merged_content: str,
-    skipped_groups: int = 0,
-):
-    _build_mechanical_fallback(
-        job, group_count, _post_processed_body(job, merged_content),
-        skipped_groups=skipped_groups,
-    ).write(job.review_file)
-
-
-def _write_clean_review(
-    job: ReviewJob, group_count: int, merged_content: str,
-    skipped_groups: int = 0,
-):
+def _write_clean_review(job: ReviewJob, group_count: int, merged: ReviewRecord,
+                        skipped_groups: int = 0) -> None:
     """The review a run that found nothing ships.
 
-    Composed through `build_mechanical_body` like every other path that reaches
-    the review file without a synthesis agent, so `merged_content` — which on a
+    Composed through `build_mechanical_record` like every other path that
+    reaches the review file without a synthesis agent, so `merged` — which on a
     findings-free run is the file triage and nothing else — is on the page. It
     is the only evidence such a run leaves that the groups examined anything.
     """
-    body = build_mechanical_body(
-        merged_content,
-        group_count=group_count,
-        summary_note=CLEAN_SUMMARY,
-        include_verdict=states_verdict(job.mode),
-        verdict=CLEAN_VERDICT,
+    record = build_mechanical_record(
+        merged, group_count=group_count, summary_note=CLEAN_SUMMARY,
+        include_verdict=states_verdict(job.mode), verdict=CLEAN_VERDICT,
         file_count=job.pr.changed_files,
     )
-    _document(
-        job, body, skipped_groups=skipped_groups, total_groups=group_count,
-    ).write(job.review_file)
-    _write_review_sidecar(job)
+    _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count)
 
 
 def write_unchanged_review(job: ReviewJob) -> None:
@@ -371,17 +244,13 @@ def write_unchanged_review(job: ReviewJob) -> None:
     review that asked for changes is still asking; the author has not answered
     it yet.
 
-    Written through `_document` like every other agentless path, so the header
+    Written through `_publish` like every other agentless path, so the header
     states this run's head SHA — which is the point of doing it at all. The
     next re-review measures its delta from here, so the merge that prompted
     this run is behind it rather than being walked again.
     """
-    body = build_mechanical_body(
-        _carried_findings(job.prior_review),
-        group_count=0,
-        summary_note=NO_CHANGES_SUMMARY,
-        include_verdict=states_verdict(job.mode),
-        file_count=job.pr.changed_files,
+    record = build_mechanical_record(
+        _carried_record(job.prior), group_count=0, summary_note=NO_CHANGES_SUMMARY,
+        include_verdict=states_verdict(job.mode), file_count=job.pr.changed_files,
     )
-    _document(job, body).write(job.review_file)
-    _write_review_sidecar(job)
+    _publish(job, record)

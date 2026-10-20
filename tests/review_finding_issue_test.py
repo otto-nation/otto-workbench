@@ -11,8 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -21,8 +19,9 @@ if str(LIB_DIR) not in sys.path:
 import review.finding_issue
 from review.deferred_issue import TRACK_ALL
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
-from review.paths import read_review_meta, write_review_meta
-from review.types import OpenFinding, ReviewMeta
+from review.record import Disposition, RecordFinding, ReviewRecord
+from review.store import write_review
+from review.types import ReviewMeta
 
 
 def _job(tmp_path, pr_number="7", host=""):
@@ -37,28 +36,36 @@ def _job(tmp_path, pr_number="7", host=""):
 
 
 def _seed(tmp_path, *findings):
-    write_review_meta(tmp_path, ReviewMeta(repo="owner/repo", open_findings=findings))
+    write_review(
+        tmp_path / "review.md",
+        ReviewRecord(findings=findings),
+        ReviewMeta(repo="owner/repo"),
+    )
 
 
-def _finding(fid, outcome="deferred", **kw):
-    return OpenFinding(
-        id=fid, outcome=outcome,
-        summary=kw.get("summary", f"finding {fid}"),
-        location=kw.get("location", "a.py:1"),
+def _finding(fid, disposition=Disposition.UNREACHED, **kw):
+    return RecordFinding(
+        id=fid, severity=fid[0],
+        path=kw.get("path", "a.py"),
+        line=kw.get("line", 1),
+        body=kw.get("summary", f"finding {fid}"),
+        disposition=disposition,
         reason=kw.get("reason", ""),
+        checkbox=True,
     )
 
 
 # ── what is filable ─────────────────────────────────────────────────────────
 
 
-def test_the_open_findings_come_from_the_sidecar_not_the_document(tmp_path):
+def test_the_open_findings_come_from_the_record_not_the_document(tmp_path):
     """A deferral writes no annotation, so the document cannot answer this."""
     _seed(tmp_path, _finding("M1"), _finding("S2"))
     assert [f.id for f in review.finding_issue.filable(tmp_path)] == ["M1", "S2"]
 
 
-def test_a_review_with_no_sidecar_offers_nothing(tmp_path):
+def test_a_review_with_no_record_offers_nothing(tmp_path):
+    """Nothing to file when the directory has no review.json."""
     assert review.finding_issue.filable(tmp_path) == []
 
 
@@ -182,7 +189,7 @@ def test_a_branch_with_no_pr_is_named_by_its_branch(tmp_path):
 
 
 def test_a_finding_with_no_reason_still_says_why_it_is_open(tmp_path):
-    needs_human = _finding("S1", outcome="needs_human", reason="")
+    needs_human = _finding("S1", disposition=Disposition.SKIPPED, reason="")
     assert "needs a person" in review.finding_issue.build_body([needs_human], _job(tmp_path))
 
 

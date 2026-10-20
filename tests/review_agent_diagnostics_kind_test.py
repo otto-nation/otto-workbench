@@ -53,6 +53,7 @@ class TestDiagnosisMessage:
         (Diagnosis(DiagnosisKind.NO_RESULT_RECORD), "no result record in session log"),
         (Diagnosis(DiagnosisKind.BUDGET_EXCEEDED), "budget exceeded"),
         (Diagnosis(DiagnosisKind.OUTPUT_MISSING), "output missing"),
+        (Diagnosis(DiagnosisKind.MALFORMED_OUTPUT), "output rejected by ingest"),
         (
             Diagnosis(DiagnosisKind.SKIPPED, detail="3 consecutive failures"),
             "skipped: 3 consecutive failures",
@@ -82,6 +83,9 @@ class TestDiagnosisRecoverable:
 
     def test_turn_exhaustion_is_recoverable(self):
         assert Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS).recoverable
+
+    def test_malformed_output_is_recoverable(self):
+        assert Diagnosis(DiagnosisKind.MALFORMED_OUTPUT).recoverable
 
     def test_prompt_rejected_by_the_api_is_not_recoverable(self):
         """The API's own refusal reads the same as the local budget's.

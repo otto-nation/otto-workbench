@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-from conftest import make_ctx, seed_review
+from conftest import make_ctx
+from review_record_support import seed_review
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"

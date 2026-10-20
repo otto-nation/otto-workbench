@@ -32,7 +32,7 @@ from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 import core.serde  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
 import review.grammar  # noqa: E402
-import review.spans  # noqa: E402
+import review.ingest  # noqa: E402
 import review.types  # noqa: E402
 
 from review_contracts_support import _template_files
@@ -368,7 +368,7 @@ class TestFindingIdRegex:
             '- ~~**[I4]** **`old.go:1`** — resolved~~',
         ]:
             assert review.grammar.FINDING_ID_RE.match(line)
-            assert review.spans.ends_finding_body(line), (
+            assert review.ingest.ends_finding_body(line), (
                 f"opens a finding but does not end the one above it: {line!r}"
             )
 
@@ -451,7 +451,7 @@ class TestSpecBodyShapesBelongToTheFindingAboveThem:
     )
     def test_no_documented_body_line_ends_the_finding(self, source, block):
         for line in _documented_body_lines(block):
-            assert not review.spans.ends_finding_body(line), (
+            assert not review.ingest.ends_finding_body(line), (
                 f"{source} writes this under a finding, "
                 f"but ends_finding_body reads it as a boundary: {line!r}"
             )
@@ -461,7 +461,7 @@ class TestSpecBodyShapesBelongToTheFindingAboveThem:
     )
     def test_every_documented_body_line_lands_in_a_span(self, source, block):
         claimed: set[str] = set()
-        for span in review.spans.finding_spans(block):
+        for span in review.ingest.finding_spans(block):
             claimed.update(
                 line.strip() for line in span.text_of(block).split("\n") if line.strip()
             )

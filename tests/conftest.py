@@ -1007,42 +1007,6 @@ requests against — shared so the two never drift apart on what "the fake repo"
 is spelled as."""
 
 
-def seed_review(reviews_dir: Path, name: str = "widget-42",
-                body: str | None = None, **meta) -> Path:
-    """A review directory the reviews walk will classify as a review.
-
-    One builder rather than one per suite, because the on-disk shape — a
-    directory holding `review.md` beside a `meta.json` sidecar — is what the
-    walk classifies on, and a second copy of it drifts the moment the layout
-    moves. `meta.json` is written only when a caller passes attribution, so the
-    default stands in for a review predating the sidecar.
-    """
-    d = reviews_dir / name
-    d.mkdir()
-    (d / "review.md").write_text(
-        "## Must fix\n- **[M1]** a.py:1 — bug\n" if body is None else body,
-    )
-    if meta:
-        (d / "meta.json").write_text(json.dumps(meta))
-    return d
-
-
-def written_review(directory: Path) -> Path:
-    """A `review.md` on disk holding one Must-fix finding.
-
-    Shared because three review-flow suites each defined a near-identical
-    helper for the same on-disk shape — a review file with one finding, which
-    is all a caller checking "did the flow leave a review behind" needs.
-    Unlike `seed_review`, this takes the review's own directory directly and
-    creates any missing parents, since callers here build ad hoc paths rather
-    than seeding into an existing `reviews_dir`.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    f = directory / "review.md"
-    f.write_text("## Must fix\n- **[M1]** boom\n")
-    return f
-
-
 def supersession_verdict(*signals):
     """A canned verdict, for the callers that decide what to do about one.
 

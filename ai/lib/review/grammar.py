@@ -31,8 +31,9 @@ finding as one in the prior review, and a fuzzy answer there silently merges two
 findings about two lines of one file. `review.dedup` is the fuzzy answer, for
 the different question of whether a finding is about to be posted twice.
 
-What a document is assembled from is `review.document`'s; what a finding means
-once parsed is `review.types`'.
+Where a finding's body ends is `review.ingest`'s `finding_spans`. What a
+document is assembled from is `review.document`'s; what a finding means once
+parsed is `review.types`'.
 """
 
 # doc-group: findings
@@ -149,12 +150,12 @@ BOLD_FINDING_ID_RE = re.compile(rf"\*\*\[({SEVERITY_KEY}\d+)\]{_POSTED_LABEL}\*\
 # resolved. It ends the body above it and opens nothing.
 STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
 
-# The head as the stable-ID annotator requires it, with the head itself
-# captured so a `<!-- sid: -->` marker can be written after it. Stricter than
-# `FINDING_ID_RE` on purpose: the closing `**` is required and a checked or
-# struck-through finding is passed over, because carry-forward is about
-# findings still open. The marker is deliberately outside the match — the
-# annotator asks whether the line already carries one before it writes another.
+# The declaration head `FindingIdentity.of` requires, with the head itself
+# captured so the remainder is the location. Stricter than `FINDING_ID_RE`
+# on purpose: the closing `**` is required and a checked or struck-through
+# finding is passed over, because identity is how open findings are compared.
+# The marker is deliberately outside the match — a sid already on the line
+# is not part of the location that follows.
 ANNOTATE_FINDING_RE = re.compile(
     rf"^(- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*)\s+"
 )
@@ -415,7 +416,7 @@ def parse_ledger_line(raw: str) -> LedgerEntry | None:
 # (`:64,82`, `:_short`), and the gate then dropped a correct finding as "file
 # not found". Only a span `finding_location` cannot place at all is checked
 # against what it captured, since there is then no placement to contradict.
-# Where a finding's body ends is not its business either — `finding_spans`
+# Where a finding's body ends is not its business either — `review.ingest.finding_spans`
 # measures that.
 #
 # The space-free class stays exactly as it was — anything the delimiters cannot
@@ -437,17 +438,6 @@ VERIFY_FINDING_RE = re.compile(
     rf"|[`]([^`\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`])"
     rf"{LINE_SUFFIX}"
     r"\s*—\s*(.*)"
-)
-
-# A declaration whose location names a line of a file, with the path captured.
-# What a scoped re-review filters the prior review's findings on: a finding
-# about a file rather than a line of one names no line to keep it against, so
-# the `:\d+` is required here where every other reader has it optional.
-SCOPED_FINDING_RE = re.compile(
-    r"- (?:\[[ x]\] )?"                       # optional checkbox
-    rf"\*\*\[{SEVERITY_KEY}\d+\]\*\*"          # finding ID
-    rf"\s+{_SID_PREFIX}"                       # optional stable ID
-    r"(?:\*\*)?[`]?(\S+?)[`]?(?:\*\*)?:\d+"   # path with optional bold/backtick wrapping
 )
 
 # A declaration as it reads once posted, in the body of a review comment rather

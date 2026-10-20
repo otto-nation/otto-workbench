@@ -13,7 +13,7 @@ if LIB_DIR not in sys.path:
 from dataclasses import replace
 
 from pr.domains import ReviewStatus, ReviewVerdict
-from review.document import ReviewDocument
+from review.document import ReviewDocument, ReviewHeader
 from review.ingest import IngestRejected, ingest_review
 from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
 from review.render import BANNER
@@ -151,12 +151,10 @@ class TestARecordBackedDocument:
         doc = ReviewDocument.from_stored(read_review(_stored(tmp_path, "self_incremental_fixed")))
         assert [f.id for f in doc.open_findings] == ["S1", "N2"]
 
-    def test_a_record_backed_document_cannot_render_or_write(self, tmp_path):
+    def test_a_record_backed_document_has_no_markdown_writer(self, tmp_path):
         doc = ReviewDocument.from_stored(read_review(_stored(tmp_path)))
-        with pytest.raises(TypeError, match="write_review"):
-            doc.render()
-        with pytest.raises(TypeError, match="write_review"):
-            doc.write(tmp_path / "out.md")
+        assert not hasattr(doc, "render")
+        assert not hasattr(doc, "write")
 
     def test_update_review_rejects_unknown_meta_key_before_transform(self, tmp_path):
         calls = []
@@ -177,23 +175,15 @@ class TestARecordBackedDocument:
                 ingest_review((FIXTURES / case / src).read_text())
 
     @pytest.mark.parametrize("case,src", list(_fixture_inputs()))
-    def test_from_stored_matches_parse_of_the_rendered_review(self, tmp_path, case, src):
+    def test_from_stored_matches_the_record_just_written(self, tmp_path, case, src):
         record = ingest_review((FIXTURES / case / src).read_text())
         meta = fixture_meta(case) if (FIXTURES / case / "meta.json").is_file() else ReviewMeta()
         review_file = tmp_path / "review.md"
         write_review(review_file, record, meta)
         stored = ReviewDocument.from_stored(read_review(review_file))
-        parsed = ReviewDocument.parse(review_file.read_text())
-        assert stored.findings == parsed.findings
-        assert stored.open_findings == parsed.open_findings
-        assert stored.open_counts == parsed.open_counts
-        assert stored.verdict == parsed.verdict
-        assert stored.header == parsed.header
-        severity = {s.section.lower() for s in SEVERITIES}
-        for heading in re.findall(r"^## (.+)$", review_file.read_text(), re.MULTILINE):
-            if heading.strip().lower() in severity:
-                continue
-            assert stored.section(heading) == parsed.section(heading), heading
+        assert [f.id for f in stored.findings] == [f.id for f in record.visible]
+        assert stored.open_counts == record.open_counts
+        assert stored.header == ReviewHeader.from_meta(meta)
 
     def test_section_on_a_severity_heading_raises(self, tmp_path):
         doc = ReviewDocument.from_stored(read_review(_stored(tmp_path)))

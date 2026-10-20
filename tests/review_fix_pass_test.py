@@ -30,6 +30,7 @@ from agent.registry import PHASES
 import fix.engine
 import fix.gate
 import review.document
+import review.ingest
 import fix.suite
 import review.fix
 import review.paths
@@ -259,6 +260,23 @@ class TestTheCommitScope:
         spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"helper.py"})
 
         assert spec.paths == {"helper.py"}
+
+    def test_a_missing_record_warns_that_dispositions_were_not_written(
+        self, git_wt, tmp_path, capsys,
+    ):
+        """Edits still commit; without review.json the answers have nowhere to land."""
+        job = _make_job(git_wt, tmp_path, "")
+        Path(job.review_file).write_text(
+            "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n",
+        )
+        adapter = review.fix.ReviewFixAdapter(job, [_finding("M1")])
+        adapter.changed = set()
+        adapter.record(fix.engine.FixRun(
+            outcomes=[_outcome("M1", FixOutcome.FIXED)],
+        ))
+        err = capsys.readouterr().err
+        assert job.review_file in err
+        assert "dispositions not recorded" in err
 
     def test_an_out_of_branch_edit_is_dropped_from_the_commit(
         self, git_wt, tmp_path, capsys,
@@ -503,19 +521,19 @@ class TestBranchScope:
 class TestParseCheckboxState:
     def test_unchecked_finding(self):
         text = "## Must fix\n- [ ] **[M1]** **`file.go:10`** — Bug found\n"
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert len(findings) == 1
         assert findings[0].checked is False
 
     def test_checked_finding(self):
         text = "## Must fix\n- [x] **[M1]** **`file.go:10`** — Bug fixed\n"
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert len(findings) == 1
         assert findings[0].checked is True
 
     def test_no_checkbox_finding(self):
         text = "## Must fix\n- **[M1]** **`file.go:10`** — Bug found\n"
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert len(findings) == 1
         assert findings[0].checked is False
 
@@ -527,57 +545,12 @@ class TestParseCheckboxState:
             "## Nit\n"
             "- [x] **[N1]** **`c.go:3`** — Also fixed\n"
         )
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert len(findings) == 3
         by_id = {f.id: f for f in findings}
         assert by_id["M1"].checked is True
         assert by_id["M2"].checked is False
         assert by_id["N1"].checked is True
-
-
-class TestIsSkipped:
-    """`*(skipped — reason)*` is the fix pass's record of work it did not do.
-
-    `run_fix_pass` reads it to leave the line alone rather than re-annotating
-    it, so a skip it fails to recognise ends up saying two things about one
-    finding.
-    """
-
-    def test_a_leading_annotation_registers(self):
-        finding = Finding(
-            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
-            body="*(skipped — requires design decision)* — Some finding body",
-        )
-        assert review.document.is_skipped(finding) is True
-
-    def test_a_trailing_annotation_registers(self):
-        finding = Finding(
-            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
-            body="Some finding body *(skipped -- needs confirmation)*",
-        )
-        assert review.document.is_skipped(finding) is True
-
-    def test_a_skip_without_a_reason_still_registers(self):
-        """Mirrors the decline case — a bare annotation is still a skip."""
-        finding = Finding(
-            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
-            body="*(skipped)* — Some finding body",
-        )
-        assert review.document.is_skipped(finding) is True
-
-    def test_a_plain_finding_carries_no_skip(self):
-        finding = Finding(
-            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
-            body="Plain finding body",
-        )
-        assert review.document.is_skipped(finding) is False
-
-    def test_a_checked_finding_carries_no_skip(self):
-        finding = Finding(
-            id="M1", severity="M", seq=1, path="a.go", line=1, end_line=None,
-            body="*(skipped — stale)* — body", checked=True,
-        )
-        assert review.document.is_skipped(finding) is False
 
 
 class TestParseDeclinedFindings:
@@ -594,13 +567,13 @@ class TestParseDeclinedFindings:
             "- [ ] **[M1]** `a.go:1` — *(declined — documented `ceiling:` tradeoff)* "
             "— Global lock serialises writes\n"
         )
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert findings[0].declined is True
         assert findings[0].decline_reason == "documented `ceiling:` tradeoff"
 
     def test_a_decline_without_a_reason_still_registers(self):
         text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(declined)* — Body\n"
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert findings[0].declined is True
         assert findings[0].decline_reason == ""
 
@@ -610,7 +583,7 @@ class TestParseDeclinedFindings:
             "## Must fix\n"
             "- [ ] **[M1]** `a.go:1` — Global lock *(declined — by design)*\n"
         )
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert findings[0].declined is True
         assert findings[0].decline_reason == "by design"
 
@@ -625,14 +598,14 @@ class TestParseDeclinedFindings:
             "- [ ] **[M1]** `review_document.py:99` — The `*(declined — reason)*` "
             "annotation is matched anywhere in the line, so prose trips it\n"
         )
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert findings[0].declined is False
         assert findings[0].decline_reason == ""
 
     def test_a_skip_is_not_a_decline(self):
         """A skip is work deferred; a decline is work rejected."""
         text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(skipped — needs design)* — Body\n"
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert findings[0].declined is False
 
     def test_a_file_without_declines_parses_unchanged(self):
@@ -642,6 +615,6 @@ class TestParseDeclinedFindings:
             "- [x] **[M1]** `a.go:1` — Fixed\n"
             "- [ ] **[M2]** `b.go:2` — Still open\n"
         )
-        findings = review.document.ReviewDocument.parse(text).findings
+        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
         assert [f.declined for f in findings] == [False, False]
         assert [f.decline_reason for f in findings] == ["", ""]

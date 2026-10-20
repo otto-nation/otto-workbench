@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 597 -->
+<!-- doc-budget: 624 -->
 
 # AI Automation
 
@@ -145,6 +145,33 @@ How it measures that, and why it is a difference of two runs, are on
 [`Eval` workflow](../.github/workflows/eval.yml) runs it ahead of the corpus and
 reports it separately — a canary that cannot measure should not cancel the
 week's eval.
+
+### Where a review lives: review.json and the rendered review.md
+
+A review is a typed record, `review.json`, written atomically beside
+`meta.json` in the review directory. `review.md` is rendered from the two on
+every change and carries a "rendered from review.json" banner — edit it and the
+next write overwrites the edit; nothing reads it back.
+
+- **What the review says** — summary, findings and their dispositions, file
+  triage, agent failures, static analysis — is the record's
+  ([`review/record.py`](ai-libraries.md#reviewrecordpy)).
+- **What the run was** — head SHA, mode, status, dates, generator — is
+  `meta.json`'s, and the header at the top of `review.md` is rendered from it.
+- **A finding's disposition** — open, fixed, declined, skipped, unreached,
+  falsified — replaces the checkbox and annotation ledgers.
+  `review-orchestrate --track` files the findings a fix pass left skipped or
+  unreached.
+- **Agent output** is read once, at one ingest boundary
+  ([`review/ingest.py`](ai-libraries.md#reviewingestpy)). A malformed entry —
+  an unknown severity, a duplicate ID — is rejected with a named error, and the
+  agent gets one repair turn; a second rejection is an agent failure.
+- **A review directory with no `review.json`** — one written before the record
+  existed — is stale. The next `pr review` regenerates it from scratch; a
+  re-review of it runs full rather than incremental.
+- `pr review --repair` re-syncs the recorded summary when `review.json` already
+  loads. It rebuilds from the group files only when there is no readable
+  `review.json` (stale or missing).
 
 ### How a review's verdict is decided
 

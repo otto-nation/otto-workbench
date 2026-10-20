@@ -64,6 +64,14 @@ class TestOnDisk:
         (tmp_path / FILENAME_RECORD).write_text(json.dumps({"schema_version": 2}))
         assert load_record(tmp_path) is None
 
+    def test_a_json_list_is_stale_without_a_schema_warning(self, tmp_path):
+        (tmp_path / FILENAME_RECORD).write_text("[]")
+        warned = []
+        with patch.object(core.log, "warn", side_effect=warned.append):
+            assert load_record(tmp_path) is None
+        assert any("could not be read" in msg for msg in warned)
+        assert not any("schema" in msg for msg in warned)
+
     def test_an_absent_triage_is_not_an_empty_one(self, tmp_path):
         save_record(tmp_path, ReviewRecord(triage=()))
         assert load_record(tmp_path).triage == ()

@@ -29,7 +29,10 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from conftest import make_ctx, written_review  # noqa: E402
+from conftest import make_ctx  # noqa: E402
+from pr.domains import ReviewStatus  # noqa: E402
+from review.types import ReviewMeta  # noqa: E402
+from review_record_support import store_review, written_review  # noqa: E402
 
 import review.completion  # noqa: E402
 import review.invoke  # noqa: E402
@@ -155,8 +158,11 @@ def test_main_exits_nonzero_only_when_no_part_of_the_review_ran(
     recorded a review step that reviewed nothing. A partial run keeps 0: its
     verdict is already withheld and the surviving findings are real.
     """
-    review_file = tmp_path / "review.md"
-    review_file.write_text(f"<!-- status: {status} -->\n\n## Summary\nx\n")
+    review_file = store_review(
+        tmp_path / "review.md",
+        "## Summary\nx\n",
+        ReviewMeta(status=ReviewStatus(status)),
+    )
     outcome = review.run.ReviewOutcome("owner/repo", "42", review_file)
     monkeypatch.setattr(cr, "_run_self_review", lambda *a, **kw: outcome)
     monkeypatch.setattr(cr, "_run_review", lambda *a, **kw: outcome)

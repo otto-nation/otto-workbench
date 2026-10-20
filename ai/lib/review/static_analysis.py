@@ -46,7 +46,7 @@ AddedLines = dict[str, frozenset[int]]
 
 # The prefix a static violation's id carries. It cannot be read as a finding:
 # `grammar.FINDING_ID_RE` wants digits straight after the severity key, and the
-# `A` in `SA1` is not one — so `ReviewDocument.parse` walks past these lines and
+# `A` in `SA1` is not one — so ingest walks past these lines and
 # the two work streams never claim each other's ids. `test_static_analysis`
 # holds that, because it is a property of a pattern in another module.
 STATIC_ID_PREFIX = "SA"
@@ -382,7 +382,7 @@ def format_static_analysis(
 
     Empty when no checker ran at all — there is nothing to report, rather than
     nothing to report *yet*. The heading and where the section sits belong to
-    `review.document.set_section`.
+    `review.render._sections`.
 
     `declined` is what earlier rounds adjudicated, by site, so a violation
     somebody already ruled on says so instead of reading as new.

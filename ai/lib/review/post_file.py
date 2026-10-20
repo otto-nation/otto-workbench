@@ -32,21 +32,22 @@ from gh.pr_reads import (
     _get_diff,
 )
 from review.posting import (
-    HEAD_SHA_RE, _post_and_track, _print_dry_run,
+    _post_and_track, _print_dry_run,
 )
 from review.sections import ReviewSections
+from review.store import read_review
 
 
 def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     severity_filter = set(args.severity.upper().split(","))
-    text = review_path.read_text()
+    stored = read_review(review_path)
+    if stored is None:
+        core.log.error(f"{review_path} predates review.json — run `pr review` again")
+        return 1
 
-    sha_match = HEAD_SHA_RE.search(text)
-    review_sha = sha_match.group(1) if sha_match else None
-
-    sections = ReviewSections.from_text(text)
-
-    doc = ReviewDocument.parse(text)
+    review_sha = stored.meta.head_sha or None
+    sections = ReviewSections.from_record(stored.record)
+    doc = ReviewDocument.from_stored(stored)
     declared = doc.findings
     core.log.info(f"Parsed {len(declared)} findings from review file")
     trail.info("parse_findings", f"parsed {len(declared)} findings",

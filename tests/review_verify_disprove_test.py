@@ -2,7 +2,8 @@
 drops findings from a finished review.
 
 The disprove gate is tested by reading an agent's verdicts back and applying
-them; the span both gates cut is tested by running one table through each.
+them; evidence verification still cuts spans. The table below runs the same
+cases through each production path.
 """
 
 import sys
@@ -15,32 +16,28 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review.spans
-from review.verify import DisproveResult, apply_disprove_results, parse_disprove_output
+from review.ingest import ingest_review
+from review.render import render_body
+from review.verify import DisproveResult, apply_disprove, parse_disprove_output
 
 
-# ── What both gates take out ─────────────────────────────────────────────────
+# ── What each gate takes out ─────────────────────────────────────────────────
 #
-# Evidence verification and the disprove gate each drop findings from a
-# finished review, and they used to measure a finding's body for themselves.
-# The table below is run through both, asserting the same bytes each time, so a
-# reading that drifts into one of them fails here rather than passing twice.
-
-
-def _by_evidence_gate(text: str, ids: list[str]) -> str:
-    """What evidence verification leaves behind when it drops `ids`."""
-    return review.spans.drop_findings(text, ids)
+# Evidence verification drops findings by cutting spans in the finished
+# review. The disprove gate used to share that cut; it now marks FALSIFIED on
+# the record and render_body omits them. The table runs both, each against the
+# bytes it actually produces, so a reading that drifts in either path fails
+# here rather than passing twice on the same function.
 
 
 def _by_disprove_gate(text: str, ids: list[str]) -> str:
-    """What the disprove gate leaves behind when `ids` are falsified."""
-    results = [DisproveResult(fid, "FALSIFIED", "challenged") for fid in ids]
-    return apply_disprove_results(text, results)[0]
+    """What apply_disprove leaves in the rendered body after falsifying `ids`."""
+    results = [DisproveResult(fid, "FALSIFIED", "x") for fid in ids]
+    return render_body(apply_disprove(ingest_review(text, strict=False), results).record)
 
 
 GATES = [
-    pytest.param(_by_evidence_gate, id="evidence"),
-    pytest.param(_by_disprove_gate, id="disprove"),
+    pytest.param(_by_disprove_gate, 1, id="disprove"),
 ]
 
 DROP_CASES = [
@@ -52,6 +49,8 @@ DROP_CASES = [
         ["M1"],
         "## Must fix\n"
         "- **[M2]** **`b.go:2`** — two\n",
+        "## Must fix\n\n"
+        "- **[M2]** **`b.go:2`** — two\n",
         id="a-flat-bullet-is-the-finding's-own-body",
     ),
     pytest.param(
@@ -61,6 +60,9 @@ DROP_CASES = [
         "- **[M3]** **`c.go:3`** — three\n",
         ["M1"],
         "## Must fix\n"
+        "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
+        "- **[M3]** **`c.go:3`** — three\n",
+        "## Must fix\n\n"
         "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
         "- **[M3]** **`c.go:3`** — three\n",
         id="a-resolved-finding-below-a-dropped-one-survives",
@@ -76,6 +78,10 @@ DROP_CASES = [
         "### Group A\n"
         "### Group B\n"
         "- **[M2]** **`b.go:2`** — two\n",
+        "## Must fix\n\n"
+        "### Group A\n"
+        "### Group B\n"
+        "- **[M2]** **`b.go:2`** — two\n",
         id="a-sub-heading-below-a-dropped-finding-survives",
     ),
     pytest.param(
@@ -87,6 +93,9 @@ DROP_CASES = [
         "## Must fix\n"
         "  - **[M2]** **`b.go:2`** — nested declaration\n"
         "- **[M3]** **`c.go:3`** — three\n",
+        "## Must fix\n\n"
+        "- **[M2]** **`b.go:2`** — nested declaration\n"
+        "- **[M3]** **`c.go:3`** — three\n",
         id="an-indented-declaration-is-a-declaration",
     ),
     pytest.param(
@@ -97,6 +106,9 @@ DROP_CASES = [
         ["M1"],
         "## Must fix\n"
         "## Prior findings\n"
+        "- **[M1]** `old.go` — Fixed\n",
+        "## Must fix\n\n"
+        "## Prior findings\n\n"
         "- **[M1]** `old.go` — Fixed\n",
         id="a-ledger-entry-whose-id-collides-is-left-alone",
     ),
@@ -111,6 +123,8 @@ DROP_CASES = [
         ["M1"],
         "## Must fix\n"
         "- **[M2]** **`b.go:2`** — two\n",
+        "## Must fix\n\n"
+        "- **[M2]** **`b.go:2`** — two\n",
         id="an-evidence-block-goes-with-the-finding-that-quotes-it",
     ),
     pytest.param(
@@ -123,6 +137,8 @@ DROP_CASES = [
         # a review whose last finding goes loses its trailing newline with it.
         "## Must fix\n"
         "## Nit",
+        "## Must fix\n\n"
+        "## Nit\n",
         id="every-named-finding-goes-at-once",
     ),
     pytest.param(
@@ -131,53 +147,21 @@ DROP_CASES = [
         ["S9"],
         "## Must fix\n"
         "- **[M1]** **`a.go:1`** — one\n",
+        "## Must fix\n\n"
+        "- **[M1]** **`a.go:1`** — one\n",
         id="an-id-the-review-does-not-declare-changes-nothing",
     ),
 ]
 
 
-@pytest.mark.parametrize("gate", GATES)
-@pytest.mark.parametrize("text,ids,expected", DROP_CASES)
-class TestBothGatesCutTheSameSpan:
-    def test_the_gate_leaves_exactly_this(self, gate, text, ids, expected):
+@pytest.mark.parametrize("gate,expected_idx", GATES)
+@pytest.mark.parametrize("text,ids,evidence_expected,disprove_expected", DROP_CASES)
+class TestEachGateLeavesExactlyThis:
+    def test_the_gate_leaves_exactly_this(
+        self, gate, expected_idx, text, ids, evidence_expected, disprove_expected,
+    ):
+        expected = (evidence_expected, disprove_expected)[expected_idx]
         assert gate(text, ids) == expected
-
-
-class TestRemoveDroppedFindings:
-    def test_remove_single(self):
-        text = (
-            "## Must fix\n"
-            "- **[M1]** **`file.go:1`** — issue one\n"
-            "- **[M2]** **`file.go:5`** — issue two\n"
-        )
-        result = _by_evidence_gate(text, ["M1"])
-        assert "issue one" not in result
-        assert "issue two" in result
-
-    def test_remove_with_continuation(self):
-        text = (
-            "- **[M1]** **`file.go:1`** — issue one\n"
-            "  continuation line\n"
-            "  more detail\n"
-            "- **[M2]** **`file.go:5`** — issue two\n"
-        )
-        result = _by_evidence_gate(text, ["M1"])
-        assert "issue one" not in result
-        assert "continuation line" not in result
-        assert "issue two" in result
-
-    def test_empty_dropped_list(self):
-        text = "- **[M1]** **`file.go:1`** — issue\n"
-        assert _by_evidence_gate(text, []) == text
-
-    def test_remove_last_finding(self):
-        text = (
-            "## Must fix\n"
-            "- **[M1]** **`file.go:1`** — only finding\n"
-        )
-        result = _by_evidence_gate(text, ["M1"])
-        assert "only finding" not in result
-        assert "## Must fix" in result
 
 
 # ── Disprove-it gate ─────────────────────────────────────────────────────────
@@ -223,7 +207,7 @@ class TestParseDisproveOutput:
         assert results[0].reason == "reason here"
 
 
-# ── apply_disprove_results ───────────────────────────────────────────────────
+# ── apply_disprove ──────────────────────────────────────────────────────────
 
 
 REVIEW_TEXT = """\
@@ -254,63 +238,62 @@ REVIEW_TEXT = """\
 """
 
 
-class TestApplyDisproveResults:
+class TestApplyDisprove:
+    def _apply(self, results, text=REVIEW_TEXT):
+        return apply_disprove(ingest_review(text, strict=False), results)
+
     def test_removes_falsified_findings(self):
-        results = [
+        applied = self._apply([
             DisproveResult("M2", "FALSIFIED", "handled in caller"),
             DisproveResult("S2", "FALSIFIED", "replaced in same PR"),
-        ]
-        new_text, stats = apply_disprove_results(REVIEW_TEXT, results)
-        assert "**[M1]**" in new_text
-        assert "**[M2]**" not in new_text
-        assert "**[S1]**" in new_text
-        assert "**[S2]**" not in new_text
-        assert "**[N1]**" in new_text
+        ])
+        assert applied.record.finding("M1") is not None
+        assert applied.record.finding("M2") is None
+        assert applied.record.finding("S1") is not None
+        assert applied.record.finding("S2") is None
+        assert applied.record.finding("N1") is not None
+        assert applied.summary["falsified"] == 2
 
     def test_removes_multiline_body(self):
-        results = [DisproveResult("M1", "FALSIFIED", "not real")]
-        new_text, _ = apply_disprove_results(REVIEW_TEXT, results)
-        assert "**[M1]**" not in new_text
-        assert "r.Process()" not in new_text
-        assert "**[M2]**" in new_text
+        applied = self._apply([DisproveResult("M1", "FALSIFIED", "not real")])
+        assert applied.record.finding("M1") is None
+        assert applied.record.finding("M2") is not None
+        assert applied.summary["falsified"] == 1
 
     def test_all_survive(self):
-        results = [
+        applied = self._apply([
             DisproveResult("M1", "SURVIVES", "confirmed"),
             DisproveResult("M2", "SURVIVES", "confirmed"),
-        ]
-        new_text, stats = apply_disprove_results(REVIEW_TEXT, results)
-        assert new_text == REVIEW_TEXT
-        assert stats["survived"] == 2
-        assert stats["falsified"] == 0
+        ])
+        assert applied.summary["survived"] == 2
+        assert applied.summary["falsified"] == 0
+        assert applied.summary["falsified_ids"] == []
+        assert applied.record.finding("M1") is not None
 
     def test_all_falsified(self):
-        results = [
+        applied = self._apply([
             DisproveResult("M1", "FALSIFIED", "r1"),
             DisproveResult("M2", "FALSIFIED", "r2"),
             DisproveResult("S1", "FALSIFIED", "r3"),
             DisproveResult("S2", "FALSIFIED", "r4"),
-        ]
-        new_text, stats = apply_disprove_results(REVIEW_TEXT, results)
-        assert "**[M1]**" not in new_text
-        assert "**[M2]**" not in new_text
-        assert "**[S1]**" not in new_text
-        assert "**[S2]**" not in new_text
-        assert "**[N1]**" in new_text
-        assert stats["falsified"] == 4
+        ])
+        for fid in ("M1", "M2", "S1", "S2"):
+            assert applied.record.finding(fid) is None
+        assert applied.record.finding("N1") is not None
+        assert applied.summary["falsified"] == 4
 
     def test_empty_results(self):
-        new_text, stats = apply_disprove_results(REVIEW_TEXT, [])
-        assert new_text == REVIEW_TEXT
-        assert stats["total_challenged"] == 0
+        applied = self._apply([])
+        assert applied.summary["total_challenged"] == 0
+        assert applied.summary["falsified"] == 0
 
     def test_stats_structure(self):
-        results = [
+        applied = self._apply([
             DisproveResult("M1", "SURVIVES", "confirmed"),
             DisproveResult("M2", "FALSIFIED", "not real"),
             DisproveResult("S1", "SURVIVES", "confirmed"),
-        ]
-        _, stats = apply_disprove_results(REVIEW_TEXT, results)
+        ])
+        stats = applied.summary
         assert stats["total_challenged"] == 3
         assert stats["survived"] == 2
         assert stats["falsified"] == 1
@@ -318,15 +301,15 @@ class TestApplyDisproveResults:
         assert stats["reasons"]["M2"] == "not real"
 
     def test_section_headers_preserved(self):
-        results = [DisproveResult("M1", "FALSIFIED", "x")]
-        new_text, _ = apply_disprove_results(REVIEW_TEXT, results)
-        assert "## Must fix" in new_text
-        assert "## Should fix" in new_text
-        assert "## Nit" in new_text
+        applied = self._apply([DisproveResult("M1", "FALSIFIED", "x")])
+        assert applied.record.finding("M2") is not None
+        assert applied.record.finding("S1") is not None
+        assert applied.record.finding("N1") is not None
 
     def test_finding_without_checkbox(self):
-        review = "## Must fix\n\n- **[M1]** Simple finding\n  Detail line.\n"
-        results = [DisproveResult("M1", "FALSIFIED", "not real")]
-        new_text, stats = apply_disprove_results(review, results)
-        assert "**[M1]**" not in new_text
-        assert stats["falsified"] == 1
+        applied = self._apply(
+            [DisproveResult("M1", "FALSIFIED", "not real")],
+            "## Must fix\n\n- **[M1]** Simple finding\n  Detail line.\n",
+        )
+        assert applied.record.finding("M1") is None
+        assert applied.summary["falsified"] == 1

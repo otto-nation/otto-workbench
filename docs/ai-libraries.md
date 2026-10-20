@@ -721,78 +721,14 @@ review *means*, and nothing here differs at all.
 
 ### review/document.py
 
-`review.md` — the artifact the review subsystem exists to produce.
+The header vocabulary of a review, and the read view of a stored one.
 
-A review document is a title, a block of HTML-comment metadata recording what
-produced it, and a body. This module owns all three: the keys the header may
-state, the sentence the title is, and where one ends and the next begins. A
-writer that assembles those itself is stating the document's format a second
-time, and the second statement is the one that drifts.
-
-Three things write a header and they do not write the same one. The pipeline
-renders the full block; `review-rebuild` renders the subset a `meta.json` can
-attest to; and on the synthesis and single-agent paths the review agent writes
-its own, following prose in its template. `ReviewHeader.parse` therefore reads
-keys wherever they appear and in whatever order, and `set_status` edits the line
-it is asked about rather than re-rendering the block — a field this module was
-never told about survives an edit instead of being dropped by it.
-
-None of it is the agent's to state. Every key here records something about the
-*run* — which commit it read, what it was a delta against, which tool produced
-it — and the agent can see none of that from inside its own prompt. What it
-typed instead was a template's placeholder: a literal `YYYY-MM-DD` on one path,
-and on every path no `review_type` at all, which `parse` reads back as `full`.
-An incremental review recorded as a full one is not a cosmetic defect: the next
-re-review asks the header what it is a delta against, so the answer decides
-whether that run reads the delta or re-reads the whole PR.
-
-`stamp_header` is the fix and the rule: the harness writes the header over
-whatever reached disk, on every path, after the agent has finished with the
-file. It is an edit and not a re-render, per key, so a marker the agent wrote
-and this module has never heard of survives being stamped — and because `parse`
-takes the first occurrence of a key, it replaces the first marker rather than
-adding a second one below it. `set_status` is the same primitive with one key,
-kept separate because a status is the last thing known about a run and is
-written by a caller holding no other part of the header.
-
-`ReviewDocument` is for a document being *built*: it renders the canonical form
-this module defines. Editing one that is already on disk is a different job and
-stays a text edit, because a header read back off disk states only what its
-writer chose to state — re-rendering it would add this module's defaults as
-claims the original never made. `set_status` and `set_section` are what such an
-edit asks instead, and `section_span` is what they are built on: the offsets of
-the section being rewritten, leaving every byte outside them alone. A pipeline
-that appends a section after the review is written — the Agent Failures table,
-the static-analysis report — states which section it is and what goes in it,
-and this module decides where that lands.
-
-Reading a document is the same one owner from the other side. What a review
-says — which sections it carries, which findings it declares, how many of each
-severity, and the call it reached — is answered off the parsed document rather
-than by a regex each caller brings, so two readers of one review cannot report
-different things about it.
-
-A finding declaration is part of that format, but not part of this module: the
-grammar of one — the ID at the head of a list item, the location after it, the
-body after that — is `review.grammar`'s, and this module reads a document
-through it. `parse_finding_line` is for a caller holding a single line that is
-not in a findings section — the prior-findings ledger is the one — and every
-other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
-onto a finding it left alone is the exception that stays: `is_skipped` is a
-question about a `Finding` this module has already parsed rather than about
-the line that declared it. Where a finding's body starts and stops is
-`review.spans`'s, and this module reads through `finding_spans` the same way
-it reads a single line through `review.grammar`.
-
-Counting them is that same parse, not a second grammar over the same text:
-`open_counts` tallies `open_findings`, so which findings a review is reported
-to have and how many it is reported to have are one answer. A tally written as
-its own regex is how a review came to report four findings it had none of —
-the ledger's lines look like declarations from anywhere but inside the parse.
-
-What a tally of them means — the verdict it supports, and the body a review
-carries when no synthesis agent wrote one — is `review.verdict`'s: a judgement
-over this module's shape rather than part of the shape itself.
+This module owns the keys a review header may state, the sentence the title is,
+and `ReviewDocument` as the read view of a stored review. `ReviewHeader.render`
+and `ReviewHeader.from_meta` write the header from the sidecar; `covers` is
+whether a header SHA covers a commit; `review_title` is the `# ...` line
+derived from the same sidecar. `ReviewDocument` answers sections, findings,
+open counts and the verdict off the record, never by parsing `review.md`.
 
 ### review/gc.py
 
@@ -1095,10 +1031,9 @@ stripped of the sections that were bookkeeping rather than findings, annotated
 with what the author said in reply to each finding, and followed by the
 instruction that asks for a disposition for every finding it carries.
 
-Scoping the prior review to a group's files cuts it a finding at a time, and
-where a finding stops is `review.spans`'s `finding_spans` — the same measure
-the gates that trim a finished review use. A section that measured it here
-would quote evidence belonging to a finding the agent was never shown.
+Scoping the prior review to a group's files keeps findings that name a line of
+one of those files. A finding without a line is file-level and is not in any
+group's slice.
 
 `_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
 an agent; both sections here interpolate it rather than restating it, and
@@ -1211,7 +1146,7 @@ leads that tell group reviewers exactly where to focus investigation.
 
 Config-driven section registry with auto-discovery for review posting.
 
-Defines section configs declaratively and extracts them from review markdown.
+Defines section configs declaratively and extracts them from the review record.
 Replaces per-section parameter threading across the posting pipeline.
 
 ### review/state.py
@@ -1296,7 +1231,7 @@ prose, whether the run states a verdict at all, and the body a mechanically
 merged review carries when no synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
-a judgement — a review file parses the same way whatever this module decides.
+a judgement — a stored review reads the same way whatever this module decides.
 
 A review where no group reported — every agent failed, so its header says
 `status: error` — records no verdict: its empty tally means nothing was read,
@@ -1435,8 +1370,9 @@ finding as one in the prior review, and a fuzzy answer there silently merges two
 findings about two lines of one file. `review.dedup` is the fuzzy answer, for
 the different question of whether a finding is about to be posted twice.
 
-What a document is assembled from is `review.document`'s; what a finding means
-once parsed is `review.types`'.
+Where a finding's body ends is `review.ingest`'s `finding_spans`. What a
+document is assembled from is `review.document`'s; what a finding means once
+parsed is `review.types`'.
 
 ### review/ingest.py
 
@@ -1445,14 +1381,15 @@ One ingest boundary: an agent's markdown review becomes a `ReviewRecord`, once.
 Every agent artifact that becomes review state passes through `ingest_review`
 where it enters. Ingest is strict: an entry it cannot represent faithfully — an
 unknown severity token, a duplicate ID, a declaration with nothing after it — is
-an `IngestError`, never a silent repair. A second rejection is an agent failure,
-handled as failures already are.
+an `IngestError`, never a silent repair. `ingest_with_repair` gives the agent one
+turn to fix a rejection and returns an `IngestOutcome`; a second rejection is an
+agent failure, handled as failures already are.
 
 Text carrying the render `BANNER` is refused outright: `review.md` is a view of
 `review.json` and is never parsed back.
 
-This reads the markdown grammar — `review.grammar` for a finding line,
-`review.spans` for where its body ends.
+This reads the markdown grammar — `review.grammar` for a finding line —
+and walks each finding's body here (`finding_spans`).
 
 ### review/merge.py
 
@@ -1473,10 +1410,11 @@ review is `review.document`'s job, checking findings against the tree is
 consumer that only holds findings needs none of this. Deciding what became of
 a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review.spans`'s. Deduplication and the
-prior-review reading both walk `finding_spans`, and a repeat is removed with
-`cut_spans`, so a duplicate takes exactly the lines out of the merged document
-that a falsified finding does. Neither says where one stops.
+Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
+carries its extent. Deduplication walks those records and drops a repeat by
+`FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
+record that never reaches the merged document rather than a span cut out of
+it.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -1530,11 +1468,12 @@ in the diff at all is skipped. `cli.review_positions` is the command over this;
 
 ### review/rebuild.py
 
-Rebuild a review document from its group finding files.
+Rebuild a review record from its group finding files.
 
-Merges the group-N.md outputs, post-processes the findings and writes a new
-review.md — the recovery path when synthesis drifted or the review file was
-corrupted. `cli.review_rebuild` is the command over this.
+Ingests the group-N.md outputs, merges the records, post-processes them and
+writes a new review through the store — the recovery path when synthesis
+drifted or the review file was corrupted. `cli.review_rebuild` is the command
+over this.
 
 ### review/reconcile.py
 
@@ -1569,9 +1508,9 @@ can decide them, rather than after the document is written and the only thing
 left to do is warn.
 
 The record is a sidecar in the review directory rather than a section of the
-review. Reconciliation parses its input for finding-shaped lines, so a
-reconciliation written into the review would come back to the next round
-looking like a fresh set of prior findings.
+review. Reconciliation walks the prior round's record, so a reconciliation
+written into the review would come back to the next round looking like a
+fresh set of prior findings.
 
 The ledger this module reads is not the only account of what became of a
 prior finding. Every finding posted inline opened a review thread,
@@ -1622,24 +1561,6 @@ there is no finding for it to be an account of.
 Fetching is `pr.comments`'s; what a re-review is shown of the result is
 `review.prompt_sections`' and `review.prompt_prior`'s.
 
-### review/spans.py
-
-Where a finding declaration starts in a document, and where its body stops.
-
-Where that body stops is the same one owner. `ends_finding_body` is the answer
-and `finding_spans` is the traversal built on it, so a reader walking a review
-a finding at a time gets the same line ranges wherever it walks from.
-`drop_findings` is what an editing caller asks instead: the gates that trim a
-finished review remove spans this module measured rather than lines each of
-them recognised, because two gates that disagreed about where a body ended cut
-one review two different ways — one of them swallowing the resolved finding
-below the one it was told to drop.
-
-`finding_spans` makes one traversal guarantee: a declaration starts where
-`FINDING_ID_RE` says and its body stops where `ends_finding_body` says, in a
-single pass over the text, so no two readers of one review can cut it in
-different places.
-
 ### review/summary.py
 
 The machine-readable summary of a finished review, and its human rendering.
@@ -1679,14 +1600,15 @@ and the rest.
 
 What a review claims, checked against the tree it claims it about.
 
-`post_process_findings` is that check as a whole pass: a caller hands it a
-finished review file and gets back what verification did to it. Evidence
-checking, evidence stripping and the reconciliation are steps of that pass
-rather than a menu — run in another order they leave a review whose prose
-describes findings by IDs it no longer uses — so they are private and the pass
-is what callers reach for.
+`post_process_record` is that check as a whole pass: a caller hands it a
+finished review record and gets back what verification did to it. Evidence
+checking and the reconciliation are steps of that pass rather than a menu —
+run in another order they leave a review whose prose describes findings by
+IDs it no longer uses — so they are private and the pass is what callers
+reach for.
 
-Two gates run over a finished review and both only ever remove findings.
+Two gates run over a finished review and both take findings out of view:
+evidence verification drops them, the disprove gate marks them `FALSIFIED`.
 
 Evidence verification is mechanical. Every must-fix and should-fix finding
 quotes the code it is about; that quote is checked against the file on disk,
@@ -1698,20 +1620,21 @@ file does not carry, and stripping only the quote leaves the file holding text
 the quote no longer has, which makes a verbatim quote fail to match itself.
 
 The disprove gate is adversarial. Each must-fix and should-fix finding is
-challenged by an agent, and one that cannot survive the challenge is dropped
-before the review is posted. Reading that agent's verdicts back and applying
-them is here; whether the gate runs at all is `review.phases`'.
+challenged by an agent, and one that cannot survive the challenge is marked
+`FALSIFIED` on the record — kept, never rendered. Reading that agent's
+verdicts back and applying them is `apply_disprove`; whether the gate runs at
+all is `review.phases`'.
 
-The synthesis agent wrote the ``## Summary`` and the ``## Verdict`` before
-either gate ran, so both can describe findings that are no longer in the file.
-Regenerating them would cost the agent's qualitative assessment, which is the
-part of a review a reader cannot reconstruct from counts. So the prose stays
-and the review says what left it:
+The synthesis agent wrote the Summary and the Verdict before either gate ran,
+so both can describe findings that are no longer visible. Regenerating them
+would cost the agent's qualitative assessment, which is the part of a review
+a reader cannot reconstruct from counts. So the prose stays and the review
+says what left it:
 
-* A blockquote at the end of ``## Summary`` names each dropped finding by
+* A blockquote at the end of the Summary names each dropped finding by
   severity and path — not by ID, since renumbering has already reassigned
   those — and why it was dropped.
-* ``## Verdict`` is rewritten when the surviving counts no longer support the
+* The Verdict is rewritten when the surviving counts no longer support the
   stated action. A drop can only remove findings, so this only ever lowers a
   verdict: ``Request changes`` → ``Needs discussion`` → ``Approve``. A verdict
   the remaining findings still support is left exactly as written, and
@@ -1724,19 +1647,11 @@ re-running post-processing does not stack notes or re-lower a verdict.
 Which verdict a tally supports in the first place is `review.verdict`'s. The
 finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from `finding_location`,
-the same reading the poster uses, and is resolved with the poster's
+checks. It does not read the location: the path comes from the record, the
+same reading the poster uses, and is resolved with the poster's
 `review.format.resolve_path` — against the files the diff changed first, as
 the poster does, and the tracked tree only when the diff has no match — so a
 finding is not placed against one file and verified against another.
-
-Where a finding's body ends is `review.spans`'s. Both gates walk the review
-through `finding_spans` and remove what they drop through `drop_findings`,
-because two gates that measured a finding themselves measured it differently:
-one of them took the resolved finding below a dropped one out with it, and
-neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
-which findings this gate checks; it reads a location only where the poster can
-place none, and never says where one stops.
 
 ## Publishing
 
@@ -2638,9 +2553,9 @@ unless `--track` names it or `--track-all` is passed, and nothing is published
 unless the publishing gate is open. Filing posts under the operator's name and
 a deferral is a per-finding judgement, so neither is a sensible default.
 
-What it does not do is decide *which* findings are filable. That is
-`ReviewMeta.open_findings`, written by the fix pass, because a deferred finding
-leaves no trace on the document to read back.
+What is filable now comes from the record's dispositions, not
+`ReviewMeta.open_findings`: a skip or an unreached finding the last fix pass
+left open, that nobody has filed yet.
 
 ### review/issue.py
 

@@ -16,7 +16,7 @@ import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import agent.diagnosis
@@ -48,9 +48,6 @@ import core.proc
 import pr.target
 from agent.registry import phase_skips
 from core.phases import Effort, Mode
-from review.document import (
-    SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
-)
 from review.paths import (
     read_review_meta, stamp_reviewed,
 )
@@ -64,6 +61,7 @@ from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
 from review.reply_threads import fetch_reply_threads
+from review.store import read_prior, read_review, update_review
 from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
@@ -145,13 +143,12 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
 
     Not reached on the no-op re-review path, which returns above — and that
     stays consistent rather than leaving a gap. No agent runs there, the fix
-    pass is never called, and `_carried_findings` drops `## Static Analysis`
+    pass is never called, and `_carried_record` drops `## Static Analysis`
     from the document it carries forward, so the section and the empty
     `job.static_results` agree: this run measured nothing and claims nothing.
     The next run with a real delta writes both.
     """
-    review_path = Path(job.review_file)
-    if not review_path.is_file():
+    if read_review(Path(job.review_file)) is None:
         return None
     changed_files = [f["path"] for f in job.pr.files]
     # Against the PR or stack base, the same ref `job.pr.files` was collected
@@ -184,9 +181,7 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
     if not section:
         return None
     job.static_results = results
-    review_path.write_text(set_section(
-        review_path.read_text(), SECTION_STATIC_ANALYSIS, section, before=SECTION_VERDICT,
-    ))
+    update_review(Path(job.review_file), lambda record: replace(record, static_analysis=section))
     return {
         "checkers_run": len(results),
         "files_checked": sum(r.files_checked for r in results),
@@ -214,7 +209,7 @@ def _is_no_op_rereview(job) -> bool:
     return bool(
         review.prompt_sections._is_incremental(job)
         and job.preflight.delta_proven_empty
-        and job.prior_review
+        and job.prior is not None
     )
 
 
@@ -321,7 +316,7 @@ def _choose_pipeline(
 def _file_open_findings(args, job, trail) -> None:
     """File the findings the pass left open, for the ones `--track` named.
 
-    After `run_fix_pass`, which is what writes them to the sidecar. Nothing is
+    After `run_fix_pass`, which is what writes them to the record. Nothing is
     filed without a `--track`, and `create_issue` drafts without `--post`, so
     the default of both flags is to record the findings and file nothing.
 
@@ -437,10 +432,6 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     )
     pr_number, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
-    prior_review = ""
-    if args.prior_review and Path(args.prior_review).exists():
-        prior_review = Path(args.prior_review).read_text()
-
     # Read separately from `repo` because `--repo` may name a repo the cwd is
     # not: the slug can be handed in, the host can only be read off the remote.
     # Taken only when the origin names the same repo the run is reviewing — the
@@ -457,12 +448,13 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         wt_path=args.repo_dir, review_file=args.review_file,
         session_log=session_log,
         issue_link=args.issue, issue_context=args.issue_context,
-        prior_review=prior_review, mode=args.mode,
+        mode=args.mode,
         generator_version=args.generator_version,
         model=args.model, effort=resolve_effort(args.effort),
         skip_phases=phase_skips(args),
         include_generated=args.generated,
     )
+    job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
 
     job.throttle = QuotaThrottle()
     # Handed to us, not derived: --repo-dir may be a detached review worktree,
@@ -482,7 +474,7 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
             job.viewer_role = ViewerRole.REVIEWER
 
     core.log.info("Collecting file data...")
-    if prior_review and args.pr:
+    if job.prior is not None and args.pr:
         with ThreadPoolExecutor(max_workers=2) as pool:
             pf_future = pool.submit(collect_preflight_data, job)
             rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)

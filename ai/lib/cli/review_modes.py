@@ -41,6 +41,7 @@ from pr.review_sync import sync_review_domain
 from pr.target import display_repo
 import review.listing
 from review.paths import find_review_file, review_file_path
+from review.store import read_review
 from review.summary import build_review_summary, json_summary
 
 
@@ -73,6 +74,15 @@ def post(argv: list[str], ctx: pr.context.ResolvedContext, *,
     return core.publishing.call_entry_point("cli.review_post:main", post_argv)
 
 
+def _sync_recorded_review(ctx: pr.context.ResolvedContext, pr_num: str,
+                          review_path: Path) -> None:
+    """Stamp the domain from a stored review; a stale directory is a no-op."""
+    report = build_review_summary(ctx.repo, pr_num, str(review_path))
+    if report is None:
+        return
+    sync_review_domain(ctx, report)
+
+
 def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
            bin_dir: Path, **_kw) -> int:
     """Repair broken review artifacts via summary or rebuild."""
@@ -82,12 +92,21 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
         return 1
 
     review_path = find_review_file(ctx.repo, pr_num)
-    if review_path:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review_path)))
+    # A directory with review.md but no review.json is stale: the store
+    # answers None, the same as a missing review. Rebuild rather than
+    # returning 0 with nothing written.
+    if review_path and read_review(review_path) is not None:
+        _sync_recorded_review(ctx, pr_num, review_path)
         return 0
 
-    core.log.info("No review file found, trying rebuild...")
-    review_dir = review_file_path(ctx.repo, pr_num).parent
+    if review_path:
+        core.log.info(f"{review_path} predates review.json — rebuilding...")
+    else:
+        core.log.info("No review file found, trying rebuild...")
+    review_dir = (
+        review_path.parent if review_path
+        else review_file_path(ctx.repo, pr_num).parent
+    )
     if not review_dir.is_dir():
         core.log.error(f"No review directory found: {review_dir}")
         return 1
@@ -99,7 +118,8 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
     if rc != 0:
         return rc
 
-    # The rebuild writes `review.md` and says nothing on stdout. This used to
+    # The rebuild writes review.json, meta.json and the rendered review.md
+    # through the store, and says nothing on stdout. This used to
     # capture its output and grep it for a `REVIEW_SUMMARY:` marker — a
     # protocol whose only writer was `review`, so on this path it
     # parsed a string nothing emitted and silently updated nothing. The
@@ -107,7 +127,7 @@ def repair(argv: list[str], ctx: pr.context.ResolvedContext, *,
     # the same thing `repair` does above when a review file already exists.
     review_path = find_review_file(ctx.repo, pr_num)
     if review_path:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review_path)))
+        _sync_recorded_review(ctx, pr_num, review_path)
     return 0
 
 

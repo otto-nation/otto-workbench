@@ -50,6 +50,7 @@ from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
 from agent.backend import selected_backend
 from agent.phases import phase_model
+from agent.session import diagnose_missing_output
 from review.budget import (
     MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes,
     ladder_target_bytes,
@@ -59,7 +60,8 @@ from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
 from review.overflow import run_with_overflow_recovery
-from review.outcome import _post_process_review, _write_review_sidecar, is_complete_review
+from review.ingest import ingest_with_repair
+from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
 from review.prompt_sections import _is_incremental
@@ -159,11 +161,15 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     _touch(job.review_file)
 
     # `rc` tracks the latest attempt so the failure message below reports the
-    # retry's exit code, not the first attempt's.
+    # retry's exit code, not the first attempt's. `sent` is the prompt the last
+    # invocation actually ran — an overflow rebuild replaces it, and repair
+    # must quote that text rather than the original.
     rc = 0
+    sent = prompt
 
     def invoke(text: str, turns: int) -> int:
-        nonlocal rc
+        nonlocal rc, sent
+        sent = text
         rc = runner.invoke(text, turns)
         return rc
 
@@ -189,11 +195,27 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
 
+    outcome = ingest_with_repair(
+        job.review_file, sent, invoke,
+        diagnose=lambda: diagnose_missing_output(
+            job.session_log, job.review_file,
+        ),
+    )
+    if not outcome.ok:
+        if outcome.diagnosis is not None:
+            core.log.error(
+                f"review agent repair failed: {outcome.diagnosis.message}"
+            )
+        else:
+            listed = "; ".join(e.render() for e in outcome.errors)
+            core.log.error(f"review agent output rejected: {listed}")
+        core.log.dim(f"Session log: {job.session_log}")
+        sys.exit(1)
+    raw = Path(job.review_file).read_text()
+    record = outcome.record
     if _should_disprove(job, disprove):
-        _phase_disprove(job)
-
-    _post_process_review(job)
-    _write_review_sidecar(job)
+        record = _phase_disprove(job, record, raw).record
+    _post_process_review(job, record)
 
 
 def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
@@ -292,7 +314,7 @@ def run_multi_phase(
 
     incremental = _is_incremental(job)
     incremental_skips: set[int] = set()
-    carried_forward = ""
+    carried = None
 
     if incremental:
         incremental_skips = _identify_incremental_skips(
@@ -304,8 +326,8 @@ def run_multi_phase(
                 f"Incremental: {affected}/{group_count} groups affected, "
                 f"{len(incremental_skips)} unchanged (findings carried forward)"
             )
-            carried_forward = _carry_forward_prior_findings(
-                job.prior_review, groups, incremental_skips,
+            carried = _carry_forward_prior_findings(
+                job.prior, groups, incremental_skips,
             )
 
     recovery = _resolve_recovery(job, groups)
@@ -364,10 +386,13 @@ def run_multi_phase(
             cost_so_far += group_phase.cost
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
-    merged_content = _phase_merge(group_outputs[:], failed_groups)
+    merged = _phase_merge(
+        group_outputs[:], failed_groups,
+        group_names=tuple(g.name for g in groups),
+    )
 
-    if carried_forward:
-        merged_content += "\n" + carried_forward
+    if carried:
+        merged = merged.carry(carried.record, carried.text)
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
@@ -380,7 +405,7 @@ def run_multi_phase(
     else:
         synthesis = _run_synthesis_or_fallback(
             job, state, holistic.content, group_count,
-            merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
+            merged, failed_groups, n_skipped, cost_so_far, max_cost,
         )
     cost_so_far += synthesis.cost
 

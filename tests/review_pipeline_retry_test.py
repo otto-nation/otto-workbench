@@ -394,15 +394,18 @@ class TestCompleteReviewReadsSectionConstants:
         from review.document import SECTION_SUMMARY
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_SUMMARY}\n\nAll good.\n")
-        assert review.outcome.is_complete_review(str(f))
+        assert review.outcome.agent_output_complete(str(f))
+        assert not review.outcome.is_complete_review(str(f))
 
     def test_verdict_section_marks_a_review_complete(self, tmp_path):
         from review.document import SECTION_VERDICT
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_VERDICT}\n\nApprove.\n")
-        assert review.outcome.is_complete_review(str(f))
+        assert review.outcome.agent_output_complete(str(f))
+        assert not review.outcome.is_complete_review(str(f))
 
     def test_a_body_with_neither_section_is_incomplete(self, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("- **[M1]** **`x.py:1`** — a finding\n")
+        assert not review.outcome.agent_output_complete(str(f))
         assert not review.outcome.is_complete_review(str(f))

@@ -38,8 +38,6 @@ from core.serde import to_dict as serde_to_dict
 DEFAULT_CHUNK_SIZE = 30
 INTER_CHUNK_DELAY = 30
 
-HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
-
 _CHUNK_PATTERN = re.compile(r"\*\(continued — part (\d+)/(\d+)\)\*")
 
 

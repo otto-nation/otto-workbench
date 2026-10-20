@@ -95,6 +95,7 @@ EOF
     --review-dir "$TMPDIR/review" --pr 42
 
   [ -f "$TMPDIR/review/review.md" ]
+  [ -f "$TMPDIR/review/review.json" ]
   grep -q "# Review: org/repo#42 — Test PR" "$TMPDIR/review/review.md"
   grep -q "## $must_section" "$TMPDIR/review/review.md"
   grep -q "## $should_section" "$TMPDIR/review/review.md"
@@ -149,6 +150,7 @@ EOF
     --review-dir "$TMPDIR/review" --pr 99
 
   [ -f "$TMPDIR/review/review.md" ]
+  [ -f "$TMPDIR/review/review.json" ]
   grep -q "# Review: org/repo#99" "$TMPDIR/review/review.md"
   grep -q "1 finding" "$TMPDIR/review/review.md"
 }

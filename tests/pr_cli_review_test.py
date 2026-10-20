@@ -10,7 +10,8 @@ import pytest
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import make_ctx, seed_review
+from conftest import make_ctx
+from review_record_support import seed_review, store_review
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
@@ -252,7 +253,7 @@ def test_cmd_review_does_not_rewrite_domain_after_delegate(
 def test_cmd_review_repair_succeeds_with_review_file(mock_sync, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
-    (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
+    store_review(review_dir / "review.md", "## Nit\n- **[N1]** path:1 — style\n")
     rc = cli.pr.cmd_review(["--repair"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     mock_sync.assert_called_once()
@@ -279,7 +280,7 @@ def test_cmd_review_repair_no_pr_fails():
 def test_cmd_review_summary_outputs_json(reviews_dir, capsys):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
-    (review_dir / "review.md").write_text("## Must fix\n- **[M1]** path:1 — bug\n")
+    store_review(review_dir / "review.md", "## Must fix\n- **[M1]** path:1 — bug\n")
     rc = cli.pr.cmd_review(["--summary"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     out = capsys.readouterr().out

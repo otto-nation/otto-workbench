@@ -5841,6 +5841,20 @@ file was staged as nothing and reported as applied. Applying the flag to the
 subcommand rather than to each caller is what stops the next call site from
 forgetting it.
 
+`fetch` is the one subcommand `run` does more than build an argv for. Every
+worktree of a repository shares one `.git`, and concurrent fetches into it race
+on its ref locks: one fails with `cannot lock ref`, or — under a force-push — a
+fetch whose advertisement went stale while it waited exits 0 having moved a
+remote-tracking ref backwards. So `run("fetch", ...)` holds an `flock` on
+`<git-common-dir>/workbench-fetch.mutex` for the fetch's duration, which
+serializes every workbench fetch into that repository across processes. It
+also retries once, still holding the mutex, on the failures a racing fetch
+leaves behind — the cover for a `git fetch` outside the workbench that takes no
+mutex — and passes `maintenance.auto=false` and `gc.auto=0`, so the detached
+maintenance a fetch otherwise starts cannot take `packed-refs.lock` after the
+mutex is released. Applying all three to the subcommand is what keeps a new
+fetch call site from being the one that races.
+
 Callers that still invoke git as literal argv are migrating across; a new one
 should go through the client. The one difference to know before moving a call
 site is that the client passes the worktree as `cwd` rather than as `git -C`, so

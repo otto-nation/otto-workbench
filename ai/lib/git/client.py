@@ -44,6 +44,20 @@ file was staged as nothing and reported as applied. Applying the flag to the
 subcommand rather than to each caller is what stops the next call site from
 forgetting it.
 
+`fetch` is the one subcommand `run` does more than build an argv for. Every
+worktree of a repository shares one `.git`, and concurrent fetches into it race
+on its ref locks: one fails with `cannot lock ref`, or — under a force-push — a
+fetch whose advertisement went stale while it waited exits 0 having moved a
+remote-tracking ref backwards. So `run("fetch", ...)` holds an `flock` on
+`<git-common-dir>/workbench-fetch.mutex` for the fetch's duration, which
+serializes every workbench fetch into that repository across processes. It
+also retries once, still holding the mutex, on the failures a racing fetch
+leaves behind — the cover for a `git fetch` outside the workbench that takes no
+mutex — and passes `maintenance.auto=false` and `gc.auto=0`, so the detached
+maintenance a fetch otherwise starts cannot take `packed-refs.lock` after the
+mutex is released. Applying all three to the subcommand is what keeps a new
+fetch call site from being the one that races.
+
 Callers that still invoke git as literal argv are migrating across; a new one
 should go through the client. The one difference to know before moving a call
 site is that the client passes the worktree as `cwd` rather than as `git -C`, so
@@ -77,8 +91,12 @@ already decided it is not.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
-from collections.abc import Mapping
+import re
+import time
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TextIO
 
@@ -227,6 +245,137 @@ def _argv(args: tuple[str, ...], config: dict[str, str] | None) -> list[str]:
     return ["git", *prefix, *args]
 
 
+# The file every workbench fetch into one repository serializes on, in its
+# common dir so all of its worktrees find the same one. Not named `*.lock`:
+# that suffix is git's own lockfile convention, and a stale-lock sweep — by
+# hand or by a tool — deletes such files, which would split the waiters across
+# two inodes and let them fetch concurrently again.
+FETCH_MUTEX = "workbench-fetch.mutex"
+
+# What a fetch leaves behind when another fetch into the same repository raced
+# it: a ref moved between read and lock, or objects the other fetch's pack was
+# supposed to supply. Each clears on a second attempt once the racer is done.
+# `git/bin/wt-fetch-default` retries on the same pattern; a test holds the two
+# in agreement.
+FETCH_RETRYABLE = re.compile(
+    r"cannot lock ref .* but expected|did not send all necessary objects"
+    r"|not our ref|fatal: bad object refs/"
+)
+
+# Settings every fetch runs with. A fetch otherwise spawns a detached `git
+# maintenance run --auto`, which can pack refs and take `packed-refs.lock`
+# after the fetch — and the mutex — are gone. Caller config wins on a clash.
+_FETCH_CONFIG = {"maintenance.auto": "false", "gc.auto": "0"}
+
+# How long a fetch waits for the mutex before giving up, and how often it
+# looks. The wait gets the same bound the fetch itself does: a holder is
+# itself bounded by `TRANSFER`, so a longer wait means a queue, not a fetch.
+_FETCH_WAIT = core.timeouts.TRANSFER
+_FETCH_POLL = 0.05
+
+
+def _run_once(
+    args: tuple[str, ...], cwd: str | Path | None, config: dict[str, str] | None,
+    env: dict[str, str] | None, relay: TextIO | None, input_text: str | None,
+) -> CmdResult:
+    """One git invocation, bounded by its subcommand's tier."""
+    return core.proc.run(
+        _argv(args, config), cwd=cwd, timeout=timeout_for(args), env=env,
+        relay=relay, input_text=input_text,
+    )
+
+
+def _mutex_path(cwd: str | Path | None, env: dict[str, str] | None) -> Path | None:
+    """Where *cwd*'s repository keeps its fetch mutex, or None outside one.
+
+    `--git-common-dir` prints a path relative to *cwd* in a main checkout and
+    an absolute one in a linked worktree; joining onto *cwd* handles both.
+    *env* is the fetch's own, so a `GIT_DIR` the caller set picks the same
+    repository the fetch will write to.
+    """
+    r = _run_once(("rev-parse", "--git-common-dir"), cwd, None, env, None, None)
+    common = r.stdout.strip()
+    if not r.ok or not common:
+        return None
+    return Path(cwd or os.getcwd()) / common / FETCH_MUTEX
+
+
+def _acquire(fd: int) -> bool:
+    """Take `LOCK_EX` on *fd* within `_FETCH_WAIT`, polling rather than blocking.
+
+    A blocking `flock` has no timeout, and `signal.alarm` would break a caller
+    running fetches off the main thread.
+    """
+    deadline = time.monotonic() + _FETCH_WAIT
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(_FETCH_POLL)
+
+
+@contextlib.contextmanager
+def _fetch_mutex(cwd: str | Path | None, env: dict[str, str] | None) -> Iterator[bool]:
+    """Hold *cwd*'s fetch mutex; yields False when the wait ran out.
+
+    Outside a repository there is nothing to serialize and the fetch runs
+    unlocked — git refuses it on its own terms. A mutex file that will not open
+    (a read-only `.git`) also runs unlocked, with a warning: the fetch is still
+    worth attempting, and the retry still covers most of a race.
+
+    `os.open` with `O_CLOEXEC` keeps the descriptor out of the git child, so the
+    lock dies with this process rather than with whatever the child left
+    running. `flock` is per open file description, so two threads of one
+    process each opening the file exclude each other as two processes would.
+    """
+    path = _mutex_path(cwd, env)
+    if path is None:
+        yield True
+        return
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+    except OSError as exc:
+        core.log.warn(f"Fetching without the fetch mutex — {path} would not open: {exc}")
+        yield True
+        return
+    try:
+        if not _acquire(fd):
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _fetch(
+    args: tuple[str, ...], cwd: str | Path | None, config: dict[str, str] | None,
+    env: dict[str, str] | None, relay: TextIO | None,
+) -> CmdResult:
+    """A fetch under the repository's mutex, retried once on a race's leftovers."""
+    settings = {**_FETCH_CONFIG, **(config or {})}
+    with _fetch_mutex(cwd, env) as held:
+        if not held:
+            return CmdResult(
+                core.proc.TIMEOUT_RETURNCODE, "",
+                f"timed out after {_FETCH_WAIT:.0f}s waiting for another fetch "
+                f"into this repository to finish",
+            )
+        r = _run_once(args, cwd, settings, env, relay, None)
+        if r.ok or not FETCH_RETRYABLE.search(r.combined_output):
+            return r
+        # Retried silently: these failures mean a fetch outside the mutex — a
+        # bare `git fetch`, an editor's background fetch — touched the same
+        # refs, and the second attempt is the answer the caller wanted. A second
+        # failure is returned as it stands.
+        return _run_once(args, cwd, settings, env, relay, None)
+
+
 def run(
     *args: str,
     cwd: str | Path | None = None,
@@ -260,11 +409,15 @@ def run(
     `input_text` is forwarded too: the child's stdin, closed when omitted.
     `update-ref --stdin` is the caller that needs it; a bound still follows
     the subcommand (`LOCAL` for `update-ref`).
+
+    `fetch` runs under the repository's fetch mutex, retried once on a race's
+    leftovers, with maintenance off — see the module docstring. A wait for the
+    mutex that runs out comes back as `TIMEOUT_RETURNCODE`, like any other
+    expired bound.
     """
-    return core.proc.run(
-        _argv(args, config), cwd=cwd, timeout=timeout_for(args), env=env,
-        relay=relay, input_text=input_text,
-    )
+    if args and args[0] == "fetch":
+        return _fetch(args, cwd, config, env, relay)
+    return _run_once(args, cwd, config, env, relay, input_text)
 
 
 def out(

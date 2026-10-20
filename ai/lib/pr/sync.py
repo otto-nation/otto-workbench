@@ -108,6 +108,19 @@ def _reset_blocker(wt_path: str, branch: str) -> str | None:
     return None
 
 
+def _fetch(cwd: str, *refs: str) -> bool:
+    """Whether fetching *refs* from origin into *cwd* succeeded.
+
+    A worktree that has vanished is a failed fetch, not an exception:
+    `git.client` raises `OSError` for a missing *cwd*, and both callers answer
+    any fetch failure by leaving the worktree alone.
+    """
+    try:
+        return git.client.run("fetch", "origin", *refs, cwd=cwd).ok
+    except OSError:
+        return False
+
+
 def fetch_and_reset(wt_path: str, branch: str) -> None:
     """Fetch branch from origin and hard-reset worktree to match.
 
@@ -117,12 +130,7 @@ def fetch_and_reset(wt_path: str, branch: str) -> None:
     has the right directory name — resetting it unconditionally destroys
     whatever is actually checked out there.
     """
-    try:
-        subprocess.run(
-            ["git", "-C", wt_path, "fetch", "origin", branch],
-            capture_output=True, text=True, check=True, timeout=core.timeouts.TRANSFER,
-        )
-    except Exception:
+    if not _fetch(wt_path, branch):
         return
     blocker = _reset_blocker(wt_path, branch)
     if blocker:
@@ -170,22 +178,16 @@ def update_to_remote(ctx: pr.context.ResolvedContext) -> pr.context.ResolvedCont
     # harm: too small a number is a rebase that never fires.
     default = git.topology.default_branch(cwd)
     refs = [ctx.branch] if default == ctx.branch else [ctx.branch, default]
-    r = subprocess.run(
-        ["git", "-C", cwd, "fetch", "origin", *refs],
-        capture_output=True, text=True, timeout=core.timeouts.TRANSFER,
-    )
-    if r.returncode != 0 and len(refs) > 1:
+    fetched = _fetch(cwd, *refs)
+    if not fetched and len(refs) > 1:
         # `default_branch` falls back to a literal guess ("main") when no
         # candidate has a local remote-tracking ref, and `git fetch` aborts the
         # whole call — updating nothing, not even the branch — when any named
         # ref cannot be resolved on the remote. Retried with the branch alone
         # so a bad guess at the trunk's name cannot take its own fetch down
         # with it.
-        r = subprocess.run(
-            ["git", "-C", cwd, "fetch", "origin", ctx.branch],
-            capture_output=True, text=True, timeout=core.timeouts.TRANSFER,
-        )
-    if r.returncode != 0:
+        fetched = _fetch(cwd, ctx.branch)
+    if not fetched:
         return ctx
 
     r = subprocess.run(

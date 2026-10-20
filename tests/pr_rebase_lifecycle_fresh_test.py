@@ -424,7 +424,8 @@ def test_fresh_prunes_on_fetch():
     """Without --prune the stale remote-tracking ref satisfies --force-with-lease."""
     _, commands, _ = _run_fresh()
 
-    assert ["git", "fetch", "--prune", "origin"] in commands
+    assert ["fetch", "--prune", "origin"] in [
+        cmd[cmd.index("fetch"):] for cmd in commands if "fetch" in cmd]
 
 
 def test_fresh_falls_back_to_the_git_signals_when_the_tracker_is_unreachable():

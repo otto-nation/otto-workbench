@@ -350,15 +350,13 @@ def namespaces_in(repo_dir: str) -> list[str]:
 def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:
     # An empty --refmap is what stops git's opportunistic update: with a
     # command-line refspec it still applies remote.origin.fetch and would move
-    # refs/remotes/origin/* alongside the namespace. maintenance.auto=false and
-    # gc.auto=0 stop the detached `git maintenance run --auto` a fetch otherwise
-    # starts, which can pack refs and take packed-refs.lock after the fetch
-    # returns. FETCH_HEAD is written (it takes no packed-refs lock); SHA specs
-    # update no refs.
+    # refs/remotes/origin/* alongside the namespace. `git.client` runs every
+    # fetch with maintenance off and under the repository's fetch mutex.
+    # FETCH_HEAD is written (it takes no packed-refs lock); SHA specs update no
+    # refs.
     return git.client.run(
         "fetch", "--quiet", "--no-tags", "--refmap=", "origin", *specs,
         cwd=repo_dir,
-        config={"maintenance.auto": "false", "gc.auto": "0"},
     ).ok
 
 

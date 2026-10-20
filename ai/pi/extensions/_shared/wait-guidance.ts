@@ -4,9 +4,10 @@
  * The block itself does not depend on which tools are active — `&`, `nohup`,
  * and a wait-sleep are refused either way. Only the reason changes. When
  * `job_start` is among the tools declared to the model, that is the
- * alternative. When it is not — a one-shot session, a restricted tool list —
- * naming it points at a tool that is not there, so the command has to run in
- * the foreground instead.
+ * alternative. When it is not — a restricted tool list — naming it points at a
+ * tool that is not there, so the command has to run in the foreground instead.
+ * json and print sessions also take the foreground, even when `job_start` is
+ * listed: the process exits at the end of the turn and kills the job.
  *
  * Imports nothing, so tests/pi_extensions_tokenize.bats can load it under
  * plain `node` the way it loads each detect.ts.
@@ -31,6 +32,24 @@ export const FOREGROUND_WAIT =
 /** Whether `job_start` is among the tools declared to the model. */
 export function jobStartIsActive(activeTools: readonly string[]): boolean {
   return activeTools.includes(JOB_START);
+}
+
+/**
+ * Whether a refusal should name `job_start` as the alternative.
+ *
+ * json and print sessions exit when the turn ends, so a job started there is
+ * killed with the process — even when `job_start` is among the active tools,
+ * as it is in a default subagent. Interactive modes (tui, rpc) still follow
+ * whether the tool is listed.
+ */
+export function shouldAdviseJobStart(
+  activeTools: readonly string[],
+  mode: string,
+): boolean {
+  if (mode === "json" || mode === "print") {
+    return false;
+  }
+  return jobStartIsActive(activeTools);
 }
 
 /**

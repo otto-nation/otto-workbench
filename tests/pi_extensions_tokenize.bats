@@ -371,9 +371,58 @@ _wait() {
   # index.ts imports the SDK, so the wiring cannot be loaded under node. The
   # call is the contract: drop it and the reason is frozen to one session shape.
   grep -qF 'waitBlockReason(' "$REPO_ROOT/ai/pi/extensions/background-guard/index.ts"
-  grep -qF 'jobStartIsActive(pi.getActiveTools())' \
+  grep -qF 'shouldAdviseJobStart(pi.getActiveTools(), ctx.mode)' \
     "$REPO_ROOT/ai/pi/extensions/background-guard/index.ts"
   grep -qF 'waitBlockReason(' "$REPO_ROOT/ai/pi/extensions/sleep-guard/index.ts"
-  grep -qF 'jobStartIsActive(pi.getActiveTools())' \
+  grep -qF 'shouldAdviseJobStart(pi.getActiveTools(), ctx.mode)' \
+    "$REPO_ROOT/ai/pi/extensions/sleep-guard/index.ts"
+}
+
+@test "wait-guidance: one-shot json/print with job_start active names the foreground" {
+  # A default subagent lists job_start, but json/print exits at the end of the
+  # turn, so naming that tool points at work the process cannot keep.
+  run node --input-type=module -e "
+    const {
+      shouldAdviseJobStart,
+      waitBlockReason,
+      FOREGROUND_WAIT,
+    } = await import('$REPO_ROOT/ai/pi/extensions/_shared/wait-guidance.ts');
+    const tools = ['bash', 'job_start'];
+    for (const mode of ['json', 'print']) {
+      if (shouldAdviseJobStart(tools, mode)) process.exit(2);
+      const background = waitBlockReason('background', shouldAdviseJobStart(tools, mode));
+      const sleep = waitBlockReason('sleep', shouldAdviseJobStart(tools, mode), 30);
+      if (!background.includes(FOREGROUND_WAIT)) process.exit(3);
+      if (!sleep.includes(FOREGROUND_WAIT)) process.exit(4);
+      if (background.includes('job_start')) process.exit(5);
+      if (sleep.includes('job_start')) process.exit(6);
+    }
+  "
+  [ "$status" -eq 0 ]
+}
+
+@test "wait-guidance: rpc/tui with job_start active still names job_start" {
+  run node --input-type=module -e "
+    const { shouldAdviseJobStart, waitBlockReason } = await import('$REPO_ROOT/ai/pi/extensions/_shared/wait-guidance.ts');
+    const tools = ['bash', 'job_start'];
+    for (const mode of ['rpc', 'tui']) {
+      if (!shouldAdviseJobStart(tools, mode)) process.exit(2);
+      const background = waitBlockReason('background', shouldAdviseJobStart(tools, mode));
+      const sleep = waitBlockReason('sleep', shouldAdviseJobStart(tools, mode), 30);
+      if (!background.includes('Use job_start instead')) process.exit(3);
+      if (!sleep.includes('timeout_minutes to job_start')) process.exit(4);
+      if (background.includes('foreground')) process.exit(5);
+      if (sleep.includes('foreground')) process.exit(6);
+    }
+  "
+  [ "$status" -eq 0 ]
+}
+
+@test "wait-guidance: both guards pass the session mode" {
+  # index.ts cannot be loaded under node. The call is the contract: without
+  # ctx.mode a json child with job_start listed is told to use job_start.
+  grep -qF 'shouldAdviseJobStart(pi.getActiveTools(), ctx.mode)' \
+    "$REPO_ROOT/ai/pi/extensions/background-guard/index.ts"
+  grep -qF 'shouldAdviseJobStart(pi.getActiveTools(), ctx.mode)' \
     "$REPO_ROOT/ai/pi/extensions/sleep-guard/index.ts"
 }

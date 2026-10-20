@@ -131,6 +131,23 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "subagent hook: blocks run_in_background" {
+  run _run_guard '{"tool_input":{"command":"true","run_in_background":true},"agent_id":"a7175461c26907157"}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"foreground"* ]]
+  [[ "$output" == *"timeout"* ]]
+}
+
+@test "subagent hook: allows run_in_background in the main session" {
+  run _run_guard '{"tool_input":{"command":"true","run_in_background":true}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "subagent hook: allows a foreground command" {
+  run _run_guard '{"tool_input":{"command":"true"},"agent_id":"a7175461c26907157"}'
+  [ "$status" -eq 0 ]
+}
+
 # ── sleeping to wait ────────────────────────────────────────────────────────
 # Unlike the rules above this one costs wall-clock, not a permission click: a
 # `sleep 295` in front of work that reports its own completion spends five

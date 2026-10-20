@@ -218,8 +218,10 @@ _validate_cadence_matches_hook() {
   [[ -n "$hook" ]] || return 0
 
   local hook_hours hook_sessions cadence_hours
-  hook_hours="$(sed -n 's/^[A-Z_]*INTERVAL_HOURS=\([0-9][0-9]*\).*/\1/p' "$hook" | head -1)"
-  hook_sessions="$(sed -n 's/^MIN_SESSIONS=\([0-9][0-9]*\).*/\1/p' "$hook" | head -1)"
+  hook_hours="$(sed -n 's/^[A-Z_]*INTERVAL_HOURS=\([0-9][0-9]*\).*/\1/p' "$hook")"
+  hook_hours="$(head -1 <<<"$hook_hours")"
+  hook_sessions="$(sed -n 's/^MIN_SESSIONS=\([0-9][0-9]*\).*/\1/p' "$hook")"
+  hook_sessions="$(head -1 <<<"$hook_sessions")"
 
   # "24h" and "7 days" both reach hours; anything else is left as-is and will
   # fail the comparison loudly rather than being silently treated as agreeing.
@@ -529,10 +531,10 @@ _superpowers_pin() {
 # discuss other versions in prose (a migration note, a changelog line) without
 # one of them standing in for a header that was never updated.
 _check_shim_pin() {
-  local skill_file="$1" display="$2" pin="$3" recorded
-  recorded=$(sed '/^# /q' "$skill_file" \
-    | grep -oE 'Written against superpowers v[0-9]+(\.[0-9]+)*' \
-    | head -1 | sed 's/.* //')
+  local skill_file="$1" display="$2" pin="$3" recorded header
+  header=$(sed '/^# /q' "$skill_file")
+  recorded=$(grep -oE 'Written against superpowers v[0-9]+(\.[0-9]+)*' <<<"$header" || true)
+  recorded=$(head -1 <<<"$recorded" | sed 's/.* //')
 
   if [[ -z "$recorded" ]]; then
     _fail "$display: overrides a superpowers skill without recording the version it was written against — add \`Written against superpowers $pin.\` to the override comment"
@@ -559,10 +561,11 @@ _check_shim_pin() {
 # Only the header is searched, for the same reason _check_shim_pin searches it:
 # a body discussing another override in prose must not stand in for the marker.
 _check_shim_name() {
-  local skill_file="$1" display="$2" dir_name claimed
+  local skill_file="$1" display="$2" dir_name claimed header
   dir_name="$(basename "$(dirname "$skill_file")")"
-  claimed=$(sed '/^# /q' "$skill_file" \
-    | sed -n "s/.*${SHIM_MARKER}\\([a-z0-9-]*\\).*/\\1/p" | head -1)
+  header=$(sed '/^# /q' "$skill_file")
+  claimed=$(sed -n "s/.*${SHIM_MARKER}\\([a-z0-9-]*\\).*/\\1/p" <<<"$header")
+  claimed=$(head -1 <<<"$claimed")
 
   if [[ -z "$claimed" ]]; then
     _fail "$display: carries the override marker without naming a skill — write \`${SHIM_MARKER}<name>\` in the override comment"

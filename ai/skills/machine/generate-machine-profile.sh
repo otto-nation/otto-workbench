@@ -72,9 +72,10 @@ mkdir -p "$MACHINE_DIR"
 # cmd_version CMD ARGS... — runs a version command and extracts the first line.
 # Returns "not found" gracefully.
 cmd_version() {
-  local cmd="$1"; shift
+  local cmd="$1" out; shift
   command -v "$cmd" >/dev/null 2>&1 || { echo "not found"; return; }
-  "$cmd" "$@" 2>&1 | head -1
+  out=$("$cmd" "$@" 2>&1) || true
+  head -1 <<<"$out"
 }
 
 # short_version OUTPUT — extracts a semver-like version number from a string.

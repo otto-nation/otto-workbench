@@ -286,7 +286,8 @@ _migration_cwd_from_transcripts() {
   local dir="$1" f cwd
   for f in "$dir"/*.jsonl; do
     [[ -f "$f" ]] || continue
-    cwd="$(grep -o '"cwd":"[^"]*"' "$f" 2>/dev/null | head -1 | cut -d'"' -f4)" || true
+    cwd="$(grep -o '"cwd":"[^"]*"' "$f" 2>/dev/null)" || true
+    cwd="$(head -1 <<<"$cwd" | cut -d'"' -f4)"
     if [[ -n "$cwd" ]]; then
       printf '%s' "$cwd"
       return 0

@@ -33,8 +33,10 @@ migration_20260824_github_ssh_block_rename() {
   # no end left to close it, dropping to EOF. Comparing first-match line
   # numbers catches that shape before the rewrite runs.
   local begin_line end_line
-  begin_line="$(grep -nxF "$begin" "$SSH_CONFIG_FILE" | head -1 | cut -d: -f1)"
-  end_line="$(grep -nxF "$end" "$SSH_CONFIG_FILE" | head -1 | cut -d: -f1)"
+  begin_line="$(grep -nxF "$begin" "$SSH_CONFIG_FILE")" || true
+  begin_line="$(head -1 <<<"$begin_line" | cut -d: -f1)"
+  end_line="$(grep -nxF "$end" "$SSH_CONFIG_FILE")" || true
+  end_line="$(head -1 <<<"$end_line" | cut -d: -f1)"
   if [[ "$end_line" -lt "$begin_line" ]]; then
     warn "$SSH_CONFIG_FILE has a github-ssh-443 end marker before its begin marker — leaving the file untouched"
     return "$MIGRATION_NOOP"

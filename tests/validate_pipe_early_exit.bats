@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
-# Tests for validate-pipe-early-exit — awk that exits while consuming a
-# pipeline SIGPIPEs the producer under pipefail.
+# Tests for validate-pipe-early-exit — an early-exit consumer (awk exit,
+# head, grep -q/-m/-l, sed q) on a pipeline SIGPIPEs the producer under
+# pipefail.
 
 setup() {
   load 'test_helper'
@@ -138,5 +139,113 @@ awk 'NR==1 { print; exit }' "$topic_file"
 SCRIPT
   )
   run "$VALIDATE" "$f"
+  [ "$status" -eq 0 ]
+}
+
+@test "flags git log piped to head" {
+  _check <<'S'
+#!/usr/bin/env bash
+git log | head -1
+S
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"capture"* ]]
+}
+
+@test "flags find piped to grep -q" {
+  _check <<'S'
+#!/usr/bin/env bash
+find . | grep -q x
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "flags git ls-files piped to grep -qE" {
+  _check <<'S'
+#!/usr/bin/env bash
+git ls-files | grep -qE x
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "flags ps piped to sed that quits" {
+  _check <<'S'
+#!/usr/bin/env bash
+ps | sed -n '1p;q'
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "flags grep -m1 as an early-exit consumer" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd | grep -m1 x
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "accepts printf piped to grep -q" {
+  _check <<'S'
+#!/usr/bin/env bash
+printf '%s\n' "$v" | grep -q x
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "accepts echo piped to head" {
+  _check <<'S'
+#!/usr/bin/env bash
+echo "$v" | head -1
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "accepts grep -q on a here-string" {
+  _check <<'S'
+#!/usr/bin/env bash
+grep -q x <<<"$out"
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "accepts grep without an early-exit flag" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd | grep x
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "ignores cmd | head inside a heredoc body" {
+  _check <<'S'
+#!/usr/bin/env bash
+cat <<EOF
+usage: cmd | head -1
+EOF
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "ignores a comment mentioning | head" {
+  _check <<'S'
+#!/usr/bin/env bash
+# git log | head -1
+echo ok
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "flags head inside a quoted command substitution" {
+  _check <<'S'
+#!/usr/bin/env bash
+since_date="$(git log --reverse | head -1)"
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "accepts echo piped to grep -q inside a function body" {
+  _check <<'S'
+#!/usr/bin/env bash
+_is_allowlisted() { echo "$1" | grep -qw "$2"; }
+S
   [ "$status" -eq 0 ]
 }

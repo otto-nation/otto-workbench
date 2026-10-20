@@ -93,7 +93,8 @@ case "$mode" in
     # Only when the claim has gone missing. An Edit arrives constantly and
     # rewriting the record on each one would be a write per keystroke-ish
     # event for a fact that has not changed.
-    if ! "$_with_session_lock" "$cwd" --check 2>/dev/null | grep -q "pid $CLAUDE_PID"; then
+    check_out=$("$_with_session_lock" "$cwd" --check 2>/dev/null) || true
+    if ! grep -q "pid $CLAUDE_PID" <<<"$check_out"; then
       "$_with_session_lock" "$cwd" --acquire --pid "$CLAUDE_PID" \
         --harness claude --session-id "${CLAUDE_CODE_SESSION_ID:-}" \
         --command "claude" >/dev/null 2>&1 || true

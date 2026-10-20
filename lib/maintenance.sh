@@ -109,8 +109,10 @@ _systemd_stop() {
 _systemd_status() {
   if ! _systemd_is_active; then return 1; fi
   local interval
-  interval=$(systemctl --user show -p TriggerUSec "${_SYSTEMD_UNIT}.timer" 2>/dev/null \
-    | grep -oP '\d+' | head -1)
+  local trigger
+  trigger=$(systemctl --user show -p TriggerUSec "${_SYSTEMD_UNIT}.timer" 2>/dev/null) || true
+  interval=$(grep -oP '\d+' <<<"$trigger" || true)
+  interval=$(head -1 <<<"$interval")
   if [[ -n "$interval" ]]; then
     echo -e "  ${GREEN}Running${NC}  (systemd timer active)"
   else

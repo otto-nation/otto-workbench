@@ -117,7 +117,7 @@ tools:
   - name: validate-pipe-early-exit
     permission: false
     visibility: brief
-    description: "Validates that awk in a pipeline drains stdin instead of exiting after the first match — an early exit SIGPIPEs the producer under pipefail"
+    description: "Validates that a pipeline does not use an early-exit consumer (awk exit, head, grep -q/-m/-l, sed q) which SIGPIPEs the producer under pipefail — capture the producer first"
 
   - name: validate-bats-version
     permission: false

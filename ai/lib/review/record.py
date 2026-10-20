@@ -11,7 +11,7 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields still carry markdown an agent wrote — `verdict`, `ledger`,
+Some fields still carry markdown an agent wrote — `verdict`,
 `extra`, `severity_sections` — and go when agents write JSON and the verdict
 is derived. A record written at schema 1, before agents wrote JSON, is
 upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the
@@ -32,7 +32,7 @@ from typing import get_args, get_origin, get_type_hints
 import core.log
 import core.serde
 from review.paths import FILENAME_RECORD
-from review.types import SEVERITIES, Finding
+from review.types import SEVERITIES, Finding, FindingRef, PriorDisposition
 
 SCHEMA_VERSION = 2
 
@@ -202,6 +202,35 @@ class ProseSection:
 
 
 @dataclass(frozen=True)
+class LedgerLine:
+    """What a re-review says became of one prior finding.
+
+    `id` and `path` are copied from the prior review, which is how the line is
+    matched to the finding it is about. `note` is the detail the agent gave,
+    which nothing reads back.
+    """
+
+    id: str
+    disposition: PriorDisposition
+    path: str | None = None
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "disposition", PriorDisposition(self.disposition))
+
+    def covers(self, ref: FindingRef) -> bool:
+        """Whether this line accounts for `ref`.
+
+        A line naming no path stands on its ID alone. One naming a path has to
+        name the right one, or a single line would account for every prior
+        finding with that ID.
+        """
+        if self.id != ref.finding_id:
+            return False
+        return not self.path or self.path == ref.path
+
+
+@dataclass(frozen=True)
 class ReviewRecord:
     schema_version: int = SCHEMA_VERSION
     summary: str = ""
@@ -217,7 +246,7 @@ class ReviewRecord:
     # PR 0 carriers of today's markdown; see the module docstring.
     verdict: str = ""
     severity_sections: tuple[SeveritySection, ...] = ()
-    ledger: str = ""
+    ledger: tuple[LedgerLine, ...] = ()
     extra: tuple[ProseSection, ...] = ()
 
     @property

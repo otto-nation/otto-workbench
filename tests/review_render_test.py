@@ -13,9 +13,9 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from review.ingest import ingest_review
-from review.record import Disposition, RecordFinding, ReviewRecord, TriageEntry, load_record
-from review.render import BANNER, evidence_block, finding_line, render_body, render_review, triage_line
-from review.types import ReviewMeta
+from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord, TriageEntry, load_record
+from review.render import BANNER, evidence_block, finding_line, ledger_line, render_body, render_review, triage_line
+from review.types import PriorDisposition, ReviewMeta
 
 from review_record_support import canonical, expected_text, fixture_meta, fixture_text
 
@@ -167,3 +167,9 @@ def test_a_multi_file_location_renders_its_first_file(tmp_path):
     ]}))
     (f,) = load_record(tmp_path).findings
     assert finding_line(f) == "- **[M1]** `a.py` — x"
+
+
+def test_a_ledger_line_renders_id_path_disposition_and_note():
+    assert ledger_line(LedgerLine("M1", PriorDisposition.FIXED, "a.py", "moved")) == \
+        "- **[M1]** `a.py` — Fixed — moved"
+    assert ledger_line(LedgerLine("S2", PriorDisposition.DECLINED)) == "- **[S2]** — Declined"

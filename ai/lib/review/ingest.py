@@ -36,10 +36,11 @@ from review.grammar import (
     DECLINED_HEAD_RE, DECLINED_TAIL_RE, FINDING_ID_RE, SID_MARKER_RE,
     SKIP_HEAD_RE, SKIP_TAIL_RE, STRIKETHROUGH_RE, TRIAGE_LINE_RE, UNVERIFIED_TAIL_RE,
     FindingIdentity, extract_body_text, finding_location, parse_finding_line,
+    parse_ledger_line,
 )
 from review.record import (
-    AgentFailure, Disposition, ProseSection, RecordFinding, ReviewRecord,
-    SeveritySection, TriageEntry, unquote_evidence,
+    AgentFailure, Disposition, LedgerLine, ProseSection, RecordFinding,
+    ReviewRecord, SeveritySection, TriageEntry, unquote_evidence,
 )
 from review.render import BANNER, RECOVER_HINT
 from review.types import SEVERITIES, Finding, FindingScope, FindingSpan
@@ -522,7 +523,7 @@ class _Builder:
     summary: str = ""
     verdict: str = ""
     static_analysis: str = ""
-    ledger: list[str] = field(default_factory=list)
+    ledger: list[LedgerLine] = field(default_factory=list)
     triage: list[TriageEntry] | None = None
     failures: list[AgentFailure] = field(default_factory=list)
     severity_sections: list[SeveritySection] = field(default_factory=list)
@@ -547,7 +548,7 @@ class _Builder:
         elif key == SECTION_STATIC_ANALYSIS.lower() and not self.static_analysis:
             self.static_analysis = body
         elif key == SECTION_PRIOR_FINDINGS.lower():
-            self.ledger.append(body)
+            self.ledger += [e for raw in body.split("\n") if (e := parse_ledger_line(raw))]
         else:
             self.extra.append(ProseSection(heading, body))
 
@@ -581,7 +582,7 @@ class _Builder:
             triage=tuple(self.triage) if self.triage is not None else None,
             static_analysis=self.static_analysis, failures=tuple(self.failures),
             verdict=self.verdict, severity_sections=tuple(self.severity_sections),
-            ledger="\n".join(part for part in self.ledger if part),
+            ledger=tuple(self.ledger),
             extra=tuple(self.extra),
         )
 

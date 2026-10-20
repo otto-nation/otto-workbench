@@ -72,13 +72,10 @@ from dataclasses import dataclass, replace
 
 from review.grammar import (
     SEVERITY_KEY,
-    DedupKey, FindingIdentity, parse_ledger_line,
+    DedupKey, FindingIdentity,
 )
-from review.record import RecordFinding, ReviewRecord, SeveritySection
-from review.types import (
-    SEVERITIES, FindingRef, LedgerEntry,
-    disposition_precedence,
-)
+from review.record import LedgerLine, RecordFinding, ReviewRecord, SeveritySection
+from review.types import SEVERITIES
 
 # ── Renumbering ──────────────────────────────────────────────────────────────
 
@@ -238,44 +235,22 @@ def _clean_section_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _dedup_ledger(ledger: str) -> str:
-    """Collapse repeats — two groups can disposition the same prior finding.
+def _dedup_ledger(lines: list[LedgerLine]) -> tuple[LedgerLine, ...]:
+    """One line per prior finding — two groups can disposition the same one.
 
-    When two groups disagree about one finding, the strongest verdict wins:
-    a finding is gone only when no group reports it, and a declined one stays
-    declined however many groups still see the code it describes.
+    When they disagree the stronger verdict wins, in `PriorDisposition`'s
+    order: a finding is gone only when no group still sees it, and a declined
+    one stays declined. The first group to reach a verdict keeps its slot and
+    its wording when a later one only repeats it. Lines are matched on the ID
+    alone, whatever path each group copied: the prior review numbers each
+    finding once.
     """
-    slot: dict[FindingRef, int] = {}
-    seen_prose: set[str] = set()
-    lines: list[str] = []
-    for line in ledger.split("\n"):
-        entry = parse_ledger_line(line)
-        if entry and entry.ref in slot:
-            _keep_strongest_disposition(lines, slot[entry.ref], entry)
-            continue
-        if not entry and line.strip() in seen_prose:
-            continue
-        if entry:
-            slot[entry.ref] = len(lines)
-        else:
-            seen_prose.add(line.strip())
-        lines.append(line)
-    return "\n".join(lines).strip() + "\n"
-
-
-def _keep_strongest_disposition(
-    lines: list[str], index: int, entry: LedgerEntry,
-) -> None:
-    """Let a stronger verdict overwrite the one already kept for its finding.
-
-    Strictly stronger, so the first group to reach a verdict keeps the wording
-    when a later one only repeats it. The ordering is `PriorDisposition`'s —
-    a still-open verdict cannot reopen a finding another group declined.
-    """
-    kept = parse_ledger_line(lines[index])
-    kept_rank = disposition_precedence(kept.disposition if kept else None)
-    if disposition_precedence(entry.disposition) > kept_rank:
-        lines[index] = entry.text
+    kept: dict[str, LedgerLine] = {}
+    for line in lines:
+        held = kept.get(line.id)
+        if held is None or line.disposition.precedence > held.disposition.precedence:
+            kept[line.id] = line
+    return tuple(kept.values())
 
 
 def _shift_record(group: ReviewRecord, offsets: dict[str, int]) -> ReviewRecord:
@@ -339,13 +314,12 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
     offsets = {s.key: 0 for s in SEVERITIES}
     findings: list[RecordFinding] = []
     triage: list = []
-    ledgers: list[str] = []
+    ledgers: list[LedgerLine] = []
     notes: list[SeveritySection] = []
     for group in groups:
         shifted = _shift_record(group, offsets)
         triage += [e for e in (shifted.triage or ()) if e.path]
-        if (ledger := _clean_section_text(shifted.ledger)):
-            ledgers.append(ledger)
+        ledgers += shifted.ledger
         notes += [
             replace(s, note=_clean_section_text(s.note)) for s in shifted.severity_sections
             if _clean_section_text(s.note)
@@ -365,6 +339,6 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
     merged = ReviewRecord(
         triage=tuple(unique_triage), findings=deduped.findings,
         severity_sections=tuple(notes),
-        ledger=_dedup_ledger("\n".join(ledgers)).strip() if ledgers else "",
+        ledger=_dedup_ledger(ledgers),
     )
     return renumber_record(merged, deduped.merged_into)

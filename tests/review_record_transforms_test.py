@@ -38,7 +38,7 @@ class TestPostProcess:
     def test_without_a_tree_only_the_cleanups_run(self):
         record = ingest_review("## Prior findings\n- **[S1]** `a` — Fixed\n\n## Nit\n- **[N3]** <!-- sid:ab12cd34 --> `a` — x\n")
         done = post_process_record(record)
-        assert done.verification is None and done.record.ledger == ""
+        assert done.verification is None and done.record.ledger == ()
         assert [(f.id, f.sid) for f in done.record.findings] == [("N1", "")]
 
     def test_a_drop_note_without_a_summary_gets_one(self, tmp_path):

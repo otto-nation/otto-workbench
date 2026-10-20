@@ -39,9 +39,9 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+from review.record import LedgerLine
 from review.types import (
-    SEVERITIES, Finding, FindingLocation, FindingRef, LedgerEntry,
-    PriorDisposition, severity_by_key,
+    SEVERITIES, Finding, FindingLocation, PriorDisposition, severity_by_key,
 )
 
 # ── What a declaration is spelled with ───────────────────────────────────────
@@ -399,21 +399,20 @@ def parse_finding_line(stripped: str) -> Finding | None:
     )
 
 
-def parse_ledger_line(raw: str) -> LedgerEntry | None:
-    """The entry a ledger line carries, or None when it names no finding.
+def parse_ledger_line(raw: str) -> LedgerLine | None:
+    """The ledger line a markdown `## Prior findings` entry carries, or None.
 
-    The grammar of one ledger line, exactly as `parse_finding_line` is the
-    grammar of one finding line — a ledger entry is a finding line whose body
-    is read as a verdict instead of a description.
+    None when the line names no finding or states no verdict this can read: the
+    record holds only verdicts, so a line without one is not an entry.
     """
     parsed = parse_finding_line(raw.strip())
     if not parsed:
         return None
-    return LedgerEntry(
-        ref=FindingRef(parsed.id, parsed.path),
-        disposition=PriorDisposition.parse(parsed.body),
-        text=raw,
-    )
+    disposition = PriorDisposition.parse(parsed.body)
+    if disposition is None:
+        return None
+    note = parsed.body.strip()[len(disposition.value):].strip().lstrip("—–-:.").strip()
+    return LedgerLine(parsed.id, disposition, parsed.path or None, note)
 
 
 # ── Readers with bounds of their own ─────────────────────────────────────────

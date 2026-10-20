@@ -11,7 +11,7 @@ from review.document import (
     ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, location_ref, sid_marker
-from review.record import AgentFailure, Disposition, ProseSection, RecordFinding, ReviewRecord, TriageEntry
+from review.record import AgentFailure, Disposition, LedgerLine, ProseSection, RecordFinding, ReviewRecord, TriageEntry
 from review.types import SEVERITIES, ReviewMeta
 
 # The line every rendered review.md carries. Ingest refuses any text holding it,
@@ -25,6 +25,13 @@ RECOVER_HINT = "Run `pr review --recover`"
 def evidence_block(code: str) -> str:
     """Raw evidence as the indented, quoted fence a markdown finding carries it in."""
     return "\n".join(f"  > {line}".rstrip() for line in ["```", *code.split("\n"), "```"])
+
+
+def ledger_line(entry: LedgerLine) -> str:
+    """One `## Prior findings` list item."""
+    where = f" `{entry.path}`" if entry.path else ""
+    note = f" — {entry.note}" if entry.note else ""
+    return f"- {finding_tag(entry.id)}{where} — {entry.disposition.value}{note}"
 
 
 def triage_line(entry: TriageEntry) -> str:
@@ -89,7 +96,7 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSec
         sections.append(ProseSection(SECTION_SUMMARY, record.summary))
     sections += _severity_sections(record, sids, evidence)
     if record.ledger:
-        sections.append(ProseSection(SECTION_PRIOR_FINDINGS, record.ledger))
+        sections.append(ProseSection(SECTION_PRIOR_FINDINGS, "\n".join(ledger_line(e) for e in record.ledger)))
     sections += list(record.extra)
     if record.static_analysis:
         sections.append(ProseSection(SECTION_STATIC_ANALYSIS, record.static_analysis))

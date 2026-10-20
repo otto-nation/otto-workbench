@@ -52,17 +52,14 @@ import git.client
 import core.log
 import core.serde
 from review.grammar import (
-    SID_MARKER_RE, FindingIdentity, parse_ledger_line,
+    SID_MARKER_RE, FindingIdentity,
 )
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
-from review.record import Disposition, ReviewRecord
+from review.record import Disposition, LedgerLine, ReviewRecord
 from review.render import finding_line
 from review.store import StoredReview
-from review.types import (
-    DISPOSITION_TAIL_BREAKS, DISPOSITION_TAIL_WORD_JOINERS, FindingRef,
-    LedgerEntry, PriorDisposition, PriorFinding, ReviewMeta,
-)
-from core.text import join_or, plural
+from review.types import FindingRef, PriorDisposition, PriorFinding, ReviewMeta
+from core.text import plural
 
 # ── Carry-forward identity ───────────────────────────────────────────────────
 
@@ -88,16 +85,15 @@ def _record_stable_ids(record: ReviewRecord) -> set[str]:
     """Every prior-finding identity the review carries: markers, finding identities,
     and any finding-shaped line in its prose — the same set `_stable_ids` read off text."""
     ids = {f.sid for f in record.findings if f.sid} | {f.stable_id for f in record.findings if f.stable_id}
-    texts = [record.ledger, record.summary, record.verdict, *(e.body for e in record.extra),
+    texts = [record.summary, record.verdict, *(e.body for e in record.extra),
              *(f.body for f in record.findings)]
     for text in texts:
         ids |= _stable_ids(text)
     return ids
 
 
-def _record_ledger(record: ReviewRecord) -> list[LedgerEntry]:
-    entries = (parse_ledger_line(raw) for raw in record.ledger.split("\n"))
-    return [entry for entry in entries if entry]
+def _record_ledger(record: ReviewRecord) -> list[LedgerLine]:
+    return list(record.ledger)
 
 
 def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
@@ -157,16 +153,15 @@ class UndecidedReason(StrEnum):
     """Why a finding reached no verdict.
 
     Undecided is only a useful warning while it means "the review passed this
-    by". Three of the four members below are something else — two of them a
-    line this pipeline could not read, one a check it was in no position to run
-    — and lumping them in with the omissions is what turns the warning into
-    noise the reader learns to skip.
+    by". Two of the three members below are something else — a location this
+    pipeline could not read, a check it was in no position to run — and lumping
+    them in with the omissions is what turns the warning into noise the reader
+    learns to skip.
 
     Declaration order is the order `_report` prints the groups: the ones a
     reader can act on come first.
     """
 
-    UNREADABLE_VERDICT = "unreadable verdict"
     NO_LOCATION = "no location parsed"
     NOT_MENTIONED = "not accounted for"
     NOT_CHECKABLE = "not checkable"
@@ -178,7 +173,6 @@ class UndecidedReason(StrEnum):
 
 
 _UNDECIDED_HEADINGS = {
-    UndecidedReason.UNREADABLE_VERDICT: "the ledger names these but states no verdict this could read",
     UndecidedReason.NO_LOCATION: "these name no file this could read, so nothing could be checked",
     UndecidedReason.NOT_MENTIONED: "neither this review nor the tree accounts for these",
     UndecidedReason.NOT_CHECKABLE: "there was nothing to check these against",
@@ -387,7 +381,7 @@ def _shorten(span: str) -> str:
 def _settle(
     finding: PriorFinding,
     carried: set[str],
-    ledger: list[LedgerEntry],
+    ledger: list[LedgerLine],
     tree: _Tree,
 ) -> PriorRecord:
     """The disposition of one prior finding, from the first source that has one.
@@ -398,7 +392,7 @@ def _settle(
     reviewer who just looked at the code outranks an inference about it.
     """
     entry = next((e for e in ledger if e.covers(finding.ref)), None)
-    if entry and entry.disposition:
+    if entry is not None:
         return PriorRecord(finding.ref, entry.disposition, DispositionSource.LEDGER,
                            "the ledger says so")
     if finding.stable_id in carried:
@@ -408,10 +402,6 @@ def _settle(
     if inference.disposition:
         return PriorRecord(finding.ref, inference.disposition, DispositionSource.TREE,
                            inference.basis)
-    if entry:
-        return PriorRecord(finding.ref, None, DispositionSource.LEDGER,
-                           f'the ledger line reads "{entry.text.strip()}"',
-                           UndecidedReason.UNREADABLE_VERDICT)
     return PriorRecord(finding.ref, None, DispositionSource.NONE, inference.basis,
                        inference.reason)
 
@@ -471,9 +461,9 @@ def passed_over(
     caller that already has the value in hand should pass it.
 
     Only `NOT_MENTIONED` qualifies. It is the one undecided reason that is the
-    review's own omission; the other three are this pipeline's failures — a
-    verdict it could not parse, a location it could not read, a tree it had
-    nothing to check against — and asking an agent again settles none of them.
+    review's own omission; the other two are this pipeline's failures — a
+    location it could not read, a tree it had nothing to check against — and
+    asking an agent again settles none of them.
 
     Records come back one per finding in parse order, so the two lists are
     zipped rather than matched on a label, which two findings in one file may
@@ -537,43 +527,6 @@ def _report_group(reason: UndecidedReason, records: list[PriorRecord]) -> None:
     core.log.dim(f"{reason.heading} ({len(records)}):")
     for record in records:
         core.log.dim(f"  {record.ref.label} — {record.basis}")
-    if reason is UndecidedReason.UNREADABLE_VERDICT:
-        core.log.dim(f"  {_VERDICT_SHAPE}")
-
-
-# What to write instead, for the reader who has just been shown a line that did
-# not parse. Both the words and the punctuation come from what the parser
-# accepts, so this cannot describe a shape the parser would reject.
-#
-# Glyphs rather than the prose `review.prompt_prior` instructs a model with:
-# this is read beside the character that failed, by someone matching it, and
-# the prose names collapse across exactly the line that matters here — "a dash"
-# is the two unconditional dashes and the conditional hyphen, "italics" is the
-# unconditional asterisk and the conditional underscore, so no prose list can
-# state the rule without contradicting itself.
-#
-# The rule is the second half of the message instead, and the split is the
-# parser's own: `DISPOSITION_TAIL_WORD_JOINERS` is the class the regex requires
-# a leading space or a trailing non-word character around, so a character moved
-# between the two sets moves between the two halves here. Printed in one list,
-# they read as unconditional breaks, and a reader who takes the message at its
-# word glues a hyphen mid-word and writes the line the parser rejected. Both
-# classes are `review.types`' own, split there for the regex, so the message
-# names each half rather than re-deriving either.
-#
-# Dropped entirely rather than rendered empty when nothing is conditional, so
-# retiring the joiner class leaves a message with one honest list instead of a
-# caveat naming no characters.
-_VERDICT_JOINER_CAVEAT = (
-    f" (also {join_or(list(DISPOSITION_TAIL_WORD_JOINERS))}, but only where a "
-    "space precedes one or a non-word character follows — glued inside a word "
-    "neither breaks the verdict)"
-) if DISPOSITION_TAIL_WORD_JOINERS else ""
-_VERDICT_SHAPE = (
-    f"write one of {join_or([d.value for d in PriorDisposition])} first, then "
-    f"end the line or break with one of: {' '.join(DISPOSITION_TAIL_BREAKS)}"
-    f"{_VERDICT_JOINER_CAVEAT}"
-)
 
 
 def record_prior_findings(

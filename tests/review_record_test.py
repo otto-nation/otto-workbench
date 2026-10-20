@@ -17,11 +17,13 @@ from review.document import ReviewHeader
 from review.paths import FILENAME_PRIOR_RECORD, FILENAME_RECORD
 from review.store import read_prior
 from review.record import (
-    SCHEMA_VERSION, AgentFailure, Disposition, ProseSection, RecordFinding,
-    ReviewRecord, SeveritySection, TriageEntry, defuse_first_line, load_record,
-    save_record, unquote_evidence,
+    SCHEMA_VERSION, AgentFailure, Disposition, LedgerLine, ProseSection,
+    RecordFinding, ReviewRecord, SeveritySection, TriageEntry,
+    defuse_first_line, load_record, save_record, unquote_evidence,
 )
-from review.types import ReviewMeta, ReviewType, review_meta_from_dict
+from review.types import (
+    FindingRef, PriorDisposition, ReviewMeta, ReviewType, review_meta_from_dict,
+)
 from review_record_support import copy_tree
 
 
@@ -212,9 +214,7 @@ def test_a_schema_1_record_is_upgraded(tmp_path):
     assert [(e.path, e.note) for e in record.triage] == [
         ("a.go", "**Tier 2** (logic)"), ("", "`a.py`, `b.py` — **Tier 1**"),
     ]
-    # The ledger is still a string field until Task 3 types it; Task 3 tightens
-    # this to `record.ledger == ()`.
-    assert not record.ledger
+    assert record.ledger == ()
 
 
 def test_a_schema_1_approach_is_upgraded_like_a_finding(tmp_path):
@@ -271,3 +271,18 @@ def test_upgrade_v1_unwraps_each_evidence_shape(tmp_path, quoted, raw):
     payload = {**V1, "findings": [{**V1["findings"][0], "evidence": quoted}]}
     (tmp_path / FILENAME_RECORD).write_text(json.dumps(payload))
     assert load_record(tmp_path).findings[0].evidence == raw
+
+
+def test_a_ledger_line_covers_its_id_and_only_its_path():
+    entry = LedgerLine("M1", PriorDisposition.FIXED, path="a.py")
+    assert entry.covers(FindingRef("M1", "a.py"))
+    assert not entry.covers(FindingRef("M1", "b.py"))
+    assert not entry.covers(FindingRef("M2", "a.py"))
+    assert LedgerLine("M1", PriorDisposition.FIXED).covers(FindingRef("M1", "anything.py"))
+
+
+def test_the_ledger_round_trips_through_review_json(tmp_path):
+    record = ReviewRecord(ledger=(LedgerLine("S2", "Still open", path="a.py", note="guard missing"),))
+    save_record(tmp_path, record)
+    (entry,) = load_record(tmp_path).ledger
+    assert entry.disposition is PriorDisposition.STILL_OPEN and entry.note == "guard missing"

@@ -31,14 +31,9 @@ def _rev(text: str):
 
 from review.paths import FILENAME_PRIOR_FINDINGS
 from review.grammar import FindingIdentity
-from review.reconcile import _VERDICT_SHAPE, DispositionSource, UndecidedReason, _prior_findings
-from review.record import RecordFinding, ReviewRecord
-from review.types import FindingRef
-from review.grammar import parse_ledger_line
-from review.types import (
-    DISPOSITION_TAIL_PUNCTUATION, DISPOSITION_TAIL_WORD_JOINERS,
-    PriorDisposition,
-)
+from review.reconcile import DispositionSource, UndecidedReason, _prior_findings, reconcile
+from review.record import LedgerLine, RecordFinding, ReviewRecord
+from review.types import FindingRef, PriorDisposition
 
 PRIOR_ONE_FINDING = (
     "## Must fix\n"
@@ -219,14 +214,6 @@ class TestAccountedByTheReview:
         record = _by_id(review.reconcile.reconcile(_prior(PRIOR_ONE_FINDING), _rev(review_md)), "M1")
         assert record.disposition is PriorDisposition.DECLINED
         assert record.source.stated
-
-    def test_an_unreadable_ledger_verdict_is_undecided_but_attributed(self):
-        review_md = _ledger("- **[M1]** `handler.go` — moved to a follow-up")
-        record = _by_id(review.reconcile.reconcile(_prior(PRIOR_ONE_FINDING), _rev(review_md)), "M1")
-        assert record.disposition is None
-        assert record.source is DispositionSource.LEDGER
-        assert record.reason is UndecidedReason.UNREADABLE_VERDICT
-        assert "moved to a follow-up" in record.basis
 
     def test_nothing_is_inferred_without_a_worktree(self):
         review_md = "## Summary\nnothing to say.\n"
@@ -489,11 +476,6 @@ class TestPassedOver:
         )
         assert review.reconcile.passed_over(prior, _rev("## Summary\nnothing.\n"), str(repo)) == []
 
-    def test_an_unreadable_verdict_is_not_asked_about_again(self, repo):
-        """Undecided, but not the review's omission — re-asking settles nothing."""
-        review_md = _ledger("- **[M1]** `handler.go` — moved to a follow-up")
-        assert review.reconcile.passed_over(self._intact(repo), _rev(review_md), str(repo)) == []
-
     def test_nothing_comes_back_when_there_is_no_tree_to_ask(self):
         """Without a worktree every finding is `NOT_CHECKABLE`, not passed over."""
         assert review.reconcile.passed_over(_prior(PRIOR_ONE_FINDING), _rev("## Summary\nnothing.\n")) == []
@@ -596,41 +578,6 @@ class TestRecordPriorFindings:
         assert f"{prior_sha[:7]} → " in err
         assert "1 Fixed, 1 Undecided, 1 inferred from the tree" in err
 
-    def test_an_unreadable_verdict_is_grouped_apart_from_an_omission(
-        self, repo, capsys,
-    ):
-        """The two are different failures, and only one is the review's."""
-        prior_sha = self._observed(repo)
-        review_path = repo / "review.md"
-        review_path.write_text(
-            "## Summary\nBoth looked at.\n"
-            + _ledger("- **[S2]** `docs.py` — moved to a follow-up")
-        )
-
-        review.reconcile.record_prior_findings(
-            str(review_path), self._prior_text(prior_sha), _rev(review_path.read_text()), str(repo),
-        )
-        err = capsys.readouterr().err
-        assert UndecidedReason.UNREADABLE_VERDICT.heading in err
-        assert "- **[S2]** `docs.py` — moved to a follow-up" in err
-        assert UndecidedReason.NOT_MENTIONED.heading not in err
-
-    def test_the_unreadable_group_says_what_shape_would_have_parsed(
-        self, repo, capsys,
-    ):
-        prior_sha = self._observed(repo)
-        review_path = repo / "review.md"
-        review_path.write_text(
-            "## Summary\nBoth looked at.\n"
-            + _ledger("- **[S2]** `docs.py` — moved to a follow-up")
-        )
-
-        review.reconcile.record_prior_findings(
-            str(review_path), self._prior_text(prior_sha), _rev(review_path.read_text()), str(repo),
-        )
-        err = capsys.readouterr().err
-        assert "Fixed" in err and "Still open" in err and "Declined" in err
-
     def test_the_record_outlives_the_run(self, repo):
         prior_sha = self._observed(repo)
         review_path = repo / "review.md"
@@ -681,58 +628,19 @@ class TestRecordPriorFindings:
         assert "Reconciled 2 prior findings" in err
 
 
-class TestVerdictShapeDescribesWhatParses:
-    """The diagnostic an operator follows after a verdict failed to parse.
-
-    Operator-facing, not a prompt: it is read beside the line that did not
-    parse, so glyphs are the right vocabulary — the reader is matching
-    characters, not composing prose. What it must not do is print `-` and `_`
-    among the unconditional breaks, because those two break a verdict only
-    where a space precedes them or a non-word character follows, and a reader
-    who glues one mid-word on this message's word reproduces the exact line
-    the parser rejects. Both halves come from `review.types`, so a character
-    moved between them restates this message rather than staling it.
-    """
-
-    def test_every_unconditional_break_is_shown(self):
-        unconditional = [
-            c for c in DISPOSITION_TAIL_PUNCTUATION
-            if c not in DISPOSITION_TAIL_WORD_JOINERS
-        ]
-        for char in unconditional:
-            assert char in _VERDICT_SHAPE, f"{char!r} breaks a verdict but is not shown"
-
-    def test_every_word_joiner_is_shown_apart_from_them(self):
-        head, _, tail = _VERDICT_SHAPE.partition("(also ")
-        assert "only where a space precedes" in tail, (
-            "the message never states the word-joiner condition"
-        )
-        for char in DISPOSITION_TAIL_WORD_JOINERS:
-            assert char in tail, f"{char!r} is a word joiner but is not under its rule"
-            assert char not in head, (
-                f"{char!r} is shown as an unconditional break, which it is not"
-            )
-
-    def test_the_shape_it_describes_is_one_the_parser_reads(self):
-        """A message naming a break the parser rejects is worse than none."""
-        for char in DISPOSITION_TAIL_PUNCTUATION:
-            joiner = char in DISPOSITION_TAIL_WORD_JOINERS
-            line = f"- **[M1]** `docs.py` — {PriorDisposition.FIXED}{' ' if joiner else ''}{char}detail"
-            entry = parse_ledger_line(line)
-            assert entry and entry.disposition is PriorDisposition.FIXED, (
-                f"{char!r} is shown in the diagnostic but breaks no verdict"
-            )
-
-    def test_gluing_a_joiner_mid_word_is_what_the_message_warns_against(self):
-        """The case the old glyph list invited, pinned so the warning stays earned."""
-        for char in DISPOSITION_TAIL_WORD_JOINERS:
-            line = f"- **[M1]** `docs.py` — {PriorDisposition.FIXED}{char}detail"
-            entry = parse_ledger_line(line)
-            assert entry and entry.disposition is None, (
-                f"{char!r} glued mid-word now parses — the caveat is stale"
-            )
-
-
 def test_a_prior_finding_is_referenced_by_its_own_path():
     record = ReviewRecord(findings=(RecordFinding(id="M1", severity="M", path="a.py", line=1, body="x"),))
     assert _prior_findings(record)[0].ref == FindingRef("M1", "a.py")
+
+
+def test_the_typed_ledger_settles_a_prior_finding():
+    prior = StoredReview(ReviewRecord(findings=(
+        RecordFinding(id="M1", severity="M", path="a.py", line=1, body="x"),
+    )), ReviewMeta())
+    review = ReviewRecord(ledger=(LedgerLine("M1", PriorDisposition.DECLINED, "a.py"),))
+    (rec,) = reconcile(prior, review).records
+    assert (rec.disposition, rec.source) == (PriorDisposition.DECLINED, DispositionSource.LEDGER)
+
+
+def test_no_undecided_reason_is_about_an_unreadable_verdict():
+    assert "unreadable verdict" not in {r.value for r in UndecidedReason}

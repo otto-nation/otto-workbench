@@ -390,7 +390,7 @@ def post_process_record(
         if verification["dropped"]:
             core.log.info(f"Dropped {len(verification['dropped'])} unverified findings: "
                           f"{', '.join(verification['dropped'])}")
-    record = replace(record, findings=tuple(replace(f, sid="") for f in record.findings), ledger="")
+    record = replace(record, findings=tuple(replace(f, sid="") for f in record.findings), ledger=())
     record = renumber_record(record)
     if verification:
         record = _reconciled_record(record, verification)

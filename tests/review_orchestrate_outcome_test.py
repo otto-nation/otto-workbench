@@ -322,6 +322,16 @@ class TestWriteCleanReview:
         assert "- `a.py` — tier 2, reviewed" in content
         assert "- `b.py` — tier 3, skimmed" in content
 
+    def test_a_clean_review_stores_no_ledger(self, ro, tmp_path):
+        """X11: publishing clears the ledger; the clean path was the one writer that skipped it."""
+        from review.record import LedgerLine, ReviewRecord, load_record
+        from review.types import PriorDisposition
+        job = self._job(ro, tmp_path, ro.Mode.PR)
+        merged = ReviewRecord(ledger=(LedgerLine("M1", PriorDisposition.FIXED, "a.py"),))
+        ro._write_clean_review(job, 2, merged)
+        assert load_record(tmp_path).ledger == ()
+        assert "## Prior findings" not in Path(job.review_file).read_text()
+
 
 # ── 35. is_complete_review ──────────────────────────────────────────────────
 

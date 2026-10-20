@@ -14,7 +14,7 @@ from review.ingest import (
     _finalize_finding, ends_finding_body, finding_spans,
     is_section_boundary, severity_of_heading, starts_finding_or_section,
 )
-from review.types import Finding, FindingScope
+from review.types import Finding, FindingScope, PriorDisposition
 from review.record import Disposition
 from review.render import BANNER
 
@@ -180,9 +180,11 @@ class TestWhatIsRead:
         assert [f.id for f in record.findings] == ["S1", "S2", "N1", "N2", "I1"]
 
     def test_the_ledger_and_unknown_sections_are_kept(self):
-        text = "## Prior findings\n- **[S1]** `a` — Fixed\n\n## Review gaps\n- group 2 failed\n"
+        text = "## Prior findings\n- **[S1]** `a.py` — Fixed\n\n## Review gaps\n- group 2 failed\n"
         record = ingest_review(text)
-        assert record.ledger == "- **[S1]** `a` — Fixed" and record.findings == ()
+        assert [(e.id, e.disposition, e.path) for e in record.ledger] == [
+            ("S1", PriorDisposition.FIXED, "a.py"),
+        ] and record.findings == ()
         assert record.extra[0].heading == "Review gaps"
 
     def test_the_header_is_not_read(self):

@@ -1527,7 +1527,7 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields still carry markdown an agent wrote — `verdict`, `ledger`,
+Some fields still carry markdown an agent wrote — `verdict`,
 `extra`, `severity_sections` — and go when agents write JSON and the verdict
 is derived. A record written at schema 1, before agents wrote JSON, is
 upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the

@@ -128,16 +128,6 @@ _DISPOSITION_PRECEDENCE = {
     member: rank for rank, member in enumerate(PriorDisposition, 1)
 }
 
-# An entry whose wording the parser could not read a verdict from. It loses to
-# any verdict it can read, and holds its slot against another unreadable one.
-_NO_DISPOSITION_PRECEDENCE = 0
-
-
-def disposition_precedence(disposition: "PriorDisposition | None") -> int:
-    """`precedence`, tolerating the unparsed entry a ledger may also carry."""
-    return _NO_DISPOSITION_PRECEDENCE if disposition is None else disposition.precedence
-
-
 # What may follow a disposition without qualifying it: nothing, or a break that
 # introduces detail rather than a caveat.
 #
@@ -488,26 +478,6 @@ class FindingRef:
         if not self.path:
             return self.finding_id
         return f"{self.finding_id} `{self.path}`".strip()
-
-
-@dataclass(frozen=True)
-class LedgerEntry:
-    """One `## Prior findings` line: a prior finding, and what became of it."""
-
-    ref: FindingRef
-    disposition: PriorDisposition | None
-    text: str
-
-    def covers(self, ref: FindingRef) -> bool:
-        """Whether this entry accounts for `ref`.
-
-        An entry that names no path stands on its ID alone; one that names a
-        path has to name the right one, or a single entry would account for
-        every prior finding in its file.
-        """
-        if self.ref.finding_id != ref.finding_id:
-            return False
-        return not self.ref.path or self.ref.path == ref.path
 
 
 @dataclass(frozen=True)

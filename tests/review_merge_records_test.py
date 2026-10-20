@@ -9,8 +9,9 @@ if LIB_DIR not in sys.path:
 
 from review.ingest import ingest_review
 from review.merge import merge_records, renumber_record
-from review.record import Disposition, RecordFinding, ReviewRecord
+from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.render import render_body
+from review.types import PriorDisposition
 
 from review_record_support import canonical, fixture_text
 
@@ -61,7 +62,9 @@ def test_a_group_ledger_keeps_the_prior_reviews_ids():
         strict=False,
     )
     merged = merge_records([record])
-    assert "[S3]" in merged.ledger
+    assert [(e.id, e.disposition, e.path) for e in merged.ledger] == [
+        ("S3", PriorDisposition.FIXED, "a.py"),
+    ]
 
 
 def test_dedup_reads_the_fields_not_a_rendered_line():
@@ -75,3 +78,26 @@ def test_pathless_findings_are_never_merged():
     a = RecordFinding(id="N1", severity="N", body="Same words")
     merged = merge_records([ReviewRecord(findings=(a,)), ReviewRecord(findings=(a,))])
     assert [f.id for f in merged.visible] == ["N1", "N2"]
+
+
+def test_two_groups_dispositioning_one_prior_finding_keep_the_stronger_verdict():
+    fixed = ReviewRecord(ledger=(LedgerLine("M1", PriorDisposition.FIXED, "a.py"),))
+    still = ReviewRecord(ledger=(LedgerLine("M1", PriorDisposition.STILL_OPEN, "a.py", "still there"),))
+    other = ReviewRecord(ledger=(LedgerLine("S1", PriorDisposition.FIXED, "b.py"),))
+    merged = merge_records([fixed, still, other])
+    assert [(e.id, e.disposition) for e in merged.ledger] == [
+        ("M1", PriorDisposition.STILL_OPEN), ("S1", PriorDisposition.FIXED),
+    ]
+
+
+def test_the_stronger_verdict_wins_whichever_path_each_group_copied():
+    """A prior review numbers each finding once, so its ID alone names it.
+
+    Keyed on (ID, path), a group that copied no path and one that copied it
+    would leave two lines for one finding, and reconciliation would settle it
+    on whichever came first.
+    """
+    bare = ReviewRecord(ledger=(LedgerLine("M1", PriorDisposition.FIXED),))
+    pathed = ReviewRecord(ledger=(LedgerLine("M1", PriorDisposition.DECLINED, "a.py"),))
+    merged = merge_records([bare, pathed])
+    assert [(e.id, e.disposition) for e in merged.ledger] == [("M1", PriorDisposition.DECLINED)]

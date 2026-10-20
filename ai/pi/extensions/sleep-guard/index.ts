@@ -6,9 +6,9 @@
  * in the context file did not stop it; this does. The reason names `job_start`
  * only when `shouldAdviseJobStart` says so — the tool is listed and the session
  * is not json/print. Otherwise the alternative is a foreground bash call. See
- * ../_shared/wait-guidance.ts. Claude Code gets the
- * same rule from ai/claude/bin/claude-bash-guard, which does not run under Pi —
- * the two enforce one rule written down in general.md § Waiting on Background Work.
+ * ../_shared/wait-guidance.ts. Claude Code gets the same rule from
+ * ai/claude/bin/claude-bash-guard, which does not run under Pi — the two
+ * enforce one rule written down in general.md § Waiting on Background Work.
  *
  * Installed globally by ai/pi/steps.sh, which is correct for this one: it needs
  * no environment set up, has nothing to say about the repository it is in, and

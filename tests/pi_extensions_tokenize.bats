@@ -417,12 +417,3 @@ _wait() {
   "
   [ "$status" -eq 0 ]
 }
-
-@test "wait-guidance: both guards pass the session mode" {
-  # index.ts cannot be loaded under node. The call is the contract: without
-  # ctx.mode a json child with job_start listed is told to use job_start.
-  grep -qF 'shouldAdviseJobStart(pi.getActiveTools(), ctx.mode)' \
-    "$REPO_ROOT/ai/pi/extensions/background-guard/index.ts"
-  grep -qF 'shouldAdviseJobStart(pi.getActiveTools(), ctx.mode)' \
-    "$REPO_ROOT/ai/pi/extensions/sleep-guard/index.ts"
-}

@@ -262,7 +262,7 @@ _live() {
 }
 
 @test "the shipped template declares the pi-extensions package" {
-  run jq -r '.packages[0]' "$REPO_ROOT/ai/pi/settings.json"
+  run jq -r '.packages[0] | if type == "object" then .source else . end' "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -eq 0 ]
   [ "$output" = "$PKG" ]
 }

@@ -197,8 +197,8 @@ PY
 
 # _target_key_count REPORT FIELD — read one number out of the trailing tally.
 _target_key_count() {
-  # awk drains the report: exiting after the first match SIGPIPEs printf under
-  # pipefail when the tally is not the last write.
+  # awk drains the report rather than exiting after the first match, so the
+  # pipeline never closes early (house rule: validate-pipe-early-exit).
   printf '%s\n' "$1" | awk -F'\t' -v want="$2" '
     $1 == "TALLY" {
       for (i = 2; i <= NF; i++) {

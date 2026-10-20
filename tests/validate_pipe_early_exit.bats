@@ -43,6 +43,74 @@ SCRIPT
   [ "$status" -eq 0 ]
 }
 
+_check() {
+  local f
+  f=$(_write_script "case.sh")
+  run "$VALIDATE" "$f"
+}
+
+@test "flags a multi-line awk program that exits" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd | awk '
+  /x/ { print
+    exit }
+'
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "flags -F and -v flags before the program" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd | awk -F'\t' -v want=1 '$1 == want { print; exit }'
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "accepts || awk (not a pipeline)" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd || awk '{ print; exit }'
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "ignores a comment mentioning | awk exit" {
+  _check <<'S'
+#!/usr/bin/env bash
+# cmd | awk '{ print; exit }'
+echo ok
+S
+  [ "$status" -eq 0 ]
+}
+
+@test "flags awk exit followed by a 2> redirect" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd | awk '{ print; exit }' 2>/dev/null
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "flags awk exit reading stdin via dash" {
+  _check <<'S'
+#!/usr/bin/env bash
+cmd | awk '{ print; exit }' -
+S
+  [ "$status" -eq 1 ]
+}
+
+@test "ignores heredoc prose that mentions | awk exit" {
+  _check <<'S'
+#!/usr/bin/env bash
+cat <<EOF
+usage: cmd | awk '{ print; exit }'
+EOF
+S
+  [ "$status" -eq 0 ]
+}
+
 @test "accepts awk exit when reading a file argument" {
   local f
   f=$(_write_script "file-arg.sh" <<'SCRIPT'

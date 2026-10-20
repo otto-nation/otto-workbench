@@ -443,7 +443,7 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
 def test_a_drivers_finish_that_applies_a_late_cancel_ends_cancelled_and_exits_0(monkeypatch,
                                                                               capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {Step.REVIEW: StepNeed(True, "x")})
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", [row]))
 
     def late_cancel(self):
         batch.store.write_request(self.run.id, Cancel())

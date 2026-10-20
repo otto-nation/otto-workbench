@@ -47,7 +47,7 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
                             capture_output=True, text=True, check=True).stdout.strip()
     row = PlanRow("o/r", str(repo), 1, "t", branch, "h", False,
                   {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", [row]))
     monkeypatch.setattr(batch.plan, "replan_row", lambda r: row)
     log = tmp_path / "calls.log"
     bin_dir = tmp_path / "bin"

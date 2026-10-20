@@ -55,7 +55,7 @@ def test_no_batch_flag_is_a_prefix_of_a_global_flag():
 
 def test_plan_prints_the_matrix(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {batch.model.Step.REBASE: StepNeed(True, "behind")})
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", [row]))
     assert _main(["batch", "plan", "--checkout", "/r"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["schema_version"] == 1
@@ -65,7 +65,7 @@ def test_plan_prints_the_matrix(monkeypatch, capsys):
 def test_run_exits_10_when_waiting(monkeypatch):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", [row]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(batch.model.RunStatus.WAITING))
     assert _main(["batch", "run", "--checkout", "/r"]) == 10
@@ -75,7 +75,7 @@ def test_run_honours_select_and_prs(monkeypatch):
     rows = [PlanRow("o/r", "/r", n, "t", f"b{n}", "h", False,
                     {s: StepNeed(False, "x") for s in batch.model.STEP_ORDER}) for n in (1, 2)]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", rows))
 
     def fake_run(self):
         seen["items"] = [(i.key, [s.step.value for s in i.steps
@@ -436,7 +436,7 @@ def test_idle_resolve_leaves_waiting_when_an_item_is_unblocked():
 
 
 def test_schema_version_1_is_served_for_batch(monkeypatch):
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", []))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", []))
     assert _main(["--schema-version", "1", "batch", "plan", "--checkout", "/r"]) == 0
 
 
@@ -481,9 +481,9 @@ def _plan_with_refs():
     return Plan("me", [], ref_namespace="refs/pr-batch/abcd", ref_dirs=["/r"])
 
 
-def test_plan_drops_its_refs_when_the_reader_has_gone(monkeypatch):
+def test_plan_does_not_drop_refs_when_the_reader_has_gone(monkeypatch):
     dropped = []
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: _plan_with_refs())
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **k: Plan("me", []))
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
 
     def gone(_payload):
@@ -492,12 +492,12 @@ def test_plan_drops_its_refs_when_the_reader_has_gone(monkeypatch):
     monkeypatch.setattr(cli.pr_batch.core.report, "emit_json", gone)
     with pytest.raises(BrokenPipeError):
         _main(["batch", "plan", "--checkout", "/r"])
-    assert dropped == [(["/r"], "refs/pr-batch/abcd")]
+    assert dropped == []
 
 
 def test_run_drops_the_plans_refs_when_it_fails_before_saving(monkeypatch):
     dropped = []
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: _plan_with_refs())
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: _plan_with_refs())
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
 
     def broken_config(dirs):
@@ -513,7 +513,7 @@ def test_watch_ci_reaches_the_run(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", rows))
 
     def fake_run(self):
         seen["watch_ci"] = self.run.watch_ci
@@ -529,7 +529,7 @@ def test_no_verify_reaches_the_run(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", rows))
 
     settle = stops_at(batch.model.RunStatus.DONE)
 
@@ -545,7 +545,7 @@ def test_no_verify_reaches_the_run(monkeypatch):
 def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", [row]))
 
     def fake_run(self):
         item = self.run.items[0]
@@ -571,7 +571,7 @@ def test_verbose_reaches_the_scheduler(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: Plan("me", rows))
 
     def fake_run(self):
         seen["verbose"] = self._verbose
@@ -623,7 +623,7 @@ def test_a_started_run_takes_over_its_plans_namespace_from_the_claim(monkeypatch
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     plan.rows.extend(rows)
     batch.plan.write_claim(plan.ref_namespace, plan.ref_dirs)
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: plan)
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, **_: plan)
     # Leave refs and claims alone so only the hand-over can retire the claim.
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: True)
     seen = {}

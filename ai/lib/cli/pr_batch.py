@@ -204,7 +204,7 @@ def _cfg(dirs: list[str]):
 def _plan(args) -> batch.plan.Plan:
     if args.plan:
         return core.serde.from_dict(batch.plan.Plan, json.loads(Path(args.plan).read_text()))
-    return batch.plan.build_plan(args.checkout)
+    return batch.plan.build_plan(args.checkout, keep_refs=True)
 
 
 class _Reporter:
@@ -631,14 +631,9 @@ def _github(run: Run, args) -> dict:
 
 
 def _cmd_plan(args) -> int:
-    plan = batch.plan.build_plan(args.checkout)
-    try:
-        core.report.emit_json(core.serde.to_dict(plan))
-    finally:
-        # Nothing runs from a standalone plan, so its refs go now, even
-        # when the reader has gone; a saved plan passed to `run --plan`
-        # reads mergeStateStatus instead.
-        batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
+    # A standalone plan is a read: no namespace, nothing to drop. `run --plan`
+    # from a saved file reads mergeStateStatus instead of namespaced refs.
+    core.report.emit_json(core.serde.to_dict(batch.plan.build_plan(args.checkout)))
     return EXIT_OK
 
 

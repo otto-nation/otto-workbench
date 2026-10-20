@@ -153,7 +153,7 @@ def _target(repo, branch):
 def test_a_new_run_is_locked_before_its_items_and_saved_only_after_them(monkeypatch, tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_plan",
-                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a")]))
+                        lambda dirs, **_: Plan("me", [_row(repo, 1, "feat/a")]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(RunStatus.DONE))
     seen = []
@@ -174,7 +174,7 @@ def test_a_new_run_is_locked_before_its_items_and_saved_only_after_them(monkeypa
 def test_a_run_refused_an_item_leaves_no_run_directory(monkeypatch, tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_plan",
-                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a")]))
+                        lambda dirs, **_: Plan("me", [_row(repo, 1, "feat/a")]))
     record = {"pid": os.getppid(), "command": "pr fix", "started": "t0"}
     with held_elsewhere(_target(repo, "feat/a") / core.run_lock.LOCK_FILE, record):
         assert _main(["batch", "run", "--checkout", str(repo)]) == 1

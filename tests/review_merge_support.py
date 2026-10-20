@@ -9,7 +9,8 @@ if LIB_DIR not in sys.path:
 
 from review.ingest import ingest_review
 from review.merge import merge_records
-from review.record import ReviewRecord
+from review.record import ReviewRecord, TriageEntry
+from review_record_support import record
 from review.types import SEVERITIES
 
 
@@ -25,3 +26,18 @@ def _merge(**by_key: str) -> ReviewRecord:
 
 def _triage(*lines: str) -> ReviewRecord:
     return ingest_review("## File Triage\n" + "\n".join(lines) + "\n", strict=False)
+
+
+def _group_of(*findings) -> ReviewRecord:
+    """One group's record holding `findings` — the builder twin of `_review`."""
+    return record(*findings)
+
+
+def _merged_of(*findings) -> ReviewRecord:
+    """`findings` as one group, merged — the builder twin of `_merge`."""
+    return merge_records([record(*findings)])
+
+
+def _triaged(*entries: TriageEntry) -> ReviewRecord:
+    """A record holding only `entries` as its File Triage — the builder twin of `_triage`."""
+    return ReviewRecord(triage=entries)

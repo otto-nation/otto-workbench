@@ -88,3 +88,54 @@ def written_review(directory: Path) -> Path:
     """
     directory.mkdir(parents=True, exist_ok=True)
     return store_review(directory / "review.md", "## Must fix\n- **[M1]** boom\n")
+
+
+def fixture_record(case: str, name: str = "record.json"):
+    """A fixture case's record, as `save_record` wrote it at schema 2."""
+    from review.record import load_record
+    rec = load_record(FIXTURES / case, name)
+    assert rec is not None, f"{case}/{name} did not load"
+    return rec
+
+
+def finding(fid: str, body: str = "x", *, path: str = "a.py", line: int | None = 1, **fields):
+    """A record finding: severity from `fid`, stable ID as ingest computes it.
+
+    `path=""` builds a finding about the PR as a whole and drops its line. Any
+    other `RecordFinding` field may be passed, `stable_id` included: a test
+    pinning a stored identity passes it, and the computed one is not used.
+    """
+    from review.grammar import FindingIdentity
+    from review.record import RecordFinding
+    line = line if path else None
+    fields.setdefault("stable_id", FindingIdentity.of_fields(path, line, body).stable_id)
+    return RecordFinding(id=fid, severity=fid[0], path=path, line=line, body=body, **fields)
+
+
+def record(*findings, **fields):
+    """A review record holding `findings`, and any other `ReviewRecord` field by keyword."""
+    from review.record import ReviewRecord
+    return ReviewRecord(findings=tuple(findings), **fields)
+
+
+def store_record(review_file, rec, meta=None):
+    """A review directory as the pipeline leaves it — review.json, meta.json, review.md — from a record."""
+    from review.store import write_review
+    review_file = Path(review_file)
+    write_review(review_file, rec, meta or ReviewMeta())
+    return review_file
+
+
+def seed_record(reviews_dir: Path, name: str = "widget-42", rec=None, **meta) -> Path:
+    """The directory `seed_review` makes, holding `rec` (default: one Must-fix finding).
+
+    `meta.json` carries attribution only when a caller passes it, as in
+    `seed_review`, whose callers move here in Task 13.
+    """
+    d = reviews_dir / name
+    d.mkdir()
+    store_record(
+        d / "review.md", rec if rec is not None else record(finding("M1", "bug")),
+        review_meta_from_dict(meta) if meta else ReviewMeta(),
+    )
+    return d

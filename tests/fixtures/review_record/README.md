@@ -14,6 +14,8 @@ scratch script that drove today's writers directly:
 | fix_annotated | captured from `review.fix._apply_outcomes` + `_apply_static_outcomes` over `before.md` (those helpers are gone; the same cases now go through `review.fix.apply_outcomes` / `apply_static_outcomes`) |
 | rebuild | `review.rebuild.rebuild` over `groups/` |
 
+Each record case also has `record.json` (and `evidence_dropped/raw.json`, `fix_annotated/before.json`): the same review, written at schema 2 by `save_record` over today's ingest of the markdown beside it. Until the markdown is deleted, `review_render_test.py::test_every_fixture_record_is_its_markdown_ingested` holds the two equal.
+
 `input.md` is what today's code wrote. `expected.md` is the same document as
 the record now renders it: schema 2, locations spelled from the fields (X1),
 sections in spec §2 order (D2/D4). Every parity case has an `expected.md`.

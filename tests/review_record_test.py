@@ -24,7 +24,7 @@ from review.record import (
 from review.types import (
     FindingRef, PriorDisposition, ReviewMeta, ReviewType, review_meta_from_dict,
 )
-from review_record_support import copy_tree
+from review_record_support import copy_tree, finding, record
 
 
 def _record() -> ReviewRecord:
@@ -286,3 +286,19 @@ def test_the_ledger_round_trips_through_review_json(tmp_path):
     save_record(tmp_path, record)
     (entry,) = load_record(tmp_path).ledger
     assert entry.disposition is PriorDisposition.STILL_OPEN and entry.note == "guard missing"
+
+
+def test_the_finding_builder_computes_the_identity_ingest_would():
+    f = finding("S2", "Missing check on the db.Query error", path="ai/lib/x.py", line=12)
+    assert (f.severity, f.stable_id) == ("S", "99e705a8")
+    assert finding("N1", "PR-wide", path="", line=7).line is None
+
+
+def test_the_finding_builder_takes_a_stored_stable_id():
+    """A test pinning a schema-1 identity passes it; the computed one must not collide."""
+    assert finding("M1", stable_id="5e406135").stable_id == "5e406135"
+
+
+def test_the_record_builder_holds_its_findings_in_order():
+    rec = record(finding("S1"), finding("M1"), summary="s")
+    assert ([f.id for f in rec.findings], rec.summary) == (["S1", "M1"], "s")

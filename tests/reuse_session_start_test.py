@@ -173,6 +173,18 @@ class TestThePRTemplateLine:
         assert "PR template: docs/pull_request_template.md (## Context)" \
             in capsys.readouterr().out
 
+    def test_optional_sections_are_labelled(self, rss, tmp_path, capsys):
+        repo = tmp_path / "repo"
+        (repo / ".github").mkdir(parents=True)
+        (repo / ".github" / "pull_request_template.md").write_text(
+            "## What\n\n## Link\n\n<!-- delete section if no issue -->\n",
+        )
+        _run(rss, repo)
+        assert (
+            "PR template: .github/pull_request_template.md "
+            "(## What; optional: ## Link)"
+        ) in capsys.readouterr().out
+
 
 class TestWhereTheSessionStarted:
     """Which directory the hook reads the repo out of.

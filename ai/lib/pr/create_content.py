@@ -101,10 +101,10 @@ def resolve_issue(branch: str, override: str) -> str:
 
 
 def missing_sections(template: PRTemplate, body: str) -> list[str]:
-    """Headers the body still owes. Empty when the repo ships no template."""
+    """Required headers the body still owes. Empty when the repo ships no template."""
     if not template.found:
         return []
-    return [header for header in template.headers if header not in body]
+    return [header for header in template.required_headers if header not in body]
 
 
 def template_refusal(template: PRTemplate, missing: list[str]) -> str:
@@ -249,6 +249,7 @@ def _single(
         log("→ Single commit — using commit message as title, AI filling template")
         prompt = (
             "Fill out this PR template based on the commit below.\n"
+            f"{core.pr_template.DELETABLE_SECTION_RULE}\n"
             "\n"
             "Template:\n"
             f"{template.text}\n"
@@ -286,6 +287,7 @@ def _multi(
         "\n"
         "The title follows conventional commits: type(scope): subject, at most "
         "72 characters, no trailing period.\n"
+        f"{core.pr_template.DELETABLE_SECTION_RULE}\n"
         "\n"
         "Template:\n"
         f"{template.text}\n"

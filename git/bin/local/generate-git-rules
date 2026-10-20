@@ -126,7 +126,7 @@ _budget_line() {
     "### Description template" \
     "" \
     "- Always create PRs via \`pr create\` — see \`git-operations.md\` § PR Creation for the full invocation and flags." \
-    "- When a repo has a PR template, its section headers are required — do not substitute or invent sections. The fallback template below is ONLY for repos with no project template:" \
+    "- When a repo has a PR template, its required section headers must be present — do not substitute or invent sections. A section whose HTML comment says to delete or remove it may be omitted when empty. The fallback template below is ONLY for repos with no project template:" \
     "" \
     '```markdown'
   printf '%s\n' "$FALLBACK_TEMPLATE"

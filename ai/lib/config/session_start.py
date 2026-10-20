@@ -165,13 +165,27 @@ def _pr_template_line(repo: str) -> str:
 
     The headers are named, not just the path. The path alone is another lookup;
     the sections are what an agent writing a PR body actually needs, and they
-    are short enough to spend the context on.
+    are short enough to spend the context on. Required headings come first;
+    deletable ones follow ``optional:`` so the line matches what ``pr create``
+    will refuse.
     """
     template = core.pr_template.load(Path(repo))
-    sections = ", ".join(template.headers) or "no sections"
+    sections = _section_list(template)
     if not template.found:
         return f"PR template: none in this repo — use the fallback ({sections})"
     return f"PR template: {template.path} ({sections})"
+
+
+def _section_list(template: core.pr_template.PRTemplate) -> str:
+    required = ", ".join(template.required_headers)
+    optional = ", ".join(
+        section.header for section in template.sections if not section.required
+    )
+    if required and optional:
+        return f"{required}; optional: {optional}"
+    if optional:
+        return f"optional: {optional}"
+    return required or "no sections"
 
 def _instructions_line(repo: str) -> str | None:
     """A suggestion to move the repo's CLAUDE.md to AGENTS.md, or None.

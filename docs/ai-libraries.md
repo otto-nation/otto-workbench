@@ -4892,6 +4892,13 @@ answers, and it is wrong the moment someone adds, moves, or deletes the file.
 The rediscovery this module exists to stop was never the automation's — it was
 the agent's, and the SessionStart line is what settles that.
 
+The text is also parsed into ``## `` sections. Prose before the first heading is
+preamble and never attaches to a section. A section is optional when an HTML
+comment in its body says to delete or remove the section; ``headers`` lists every
+heading and ``required_headers`` the ones a body must still carry. ``pr create``
+and ``pr describe --body`` refuse a body that omits a required header, and the
+SessionStart line names optional sections after ``optional:``.
+
 Bash reads through the CLI below rather than globbing for itself, the same way
 it asks ``config_cli.py`` for a config value instead of parsing YAML twice. The
 record it prints is:

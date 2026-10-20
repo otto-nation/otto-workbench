@@ -399,8 +399,8 @@ def shows_work(
     burned = after.cpu_over(counted) - before.cpu_over(counted)
     # CPU is /proc ticks on Linux and `ps` hundredths on macOS, so a comparison
     # against a threshold expressed in the same units lands on a float
-    # boundary; the tolerance is below one tick
-    # and cannot admit a reading that is genuinely idle.
+    # boundary; the tolerance is below one tick and cannot admit a reading
+    # that is genuinely idle.
     return burned > (CPU_FLOOR - 0.001)
 
 

@@ -44,6 +44,7 @@ EXIT_TOKEN = re.compile(r'(?<![\w$])exit(?![\w])')
 HEREDOC_START = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_]\w*)\1")
 BASH_SHEBANG = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
 ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
+FUNC_DEF = re.compile(r'^[A-Za-z_][A-Za-z0-9_-]*\s*\(\s*\)\s*')
 SED_Q = re.compile(
     r'(?:^|[;{\n])\s*(?:'
     r'[qQ](?:\s|[0-9]|}|;|$)'
@@ -559,12 +560,11 @@ def _sed_programs(after: str) -> list[str]:
             break
         t = token.text
         i = token.end
-        expr = t in ('-e', '--expression') or t.startswith('--expression=')
-        if expr and t.startswith('--expression=') and '=' in t:
+        if t.startswith('--expression='):
             seen_e = True
             programs.append(t.split('=', 1)[1])
             continue
-        if expr:
+        if t in ('-e', '--expression'):
             seen_e = True
             script = _take_sed_script(after, i)
             programs.append(script.text)
@@ -619,8 +619,6 @@ def _first_consumer_kind(stages: list[str]) -> str | None:
             return kind
     return None
 
-
-FUNC_DEF = re.compile(r'^[A-Za-z_][A-Za-z0-9_-]*\s*\(\s*\)\s*')
 
 
 def _producer_stage(first: str) -> str:

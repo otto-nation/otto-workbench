@@ -72,7 +72,8 @@ mkdir -p "$MACHINE_DIR"
 # cmd_version CMD ARGS... — runs a version command and extracts the first line.
 # Returns "not found" gracefully.
 cmd_version() {
-  local cmd="$1" out; shift
+  local cmd="$1" out
+  shift
   command -v "$cmd" >/dev/null 2>&1 || { echo "not found"; return; }
   out=$("$cmd" "$@" 2>&1) || true
   head -1 <<<"$out"

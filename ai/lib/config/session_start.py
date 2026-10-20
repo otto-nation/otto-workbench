@@ -187,6 +187,7 @@ def _section_list(template: core.pr_template.PRTemplate) -> str:
         return f"optional: {optional}"
     return required or "no sections"
 
+
 def _instructions_line(repo: str) -> str | None:
     """A suggestion to move the repo's CLAUDE.md to AGENTS.md, or None.
 

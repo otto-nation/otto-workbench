@@ -82,6 +82,12 @@ def test_filable_findings_are_the_ones_left_open_and_not_yet_filed(tmp_path):
     assert read_review(tmp_path / "review.md").record.finding("N1").filed == "ENG-9"
 
 
+def test_clear_filed_tolerates_a_stale_id(tmp_path):
+    write_review(tmp_path / "review.md", _answered(), fixture_meta("fix_annotated"))
+    review.finding_issue.clear_filed(tmp_path, {"ZZ9", "N1"}, "ENG-9")
+    assert read_review(tmp_path / "review.md").record.finding("N1").filed == "ENG-9"
+
+
 def test_the_issue_body_names_why_each_is_open(tmp_path):
     from types import SimpleNamespace
     write_review(tmp_path / "review.md", _answered(), fixture_meta("fix_annotated"))

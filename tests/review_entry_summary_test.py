@@ -283,7 +283,8 @@ def test_no_json_summary_leaves_stdout_alone(cr, capfd):
 
 def test_json_summary_with_findings(cr, tmp_path):
     review = tmp_path / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Must fix\n- **[M1]** path:1 — bug\n"
         "## Should fix\n- **[S1]** path:2 — improvement\n- **[S2]** path:3 — improvement\n"
         "## Nit\n- **[N1]** path:4 — style\n"
@@ -304,7 +305,8 @@ def test_json_summary_with_findings(cr, tmp_path):
 
 def test_json_summary_needs_discussion_no_must_fix(cr, tmp_path):
     review = tmp_path / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Should fix\n- **[S1]** path:1 — improvement\n"
         "## Nit\n- **[N1]** path:2 — style\n"
     )
@@ -391,7 +393,8 @@ def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-42"
     review_dir.mkdir(parents=True)
     review = review_dir / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Must fix\n- **[M1]** path:1 — bug\n\n"
         "## Verdict\nDisapprove — fundamentally wrong approach.\n"
     )
@@ -403,7 +406,8 @@ def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
 def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
     """Prose cannot under-report findings that block — the counts win."""
     review = tmp_path / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Must fix\n- **[M1]** path:1 — bug\n\n"
         "## Verdict\nApprove — looks fine.\n"
     )
@@ -415,7 +419,8 @@ def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
 def test_json_summary_verdict_keeps_stronger_prose(cr, tmp_path):
     """Counts cannot discard a stronger call the agent stated."""
     review = tmp_path / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Nit\n- **[N1]** path:1 — style\n\n"
         "## Verdict\nRequest changes — the approach needs rework.\n"
     )
@@ -526,7 +531,8 @@ def test_format_findings_line_no_findings(tmp_path):
 
 def test_format_findings_line_nits_only(tmp_path):
     review = tmp_path / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Nit\n"
         "- **[N1]** `file.py:10` — style\n"
         "- **[N2]** `file.py:20` — naming\n"
@@ -538,7 +544,8 @@ def test_format_findings_line_nits_only(tmp_path):
 
 def test_format_findings_line_mixed(tmp_path):
     review = tmp_path / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Must fix\n"
         "- **[M1]** `file.py:10` — bug\n"
         "\n## Should fix\n"
@@ -566,7 +573,8 @@ def test_format_verdict_approve(tmp_path):
 
 def test_format_verdict_with_must_fix(tmp_path):
     review = tmp_path / "review.md"
-    store_review(review, 
+    store_review(
+        review,
         "## Must fix\n- **[M1]** `file.py:10` — bug\n\n## Verdict\nApprove\n"
     )
     report = build_review_summary("org/repo", "1", str(review))

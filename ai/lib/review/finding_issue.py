@@ -222,7 +222,11 @@ def clear_filed(review_dir: Path, filed_ids: set[str], issue_id: str) -> None:
     """Mark the filed findings with their issue, so a second `--track-all` files nothing twice."""
     def mark(record):
         for fid in filed_ids:
-            record = record.with_finding(fid, filed=issue_id)
+            try:
+                record = record.with_finding(fid, filed=issue_id)
+            except KeyError:
+                # The issue is already filed; a stale id must not crash after it.
+                core.log.warn(f"finding {fid} is gone from the record — not marked filed")
         return record
     update_review(review_dir / FILENAME_REVIEW, mark)
 

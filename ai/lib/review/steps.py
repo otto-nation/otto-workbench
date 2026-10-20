@@ -217,8 +217,8 @@ def _run_synthesis_or_fallback(
         # Recorded before the fallback is built, not after: the meta header the
         # fallback carries reads the status back off this file, so a verdict
         # written afterwards leaves the document claiming the run completed.
-        # Today, the all-groups-failed fallback was *not* post-processed. Keep
-        # that by building with pipeline_state and publishing directly.
+        # The all-groups-failed fallback is not post-processed: it is built
+        # with pipeline_state and published directly.
         state.done.add(Phase.SYNTHESIS)
         state.failed[Phase.SYNTHESIS] = why
         _write_pipeline_state(job, state)
@@ -576,5 +576,7 @@ def _ingest_group_outputs(
             records.append(ingest_review(Path(path).read_text()))
         except IngestRejected as exc:
             core.log.warn(f"{path} rejected ({exc}) — excluding from merge")
-            _malformed_gap(group_names[i], failed_names, exc.errors, gaps)
+            _malformed_gap(
+                group_names[i] if i < len(group_names) else f"group-{i + 1}",
+                failed_names, exc.errors, gaps)
     return _GroupIngest(tuple(records), tuple(gaps))

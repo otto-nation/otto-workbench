@@ -289,7 +289,7 @@ class TestTheWalk:
 
 
     # TestEndsFindingBody
-    """The one answer to where a finding stops, which every span walk asks."""
+    # The one answer to where a finding stops, which every span walk asks.
 
     @pytest.mark.parametrize("line", [
         "- **[M2]** **`b.go:2`** — the next declaration",

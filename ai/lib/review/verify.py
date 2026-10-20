@@ -7,7 +7,8 @@ run in another order they leave a review whose prose describes findings by
 IDs it no longer uses — so they are private and the pass is what callers
 reach for.
 
-Two gates run over a finished review and both only ever remove findings.
+Two gates run over a finished review and both take findings out of view:
+evidence verification drops them, the disprove gate marks them `FALSIFIED`.
 
 Evidence verification is mechanical. Every must-fix and should-fix finding
 quotes the code it is about; that quote is checked against the file on disk,

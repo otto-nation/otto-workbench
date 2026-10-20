@@ -258,7 +258,7 @@ class TestApplyOutcomes:
         )
         finding = _findings(out)[0]
         assert finding.declined is False
-        assert finding.body.endswith("*(skipped — no auto-fix)*") or "skipped" in finding.body
+        assert finding.body.endswith("*(skipped — no auto-fix)*")
         assert finding.checked is False
 
     def test_a_reason_carrying_a_newline_does_not_fabricate_a_finding(self):

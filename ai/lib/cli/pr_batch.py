@@ -92,6 +92,7 @@ without asking.
 _DEFAULT_RUN = (
     "this repo's newest unfinished covering run, else its newest covering, else the latest"
 )
+_DEFAULT_RUN_REFUSES = f"{_DEFAULT_RUN}; refused when several unfinished runs cover this repo"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -130,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(it is always in the run's logs/)")
 
     m = sub.add_parser("resume", help="Continue a run")
-    m.add_argument("run_id", nargs="?", help=f"Run to continue (default: {_DEFAULT_RUN})")
+    m.add_argument("run_id", nargs="?", help=f"Run to continue (default: {_DEFAULT_RUN_REFUSES})")
     m.add_argument("--verbose", action="store_true",
                    help="Also stream each step's stderr as step_log events")
 
@@ -144,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--commit", default="", help="Commit that settles the decision, for actions that cite one")
 
     c = sub.add_parser("cancel", help="Stop the run; a recorded cancel is final")
-    c.add_argument("run_id", nargs="?", help=f"Run to cancel (default: {_DEFAULT_RUN})")
+    c.add_argument("run_id", nargs="?", help=f"Run to cancel (default: {_DEFAULT_RUN_REFUSES})")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
 
     s = sub.add_parser("status", help="Print a run's report: what needs action, and why (JSON)")

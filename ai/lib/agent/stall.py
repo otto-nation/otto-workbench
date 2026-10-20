@@ -175,7 +175,8 @@ class Sample:
     def readable(self) -> bool:
         """Whether this sample measured anything at all.
 
-        False means `ps` failed or was killed by its own bound, not that the
+        False means the process table could not be read (`/proc` yielded
+        nothing and `ps` failed or was killed by its own bound), not that the
         tree is idle: the root process is always in a successful reading, so
         an empty one cannot have come from a live run. The distinction is the
         difference between a stall and a blind watchdog, and treating the two

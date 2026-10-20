@@ -1,5 +1,6 @@
 """Every path that writes a review now publishes a record: review.json beside a rendered review.md."""
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from review.store import StoredReview, read_review, write_review
 from review.types import DeltaAttribution, PreflightData, ReviewJob
 from review.verify import DisproveResult, apply_disprove
 
-from review_record_support import copy_tree, canonical, expected_text, fixture_meta, fixture_text
+from review_record_support import FIXTURES, copy_tree, canonical, expected_text, fixture_meta, fixture_text
 
 HEAD = "9f1c2e3d4b5a69788796a5b4c3d2e1f00a1b2c3d"
 
@@ -257,3 +258,24 @@ def test_static_analysis_is_a_record_field(tmp_path, monkeypatch):
     assert read_review(Path(job.review_file)).record.static_analysis == "All checks passed."
     text = Path(job.review_file).read_text()
     assert text.index("## Static Analysis") < text.index("## Verdict")
+
+
+def test_rebuild_publishes_a_record_matching_todays_rebuild(tmp_path):
+    import review.rebuild
+    from core.phases import Mode
+    from review.paths import write_review_meta
+    from review.types import ReviewMeta, ReviewType
+    rd = tmp_path / "rev"
+    rd.mkdir()
+    for i in (1, 2):
+        shutil.copy(FIXTURES / "groups" / f"group-{i}.md", rd / f"group-{i}.md")
+    write_review_meta(rd, ReviewMeta(repo="acme/widget", pr_number=38, head_sha=HEAD, head_ref="feat/retry",
+                                     base_ref="main", title="feat: retry the flaky fetch", changed_files=3,
+                                     generator_version="review 1.42.0 / otto-workbench 1.47.0 (6c990742)",
+                                     review_type=ReviewType.FULL, mode=Mode.PR))
+    assert review.rebuild.rebuild(rd, "38", script="test") == 0
+    stored = read_review(rd / "review.md")
+    from dataclasses import replace
+    from review.render import render_review
+    meta = replace(stored.meta, date=fixture_meta("rebuild").date)
+    assert canonical(render_review(stored.record, meta)) == canonical(expected_text("rebuild"))

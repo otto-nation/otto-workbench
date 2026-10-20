@@ -2,6 +2,7 @@
 
 import sys
 
+import pytest
 from conftest import REPO_ROOT
 
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
@@ -41,3 +42,15 @@ def test_rebuild_refuses_a_sidecar_that_names_no_repo(tmp_path, capsys):
     assert review.rebuild.rebuild(tmp_path, "7", script="review-rebuild") == 1
     assert "Cannot determine repository" in capsys.readouterr().err
     assert not (tmp_path / "review.md").exists()
+
+
+def test_rebuild_refuses_a_group_file_carrying_the_render_banner(tmp_path):
+    from review.ingest import IngestRejected
+    from review.paths import FILENAME_RECORD
+    from review.render import BANNER
+    path = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
+    path.write_text(f"{BANNER}\n## Findings\n- **[M1]** **`a.py:1`** \u2014 x\n")
+    write_review_meta(tmp_path, ReviewMeta(repo="acme/widget", pr_number=1))
+    with pytest.raises(IngestRejected):
+        review.rebuild.rebuild(tmp_path, "1", script="review-rebuild")
+    assert not (tmp_path / FILENAME_RECORD).exists()

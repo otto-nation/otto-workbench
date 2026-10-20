@@ -1531,11 +1531,12 @@ in the diff at all is skipped. `cli.review_positions` is the command over this;
 
 ### review/rebuild.py
 
-Rebuild a review document from its group finding files.
+Rebuild a review record from its group finding files.
 
-Merges the group-N.md outputs, post-processes the findings and writes a new
-review.md — the recovery path when synthesis drifted or the review file was
-corrupted. `cli.review_rebuild` is the command over this.
+Ingests the group-N.md outputs, merges the records, post-processes them and
+writes a new review through the store — the recovery path when synthesis
+drifted or the review file was corrupted. `cli.review_rebuild` is the command
+over this.
 
 ### review/reconcile.py
 

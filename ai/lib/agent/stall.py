@@ -92,6 +92,7 @@ into the duration bound `timeouts` rejects.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable, Container, Mapping
@@ -245,7 +246,7 @@ def _read_proc_pid(
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
             return _parse_proc_stat(name, handle.read(), ticks)
-    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+    except (OSError, ValueError):
         return None
 
 
@@ -271,6 +272,9 @@ def _proc_stat_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[i
     return rows
 
 
+_warned_coarse_fallback = False
+
+
 def _process_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[int, int, float]]:
     """Every process as `(pid, ppid, cpu_seconds)`, or empty if the reading failed.
 
@@ -286,6 +290,13 @@ def _process_rows(proc_root: str | os.PathLike[str] = "/proc") -> list[tuple[int
     rows = _proc_stat_rows(proc_root)
     if rows:
         return rows
+    global _warned_coarse_fallback
+    if sys.platform.startswith("linux") and not _warned_coarse_fallback:
+        _warned_coarse_fallback = True
+        core.log.warn(
+            "stall watch: /proc unreadable, falling back to `ps`; procps TIME "
+            "is whole seconds so short idle windows may be misread"
+        )
     return _ps_rows()
 
 
@@ -379,8 +390,8 @@ def shows_work(
         return True
     counted = (after.pids - baseline) | ({root_pid} if root_pid else set())
     burned = after.cpu_over(counted) - before.cpu_over(counted)
-    # `ps` reports hundredths, so a comparison against a threshold expressed in
-    # the same units lands on a float boundary; the tolerance is below one tick
+    # CPU is /proc ticks on Linux and `ps` hundredths on macOS, so a comparison
+    # against a threshold expressed in the same units lands on a float boundary; the tolerance is below one tick
     # and cannot admit a reading that is genuinely idle.
     return burned > (CPU_FLOOR - 0.001)
 

@@ -199,6 +199,21 @@ class TestProcRows:
         assert rows == [(7, 1, 1.25)]
 
 
+class TestLinuxFallbackWarning:
+    def test_linux_ps_fallback_warns_once(self, tmp_path, monkeypatch):
+        warnings = []
+        monkeypatch.setattr(agent.stall.sys, "platform", "linux")
+        monkeypatch.setattr(agent.stall, "_warned_coarse_fallback", False)
+        monkeypatch.setattr(agent.stall.core.log, "warn", warnings.append)
+        monkeypatch.setattr(
+            core.proc, "run",
+            lambda cmd, timeout=None: core.proc.CmdResult(returncode=1, stdout=""),
+        )
+        agent.stall._process_rows(proc_root=tmp_path)
+        agent.stall._process_rows(proc_root=tmp_path)
+        assert len(warnings) == 1
+
+
 class TestSampleSubtree:
     """CPU is attributed by walking PPID, because PGID cannot see the child.
 

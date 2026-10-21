@@ -262,6 +262,42 @@ class TestCollectDeltaSurface:
         capsys.readouterr()
         assert delta.files == ["a.py", "b.py"]
 
+    def test_failed_walk_fallback_lists_files_past_the_diff_budget(
+        self, tmp_path, capsys, monkeypatch,
+    ):
+        """A failed ancestry walk still lists files the truncated patch dropped."""
+        repo = init_repo(tmp_path / "repo")
+        (repo / "a.py").write_text("x = 1\n")
+        (repo / "b.py").write_text("y = 1\n")
+        commit_all(repo, "reviewed")
+        prior_sha = git_out(repo, "rev-parse", "HEAD").strip()
+        add_self_origin(repo)
+        (repo / "a.py").write_text("x = 2\n")
+        (repo / "b.py").write_text("y = 2\n" * 2000)
+        commit_all(repo, "since review")
+        monkeypatch.setattr(review.collect, "MAX_DELTA_DIFF_BYTES", 2_000)
+        job = replace(
+            _delta_job(
+                head_sha=git_out(repo, "rev-parse", "HEAD").strip(),
+                prior_sha=prior_sha,
+            ),
+            wt_path=str(repo),
+        )
+        job = replace(job, pr=replace(job.pr, files=[{"path": "a.py"}, {"path": "b.py"}]))
+        real_run = git.client.run
+
+        def _run(*args, **kwargs):
+            if args and args[0] in {"log", "show"} and "--numstat" in args:
+                return CmdResult(returncode=128, stderr="fatal: bad revision")
+            return real_run(*args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(git.client, "run", _run)
+            delta = review.collect._collect_delta(job)
+        capsys.readouterr()
+        assert "a.py" in delta.files
+        assert "b.py" in delta.files
+
 
 class TestCollectDeltaAncestry:
     """The delta's file list is the author's commits, not everything in range.

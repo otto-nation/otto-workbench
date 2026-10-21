@@ -92,6 +92,7 @@ def _run_chunk(
         label=label,
         repo=adapter.repo or None,
         pr=adapter.pr or None,
+        branch=adapter.branch or None,
         config=adapter.config,
         effort=adapter.effort,
         model=adapter.model or None,

@@ -26,6 +26,7 @@ import agent.backend
 import agent.backend_claude
 import agent.backend_pi
 import agent.usage
+import core.trail
 from conftest import FIXTURES_DIR
 
 RESULT_ENVELOPE = {
@@ -273,6 +274,20 @@ class TestPromptRecordsToLedger:
         monkeypatch.setattr(agent.backend, "_get_module", lambda: mod)
         assert agent.backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
         assert list(ledger.glob("*.jsonl")) == []
+
+    def test_every_row_names_the_command_it_ran_under(self, ledger, monkeypatch, tmp_path):
+        monkeypatch.setenv(core.trail.TRAIL_ROOT_ENV, "0123456789ab")
+        session_log = tmp_path / "session.jsonl"
+        session_log.write_text(json.dumps(RESULT_ENVELOPE) + "\n")
+        mod = types.SimpleNamespace(invoke_agent=lambda inv: 0)
+        monkeypatch.setattr(agent.backend, "_get_module", lambda: mod)
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(session_log),
+            repo="o/r", pr="7", branch="feat/x",
+        ))
+        rec = json.loads(next(ledger.glob("*.jsonl")).read_text().strip())
+        assert (rec["repo"], rec["pr"], rec["branch"], rec["invocation"]) == (
+            "o/r", "7", "feat/x", "0123456789ab")
 
 
 class TestFixWritesSessionLog:

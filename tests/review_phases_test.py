@@ -193,6 +193,11 @@ class TestPhaseRunnerInvocation:
         runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.invocation("P", 42).max_turns == 42
 
+    def test_labels_the_ledger_row(self, tmp_path):
+        runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
+        inv = runner.invocation("P")
+        assert (inv.repo, inv.pr, inv.branch) == ("org/repo", "42", "head")
+
     def test_add_dirs_grant_only_the_review_artifact_dir(self, tmp_path):
         # Never the shared reviews root: a root grant is how scratch files
         # ended up beside unrelated reviews.

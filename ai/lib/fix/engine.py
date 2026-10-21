@@ -531,6 +531,7 @@ def _invoke(
         hint_select=lambda _diagnosis: adapter.fix_hint,
         repo=adapter.repo or None,
         pr=adapter.pr or None,
+        branch=adapter.branch or None,
         config=adapter.config,
         effort=adapter.effort,
         model=adapter.model or None,

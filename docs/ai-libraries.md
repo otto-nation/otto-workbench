@@ -4135,10 +4135,11 @@ Lives below the review layer so agent.backend can depend on it without inverting
 the dependency.
 
 Every AI call made through the workbench appends one record to a monthly JSONL
-file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
-the task that made the call. Python entry points record automatically through
-`agent.backend`; the shell caller that cannot use it — `run-auto-task`, which
-needs slash commands — goes through `ai-usage-log`.
+file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, the
+task that made the call, the trail invocation of the command it ran under, and
+the repo, PR and branch where the caller knows them. Python entry points record
+automatically through `agent.backend`; the shell caller that cannot use it —
+`run-auto-task`, which needs slash commands — goes through `ai-usage-log`.
 
 A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed

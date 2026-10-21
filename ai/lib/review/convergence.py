@@ -14,10 +14,16 @@ HEAD past the review that produced it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
+import git.client
 from core.phases import Mode
+from pr.fix import FixOutcome, ItemOutcome
 from review.collect import uncommitted_files
 from review.document import covers
-from review.types import ReviewJob
+from review.record import Disposition, ReviewRecord
+from review.types import Finding, ReviewJob, StickySkip
 
 
 def change_set(job: ReviewJob) -> frozenset[str] | None:
@@ -42,3 +48,64 @@ def change_set(job: ReviewJob) -> frozenset[str] | None:
             dirty = prior.meta.dirty_files
         return frozenset(uncommitted_files(job.wt_path, job.pr.head_sha)) | frozenset(dirty)
     return None
+
+
+def anchor_key(path: str, line: int | None) -> str:
+    """How a sticky skip names its anchor: `path:line`, with 0 for a line-less finding."""
+    return f"{path}:{line or 0}"
+
+
+def blob_of(wt_path: str | Path, path: str) -> str:
+    """The object id *path* has in the working tree at *wt_path*, or "" when absent."""
+    if not path or not (Path(wt_path) / path).is_file():
+        return ""
+    return git.client.out("hash-object", "--", path, cwd=wt_path)
+
+
+@dataclass(frozen=True)
+class StickyApplied:
+    """A record with live sticky skips applied, and the marks still live."""
+
+    record: ReviewRecord
+    marks: dict[str, StickySkip]
+
+
+def apply_sticky_skips(
+    record: ReviewRecord, marks: dict[str, StickySkip], wt_path: str | Path,
+) -> StickyApplied:
+    """*record* with every open finding at a live mark's anchor and severity skipped.
+
+    A mark is live while its anchor file still hashes to the recorded blob. A
+    stale mark is dropped from what is returned, so the sidecar sheds it on the
+    write that follows and the next round's finding there is open again.
+    """
+    live = {key: mark for key, mark in marks.items()
+            if mark.blob and blob_of(wt_path, key.rsplit(":", 1)[0]) == mark.blob}
+    for f in record.visible:
+        mark = live.get(anchor_key(f.path, f.line))
+        if mark and f.disposition is Disposition.OPEN and mark.severity == f.severity:
+            record = record.with_finding(f.id, disposition=Disposition.SKIPPED,
+                                         reason=mark.reason)
+    return StickyApplied(record, live)
+
+
+def mark_skips(
+    findings: dict[str, Finding], outcomes: list[ItemOutcome], wt_path: str | Path,
+    committed: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, StickySkip]:
+    """A mark for each finding this pass handed to a person, keyed by its anchor.
+
+    None for a finding whose file is in *committed*, the pass's own commit
+    scope: that file changed in this very pass, so the change a mark waits for
+    has already happened, and the blob it would record is one nobody reviewed.
+    """
+    marks: dict[str, StickySkip] = {}
+    for outcome in outcomes:
+        f = findings.get(outcome.id)
+        if outcome.outcome is not FixOutcome.NEEDS_HUMAN or f is None or not f.path:
+            continue
+        if f.path in committed:
+            continue
+        marks[anchor_key(f.path, f.line)] = StickySkip(
+            blob_of(wt_path, f.path), f.severity, outcome.reason or "needs a person")
+    return marks

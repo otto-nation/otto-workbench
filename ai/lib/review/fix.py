@@ -68,6 +68,7 @@ import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
+from review.convergence import mark_skips
 from review.document import ReviewDocument
 import review.fix_logs
 from review.grammar import UNVERIFIED_TAIL_RE
@@ -832,6 +833,7 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             # claim a SHA and still stand.
             outcomes = [o for o in outcomes if not o.outcome.counts_as_fixed]
         self._persist_static_declines(outcomes)
+        self._persist_sticky_skips(outcomes)
         # A stale directory has no review.json, so update_review writes nothing
         # while the commit still landed. Say so — a silent drop of dispositions
         # is how the next round retries work already done.
@@ -875,6 +877,22 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             meta, static_declined={**meta.static_declined, **settled},
         ))
 
+    def _persist_sticky_skips(self, outcomes: list[ItemOutcome]) -> None:
+        """Keep this pass's "needs a person" answers, by anchor, for later rounds.
+
+        Accumulated rather than replaced, as static declines are: a round that
+        skips nothing does not retract an earlier round's call. `changed` is
+        the commit scope `landing` stored; a skip in a file it holds is left
+        unmarked (`mark_skips`).
+        """
+        marks = mark_skips(self.findings, outcomes, self.workdir, self.changed or set())
+        if not marks:
+            return
+        review_dir = Path(self.job.artifact_dir)
+        meta = read_review_meta(review_dir)
+        write_review_meta(review_dir, replace(
+            meta, sticky_skips={**meta.sticky_skips, **marks}))
+
     def _descriptions(self) -> dict[str, str]:
         """The one line each item is reported under, by id.
 
@@ -910,9 +928,10 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
         core.log.warn("No review file to fix — skipping fix pass")
         return 0
 
-    # A declined finding is not work: it was considered and rejected, so it is
-    # out of the work set and out of the turn budget it would otherwise buy.
-    findings = [f for f in doc.open_findings if not f.declined]
+    # A declined finding is not work: it was considered and rejected. A skipped
+    # one was handed to a person, and stays with them until its file changes
+    # (`review.convergence`). Neither is rendered onto the checklist or buys turns.
+    findings = [f for f in doc.open_findings if not f.declined and not f.skipped]
     review_dir = Path(job.artifact_dir)
     violations = _static_items(
         job.static_results, read_review_meta(review_dir).static_declined,

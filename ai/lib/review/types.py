@@ -202,6 +202,25 @@ class GroupSkip(StrEnum):
     CARRIED = "carried"
 
 
+# ── Sticky skips ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class StickySkip:
+    """A finding the fix pass handed to a person, held until its file changes.
+
+    Keyed in `ReviewMeta.sticky_skips` by `path:line`. `blob` is the anchor
+    file's object id when the skip was made: while the file still hashes to it,
+    its lines are the lines that were judged, so a later round's finding at the
+    same anchor and `severity` is the same call and goes back to the person
+    rather than to the agent.
+    """
+
+    blob: str = ""
+    severity: str = ""
+    reason: str = ""
+
+
 # ── Review metadata ──────────────────────────────────────────────────────────
 
 
@@ -285,6 +304,11 @@ class ReviewMeta:
     # Keyed on the site hash rather than the `SA<n>` id, which is a position in
     # one rendering and names a different violation in the next.
     static_declined: dict[str, str] = field(default_factory=dict)
+    # Findings the fix pass handed to a person, by `path:line`. Accumulated like
+    # `static_declined` and for its reason — the document is rewritten every
+    # round — and pruned at publish once the anchor file no longer hashes to the
+    # recorded blob. See `review.convergence.apply_sticky_skips`.
+    sticky_skips: dict[str, StickySkip] = field(default_factory=dict)
     # What the rendered header states about the run beyond attribution. They
     # live here because the record holds what the review says and the sidecar
     # holds what the run was; `review.md`'s header is rendered from these.
@@ -382,6 +406,10 @@ class Finding:
     # review saying "not at all", and the fix pass must not revisit it.
     declined: bool = False
     decline_reason: str = ""
+    # Handed to a person by a fix pass (`Disposition.SKIPPED`). Not work: the
+    # next pass does not take it, and a later round re-raising it at the same
+    # anchor is marked skipped until the file changes.
+    skipped: bool = False
 
 
 # ── Prior-finding vocabulary ─────────────────────────────────────────────────

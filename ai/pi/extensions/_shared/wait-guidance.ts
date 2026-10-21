@@ -26,8 +26,10 @@ const SEE = "See general.md § Waiting on Background Work.";
  * you get depends on which guard saw the command first.
  */
 export const FOREGROUND_WAIT =
-  "Run the command in the foreground bounded by the bash tool's own `timeout` parameter (check its unit) and do not " +
-  "end the turn while the work is outstanding.";
+  "Run the command in the foreground and do not end the turn while the work is outstanding. " +
+  "Bound it with coreutils `timeout <seconds>` inside the command, which sends SIGTERM first; " +
+  "the bash tool's own `timeout` is in seconds and SIGKILLs the process group, so keep it, if " +
+  "at all, as a backstop above that.";
 
 /** Whether `job_start` is among the tools declared to the model. */
 export function jobStartIsActive(activeTools: readonly string[]): boolean {

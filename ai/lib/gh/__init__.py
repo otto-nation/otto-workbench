@@ -1,1 +1,1 @@
-"""Layer 3 — GitHub reads. May import: core, config, git."""
+"""Layer 3 — GitHub reads and the owner boundary. May import: core, config, git."""

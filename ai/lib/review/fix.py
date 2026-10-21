@@ -68,7 +68,7 @@ import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
-from review.convergence import FixCoverage, blob_of, fix_coverage, fix_work_set, mark_skips
+from review.convergence import FixCoverage, blob_of, fix_candidates, fix_coverage, mark_skips
 from review.document import ReviewDocument
 import review.fix_logs
 from review.grammar import UNVERIFIED_TAIL_RE
@@ -947,14 +947,10 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
         core.log.warn("No review file to fix — skipping fix pass")
         return 0
 
-    # A declined finding is not work: it was considered and rejected. A skipped
-    # one was handed to a person, and stays with them until its file changes
-    # (`review.convergence`). Neither is rendered onto the checklist or buys turns.
-    findings = [f for f in doc.open_findings if not f.declined and not f.skipped]
     review_dir = Path(job.artifact_dir)
-    # The nits an incremental round withheld stay open on the page and out of
-    # the work set (D13); a full round's sidecar withholds none.
-    findings = fix_work_set(findings, read_review_meta(review_dir).held_nits)
+    findings = fix_candidates(
+        doc.open_findings, read_review_meta(review_dir).held_nits, quiet=False,
+    )
     violations = _static_items(
         job.static_results, read_review_meta(review_dir).static_declined,
     )

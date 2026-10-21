@@ -7149,8 +7149,9 @@ routing — rather than commands in their own right, which is why the registry
 points `review` and `comments` at the delegates themselves.
 
 `pr fix` decides whether to run each pass by reading the same cached state
-`pr status` prints (`_worth_running`). A cached "nothing to do" is honoured only
-when the domain can say it was measured against the current HEAD —
+`pr status` prints (`_worth_running`). The review pass is skipped when only
+declined, skipped or held findings remain. A cached "nothing to do" is honoured
+only when the domain can say it was measured against the current HEAD —
 `ReviewSummary.reviewed_through` for the review, the latest stored run's `headSha` for
 CI. A verdict about another commit, or one that names no commit, re-runs the
 pass and says why. Skipping a necessary pass is silent and permanent, so the

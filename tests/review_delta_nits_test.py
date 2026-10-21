@@ -12,7 +12,8 @@ import review.phases  # noqa: E402
 import review.pipeline  # noqa: E402
 import review.steps  # noqa: E402
 from review.convergence import (  # noqa: E402
-    drop_out_of_delta_nits, fix_work_set, held_nits, new_nit_ids, prior_ids,
+    drop_out_of_delta_nits, fix_candidates, fix_work_set, held_nits, new_nit_ids,
+    prior_ids,
 )
 from core.phases import Phase  # noqa: E402
 from review.ingest import ArtifactOutcome  # noqa: E402
@@ -219,6 +220,22 @@ def test_a_must_or_should_finding_in_the_held_set_stays_in_fix_work():
     should = finding("S1", "should", path="a.py", line=2, stable_id="held").view()
     nit = finding("N1", "nit", path="a.py", line=3, stable_id="held").view()
     assert [f.id for f in fix_work_set([must, should, nit], ("held",))] == ["M1", "S1"]
+
+
+def test_fix_candidates_drops_checked_declined_skipped_and_held():
+    """One owner: open + not declined + not skipped + not held."""
+    open_must = finding("M1", "bug", path="a.py", line=1).view()
+    declined = finding("M2", "tradeoff", path="a.py", line=2).view()
+    declined.declined = True
+    skipped = finding("S1", "person", path="a.py", line=3).view()
+    skipped.skipped = True
+    held = finding("N1", "nit", path="a.py", line=4, stable_id="held").view()
+    fixed = finding("M3", "done", path="a.py", line=5).view()
+    fixed.checked = True
+    got = fix_candidates(
+        [open_must, declined, skipped, held, fixed], ("held",), quiet=True,
+    )
+    assert [f.id for f in got] == ["M1"]
 
 
 def test_synthesis_drops_out_of_delta_nits_on_an_incremental_round(tmp_path, monkeypatch):

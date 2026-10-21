@@ -118,7 +118,8 @@ ones inside it stay open but out of the fix pass's work set:
 `_reconcile_and_verify` reads them while the record still carries sids
 (`new_nit_ids`), `_publish` adds them to `ReviewMeta.held_nits` (the prior
 round's held set plus this round's new ones; empty after a full round), and
-`fix_work_set` withholds every nit whose stable id is held. When the round is
+`fix_candidates` applies open + not declined + not skipped, then `fix_work_set`
+withholds every nit whose stable id is held. When the round is
 incremental, no group failed, the groups that ran produced nothing and
 `passed_over` is empty, synthesis and the disprove gate are both skipped and
 `_write_settled_review` ships the merge, with a mechanical verdict where the

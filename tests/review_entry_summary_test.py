@@ -15,6 +15,8 @@ from review.summary import (
     ReviewSummaryReport, build_review_summary, format_findings_line,
     format_usage, format_verdict, json_summary,
 )
+from review.convergence import fix_candidates
+from review.document import ReviewDocument
 from review.record import Disposition
 from review.types import ReviewMeta
 from review_record_support import finding, record, store_record
@@ -368,7 +370,10 @@ def test_build_review_summary_workable_excludes_declined_skipped_and_held(tmp_pa
         tmp_path / "review.md", rec, ReviewMeta(held_nits=("held-sid",)),
     )
     report = build_review_summary("org/repo", "42", str(review))
+    doc = ReviewDocument.read(str(review))
+    assert doc is not None
     assert report.workable == 1
+    assert report.workable == len(fix_candidates(doc.findings, ("held-sid",), quiet=True))
     assert report.findings["must_fix"] == 2
     assert "workable" not in report.to_json()
 

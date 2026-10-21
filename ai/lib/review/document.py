@@ -319,9 +319,9 @@ class ReviewDocument:
 
         A finding is open until the fix pass ticks its box. That is wider than
         the work a fix pass has left: a declined finding is open — the review
-        recorded a judgement about it rather than a fix — and `run_fix_pass`
-        states that narrower predicate where it drives the pass, so neither
-        reading has to answer for the other.
+        recorded a judgement about it rather than a fix — and `fix_candidates`
+        states that narrower predicate, so neither reading has to answer for
+        the other.
         """
         return [f for f in self.findings if not f.checked]
 

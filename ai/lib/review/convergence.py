@@ -218,7 +218,9 @@ def held_nits(job: ReviewJob, *, incremental: bool) -> tuple[str, ...]:
     return tuple(sorted({*previous, *job.new_nits}))
 
 
-def fix_work_set(findings: list[Finding], held: tuple[str, ...]) -> list[Finding]:
+def fix_work_set(
+    findings: list[Finding], held: tuple[str, ...], *, quiet: bool = False,
+) -> list[Finding]:
     """*findings* without the nits and idioms the review withheld from fix work (D13).
 
     Every fix commit moves HEAD and re-arms a round, and on the rounds that
@@ -229,6 +231,8 @@ def fix_work_set(findings: list[Finding], held: tuple[str, ...]) -> list[Finding
     `ReviewMeta.held_nits`, written at publish, so a resumed or later pass gets
     the answer the publishing round gave; a full round's is empty and hands
     every severity. Matched by stable id and severity, never by an empty id.
+    *quiet* suppresses the withheld-nit log; `fix_candidates` passes it through
+    so a summary count does not print a pass's line.
     """
     # ceiling: a carried nit that synthesis rewords takes a new stable id and
     # so leaves the held set. Upgrade trigger: if a fix commit is seen fixing a
@@ -236,10 +240,24 @@ def fix_work_set(findings: list[Finding], held: tuple[str, ...]) -> list[Finding
     kept = set(held)
     withheld = sorted(f.id for f in findings
                       if f.severity in NIT_SEVERITIES and f.stable_id and f.stable_id in kept)
-    if withheld:
+    if withheld and not quiet:
         core.log.info(f"Incremental: {len(withheld)} nit/idiom finding(s) left open for a "
                       f"person or the next full review ({', '.join(withheld)})")
     return [f for f in findings if f.id not in withheld]
+
+
+def fix_candidates(
+    findings: list[Finding], held: tuple[str, ...], *, quiet: bool = False,
+) -> list[Finding]:
+    """The findings a fix pass would still take.
+
+    Open, not declined, not skipped, and not in the nits the review withheld
+    from fix work (`ReviewMeta.held_nits`). One owner for the filter `run_fix_pass`
+    and the summary's workable count both apply. *quiet* is False on the pass
+    (the withheld-nit log is for the operator) and True on the count.
+    """
+    work = [f for f in findings if not f.checked and not f.declined and not f.skipped]
+    return fix_work_set(work, held, quiet=quiet)
 
 
 def interrupted_fix(review_dir: Path, wt_path: str) -> FixInterruption | None:

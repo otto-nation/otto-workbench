@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 647 -->
+<!-- doc-budget: 650 -->
 
 # AI Automation
 
@@ -174,9 +174,9 @@ keeps the next round from starting over:
 
 - **A qualifying fix commit counts as reviewed.** The header carries
   `covered_sha` when that commit landed on the reviewed commit, checks were
-  green, every fix was verified, and it touches only the fixed findings'
-  files and their tests. That SHA counts as reviewed; a later review still
-  measures its delta from `head_sha`.
+  green, every fix was verified, it touches only the fixed findings' files
+  and their tests, and no file of a finding the pass left unfixed. That SHA
+  counts as reviewed; a later review still measures its delta from `head_sha`.
 - **Re-reviews do only new work.** Same-HEAD dirty files (including ones the
   last round read that have since been reverted) are incremental; `--force`
   keeps the run full. New nits outside the delta are dropped; new nits inside
@@ -184,8 +184,11 @@ keeps the next round from starting over:
   file is restated without an agent. A sticky skip keeps a finding away from
   the fix agent while its anchor is unchanged — it does not settle it.
 - **Verify names inherited failures.** A red check re-run at the pass's base
-  that was already red becomes `Fix-Checks: preexisting`; the fixes stay and
+  that was already red becomes `Fix-Checks: preexisting` only when every
+  failure is inherited; one new failure keeps it red. The fixes stay and
   publishing is still held.
+- **`pr fix` skips the review** when only declined, skipped or held findings
+  remain.
 - **An interrupted pass resumes.** The next run on the same HEAD stashes the
   leftovers and, with `--fix`, resumes the fix step; `--force` or a failed
   set-aside does not resume.

@@ -126,6 +126,8 @@ def test_two_real_drivers_on_a_starved_host_start_one_step_between_them(tmp_path
 
 
 def test_floor_refused_while_a_peer_has_a_step_live(tmp_path):
+    """a's step started by normal admission; b, starved, would otherwise take the
+    free floor slot and run a second step on a host with room for none."""
     starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
     healthy = batch.admission.HostSample(64 * GiB, 1.0, 0.0)
     with batch.machine.register("run-a", tmp_path) as ma, \
@@ -135,7 +137,7 @@ def test_floor_refused_while_a_peer_has_a_step_live(tmp_path):
         a.sched._once()
         b.sched._once()
         assert (len(a.spawned), len(b.spawned)) == (1, 0)
-        assert b.run.items[0].wait_reason
+        assert b.run.items[0].wait_reason.startswith("waiting for memory")
 
 
 def test_a_driver_defers_to_an_earlier_waiter_even_with_room():

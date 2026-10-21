@@ -18,7 +18,8 @@ from review.record import ReviewRecord  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
 from review.types import PreflightData, ReviewMeta  # noqa: E402
-from review.verdict import SETTLED_SUMMARY  # noqa: E402
+from review.render import BANNER  # noqa: E402
+from review.verdict import BUDGET_SUMMARY, SETTLED_SUMMARY, mechanical_verdict  # noqa: E402
 from review.verify import PostProcessed  # noqa: E402
 from review_convergence_support import finding, merged, review_job  # noqa: E402
 
@@ -62,12 +63,22 @@ def test_nothing_new_with_everything_settled(tmp_path):
     assert review.steps._nothing_new(_job(tmp_path), merged(fresh=0), [])
 
 
+def test_a_rejected_group_is_not_a_counted_zero(tmp_path):
+    """A merge-time ingest rejection is not `fresh=0` and does not settle the round."""
+    path = tmp_path / "group-1.md"
+    path.write_text(f"{BANNER}\n## Must fix\n- **[M1]** `a.py:1` — x\n")
+    out = review.steps._phase_merge([str(path)], [], ("g1",))
+    assert out.fresh is None
+    assert not review.steps._nothing_new(_job(tmp_path), out, [])
+
+
 def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch):
     """PR mode, because a self-review states no verdict on any path (`states_verdict`)."""
     job = _job(tmp_path, mode=Mode.PR)
     monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    reconciled = []
     monkeypatch.setattr(review.outcome, "post_process_record",
-                        lambda record, *a, **k: PostProcessed(record, None))
+                        lambda record, *a, **k: reconciled.append(record) or PostProcessed(record, None))
     monkeypatch.setattr(review.steps, "_phase_synthesis",
                         lambda *a, **k: pytest.fail("synthesis ran with nothing new"))
     result = review.steps._run_synthesis_or_fallback(
@@ -76,8 +87,28 @@ def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch)
     assert result.cost == 0.0
     stored = read_review(Path(job.review_file))
     assert stored.record.summary == f"1 finding across 2 groups. {SETTLED_SUMMARY}"
-    assert stored.record.verdict
+    assert stored.record.verdict == mechanical_verdict(stored.record.open_counts).strip()
+    assert reconciled, "reconciliation did not run"
     assert [f.id for f in stored.record.findings] == ["S1"]
+
+
+def test_a_settled_over_budget_round_still_ships_settled(tmp_path, monkeypatch):
+    """Settled is decided before the budget; an over-budget settled round is still settled."""
+    job = _job(tmp_path, mode=Mode.PR)
+    state = _state()
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.outcome, "post_process_record",
+                        lambda record, *a, **k: PostProcessed(record, None))
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: pytest.fail("synthesis ran when settled"))
+    result = review.steps._run_synthesis_or_fallback(
+        job, state, "", 2, merged(ReviewRecord(findings=(CARRIED,)), fresh=0), [], 1,
+        25.0, 20.0, settled=True)
+    assert result.cost == 0.0
+    stored = read_review(Path(job.review_file))
+    assert SETTLED_SUMMARY in stored.record.summary
+    assert BUDGET_SUMMARY not in stored.record.summary
+    assert Phase.SYNTHESIS in state.done and Phase.SYNTHESIS not in state.failed
 
 
 def test_a_settled_round_skips_the_disprove_gate(tmp_path, monkeypatch):
@@ -94,7 +125,10 @@ def test_a_settled_round_skips_the_disprove_gate(tmp_path, monkeypatch):
     assert Phase.DISPROVE in state.done and Phase.DISPROVE not in state.failed
 
 
-def test_run_multi_phase_hands_settled_to_synthesis_and_the_gate(tmp_path, monkeypatch):
+@pytest.mark.parametrize("nothing_new", [True, False], ids=["settled", "unsettled"])
+def test_run_multi_phase_hands_settled_to_synthesis_and_the_gate(
+    tmp_path, monkeypatch, nothing_new,
+):
     job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
     seen = {}
     monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
@@ -108,12 +142,12 @@ def test_run_multi_phase_hands_settled_to_synthesis_and_the_gate(tmp_path, monke
     monkeypatch.setattr(review.pipeline, "_run_group_phase",
                         lambda *a: SimpleNamespace(outputs=[], failures=[], cost=0.0))
     monkeypatch.setattr(review.pipeline, "_merge_round", lambda *a, **k: merged(fresh=0))
-    monkeypatch.setattr(review.pipeline, "_nothing_new", lambda *a: True)
+    monkeypatch.setattr(review.pipeline, "_nothing_new", lambda *a: nothing_new)
     monkeypatch.setattr(review.pipeline, "_run_synthesis_or_fallback",
                         lambda *a, **k: seen.update(synthesis=k) or PhaseResult())
     monkeypatch.setattr(review.pipeline, "_run_disprove_gate",
                         lambda *a, **k: seen.update(gate=k) or PhaseResult())
     monkeypatch.setattr(review.pipeline, "_consolidate_logs", lambda *a, **k: None)
     review.pipeline.run_multi_phase(job, max_parallel=1)
-    assert seen["synthesis"].get("settled") is True
-    assert seen["gate"].get("settled") is True
+    assert seen["synthesis"].get("settled") is nothing_new
+    assert seen["gate"].get("settled") is nothing_new

@@ -337,6 +337,14 @@ def _run_synthesis_or_fallback(
         _inject_failures_and_status(job.review_file, state)
         return PhaseResult()
 
+    if settled:
+        core.log.info("Synthesis skipped — no new findings, and every prior finding is settled")
+        _write_settled_review(job, group_count, merged.record, skipped_groups=n_skipped)
+        state.done.add(Phase.SYNTHESIS)
+        _write_pipeline_state(job, state)
+        _inject_failures_and_status(job.review_file, state)
+        return PhaseResult()
+
     if cost_so_far > max_cost:
         core.log.warn("Using merged group output as final review (synthesis skipped due to budget)")
         # Post-processed like every other path that ships group output: the
@@ -354,14 +362,6 @@ def _run_synthesis_or_fallback(
         )
         state.done.add(Phase.SYNTHESIS)
         state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
-        _write_pipeline_state(job, state)
-        _inject_failures_and_status(job.review_file, state)
-        return PhaseResult()
-
-    if settled:
-        core.log.info("Synthesis skipped — no new findings, and every prior finding is settled")
-        _write_settled_review(job, group_count, merged.record, skipped_groups=n_skipped)
-        state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
         return PhaseResult()
@@ -493,6 +493,9 @@ def _phase_synthesis(
         )
         record = _restore_held_findings(merged.record, record)
         if _is_incremental(job):
+            # ceiling: a carried nit reworded without its sid marker reads as
+            # new and is dropped. Upgrade trigger: once findings carry identity
+            # as a field (the JSON-artifact PR), match on sid not stable_id.
             record = drop_out_of_delta_nits(
                 record, job.preflight.delta_files, prior_ids(job)).record
         _post_process_review(
@@ -623,8 +626,7 @@ def _run_disprove_gate(
     failure: Diagnosis | None = None
 
     if settled:
-        core.log.info("Disprove gate skipped — nothing new to challenge; every carried "
-                      "finding faced the gate in the round that raised it")
+        core.log.info("nothing new to challenge; disprove skipped")
     elif not _should_disprove(job, disprove):
         core.log.info("Disprove gate off — keeping all findings")
     elif cost_so_far > max_cost:
@@ -670,7 +672,10 @@ def _phase_merge(
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
             f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
         record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
-    return Merged(record, fresh=len(record.visible))
+    # A rejection ingest added, that the caller did not already count as a
+    # failed group, is not a counted zero — `_nothing_new` must not settle.
+    ingest_gaps = {g.group for g in ingested.gaps} - {f.group for f in failed_groups}
+    return Merged(record, fresh=None if ingest_gaps else len(record.visible))
 
 
 def _without_out_of_delta_nits(merged: Merged, job: ReviewJob) -> Merged:

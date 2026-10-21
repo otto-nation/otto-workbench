@@ -81,3 +81,23 @@ def test_the_clients_own_argv_for_a_post_is_a_write():
 def test_the_clients_own_argv_for_a_get_is_not():
     argv = gh.client._api_argv("repos/o/r/issues", "GET", "", True, False, None, None, None)
     assert not gh.write_shapes.gh_is_write(argv)
+
+
+@pytest.mark.parametrize("args,index", [
+    (("issue", "comment", "1"), 0),
+    (("-R", "o/r", "issue", "comment", "1"), 2),
+    (("-Ro/r", "issue", "comment", "1"), 1),
+    (("-R=o/r", "issue", "comment", "1"), 1),
+    (("--repo", "o/r", "issue", "comment", "1"), 2),
+    (("--repo=o/r", "issue", "comment", "1"), 1),
+])
+def test_skip_repo_flags_covers_every_pflag_form(args, index):
+    assert gh.write_shapes.skip_repo_flags(args) == index
+
+
+@pytest.mark.parametrize("command", [
+    "gh -Rstranger/lib issue comment 1",
+    "gh -R=stranger/lib issue comment 1",
+])
+def test_an_attached_short_repo_flag_is_a_write(command):
+    assert gh.write_shapes.command_is_write(command)

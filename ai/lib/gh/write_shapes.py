@@ -144,17 +144,51 @@ def invocation(statement: Sequence[str]) -> Invocation:
     return Invocation(env=env, words=tuple(statement[start:]))
 
 
+def take_repo_flag(args: Sequence[str], i: int) -> tuple[str | None, int]:
+    """If *args[i]* is ``-R/--repo`` in any pflag form, return ``(value, next_index)``.
+
+    Forms: ``-R VALUE``, ``-RVALUE``, ``-R=VALUE``, ``--repo VALUE``, ``--repo=VALUE``.
+    When it is not a repo flag, return ``(None, i)``.
+    """
+    if i >= len(args):
+        return None, i
+    word = args[i]
+    if word in ("-R", "--repo"):
+        if i + 1 < len(args):
+            return args[i + 1], i + 2
+        return None, i + 1
+    if word.startswith("--repo="):
+        return word[len("--repo="):], i + 1
+    if word.startswith("-R="):
+        return word[len("-R="):], i + 1
+    if word.startswith("-R") and len(word) > 2:
+        return word[2:], i + 1
+    return None, i
+
+
 def skip_repo_flags(args: Sequence[str]) -> int:
     """Index of the first word that is not a leading ``-R/--repo`` flag or its value."""
     i = 0
     while i < len(args):
-        if args[i] in ("-R", "--repo"):
-            i += 2
-        elif args[i].startswith("--repo="):
-            i += 1
-        else:
+        _, nxt = take_repo_flag(args, i)
+        if nxt == i:
             break
+        i = nxt
     return i
+
+
+def with_env_builtin(inv: Invocation) -> Invocation:
+    """Lift ``env NAME=value ... cmd`` the same way leading ``NAME=value`` prefixes are."""
+    if inv.program != "env":
+        return inv
+    env = dict(inv.env)
+    i = 0
+    args = inv.args
+    while i < len(args) and _ASSIGNMENT.match(args[i]):
+        name, _, value = args[i].partition("=")
+        env[name] = value
+        i += 1
+    return Invocation(env=env, words=tuple(args[i:]))
 
 
 def _api_is_write(args: Sequence[str], input_text: str | None) -> bool:

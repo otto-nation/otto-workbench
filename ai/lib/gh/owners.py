@@ -144,6 +144,9 @@ def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdic
     """Whether every candidate owner of *target* is ours, in one group."""
     if not owner_map.configured:
         return Verdict.refuse(UNCONFIGURED, target)
+    if not target.owners:
+        return Verdict.refuse(
+            f"{target.detail} name no GitHub owner — pass --repo OWNER/REPO", target)
     groups = {candidate: owner_map.classify(candidate) for candidate in target.owners}
     foreign = [str(candidate) for candidate, group in groups.items() if group.upstream]
     if foreign and len(target.owners) > 1:
@@ -163,6 +166,51 @@ def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdic
     return Verdict.allow(names[0], target)
 
 
+_GH_TARGET_VARS = frozenset({"GH_REPO", "GH_HOST"})
+_ENV_BUILTINS = frozenset({"export", "declare", "typeset", "local", "env"})
+
+
+def _is_assign(word: str) -> bool:
+    name, sep, _ = word.partition("=")
+    return bool(sep) and name.isidentifier()
+
+
+def _assign_target_var(word: str) -> frozenset[str]:
+    if word.startswith("-") or not _is_assign(word):
+        return frozenset()
+    return frozenset({word.partition("=")[0]}) & _GH_TARGET_VARS
+
+
+def _builtin_assigns(words: Sequence[str]) -> frozenset[str]:
+    if not words or words[0] not in _ENV_BUILTINS:
+        return frozenset()
+    stop_on_word = words[0] == "env"
+    names: set[str] = set()
+    for word in words[1:]:
+        names.update(_assign_target_var(word))
+        if stop_on_word and not word.startswith("-") and not _is_assign(word):
+            break
+    return frozenset(names)
+
+
+def _gh_env_names(statement: Sequence[str]) -> frozenset[str]:
+    inv = gh.write_shapes.invocation(statement)
+    return frozenset(_GH_TARGET_VARS.intersection(inv.env)) | _builtin_assigns(inv.words)
+
+
+def _own_gh_env(statement: Sequence[str]) -> frozenset[str]:
+    inv = gh.write_shapes.with_env_builtin(gh.write_shapes.invocation(statement))
+    return frozenset(_GH_TARGET_VARS.intersection(inv.env))
+
+
+def _is_write(statement: Sequence[str]) -> bool:
+    if gh.write_shapes.statement_is_write(statement):
+        return True
+    inv = gh.write_shapes.with_env_builtin(gh.write_shapes.invocation(statement))
+    rebuilt = [f"{name}={value}" for name, value in inv.env.items()] + list(inv.words)
+    return rebuilt != list(statement) and gh.write_shapes.statement_is_write(rebuilt)
+
+
 def _load() -> OwnerMap | Verdict:
     try:
         owner_map = OwnerMap.load()
@@ -178,7 +226,7 @@ def check_command(command: str, cwd: str) -> Verdict:
     except ValueError as exc:
         return Verdict.refuse(
             f"the command could not be parsed ({exc}), so the GitHub write in it cannot be checked")
-    writes = [s for s in statements if gh.write_shapes.statement_is_write(s)]
+    writes = [s for s in statements if _is_write(s)]
     if not writes:
         return Verdict.allow()
     loaded = _load()
@@ -186,10 +234,13 @@ def check_command(command: str, cwd: str) -> Verdict:
         return loaded
     after_cd = any(gh.write_shapes.invocation(s).program in gh.write_shapes.DIRECTORY_CHANGERS
                    for s in statements)
+    assigned = frozenset().union(*(_gh_env_names(s) for s in statements)) if statements else frozenset()
     verdict = Verdict.allow()
     for statement in writes:
+        shifted = assigned - _own_gh_env(statement)
         resolution = gh.owner_targets.resolve_statement(
-            statement, cwd, after_cd=after_cd, known_hosts=loaded.hosts())
+            statement, cwd, after_cd=after_cd, known_hosts=loaded.hosts(),
+            shifted_env=shifted)
         if not resolution.ok:
             return Verdict.refuse(resolution.reason)
         verdict = check_target(resolution.target, loaded)

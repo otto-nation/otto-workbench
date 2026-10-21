@@ -91,6 +91,14 @@ def test_remotes_spanning_two_groups_need_an_explicit_repo(github_owners):
     assert "personal" in verdict.reason and "work" in verdict.reason
 
 
+def test_an_empty_target_is_refused(github_owners):
+    github_owners({"work": ["acme"]})
+    target = gh.owner_targets.Target(
+        (), gh.owner_targets.TargetSource.REMOTES, "the remotes at /x")
+    verdict = gh.owners.check_target(target, gh.owners.OwnerMap.load())
+    assert not verdict.ok
+
+
 def test_an_own_target_is_allowed_with_its_group(github_owners):
     github_owners({"work": ["acme"]})
     verdict = gh.owners.check_target(_target("acme"), gh.owners.OwnerMap.load())
@@ -130,6 +138,50 @@ def test_check_command_refuses_a_graphql_mutation_even_at_home(github_owners, tm
     github_owners({"work": ["otto-nation"]})
     repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
     assert not gh.owners.check_command("gh api graphql -f query='mutation { x }'", str(repo)).ok
+
+
+def test_check_command_refuses_when_one_statement_targets_upstream(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    verdict = gh.owners.check_command(
+        "gh issue comment 1 --repo ours/x -b a; gh issue comment 1 --repo stranger/y -b b",
+        str(tmp_path))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "export GH_REPO=stranger/lib; gh issue comment 1 -b hi",
+    "GH_REPO=stranger/lib; gh issue comment 1 -b hi",
+    "declare GH_REPO=stranger/lib; gh issue comment 1 -b hi",
+])
+def test_an_exported_gh_repo_refuses_a_cwd_write(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    verdict = gh.owners.check_command(command, str(repo))
+    assert not verdict.ok
+    assert "GH_REPO" in verdict.reason or "GH_HOST" in verdict.reason
+
+
+def test_an_exported_gh_host_refuses_a_bare_repo(github_owners, tmp_path):
+    github_owners({"work": ["acme"]})
+    verdict = gh.owners.check_command(
+        "export GH_HOST=ghe.corp; gh issue create --repo acme/x --title x", str(tmp_path))
+    assert not verdict.ok
+    assert "GH_HOST" in verdict.reason
+
+
+def test_env_builtin_repo_is_honoured_like_a_prefix(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    verdict = gh.owners.check_command(
+        "env GH_REPO=stranger/lib gh issue comment 1 -b hi", str(repo))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+def test_a_this_statement_prefix_still_wins_over_an_earlier_export(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    verdict = gh.owners.check_command(
+        "export GH_REPO=stranger/lib; GH_REPO=ours/svc gh issue create --title x", str(tmp_path))
+    assert verdict.ok
 
 
 def test_check_gh_call_ignores_reads_without_loading_config(github_owners):

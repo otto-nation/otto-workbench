@@ -386,6 +386,8 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
     # replies, so the remote may have moved under our own hand.
     adopted = bool(rest) and _adopt_own_push(item, read(item))
     item.status = ItemStatus.DONE
+    # A confirmation covers one publish; a completed one spends it, push or not.
+    item.forced = []
     if plan.pushes or adopted:
         _reopen_for_ci(run, item)
     return []

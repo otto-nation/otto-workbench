@@ -111,6 +111,18 @@ def test_a_drafted_commit_reset_away_by_hand_is_refused(tmp_path):
     assert batch.publish.plan(item, "pr", tree).refusal is Refusal.DRAFTED_DROPPED
 
 
+def test_dropped_is_computed_once_per_branch_tip(tmp_path, monkeypatch):
+    pair = remote_and_clone(tmp_path)
+    item, _ = _draft(pair)
+    calls = []
+    real = batch.publish._compute_dropped
+    monkeypatch.setattr(batch.publish, "_compute_dropped",
+                        lambda *a: calls.append(1) or real(*a))
+    batch.publish.read_tree(item)
+    batch.publish.read_tree(item)
+    assert len(calls) == 1
+
+
 def test_a_reset_and_new_commit_still_misses_the_drafted_one(tmp_path):
     pair = remote_and_clone(tmp_path)
     item, sha = _draft(pair)

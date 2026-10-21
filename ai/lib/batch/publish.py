@@ -38,8 +38,9 @@ unverifiable: the gate fails closed. Confirmations accumulate on the item
 
 A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
 of the old lease that the local branch already contains (`remote_fast_forwarded`)
-— the push that follows is a fast-forward and loses nothing. A branch the operator rebased
-by hand with `--fork-point` reaches that refusal too: the commits the fork
+— the push that follows is a fast-forward and loses nothing.
+
+A branch the operator rebased by hand with `--fork-point` reaches that refusal too: the commits the fork
 point skipped are the ones listed, and the rebase's start tip stays the one
 the batch saw before the hand rebase (`batch.resolve`, `force`), so
 `not_incorporated` does not fire for it. The lease advances as soon as
@@ -148,8 +149,14 @@ def drafted_commits(item: Item) -> list[str]:
     return list(dict.fromkeys(sha for rec in item.steps for sha in rec.commits))
 
 
-def _carried(wt: str, branch: str, sha: str, finder: git.replay.ReplayFinder) -> bool | None:
-    """Whether *branch* still carries *sha*; None when git could not say.
+class _Carried(StrEnum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+def _carried(wt: str, branch: str, sha: str, finder: git.replay.ReplayFinder) -> _Carried:
+    """Whether *branch* still carries *sha*; UNKNOWN when git could not say.
 
     On the branch as itself, or as a patch-equivalent (`git cherry` against
     *sha* alone), or as the replay `git.replay` follows through git's rewrite
@@ -159,28 +166,49 @@ def _carried(wt: str, branch: str, sha: str, finder: git.replay.ReplayFinder) ->
     """
     ref = f"refs/heads/{branch}"
     if git.client.ok("merge-base", "--is-ancestor", sha, ref, cwd=wt):
-        return True
+        return _Carried.YES
     if _cherry_plus(wt, ref, sha, f"{sha}^") == ():
-        return True
+        return _Carried.YES
     replay = finder.find(sha)
     if replay.status is git.replay.ReplayStatus.NONE:
-        return False
+        return _Carried.NO
     if replay.status is git.replay.ReplayStatus.UNKNOWN:
-        return None
-    return True
+        return _Carried.UNKNOWN
+    return _Carried.YES
+
+
+_DROPPED_CACHE: dict[tuple[str, str, str, tuple[str, ...]], tuple[str, ...]] = {}
 
 
 def _dropped(item: Item, wt: str) -> tuple[str, ...]:
-    """The drafted commits *item*'s branch no longer carries, labelled for the refusal."""
+    """The drafted commits *item*'s branch no longer carries, labelled for the refusal.
+
+    One publish reads the tree several times; the answer depends only on the
+    branch tip and the drafted list, so it is computed once per pair.
+    """
+    drafted = tuple(drafted_commits(item))
+    if not drafted:
+        return ()
+    tip = git.client.out("rev-parse", "--verify", "--quiet", f"refs/heads/{item.branch}", cwd=wt)
+    key = (wt, item.branch, tip, drafted)
+    if tip and key in _DROPPED_CACHE:
+        return _DROPPED_CACHE[key]
+    result = _compute_dropped(item, wt, drafted)
+    if tip:
+        _DROPPED_CACHE[key] = result
+    return result
+
+
+def _compute_dropped(item: Item, wt: str, drafted: Sequence[str]) -> tuple[str, ...]:
     finder = git.replay.ReplayFinder(Path(wt))
     dropped: list[str] = []
-    for sha in drafted_commits(item):
+    for sha in drafted:
         carried = _carried(wt, item.branch, sha, finder)
-        if carried:
+        if carried is _Carried.YES:
             continue
         subject = git.client.out("log", "-1", "--format=%s", sha, cwd=wt)
         label = f"{git.client.abbrev(sha)} {subject}".rstrip()
-        dropped.append(label if carried is False else f"{label} (unverifiable)")
+        dropped.append(label if carried is _Carried.NO else f"{label} (unverifiable)")
     return tuple(dropped)
 
 

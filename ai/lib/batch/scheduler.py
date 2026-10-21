@@ -316,8 +316,9 @@ class Scheduler:
         """
         new = self._commits(item.worktree, before) if before else None
         if new is None:
-            self._emit("commits_unrecorded", run=self.run.id, item=item.key,
-                       step=rec.step.value, head=head)
+            if before:
+                self._emit("commits_unrecorded", run=self.run.id, item=item.key,
+                           step=rec.step.value, head=head)
             new = [head] if head else []
         rec.commits.extend(sha for sha in new if sha not in rec.commits)
 

@@ -17,6 +17,7 @@ import batch.events
 import batch.machine
 import batch.outcomes
 import batch.plan
+import batch.publish
 import batch.report
 import batch.store
 import batch.targets
@@ -28,7 +29,8 @@ from batch.model import (STEP_ORDER, CancelState, Decision, DecisionKind, DirtyR
                          StepStatus, stacked_on_items)
 from batch.plan import PlanRow
 from batch.requests import Cancel, Decide, Outcome
-from batch.steps import StepProcess, WorktreeResult, ensure_worktree, restore_generated_dirt, step_argv
+from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure_worktree,
+                         restore_generated_dirt, step_argv)
 from config.workbench_config import BatchConfig
 from pr.comments_fix import CloseoutDebt
 
@@ -213,7 +215,9 @@ class Scheduler:
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None,
                  release: Callable[[Run], object] | None = None,
-                 machine: batch.machine.Machine | batch.machine.PerRun | None = None):
+                 machine: batch.machine.Machine | batch.machine.PerRun | None = None,
+                 hold_tree: Callable[[Item], str] | None = None,
+                 branch: Callable[[str], str] = checked_out_branch):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
         # Called with the run after every commit a tick makes, so the driver
         # can give back the target lock of an item that is now terminal. A
@@ -237,6 +241,11 @@ class Scheduler:
         # What other drivers on the machine are running, and the floor slot.
         # Without one the scheduler sees only itself (`PerRun`), as before.
         self._machine = machine or batch.machine.PerRun()
+        # Holds an item's worktree for the run once it is assigned; returns
+        # who holds it instead when it is busy. Supplied by the driver, which
+        # holds the item targets; without one no checkout is held.
+        self._hold_tree = hold_tree or (lambda item: "")
+        self._branch = branch
         self._peers = batch.machine.Peers()
         # Whether this pass refused a step on the host's say: the driver is
         # waiting, and with nothing running it queues for the floor slot.
@@ -365,6 +374,31 @@ class Scheduler:
                     emit=self._emit)
             return False
         item.worktree = res.path
+        if busy := self._hold_tree(item):
+            # Not this item's worktree until the run holds it: a retry assigns
+            # and holds again.
+            item.worktree = ""
+            _decide(self.run, item, "worktree", DecisionKind.FAILED,
+                    {"reason": batch.outcomes.FailureReason.LOCK_BUSY.value, "detail": busy},
+                    emit=self._emit)
+            return False
+        return True
+
+    def _off_branch(self, item: Item, rec: StepRecord) -> bool:
+        """Whether *item*'s worktree stands on another branch, deciding when it does.
+
+        Checked before every start: the worktree is the operator's between
+        steps, and a step run on whatever they switched to would commit to,
+        rebase or review the wrong branch.
+        """
+        current = self._branch(item.worktree)
+        if current == item.branch:
+            return False
+        on = f"is on {current}" if current else "is on no branch git could name"
+        _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
+                {"reason": batch.publish.Refusal.WRONG_BRANCH.value,
+                 "detail": f"{item.worktree} {on}, not {item.branch}"},
+                emit=self._emit)
         return True
 
     def _close(self, item: Item) -> None:
@@ -573,6 +607,8 @@ class Scheduler:
             rec = self._pending(item)
             if rec is None:
                 self._close(item)
+                continue
+            if self._off_branch(item, rec):
                 continue
             if self._tree_blocks(item, rec):
                 continue

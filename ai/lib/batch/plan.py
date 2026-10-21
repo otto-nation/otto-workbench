@@ -543,6 +543,17 @@ def _review_file(repo: str, branch: str) -> Path:
 
 
 def _repo_slug(repo_dir: str) -> str:
+    """`owner/repo` for a `--checkout`, or a PlanError naming what is wrong with it.
+
+    Checked here rather than left to `detect_repo`, which exits the process on
+    a checkout with no remote, and to git, which raises `FileNotFoundError` on
+    one that does not exist: both reached the operator as a traceback or a
+    message naming `gh repo view` rather than the flag they passed.
+    """
+    if not Path(repo_dir).is_dir():
+        raise PlanError(f"--checkout {repo_dir} does not exist")
+    if not git.client.ok("remote", "get-url", "origin", cwd=repo_dir):
+        raise PlanError(f"--checkout {repo_dir} has no origin remote to plan from")
     return pr.context.detect_repo(repo_dir)
 
 

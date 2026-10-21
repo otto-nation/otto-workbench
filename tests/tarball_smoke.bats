@@ -160,6 +160,33 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+# ── 6b. owners-check: the subagent guards' classifier ──────────────────────
+# claude-bash-guard and the Pi extensions ship apart from this tarball and find
+# owners-check on PATH when it is not beside them, so the tarball's bin/ must
+# hold one that answers from the tarball's own lib/.
+
+@test "owners-check --classify answers from the tarball layout" {
+  run "$TARBALL_ROOT/bin/owners-check" --classify -- gh issue create --title x
+  [ "$status" -eq 0 ]
+  [ "$output" = write ]
+  run "$TARBALL_ROOT/bin/owners-check" --classify -- gh pr view 1
+  [ "$status" -eq 0 ]
+  [ "$output" = read ]
+}
+
+@test "claude-bash-guard placed apart from ai/bin classifies through the tarball's owners-check on PATH" {
+  local guard_dir="$BATS_TEST_TMPDIR/guard" payload
+  mkdir -p "$guard_dir"
+  cp "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$guard_dir/"
+  payload='{"agent_id":"a","tool_input":{"command":"gh pr view 1"}}'
+  run bash -c 'printf "%s" "$1" | PATH="$2:$PATH" "$3"' _ "$payload" "$TARBALL_ROOT/bin" "$guard_dir/claude-bash-guard"
+  [ "$status" -eq 0 ]
+  payload='{"agent_id":"a","tool_input":{"command":"gh issue create --title x"}}'
+  run bash -c 'printf "%s" "$1" | PATH="$2:$PATH" "$3"' _ "$payload" "$TARBALL_ROOT/bin" "$guard_dir/claude-bash-guard"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"does not file issues"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

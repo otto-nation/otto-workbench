@@ -313,6 +313,20 @@ curl -sI localhost:3000'
   [ "$pi_value" = "$claude_value" ]
 }
 
+@test "github-writes: the two harnesses bound owners-check by one timeout" {
+  # Pi's spawnSync timeout and claude-bash-guard's own watchdog bound the same
+  # classify call; drifting apart would make one harness wait where the other
+  # has already refused.
+  local pi_ms claude_seconds
+  pi_ms=$(grep -oE 'CLASSIFY_TIMEOUT_MS = [0-9_]+' \
+    "$REPO_ROOT/ai/pi/extensions/_shared/github-writes.ts" | grep -oE '[0-9_]+$' | tr -d _)
+  claude_seconds=$(grep -oE '^OWNERS_CHECK_TIMEOUT_SECONDS=[0-9]+' \
+    "$REPO_ROOT/ai/claude/bin/claude-bash-guard" | grep -oE '[0-9]+')
+  [ -n "$pi_ms" ]
+  [ -n "$claude_seconds" ]
+  [ "$pi_ms" = "$((claude_seconds * 1000))" ]
+}
+
 # ─── wait-guidance ────────────────────────────────────────────────────────
 # The reason both guards return. Imports nothing, so node loads it directly.
 # The block is unchanged either way; only the named alternative switches.

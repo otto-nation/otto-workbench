@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { statements } from "./statements.ts";
 
@@ -31,8 +32,14 @@ import { statements } from "./statements.ts";
 
 /**
  * Program names that can write to GitHub: `gh` and the workbench commands that
- * post. Kept in step with `_GITHUB_COMMANDS` in ai/lib/gh/write_shapes.py and
- * `GITHUB_WRITE_PROGRAMS` in ai/claude/bin/claude-bash-guard.
+ * post. A deliberate superset of `_GITHUB_COMMANDS` in
+ * ai/lib/gh/write_shapes.py, never a copy of it: an extra name costs one
+ * classify call and cannot let a write through, while a missing one would hide
+ * every write Python knows it for. `review-orchestrate` is the extra — it runs
+ * `review-post`, so the pre-filter already asks about it should the classifier
+ * learn it. Same list as `GITHUB_WRITE_PROGRAMS` in
+ * ai/claude/bin/claude-bash-guard; tests/github_write_shapes.bats fails when
+ * either loses a name Python has.
  */
 export const GITHUB_WRITE_PROGRAMS: ReadonlySet<string> = new Set([
   "gh",
@@ -45,9 +52,26 @@ export const GITHUB_WRITE_PROGRAMS: ReadonlySet<string> = new Set([
 ]);
 
 /** ai/bin/owners-check, from this module's real path in the checkout. */
-export const OWNERS_CHECK = fileURLToPath(new URL("../../../bin/owners-check", import.meta.url));
+const CHECKOUT_OWNERS_CHECK = fileURLToPath(new URL("../../../bin/owners-check", import.meta.url));
 
-/** How long a classify call may take before it counts as a check that could not run. */
+/**
+ * The owners-check to run: BESIDE_CHECKOUT when it exists, else the bare name,
+ * which spawnSync looks up on PATH — where a layout that ships the extensions
+ * apart from ai/bin keeps it. Not found on PATH either is a spawn error, which
+ * classifiesAsWrite counts as a write.
+ */
+export function locateOwnersCheck(besideCheckout: string = CHECKOUT_OWNERS_CHECK): string {
+  return existsSync(besideCheckout) ? besideCheckout : "owners-check";
+}
+
+/** The owners-check the guards run by default. */
+export const OWNERS_CHECK = locateOwnersCheck();
+
+/**
+ * How long a classify call may take before it counts as a check that could not
+ * run. claude-bash-guard's OWNERS_CHECK_TIMEOUT_SECONDS is the same bound in
+ * seconds; tests/pi_extensions_tokenize.bats holds the two to one value.
+ */
 export const CLASSIFY_TIMEOUT_MS = 15_000;
 
 /** owners-check --classify's stdout for a command that does not write (with exit 0). */
@@ -89,8 +113,9 @@ export function mightWriteGithub(command: string): boolean {
  * exit 0 with exactly `read` on stdout.
  *
  * Fails closed: a missing checker, a missing python3, a crash (an uncaught
- * exception also exits 1), unexpected output or a timeout all count as a write, because the callers refuse a write and a guard that
- * allowed on its own inability to answer would be no guard.
+ * exception also exits 1), unexpected output or a timeout all count as a
+ * write, because the callers refuse a write and a guard that allowed on its
+ * own inability to answer would be no guard.
  */
 export function classifiesAsWrite(
   command: string,

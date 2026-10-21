@@ -52,6 +52,18 @@ _pi_publishes() {
   " -- "$1" "${2:-}"
 }
 
+# _path_without_owners_check — PATH with every directory holding an
+# owners-check dropped, so a guard copy with none beside it really finds none.
+_path_without_owners_check() {
+  local dir kept=""
+  local -a dirs
+  IFS=: read -ra dirs <<<"$PATH"
+  for dir in "${dirs[@]}"; do
+    [[ -e "$dir/owners-check" ]] || kept+="${kept:+:}$dir"
+  done
+  printf '%s' "$kept"
+}
+
 # _guard_copy CHECKER_BODY — a copy of the guard at $TMPDIR/tree/ai/claude/bin,
 # with an owners-check at ai/bin holding CHECKER_BODY, or none when it is empty.
 # Prints the copy's path.
@@ -131,7 +143,54 @@ _guard_copy() {
   local guard
   guard=$(_guard_copy '')
   rm -f "$TMPDIR/tree/ai/bin/owners-check"
+  [ "$(PATH="$(_path_without_owners_check)" _claude_subagent "$guard" 'gh pr view 1')" = publish ]
+}
+
+@test "github write shapes: Claude finds owners-check on PATH when none is beside the guard" {
+  local guard
+  guard=$(_guard_copy '')
+  mkdir -p "$TMPDIR/pathbin"
+  printf '#!/usr/bin/env bash\necho read\n' > "$TMPDIR/pathbin/owners-check"
+  chmod +x "$TMPDIR/pathbin/owners-check"
+  [ "$(PATH="$TMPDIR/pathbin:$(_path_without_owners_check)" _claude_subagent "$guard" 'gh pr view 1')" = allowed ]
+}
+
+@test "github write shapes: Claude counts an owners-check that outlives its bound as publishing" {
+  local guard started elapsed
+  guard=$(_guard_copy 'sleep 30; echo read')
+  # A one-second bound in the copy keeps this fast; the sed has to have landed.
+  sed -i.orig 's/^OWNERS_CHECK_TIMEOUT_SECONDS=15$/OWNERS_CHECK_TIMEOUT_SECONDS=1/' "$guard"
+  grep -q '^OWNERS_CHECK_TIMEOUT_SECONDS=1$' "$guard"
+  started=$SECONDS
   [ "$(_claude_subagent "$guard" 'gh pr view 1')" = publish ]
+  elapsed=$((SECONDS - started))
+  [ "$elapsed" -lt 10 ] || { echo "waited ${elapsed}s for a 1s bound"; return 1; }
+}
+
+@test "github write shapes: Claude takes a clean read printed without a newline" {
+  local guard
+  guard=$(_guard_copy 'printf read; exit 0')
+  [ "$(_claude_subagent "$guard" 'gh issue create --title x')" = allowed ]
+}
+
+@test "github write shapes: both pre-filter lists hold every program the Python classifier knows" {
+  local python_names claude_names name missing=""
+  python_names=$(cd "$REPO_ROOT/ai/lib" && python3 -c '
+import gh.write_shapes as w
+print(" ".join(sorted(w._GITHUB_COMMANDS)))')
+  [ -n "$python_names" ]
+  claude_names=$(sed -n "s/^GITHUB_WRITE_PROGRAMS='\(.*\)'$/\1/p" "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
+  [ -n "$claude_names" ]
+  for name in $python_names; do
+    [[ " $claude_names " == *" $name "* ]] || missing+=" claude:$name"
+  done
+  run node --input-type=module -e "
+    const { GITHUB_WRITE_PROGRAMS } = await import('$REPO_ROOT/ai/pi/extensions/_shared/github-writes.ts');
+    process.stdout.write(process.argv[1].split(' ').filter(n => !GITHUB_WRITE_PROGRAMS.has(n)).join(' '));
+  " -- "$python_names"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ] || missing+=" pi:$output"
+  [ -z "$missing" ] || { echo "missing:$missing"; return 1; }
 }
 
 @test "github write shapes: Claude counts a pre-filter match as publishing when owners-check crashes" {
@@ -197,6 +256,7 @@ _pi_checker() {
   [ "$status" -eq 0 ]
   [ "$output" = false ]
   _pi_publishes 'gh issue create --title x' "$(_pi_checker padded 'printf "  read\n"; exit 0')"
+  [ "$status" -eq 0 ]
   [ "$output" = false ]
 }
 
@@ -211,6 +271,7 @@ _pi_checker() {
   for body in 'echo read; exit 1' 'echo write; exit 0' 'exit 0' 'echo reader; exit 0' 'printf "read\nread\n"; exit 0'; do
     n=$((n + 1))
     _pi_publishes 'gh pr view 1' "$(_pi_checker "odd$n" "$body")"
+    [ "$status" -eq 0 ]
     [ "$output" = true ] || { echo "allowed with: $body"; return 1; }
   done
 }
@@ -219,9 +280,37 @@ _pi_checker() {
   printf '#!/usr/bin/env bash\ntouch "%s/checker-ran"\nexit 0\n' "$TMPDIR" > "$TMPDIR/marking-checker"
   chmod +x "$TMPDIR/marking-checker"
   _pi_publishes 'git log --oneline -3' "$TMPDIR/marking-checker"
+  [ "$status" -eq 0 ]
   [ "$output" = false ]
   [ ! -e "$TMPDIR/checker-ran" ]
   _pi_publishes 'gh pr view 1' "$TMPDIR/marking-checker"
+  [ "$status" -eq 0 ]
   [ "$output" = true ]
   [ -e "$TMPDIR/checker-ran" ]
+}
+
+@test "github write shapes: Pi counts an owners-check that outlives its bound as publishing" {
+  local checker
+  checker=$(_pi_checker hanging 'sleep 30; echo read')
+  run node --input-type=module -e "
+    const { classifiesAsWrite } = await import('$REPO_ROOT/ai/pi/extensions/_shared/github-writes.ts');
+    const started = Date.now();
+    const answer = classifiesAsWrite('gh pr view 1', process.argv[1], 500);
+    process.stdout.write(answer + ' ' + (Date.now() - started < 10000));
+  " -- "$checker"
+  [ "$status" -eq 0 ]
+  [ "$output" = "true true" ]
+}
+
+@test "github write shapes: Pi falls back to an owners-check on PATH when the checkout has none" {
+  mkdir -p "$TMPDIR/pathbin"
+  printf '#!/usr/bin/env bash\necho read\n' > "$TMPDIR/pathbin/owners-check"
+  chmod +x "$TMPDIR/pathbin/owners-check"
+  PATH="$TMPDIR/pathbin:$PATH" run node --input-type=module -e "
+    const { locateOwnersCheck, classifiesAsWrite } = await import('$REPO_ROOT/ai/pi/extensions/_shared/github-writes.ts');
+    const located = locateOwnersCheck(process.argv[1]);
+    process.stdout.write(located + ' ' + classifiesAsWrite('gh pr view 1', located));
+  " -- "$TMPDIR/no-such-checker"
+  [ "$status" -eq 0 ]
+  [ "$output" = "owners-check false" ]
 }

@@ -44,10 +44,23 @@ block() {
 SLEEP_WAIT_THRESHOLD_SECONDS=10
 
 # Program names that can write to GitHub: gh and the workbench commands that
-# post. The pre-filter's word list, kept in step with _GITHUB_COMMANDS in
-# ai/lib/gh/write_shapes.py and GITHUB_WRITE_PROGRAMS in
-# ai/pi/extensions/_shared/github-writes.ts.
+# post. The pre-filter's word list — a deliberate superset of _GITHUB_COMMANDS
+# in ai/lib/gh/write_shapes.py, never a copy of it. An extra name costs one
+# classify call and cannot let a write through; a name missing here would hide
+# every write Python knows it for. review-orchestrate is the extra: it runs
+# review-post, so the pre-filter already asks about it should the classifier
+# learn it. Same list as GITHUB_WRITE_PROGRAMS in
+# ai/pi/extensions/_shared/github-writes.ts; tests/github_write_shapes.bats
+# fails when either loses a name Python has.
 GITHUB_WRITE_PROGRAMS='gh pr pr-describe review review-post review-threads review-orchestrate'
+
+# How long an owners-check call may run before the guard stops waiting and
+# treats it as a check that could not answer. The guard bounds itself: the hook
+# sets no timeout, and Claude Code lets the tool call through when a hook times
+# out, so a hung checker left to the harness would fail open. Kept in step with
+# CLASSIFY_TIMEOUT_MS in ai/pi/extensions/_shared/github-writes.ts —
+# tests/pi_extensions_tokenize.bats holds the two to one value.
+OWNERS_CHECK_TIMEOUT_SECONDS=15
 
 # _branch_review_has_open_findings — true when a self-review for the current
 # branch is sitting on unticked findings.
@@ -295,10 +308,12 @@ _command_might_write_github() {
 # _locate_owners_check — set OWNERS_CHECK to ai/bin/owners-check, or to empty
 # when it cannot be found.
 #
-# Found beside this script first — the otto-ai-tools tarball flattens ai/bin and
-# ai/claude/bin into one bin/ — then at ../../bin in a checkout. The installed
-# ~/.local/bin symlink is followed first, as claude-edit-guard does, so a
-# checkout install resolves into the repo.
+# The installed ~/.local/bin symlink is followed first, as claude-edit-guard
+# does, so a checkout install resolves into the repo: beside this script, then
+# ../../bin (ai/claude/bin → ai/bin). Last, an owners-check on PATH — the
+# layouts that ship the guard apart from ai/bin (a hand-placed guard beside the
+# claude-config tarball's settings.json, the otto-ai-tools tarball's bin/ on
+# PATH) keep their checker there.
 _locate_owners_check() {
   local self dir candidate
   OWNERS_CHECK=""
@@ -311,23 +326,59 @@ _locate_owners_check() {
       return 0
     fi
   done
+  OWNERS_CHECK="$(command -v owners-check 2>/dev/null)" || OWNERS_CHECK=""
+  return 0
+}
+
+# _run_owners_check ARGS... — run "$OWNERS_CHECK" ARGS... for at most
+# OWNERS_CHECK_TIMEOUT_SECONDS. Sets OWNERS_CHECK_STATUS to its exit status, or
+# to empty when it did not finish in time (it is killed), and
+# OWNERS_CHECK_OUTPUT to its stdout. stderr is discarded.
+#
+# Bash builtins only: coreutils `timeout` is not on stock macOS. The checker
+# runs in a process substitution that reports its pid and then its exit status
+# on the same pipe, and `read -t` bounds the wait for each line. The markers
+# start on a fresh line so output without a trailing newline cannot swallow
+# them.
+_run_owners_check() {
+  local fd line runner="" child="" left
+  local -i deadline=$((SECONDS + OWNERS_CHECK_TIMEOUT_SECONDS))
+  OWNERS_CHECK_STATUS="" OWNERS_CHECK_OUTPUT=""
+  exec {fd}< <(
+    status=0
+    "$OWNERS_CHECK" "$@" 2>/dev/null &
+    printf '\npid %s %s\n' "$BASHPID" "$!"
+    wait "$!" || status=$?
+    printf '\nexit %s\n' "$status"
+  )
+  while left=$((deadline - SECONDS)); (( left > 0 )) && IFS= read -r -t "$left" -u "$fd" line; do
+    case "$line" in
+      "pid "*) read -r runner child <<<"${line#pid }" ;;
+      "exit "*) OWNERS_CHECK_STATUS="${line#exit }"; break ;;
+      *) OWNERS_CHECK_OUTPUT+="$line"$'\n' ;;
+    esac
+  done
+  if [[ -z "$OWNERS_CHECK_STATUS" && -n "$runner" ]]; then
+    kill "$child" "$runner" 2>/dev/null || true
+  fi
+  exec {fd}<&-
   return 0
 }
 
 # True unless owners-check --classify answers that $cmd does not write: exit 0
 # with exactly `read` on stdout. Fails closed on everything else — not found,
-# no python3, a crash (an uncaught exception also exits 1), unexpected output —
-# because the caller refuses a write and a guard that allowed on its own
-# inability to answer would be no guard. Unbounded here; the Claude Code hook
-# timeout bounds the whole hook.
+# no python3, a crash (an uncaught exception also exits 1), unexpected output,
+# no answer within OWNERS_CHECK_TIMEOUT_SECONDS — because the caller refuses a
+# write and a guard that allowed on its own inability to answer would be no
+# guard.
 _command_classifies_as_write() {
-  local status=0 answer
+  local answer
   _locate_owners_check
   [[ -n "$OWNERS_CHECK" ]] || return 0
-  answer="$("$OWNERS_CHECK" --classify -- "$cmd" 2>/dev/null)" || status=$?
-  answer="${answer#"${answer%%[![:space:]]*}"}"
+  _run_owners_check --classify -- "$cmd"
+  answer="${OWNERS_CHECK_OUTPUT#"${OWNERS_CHECK_OUTPUT%%[![:space:]]*}"}"
   answer="${answer%"${answer##*[![:space:]]}"}"
-  (( status != 0 )) || [[ "$answer" != read ]]
+  [[ "$OWNERS_CHECK_STATUS" != 0 || "$answer" != read ]]
 }
 
 # True when $cmd files a Linear issue or writes to GitHub — what a subagent may

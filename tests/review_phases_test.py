@@ -475,12 +475,10 @@ class TestExecutorsUseTheResolvedBudget:
 
     def test_disprove_does_not_pay_for_omitted_files(self, tmp_path, monkeypatch):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
-        text = "## Must fix\n- [ ] **[M1]** must fix something\n"
-        Path(job.review_file).write_text(text)
-        from review.ingest import ingest_review
-        record = ingest_review(text, strict=False)
+        from review_record_support import finding, record
+        rec = record(finding("M1", "must fix something", path="", checkbox=True))
         inv = self._first_invocation(
-            monkeypatch, lambda: review.steps._phase_disprove(job, record),
+            monkeypatch, lambda: review.steps._phase_disprove(job, rec),
         )
         assert inv.max_turns == review.phases.PHASES[Phase.DISPROVE].max_turns
 

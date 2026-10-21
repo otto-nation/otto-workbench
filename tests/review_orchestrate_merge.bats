@@ -40,15 +40,13 @@ PYEOF
 
 @test "_scoped: keeps only findings for matching files" {
   result=$(_py_here <<'PYEOF'
-from review.ingest import ingest_review
+from review.record import RecordFinding, ReviewRecord
 from review.render import render_findings
-prior = ingest_review("""## Must fix
-- [ ] **[M1]** `src/auth.go:10` — auth bug
-- [ ] **[M2]** `src/db.go:20` — db bug
-
-## Should fix
-- [ ] **[S1]** `src/auth.go:30` — cleanup
-""", strict=False)
+prior = ReviewRecord(findings=(
+    RecordFinding(id="M1", severity="M", path="src/auth.go", line=10, body="auth bug", checkbox=True),
+    RecordFinding(id="M2", severity="M", path="src/db.go", line=20, body="db bug", checkbox=True),
+    RecordFinding(id="S1", severity="S", path="src/auth.go", line=30, body="cleanup", checkbox=True),
+))
 scoped = mod._scoped(prior, ['src/auth.go'])
 print(render_findings(scoped))
 PYEOF
@@ -62,10 +60,10 @@ PYEOF
 
 @test "_scoped: no matches returns empty" {
   result=$(_py_here <<'PYEOF'
-from review.ingest import ingest_review
-prior = ingest_review("""## Must fix
-- [ ] **[M1]** src/auth.go:10 — auth bug
-""", strict=False)
+from review.record import RecordFinding, ReviewRecord
+prior = ReviewRecord(findings=(
+    RecordFinding(id="M1", severity="M", path="src/auth.go", line=10, body="auth bug", checkbox=True),
+))
 scoped = mod._scoped(prior, ['src/unrelated.go'])
 print([f.id for f in scoped.findings])
 PYEOF
@@ -75,13 +73,13 @@ PYEOF
 
 @test "_scoped: multiline finding continuation kept" {
   result=$(_py_here <<'PYEOF'
-from review.ingest import ingest_review
+from review.record import RecordFinding, ReviewRecord
 from review.render import render_findings
-prior = ingest_review("""## Must fix
-- [ ] **[M1]** `src/auth.go:10` — auth bug
-  This is a continuation line with more detail
-- [ ] **[M2]** `src/db.go:20` — db bug
-""", strict=False)
+prior = ReviewRecord(findings=(
+    RecordFinding(id="M1", severity="M", path="src/auth.go", line=10,
+                 body="auth bug\n  This is a continuation line with more detail", checkbox=True),
+    RecordFinding(id="M2", severity="M", path="src/db.go", line=20, body="db bug", checkbox=True),
+))
 scoped = mod._scoped(prior, ['src/auth.go'])
 print(render_findings(scoped))
 PYEOF
@@ -93,7 +91,7 @@ PYEOF
 
 @test "build_prompt: GROUP template gets scoped prior review" {
   result=$(_py_here <<'PYEOF'
-from review.ingest import ingest_review
+from review.record import RecordFinding, ReviewRecord
 from review.store import StoredReview
 from review.types import ReviewMeta
 pr = mod.PRMetadata(
@@ -111,12 +109,10 @@ job = mod.ReviewJob(
     session_log='/tmp/session.jsonl',
 )
 job.prior = StoredReview(
-    ingest_review(
-        '## Must fix\n'
-        '- [ ] **[M1]** `src/auth.go:10` — auth bug\n'
-        '- [ ] **[M2]** `src/db.go:20` — db bug',
-        strict=False,
-    ),
+    ReviewRecord(findings=(
+        RecordFinding(id="M1", severity="M", path="src/auth.go", line=10, body="auth bug", checkbox=True),
+        RecordFinding(id="M2", severity="M", path="src/db.go", line=20, body="db bug", checkbox=True),
+    )),
     ReviewMeta(),
 )
 result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
@@ -134,19 +130,16 @@ PYEOF
 
 @test "open_counts: counts by prefix" {
   result=$(_py "
-text = '''## Must fix
-- **[M1]** finding a
-- **[M2]** finding b
-## Should fix
-- **[S1]** finding c
-## Nit
-- **[N1]** finding d
-- **[N2]** finding e
-- **[N3]** finding f
-## Idioms
-- **[I1]** finding g'''
-from review.ingest import ingest_review
-counts = ingest_review(text, strict=False).open_counts
+from review.record import RecordFinding, ReviewRecord
+counts = ReviewRecord(findings=(
+    RecordFinding(id='M1', severity='M', body='finding a'),
+    RecordFinding(id='M2', severity='M', body='finding b'),
+    RecordFinding(id='S1', severity='S', body='finding c'),
+    RecordFinding(id='N1', severity='N', body='finding d'),
+    RecordFinding(id='N2', severity='N', body='finding e'),
+    RecordFinding(id='N3', severity='N', body='finding f'),
+    RecordFinding(id='I1', severity='I', body='finding g'),
+)).open_counts
 print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
 ")
   [ "$result" = "M=2,S=1,N=3,I=1" ]

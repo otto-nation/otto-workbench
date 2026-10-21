@@ -15,18 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
-from review.ingest import ingest_review
-from review.record import Disposition, ProseSection, ReviewRecord, load_record
+from review.record import Disposition, LedgerLine, ProseSection, ReviewRecord, load_record
 from review.steps import Merged
 from review.store import StoredReview
-from review.types import ReviewMeta
+from review.types import PriorDisposition, ReviewMeta
 from review.verdict import FALLBACK_SUMMARY, MECHANICAL_NOTE
 from review.verify import PostProcessed
 from review_record_support import finding, record
-
-
-def _merged(text: str) -> Merged:
-    return Merged(ingest_review(text, strict=False))
 
 
 class TestPhaseSynthesis:
@@ -90,7 +85,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
-        ro._phase_synthesis(job, "", 3, _merged("merged content"))
+        ro._phase_synthesis(job, "", 3, Merged(record()))
 
         result = Path(job.review_file).read_text()
         assert "## Summary" in result
@@ -117,7 +112,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
-        result = ro._phase_synthesis(job, "", 3, _merged("merged content"))
+        result = ro._phase_synthesis(job, "", 3, Merged(record()))
 
         assert result.diagnosis is None
 
@@ -133,7 +128,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
-        assert ro._phase_synthesis(job, "", 3, _merged("merged content")).cost == 2.5
+        assert ro._phase_synthesis(job, "", 3, Merged(record())).cost == 2.5
 
     def test_a_fallen_back_synthesis_is_still_charged(self, ro, tmp_path, monkeypatch):
         """The agent ran and spent; the review file just came from the merge."""
@@ -150,8 +145,8 @@ class TestPhaseSynthesis:
             try_recover_output=lambda *a: False,
         )
 
-        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        result = ro._phase_synthesis(job, "", 3, _merged(merged))
+        merged = record(finding("M1", "issue", path="file.go"))
+        result = ro._phase_synthesis(job, "", 3, Merged(merged))
 
         assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
         assert result.cost == 2.5
@@ -172,8 +167,8 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
-        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        result = ro._phase_synthesis(job, "", 3, _merged(merged))
+        merged = record(finding("M1", "issue", path="file.go"))
+        result = ro._phase_synthesis(job, "", 3, Merged(merged))
 
         assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
         assert result.diagnosis.kind == ro.DiagnosisKind.MECHANICAL_FALLBACK
@@ -203,8 +198,8 @@ class TestPhaseSynthesis:
             run_agent=lambda inv, **kw: invoked.append(inv),
         )
 
-        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        result = ro._phase_synthesis(job, "", 3, _merged(merged))
+        merged = record(finding("M1", "issue", path="file.go"))
+        result = ro._phase_synthesis(job, "", 3, Merged(merged))
 
         assert invoked == []
         written = Path(job.review_file).read_text()
@@ -225,8 +220,8 @@ class TestPhaseSynthesis:
             try_recover_output=lambda *a: False,
         )
 
-        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        ro._phase_synthesis(job, "", 3, _merged(merged))
+        merged = record(finding("M1", "issue", path="file.go"))
+        ro._phase_synthesis(job, "", 3, Merged(merged))
 
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
@@ -241,8 +236,8 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
-        ro._phase_synthesis(job, "", 3, _merged(merged))
+        merged = record(finding("S1", "cleanup", path="api.go", line=10))
+        ro._phase_synthesis(job, "", 3, Merged(merged))
 
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
@@ -266,7 +261,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
-        ro._phase_synthesis(job, "", 3, _merged("merged content"))
+        ro._phase_synthesis(job, "", 3, Merged(record()))
 
         result = Path(job.review_file).read_text()
         assert "## Summary" in result
@@ -291,8 +286,8 @@ class TestPhaseSynthesis:
             try_recover_output=lambda *a: False,
         )
 
-        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        ro._phase_synthesis(job, "", 3, _merged(merged))
+        merged = record(finding("M1", "issue", path="file.go"))
+        ro._phase_synthesis(job, "", 3, Merged(merged))
 
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
@@ -316,8 +311,8 @@ class TestPhaseSynthesis:
             try_recover_output=lambda *a: False,
         )
 
-        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        ro._phase_synthesis(job, "", 3, _merged(merged))
+        merged = record(finding("M1", "issue", path="file.go"))
+        ro._phase_synthesis(job, "", 3, Merged(merged))
 
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
@@ -638,11 +633,12 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
     """
 
     BEFORE = "func handle() {\n    rows, _ := db.Query(sql)\n}\n"
-    PRIOR_LINE = (
-        "- **[M1]** **`handler.go:2`** — `rows, _ := db.Query(sql)` drops the error"
-    )
+    PRIOR = record(finding(
+        "M1", "`rows, _ := db.Query(sql)` drops the error",
+        path="handler.go", line=2,
+    ))
 
-    def _job(self, ro, tmp_path, prior_review):
+    def _job(self, ro, tmp_path, prior):
         wt = tmp_path / "wt"
         wt.mkdir()
         git_out(wt, "init", "-q", "-b", "main")
@@ -657,21 +653,11 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
 
         job = TestPhaseSynthesis()._make_job(ro, tmp_path)
         job.wt_path = str(wt)
-        prior_text = (
-            f"# Review: org/repo#42 — t\n<!-- head_sha: {prior_sha} -->\n"
-            f"## Must fix\n{prior_review}\n"
-        )
-        from review.ingest import ingest_review
-        from review.store import StoredReview
-        from review.types import ReviewMeta
-        job.prior = StoredReview(
-            ingest_review(prior_text, strict=False),
-            ReviewMeta(head_sha=prior_sha),
-        )
+        job.prior = StoredReview(prior, ReviewMeta(head_sha=prior_sha))
         return job
 
-    def _extras(self, ro, tmp_path, monkeypatch, merged, prior_review=PRIOR_LINE):
-        job = self._job(ro, tmp_path, prior_review)
+    def _extras(self, ro, tmp_path, monkeypatch, merged, prior=None):
+        job = self._job(ro, tmp_path, self.PRIOR if prior is None else prior)
         seen = {}
 
         def capture(phase, j, **extra):
@@ -687,26 +673,29 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
         TestPhaseSynthesis._patch_pipeline(
             monkeypatch, build_prompt=capture, run_agent=mock_invoke,
         )
-        ro._phase_synthesis(job, "", 3, _merged(merged))
+        ro._phase_synthesis(job, "", 3, Merged(merged))
         return seen
 
     def test_a_finding_no_group_mentioned_is_handed_to_synthesis(
         self, ro, tmp_path, monkeypatch,
     ):
         extras = self._extras(
-            ro, tmp_path, monkeypatch, "## Must fix\n- **[M9]** **`other.go:1`** — x\n",
+            ro, tmp_path, monkeypatch,
+            record(finding("M9", "x", path="other.go")),
         )
         assert [f.ref.finding_id for f in extras["unaccounted_prior"]] == ["M1"]
 
     def test_a_finding_the_groups_settled_is_not_asked_about_again(
         self, ro, tmp_path, monkeypatch,
     ):
-        merged = "## Prior findings\n- **[M1]** `handler.go` — Fixed\n"
+        merged = record(ledger=(
+            LedgerLine("M1", PriorDisposition.FIXED, "handler.go"),
+        ))
         assert self._extras(ro, tmp_path, monkeypatch, merged)["unaccounted_prior"] == []
 
     def test_a_prior_review_that_reported_nothing_hands_over_nothing(
         self, ro, tmp_path, monkeypatch,
     ):
         assert self._extras(
-            ro, tmp_path, monkeypatch, "## Must fix\n", prior_review="",
+            ro, tmp_path, monkeypatch, record(), prior=record(),
         )["unaccounted_prior"] == []

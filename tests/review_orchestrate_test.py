@@ -128,15 +128,13 @@ class TestStaticAnalysisIntegration:
         "}\n"
     )
 
-    _REVIEW_TEXT = "## Summary\nLooks good.\n\n## Verdict\nApprove"
-
     def _seed(self, review_file):
-        from review.ingest import ingest_review
         from review.store import write_review
         from review.types import ReviewMeta
+        from review_record_support import record
         write_review(
             Path(review_file),
-            ingest_review(self._REVIEW_TEXT, strict=False),
+            record(summary="Looks good.", verdict="Approve"),
             ReviewMeta(),
         )
 
@@ -522,15 +520,15 @@ class TestCleanupScope:
         self, ro, monkeypatch, tmp_path,
     ):
         """`--prior-review` sets job.prior from prior.json, not from the text."""
-        from review.ingest import ingest_review
         from review.store import archive_prior, write_review
         from review.types import ReviewMeta
+        from review_record_support import record
 
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
         write_review(
             review_dir / "review.md",
-            ingest_review("## Summary\nprior round\n", strict=False),
+            record(summary="prior round"),
             ReviewMeta(head_sha="0ldc0de", date="2026-10-15"),
         )
         archive_prior(review_dir)

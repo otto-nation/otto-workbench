@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
 
+from review.record import ReviewRecord, TriageEntry
+from review_record_support import finding, record
+
 
 # ── 31. _document ───────────────────────────────────────────────────────────
 
@@ -37,10 +40,10 @@ class TestDocument:
         which commit — is on the page rather than a join away.
         """
         from datetime import date
-        from review.ingest import ingest_review
         from review.store import read_review
+        from review_record_support import record
         job = self._job(ro, tmp_path)
-        ro._publish(job, ingest_review("## Summary\nbody\n"))
+        ro._publish(job, record(summary="body"))
         stored = read_review(Path(job.review_file))
         meta = stored.meta
         assert meta.date == date.today().isoformat()
@@ -65,11 +68,11 @@ class TestDocument:
     def _incremental(self, ro, tmp_path, *, prior_date=""):
         job = self._job(ro, tmp_path)
         if prior_date:
-            from review.ingest import ingest_review
             from review.store import StoredReview
             from review.types import ReviewMeta
+            from review_record_support import record
             job.prior = StoredReview(
-                ingest_review("## Summary\nprior\n", strict=False),
+                record(summary="prior"),
                 ReviewMeta(date=prior_date, head_sha="def456"),
             )
         job.preflight = ro.PreflightData(
@@ -98,11 +101,6 @@ class TestDocument:
 
 
 class TestBuildMechanicalFallback:
-    @staticmethod
-    def _record(text):
-        from review.ingest import ingest_review
-        return ingest_review(text, strict=False)
-
     def test_pr_mode(self, ro, tmp_path):
         job = ro.ReviewJob(
             repo="org/repo", pr_number="42",
@@ -114,9 +112,11 @@ class TestBuildMechanicalFallback:
             session_log=str(tmp_path / "session.jsonl"),
             mode=ro.Mode.PR,
         )
-        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        record = ro._build_mechanical_fallback(job, 3, self._record(merged))
-        ro._publish(job, record)
+        from review_record_support import finding, record
+        rec = ro._build_mechanical_fallback(
+            job, 3, record(finding("M1", "issue", path="file.go")),
+        )
+        ro._publish(job, rec)
         result = Path(job.review_file).read_text()
         assert result.startswith("# Review: org/repo#42 — test PR\n")
         assert "Verdict" in result
@@ -133,9 +133,11 @@ class TestBuildMechanicalFallback:
             session_log=str(tmp_path / "session.jsonl"),
             mode=ro.Mode.SELF,
         )
-        merged = "## Nit\n- **[N1]** **`file.go:1`** — style\n"
-        record = ro._build_mechanical_fallback(job, 2, self._record(merged))
-        ro._publish(job, record)
+        from review_record_support import finding, record
+        rec = ro._build_mechanical_fallback(
+            job, 2, record(finding("N1", "style", path="file.go")),
+        )
+        ro._publish(job, rec)
         result = Path(job.review_file).read_text()
         assert result.startswith("# Self-Review: org/repo — my-branch\n")
         assert "Verdict" not in result
@@ -151,11 +153,12 @@ class TestBuildMechanicalFallback:
             session_log=str(tmp_path / "session.jsonl"),
             mode=ro.Mode.PR,
         )
-        merged = (
-            "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
-            "## Nit\n- **[N1]** **`b.go:2`** — style\n- **[N2]** **`c.go:3`** — naming\n"
-        )
-        result = ro._build_mechanical_fallback(job, 3, self._record(merged))
+        from review_record_support import finding, record
+        result = ro._build_mechanical_fallback(job, 3, record(
+            finding("M1", "issue", path="a.go"),
+            finding("N1", "style", path="b.go", line=2),
+            finding("N2", "naming", path="c.go", line=3),
+        ))
         assert "3 findings" in result.summary
 
     def _partial_job(self, ro, tmp_path, changed_files=16):
@@ -183,7 +186,7 @@ class TestBuildMechanicalFallback:
         state = PipelineState(group_names=["a", "b", "c"])
         state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
         result = ro._build_mechanical_fallback(
-            self._partial_job(ro, tmp_path), 3, self._record(""), pipeline_state=state,
+            self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
         assert "in 2 of 3 groups" in result.summary
         assert "in 3 groups" not in result.summary
@@ -196,7 +199,7 @@ class TestBuildMechanicalFallback:
         state = PipelineState(group_names=["a", "b", "c"])
         state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
         result = ro._build_mechanical_fallback(
-            self._partial_job(ro, tmp_path), 3, self._record(""), pipeline_state=state,
+            self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
         assert "No verdict — part of this review did not run." in result.verdict
         assert "Approve" not in result.verdict
@@ -204,7 +207,7 @@ class TestBuildMechanicalFallback:
     def test_a_run_where_every_group_reported_counts_plainly(self, ro, tmp_path):
         """The common case keeps its wording; only a partial run qualifies it."""
         result = ro._build_mechanical_fallback(
-            self._partial_job(ro, tmp_path), 3, self._record(""),
+            self._partial_job(ro, tmp_path), 3, record(),
         )
         assert "in 3 groups" in result.summary
         assert " of 3 groups" not in result.summary
@@ -226,7 +229,7 @@ class TestBuildMechanicalFallback:
         for n in range(3):
             state.groups_failed[n] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=15)
         result = ro._build_mechanical_fallback(
-            self._partial_job(ro, tmp_path), 3, self._record(""), pipeline_state=state,
+            self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
 
         assert "in 0 of 3 groups" in result.summary
@@ -249,7 +252,7 @@ class TestBuildMechanicalFallback:
         for n in range(3):
             state.groups_failed[n] = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="boom")
         result = ro._build_mechanical_fallback(
-            self._partial_job(ro, tmp_path), 3, self._record(""), pipeline_state=state,
+            self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
 
         assert result.verdict.strip() == NO_RUN_VERDICT.strip()
@@ -265,7 +268,7 @@ class TestBuildMechanicalFallback:
         state = PipelineState(group_names=["a", "b"])
         state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
         result = ro._build_mechanical_fallback(
-            self._partial_job(ro, tmp_path), 2, self._record(""), pipeline_state=state,
+            self._partial_job(ro, tmp_path), 2, record(), pipeline_state=state,
         )
 
         assert NO_RUN_VERDICT.strip() in result.verdict
@@ -278,7 +281,10 @@ class TestBuildMechanicalFallback:
 
 
 class TestWriteCleanReview:
-    TRIAGE = "## File Triage\n- `a.py` — tier 2, reviewed\n- `b.py` — tier 3, skimmed\n"
+    TRIAGE = ReviewRecord(triage=(
+        TriageEntry("a.py", "tier 2, reviewed"),
+        TriageEntry("b.py", "tier 3, skimmed"),
+    ))
 
     @staticmethod
     def _job(ro, tmp_path, mode):
@@ -294,18 +300,16 @@ class TestWriteCleanReview:
         )
 
     def test_pr_mode(self, ro, tmp_path):
-        from review.ingest import ingest_review
         job = self._job(ro, tmp_path, ro.Mode.PR)
-        ro._write_clean_review(job, 2, ingest_review(self.TRIAGE))
+        ro._write_clean_review(job, 2, self.TRIAGE)
         content = Path(job.review_file).read_text()
         assert "# Review:" in content
         assert "No findings across 3 files in 2 groups" in content
         assert "Approve — clean review." in content
 
     def test_self_review_mode(self, ro, tmp_path):
-        from review.ingest import ingest_review
         job = self._job(ro, tmp_path, ro.Mode.SELF)
-        ro._write_clean_review(job, 2, ingest_review(self.TRIAGE))
+        ro._write_clean_review(job, 2, self.TRIAGE)
         content = Path(job.review_file).read_text()
         assert "# Self-Review:" in content
         assert "No findings across 3 files in 2 groups" in content
@@ -314,9 +318,8 @@ class TestWriteCleanReview:
     def test_carries_the_triage_its_groups_merged(self, ro, tmp_path):
         """The triage is the only evidence a findings-free run leaves that the
         groups examined anything, and it was the one path that dropped it."""
-        from review.ingest import ingest_review
         job = self._job(ro, tmp_path, ro.Mode.PR)
-        ro._write_clean_review(job, 2, ingest_review(self.TRIAGE))
+        ro._write_clean_review(job, 2, self.TRIAGE)
         content = Path(job.review_file).read_text()
         assert "## File Triage" in content
         assert "- `a.py` — tier 2, reviewed" in content

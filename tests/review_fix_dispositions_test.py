@@ -13,14 +13,13 @@ import review.finding_issue
 from gh.types import PRContext, PRMetadata
 from pr.fix import FixOutcome, ItemOutcome
 from review.fix import apply_outcomes, apply_static_outcomes
-from review.ingest import ingest_review
 from review.outcome import write_unchanged_review
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.render import render_review
 from review.store import StoredReview, read_review, write_review
 from review.types import DeltaAttribution, PreflightData, ReviewJob
 
-from review_record_support import canonical, expected_text, fixture_meta, fixture_text
+from review_record_support import canonical, expected_text, finding, fixture_meta, fixture_record, record
 
 OUTCOMES = [
     ItemOutcome(id="S1", outcome=FixOutcome.FIXED, verified=False, verify_detail="the suite did not run"),
@@ -33,7 +32,7 @@ OUTCOMES = [
 
 def _answered():
     from dataclasses import replace
-    record = apply_outcomes(ingest_review(fixture_text("fix_annotated", "before.md")), OUTCOMES)
+    record = apply_outcomes(fixture_record("fix_annotated", "before.json"), OUTCOMES)
     return replace(record, static_analysis=apply_static_outcomes(record.static_analysis, OUTCOMES))
 
 
@@ -51,14 +50,17 @@ def test_each_outcome_is_a_disposition():
 
 
 def test_a_pr_mode_finding_without_a_box_stays_open_when_fixed():
-    record = ingest_review("## Should fix\n- **[S1]** `a` — x\n")
-    out = apply_outcomes(record, [ItemOutcome(id="S1", outcome=FixOutcome.FIXED, verified=True)])
+    rec = record(finding("S1", "x", path="a", line=None))
+    out = apply_outcomes(rec, [ItemOutcome(id="S1", outcome=FixOutcome.FIXED, verified=True)])
     assert out.finding("S1").disposition is Disposition.OPEN
 
 
 def test_an_earlier_verdict_outranks_this_pass():
-    record = ingest_review("## Nit\n- [ ] **[N1]** `a` — x *(declined — no)*\n")
-    out = apply_outcomes(record, [ItemOutcome(id="N1", outcome=FixOutcome.FIXED, verified=True)])
+    rec = record(finding(
+        "N1", "x", path="a", line=None, checkbox=True,
+        disposition=Disposition.DECLINED, reason="no",
+    ))
+    out = apply_outcomes(rec, [ItemOutcome(id="N1", outcome=FixOutcome.FIXED, verified=True)])
     assert out.finding("N1").disposition is Disposition.DECLINED
 
 
@@ -68,9 +70,9 @@ def test_a_deferred_finding_can_be_fixed_by_a_later_pass():
     Putting UNREACHED on `_STICKY` alone cannot fail this: the reset runs first.
     Removing the reset and adding UNREACHED to `_STICKY` together is the revert.
     """
-    record = apply_outcomes(ingest_review("## Nit\n- [ ] **[N1]** `a` — x\n"),
-                            [ItemOutcome(id="N1", outcome=FixOutcome.DEFERRED)])
-    again = apply_outcomes(record, [ItemOutcome(id="N1", outcome=FixOutcome.FIXED, verified=True)])
+    rec = apply_outcomes(record(finding("N1", "x", path="a", line=None, checkbox=True)),
+                         [ItemOutcome(id="N1", outcome=FixOutcome.DEFERRED)])
+    again = apply_outcomes(rec, [ItemOutcome(id="N1", outcome=FixOutcome.FIXED, verified=True)])
     assert again.finding("N1").disposition is Disposition.FIXED
 
 
@@ -99,22 +101,22 @@ def test_the_issue_body_names_why_each_is_open(tmp_path):
 
 def test_a_skipped_finding_stays_filable_across_passes(tmp_path):
     """D11: skipped is sticky, so a later pass that rebuilds nothing still files it."""
-    record = apply_outcomes(
-        ingest_review("## Nit\n- [ ] **[N1]** `a` — x\n"),
+    rec = apply_outcomes(
+        record(finding("N1", "x", path="a", line=None, checkbox=True)),
         [ItemOutcome(id="N1", outcome=FixOutcome.NEEDS_HUMAN, reason="needs a product call")],
     )
-    later = apply_outcomes(record, [])
+    later = apply_outcomes(rec, [])
     write_review(tmp_path / "review.md", later, fixture_meta("fix_annotated"))
     assert [f.id for f in review.finding_issue.filable(tmp_path)] == ["N1"]
     assert later.finding("N1").disposition is Disposition.SKIPPED
 
 
 def test_a_deferral_not_repeated_is_no_longer_filable(tmp_path):
-    record = apply_outcomes(
-        ingest_review("## Nit\n- [ ] **[N1]** `a` — x\n"),
+    rec = apply_outcomes(
+        record(finding("N1", "x", path="a", line=None, checkbox=True)),
         [ItemOutcome(id="N1", outcome=FixOutcome.DEFERRED)],
     )
-    later = apply_outcomes(record, [])
+    later = apply_outcomes(rec, [])
     write_review(tmp_path / "review.md", later, fixture_meta("fix_annotated"))
     assert [f.id for f in review.finding_issue.filable(tmp_path)] == []
     assert later.finding("N1").disposition is Disposition.OPEN
@@ -137,7 +139,7 @@ def test_an_outcome_lands_on_the_visible_finding_not_a_falsified_twin():
 
 def test_a_fixed_finding_stays_fixed_after_an_unchanged_rereview(tmp_path):
     answered = apply_outcomes(
-        ingest_review("## Should fix\n- [ ] **[S1]** `a.py:1` — x\n"),
+        record(finding("S1", "x", checkbox=True)),
         [ItemOutcome(id="S1", outcome=FixOutcome.FIXED, verified=True)],
     )
     prior = StoredReview(answered, fixture_meta("fix_annotated"))

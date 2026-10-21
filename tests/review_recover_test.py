@@ -15,7 +15,7 @@ if LIB_DIR not in sys.path:
 import review.recover
 from review.types import ReviewMeta
 from review.worktree import WorktreeResult
-from review_record_support import store_review
+from review_record_support import record, store_record
 import gh.client
 import pr.context
 import review.worktree
@@ -34,7 +34,7 @@ def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None
 
 def test_read_review_sha_extracts_the_html_comment(tmp_path):
     review_path = tmp_path / "review.md"
-    store_review(review_path, "# Review\n", ReviewMeta(head_sha="abcdef0123456789"))
+    store_record(review_path, record(), ReviewMeta(head_sha="abcdef0123456789"))
     assert review.recover.read_review_sha(review_path) == "abcdef0123456789"
 
 
@@ -192,7 +192,7 @@ def test_pin_recover_worktree_exits_when_commit_gone(monkeypatch):
 
 def test_should_auto_recover_logs_when_head_matches_a_partial(tmp_path, monkeypatch, capsys):
     review_path = tmp_path / "review.md"
-    store_review(review_path, "# Review\n", ReviewMeta(head_sha="abc1234"))
+    store_record(review_path, record(), ReviewMeta(head_sha="abc1234"))
     _write_partial_pipeline(tmp_path)
     monkeypatch.setattr(
         gh.client, "pr_view",
@@ -207,7 +207,7 @@ def test_should_auto_recover_logs_when_head_matches_a_partial(tmp_path, monkeypa
 
 def test_should_auto_recover_silent_when_head_moved(tmp_path, monkeypatch, capsys):
     review_path = tmp_path / "review.md"
-    store_review(review_path, "# Review\n", ReviewMeta(head_sha="abc1234"))
+    store_record(review_path, record(), ReviewMeta(head_sha="abc1234"))
     monkeypatch.setattr(
         gh.client, "pr_view",
         lambda *a, **kw: {"headRefOid": "def5678"},
@@ -221,7 +221,7 @@ def test_should_auto_recover_silent_when_head_moved(tmp_path, monkeypatch, capsy
 def test_should_auto_recover_reads_an_abbreviated_header_as_the_same_head(
         tmp_path, monkeypatch, capsys):
     review_path = tmp_path / "review.md"
-    store_review(review_path, "# Review\n", ReviewMeta(head_sha="abc1234"))
+    store_record(review_path, record(), ReviewMeta(head_sha="abc1234"))
     _write_partial_pipeline(tmp_path)
     monkeypatch.setattr(gh.client, "pr_view",
                         lambda *a, **kw: {"headRefOid": "abc1234deadbeef"})

@@ -221,6 +221,20 @@ class StickySkip:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class FixInterruption:
+    """A fix pass stopped before it landed, and the edits it left behind.
+
+    `leftovers` maps each path the agent had changed to its object id when the
+    pass stopped ("" for a deletion). The next run on the same HEAD compares the
+    file against it: still equal is the agent's edit, untouched, and is set
+    aside; anything else is someone's since, and is left where it is.
+    """
+
+    head_before: str = ""
+    leftovers: dict[str, str] = field(default_factory=dict)
+
+
 # ── Review metadata ──────────────────────────────────────────────────────────
 
 
@@ -298,6 +312,12 @@ class ReviewMeta:
     # schema depend on a module it otherwise knows nothing about.
     fix_commit_sha: str = ""
     fix_commit_status: str = ""
+    # A fix pass that was stopped before it landed. Its own field rather than a
+    # `fix_commit_status` value: that one is `CommitStatus`'s vocabulary, and an
+    # interruption is not something `land` reports. Cleared once the leftovers
+    # are set aside (`review.convergence.set_aside_leftovers`), and by any
+    # publish, which builds a fresh sidecar.
+    fix_interrupted: FixInterruption | None = None
     # Static violations a pass adjudicated rather than fixed, keyed by
     # `StaticViolation.site` and valued with the reason. The `## Static
     # Analysis` section is regenerated from a fresh scan every review, so an

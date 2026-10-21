@@ -68,7 +68,7 @@ import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
-from review.convergence import fix_work_set, mark_skips
+from review.convergence import blob_of, fix_work_set, mark_skips
 from review.document import ReviewDocument
 import review.fix_logs
 from review.grammar import UNVERIFIED_TAIL_RE
@@ -80,7 +80,7 @@ from review.static_analysis import (
 )
 from review.store import read_review, update_review
 from review.retry import _has_output
-from review.types import Finding, ReviewJob, severity_by_key
+from review.types import Finding, FixInterruption, ReviewJob, severity_by_key
 from core.trail import Trail
 
 # The two outcomes that leave a finding open. A deferral is a finding the agent
@@ -915,6 +915,17 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             (v.id, v.describe()) for v in self.violations.values()
         )
         return described
+
+    def interrupted(self, leftovers: frozenset[str], head_before: str) -> None:
+        """Record what this stopped pass left, so the next run can set it aside and resume."""
+        review_dir = Path(self.job.artifact_dir)
+        stopped = FixInterruption(
+            head_before, {p: blob_of(self.workdir, p) for p in sorted(leftovers)})
+        write_review_meta(review_dir, replace(read_review_meta(review_dir),
+                                              fix_interrupted=stopped))
+        core.log.warn(
+            f"Fix pass interrupted — {len(leftovers)} edited file(s) left uncommitted. "
+            "Re-running the self-review with --fix on this HEAD resumes the pass.")
 
 
 def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:

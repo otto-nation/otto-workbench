@@ -3,15 +3,21 @@
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import fix.engine  # noqa: E402
+import review.fix  # noqa: E402
 import review.fix_logs  # noqa: E402
 import review.summary  # noqa: E402
 from review.paths import write_review_meta  # noqa: E402
 from review.record import ReviewRecord  # noqa: E402
 from review.store import write_review  # noqa: E402
 from review.types import ReviewMeta  # noqa: E402
+from review_fix_pass_support import git_wt, _make_job  # noqa: F401,E402
 
 STARTED = "2026-10-21T09:15:02+00:00"
 
@@ -85,3 +91,31 @@ def test_another_runs_pass_is_not_counted(tmp_path):
     _log(tmp_path / "fix.jsonl", 0.5)
     review.fix_logs.keep(tmp_path, STARTED)
     assert review.summary.usage_logs(tmp_path, "", "") == []
+
+
+def test_run_fix_pass_clears_before_the_engine_and_keeps_logs_when_it_raises(
+        git_wt, tmp_path):
+    job = _make_job(
+        git_wt, tmp_path,
+        "## Must fix\n- [ ] **[M1]** `a.py:1` — Still open\n",
+    )
+    order = []
+
+    def _clear(_review_dir):
+        order.append("clear")
+
+    def _keep(_review_dir, _started_at):
+        order.append("keep")
+
+    def _engine(*_a, **_k):
+        order.append("run")
+        raise KeyboardInterrupt
+
+    with (
+        patch.object(review.fix_logs, "clear", side_effect=_clear),
+        patch.object(review.fix_logs, "keep", side_effect=_keep),
+        patch.object(fix.engine, "run", side_effect=_engine),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        review.fix.run_fix_pass(job)
+    assert order == ["clear", "run", "keep"]

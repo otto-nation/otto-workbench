@@ -61,7 +61,7 @@ from agent.registry import PHASES
 from core.phases import Effort, Phase
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
-from core.trail import Trail, tinfo
+from core.trail import Trail, tinfo, twarn
 from config.workbench_config import WorkbenchConfig, load_config_or_default
 import fix.gate
 from fix.gate import VerifyFn
@@ -402,6 +402,15 @@ class FixAdapter(ABC):
         not the pipeline's: the comments pass owes a reviewer a reply and must
         not send one it cannot stand behind, while `pr ci` and `pr review` owe
         nobody anything mid-pass and hold nothing.
+        """
+        return None
+
+    def interrupted(self, leftovers: frozenset[str], head_before: str) -> None:
+        """Called when a stop unwinds through the pass, before it propagates.
+
+        *leftovers* is what the agent had changed and nothing committed. A
+        domain that can resume records it; the default records nothing, and the
+        engine's own trail event is what every domain gets.
         """
         return None
 
@@ -1025,6 +1034,19 @@ def run(
         else ""
     )
 
+    try:
+        return _run_pass(adapter, items, trail=trail, verify=verify, head_before=head_before,
+                         dirty_before=dirty_before, baseline_ref=baseline_ref)
+    except (KeyboardInterrupt, SystemExit):
+        _interrupted(adapter, dirty_before, head_before, trail)
+        raise
+
+
+def _run_pass(
+    adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
+    verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
+) -> FixRun:
+    """`run`'s body once the pass is cleared to start: batch, settle, gate, check, land."""
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)
     name = PHASES[adapter.phase].label
@@ -1131,3 +1153,22 @@ def run(
     )
     adapter.record(finished)
     return finished
+
+
+def _interrupted(
+    adapter: FixAdapter, dirty_before: set[str], head_before: str, trail: Trail | None,
+) -> None:
+    """Say what a stopped pass left uncommitted, and let the domain record it.
+
+    Nothing here may mask the stop: a failure to record is reported and the
+    stop still propagates, which is the one outcome the operator asked for.
+    """
+    leftovers = frozenset(fix.scope.agent_changed(adapter.workdir, dirty_before) or ())
+    twarn(trail, "fix_interrupted",
+          f"fix pass stopped with {len(leftovers)} edited file(s) uncommitted",
+          data={"paths": sorted(leftovers), "head_before": head_before,
+                "workdir": str(adapter.workdir)})
+    try:
+        adapter.interrupted(leftovers, head_before)
+    except Exception as exc:  # noqa: BLE001 - recording must not replace the stop
+        core.log.warn(f"could not record the interrupted fix pass: {exc}")

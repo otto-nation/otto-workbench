@@ -80,15 +80,12 @@ but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
-``opus``, ``haiku``) is then resolved through ``AI_SONNET_MODEL`` /
-``AI_OPUS_MODEL`` / ``AI_HAIKU_MODEL``, falling back to the
-``ANTHROPIC_DEFAULT_*_MODEL`` names those were renamed from. An alias names a
-tier, not a deployment — on Vertex and Bedrock the account provisions a
-specific model ID, and that is where it lives. A concrete model ID anywhere in
-the chain passes through untouched. The Claude CLI does this resolution itself;
-the Pi backend does not, so it happens here before dispatch and both backends
-land on the same model.
+**No built-in model.** A phase names no default model, so when no layer sets
+one the model is ``None`` and the backend gets no ``--model``: the Claude CLI
+and Pi then use their own defaults. Pi refuses a provider without a model, which
+``agent.pi_models.require_model_with_provider`` reports before anything runs.
+Whatever a layer names is passed through as a model id — there is no tier-alias
+rewriting, so the provider's catalogue decides what an id means.
 
 ### agent/registry.py
 
@@ -140,9 +137,9 @@ it; ``--no-disprove`` is read off ``skip_phases`` and beats ``--disprove`` —
 ``review.phases._should_disprove``.
 
 Each phase's model is resolved elsewhere: ``agent.phases`` layers
-``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` over the
-default on the spec here, then maps a bare alias (``sonnet``, ``opus``,
-``haiku``) through ``AI_*_MODEL`` / ``ANTHROPIC_DEFAULT_*_MODEL``.
+``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` and the
+config file over the default on the spec here, which is no model at all — an
+unconfigured phase runs on the backend's own default.
 
 ### agent/retry.py
 
@@ -654,10 +651,10 @@ the fallback when the catalogue cannot be read or lacks the model. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
-them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
-takes its tier's floor rather than failing, because an unset
-`AI_*_MODEL` is the ordinary first-party-API setup; only a
-concrete model nobody has measured raises `UnknownModelWindow`.
+them. `prompt_budget_bytes` is that derivation. A phase with no configured
+model takes the unset-model floor rather than failing, because leaving the
+choice to the backend is an ordinary setup; only a concrete model nobody has
+measured raises `UnknownModelWindow`.
 
 The byte figure can only ever be conservative: no byte count bounds a token
 count without knowing the content's density, so `BYTES_PER_TOKEN_FLOOR` assumes
@@ -6941,7 +6938,7 @@ Runs each corpus case through the task its manifest declares — review today,
 ci-fix next — and scores the result against that case's expectations.
 
 Usage:
-  eval-models --corpus eval/corpus/ --models sonnet,opus --effort medium
+  eval-models --corpus eval/corpus/ --models claude-sonnet-5,grok-4.7 --effort medium
   eval-models --entry unchecked-error-go --runs 3
   eval-models --dry-run
 

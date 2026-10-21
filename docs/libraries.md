@@ -258,7 +258,7 @@ Six layers decide an agent value, highest first:
 
 | # | Layer | Example |
 |---|-------|---------|
-| 1 | Explicit flag | `--model opus`, `--effort high` |
+| 1 | Explicit flag | `--model claude-sonnet-5`, `--effort high` |
 | 2 | Phase env var | `WORKBENCH_AI_SCOUT_MODEL` |
 | 3 | Global env var | `WORKBENCH_AI_MODEL` |
 | 4 | Project config | `<worktree>/.workbench.yml` |
@@ -268,6 +268,9 @@ Six layers decide an agent value, highest first:
 Within one file an `agent.phases.<phase>` entry outranks the `agent.*` section
 it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
 phase keeps every sibling the layers below it set.
+
+A model no layer names is left to the backend's own default; Pi refuses a
+provider without a model, so a run with agent.provider set needs one too.
 
 Layer 5 exists only in the bare-repo worktree layout, where every checkout is
 a peer of the bare `.git` inside a container directory — the same directory

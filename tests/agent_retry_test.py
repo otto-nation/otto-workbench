@@ -642,5 +642,34 @@ class TestANarratedRunEndToEnd:
             output_path=str(output),
         )
         assert len(attempts) == 1
-        assert "without ever calling a file-writing tool" in attempts[0]
+        assert "as text" in attempts[0]
         assert attempts[0].endswith("ORIGINAL")
+
+    def test_an_xml_element_narration_is_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output
+
+        output = tmp_path / "review.json"
+        output.write_text("")
+        log = self._log(
+            tmp_path,
+            "<write><path>review.md</path><content>see above</content></write>",
+        )
+        assert diagnose_missing_output(str(log), str(output)).narrated_call is True
+
+    def test_a_prose_write_call_is_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output
+
+        output = tmp_path / "tracking.md"
+        output.write_text("")
+        log = self._log(tmp_path, 'write tracking.md "fixed M1"')
+        assert diagnose_missing_output(str(log), str(output)).narrated_call is True
+
+    def test_plain_prose_is_not_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output
+
+        output = tmp_path / "review.json"
+        output.write_text("")
+        log = self._log(tmp_path, "I could not complete the review. Please advise.")
+        diagnosis = diagnose_missing_output(str(log), str(output))
+        assert diagnosis.narrated_call is False
+        assert diagnosis.no_write_tool is True

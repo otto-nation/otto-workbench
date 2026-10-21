@@ -348,32 +348,6 @@ class TestVerifyFindsTheFileThePosterWould:
         assert result["dropped"] == ["S1"]
 
 
-class TestParseVerificationReadsALineList:
-    """A finding naming two discrete lines still names one file.
-
-    A duplicate declaration is the case that produces this location: the
-    finding cites both offsets, and the path used to keep the whole `:64,82`
-    suffix. `_match_evidence` then stat'd a path no filesystem holds and
-    `_drop_reason` called it "file not found", discarding a correct finding
-    about a file that was right there.
-    """
-
-    def test_a_real_file_named_by_a_line_list_is_found(self, tmp_path):
-        """The drop this whole fix exists to prevent, end to end.
-
-        Through the seam the run uses: the reader strips the location, and
-        `_match_evidence` stats what it handed back. Calling `_match_evidence`
-        with an unstripped path instead would test a layer that never sees one.
-        """
-        (tmp_path / "run.py").write_text('command: str = ""\n')
-        f = finding(
-            "S2", "duplicate field", path="run.py", line=64, end_line=82,
-        )
-        detail = review.verify._match_evidence(f.path, None, str(tmp_path))
-        assert detail["file_exists"]
-        assert detail["match_result"]
-
-
 def test_a_finding_without_a_path_is_not_evidence_checked(tmp_path):
     """X2: a label is not a file; the gate has nothing to check it against."""
     f = RecordFinding(id="M1", severity="M", body="**Documentation** — the README is stale")

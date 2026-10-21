@@ -374,3 +374,22 @@ def test_a_second_artifact_rejection_is_a_failure_not_another_turn(tmp_path):
     outcome = ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
     assert not outcome.ok and len(agent.calls) == 1
     assert outcome.errors[0].kind is IngestErrorKind.LINE_IN_PATH
+
+
+def test_a_repair_that_exits_nonzero_carries_that_failure(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(BAD_JSON)
+    agent = FakeAgent(path, BAD_JSON, rc=1)
+    outcome = ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
+    assert not outcome.ok and outcome.repaired
+    assert outcome.errors == ()
+    assert outcome.diagnosis.kind is DiagnosisKind.AGENT_ERROR
+    assert "1" in outcome.diagnosis.detail
+
+
+def test_clean_output_spends_no_repair_turn(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(GOOD_JSON)
+    agent = FakeAgent(path, GOOD_JSON)
+    outcome = ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
+    assert outcome.ok and not outcome.repaired and agent.calls == []

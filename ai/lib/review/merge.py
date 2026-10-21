@@ -7,19 +7,18 @@ path and description that decide whether two findings are duplicates are the
 pair that hashes to a stable ID, and a stable ID is how a later reconciliation
 recognises a finding a review restates.
 
-Reading that identity off a finding line is `review.grammar`'s job, not this
-module's: `FindingIdentity` answers both questions, so deduplication and
-carry-forward cannot come to different conclusions about one line. Reading a
+Reading that identity off a finding's fields is `review.grammar`'s job, not
+this module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one record. Reading a
 review is `review.document`'s job, checking findings against the tree is
 `review.verify`'s, and the `Finding` every side holds is `review.types`' — a
 consumer that only holds findings needs none of this. Deciding what became of
 a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
-carries its extent. Deduplication walks those records and drops a repeat by
-`FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
-record that never reaches the merged document rather than a span cut out of
-it.
+A `RecordFinding` already carries its fields. Deduplication walks those
+records and drops a repeat by `FindingIdentity.dedup_key` within the same ID
+prefix, so a duplicate is a record that never reaches the merged document
+rather than a second copy of it.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs

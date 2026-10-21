@@ -224,13 +224,12 @@ class FindingIdentity:
 
     @classmethod
     def of_fields(cls, path: str, line: int | None, body: str) -> "FindingIdentity":
-        """The identity of a finding held as fields rather than as a line.
+        """The identity of a finding held as fields.
 
-        `desc` is what `of` captured after a declaration's dash: the body's first
-        line, leading space dropped, cut to eighty characters. Anchored findings
-        therefore keep the stable ID their rendered line hashed to, which is
-        the sid a posted comment already carries. A finding with no file hashes
-        with an empty path.
+        `desc` is the body's first line, leading space dropped, cut to eighty
+        characters. Anchored findings therefore keep the stable ID their
+        rendered line hashed to, which is the sid a posted comment already
+        carries. A finding with no file hashes with an empty path.
         """
         first = body.split("\n", 1)[0].lstrip()
         return cls(path, line, first[:80].strip())

@@ -316,9 +316,8 @@ class TestPiLogsAreReadableForWrites:
 class TestTheNarrationScanIsOrderedCheaplyFirst:
     """The expensive half runs only for a run that called nothing.
 
-    `_narrated_write_contents` counts fence depth, parses JSON and matches a
-    heading regex over every assistant text block. `_called_any_tool` is a
-    scan for one record type. The `and` puts the cheap test first, so the
+    `_has_narrated_call` walks every assistant text block. `_called_any_tool`
+    is a scan for one record type. The `and` puts the cheap test first, so the
     expensive one is reached only in the rare case whose answer is used.
 
     A lazy wrapper around the pair buys nothing on top of this and was tried:
@@ -330,7 +329,7 @@ class TestTheNarrationScanIsOrderedCheaplyFirst:
         def _boom(records):
             raise AssertionError("narration scan ran for a run that used tools")
 
-        monkeypatch.setattr(agent.session, "_narrated_write_contents", _boom)
+        monkeypatch.setattr(agent.session, "_has_narrated_call", _boom)
         log_path = _write_log(
             tmp_path,
             _pi_tool("read", path="/wt/a.py"),

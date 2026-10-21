@@ -50,7 +50,6 @@ during a review, and a fix pass needs only a finished review file to work from.
 
 from __future__ import annotations
 
-import re
 import sys
 import textwrap
 from dataclasses import replace
@@ -350,9 +349,7 @@ def _escape_annotation(detail: str) -> str:
     return " ".join(detail.replace("*(", "* (").split())
 
 
-def _fixed_static_line(
-    line: str, outcome: ItemOutcome, pattern: re.Pattern[str] = STATIC_ID_RE,
-) -> str:
+def _fixed_static_line(line: str, outcome: ItemOutcome) -> str:
     """The Static Analysis declaration a landed fix leaves behind: ticked, and hedged if owed.
 
     The tick and the caveat are one decision rather than two, so they are made
@@ -367,18 +364,12 @@ def _fixed_static_line(
     compound once per round on a finding that also never leaves `open_findings`.
     An already-hedged line is left alone for the same reason, which is what a
     synthesis pass carrying the annotation forward needs.
-
-    `pattern` is how the caller's own declaration is spelled, and its group(1)
-    must be the box. A static violation is declared differently from a finding
-    and would not match the default — the tick would silently be a no-op, which
-    is the failure this parameter exists to prevent rather than a default worth
-    falling back to.
     """
     # The box the declaration carries, not the first `- [ ]` anywhere on the
     # line: a finding quoting the empty box in its own prose — a review of a
     # template does — would otherwise have that quotation ticked instead, which
     # corrupts the prose and annotates a finding that stays open.
-    box = pattern.match(line.strip())
+    box = STATIC_ID_RE.match(line.strip())
     if not (box and box.group(1) == " "):
         return line
     ticked = line.replace("- [ ]", "- [x]", 1)
@@ -605,7 +596,7 @@ def apply_static_outcomes(section: str, outcomes: list[ItemOutcome]) -> str:
             continue
         outcome = by_id[match.group(2)]
         if outcome.outcome.counts_as_fixed:
-            lines[n] = _fixed_static_line(line, outcome, STATIC_ID_RE)
+            lines[n] = _fixed_static_line(line, outcome)
         elif note := _annotation(outcome):
             lines[n] = _annotated_static_line(line, note)
     return "\n".join(lines)

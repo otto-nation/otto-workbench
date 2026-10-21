@@ -230,20 +230,22 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     # Only now: a crash already explains the missing output, and saying it
     # twice pushes the cause out of the reader's way with a restatement of it.
     diagnosis = replace(diagnosis, deliverable_gone=gone)
-    # Narration means the agent produced a JSON object as text *and called
-    # nothing*. Without the second half this fires on any run whose commentary
-    # happens to contain a JSON object. The hint would then be addressed to an
-    # agent that did call its tools, about a mistake it did not make.
+    # Narration means the agent produced a tool call as text *and called
+    # nothing*. Salvage only accepts a JSON object; diagnosis is wider — an
+    # XML write/invoke element, a prose `write <path>` call, a JSON-shaped
+    # call, or a JSON artifact. Plain prose with no call shape is not a
+    # narrated call. Without the called-nothing half this fires on any run
+    # whose commentary happens to contain one of those shapes. The hint would
+    # then be addressed to an agent that did call its tools, about a mistake
+    # it did not make.
     #
     # The order of the `and` is what keeps this cheap. `_called_any_tool` is a
-    # scan for one record type; `_narrated_write_contents` parses JSON over
-    # every assistant text block. Putting the cheap half first means the
-    # expensive half runs only for a run that called nothing at all — rare,
-    # and the only case whose answer is used. Reversing them would pay the
-    # full cost on every diagnosis.
-    narrated = not _called_any_tool(records) and bool(
-        _narrated_write_contents(records),
-    )
+    # scan for one record type; `_has_narrated_call` walks every assistant
+    # text block. Putting the cheap half first means the expensive half runs
+    # only for a run that called nothing at all — rare, and the only case
+    # whose answer is used. Reversing them would pay the full cost on every
+    # diagnosis.
+    narrated = not _called_any_tool(records) and _has_narrated_call(records)
     if _is_pi_log(records):
         if _pi_wrote_output(records, output_path):
             return diagnosis
@@ -458,6 +460,54 @@ def _json_documents(text: str) -> list[str]:
         return []
     span = text[start:end + 1]
     return [span] if _json_object(span) is not None else []
+
+
+# Closing tags of an XML-shaped call written out as text:
+# `</content></write>`, `</parameter></invoke>`, and the like.
+_CALL_TAIL = re.compile(r"""(?:\s*</[A-Za-z_][\w.-]*>)+\s*$""")
+_XML_CALL = re.compile(r"<(?:write|invoke)\b", re.IGNORECASE)
+_PROSE_WRITE = re.compile(r"(?i)\bwrite\s+(?:\S+[/\\]|\S+\.\S+)")
+
+
+def _is_narrated_call_text(text: str) -> bool:
+    """Whether one assistant text block is a narrated tool call.
+
+    Four shapes: an XML write/invoke element, a prose `write <path>` call, a
+    JSON-shaped call, or a JSON artifact object. Plain prose is not.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if _json_call_content(text) is not None:
+        return True
+    if _json_documents(text):
+        return True
+    if _XML_CALL.search(stripped) or _CALL_TAIL.search(stripped):
+        return True
+    return bool(_PROSE_WRITE.search(stripped))
+
+
+def _has_narrated_call(records: list[dict]) -> bool:
+    """Whether any assistant text in the log is a narrated tool call."""
+    return any(
+        _message_narrates_a_call(message)
+        for record in records
+        for message in _assistant_messages(record)
+    )
+
+
+def _message_narrates_a_call(message: dict) -> bool:
+    """Whether one assistant message's text blocks include a narrated call."""
+    for block in message.get("content") or []:
+        if _block_narrates_a_call(block):
+            return True
+    return False
+
+
+def _block_narrates_a_call(block: object) -> bool:
+    if not isinstance(block, dict) or block.get("type") != "text":
+        return False
+    return _is_narrated_call_text(block.get("text") or "")
 
 
 def _assistant_messages(record: dict) -> list[dict]:

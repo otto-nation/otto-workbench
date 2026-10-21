@@ -15,7 +15,7 @@
 # nothing the failure output does not. A caller that wants it back passes it
 # after --.
 #
-# Usage: bin/local/run-tests [--bats|--pytest] [--shard N/M] [-- RUNNER_ARGS...]
+# Usage: bin/local/run-tests [--bats|--pytest] [--shard N/M] [--changed] [--direct] [-- RUNNER_ARGS...]
 # Exit code: 0 when every suite it ran passed, 1 otherwise.
 
 set -e

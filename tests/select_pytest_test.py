@@ -414,3 +414,9 @@ def test_a_paths_file_replaces_the_diff(tmp_path, monkeypatch, capsys):
                         lambda base: pytest.fail("diffed despite a paths file"))
     assert sp.main(["--paths-file", str(listed)]) == 0
     assert str(REPO_ROOT / "tests" / "wiki_test.py") in capsys.readouterr().out.split()
+
+
+def test_an_unreadable_paths_file_is_an_error(tmp_path, capsys):
+    missing = tmp_path / "nope"
+    assert sp.main(["--paths-file", str(missing)]) == 2
+    assert capsys.readouterr().err == f"--paths-file: cannot read {missing}\n"

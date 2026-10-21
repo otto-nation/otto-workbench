@@ -690,7 +690,14 @@ def main(argv: list[str]) -> int:
         return _validate(dependency_map())
 
     mapping = dependency_map(direct_only=args.direct)
-    changed = _read_paths(args.paths_file) if args.paths_file else _changed_files(args.base)
+    if args.paths_file:
+        try:
+            changed = _read_paths(args.paths_file)
+        except OSError:
+            print(f"--paths-file: cannot read {args.paths_file}", file=sys.stderr)
+            return 2
+    else:
+        changed = _changed_files(args.base)
     if not changed or _triggers_full_suite(changed):
         selected = _all_tests()
     else:

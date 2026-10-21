@@ -112,6 +112,22 @@ def test_missing_file_skipped(tmp_path):
     assert all(s.heading != "Review gaps" for s in merged.record.extra)
 
 
+def test_a_whitespace_only_group_file_is_skipped_silently(tmp_path, capsys):
+    """A failed group's pre-created empty file is not a malformed artifact."""
+    good = tmp_path / "group-1.json"
+    good.write_text(GROUP_OK)
+    empty = tmp_path / "group-2.json"
+    empty.write_text("  \n")
+    merged = _phase_merge(
+        [str(good), str(empty)], [], ("g1", "g2"), declinable=frozenset(),
+    )
+    seen = capsys.readouterr()
+    assert "invalid_json" not in seen.out + seen.err
+    assert "rejected" not in seen.out + seen.err
+    assert [f.id for f in merged.record.findings] == ["M1"]
+    assert all(s.heading != "Review gaps" for s in merged.record.extra)
+
+
 def test_a_doc_rewritten_mid_run_merges_the_current_bytes(tmp_path):
     path = tmp_path / "group-1.json"
     path.write_text(GROUP_OK)

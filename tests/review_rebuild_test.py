@@ -95,6 +95,20 @@ def test_markdown_group_files_are_named_not_read(tmp_path, capsys):
     assert "predate JSON artifacts" in seen.out + seen.err
 
 
+def test_a_whitespace_only_group_file_is_skipped_silently(tmp_path, capsys):
+    """A failed group's pre-created empty file is not a malformed artifact."""
+    (tmp_path / "group-1.json").write_text("  \n")
+    (tmp_path / "group-2.json").write_text(
+        json.dumps({"findings": [{"id": "M1", "path": "a.py", "line": 1, "body": "x"}]}),
+    )
+    (tmp_path / "meta.json").write_text(json.dumps({"repo": "o/r"}))
+    assert rebuild(tmp_path, "1", script="test") == 0
+    seen = capsys.readouterr()
+    assert "invalid_json" not in seen.out + seen.err
+    assert "skipped" not in seen.out + seen.err
+    assert [f.id for f in load_record(tmp_path).visible] == ["M1"]
+
+
 def test_a_rejected_group_file_is_skipped_and_the_rest_rebuilt(tmp_path):
     finding_doc = {"id": "M1", "path": "a.py", "line": 1, "body": "x"}
     (tmp_path / "group-1.json").write_text(json.dumps({"findings": [finding_doc]}))

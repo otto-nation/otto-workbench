@@ -59,6 +59,10 @@ def _group_records(group_files: list[str], declinable: frozenset[str]) -> list[R
     """
     records = []
     for path in group_files:
+        # A failed group's pre-created file is empty (or whitespace); it is
+        # not a malformed artifact.
+        if not Path(path).read_text().strip():
+            continue
         try:
             records.append(load_artifact(path, GroupArtifact).to_record(declinable=declinable))
         except IngestRejected as exc:

@@ -661,6 +661,10 @@ def _ingest_group_outputs(
     for i, path in enumerate(group_outputs):
         if not Path(path).exists():
             continue
+        # A failed group's pre-created file is empty (or whitespace); it is
+        # not a malformed artifact.
+        if not Path(path).read_text().strip():
+            continue
         try:
             # A carried decline is believed only for a finding the prior round held (D19).
             records.append(load_artifact(path, GroupArtifact).to_record(declinable=declinable))

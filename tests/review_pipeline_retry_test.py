@@ -211,18 +211,19 @@ class TestRetryMissingOutput:
         assert "exited with code 3" in errors[0]
 
     def test_denied_write_is_recovered_instead_of_retried(self, tmp_path):
+        recovered = {"summary": "No issues found."}
         log_path = _write_log(tmp_path, json.dumps({
             "type": "result", "is_error": True,
             "permission_denials": [{
                 "tool_name": "Write",
-                "tool_input": {"content": "## Summary\nNo issues found."},
+                "tool_input": {"content": json.dumps(recovered)},
             }],
         }))
-        output = tmp_path / "out.md"
+        output = tmp_path / "out.json"
         invoke = _Invoke()
         assert self._run(invoke, log_path, str(output)) is None
         assert invoke.calls == []
-        assert "## Summary" in output.read_text()
+        assert json.loads(output.read_text()) == recovered
 
 
 class TestSingleAgentCleanup:

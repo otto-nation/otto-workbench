@@ -58,8 +58,11 @@ def keep(review_dir: Path, started_at: str) -> Path | None:
     target.mkdir(parents=True, exist_ok=True)
     for log in present:
         shutil.copy2(log, target / log.name)
-    passes = sorted(p for p in (review_dir / FIX_LOGS_DIRNAME).iterdir() if p.is_dir())
-    for stale in passes[:-PASSES_KEPT]:
+    # Newest by mtime, not name: `unstamped` or an odd-width stamp sorts wrong.
+    # The pass just written is never a candidate.
+    others = [p for p in (review_dir / FIX_LOGS_DIRNAME).iterdir() if p.is_dir() and p != target]
+    others.sort(key=lambda p: p.stat().st_mtime)
+    for stale in others[:max(0, len(others) - (PASSES_KEPT - 1))]:
         shutil.rmtree(stale, ignore_errors=True)
     return target
 

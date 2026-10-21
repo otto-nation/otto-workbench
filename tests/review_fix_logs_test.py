@@ -58,6 +58,20 @@ def test_only_the_newest_passes_are_kept(tmp_path):
     assert kept[0].startswith("20261021T02")
 
 
+def test_unstamped_pass_is_pruned_by_age_and_target_survives(tmp_path):
+    import os
+    root = tmp_path / "fix-logs"
+    for i in range(review.fix_logs.PASSES_KEPT):
+        d = root / ("unstamped" if i == 0 else f"2026{i}")
+        d.mkdir(parents=True)
+        os.utime(d, (1000 + i, 1000 + i))
+    _log(tmp_path / "fix.jsonl", 0.1)
+    target = review.fix_logs.keep(tmp_path, "2026-10-21T00:00:00+00:00")
+    names = {p.name for p in root.iterdir()}
+    assert target.exists() and "unstamped" not in names
+    assert len(names) == review.fix_logs.PASSES_KEPT
+
+
 def test_clear_leaves_the_review_alone(tmp_path):
     _log(tmp_path / "fix.jsonl", 0.1)
     (tmp_path / "review.md").write_text("x")

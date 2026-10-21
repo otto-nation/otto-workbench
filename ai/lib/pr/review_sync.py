@@ -42,7 +42,7 @@ class ReviewReport(Protocol):
     cache_write_tokens: int
     unpushed_fix_commit: str
     reviewed_through: str
-    workable: int
+    workable: int | None
 
 
 def sync_review_domain(

@@ -5,9 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import review.outcome  # noqa: E402
 from conftest import git_out  # noqa: E402
 import review.fix  # noqa: E402
+import review.outcome  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from review.convergence import anchor_key, apply_sticky_skips, blob_of, mark_skips  # noqa: E402
 from review.paths import read_review_meta, write_review_meta  # noqa: E402

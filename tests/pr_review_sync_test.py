@@ -221,7 +221,9 @@ def test_repair_on_a_stale_dir_with_group_files_rebuilds_and_syncs(tmp_path):
         repo="org/repo", pr_number=42, head_sha="abc123def456",
     ))
     group = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
-    group.write_text("## Nit\n- **[N1]** **`a.py:1`** — x\n")
+    group.write_text(json.dumps({
+        "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}],
+    }))
     ctx = make_ctx(
         repo="org/repo", branch="feat/x", pr_number=42,
         worktree_root=tmp_path / "wt", head_sha="abc123def456",

@@ -19,17 +19,26 @@ drops out the moment the kernel releases it; its JSON is removed by whichever
 peer next finds the lock free. Machine-wide pending memory is the sum, over
 live peers, of each running step's estimate less the peak it has reached.
 
+A driver refused with nothing running joins a queue, ordered by
+`waiting_since`. While a driver ahead of it is still waiting, every other
+driver defers — normal admission included — so the next step the host has
+room for goes to the longest waiter rather than to whichever driver happened
+to look first. Without that, a plain shared slot starves: whoever finishes
+first wins it again.
+
 The floor slot replaces the per-run "nothing running, so one step is always
-admitted" rule with one slot for the whole machine. A driver with nothing
-running that the host refuses may start one step anyway only while it holds
-`floor.lock`, and only the longest-waiting driver may try for it: the one with
-the smallest `waiting_since` among live peers whose JSON is fresh. It gives
-the slot back once its own running count returns to zero and joins the back
-of the queue before admitting again, so under sustained pressure every
-waiting driver gets a turn within about (N-1) times the longest step. A plain
-shared slot without the queue starves: whoever finishes first wins it again.
-"Fresh" excludes a driver blocked in an inline publish, which still holds its
-lock but is not taking steps.
+admitted" rule. The head of the queue may start one step whatever the host
+says, but only while it holds `floor.lock` and only while nothing is running
+anywhere on the machine: a starved host gets one step, not one per driver.
+The holder gives the slot back once its own running count returns to zero and
+joins the back of the queue, so under sustained pressure every waiting driver
+gets a turn within about (N-1) times the longest step. Only fresh entries
+queue: one not rewritten for `FRESH_SECONDS` belongs to a driver blocked in an
+inline publish, which still holds its lock but is not taking steps.
+
+A registry write or read that fails mid-run (a full disk, a removed directory)
+drops the driver to per-run admission with one warning, rather than raising
+out of the scheduler and killing the steps it has live.
 
 `PerRun` is the same interface with no peers and the old per-run floor. It is
 what a scheduler uses when nothing else is supplied, and what `register`
@@ -112,6 +121,12 @@ class PerRun:
     def sync(self, live: list[LiveStep]) -> Peers:
         return Peers()
 
+    def queue(self) -> None:
+        return None
+
+    def ahead(self) -> str:
+        return ""
+
     def take_floor(self) -> bool:
         return True
 
@@ -158,22 +173,32 @@ class Machine:
                  clock: Callable[[], float] = time.time):
         self.run_id, self._fd, self._root, self._clock = run_id, fd, root, clock
         self._floor_fd: int | None = None
-        self._write_failed = False
+        # Set by the first registry I/O that fails mid-run. The registry is
+        # advisory, so a full disk or a removed directory must not stop the
+        # run: from then on this driver admits per-run, as `PerRun` does.
+        self._degraded = False
         self._waiting_since: float | None = None
         self._live: list[LiveStep] = []
         self._peers: list[DriverState] = []
 
+    def _degrade(self, exc: OSError) -> None:
+        if not self._degraded:
+            core.log.warn(f"batch admission is per-run from here: the registry under "
+                          f"{self._root} failed ({exc})")
+        self._degraded = True
+        self._peers = []
+
     # ── own state ────────────────────────────────────────────────────────
 
     def _write(self) -> None:
+        if self._degraded:
+            return
         state = DriverState(self.run_id, os.getpid(), self._clock(), self._waiting_since,
                             list(self._live))
         try:
             core.serde.write_json(self._root / f"{self.run_id}.json", asdict(state))
         except OSError as exc:
-            if not self._write_failed:
-                core.log.warn(f"batch admission registry not updated ({exc})")
-            self._write_failed = True
+            self._degrade(exc)
 
     def _release_floor(self) -> None:
         if self._floor_fd is None:
@@ -198,12 +223,12 @@ class Machine:
         paths = [p for p in sorted(self._root.glob("*.json")) if p.stem != self.run_id]
         return [state for state in map(self._peer, paths) if state is not None]
 
-    def _queue_head(self) -> bool:
-        """Whether this driver has waited longest among live drivers still taking steps."""
+    def _waiters(self) -> list[DriverState]:
+        """Peers queued for the machine and still taking steps (fresh), oldest first."""
         cutoff = self._clock() - FRESH_SECONDS
-        mine = (self._waiting_since, self.run_id)
-        return all(mine <= (p.waiting_since, p.run) for p in self._peers
-                   if p.waiting_since is not None and p.updated_at >= cutoff)
+        return sorted((p for p in self._peers
+                       if p.waiting_since is not None and p.updated_at >= cutoff),
+                      key=lambda p: (p.waiting_since, p.run))
 
     # ── the admission pass ───────────────────────────────────────────────
 
@@ -215,23 +240,50 @@ class Machine:
             # The back of the queue: the next refusal stamps a new waiting_since.
             self._waiting_since = None
         self._live = list(live)
-        self._peers = self._read_peers()
+        if self._degraded:
+            return Peers()
+        try:
+            self._peers = self._read_peers()
+        except OSError as exc:
+            self._degrade(exc)
+            return Peers()
         return Peers(pending=sum(s.pending for p in self._peers for s in p.live),
                      live=sum(len(p.live) for p in self._peers))
 
-    def take_floor(self) -> bool:
-        """Whether this driver, refused with nothing running, may start one step anyway."""
-        if self._floor_fd is not None:
-            return True
+    def queue(self) -> None:
+        """Join the queue, refused with nothing running; a driver already in it keeps its place."""
         if self._waiting_since is None:
             self._waiting_since = self._clock()
             self._write()
-        if not self._queue_head():
+
+    def ahead(self) -> str:
+        """The run of a driver that queued before this one and is still waiting, or "".
+
+        Every driver defers to it — normal admission included — so a freed slot
+        goes to the longest waiter rather than to whichever driver looks first.
+        """
+        mine = (self._waiting_since if self._waiting_since is not None else float("inf"),
+                self.run_id)
+        first = next(iter(self._waiters()), None)
+        return first.run if first and (first.waiting_since, first.run) < mine else ""
+
+    def take_floor(self) -> bool:
+        """Whether this driver, refused with nothing running, may start one step anyway.
+
+        Only with nothing running anywhere on the machine, and only for the head
+        of the queue: the floor guarantees a starved host one step, not one per
+        driver.
+        """
+        if self._degraded or self._floor_fd is not None:
+            return True
+        self.queue()
+        if self.ahead() or any(p.live for p in self._peers):
             return False
         try:
             fd = os.open(self._root / FLOOR, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
-        except OSError:
-            return False
+        except OSError as exc:
+            self._degrade(exc)
+            return True
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -251,7 +303,8 @@ class Machine:
         """Leave the registry. Unlinked while still locked, so no peer reads a half-gone entry."""
         self._release_floor()
         for name in (f"{self.run_id}.json", f"{self.run_id}.lock"):
-            (self._root / name).unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                (self._root / name).unlink(missing_ok=True)
         os.close(self._fd)
 
 

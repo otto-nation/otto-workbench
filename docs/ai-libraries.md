@@ -3572,17 +3572,26 @@ drops out the moment the kernel releases it; its JSON is removed by whichever
 peer next finds the lock free. Machine-wide pending memory is the sum, over
 live peers, of each running step's estimate less the peak it has reached.
 
+A driver refused with nothing running joins a queue, ordered by
+`waiting_since`. While a driver ahead of it is still waiting, every other
+driver defers — normal admission included — so the next step the host has
+room for goes to the longest waiter rather than to whichever driver happened
+to look first. Without that, a plain shared slot starves: whoever finishes
+first wins it again.
+
 The floor slot replaces the per-run "nothing running, so one step is always
-admitted" rule with one slot for the whole machine. A driver with nothing
-running that the host refuses may start one step anyway only while it holds
-`floor.lock`, and only the longest-waiting driver may try for it: the one with
-the smallest `waiting_since` among live peers whose JSON is fresh. It gives
-the slot back once its own running count returns to zero and joins the back
-of the queue before admitting again, so under sustained pressure every
-waiting driver gets a turn within about (N-1) times the longest step. A plain
-shared slot without the queue starves: whoever finishes first wins it again.
-"Fresh" excludes a driver blocked in an inline publish, which still holds its
-lock but is not taking steps.
+admitted" rule. The head of the queue may start one step whatever the host
+says, but only while it holds `floor.lock` and only while nothing is running
+anywhere on the machine: a starved host gets one step, not one per driver.
+The holder gives the slot back once its own running count returns to zero and
+joins the back of the queue, so under sustained pressure every waiting driver
+gets a turn within about (N-1) times the longest step. Only fresh entries
+queue: one not rewritten for `FRESH_SECONDS` belongs to a driver blocked in an
+inline publish, which still holds its lock but is not taking steps.
+
+A registry write or read that fails mid-run (a full disk, a removed directory)
+drops the driver to per-run admission with one warning, rather than raising
+out of the scheduler and killing the steps it has live.
 
 `PerRun` is the same interface with no peers and the old per-run floor. It is
 what a scheduler uses when nothing else is supplied, and what `register`

@@ -541,15 +541,19 @@ class Scheduler:
 
     def _verdict(self, item: Item, rec: StepRecord) -> batch.admission.Verdict:
         """The host's answer for *rec*, and the floor slot's when the host refuses
-        a driver with nothing running."""
+        a driver with nothing running. A driver that queued first goes first."""
         def ask(floor: bool) -> batch.admission.Verdict:
             return batch.admission.decide(
                 self._host_for_admit(), running=len(self._live), limit=max(1, self.run.pool),
                 estimate=self._estimates.get(item.repo, rec.step), cfg=self.cfg,
                 floor=floor, elsewhere=self._peers.live)
+        if ahead := self._machine.ahead():
+            if not self._live:
+                self._machine.queue()
+            return batch.admission.Verdict(
+                False, f"waiting behind batch run {ahead}, which queued for the machine first")
         verdict = ask(False)
-        if (verdict.admit or self._live or self._peers.live
-                or not self._machine.take_floor()):
+        if verdict.admit or self._live or not self._machine.take_floor():
             return verdict
         return ask(True)
 

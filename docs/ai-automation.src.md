@@ -530,8 +530,8 @@ A run with open decisions exits **10**. That means it is waiting on you, not tha
 
 Admission counts every batch driver on the machine: a step starts when free memory, less other
 drivers' pending steps and `batch.mem_reserve`, covers its observed peak and pressure stays under
-`batch.cpu_pressure_max` / `batch.mem_pressure_max`; one machine-wide floor slot, taken in waiting
-order, starts a step regardless ([`batch/machine.py`](ai-libraries.md#batchmachinepy)). `--pool` and `batch.pool_max` (default 2)
+`batch.cpu_pressure_max` / `batch.mem_pressure_max`. Drivers that queued first start first, and with
+nothing running anywhere the queue's head starts one step regardless ([`batch/machine.py`](ai-libraries.md#batchmachinepy)). `--pool` and `batch.pool_max` (default 2)
 cap a run; with no pressure metrics (macOS) `batch.pool_default` (1) caps steps machine-wide. State lives under
 `~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces that have no live claim and no run ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 

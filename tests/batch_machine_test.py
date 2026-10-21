@@ -204,3 +204,77 @@ def test_the_drivers_own_lock_is_held_for_its_life(drivers):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
         os.close(fd)
+
+
+# ── deferring to the queue ──────────────────────────────────────────────────
+
+
+def test_a_driver_defers_to_one_that_queued_first(drivers):
+    a, b = drivers("a"), drivers("b")
+    b.queue()
+    drivers.clock.now += 1
+    a.sync([])
+    assert a.ahead() == "b"
+    a.queue()
+    assert a.ahead() == "b"
+    b.sync([])
+    assert b.ahead() == ""
+
+
+def test_a_driver_not_queued_defers_to_any_waiter(drivers):
+    """A driver with steps running is not in the queue; it still yields the next slot."""
+    a, b = drivers("a"), drivers("b")
+    b.queue()
+    a.sync([_step()])
+    assert a.ahead() == "b"
+
+
+def test_a_stale_waiter_is_not_deferred_to(drivers):
+    a, b = drivers("a"), drivers("b")
+    b.queue()
+    drivers.clock.now += batch.machine.FRESH_SECONDS + 1
+    a.sync([])
+    assert a.ahead() == ""
+
+
+def test_the_floor_is_refused_while_any_peer_has_a_step_running(drivers):
+    """The floor guarantees a starved host one step, not one per driver."""
+    a, b = drivers("a"), drivers("b")
+    a.settle([_step()], waiting=False)
+    b.sync([])
+    assert not b.take_floor()
+    a.settle([], waiting=False)
+    b.sync([])
+    assert b.take_floor()
+
+
+# ── a registry that fails mid-run ───────────────────────────────────────────
+
+
+def test_a_registry_write_that_fails_drops_to_per_run_admission(drivers, monkeypatch, capsys):
+    a = drivers("a")
+
+    def full(path, data, **kw):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(batch.machine.core.serde, "write_json", full)
+    a.settle([_step()], waiting=False)
+    a.settle([_step()], waiting=False)
+    assert capsys.readouterr().err.count("per-run from here") == 1
+    assert a.sync([]) == batch.machine.Peers()
+    assert a.ahead() == ""
+    assert a.take_floor()
+
+
+def test_a_floor_file_that_will_not_open_drops_to_per_run_rather_than_stalling(drivers, monkeypatch):
+    a = drivers("a")
+    a.sync([])
+    real = os.open
+
+    def refuse_floor(path, *args, **kwargs):
+        if str(path).endswith(batch.machine.FLOOR):
+            raise OSError(errno.EACCES, "Permission denied")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(batch.machine.os, "open", refuse_floor)
+    assert a.take_floor()

@@ -27,9 +27,15 @@ NO_METRICS = batch.admission.HostSample(None, None, None)
 class FakeMachine:
     """What the scheduler asks of `batch.machine`, answered from fixed values."""
 
-    def __init__(self, peers=batch.machine.Peers(), floor=False):
-        self.peers, self.floor = peers, floor
-        self.synced, self.settled, self.asked = [], [], 0
+    def __init__(self, peers=batch.machine.Peers(), floor=False, ahead=""):
+        self.peers, self.floor, self._ahead = peers, floor, ahead
+        self.synced, self.settled, self.asked, self.queued = [], [], 0, 0
+
+    def queue(self):
+        self.queued += 1
+
+    def ahead(self):
+        return self._ahead
 
     def sync(self, live):
         self.synced.append(list(live))
@@ -136,3 +142,35 @@ def test_registry_write_failure_does_not_raise(tmp_path):
         m._root = tmp_path / "gone"
         m.settle([], waiting=False)
         assert m.take_floor() in (True, False)
+
+
+def test_a_driver_defers_to_an_earlier_waiter_even_with_room():
+    machine = FakeMachine(ahead="run-x")
+    h = Harness([row(1, ONLY_REVIEW)], machine=machine)
+    item = _first_tick(h)
+    assert h.spawned == []
+    assert item.wait_reason == "waiting behind batch run run-x, which queued for the machine first"
+    assert machine.queued == 1
+    assert machine.asked == 0
+    assert machine.settled[-1] == ([], True)
+
+
+def test_a_freed_slot_goes_to_the_driver_that_waited_rather_than_the_one_that_finished(tmp_path):
+    """Regression for the starvation a plain shared slot has: a's step ends with
+    room for one more, and a — looking first — must not take it from b."""
+    starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
+    with batch.machine.register("run-a", tmp_path) as ma, \
+            batch.machine.register("run-b", tmp_path) as mb:
+        a = Harness([row(1, ONLY_REVIEW), row(3, ONLY_REVIEW)],
+                    host=batch.admission.HostSample(4 * GiB, 1.0, 0.0), pool=1, machine=ma)
+        b = Harness([row(2, ONLY_REVIEW)], host=starved, machine=mb)
+        a.sched._once()
+        assert len(a.spawned) == 1
+        b.sched._once()
+        assert b.spawned == []
+        a.sched._once()
+        a.sched._once()
+        assert len(a.spawned) == 1
+        assert "waiting behind batch run run-b" in a.run.items[1].wait_reason
+        b.sched._once()
+        assert len(b.spawned) == 1

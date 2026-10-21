@@ -24,6 +24,7 @@ import contextlib
 import json
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -375,7 +376,7 @@ def _hold_target(holds: batch.targets.ItemHolds, target: Path, items: list[Item]
         holds.hold_checkout(item.key, item.worktree)
 
 
-def _tree_holder(holds: batch.targets.ItemHolds):
+def _tree_holder(holds: batch.targets.ItemHolds) -> Callable[[Item], str]:
     """The scheduler's `hold_tree`: hold an item's new worktree, or say who holds it."""
     def hold(item: Item) -> str:
         try:

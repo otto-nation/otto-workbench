@@ -3845,9 +3845,10 @@ an item's worktree is known — assigned, or recorded by an earlier run being
 resumed — the run holds that checkout's lock too, on the same stack, so it is
 released with the target: a `pr` command run in the worktree on another branch
 is refused as well, and the driver's own git writes there (restore, fetch,
-reset) are covered by a lock rather than by luck. A
-terminal item is one the scheduler never admits again, so `ItemHolds` releases
-its lock while the run carries on, and the PR is free for manual work at once.
+reset) are covered by a lock rather than by luck.
+A terminal item is one the scheduler never admits again, so `ItemHolds`
+releases its lock while the run carries on, and the PR is free for manual work
+at once.
 Its children must get through those locks, and each only through its own: a
 child is started with `WORKBENCH_RUN_LOCK` naming its item's target and
 `WORKBENCH_RUN_LOCK_TREE` naming its item's checkout, and nothing else, so a

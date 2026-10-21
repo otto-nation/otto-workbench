@@ -21,7 +21,7 @@ from repo_config_guard_support import _REPO_CONFIG, _assert_config_unchanged, _c
 # The suite heartbeat's in-flight records, as a plugin of their own so this
 # module keeps the fixtures and stays within the test-layout cap.
 # Environment-variable isolation fixtures, split out for the same reason.
-pytest_plugins = ["suite_status_support", "env_isolation_support"]
+pytest_plugins = ["suite_status_support", "env_isolation_support", "github_owners_support"]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")

@@ -144,7 +144,8 @@ def invocation(statement: Sequence[str]) -> Invocation:
     return Invocation(env=env, words=tuple(statement[start:]))
 
 
-def _skip_repo_flags(args: Sequence[str]) -> int:
+def skip_repo_flags(args: Sequence[str]) -> int:
+    """Index of the first word that is not a leading ``-R/--repo`` flag or its value."""
     i = 0
     while i < len(args):
         if args[i] in ("-R", "--repo"):
@@ -191,7 +192,7 @@ def _api_is_write(args: Sequence[str], input_text: str | None) -> bool:
 
 def gh_is_write(args: Sequence[str], input_text: str | None = None) -> bool:
     """Whether ``gh *args`` writes to GitHub. *input_text* is the body gh reads on stdin."""
-    i = _skip_repo_flags(args)
+    i = skip_repo_flags(args)
     sub = args[i] if i < len(args) else ""
     if sub == "api":
         return _api_is_write(args[i + 1:], input_text)

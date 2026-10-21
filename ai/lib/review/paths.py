@@ -151,6 +151,15 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
         for name in (PHASES[p].output_filename, PHASES[p].log_filename)
         if name
     ]
+    # ceiling: a run from before agents wrote JSON named each artifact
+    # `<phase>.md`; swept alongside the JSON names so such a directory, once
+    # regenerated, keeps only its deliverable. review.md names no phase and is
+    # never matched. Upgrade trigger: delete this block once SCHEMA_VERSION
+    # moves past 2, when a directory that old is stale on every other path too.
+    patterns += [
+        str(Path(PHASES[p].output_filename).with_suffix(".md")).format("*")
+        for p in REVIEW_PHASES if PHASES[p].output_filename
+    ]
     return [f for pat in patterns for f in review_dir.glob(pat) if f.is_file()]
 
 

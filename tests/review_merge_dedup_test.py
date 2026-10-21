@@ -64,26 +64,17 @@ class TestDedupTriage:
 
 class TestFindingDedupKey:
     def test_standard_finding(self):
-        line = "- **[M1]** **`pkg/handler.go:42`** — missing error check"
-        result = FindingIdentity.of(line)
-        assert result is not None
+        result = FindingIdentity.of_fields("pkg/handler.go", 42, "missing error check")
         assert "handler.go" in result.path
         assert "missing error check" in result.desc
 
     def test_checkbox_finding(self):
-        line = "- [ ] **[S1]** **`handler.go:10`** — issue here"
-        result = FindingIdentity.of(line)
-        assert result is not None
+        result = FindingIdentity.of_fields("handler.go", 10, "issue here")
         assert "handler.go" in result.path
 
     def test_stable_id(self):
-        line = "- **[M1]** <!-- sid:abc12345 --> **`file.go:1`** — desc"
-        result = FindingIdentity.of(line)
-        assert result is not None
+        result = FindingIdentity.of_fields("file.go", 1, "desc")
         assert "file.go" in result.path
-
-    def test_non_finding_line(self):
-        assert FindingIdentity.of("just some text") is None
 
 
 # ── 11. finding dedup (via merge_records) ───────────────────────────────────

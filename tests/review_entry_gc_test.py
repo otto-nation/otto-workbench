@@ -594,6 +594,15 @@ def test_cleaned_on_success_keeps_a_partial_run_for_recover(cr, tmp_path):
     assert (d / "disprove.json").exists()
 
 
+def test_cleanup_sweeps_markdown_artifacts_from_before_json(tmp_path):
+    """X10: a pre-upgrade run's .md phase artifacts do not outlive the regenerated review."""
+    for name in ("scout.md", "holistic.md", "disprove.md", "group-1.md", "group-2.json"):
+        (tmp_path / name).write_text("x")
+    (tmp_path / "review.md").write_text("kept")
+    review.gc.cleanup_intermediates(tmp_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["review.md"]
+
+
 def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, capsys, monkeypatch):
     """A tidy-up failure must not take the run's outcome down with it.
 

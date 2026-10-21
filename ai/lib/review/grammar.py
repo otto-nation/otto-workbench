@@ -1,34 +1,18 @@
-"""The one reading of a finding line: its ID, its location, its identity.
+"""The posted-comment wire format, and the identity two findings are compared on.
 
-Every regex that parses a finding declaration lives here, and so does the
-identity two findings are compared on. Before this module there were eleven
-such regexes in five files, and they disagreed: dedup read a path only when it
-was bold, while carry-forward read all four shapes and hashed them together, so
-a finding written with plain backticks was carried forward and deduplicated
-against nothing.
+A finding posted to GitHub carries its tag (`finding_tag`, `posted_finding_tag`)
+and a `<!-- sid: -->` marker (`sid_marker`). `reply_threads` reads them back off
+the PR (`SID_MARKER_RE`, `BOLD_FINDING_ID_RE`), and `review.dedup` reads a
+posted body (`BODY_FINDING_RE`, `strip_sid_markers`, `strip_line_suffix`).
+`location_ref` is how both `review.md` and the comment spell a location.
 
-A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
-`:12-18` several of them match inside a span they capture, and
-`strip_line_suffix` is how such a reader takes it back off — each used to
-truncate at the last colon instead, which read `ns:module.py` as `ns` and
-verified a finding against a file that does not exist. `SEVERITY_KEY` and the
-`<!-- sid: -->` marker are the other two: `sid_marker` writes a marker,
-`strip_sid_markers` takes it back off and `SID_MARKER_RE` reads the identity
-out of one, so a marker a writer emits is one every reader here skips over.
+`FindingIdentity` is what makes two findings the same one: built from a
+finding's fields (`of_fields`), it owns the `DedupKey` merge deduplicates on and
+the stable ID a sid marker carries. The stable ID hashes the path and the
+body's first eighty characters, so an anchored finding keeps the sid its
+rendered line hashed to before agents wrote JSON.
 
-The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
-returns is a pair with names rather than two loose strings, because which half
-is the location is not something a call site should have to infer from
-position.
-
-Exact, and deliberately so: a carry-forward asks whether this is the same
-finding as one in the prior review, and a fuzzy answer there silently merges two
-findings about two lines of one file. `review.dedup` is the fuzzy answer, for
-the different question of whether a finding is about to be posted twice.
-
-Where a finding's body ends is `review.ingest`'s `finding_spans`. What a
-document is assembled from is `review.document`'s; what a finding means once
-parsed is `review.types`'.
+Agent output is not parsed here — agents write JSON (`review.artifacts`).
 """
 
 # doc-group: findings
@@ -39,9 +23,8 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from review.record import LedgerLine
 from review.types import (
-    SEVERITIES, Finding, FindingLocation, PriorDisposition, severity_by_key,
+    SEVERITIES, severity_by_key,
 )
 
 # ── What a declaration is spelled with ───────────────────────────────────────
@@ -81,10 +64,6 @@ _SID_CLOSE = " -->"
 # The marker with its ID captured, for a reader that wants the identity back.
 SID_MARKER_RE = re.compile(rf"{_SID_OPEN}(\w+){_SID_CLOSE}")
 
-# The marker as every reader of a declaration head sees it: optional, and
-# taking the whitespace after it, because what follows is the location.
-_SID_PREFIX = rf"(?:{_SID_OPEN}\w+{_SID_CLOSE}\s+)?"
-
 # The marker with the space that precedes it. `sid_marker` writes that space and
 # `strip_sid_markers` takes it back off, so a round trip leaves the line exactly
 # as it was rather than a space wider each time.
@@ -98,16 +77,6 @@ def sid_marker(stable_id: str) -> str:
     what this returns because it is part of what `strip_sid_markers` removes.
     """
     return f" {_SID_OPEN}{stable_id}{_SID_CLOSE}"
-
-
-def has_sid_marker(text: str) -> bool:
-    """Whether `text` already carries a stable-ID marker.
-
-    An opening test rather than a whole-marker match: a writer asking this
-    wants to know whether to write another, and a half-written marker is still
-    one it must not double.
-    """
-    return _SID_OPEN in text
 
 
 def strip_sid_markers(text: str) -> str:
@@ -125,35 +94,9 @@ def strip_sid_markers(text: str) -> str:
 
 # ── The head of a declaration ────────────────────────────────────────────────
 
-# The head of a finding declaration: a list item opening with the bold ID,
-# carrying the fix pass's checkbox and a resolved finding's strikethrough when
-# it has them, and the stable-ID marker a carried finding keeps. What follows
-# the match is the location and the body.
-FINDING_ID_RE = re.compile(
-    r"^- (?:\[([ x])\] )?"
-    r"(?:~~)?"
-    rf"\*\*\[({SEVERITY_KEY})(\d+)\](?:\*\*)?"
-    r"\s+"
-    rf"{_SID_PREFIX}"
-)
-
 # A finding's ID wherever it appears, in either spelling: a review file's
 # declaration or reference, and a posted comment's labelled tag.
 BOLD_FINDING_ID_RE = re.compile(rf"\*\*\[({SEVERITY_KEY}\d+)\]{_POSTED_LABEL}\*\*")
-
-# A declaration the review struck through, which is how it says the finding was
-# resolved. It ends the body above it and opens nothing.
-STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
-
-# The declaration head `FindingIdentity.of` requires, with the head itself
-# captured so the remainder is the location. Stricter than `FINDING_ID_RE`
-# on purpose: the closing `**` is required and a checked or struck-through
-# finding is passed over, because identity is how open findings are compared.
-# The marker is deliberately outside the match — a sid already on the line
-# is not part of the location that follows.
-ANNOTATE_FINDING_RE = re.compile(
-    rf"^(- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*)\s+"
-)
 
 
 def finding_tag(posted_id: str) -> str:
@@ -195,28 +138,9 @@ def location_ref(path: str, line: int | None, end_line: int | None) -> str:
 
 # ── The location a declaration names ─────────────────────────────────────────
 
-_PATH_SECTION_RE = re.compile(
-    r"\*\*`(.+?)`\*\*"
-    r"|"
-    r"\*\*(.+?)\*\*"
-    r"|"
-    r"`(.+?)`"
-)
-# What a path may hold, now that `_PATH_SECTION_RE` has already delimited the
-# span. The class says what a path is not: whitespace, the `:` that introduces
-# the line suffix, the `*` and backtick that close the span, and the em dash
-# that separates a location from its body. Everything else is an ordinary
-# filename character — non-ASCII included, because `src/café.py` names a file
-# the same way `src/cafe.py` does.
-_PATH_CHAR = r"[^\s:*`—]"
-_SEGMENT_CHAR = r"[^\s/:*`—]"
-
 # The `:12` or `:12-18` a location may carry after its filename. A fragment
-# rather than a reader: `_FIRST_FILE_RE` and `BODY_FINDING_RE` each bound it
-# differently, and they have to agree on what a
-# line suffix is or a finding parses one way and is selected by the other.
-# `strip_line_suffix` removes what this matches, so a reader that matched one
-# without capturing it does not decide for itself what it was.
+# rather than a reader: `BODY_FINDING_RE` bounds it inside a posted declaration,
+# and `strip_line_suffix` removes what this matches.
 # A list is one suffix, not several: `:64,82` names two lines of one file, and
 # a reader that takes only the first leaves `,82` on the path.
 _LINE_SPAN = r"\d+(?:[-–]\d+)?"
@@ -240,179 +164,10 @@ def strip_line_suffix(path: str) -> str:
     return _LINE_SUFFIX_TAIL_RE.sub("", path)
 
 
-# A filename holding spaces. It has no character class to stop it, so every
-# use has to bound it: the extension ends it, and whatever follows has to be
-# the end of the span it was found in.
-SPACED_FILE = rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+"
-
-# Three shapes, tried in this order:
-#
-#   1. pkg/handler.go            — an extension ends the filename
-#   2. src/café brûlé.py         — a filename holding spaces
-#   3. ai/bin/ci-check           — an extensionless script, slash required
-#
-# Shapes 1 and 3 keep prose out by starting at the span's first character and
-# stopping at the first space: a sentence only passes if its opening word is
-# already shaped like a file. A slash is what shape 3 has instead of an
-# extension, and prose is full of slashes, so that shape cannot be allowed to
-# reach across a space either.
-#
-# Shape 2 has no such boundary, so it earns the space a different way: it must
-# end in an extension and, per the lookahead, account for the whole span, line
-# suffix included. "the fix lands in v2.0 of the tool" fails that — the words
-# after the dotted token are left over — while "src/café brûlé.py:12-18"
-# satisfies it. The same lookahead is what stops a greedy space run from
-# walking past the real filename, since anything it swallowed would have to be
-# part of the span's final extension.
-#
-# Shape 2 is tried after shape 1 so it only runs where the space-free shapes
-# found nothing: every location a review already parsed still parses the same
-# way, and a span naming one path before some prose still yields that path
-# rather than the whole span.
-_FIRST_FILE_RE = re.compile(
-    r"("
-    rf"{_PATH_CHAR}+\.\w+"
-    r"|"
-    rf"{SPACED_FILE}(?={LINE_SUFFIX}\s*$)"
-    r"|"
-    rf"{_SEGMENT_CHAR}+(?:/{_SEGMENT_CHAR}+)+"
-    r")"
-    rf"({_LINE_SUFFIX_BODY})?"
-)
-
-# The digits inside a `_FIRST_FILE_RE` suffix match, for a location naming more
-# than the two endpoints `FindingLocation` has fields for — `:12,18,24` keeps
-# its first and last as `line`/`end_line`, the same pair a plain `:12-18` range
-# already yields, rather than the second number silently falling off the finding.
-_LINE_NUM_RE = re.compile(r"\d+")
-
-
-def finding_location(after_id: str) -> FindingLocation:
-    """The location a finding line names, having had its ID stripped.
-
-    An unnamed `FindingLocation` when the line names none — `named` is the
-    question to ask rather than the emptiness of `path`.
-
-    The location has to open the remainder of the line, in a bold or backtick
-    span: a path mentioned mid-sentence is the finding's prose rather than its
-    location, and reading one as the other points the posted comment at a file
-    the finding only mentions.
-    """
-    section_match = _PATH_SECTION_RE.match(after_id)
-    if not section_match:
-        return FindingLocation()
-    section_text = section_match.group(1) or section_match.group(2) or section_match.group(3) or ""
-    section_text = section_text.replace("\\_", "_")
-    file_match = _FIRST_FILE_RE.match(section_text)
-    if not file_match:
-        return FindingLocation()
-    numbers = [int(n) for n in _LINE_NUM_RE.findall(file_match.group(2) or "")]
-    return FindingLocation(
-        path=file_match.group(1).strip(),
-        line=numbers[0] if numbers else None,
-        end_line=numbers[-1] if len(numbers) > 1 else None,
-    )
-
-
-# ── The body below the location ──────────────────────────────────────────────
-
-# The review file's record of `PriorDisposition.DECLINED`. The ledger is
-# stripped before the file is finished, so the verdict has to survive on the
-# finding line itself or the next `--fix` sees an ordinary open finding. The
-# reason is optional so a decline written without one still registers.
-_DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
-
-# An annotation, not prose. Matched anywhere in the line, a finding that merely
-# quotes the annotation — which any review of this parser writes — reads as
-# declined and is silently dropped from the fix pass's work set with no warning
-# anywhere. So the match is anchored to the two places the templates put an
-# annotation: at the head of the finding body, and at the end of the line.
-DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
-DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
-
-# The fix pass's record of a finding it read and left alone, in the same grammar
-# as the decline annotation and optional in the same way — a skip written
-# without a reason is still a skip, and reading it as an ordinary open finding
-# is what lets a sibling finding's edit report it as fixed.
-#
-# Anchored to head and tail for the reason the decline annotation is: matched
-# anywhere, a finding whose prose quotes the annotation — the docs of the fix
-# pass do, verbatim — would read as carrying it and never be touched again.
-_SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
-SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
-SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
-
 # The caveat a landed-but-unverifiable fix carries, in the same shape. Anchored
 # to the tail for the same reason: matched anywhere, a finding whose prose
 # quotes the annotation would read as already carrying one.
 UNVERIFIED_TAIL_RE = re.compile(r"\*\(unverified(?:\s*[—–-]+\s*(.+?))?\)\*\s*$")
-
-
-def _match_decline(body: str, line: str) -> re.Match[str] | None:
-    """The decline annotation a finding line carries, if it carries one."""
-    return DECLINED_HEAD_RE.match(body) or DECLINED_TAIL_RE.search(line)
-
-
-def extract_body_text(line: str) -> str:
-    """The prose after a finding line's separator (em dash, ` -- `, or ` - `), or "" when it has none."""
-    em_dash_pos = line.find("—")
-    if em_dash_pos != -1:
-        return line[em_dash_pos + 1:].strip()
-    for sep in (" -- ", " - "):
-        pos = line.find(sep)
-        if pos != -1:
-            return line[pos + len(sep):].strip()
-    return ""
-
-
-def parse_finding_line(stripped: str) -> Finding | None:
-    """The finding `stripped` declares, or None when it declares none.
-
-    For a caller holding one line that is not in a findings section — the
-    prior-findings ledger writes finding lines under its own heading. A caller
-    after the findings of a whole review asks `ReviewDocument.findings`, which
-    is the reading that knows which headings declare findings.
-
-    The `stable_id` is set here rather than derived from the finding returned,
-    because `finding_spans` replaces `body` with the whole multi-line span and
-    the identity hashes the declaration line's own wording.
-    """
-    id_match = FINDING_ID_RE.match(stripped)
-    if not id_match:
-        return None
-    checkbox = id_match.group(1)
-    sev = id_match.group(2)
-    seq = int(id_match.group(3))
-    after_id = stripped[id_match.end():]
-    location = finding_location(after_id)
-    body = extract_body_text(stripped) if location.named else after_id.strip()
-    declined = _match_decline(body, stripped)
-    identity = FindingIdentity.of(stripped)
-    return Finding(
-        id=f"{sev}{seq}", severity=sev, seq=seq,
-        path=location.path, line=location.line, end_line=location.end_line,
-        body=body,
-        stable_id=identity.stable_id if identity else "",
-        checked=(checkbox is not None and checkbox.lower() == "x"),
-        declined=declined is not None,
-        decline_reason=(declined.group(1) or "").strip() if declined else "",
-    )
-
-
-def parse_ledger_line(raw: str) -> LedgerLine | None:
-    """The ledger line a markdown `## Prior findings` entry carries, or None.
-
-    None when the line names no finding or states no verdict this can read: the
-    record holds only verdicts, so a line without one is not an entry.
-    """
-    parsed = parse_finding_line(raw.strip())
-    if not parsed:
-        return None
-    disposition = PriorDisposition.parse(parsed.body)
-    if disposition is None:
-        return None
-    note = parsed.body.strip()[len(disposition.value):].strip().lstrip("—–-:.").strip()
-    return LedgerLine(parsed.id, disposition, parsed.path or None, note)
 
 
 # ── Readers with bounds of their own ─────────────────────────────────────────
@@ -431,37 +186,8 @@ BODY_FINDING_RE = re.compile(
     re.MULTILINE,
 )
 
-# A file-triage line: the file a group looked at, in backticks, and its note on
-# what it found there. The note is what makes it a triage entry rather than a
-# bare bullet, so the trailing space is part of the shape; the path is captured
-# because two groups reporting on one file report it once.
-TRIAGE_LINE_RE = re.compile(r"^- `([^`]+)`\s")
-
 
 # ── The identity two findings are compared on ────────────────────────────────
-
-_FINDING_PATH_RE = re.compile(
-    rf"^- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*"
-    rf"\s+{_SID_PREFIX}"
-    r"\*\*(?:`([^`]+)`|([^*]+))\*\*"
-)
-_FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
-
-
-def _fallback_location(line: str, after: str) -> tuple[str, int | None]:
-    """The two readings `finding_location` declines: a bold label, and a bare `path:12`.
-
-    A finding whose location is `**Documentation**` is not a file, but it still
-    has to hash to the same thing across reviews to be carried forward.
-    """
-    path_m = _FINDING_PATH_RE.match(line)
-    if path_m:
-        raw = (path_m.group(1) or path_m.group(2) or "").replace("\\_", "_").strip()
-        head, _, tail = raw.rpartition(":")
-        return (head, int(tail)) if head and tail.isdigit() else (raw, None)
-    bare = re.match(r"[`]?(\S+?)[`]?:(\d+)", after)
-    return (bare.group(1), int(bare.group(2))) if bare else ("", None)
-
 
 @dataclass(frozen=True)
 class DedupKey:
@@ -495,29 +221,6 @@ class FindingIdentity:
     path: str
     line: int | None
     desc: str
-
-    @classmethod
-    def of(cls, text: str) -> "FindingIdentity | None":
-        """The identity of the finding `text` declares, or None if it declares none.
-
-        `finding_location` answers first because it is the same reading the
-        rest of the parser gives a location, and it is the only rung that
-        recognises a plain-backtick file with no `:<line>` after it — the shape
-        a review writes whenever the finding is about a file rather than a line
-        of one. `_fallback_location` is what reads the two shapes it declines.
-        """
-        m = ANNOTATE_FINDING_RE.match(text)
-        if not m:
-            return None
-        after = text[m.end():]
-        location = finding_location(after)
-        path, line = location.path, location.line
-        if not path:
-            path, line = _fallback_location(text, after)
-        if not path:
-            return None
-        desc_m = _FINDING_DESC_RE.search(text)
-        return cls(path, line, desc_m.group(1).strip() if desc_m else "")
 
     @classmethod
     def of_fields(cls, path: str, line: int | None, body: str) -> "FindingIdentity":

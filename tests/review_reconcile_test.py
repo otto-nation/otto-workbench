@@ -27,7 +27,7 @@ from review_record_support import finding, record
 
 from review.paths import FILENAME_PRIOR_FINDINGS
 from review.grammar import FindingIdentity
-from review.reconcile import DispositionSource, UndecidedReason, _prior_findings, reconcile
+from review.reconcile import DispositionSource, UndecidedReason, _prior_findings, _record_stable_ids, reconcile
 from review.record import LedgerLine, RecordFinding, ReviewRecord
 from review.types import FindingRef, PriorDisposition
 
@@ -676,3 +676,12 @@ def test_an_unreadable_ledger_line_does_not_settle_from_the_ledger():
 
 def test_no_undecided_reason_is_about_an_unreadable_verdict():
     assert "unreadable verdict" not in {r.value for r in UndecidedReason}
+
+
+def test_a_restatement_in_prose_alone_is_not_carried():
+    """X6: carried means the finding's own sid or stable ID, or a sid marker."""
+    sid = FindingIdentity("handler.go", None, "missing error check").stable_id
+    prose = ReviewRecord(summary="- **[M1]** `handler.go` — missing error check")
+    marked = ReviewRecord(summary=f"see <!-- sid:{sid} --> above")
+    assert sid not in _record_stable_ids(prose)
+    assert sid in _record_stable_ids(marked)

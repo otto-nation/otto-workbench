@@ -57,12 +57,6 @@ DEFAULT_RETRY_CEILING = 30
 # file per chunk. Every other review phase writes `<phase>.json`.
 _NO_FINDINGS_ARTIFACT = frozenset({Phase.FIX, Phase.FIX_VERIFY})
 _INDEXED = frozenset({Phase.GROUP, Phase.FIX_VERIFY})
-# ceiling: empty while phases still write markdown. Upgrade trigger: once every
-# review phase has joined, delete the set and the markdown suffix.
-_JSON_ARTIFACT: frozenset[Phase] = frozenset({
-    Phase.SCOUT, Phase.HOLISTIC, Phase.DISPROVE, Phase.GROUP,
-    Phase.SINGLE, Phase.SYNTHESIS,
-})
 
 
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -333,5 +327,4 @@ class PhaseSpec:
         """
         if self.phase in _NO_FINDINGS_ARTIFACT:
             return ""
-        suffix = "json" if self.phase in _JSON_ARTIFACT else "md"
-        return f"{self._stem}.{suffix}"
+        return f"{self._stem}.json"

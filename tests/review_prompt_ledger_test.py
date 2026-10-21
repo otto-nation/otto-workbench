@@ -67,6 +67,7 @@ class TestUnaccountedPriorSection:
         extra = dict(
             group_count=1, merged_content="m", holistic_content="h",
             unaccounted_prior=[self.M1],
+            artifact=review.registry.for_phase(Phase.SYNTHESIS).artifact,
         )
         built = review.registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
         assert "drops the error" in built.builder.vars["prior_section"]
@@ -74,7 +75,10 @@ class TestUnaccountedPriorSection:
     def test_a_synthesis_prompt_with_nothing_left_over_says_nothing(self):
         job = _make_job(_make_preflight())
         common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
-        extra = dict(group_count=1, merged_content="m", holistic_content="h")
+        extra = dict(
+            group_count=1, merged_content="m", holistic_content="h",
+            artifact=review.registry.for_phase(Phase.SYNTHESIS).artifact,
+        )
         built = review.registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
         assert built.builder.vars["prior_section"] == ""
 

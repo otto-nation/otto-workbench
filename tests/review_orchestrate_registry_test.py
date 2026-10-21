@@ -357,13 +357,6 @@ def test_the_output_block_carries_the_format_after_the_write_recipe():
     assert block.endswith("\n\n" + output_format(DisproveArtifact, Mode.PR, rereview=False))
 
 
-def test_a_markdown_phase_s_output_block_is_the_write_recipe_alone():
-    job = _make_job(_make_preflight())
-    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
-    built = review.registry.for_phase(Phase.DISPROVE).build(job, common, {}, "/tmp/d.md")
-    assert "```json" not in built.builder.vars["output_block"]
-
-
 def test_build_prompt_hands_the_builder_its_artifact(monkeypatch):
     seen = {}
     monkeypatch.setattr(review.registry, "fit_rendered_prompt", lambda phase, job, **kw: seen.update(kw) or "p")

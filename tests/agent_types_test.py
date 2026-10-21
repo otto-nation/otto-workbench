@@ -161,8 +161,3 @@ class TestPhaseSpecTemplates:
         assert spec.template_for(Mode.PR) == "a.md"
 
 
-def test_a_phase_in_the_json_set_names_a_json_artifact(monkeypatch):
-    monkeypatch.setattr(agent.types, "_JSON_ARTIFACT", frozenset({Phase.SCOUT}))
-    assert PHASES[Phase.SCOUT].output_filename == "scout.json"
-    assert PHASES[Phase.HOLISTIC].output_filename == "holistic.md"
-    assert PHASES[Phase.GROUP].output_filename == "group-{}.md"

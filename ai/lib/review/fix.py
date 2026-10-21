@@ -70,7 +70,7 @@ from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
 from review.document import ReviewDocument
-from review.grammar import FINDING_ID_RE, UNVERIFIED_TAIL_RE
+from review.grammar import UNVERIFIED_TAIL_RE
 from review.record import (
     Disposition, RecordFinding, ReviewRecord, defuse_first_line,
 )
@@ -351,7 +351,7 @@ def _escape_annotation(detail: str) -> str:
 
 
 def _fixed_static_line(
-    line: str, outcome: ItemOutcome, pattern: re.Pattern[str] = FINDING_ID_RE,
+    line: str, outcome: ItemOutcome, pattern: re.Pattern[str] = STATIC_ID_RE,
 ) -> str:
     """The Static Analysis declaration a landed fix leaves behind: ticked, and hedged if owed.
 

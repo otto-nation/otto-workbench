@@ -10,7 +10,7 @@ if str(LIB_DIR) not in sys.path:
 if str(REPO_ROOT / "lib") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "lib"))
 
-from review.grammar import FINDING_ID_RE
+from review.artifacts import _ID_RE
 from review.static_analysis import (
     STATIC_ID_RE,
     CheckerResult,
@@ -251,17 +251,17 @@ class TestViolationIds:
     def test_a_static_id_is_not_readable_as_a_finding(self):
         """The two work streams must not claim each other's ids.
 
-        `FINDING_ID_RE` wants digits straight after the severity key, and the
+        `review.artifacts._ID_RE` wants a severity key plus digits, and the
         `A` in `SA1` is not one — a property of a pattern in another module,
         which is why it is asserted here rather than described in a comment.
         """
         line = "- [ ] **[SA1]** **`a.py:1`** — depth 5 exceeds limit 4"
         assert STATIC_ID_RE.match(line)
-        assert not FINDING_ID_RE.match(line)
+        assert not _ID_RE.fullmatch("SA1")
 
     def test_a_finding_line_is_not_readable_as_a_violation(self):
         line = "- [ ] **[S1]** `a.py:1` — the guard is missing"
-        assert FINDING_ID_RE.match(line)
+        assert _ID_RE.fullmatch("S1")
         assert not STATIC_ID_RE.match(line)
 
     def test_an_id_quoted_mid_line_is_not_a_declaration(self):

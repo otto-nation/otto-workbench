@@ -3,8 +3,9 @@
 Everything here reads a session log after the fact. Running the agent is
 ``agent.invoke``'s job and resolving which model it ran with is
 ``agent.phases``'s; this module is what the pipeline asks once the log exists —
-what the run cost, why it produced nothing, whether the document it was denied
-permission to save can still be recovered.
+what the run cost, why it produced nothing, whether the JSON document it was
+denied permission to save can still be recovered. Every review deliverable is
+a JSON document.
 
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
@@ -229,20 +230,17 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     # Only now: a crash already explains the missing output, and saying it
     # twice pushes the cause out of the reader's way with a restatement of it.
     diagnosis = replace(diagnosis, deliverable_gone=gone)
-    # Narration means the agent produced a call as text *and called nothing*.
-    # Without the second half this fires on any run whose commentary happens
-    # to contain a markdown heading: measured over the logs on this machine,
-    # 3 of 75 runs that made real tool calls — one of them alongside 58 calls
-    # — carry heading-bearing prose and would be told they had narrated. The
-    # hint would then be addressed to an agent that did call its tools, about
-    # a mistake it did not make.
+    # Narration means the agent produced a JSON object as text *and called
+    # nothing*. Without the second half this fires on any run whose commentary
+    # happens to contain a JSON object. The hint would then be addressed to an
+    # agent that did call its tools, about a mistake it did not make.
     #
     # The order of the `and` is what keeps this cheap. `_called_any_tool` is a
-    # scan for one record type; `_narrated_write_contents` counts fence depth,
-    # parses JSON and matches a heading regex over every assistant text block.
-    # Putting the cheap half first means the expensive half runs only for a
-    # run that called nothing at all — rare, and the only case whose answer is
-    # used. Reversing them would pay the full cost on every diagnosis.
+    # scan for one record type; `_narrated_write_contents` parses JSON over
+    # every assistant text block. Putting the cheap half first means the
+    # expensive half runs only for a run that called nothing at all — rare,
+    # and the only case whose answer is used. Reversing them would pay the
+    # full cost on every diagnosis.
     narrated = not _called_any_tool(records) and bool(
         _narrated_write_contents(records),
     )
@@ -361,136 +359,8 @@ def _pi_write_attempts(records: list[dict], output_path: str) -> list[str]:
     return contents
 
 
-# A fenced block holding the whole document, as a model writes one when it is
-# narrating a tool call rather than making one: ```markdown ... ``` or ``` ... ```.
-# The opening fence of a narrated document, and everything after it. Where it
-# ends is decided by `_fenced_documents` counting fences rather than by the
-# regex, because neither greediness is right on its own.
-_FENCE_OPEN = re.compile(r"```(?:markdown|md)?\n", re.MULTILINE)
-# Horizontal whitespace only, so the match starts on the fence's own line: a
-# plain `\s*` also spans the newline before it, and `_is_bare` then reads the
-# blank line above instead of the fence.
-_FENCE = re.compile(r"^[^\S\n]*```", re.MULTILINE)
-
-
-def _fenced_documents(text: str) -> list[str]:
-    """Documents inside ``` fences, each closed at its own matching fence.
-
-    Fences are counted rather than matched by a regex, because both
-    greediness settings are wrong against a real review. The format this
-    pipeline generates nests fenced evidence blocks inside its findings, so a
-    lazy `.*?` closes on the first *inner* fence and truncates the document
-    at its first code sample. A greedy `.*` instead runs to the last fence in
-    the whole reply, swallowing any commentary the model added after the
-    document — which arrives in the review file as a stray fence followed by
-    chatter, a worse artifact than the truncation it was meant to fix.
-
-    Depth is what distinguishes them: an inner fence opens a block and the
-    next one closes it, so only a fence at depth zero ends the document.
-    """
-    documents = []
-    position = 0
-    while (opening := _FENCE_OPEN.search(text, position)) is not None:
-        body = text[opening.end():]
-        end = _document_end(body)
-        documents.append(body if end is None else body[:end])
-        if end is None:
-            break
-        # Resume past this document's closing fence, never inside it, so the
-        # nested blocks of a document already taken are not re-read as
-        # documents of their own. `_same_document` would drop them anyway —
-        # they carry a different heading, or none — but only after the whole
-        # text had been rescanned once per nested block.
-        position = opening.end() + end
-    return _same_document(documents)
-
-
-def _same_document(documents: list[str]) -> list[str]:
-    """The blocks that are drafts of the first one, dropping later commentary.
-
-    The caller keeps the last candidate, because a document redrafted after a
-    refused write grows across attempts. A reply that finishes its review and
-    then adds a second fenced block of commentary is the other shape that
-    reaches here, and under that rule the commentary wins.
-
-    A redraft repeats the document's own title; commentary is a different
-    document with a different one. Comparing the first heading line separates
-    them where length or position cannot — a redraft may be shorter than the
-    draft it replaces, and both shapes put the extra block last.
-
-    Untitled blocks cannot be compared this way, so a document with no heading
-    at all is dropped: the caller's own gate would reject it anyway, and
-    keeping it here lets it outrank a real document that came before it.
-    """
-    titles = [_first_heading_line(doc) for doc in documents]
-    titled = [(doc, title) for doc, title in zip(documents, titles) if title]
-    if not titled:
-        return []
-    first_title = titled[0][1]
-    return [doc for doc, title in titled if title == first_title]
-
-
-# The tail a narrated XML-shaped call leaves after the document:
-# `</content></write>`, `</parameter></invoke>`, and the like. Closing tags
-# only — a bare `"` or `}` is not matched, because those are also how a
-# document legitimately ends (a quoted line, a code sample's last brace) and
-# there is no way to tell the two apart from the tail alone.
-_CALL_TAIL = re.compile(r"""(?:\s*</[A-Za-z_][\w.-]*>)+\s*$""")
-
-
-def _strip_call_syntax(text: str) -> str:
-    """Drop the closing tags of an XML-shaped call written out as text.
-
-    A narrated call wraps the document, so trimming the preamble off the
-    front leaves the call's own tail on the end. For the XML shape that tail
-    is unambiguous — no markdown document ends in `</content></write>` — and
-    it is visible junk in the recovered review.
-
-    The JSON shape is handled by `_json_call_content` before this, because its
-    tail cannot be stripped safely: `"` and `}` are both ways a real document
-    ends, and its body needs unescaping rather than trimming anyway.
-    """
-    return _CALL_TAIL.sub("", text).rstrip()
-
-
-def _first_heading_line(text: str) -> str:
-    """The text of the first heading line, or "" when there is none."""
-    match = _HEADING.search(text)
-    if not match:
-        return ""
-    line_end = text.find("\n", match.start(1))
-    return text[match.start(1):line_end if line_end != -1 else len(text)].strip()
-
-
-def _document_end(body: str) -> int | None:
-    """Where the document's own closing fence starts, or None if it never closes.
-
-    Every fence toggles depth, so a nested block's opening and closing pair
-    cancel and only a fence met at depth zero ends the document. Tracking the
-    toggle is what separates the two — the inner block's *closing* fence is
-    bare and column-zero exactly like the document's, so nothing about the
-    line itself distinguishes them.
-
-    None is an unclosed fence: the reply ended mid-document, and what there is
-    of it is still the whole of what the agent produced.
-    """
-    depth = 0
-    for fence in _FENCE.finditer(body):
-        if depth == 0 and _is_bare(body, fence):
-            return fence.start()
-        depth = 0 if _is_bare(body, fence) else 1
-    return None
-
-
-def _is_bare(body: str, fence: re.Match) -> bool:
-    """Whether this fence is a bare ``` rather than one opening a tagged block."""
-    line_end = body.find("\n", fence.start())
-    line = body[fence.start():line_end if line_end != -1 else len(body)]
-    return line.strip() == "```"
-
-
-def _narrated_write_contents(records: list[dict], *, json_mode: bool = False) -> list[str]:
-    """Documents an agent typed into its reply instead of calling a tool with.
+def _narrated_write_contents(records: list[dict]) -> list[str]:
+    """JSON objects an agent typed into its reply instead of calling a tool with.
 
     A third lost-write shape, and the one neither other reader sees. The model
     ends its turn having produced the whole document as assistant text — some
@@ -509,19 +379,19 @@ def _narrated_write_contents(records: list[dict], *, json_mode: bool = False) ->
     sitting in the log.
 
     Fenced content is preferred, since a model that narrates a write usually
-    puts the document in a block. The bare text is the fallback, which the
-    heading filter in the caller is what makes safe: ordinary commentary does
-    not contain a markdown heading, and a reply that does is the deliverable.
+    puts the JSON object in a block. The bare text is the fallback, which the
+    JSON-object filter in the caller is what makes safe: ordinary commentary
+    is not a JSON object, and a reply that is one is the deliverable.
     """
     contents = []
     for record in records:
         for message in _assistant_messages(record):
-            contents.extend(_text_documents(message, json_mode=json_mode))
+            contents.extend(_text_documents(message))
     return contents
 
 
-def _text_documents(message: dict, *, json_mode: bool = False) -> list[str]:
-    """Every candidate document in one assistant message's text blocks."""
+def _text_documents(message: dict) -> list[str]:
+    """Every candidate JSON object in one assistant message's text blocks."""
     contents = []
     for block in message.get("content") or []:
         if not isinstance(block, dict) or block.get("type") != "text":
@@ -529,14 +399,8 @@ def _text_documents(message: dict, *, json_mode: bool = False) -> list[str]:
         text = block.get("text") or ""
         if (decoded := _json_call_content(text)) is not None:
             contents.append(decoded)
-        elif json_mode:
-            contents.extend(_json_documents(text))
         else:
-            fenced = _fenced_documents(text)
-            # Trimmed on both branches: a fenced document can still carry the
-            # narration's own preamble inside the fence, and a bare one usually
-            # does.
-            contents.extend(_strip_call_syntax(_from_first_heading(c)) for c in (fenced or [text]))
+            contents.extend(_json_documents(text))
     return contents
 
 
@@ -545,7 +409,7 @@ def _json_call_content(text: str) -> str | None:
 
     A model narrating in JSON emits the document as a *string literal*, so its
     newlines arrive as a backslash and an `n`. Recovered verbatim that is one
-    long line with `\\n` through it rather than a markdown document, which no
+    long line with `\\n` through it rather than a JSON object, which no
     amount of trimming fixes — it has to be decoded.
 
     Only a reply that is entirely one JSON object qualifies, and only when it
@@ -596,48 +460,6 @@ def _json_documents(text: str) -> list[str]:
     return [span] if _json_object(span) is not None else []
 
 
-# A markdown heading, capturing its `#` run so the level can be compared.
-# An opening quote may sit in front of it: a narrated call puts the title
-# straight after `write review.md "`, where a line-anchored search would miss
-# it and take the first heading on a line of its own instead — dropping the
-# document's title and the summary under it.
-_HEADING = re.compile(r"""(?:^|["'])((#{1,6}) )""", re.MULTILINE)
-
-
-def _from_first_heading(text: str) -> str:
-    """`text` from its top-level heading on, or unchanged when it has none.
-
-    A narrated write is the document with a sentence of preamble in front of
-    it — "I already wrote the file, let me re-issue it" — and often the tool
-    call spelled out as prose. Recovering that verbatim puts the chatter in
-    the review file, where the heading is what every later reader and the
-    archive parser key off.
-
-    "Top-level" means the shallowest heading level the text contains, not a
-    fixed `#`. Both fixed choices are wrong against a deliverable this
-    pipeline actually generates: matching any level lets a model that titles
-    its own narration (`## My plan`) keep the chatter, while matching only
-    level 1 stops trimming entirely for the scout artifact, whose format
-    starts at `## Investigation Leads` and has no level-1 title at all. The
-    shallowest level is the document's own outline root either way, and
-    narration that happens to use a *shallower* heading than the document is
-    the one shape this does not catch.
-
-    Only the leading text is dropped, never a trailing word: an agent that
-    stopped mid-document is a partial review worth keeping, and there is no
-    marker that reliably says where one ends. Text with no heading is returned
-    as-is, and the caller's own heading filter is what then rejects it.
-    """
-    headings = [
-        (match.start(1), len(match.group(2)))
-        for match in _HEADING.finditer(text)
-    ]
-    if not headings:
-        return text
-    top = min(level for _, level in headings)
-    return next(text[pos:] for pos, level in headings if level == top)
-
-
 def _assistant_messages(record: dict) -> list[dict]:
     """The assistant messages a log record carries, in either shape.
 
@@ -677,29 +499,22 @@ def try_recover_output(log_path: str, output_path: str) -> bool:
     that merely looks like one, so narration only wins when neither other
     source produced a candidate that qualifies.
 
-    A `.json` deliverable is held to being one JSON object, and narration around
-    it is cut at the object's braces rather than at a heading: a markdown heading
-    inside a JSON string is part of a value, not the document's start.
+    Every review deliverable is a JSON object. Narration around it is cut at
+    the object's braces: a markdown heading inside a JSON string is part of a
+    value, not the document's start.
     """
     if not log_path or not Path(log_path).is_file():
         return False
-    # ceiling: suffix picks the salvage filter while some phases still write
-    # markdown. Upgrade trigger: once every review deliverable is `.json`, drop
-    # json_mode and the heading filter.
-    json_mode = output_path.endswith(".json")
     records = read_jsonl(log_path)
     candidates = (
-        _narrated_write_contents(records, json_mode=json_mode)
+        _narrated_write_contents(records)
         + _collect_denied_contents(records)
         + _pi_write_attempts(records, output_path)
     )
-    # A JSON deliverable is a JSON object; a markdown one has a heading.
     for content in reversed(candidates):
-        if json_mode and _json_object(content.strip()) is None:
+        if _json_object(content.strip()) is None:
             continue
-        if not json_mode and "## " not in content:
-            continue
-        Path(output_path).write_text(content.strip() + "\n" if json_mode else content + "\n")
+        Path(output_path).write_text(content.strip() + "\n")
         core.log.warn(f"Recovered review from the session log — saved to {output_path}")
         return True
     return False

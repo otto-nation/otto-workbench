@@ -598,11 +598,11 @@ class TestANarratedRunEndToEnd:
         """Recovering the document is cheaper than running the agent again."""
         from agent.session import try_recover_output
 
-        output = tmp_path / "review.md"
+        output = tmp_path / "review.json"
         output.write_text("")
         log = self._log(
             tmp_path,
-            'I already wrote it.\n\nwrite review.md "# Rev\n\n## Must fix\n- [M1] x\n"',
+            'I already wrote it.\n\n{"summary": "[M1] x", "findings": []}',
         )
         attempts = []
         result = agent.retry.retry_unproductive(
@@ -642,5 +642,5 @@ class TestANarratedRunEndToEnd:
             output_path=str(output),
         )
         assert len(attempts) == 1
-        assert "as text" in attempts[0]
+        assert "without ever calling a file-writing tool" in attempts[0]
         assert attempts[0].endswith("ORIGINAL")

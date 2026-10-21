@@ -344,7 +344,7 @@ class TestTheNarrationScanIsOrderedCheaplyFirst:
         """The other half: the cheap test must not suppress a real answer."""
         log_path = _write_log(
             tmp_path,
-            _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
+            _pi_text('write review.json {"summary": "x", "findings": []}'),
             _pi_result(subtype="success"),
         )
         assert agent.session.diagnose_missing_output(log_path).narrated_call is True
@@ -517,7 +517,7 @@ class TestDiagnosingANarratedCall:
     def test_a_tool_less_run_that_narrated_is_flagged(self, tmp_path):
         log_path = _write_log(
             tmp_path,
-            _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
+            _pi_text('write review.json {"summary": "x", "findings": []}'),
             _pi_result(subtype="success"),
         )
         diagnosis = agent.session.diagnose_missing_output(log_path)
@@ -547,7 +547,7 @@ class TestDiagnosingANarratedCall:
 
         log_path = _write_log(
             tmp_path,
-            _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
+            _pi_text('write review.json {"summary": "x", "findings": []}'),
             _pi_result(subtype="success"),
         )
         hint = agent.retry.hint_for(agent.session.diagnose_missing_output(log_path))

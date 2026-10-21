@@ -27,9 +27,9 @@ they like; merging, deduplication, and evidence verification all remove
 findings, and a final pass closes the gaps so each severity numbers from 1 with
 no holes.
 
-Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
-…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
-a reference, and references are rewritten through the same map, so a finding
+Only a finding on the record — a `RecordFinding` in `findings` — gets a number.
+A mention of an ID inside a finding's body, summary, or other prose is a
+reference, and references are rewritten through the same map, so a finding
 that cites another one still cites the same one afterwards.
 
 Every severity is renumbered over the whole set of sections rather than one

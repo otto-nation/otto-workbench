@@ -232,8 +232,7 @@ class TestApplyOutcomes:
     )
 
     # What a PR-mode review writes: `review-templates/single-agent.md` asks for a
-    # finding with no checkbox, and `FINDING_ID_RE` makes the box optional so the
-    # line parses either way. A pass that only ever saw `OPEN` cannot see what
+    # finding with no checkbox. A pass that only ever saw `OPEN` cannot see what
     # this shape does to a tick.
     NO_CHECKBOX = record(finding("M1", "Missing nil check"))
 
@@ -308,12 +307,17 @@ class TestApplyOutcomes:
             "characters so the append lands after it"
         )
         rec = record(finding("M1", body, checkbox=True))
-        before_line = _finding_line(render_body(rec), "M1")
-        out = _apply(
+        before_f = rec.finding("M1")
+        done = _applied(
             rec, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        before = review.grammar.FindingIdentity.of(before_line)
-        after = review.grammar.FindingIdentity.of(_finding_line(out, "M1"))
+        after_f = done.finding("M1")
+        before = review.grammar.FindingIdentity.of_fields(
+            before_f.path, before_f.line, before_f.body,
+        )
+        after = review.grammar.FindingIdentity.of_fields(
+            after_f.path, after_f.line, after_f.body,
+        )
         assert after.stable_id == before.stable_id
 
     # passes-at-base: base rewrites nothing on the line, so the spacing is safe for free
@@ -382,7 +386,6 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ]).finding("M1")
-        assert review.grammar.SKIP_TAIL_RE.search(answered.body) is None
         assert answered.disposition is Disposition.FIXED
         assert "- [x] **[M1]**" in out
 
@@ -462,14 +465,12 @@ class TestApplyOutcomes:
     # passes-at-base: base writes no annotation, so the wording assertions hold vacuously there
     def test_an_unverified_tick_renders_as_a_fix(self):
         """The caveat is for the reader; it must not read back as a skip or decline."""
-        out = _apply(self.OPEN, [
-            _outcome("M1", FixOutcome.FIXED, verified=False,
-                     verify_detail="no runnable check"),
-        ])
+        outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
+                           verify_detail="no runnable check")
+        out = _apply(self.OPEN, [outcome])
         line = _finding_line(out, "M1")
         assert line.startswith("- [x] **[M1]**")
-        assert review.grammar.SKIP_TAIL_RE.search(line) is None
-        assert review.grammar.DECLINED_TAIL_RE.search(line) is None
+        assert _applied(self.OPEN, [outcome]).finding("M1").disposition is Disposition.FIXED
 
     # passes-at-base: base annotates nothing, so a checkbox-free line is untouched there anyway
     def test_a_finding_with_no_checkbox_is_not_annotated(self):
@@ -505,13 +506,12 @@ class TestApplyOutcomes:
         caveat is found there and the whole finding reads as adjudicated — which
         drops it from the next round's work set.
         """
-        out = _apply(self.OPEN, [
-            _outcome("M1", FixOutcome.FIXED, verified=False,
-                     verify_detail="the repro *(declined — see above)*"),
-        ])
+        outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
+                           verify_detail="the repro *(declined — see above)*")
+        out = _apply(self.OPEN, [outcome])
         line = _finding_line(out, "M1")
         assert line.startswith("- [x] **[M1]**")
-        assert review.grammar.DECLINED_TAIL_RE.search(line) is None
+        assert _applied(self.OPEN, [outcome]).finding("M1").disposition is Disposition.FIXED
 
     # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
     def test_a_detail_quoting_a_skip_does_not_become_one(self):
@@ -521,12 +521,9 @@ class TestApplyOutcomes:
         so only the pattern can see whether the quotation survived into the
         document.
         """
-        out = _apply(self.OPEN, [
-            _outcome("M1", FixOutcome.FIXED, verified=False,
-                     verify_detail="see *(skipped — needs design)*"),
-        ])
-        line = _finding_line(out, "M1")
-        assert review.grammar.SKIP_TAIL_RE.search(line) is None
+        outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
+                           verify_detail="see *(skipped — needs design)*")
+        assert _applied(self.OPEN, [outcome]).finding("M1").disposition is Disposition.FIXED
 
     # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own
     def test_an_already_hedged_line_gains_no_second_caveat(self):

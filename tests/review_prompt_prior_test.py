@@ -94,9 +94,8 @@ class TestThreadStateFollowsTheIdentityNotTheNumber:
         the hash a posted comment carries and the hash that stamps have to be
         the same one — this is the test that they are.
         """
-        line = "- **[M9]** **`a.py:10`** — Missing error check"
         prior = _stored(finding("M9", "Missing error check", path="a.py", line=10))
-        identity = FindingIdentity.of(line)
+        identity = FindingIdentity.of_fields("a.py", 10, "Missing error check")
         # Both sides carrying "" would match each other and prove nothing.
         assert identity.stable_id
         threads = self._threads(finding_id="M1", stable_id=identity.stable_id)
@@ -233,12 +232,11 @@ class TestPriorTextOmitsBookkeeping:
         assert "**[M1]**" in result
 
     def test_carried_findings_are_stamped_with_their_stable_id(self):
-        line = "- **[M1]** **`handler.go:42`** — missing error check"
         result = _prior_text(_stored(finding("M1", "missing error check", path="handler.go", line=42)), None)
         assert "<!-- sid:" in result
         assert "**[M1]**" in result
         assert "handler.go:42" in result
-        identity = FindingIdentity.of(line)
+        identity = FindingIdentity.of_fields("handler.go", 42, "missing error check")
         assert identity.stable_id in result
         assert _prior_text(_stored(finding("M1", "missing error check", path="handler.go", line=42)), None) == result
 

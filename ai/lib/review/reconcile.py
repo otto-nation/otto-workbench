@@ -51,9 +51,7 @@ from pathlib import Path
 import git.client
 import core.log
 import core.serde
-from review.grammar import (
-    SID_MARKER_RE, FindingIdentity,
-)
+from review.grammar import SID_MARKER_RE
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review.record import Disposition, LedgerLine, ReviewRecord
 from review.render import finding_line
@@ -61,34 +59,20 @@ from review.store import StoredReview
 from review.types import FindingRef, PriorDisposition, PriorFinding, ReviewMeta
 from core.text import plural
 
-# ── Carry-forward identity ───────────────────────────────────────────────────
-
-def _stable_ids(text: str) -> set[str]:
-    """Every prior-finding identity the text carries.
-
-    Both the markers in carried-forward text and the ID each finding line
-    hashes to on its own — a synthesis agent that retypes a carried finding
-    drops the marker but keeps the path and the wording, so the recomputed ID
-    is the part that survives it.
-    """
-    ids = set(SID_MARKER_RE.findall(text))
-    for raw in text.split("\n"):
-        identity = FindingIdentity.of(raw.strip())
-        if identity:
-            ids.add(identity.stable_id)
-    return ids
-
-
 # ── Reading the prior review ─────────────────────────────────────────────────
 
 def _record_stable_ids(record: ReviewRecord) -> set[str]:
-    """Every prior-finding identity the review carries: markers, finding identities,
-    and any finding-shaped line in its prose — the same set `_stable_ids` read off text."""
+    """Every prior-finding identity the review carries.
+
+    A finding's own `sid` (copied from the prior finding it carries forward) and
+    its stable ID, plus any `<!-- sid: -->` marker in the review's prose. A
+    finding restated only in words is not carried: the agent that carried it
+    was asked for its sid.
+    """
     ids = {f.sid for f in record.findings if f.sid} | {f.stable_id for f in record.findings if f.stable_id}
-    texts = [record.summary, record.verdict, *(e.body for e in record.extra),
-             *(f.body for f in record.findings)]
-    for text in texts:
-        ids |= _stable_ids(text)
+    for text in (record.summary, record.verdict, *(e.body for e in record.extra),
+                 *(f.body for f in record.findings)):
+        ids |= set(SID_MARKER_RE.findall(text))
     return ids
 
 

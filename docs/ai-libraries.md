@@ -172,8 +172,9 @@ What an agent run left behind: its cost, its diagnosis, its salvage.
 Everything here reads a session log after the fact. Running the agent is
 ``agent.invoke``'s job and resolving which model it ran with is
 ``agent.phases``'s; this module is what the pipeline asks once the log exists —
-what the run cost, why it produced nothing, whether the document it was denied
-permission to save can still be recovered.
+what the run cost, why it produced nothing, whether the JSON document it was
+denied permission to save can still be recovered. Every review deliverable is
+a JSON document.
 
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
@@ -1363,54 +1364,36 @@ line the diff never touched.
 
 ### review/grammar.py
 
-The one reading of a finding line: its ID, its location, its identity.
+The posted-comment wire format, and the identity two findings are compared on.
 
-Every regex that parses a finding declaration lives here, and so does the
-identity two findings are compared on. Before this module there were eleven
-such regexes in five files, and they disagreed: dedup read a path only when it
-was bold, while carry-forward read all four shapes and hashed them together, so
-a finding written with plain backticks was carried forward and deduplicated
-against nothing.
+A finding posted to GitHub carries its tag (`finding_tag`, `posted_finding_tag`)
+and a `<!-- sid: -->` marker (`sid_marker`). `reply_threads` reads them back off
+the PR (`SID_MARKER_RE`, `BOLD_FINDING_ID_RE`), and `review.dedup` reads a
+posted body (`BODY_FINDING_RE`, `strip_sid_markers`, `strip_line_suffix`).
+`location_ref` is how both `review.md` and the comment spell a location.
 
-A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
-`:12-18` several of them match inside a span they capture, and
-`strip_line_suffix` is how such a reader takes it back off — each used to
-truncate at the last colon instead, which read `ns:module.py` as `ns` and
-verified a finding against a file that does not exist. `SEVERITY_KEY` and the
-`<!-- sid: -->` marker are the other two: `sid_marker` writes a marker,
-`strip_sid_markers` takes it back off and `SID_MARKER_RE` reads the identity
-out of one, so a marker a writer emits is one every reader here skips over.
+`FindingIdentity` is what makes two findings the same one: built from a
+finding's fields (`of_fields`), it owns the `DedupKey` merge deduplicates on and
+the stable ID a sid marker carries. The stable ID hashes the path and the
+body's first eighty characters, so an anchored finding keeps the sid its
+rendered line hashed to before agents wrote JSON.
 
-The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
-returns is a pair with names rather than two loose strings, because which half
-is the location is not something a call site should have to infer from
-position.
-
-Exact, and deliberately so: a carry-forward asks whether this is the same
-finding as one in the prior review, and a fuzzy answer there silently merges two
-findings about two lines of one file. `review.dedup` is the fuzzy answer, for
-the different question of whether a finding is about to be posted twice.
-
-Where a finding's body ends is `review.ingest`'s `finding_spans`. What a
-document is assembled from is `review.document`'s; what a finding means once
-parsed is `review.types`'.
+Agent output is not parsed here — agents write JSON (`review.artifacts`).
 
 ### review/ingest.py
 
-One ingest boundary: an agent's markdown review becomes a `ReviewRecord`, once.
+One ingest boundary: an agent's JSON artifact becomes typed data, once.
 
-Every agent artifact that becomes review state passes through `ingest_review`
-where it enters. Ingest is strict: an entry it cannot represent faithfully — an
-unknown severity token, a duplicate ID, a declaration with nothing after it — is
-an `IngestError`, never a silent repair. `ingest_with_repair` gives the agent one
-turn to fix a rejection and returns an `IngestOutcome`; a second rejection is an
-agent failure, handled as failures already are.
+Every agent output that becomes review state passes through `load_artifact`
+where it enters: `json.loads`, then the strict schema (`core.strict`), then the
+artifact's own `problems()` (`review.artifacts`). Ingest is strict. Invalid
+JSON (named by line and column), a schema violation or a malformed entry (named
+by JSON path) is an `IngestError`, never a silent repair. `ingest_artifact`
+gives the agent one turn to fix a rejection and returns an `ArtifactOutcome`;
+a second rejection is an agent failure, handled as failures already are.
 
-Text carrying the render `BANNER` is refused outright: `review.md` is a view of
-`review.json` and is never parsed back.
-
-This reads the markdown grammar — `review.grammar` for a finding line —
-and walks each finding's body here (`finding_spans`).
+`review.md` is rendered from the record and never parsed back; nothing here
+reads markdown.
 
 ### review/merge.py
 
@@ -1443,9 +1426,9 @@ they like; merging, deduplication, and evidence verification all remove
 findings, and a final pass closes the gaps so each severity numbers from 1 with
 no holes.
 
-Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
-…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
-a reference, and references are rewritten through the same map, so a finding
+Only a finding on the record — a `RecordFinding` in `findings` — gets a number.
+A mention of an ID inside a finding's body, summary, or other prose is a
+reference, and references are rewritten through the same map, so a finding
 that cites another one still cites the same one afterwards.
 
 Every severity is renumbered over the whole set of sections rather than one

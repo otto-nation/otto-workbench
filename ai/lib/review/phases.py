@@ -102,15 +102,12 @@ def _phase_deliverable(
 ) -> str:
     """The one file `phase` is judged on having written, or "" if it has none.
 
-    A named findings artifact is derived from the phase spec. A phase with no
-    artifact of its own would fall back to the review document. A fix-shaped
+    A named findings artifact is derived from the phase spec. A fix-shaped
     phase edits a tracking file and has no single deliverable, so it opts out
     and any write counts as progress there.
     """
     if spec.shape is PhaseShape.FIX:
         return ""
-    if not spec.output_filename:
-        return job.review_file
     return phase_output_path(job.review_file, phase, index)
 
 

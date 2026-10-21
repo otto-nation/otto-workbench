@@ -23,7 +23,6 @@ and the rest.
 from __future__ import annotations
 
 import functools
-import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -76,10 +75,9 @@ def severity_by_key(key: str) -> SeverityConfig:
 class PriorDisposition(StrEnum):
     """What a re-review says became of a prior finding.
 
-    The values are the words the prompt asks for and the words the ledger is
-    parsed for, so the two cannot drift apart. `FIXED` and `STILL_OPEN` keep
-    their original spellings: a review file written before `DECLINED` existed
-    still parses.
+    The values are what the strict reader validates `disposition` against.
+    `FIXED` and `STILL_OPEN` keep their original spellings: a review file
+    written before `DECLINED` existed still loads.
 
     Declaration order is load-bearing: `precedence` reads it, so a member
     declared later outranks every member above it.
@@ -92,22 +90,6 @@ class PriorDisposition(StrEnum):
     # work: carrying an adjudicated finding as open re-presents it every review
     # and feeds it back into the next fix pass.
     DECLINED = "Declined"
-
-    @classmethod
-    def parse(cls, text: str) -> "PriorDisposition | None":
-        """The disposition a ledger line states, if it states one plainly.
-
-        The verdict has to stand on its own — the whole text, or ahead of the
-        break that introduces its detail. A qualified one ("Fixed, but only on
-        the happy path") is left unparsed rather than read as its optimistic
-        half.
-        """
-        lowered = text.strip().lower()
-        for member in cls:
-            rest = lowered.removeprefix(member.value.lower())
-            if rest != lowered and _DISPOSITION_TAIL_RE.match(rest):
-                return member
-        return None
 
     @property
     def precedence(self) -> int:
@@ -127,63 +109,6 @@ class PriorDisposition(StrEnum):
 _DISPOSITION_PRECEDENCE = {
     member: rank for rank, member in enumerate(PriorDisposition, 1)
 }
-
-# What may follow a disposition without qualifying it: nothing, or a break that
-# introduces detail rather than a caveat.
-#
-# The full stop is on the list because a review states a verdict in a sentence
-# as readily as in a clause — "Fixed. `check_key` now calls it directly." is the
-# same claim as "Fixed — `check_key` now calls it directly.", and the prompt's
-# example cannot show every punctuation a model will reach for. The comma stays
-# off it: what follows a comma qualifies the verdict rather than explaining it.
-#
-# The markdown emphasis characters are on it for the same reason the full stop
-# is: "Fixed *(removed in 89f66d9)*" is the claim "Fixed (removed in 89f66d9)"
-# already makes, and the ledger is markdown, so a model italicises its detail
-# whether or not the prompt shows that form. Emphasis carries no meaning here —
-# stripping it changes nothing about what the line claims — so it introduces
-# detail rather than qualifying the verdict.
-#
-# Each character is mapped to the words the prompt uses for it, because neither
-# can be derived from the other: three of these are "a dash" and two are
-# "italics", so a glyph list built from the keys would instruct a model worse
-# than prose does, and prose alone has now gone stale twice. The prompt is held
-# to these names by `TestLedgerInstructionNamesEveryBreak`, so a character added
-# here fails a test until `review.prompt_prior` says how to write it.
-DISPOSITION_TAIL_PROSE = {
-    "—": "a dash",
-    "–": "a dash",
-    "-": "a dash",
-    ":": "a colon",
-    ".": "a full stop",
-    "(": "an opening bracket",
-    "*": "italics",
-    "_": "italics",
-}
-DISPOSITION_TAIL_PUNCTUATION = "".join(DISPOSITION_TAIL_PROSE)
-
-# The two characters above that join words as readily as they break them. Glued
-# straight onto the verdict and straight onto what follows, neither is a break
-# at all — "Fixed_up in a follow-up branch" and "Fixed-up in a follow-up branch"
-# are the unparseable "Fixed in a follow-up branch" with the space spelled
-# differently, not a verdict with detail after it. So they break the line only
-# where a space precedes them or a non-word character follows: "Fixed _reason_"
-# and a trailing "Fixed -" still read as verdicts, while a hyphenated or
-# underscored word does not. Every other character in the map cannot sit inside
-# a word in the first place and is read wherever it appears.
-_DISPOSITION_TAIL_WORD_JOINERS = "-_"
-
-# The rest of the map: every character that breaks a verdict wherever it
-# appears.
-_DISPOSITION_TAIL_BREAKS = "".join(
-    c for c in DISPOSITION_TAIL_PUNCTUATION if c not in _DISPOSITION_TAIL_WORD_JOINERS
-)
-_DISPOSITION_TAIL_RE = re.compile(
-    rf"^(?:\s*$"
-    rf"|\s*[{re.escape(_DISPOSITION_TAIL_BREAKS)}]"
-    rf"|\s+[{re.escape(_DISPOSITION_TAIL_WORD_JOINERS)}]"
-    rf"|[{re.escape(_DISPOSITION_TAIL_WORD_JOINERS)}](?!\w))"
-)
 
 
 # ── Coverage ─────────────────────────────────────────────────────────────────
@@ -431,11 +356,9 @@ class Finding:
     body: str
     full_path: str = ""
     posted_id: str = ""
-    # The `FindingIdentity.stable_id` of the line this was parsed from, which a
-    # posted comment carries so a later round can match a reply thread back to
-    # the finding it hangs off. Set where the line is read rather than derived
-    # from the fields beside it: `finding_spans` replaces `body` with the whole
-    # span, and the identity hashes the declaration line's wording.
+    # The `FindingIdentity.stable_id` of this finding, which a posted comment
+    # carries so a later round can match a reply thread back to the finding it
+    # hangs off.
     stable_id: str = ""
     classification: str = ""
     skip_reason: str = ""
@@ -485,79 +408,6 @@ class PriorFinding:
     ref: FindingRef
     stable_id: str
     text: str = ""
-
-
-# ── Finding location and span ────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class FindingLocation:
-    """Where in the tree a finding line says its finding is.
-
-    `line` and `end_line` are the range the location names — both absent when
-    it names a file and no line of it.
-    """
-
-    path: str = ""
-    line: int | None = None
-    end_line: int | None = None
-
-    @property
-    def named(self) -> bool:
-        """Whether the line named a location at all."""
-        return bool(self.path)
-
-
-class FindingScope(StrEnum):
-    """What the heading above a finding declaration makes of it.
-
-    `DECLARED` is a declaration under a severity heading — a finding the text
-    reports as its own. `REPORTED` is one under a heading that names no
-    severity: the `## Prior findings` ledger repeats the last review's findings
-    there, and its IDs number that review rather than this one, so an edit that
-    touched them would rewrite the record of a review it is not looking at.
-    `UNHEADED` is a declaration with no heading above it at all, which is what
-    a caller holding one severity's findings on their own hands in.
-    """
-
-    DECLARED = "declared"
-    REPORTED = "reported"
-    UNHEADED = "unheaded"
-
-
-@dataclass(frozen=True)
-class FindingSpan:
-    """A finding declaration and the lines belonging to it.
-
-    `line` is the declaration itself, stripped — what a caller with a narrower
-    grammar than `FINDING_ID_RE` matches against to decide whether this is a
-    finding it wants. `start` and `end` are line indices into the text the span
-    was read from: the declaration's own line, and the line after the last one
-    its body claims. `text_of` is the slice they name.
-
-    The coordinates live here rather than on `Finding`, which the fix pass
-    serializes to disk — a line number from one reading of one document is not
-    something a stored finding should carry around.
-    """
-
-    finding: Finding
-    line: str
-    start: int
-    end: int
-    scope: FindingScope = FindingScope.UNHEADED
-
-    @property
-    def reported(self) -> bool:
-        """Whether the span sits under a heading reporting on another review."""
-        return self.scope is FindingScope.REPORTED
-
-    def text_of(self, text: str) -> str:
-        """The lines the span claims, verbatim.
-
-        Trailing blank lines included, since a caller removing the span has to
-        name every line the span owns or it leaves the gap behind.
-        """
-        return "\n".join(text.split("\n")[self.start:self.end])
 
 
 # ── What is under review ─────────────────────────────────────────────────────

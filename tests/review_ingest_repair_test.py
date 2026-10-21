@@ -14,20 +14,7 @@ from agent.diagnosis import Diagnosis, DiagnosisKind
 from review.artifacts import GroupArtifact
 from review.ingest import (
     REPAIR_MAX_TURNS, IngestError, IngestErrorKind, IngestRejected,
-    ingest_artifact, ingest_with_repair, load_artifact,
-)
-
-BAD = "## Nit\n- **[N1]** `a` — x\n- **[N1]** `b` — y\n"
-GOOD = "## Nit\n- **[N1]** `a` — x\n- **[N2]** `b` — y\n"
-BAD_SYNTH = (
-    "## Summary\nLooks good.\n\n"
-    "## Nit\n- **[N1]** `a` — x\n- **[N1]** `b` — y\n\n"
-    "## Verdict\nApprove.\n"
-)
-GOOD_SYNTH = (
-    "## Summary\nLooks good.\n\n"
-    "## Nit\n- **[N1]** `a` — x\n- **[N2]** `b` — y\n\n"
-    "## Verdict\nApprove.\n"
+    ingest_artifact, load_artifact,
 )
 
 
@@ -41,57 +28,6 @@ class FakeAgent:
         self.calls.append((text, turns))
         self.path.write_text(self.fixed)
         return self.rc
-
-
-def test_clean_output_spends_no_repair_turn(tmp_path):
-    path = tmp_path / "review.md"
-    path.write_text(GOOD)
-    agent = FakeAgent(path, GOOD)
-    outcome = ingest_with_repair(str(path), "PROMPT", agent)
-    assert outcome.ok and not outcome.repaired and agent.calls == []
-
-
-def test_a_rejection_gets_one_turn_with_the_errors_quoted(tmp_path):
-    path = tmp_path / "review.md"
-    path.write_text(BAD)
-    agent = FakeAgent(path, GOOD)
-    outcome = ingest_with_repair(str(path), "PROMPT", agent)
-    assert outcome.ok and outcome.repaired
-    (text, turns), = agent.calls
-    assert text.startswith("PROMPT") and "duplicate_id" in text and "N1" in text
-    assert turns == REPAIR_MAX_TURNS
-
-
-def test_a_second_rejection_is_a_failure_not_another_turn(tmp_path):
-    path = tmp_path / "review.md"
-    path.write_text(BAD)
-    agent = FakeAgent(path, BAD)
-    outcome = ingest_with_repair(str(path), "PROMPT", agent)
-    assert not outcome.ok and len(agent.calls) == 1
-    assert outcome.errors[0].kind is IngestErrorKind.DUPLICATE_ID
-    assert outcome.diagnosis is None
-
-
-def test_a_repair_that_exits_nonzero_carries_that_failure(tmp_path):
-    path = tmp_path / "review.md"
-    path.write_text(BAD)
-    agent = FakeAgent(path, BAD, rc=1)
-    outcome = ingest_with_repair(str(path), "PROMPT", agent)
-    assert not outcome.ok and outcome.repaired
-    assert outcome.errors == ()
-    assert outcome.diagnosis.kind is DiagnosisKind.AGENT_ERROR
-    assert "1" in outcome.diagnosis.detail
-
-
-def test_a_repair_that_diagnoses_a_cause_carries_that_kind(tmp_path):
-    path = tmp_path / "review.md"
-    path.write_text(BAD)
-    agent = FakeAgent(path, BAD, rc=1)
-    quota = Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)
-    outcome = ingest_with_repair(
-        str(path), "PROMPT", agent, diagnose=lambda: quota,
-    )
-    assert not outcome.ok and outcome.diagnosis is quota
 
 
 def test_a_group_whose_repair_fails_is_a_group_failure(tmp_path, monkeypatch):
@@ -275,11 +211,11 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
     import review.phases
     import review.steps
     from gh.types import PRContext, PRMetadata
-    from review.ingest import ingest_review
     from review.steps import Merged
     from review.types import ReviewJob
     from review.verdict import FALLBACK_SUMMARY
     from review.verify import PostProcessed
+    from review_record_support import finding, record
 
     prompts = []
     job = ReviewJob(
@@ -307,7 +243,11 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
         review.outcome, "post_process_record",
         lambda record, *a, **k: PostProcessed(record, None),
     )
-    merged = Merged(ingest_review(GOOD, strict=False))
+    merged = Merged(record(
+        finding("N1", "x", path="a.py", line=1),
+        finding("N2", "y", path="b.py", line=1),
+        summary="Looks good.", verdict="Approve.",
+    ))
     result = review.steps._phase_synthesis(job, "", 1, merged)
     assert result.diagnosis is None
     written = Path(job.review_file).read_text()

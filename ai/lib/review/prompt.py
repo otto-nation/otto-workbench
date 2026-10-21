@@ -133,15 +133,15 @@ class PromptBuilder:
         return self
 
     def output(
-        self, output_path: str, *, stdout_warning: bool = False, output_format: str = "",
+        self, output_path: str, *, output_format: str, stdout_warning: bool = False,
     ) -> "PromptBuilder":
-        """How the agent saves its file, then — for a JSON artifact — the shape it writes.
+        """How the agent saves its file, then the JSON shape it writes.
 
         The write recipe is `agent.templates`' and is not changed here. The
         format follows it so the agent reads where to write before what to write.
         """
         block = build_output_block(output_path, stdout_warning=stdout_warning)
-        return self.set("output_block", f"{block}\n\n{output_format}" if output_format else block)
+        return self.set("output_block", f"{block}\n\n{output_format}")
 
     def execution_claim_guard(self, *, cross_cutting_step: int | None = None) -> "PromptBuilder":
         """The ban on claiming a command was run, for a write-first template.
@@ -823,13 +823,12 @@ def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
 
 
 def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False) -> str:
-    """The Output section's JSON example and field guide, or "" for a phase still on markdown.
+    """The Output section's JSON example and field guide for this phase's artifact.
 
     `rereview` is whether this prompt carries prior findings to account for.
     Only then does the example show the fields that carry one forward (D20).
     """
-    kind = extra.get("artifact")
-    return output_format(kind, job.mode, rereview=rereview) if kind is not None else ""
+    return output_format(extra["artifact"], job.mode, rereview=rereview)
 
 
 def _prompt_single(job, common, extra, output):

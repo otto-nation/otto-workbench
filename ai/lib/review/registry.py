@@ -55,12 +55,8 @@ class PhaseScan:
 @dataclass(frozen=True)
 class ReviewPhase:
     build: Callable[..., BuiltPrompt]
+    artifact: type
     scan: PhaseScan | None = None
-    # The JSON artifact this phase's agent writes. Its example is what the
-    # prompt's Output section shows; None while the phase still writes markdown.
-    # ceiling: optional until every phase writes JSON. Upgrade trigger: once
-    # every ReviewPhase names an artifact, drop the default and the markdown path.
-    artifact: type | None = None
 
 
 def _scout_context(scan: ScoutArtifact) -> str:
@@ -138,8 +134,7 @@ def build_prompt(
     spec = PHASES[phase]
     # The builder renders the format: only it knows whether it built a prior
     # section, which decides whether the carry fields are shown (D20).
-    if entry.artifact is not None:
-        extra = {**extra, "artifact": entry.artifact}
+    extra = {**extra, "artifact": entry.artifact}
     output = phase_output_path(job.review_file, phase, extra.get("group_idx"))
     template_name = spec.template_for(job.mode)
     model = phase_model(phase, job.model or None, job.config)

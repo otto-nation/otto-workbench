@@ -14,8 +14,9 @@ from review.grammar import finding_tag, location_ref, sid_marker
 from review.record import AgentFailure, Disposition, LedgerLine, ProseSection, RecordFinding, ReviewRecord, TriageEntry
 from review.types import SEVERITIES, ReviewMeta
 
-# The line every rendered review.md carries. Ingest refuses any text holding it,
-# which is what "review.md is never parsed back" is enforced by.
+# The line every rendered review.md carries. Agents write JSON, so nothing
+# parses review.md; the banner tells a human the file is generated and that
+# editing it is lost.
 BANNER = "<!-- rendered from review.json — edits here are overwritten; change the record -->"
 
 # Quoted in the Agent Failures section when a failed phase can be retried.
@@ -124,7 +125,9 @@ def render_review(record: ReviewRecord, meta: ReviewMeta, *, sids: bool = False,
     """The whole review.md: title and header from `meta`, banner, then the body.
 
     Prompt text passes `banner=False` so an agent quoting a rendered review
-    cannot echo the line ingest refuses as RENDERED_INPUT.
+    does not echo the generated-file banner. Agents write JSON, so nothing
+    parses review.md; the banner tells a human the file is generated and that
+    editing it is lost.
     """
     header = ReviewHeader.from_meta(meta).render()
     mark = f"{BANNER}\n" if banner else ""

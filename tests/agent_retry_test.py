@@ -598,11 +598,11 @@ class TestANarratedRunEndToEnd:
         """Recovering the document is cheaper than running the agent again."""
         from agent.session import try_recover_output
 
-        output = tmp_path / "review.md"
+        output = tmp_path / "review.json"
         output.write_text("")
         log = self._log(
             tmp_path,
-            'I already wrote it.\n\nwrite review.md "# Rev\n\n## Must fix\n- [M1] x\n"',
+            'I already wrote it.\n\n{"summary": "[M1] x", "findings": []}',
         )
         attempts = []
         result = agent.retry.retry_unproductive(
@@ -644,3 +644,51 @@ class TestANarratedRunEndToEnd:
         assert len(attempts) == 1
         assert "as text" in attempts[0]
         assert attempts[0].endswith("ORIGINAL")
+
+    def test_an_xml_element_narration_is_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output
+
+        output = tmp_path / "review.json"
+        output.write_text("")
+        log = self._log(
+            tmp_path,
+            "<write><path>review.md</path><content>see above</content></write>",
+        )
+        assert diagnose_missing_output(str(log), str(output)).narrated_call is True
+
+    def test_a_prose_write_call_is_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output
+
+        output = tmp_path / "tracking.md"
+        output.write_text("")
+        log = self._log(tmp_path, 'write tracking.md "fixed M1"')
+        assert diagnose_missing_output(str(log), str(output)).narrated_call is True
+
+    def test_plain_prose_is_not_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output
+
+        output = tmp_path / "review.json"
+        output.write_text("")
+        log = self._log(tmp_path, "I could not complete the review. Please advise.")
+        diagnosis = diagnose_missing_output(str(log), str(output))
+        assert diagnosis.narrated_call is False
+        assert diagnosis.no_write_tool is True
+
+    def test_a_json_shaped_call_is_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output, try_recover_output
+
+        output = tmp_path / "review.json"
+        output.write_text("")
+        inner = {"summary": "from call"}
+        log = self._log(tmp_path, json.dumps({"content": json.dumps(inner)}))
+        assert diagnose_missing_output(str(log), str(output)).narrated_call is True
+        assert try_recover_output(str(log), str(output)) is True
+        assert json.loads(output.read_text()) == inner
+
+    def test_a_bare_json_artifact_is_a_narrated_call(self, tmp_path):
+        from agent.session import diagnose_missing_output
+
+        output = tmp_path / "review.json"
+        output.write_text("")
+        log = self._log(tmp_path, '{"summary": "No issues found.", "findings": []}')
+        assert diagnose_missing_output(str(log), str(output)).narrated_call is True

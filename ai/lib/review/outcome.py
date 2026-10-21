@@ -20,7 +20,6 @@ from datetime import date
 from pathlib import Path
 
 from pr.domains import ReviewStatus
-from review.document import SECTION_SUMMARY, SECTION_VERDICT
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
@@ -100,15 +99,6 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
     ))
 
 
-def agent_output_complete(review_file: str) -> bool:
-    """Whether an agent's raw output carries a section every complete review has."""
-    path = Path(review_file)
-    if not path.exists():
-        return False
-    content = path.read_text()
-    return f"## {SECTION_SUMMARY}" in content or f"## {SECTION_VERDICT}" in content
-
-
 def is_complete_review(review_file: str) -> bool:
     """Whether a finished review is stored — the resumed run's test for trusting the disk."""
     stored = read_review(Path(review_file))
@@ -183,7 +173,7 @@ def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
 
 def _carried_record(prior: StoredReview) -> ReviewRecord:
     """The prior round's claims about the code, without its claims about its own run."""
-    return replace(prior.record, summary="", verdict="", triage=None, ledger="", static_analysis="")
+    return replace(prior.record, summary="", verdict="", triage=None, ledger=(), static_analysis="")
 
 
 def _post_process_review(job: ReviewJob, record: ReviewRecord,
@@ -222,7 +212,9 @@ def _write_clean_review(job: ReviewJob, group_count: int, merged: ReviewRecord,
         include_verdict=states_verdict(job.mode), verdict=CLEAN_VERDICT,
         file_count=job.pr.changed_files,
     )
-    _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count)
+    # Publishing clears the ledger everywhere else (`post_process_record`); this
+    # writer never reaches it, and a stored ledger would number the prior review.
+    _publish(job, replace(record, ledger=()), skipped_groups=skipped_groups, total_groups=group_count)
 
 
 def write_unchanged_review(job: ReviewJob) -> None:

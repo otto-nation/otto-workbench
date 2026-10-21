@@ -107,26 +107,6 @@ class TestCheckSerialAbort:
         assert consec == 1
 
 
-# ── 30. _validate_group_output ──────────────────────────────────────────────
-
-
-class TestValidateGroupOutput:
-    def test_valid_sections(self, ro, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("## Must fix\n- **[M1]** finding\n## Nit\n- **[N1]** nit\n")
-        assert ro._validate_group_output(str(f), "test") is True
-
-    def test_no_recognized_sections(self, ro, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("## Random Header\nsome content\n")
-        assert ro._validate_group_output(str(f), "test") is False
-
-    def test_empty_file(self, ro, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("")
-        assert ro._validate_group_output(str(f), "test") is True
-
-
 class TestIsRetryable:
     def test_max_turns_is_retryable(self, ro):
         assert ro._is_retryable(
@@ -212,14 +192,14 @@ class TestRetryFailedGroups:
         def mock_invoke(inv, **kwargs):
             from pathlib import Path
             calls.append(inv.max_turns)
-            output_path = str(tmp_path / "group-1.md")
-            Path(output_path).write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+            Path(inv.output_path).write_text(
+                json.dumps({"findings": [{"id": "M1", "path": "a.go", "line": 1, "body": "issue"}]})
+            )
             Path(inv.session_log).write_text("")
             return 0
 
         monkeypatch.setattr(review.phases, "run_agent", mock_invoke)
         monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review.phases, "_validate_group_output", lambda *a: None)
 
         failed = [ro.GroupFailure("grp-a", _max_turns_16(ro))]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
@@ -260,19 +240,14 @@ class TestRetryFailedGroups:
 
         def mock_invoke(inv, **kwargs):
             retried.append(inv.label)
-            # Each group writes its own artifact, as the real phase does: one
-            # shared path would leave groups 2 and 3 with no output and the
-            # assertion would read a harness bug as a retry that failed.
-            for n in range(1, 4):
-                Path(str(tmp_path / f"group-{n}.md")).write_text(
-                    "## Must fix\n- **[M1]** **`a.go:1`** — issue\n",
-                )
+            Path(inv.output_path).write_text(
+                json.dumps({"findings": [{"id": "M1", "path": "a.go", "line": 1, "body": "issue"}]})
+            )
             Path(inv.session_log).write_text("")
             return 0
 
         monkeypatch.setattr(review.phases, "run_agent", mock_invoke)
         monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **kw: "p")
-        monkeypatch.setattr(review.phases, "_validate_group_output", lambda *a: None)
 
         failed = [
             ro.GroupFailure(g.name, _max_turns_16(ro)) for g in groups
@@ -323,16 +298,14 @@ class TestRetryFailedGroups:
             from pathlib import Path
             name = inv.label
             calls.append(name)
-            if name == "grp-a":
-                Path(job.artifact_dir, "group-1.md").write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
-            elif name == "grp-b":
-                Path(job.artifact_dir, "group-2.md").write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
+            Path(inv.output_path).write_text(
+                json.dumps({"findings": [{"id": "M1", "path": "a.go", "line": 1, "body": "issue"}]})
+            )
             Path(inv.session_log).write_text("")
             return 0
 
         monkeypatch.setattr(review.phases, "run_agent", mock_invoke)
         monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review.phases, "_validate_group_output", lambda *a: None)
 
         failed = [
             ro.GroupFailure("grp-a", _max_turns_16(ro)),

@@ -408,16 +408,10 @@ next write overwrites the edit; nothing reads it back.
   falsified — replaces the checkbox and annotation ledgers.
   `review-orchestrate --track` files the findings a fix pass left skipped or
   unreached.
-- **Agent output** is read once, at one ingest boundary
-  ([`review/ingest.py`](ai-libraries.md#reviewingestpy)). A malformed entry —
-  an unknown severity, a duplicate ID — is rejected with a named error, and the
-  agent gets one repair turn; a second rejection is an agent failure.
-- **A review directory with no `review.json`** — one written before the record
-  existed — is stale. The next `pr review` regenerates it from scratch; a
-  re-review of it runs full rather than incremental.
-- `pr review --repair` re-syncs the recorded summary when `review.json` already
-  loads. It rebuilds from the group files only when there is no readable
-  `review.json` (stale or missing).
+- **Agent output** is JSON. Each phase writes one artifact ([`review/artifacts.py`](ai-libraries.md#reviewartifactspy)) — `scout.json`, `holistic.json`, `group-N.json`, `single.json`/`synthesis.json`, `disprove.json` — shaped like the prompt example generated from the dataclass the reader checks. Ingest ([`review/ingest.py`](ai-libraries.md#reviewingestpy)) reads it once: invalid JSON (line and column), a schema violation or a malformed entry (JSON path) is rejected with one repair turn; a second rejection is an agent failure.
+- **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
+- **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
+- `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
 
 ### How a review's verdict is decided
 

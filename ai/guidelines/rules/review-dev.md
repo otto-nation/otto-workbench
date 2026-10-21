@@ -14,13 +14,15 @@ When adding or modifying a review phase, verify these integration points:
 - `review/types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
 - `review/merge.py`: iteration over `SEVERITIES` in `merge_records()` and `renumber_record()` — merging the group reviews into one document. Renumbering rewrites every visible finding and every reference together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
 - `review/reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review/reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
-- `review/registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
-- `review/grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
+- `review/registry.py`: a builder in its phase table keyed by the new `Phase`, and the `artifact` its agent writes — the template and the output path come off the phase spec, so the builder supplies neither. The builder renders the Output section with `_artifact_format(job, extra, rereview=...)`, `rereview` being whether it built a prior section
+- `review/artifacts.py`: the JSON artifact each phase's agent writes. A new field goes on the dataclass with a value in its `example()` and an entry in `FIELD_NOTES` — `review_artifacts_test` fails until both exist — and the prompt shows it without a template edit. A field only a re-review fills goes in `CARRY_FIELDS` too, so a first-round prompt neither shows nor explains it
+- `review/ingest.py`: `load_artifact`/`ingest_artifact` read an artifact strictly (`core.strict`) and give the agent one repair turn. Nothing parses agent markdown; `review.md` is rendered and never read back
+- `review/record.py`: `review.json`'s schema. A change that is not load-safe bumps `SCHEMA_VERSION`, and either upgrades the previous version on load, as `_upgrade_v1` does for schema 1, or accepts that every existing review directory reads as stale
+- `review/grammar.py`: the posted-comment wire format (`sid_marker`, `SID_MARKER_RE`, `BOLD_FINDING_ID_RE`, `BODY_FINDING_RE`) and the identity two findings are compared on (`FindingIdentity.of_fields`, which owns both the dedup key and the stable ID)
 - `review/document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
-- `review/ingest.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`. A pass that walks agent markdown a finding at a time asks these rather than recognising the next head itself. Ingest is the only remaining walker; finished reviews are records.
 - `review-post`: `renumber_for_posting()`, `classify_findings()` posting routing. `posted_id` is positional — reassigned on every round from the diff order — so nothing that has to survive to the next round may key on it. What survives is `FindingIdentity.stable_id`, which `format_inline_comment` writes into the posted comment as a `<!-- sid: -->` marker and `_match_thread_to_finding` reads back out. A pass comparing the words of a posted comment strips it first, the way `review_dedup` does; the fresh finding it is scored against carries none
-- `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
-- `lib/review-templates/`: section headers referenced in synthesis and group templates
+- `agents/reviewer.md`, `agents/reviewer-lite.md`: the JSON artifact contract. `reviewer.md` is also the system prompt of the single, holistic and synthesis phases, so its embedded interactive example stays its last section and must strict-load as a `ReviewArtifact` (`review_contracts_test`)
+- `lib/review-templates/`: the field names the Output prose refers to — they must exist on the phase's artifact
 
 ## Which base a review measures against
 
@@ -57,62 +59,64 @@ review covering no commits reads exactly like a branch that changed nothing.
 
 ## Re-review reconciliation
 
-A re-review accounts for every prior finding in a `## Prior findings` ledger —
-one line per prior finding, `- **[M1]** \`path\` — Fixed`, `— Still open`, or
-`— Declined`, with the ID and path copied from the prior review. Those three
-verdicts are `PriorDisposition`, and `review.prompt_prior._build_prior_section()`'s
-instruction interpolates the enum's values, so the words asked for and the
-words parsed cannot drift apart. Where the verdict sits in the line is held together by a
-test instead: `TestLedgerInstructionParses` reads every example the instruction
-shows back through `review.grammar.parse_ledger_line`, because an example the parser rejects
-is invisible until a whole re-review's bookkeeping is lost. A verdict parses
-when it comes first and ends the line or breaks with one of
-`DISPOSITION_TAIL_PUNCTUATION`; a comma is deliberately not on that list, so
-"Fixed, but only on the happy path" reaches no verdict rather than its
-optimistic half.
-The ledger is unioned across groups by `merge_records()` — where the strongest
-verdict wins, in `PriorDisposition.precedence` order (`Declined` beats
-`Still open` beats `Fixed`) — copied through by the synthesis templates, and
-stripped in `post_process_record()` before renumbering, since its IDs number
-the prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`,
-`PriorDisposition`, the merge, the synthesis templates, or
-`_build_prior_section()`'s instruction means checking the others.
+A re-review accounts for every prior finding in its artifact's `prior_findings`:
+one `review.record.LedgerLine` per prior finding, with the `id` and `path`
+copied from the prior review, a `disposition`, and any detail in `note`.
+`disposition` is `PriorDisposition`, and the strict reader (`core.strict`)
+rejects any other value as a schema violation the agent gets one repair turn
+to fix, so the words asked for and the words read are one enum.
+`review.prompt_prior._LEDGER_FIELDS_INSTRUCTION` interpolates the enum's values
+and an example entry serialised from a real `LedgerLine`, and
+`TestLedgerFieldsInstruction` strict-loads that example back. A first-round
+prompt shows none of the carry fields (`review.artifacts.CARRY_FIELDS`): the
+builder that built — or did not build — the prior section passes `rereview`
+to `output_format`.
+The ledger is merged across groups by `merge_records()` — one line per prior
+finding ID, the strongest verdict winning in `PriorDisposition.precedence`
+order (`Declined` beats `Still open` beats `Fixed`) — copied through by
+synthesis, and cleared by `post_process_record()` before renumbering, since its
+IDs number the prior review, not this one. Every writer publishes an empty
+ledger, the clean-review path included. Changing any one of `LedgerLine`,
+`PriorDisposition`, the merge, the synthesis templates or
+`_LEDGER_FIELDS_INSTRUCTION` means checking the others.
 
 `review.reconcile.reconcile()` gives every prior finding a disposition, and
 `record_prior_findings()` runs it from `_post_process_review()` — before the
-strip, which is the last moment the review still says what it made of them.
-Sources, in the order they are asked: a ledger entry matching the prior
-finding's `FindingRef` (ID plus path); the stable ID the new review's own
-finding lines hash to, so a verbatim carry-forward counts with or without its
-`<!-- sid: -->` marker; then the tree, which settles a finding whose file is
-gone, or whose quoted code was in that file at the prior review's `head_sha`
-and is not in it now. `DispositionSource` records which of those answered, so
-an inference is never read back as something the review stated, and the tree is
-asked last because it cannot produce `Declined`. Every source reads a location
-through `review.grammar.FindingIdentity`, which asks `finding_location()` first
-so a finding citing a bare `` `path` `` with no `:<line>` still yields a path
-and a stable ID — without one it can be neither carried forward nor checked
-against the tree. That one type answers both the dedup key and the stable ID,
-so two findings cannot be duplicates for one pass and distinct for the other.
+clear, which is the last moment the review still says what it made of them.
+Sources, in the order they are asked: a ledger entry that `covers()` the prior
+finding's `FindingRef` (its ID, and its path when the entry names one); the
+identities the new review carries — each finding's own `sid`, copied from the
+prior finding's `<!-- sid: -->` marker, its stable ID, and any sid marker in
+the review's prose; then the tree, which settles a finding whose file is gone,
+or whose quoted code was in that file at the prior review's `head_sha` and is
+not in it now. A finding restated only in words is not carried. `DispositionSource`
+records which source answered, so an inference is never read back as something
+the review stated, and the tree is asked last because it cannot produce
+`Declined`. Identity is `review.grammar.FindingIdentity.of_fields(path, line,
+body)`, which answers both the dedup key and the stable ID, so two findings
+cannot be duplicates for one pass and distinct for the other. A prior record
+keeps the stable IDs it was stored with, including one upgraded from schema 1
+by `review.record._upgrade_v1`, so the sid a posted thread carries keeps
+matching even where the fields would hash differently.
 
 What none of them settles is undecided, and `UndecidedReason` says which kind:
-an unreadable ledger verdict and a location nothing could parse are defects
-here, `NOT_CHECKABLE` is a check there was nothing to run, and only
-`NOT_MENTIONED` is the review passing a finding by. `_report()` prints them
-grouped in that order rather than as one list — run together they all read as
-the last one — and the whole reconciliation, settled and not, is written to
+a location nothing could place is a defect here (`NO_LOCATION`), `NOT_CHECKABLE`
+is a check there was nothing to run, and only `NOT_MENTIONED` is the review
+passing a finding by. `_report()` prints them grouped in declaration order
+(`NO_LOCATION`, then `NOT_MENTIONED`, then `NOT_CHECKABLE`) rather than as one
+list, and the whole reconciliation, settled and not, is written to
 `prior-findings.json`.
 
-Because the ledger is stripped, `Declined` also has to survive on the finding
-line itself: a declined finding is carried forward annotated
-`*(declined — reason)*`, which `match_decline()` parses into `Finding.declined`
-— anchored to the head of the finding body or the end of the line, so a
-finding whose prose quotes the annotation is not silently adjudicated.
-That flag is what keeps the finding out of `run_fix_pass`'s work set: a
-declined finding is never rendered onto the tracking file and never costs the
-turns it would have bought. The fix template treats a `ceiling:` or
-`ceiling-permanent:` marked tradeoff as grounds for the agent's own `declined`
-box rather than a defect to fix.
+Because the ledger is cleared, `Declined` also has to survive on the finding
+itself: a declined finding is carried forward with its prior `sid` and its
+`declined` reason, and the runner believes the decline only when that sid is
+one the prior round held (`review.artifacts.declinable_sids`) — an agent cannot
+decline a finding of its own. The record keeps it as `Disposition.DECLINED`,
+rendered `*(declined — reason)*`, and that disposition is what keeps the
+finding out of `run_fix_pass`'s work set: a declined finding is never rendered
+onto the tracking file and never costs the turns it would have bought. The fix
+template treats a `ceiling:` or `ceiling-permanent:` marked tradeoff as grounds
+for the agent's own `declined` box rather than a defect to fix.
 
 Posting reads the same two marks and answers them differently, because they are
 not the same case. A ticked box is work that is done, so `review-post` drops the

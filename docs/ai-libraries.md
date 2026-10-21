@@ -172,8 +172,9 @@ What an agent run left behind: its cost, its diagnosis, its salvage.
 Everything here reads a session log after the fact. Running the agent is
 ``agent.invoke``'s job and resolving which model it ran with is
 ``agent.phases``'s; this module is what the pipeline asks once the log exists —
-what the run cost, why it produced nothing, whether the document it was denied
-permission to save can still be recovered.
+what the run cost, why it produced nothing, whether the JSON document it was
+denied permission to save can still be recovered. Every review deliverable is
+a JSON document.
 
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
@@ -1035,9 +1036,9 @@ Scoping the prior review to a group's files keeps findings that name a line of
 one of those files. A finding without a line is file-level and is not in any
 group's slice.
 
-`_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
-an agent; both sections here interpolate it rather than restating it, and
-`review.reconcile` is what reads the ledger back afterwards.
+`_LEDGER_FIELDS_INSTRUCTION` is the one place the ledger's shape is written
+down for an agent; both sections here interpolate it rather than restating it,
+and the strict reader is what checks it afterwards.
 
 Everything else a prompt says about the PR is `review.prompt_sections`'s, and
 which sections a phase asks for is `review.prompt`'s.
@@ -1137,10 +1138,13 @@ the order those checks run in.
 
 ### review/scout.py
 
-Lead scout: parse structured investigation leads from scout phase output.
+Phase 1's context: the scout's leads or the holistic assessment, as prompt text.
 
-The scout phase replaces the holistic phase's prose output with structured
-leads that tell group reviewers exactly where to focus investigation.
+Phase 1 runs one of two scans over the whole PR. Its agent writes a
+`ScoutArtifact` or a `HolisticArtifact` (`review.artifacts`). The phases after
+it never read that file: they read the block rendered here, which every group
+prompt embeds and synthesis is shown. Each block opens with its own heading, so
+a reader needs no sentinel to tell the two apart.
 
 ### review/sections.py
 
@@ -1260,6 +1264,29 @@ lookup, no `~/git` walk, and no `gh`. The slug-to-clone path is `find_repo_root`
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.
 
+### review/artifacts.py
+
+What a review agent writes: one JSON document per phase, each a frozen dataclass.
+
+Scout, holistic, group, single, synthesis and disprove each write one of the
+types here. The prompt shows the agent `example()` as `core.serde.to_dict` writes
+it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
+what `review.ingest` accepts are one schema. A test
+holds each example to the strict reader and to `problems()`, and holds the
+notes to the fields.
+
+The types are narrower than the record on purpose. `ReviewRecord` carries what
+the harness decides — dispositions, stable IDs, failures, static analysis,
+checkboxes — and an agent must not be able to write any of it. The strict
+reader rejects an unknown key, so a harness field in an agent's document is a
+named error rather than a value silently taken. `to_record` is the one
+conversion, and `as_group_artifact` is its inverse for the one prompt that
+shows a merged record back to an agent (synthesis).
+
+A finding's severity is its ID's first letter, so the two cannot disagree.
+`TriageEntry` and `LedgerLine` are the record's own types: what an agent
+writes there is exactly what the record keeps.
+
 ### review/dedup.py
 
 Deduplication of findings against already-posted PR comments.
@@ -1337,59 +1364,36 @@ line the diff never touched.
 
 ### review/grammar.py
 
-The one reading of a finding line: its ID, its location, its identity.
+The posted-comment wire format, and the identity two findings are compared on.
 
-Every regex that parses a finding declaration lives here, and so does the
-identity two findings are compared on. Before this module there were eleven
-such regexes in five files, and they disagreed: dedup read a path only when it
-was bold, while carry-forward read all four shapes and hashed them together, so
-a finding written with plain backticks was carried forward and deduplicated
-against nothing.
+A finding posted to GitHub carries its tag (`finding_tag`, `posted_finding_tag`)
+and a `<!-- sid: -->` marker (`sid_marker`). `reply_threads` reads them back off
+the PR (`SID_MARKER_RE`, `BOLD_FINDING_ID_RE`), and `review.dedup` reads a
+posted body (`BODY_FINDING_RE`, `strip_sid_markers`, `strip_line_suffix`).
+`location_ref` is how both `review.md` and the comment spell a location.
 
-One owner does not mean one pattern. `VERIFY_FINDING_RE` bounds a spaced
-filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
-and the two have to keep reading the same line the same way for different
-purposes. Both live here so a change to one is made next to the other.
+`FindingIdentity` is what makes two findings the same one: built from a
+finding's fields (`of_fields`), it owns the `DedupKey` merge deduplicates on and
+the stable ID a sid marker carries. The stable ID hashes the path and the
+body's first eighty characters, so an anchored finding keeps the sid its
+rendered line hashed to before agents wrote JSON.
 
-A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
-`:12-18` several of them match inside a span they capture, and
-`strip_line_suffix` is how such a reader takes it back off — each used to
-truncate at the last colon instead, which read `ns:module.py` as `ns` and
-verified a finding against a file that does not exist. `SEVERITY_KEY` and the
-`<!-- sid: -->` marker are the other two: `sid_marker` writes a marker,
-`strip_sid_markers` takes it back off and `SID_MARKER_RE` reads the identity
-out of one, so a marker a writer emits is one every reader here skips over.
-
-The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
-returns is a pair with names rather than two loose strings, because which half
-is the location is not something a call site should have to infer from
-position.
-
-Exact, and deliberately so: a carry-forward asks whether this is the same
-finding as one in the prior review, and a fuzzy answer there silently merges two
-findings about two lines of one file. `review.dedup` is the fuzzy answer, for
-the different question of whether a finding is about to be posted twice.
-
-Where a finding's body ends is `review.ingest`'s `finding_spans`. What a
-document is assembled from is `review.document`'s; what a finding means once
-parsed is `review.types`'.
+Agent output is not parsed here — agents write JSON (`review.artifacts`).
 
 ### review/ingest.py
 
-One ingest boundary: an agent's markdown review becomes a `ReviewRecord`, once.
+One ingest boundary: an agent's JSON artifact becomes typed data, once.
 
-Every agent artifact that becomes review state passes through `ingest_review`
-where it enters. Ingest is strict: an entry it cannot represent faithfully — an
-unknown severity token, a duplicate ID, a declaration with nothing after it — is
-an `IngestError`, never a silent repair. `ingest_with_repair` gives the agent one
-turn to fix a rejection and returns an `IngestOutcome`; a second rejection is an
-agent failure, handled as failures already are.
+Every agent output that becomes review state passes through `load_artifact`
+where it enters: `json.loads`, then the strict schema (`core.strict`), then the
+artifact's own `problems()` (`review.artifacts`). Ingest is strict. Invalid
+JSON (named by line and column), a schema violation or a malformed entry (named
+by JSON path) is an `IngestError`, never a silent repair. `ingest_artifact`
+gives the agent one turn to fix a rejection and returns an `ArtifactOutcome`;
+a second rejection is an agent failure, handled as failures already are.
 
-Text carrying the render `BANNER` is refused outright: `review.md` is a view of
-`review.json` and is never parsed back.
-
-This reads the markdown grammar — `review.grammar` for a finding line —
-and walks each finding's body here (`finding_spans`).
+`review.md` is rendered from the record and never parsed back; nothing here
+reads markdown.
 
 ### review/merge.py
 
@@ -1402,19 +1406,18 @@ path and description that decide whether two findings are duplicates are the
 pair that hashes to a stable ID, and a stable ID is how a later reconciliation
 recognises a finding a review restates.
 
-Reading that identity off a finding line is `review.grammar`'s job, not this
-module's: `FindingIdentity` answers both questions, so deduplication and
-carry-forward cannot come to different conclusions about one line. Reading a
+Reading that identity off a finding's fields is `review.grammar`'s job, not
+this module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one record. Reading a
 review is `review.document`'s job, checking findings against the tree is
 `review.verify`'s, and the `Finding` every side holds is `review.types`' — a
 consumer that only holds findings needs none of this. Deciding what became of
 a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
-carries its extent. Deduplication walks those records and drops a repeat by
-`FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
-record that never reaches the merged document rather than a span cut out of
-it.
+A `RecordFinding` already carries its fields. Deduplication walks those
+records and drops a repeat by `FindingIdentity.dedup_key` within the same ID
+prefix, so a duplicate is a record that never reaches the merged document
+rather than a second copy of it.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -1422,9 +1425,9 @@ they like; merging, deduplication, and evidence verification all remove
 findings, and a final pass closes the gaps so each severity numbers from 1 with
 no holes.
 
-Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
-…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
-a reference, and references are rewritten through the same map, so a finding
+Only a finding on the record — a `RecordFinding` in `findings` — gets a number.
+A mention of an ID inside a finding's body, summary, or other prose is a
+reference, and references are rewritten through the same map, so a finding
 that cites another one still cites the same one afterwards.
 
 Every severity is renumbered over the whole set of sections rather than one
@@ -1470,10 +1473,13 @@ in the diff at all is skipped. `cli.review_positions` is the command over this;
 
 Rebuild a review record from its group finding files.
 
-Ingests the group-N.md outputs, merges the records, post-processes them and
-writes a new review through the store — the recovery path when synthesis
-drifted or the review file was corrupted. `cli.review_rebuild` is the command
-over this.
+Loads the `group-N.json` artifacts, merges their records, post-processes them
+and writes a new review through the store. It is the recovery path when
+synthesis drifted or the review file was corrupted; `cli.review_rebuild` is
+the command over it. A group file that no longer loads is skipped with a
+warning, because rebuilding exists to salvage. When none of them load, the
+existing review is left untouched. A directory holding only the `group-N.md`
+files of a run from before agents wrote JSON is refused by name.
 
 ### review/reconcile.py
 
@@ -1532,9 +1538,11 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields carry today's markdown verbatim — `lead`, `verdict`, `ledger`,
-`extra`, `severity_sections` — so the cut-over renders what the markdown
-pipeline wrote. They go when agents write JSON and the verdict is derived.
+Some fields still carry markdown an agent wrote — `verdict`,
+`extra`, `severity_sections` — and go when agents write JSON and the verdict
+is derived. A record written at schema 1, before agents wrote JSON, is
+upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the
+stable IDs its posted comments carry.
 
 ### review/render.py
 
@@ -1621,9 +1629,9 @@ the quote no longer has, which makes a verbatim quote fail to match itself.
 
 The disprove gate is adversarial. Each must-fix and should-fix finding is
 challenged by an agent, and one that cannot survive the challenge is marked
-`FALSIFIED` on the record — kept, never rendered. Reading that agent's
-verdicts back and applying them is `apply_disprove`; whether the gate runs at
-all is `review.phases`'.
+`FALSIFIED` on the record — kept, never rendered. The agent writes a
+`DisproveArtifact`; `apply_disprove` reads those verdicts onto the record.
+Whether the gate runs at all is `review.phases`'.
 
 The synthesis agent wrote the Summary and the Verdict before either gate ran,
 so both can describe findings that are no longer visible. Regenerating them
@@ -1644,14 +1652,13 @@ says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review.verdict`'s. The
-finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from the record, the
-same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path` — against the files the diff changed first, as
-the poster does, and the tracked tree only when the diff has no match — so a
-finding is not placed against one file and verified against another.
+Which verdict a tally supports in the first place is `review.verdict`'s. A
+finding's evidence is the code on the record, and the file it is checked
+against is `path` — resolved with the poster's `review.format.resolve_path`
+against the files the diff changed first, as the poster does, and the tracked
+tree only when the diff has no match — so a finding is not placed against one
+file and verified against another. A finding with no path names no file, and
+is not checked.
 
 ## Publishing
 
@@ -5362,6 +5369,25 @@ One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
 
+### core/strict.py
+
+Strict reading of a dataclass from JSON someone else wrote.
+
+`core.serde.from_dict` is lenient on purpose: the files it reads are caches
+and state this workbench wrote itself, and a value that will not coerce is
+better dropped to its default than allowed to fail a run. A document an agent
+wrote is the opposite case. Dropping what does not fit is a silent repair, and
+the reader has to say exactly what is wrong so the agent can fix it.
+
+`load_strict` checks a parsed JSON value against a dataclass and reports every
+disagreement by JSON path (`$.findings[2].id`). Only once there are none does
+it build the instance, through the same `from_dict`. Both readers dispatch on
+`core.serde.classify`, so the two cannot disagree about what a hint means.
+
+`example_json` renders an instance the way `to_dict` writes it. A prompt that
+shows an agent the shape to write shows it with this, so the example and the
+reader are one schema.
+
 ### core/suite_watch.py
 
 Supervise a test-suite child and say what it is doing.
@@ -7393,7 +7419,7 @@ Usage:
 
 Rebuild review.md from group finding files.
 
-Reads group-N.md files from the review directory, merges findings,
+Reads group-N.json files from the review directory, merges findings,
 post-processes them, and writes a new review.md. Used to recover from
 synthesis agent formatting drift or corrupted review files.
 

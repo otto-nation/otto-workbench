@@ -128,15 +128,13 @@ class TestStaticAnalysisIntegration:
         "}\n"
     )
 
-    _REVIEW_TEXT = "## Summary\nLooks good.\n\n## Verdict\nApprove"
-
     def _seed(self, review_file):
-        from review.ingest import ingest_review
         from review.store import write_review
         from review.types import ReviewMeta
+        from review_record_support import record
         write_review(
             Path(review_file),
-            ingest_review(self._REVIEW_TEXT, strict=False),
+            record(summary="Looks good.", verdict="Approve"),
             ReviewMeta(),
         )
 
@@ -477,7 +475,7 @@ class TestCleanupScope:
         def _partial(job, **_kwargs):
             review_dir = Path(job.artifact_dir)
             Path(job.review_file).write_text(self._REVIEW)
-            (review_dir / "group-1.md").write_text("finding")
+            (review_dir / "group-1.json").write_text("finding")
             state = PipelineState(
                 head_sha="abc123", group_names=["a", "b"], groups_done=[1],
                 groups_failed={2: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)},
@@ -489,7 +487,7 @@ class TestCleanupScope:
 
         review_dir = self._run(ro, monkeypatch, tmp_path, pipeline=_partial, fix=True)
 
-        assert (review_dir / "group-1.md").exists()
+        assert (review_dir / "group-1.json").exists()
         assert (review_dir / "pipeline.json").exists()
         assert (review_dir / "fix.jsonl").exists()
 
@@ -522,15 +520,15 @@ class TestCleanupScope:
         self, ro, monkeypatch, tmp_path,
     ):
         """`--prior-review` sets job.prior from prior.json, not from the text."""
-        from review.ingest import ingest_review
         from review.store import archive_prior, write_review
         from review.types import ReviewMeta
+        from review_record_support import record
 
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
         write_review(
             review_dir / "review.md",
-            ingest_review("## Summary\nprior round\n", strict=False),
+            record(summary="prior round"),
             ReviewMeta(head_sha="0ldc0de", date="2026-10-15"),
         )
         archive_prior(review_dir)

@@ -3,10 +3,9 @@ You are completing the final self-review of changes on branch ${branch_name} in 
 ${pr_header}
 ${state_context}
 
-## Holistic assessment (from Phase 1)
 ${holistic_content}
 
-## Detailed findings (from Phase 2, merged across ${group_count} file groups)
+## Detailed findings (from Phase 2, merged across ${group_count} file groups, as group JSON)
 ${merged_content}
 
 ## Reference data
@@ -14,20 +13,16 @@ ${preflight_data}
 ${delta_section}
 
 ## Task
-1. Write the title: # Self-Review: ${repo} — ${branch_name}
-   Write no `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not
-2. Write ## Summary — one sentence on what the changes do and overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — the `## Prior findings` ledger is the record of what became of them, and a tally written twice is a tally that can disagree with itself
-3. Include all Must fix / Should fix / Nit / Idioms findings from the merged content
-4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description` (use I prefix for Idioms). Keep any `*(declined — reason)*` annotation on the line — it marks a finding already adjudicated, and dropping it puts the finding back into the next fix pass. NEVER use ### headings for findings — downstream counters and fix tools parse the `- [ ] **[X1]**` list-item format only
-5. Use any finding IDs — they will be mechanically renumbered after you write the file
-6. Preserve evidence blocks from group findings when carrying forward Must-fix and Should-fix items.
-7. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings
-8. Check for cross-file concerns — do findings in one group imply issues in files from another group?
+1. Write `summary` — one sentence on what the changes do and their overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself
+2. Put every finding from the merged findings into `findings`. Keep each finding's `sid`, and keep `declined` wherever it is set — it marks a finding already adjudicated, and dropping it puts the finding back into the next fix pass
+3. Use any finding IDs — they will be mechanically renumbered after you write the file
+4. Keep each must-fix and should-fix finding's `evidence` exactly as the merged findings carry it
+5. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings
+6. Check for cross-file concerns — do findings in one group imply issues in files from another group?
+7. Leave `triage` as [] and `verdict` as ""
+8. If the merged findings carry `prior_findings`, copy every entry into your output unchanged — they record which prior findings the group agents found fixed, and they are stripped before the review is published. Add entries only where a section below asks you to
 9. Add any cross-cutting findings
-10. Omit empty severity sections entirely
-11. Do NOT include a File Triage or Verdict section
-12. If the merged findings contain a ## Prior findings section, copy every line of it into your output unchanged — it records which prior findings the group agents found fixed, and it is stripped before the review is published. Add lines to it only where a section below asks you to
-13. Save the COMPLETE review file as described under ## Output below
+10. Save the COMPLETE review file as described under ## Output below
 
 ## Output
 ${output_block}

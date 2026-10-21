@@ -1,0 +1,90 @@
+{
+  "schema_version": 2,
+  "summary": "The retry loop works; four small items remain.",
+  "approach": null,
+  "findings": [
+    {
+      "id": "S1",
+      "severity": "S",
+      "path": "src/app.py",
+      "line": 2,
+      "end_line": null,
+      "body": "The retry loop never sleeps between attempts.",
+      "evidence": "",
+      "stable_id": "",
+      "sid": "",
+      "disposition": "fixed",
+      "reason": "the suite did not run",
+      "unverified": true,
+      "checkbox": true,
+      "filed": ""
+    },
+    {
+      "id": "S2",
+      "severity": "S",
+      "path": "src/cli.py",
+      "line": 5,
+      "end_line": null,
+      "body": "`--timeout` is never validated; a quoted * (note)* stays prose.",
+      "evidence": "",
+      "stable_id": "00bfdfec",
+      "sid": "",
+      "disposition": "declined",
+      "reason": "argparse already validates it with type=int",
+      "unverified": false,
+      "checkbox": true,
+      "filed": ""
+    },
+    {
+      "id": "N1",
+      "severity": "N",
+      "path": "src/util.py",
+      "line": 1,
+      "end_line": null,
+      "body": "`clamp` duplicates `max(min(...))`.",
+      "evidence": "",
+      "stable_id": "e57757d7",
+      "sid": "",
+      "disposition": "skipped",
+      "reason": "needs a product call",
+      "unverified": false,
+      "checkbox": true,
+      "filed": ""
+    },
+    {
+      "id": "N2",
+      "severity": "N",
+      "path": "src/cli.py",
+      "line": 1,
+      "end_line": null,
+      "body": "Unused import `os`.",
+      "evidence": "",
+      "stable_id": "7e2e397e",
+      "sid": "",
+      "disposition": "open",
+      "reason": "",
+      "unverified": false,
+      "checkbox": true,
+      "filed": ""
+    }
+  ],
+  "questions": [],
+  "verified": [],
+  "focus": [],
+  "triage": null,
+  "static_analysis": "- [x] **[SA1]** `src/app.py:2` \u2014 nesting depth 5 exceeds 4",
+  "failures": [],
+  "verdict": "",
+  "severity_sections": [
+    {
+      "severity": "S",
+      "note": ""
+    },
+    {
+      "severity": "N",
+      "note": ""
+    }
+  ],
+  "ledger": [],
+  "extra": []
+}

@@ -12,56 +12,42 @@ if str(LIB_DIR) not in sys.path:
 # The module the `rp` fixture returns, imported so bin/local/select-pytest maps
 # this suite to the code it reaches through `rp`.
 import cli.review_post  # noqa: E402,F401
-from review.ingest import ingest_review  # noqa: E402
+from review.record import LedgerLine, ProseSection, TriageEntry  # noqa: E402
+from review.types import PriorDisposition  # noqa: E402
+
+from review_record_support import finding, record  # noqa: E402
 
 
-def _sections(rp, text):
-    return rp.ReviewSections.from_record(ingest_review(text, strict=False))
+def _sections(rp, rec):
+    return rp.ReviewSections.from_record(rec)
 
 
 class TestReviewSections:
-    REVIEW_TEXT = (
-        "# Review: test-org/test-repo#42 — Fix handler\n"
-        "<!-- head_sha: abc123def456 -->\n"
-        "\n"
-        "## Summary\n"
-        "Clean refactor with good test coverage.\n"
-        "\n"
-        "## Must fix\n"
-        "\n"
-        "- **[M1]** **`handler.go:11`** — missing error check\n"
-        "\n"
-        "## Should fix\n"
-        "\n"
-        "- **[S1]** **`handler.go:25`** — unused variable\n"
-        "\n"
-        "## Static Analysis\n"
-        "\n"
-        "### Nesting depth\n"
-        "1 violation in 1 of 3 files checked\n"
-        "\n"
-        "## Verdict\n"
-        "\n"
-        "Request changes — M1 is a blocker.\n"
+    REVIEW = record(
+        finding("M1", "missing error check", path="handler.go", line=11),
+        finding("S1", "unused variable", path="handler.go", line=25),
+        summary="Clean refactor with good test coverage.",
+        verdict="Request changes — M1 is a blocker.",
+        static_analysis="### Nesting depth\n1 violation in 1 of 3 files checked",
     )
 
     def test_from_record_extracts_known_sections(self, rp):
-        sections = _sections(rp, self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW)
         assert sections.get("summary") == "Clean refactor with good test coverage."
         assert "Request changes" in sections.get("verdict")
         assert "Nesting depth" in sections.get("static_analysis")
 
     def test_from_record_ignores_severity_headers(self, rp):
-        sections = _sections(rp, self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW)
         assert sections.get("must_fix") == ""
         assert sections.get("should_fix") == ""
 
     def test_get_returns_empty_for_absent(self, rp):
-        sections = _sections(rp, self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW)
         assert sections.get("nonexistent") == ""
 
     def test_before_findings_returns_ordered_pairs(self, rp):
-        sections = _sections(rp, self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW)
         before = sections.before_findings()
         keys = [cfg.key for cfg, _ in before]
         assert "summary" in keys
@@ -69,7 +55,7 @@ class TestReviewSections:
         assert keys.index("summary") < keys.index("verdict")
 
     def test_after_findings_returns_passthrough(self, rp):
-        sections = _sections(rp, self.REVIEW_TEXT)
+        sections = _sections(rp, self.REVIEW)
         after = sections.after_findings()
         keys = [cfg.key for cfg, _ in after]
         assert "static_analysis" in keys
@@ -81,56 +67,39 @@ class TestReviewSections:
         assert sections.after_findings() == []
 
     def test_auto_discovers_unknown_section(self, rp):
-        text = (
-            "## Summary\n"
-            "Quick summary.\n"
-            "\n"
-            "## Performance Notes\n"
-            "Consider caching the DB query.\n"
-            "\n"
-            "## Must fix\n"
-            "\n"
-            "- **[M1]** **`a.go:1`** — bug\n"
+        rec = record(
+            finding("M1", "bug", path="a.go", line=1),
+            summary="Quick summary.",
+            extra=(ProseSection("Performance Notes", "Consider caching the DB query."),),
         )
-        sections = _sections(rp, text)
+        sections = _sections(rp, rec)
         assert sections.get("performance_notes") == "Consider caching the DB query."
         after = sections.after_findings()
         keys = [cfg.key for cfg, _ in after]
         assert "performance_notes" in keys
 
     def test_file_triage_is_not_extracted(self, rp):
-        text = (
-            "## File Triage\n"
-            "- `a.go` — **Tier 1** (core logic)\n"
-            "\n"
-            "## Must fix\n"
-            "\n"
-            "- **[M1]** **`a.go:1`** — bug\n"
+        rec = record(
+            finding("M1", "bug", path="a.go", line=1),
+            triage=(TriageEntry("a.go", "**Tier 1** (core logic)"),),
         )
-        sections = _sections(rp, text)
+        sections = _sections(rp, rec)
         assert sections.get("file_triage") == ""
         assert sections.after_findings() == []
 
     def test_prior_findings_is_not_extracted(self, rp):
-        text = (
-            "## Prior findings\n"
-            "- **[M4]** `a.go` — Fixed\n"
-            "- **[S7]** `b.go` — Still open\n"
-            "\n"
-            "## Must fix\n"
-            "\n"
-            "- **[M1]** **`a.go:1`** — bug\n"
+        rec = record(
+            finding("M1", "bug", path="a.go", line=1),
+            ledger=(
+                LedgerLine("M4", PriorDisposition.FIXED, "a.go"),
+                LedgerLine("S7", PriorDisposition.STILL_OPEN, "b.go"),
+            ),
         )
-        sections = _sections(rp, text)
+        sections = _sections(rp, rec)
         assert sections.get("prior_findings") == ""
         assert sections.after_findings() == []
 
     def test_before_findings_omits_empty(self, rp):
-        text = "## Must fix\n\n- **[M1]** **`a.go:1`** — bug\n"
-        sections = _sections(rp, text)
+        rec = record(finding("M1", "bug", path="a.go", line=1))
+        sections = _sections(rp, rec)
         assert sections.before_findings() == []
-
-    def test_severity_alias_nits_ignored(self, rp):
-        text = "## Nits\n\n- **[N1]** **`a.go:1`** — nit\n"
-        sections = _sections(rp, text)
-        assert sections.get("nits") == ""

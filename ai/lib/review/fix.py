@@ -50,7 +50,6 @@ during a review, and a fix pass needs only a finished review file to work from.
 
 from __future__ import annotations
 
-import re
 import sys
 import textwrap
 from dataclasses import replace
@@ -70,9 +69,9 @@ from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
 from review.document import ReviewDocument
-from review.grammar import FINDING_ID_RE, UNVERIFIED_TAIL_RE
+from review.grammar import UNVERIFIED_TAIL_RE
 from review.record import (
-    Disposition, RecordFinding, ReviewRecord, defuse, defuse_first_line,
+    Disposition, RecordFinding, ReviewRecord, defuse_first_line,
 )
 from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
@@ -350,9 +349,7 @@ def _escape_annotation(detail: str) -> str:
     return " ".join(detail.replace("*(", "* (").split())
 
 
-def _fixed_static_line(
-    line: str, outcome: ItemOutcome, pattern: re.Pattern[str] = FINDING_ID_RE,
-) -> str:
+def _fixed_static_line(line: str, outcome: ItemOutcome) -> str:
     """The Static Analysis declaration a landed fix leaves behind: ticked, and hedged if owed.
 
     The tick and the caveat are one decision rather than two, so they are made
@@ -367,18 +364,12 @@ def _fixed_static_line(
     compound once per round on a finding that also never leaves `open_findings`.
     An already-hedged line is left alone for the same reason, which is what a
     synthesis pass carrying the annotation forward needs.
-
-    `pattern` is how the caller's own declaration is spelled, and its group(1)
-    must be the box. A static violation is declared differently from a finding
-    and would not match the default — the tick would silently be a no-op, which
-    is the failure this parameter exists to prevent rather than a default worth
-    falling back to.
     """
     # The box the declaration carries, not the first `- [ ]` anywhere on the
     # line: a finding quoting the empty box in its own prose — a review of a
     # template does — would otherwise have that quotation ticked instead, which
     # corrupts the prose and annotates a finding that stays open.
-    box = pattern.match(line.strip())
+    box = STATIC_ID_RE.match(line.strip())
     if not (box and box.group(1) == " "):
         return line
     ticked = line.replace("- [ ]", "- [x]", 1)
@@ -508,7 +499,7 @@ def _answered(f: RecordFinding, outcome: ItemOutcome) -> RecordFinding:
         if detail is None:
             return replace(f, disposition=Disposition.FIXED)
         return replace(f, disposition=Disposition.FIXED, unverified=True,
-                       reason=_escape_annotation(detail), lead=defuse(f.lead),
+                       reason=_escape_annotation(detail),
                        body=defuse_first_line(f.body))
     if outcome.outcome in (FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN):
         disposition = (
@@ -516,7 +507,7 @@ def _answered(f: RecordFinding, outcome: ItemOutcome) -> RecordFinding:
             else Disposition.SKIPPED
         )
         return replace(f, disposition=disposition, reason=_escape_annotation(outcome.reason),
-                       lead=defuse(f.lead), body=defuse_first_line(f.body))
+                       body=defuse_first_line(f.body))
     if outcome.outcome is FixOutcome.DEFERRED:
         return replace(f, disposition=Disposition.UNREACHED, reason=outcome.reason)
     return f
@@ -566,7 +557,7 @@ def apply_outcomes(record: ReviewRecord, outcomes: list[ItemOutcome]) -> ReviewR
         record = record.with_finding(
             current.id,
             disposition=answered.disposition, unverified=answered.unverified,
-            reason=answered.reason, lead=answered.lead, body=answered.body,
+            reason=answered.reason, body=answered.body,
         )
     return record
 
@@ -605,7 +596,7 @@ def apply_static_outcomes(section: str, outcomes: list[ItemOutcome]) -> str:
             continue
         outcome = by_id[match.group(2)]
         if outcome.outcome.counts_as_fixed:
-            lines[n] = _fixed_static_line(line, outcome, STATIC_ID_RE)
+            lines[n] = _fixed_static_line(line, outcome)
         elif note := _annotation(outcome):
             lines[n] = _annotated_static_line(line, note)
     return "\n".join(lines)

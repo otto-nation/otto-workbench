@@ -210,15 +210,15 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
 @test "cleanup_intermediates: removes every phase artifact and pipeline state" {
   # Regression: disprove.md and disprove.jsonl outlived the pass
   # because the call site enumerated what to remove and never named them.
-  echo "scout" > "$TMPDIR/scout.md"
+  echo "scout" > "$TMPDIR/scout.json"
   echo "slog" > "$TMPDIR/scout.jsonl"
-  echo "holistic" > "$TMPDIR/holistic.md"
+  echo "holistic" > "$TMPDIR/holistic.json"
   echo "log" > "$TMPDIR/holistic.jsonl"
-  echo "group" > "$TMPDIR/group-1.md"
+  echo "group" > "$TMPDIR/group-1.json"
   echo "glog" > "$TMPDIR/group-1.jsonl"
   echo "glog2" > "$TMPDIR/group-2.jsonl"
   echo "synth" > "$TMPDIR/synthesis.jsonl"
-  echo "disprove" > "$TMPDIR/disprove.md"
+  echo "disprove" > "$TMPDIR/disprove.json"
   echo "dlog" > "$TMPDIR/disprove.jsonl"
   echo '{}' > "$TMPDIR/pipeline.json"
 
@@ -226,9 +226,9 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
 import os, pathlib
 mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
 remaining = []
-for f in ['scout.md', 'scout.jsonl', 'holistic.md', 'holistic.jsonl',
-          'group-1.md', 'group-1.jsonl', 'group-2.jsonl', 'synthesis.jsonl',
-          'disprove.md', 'disprove.jsonl', 'pipeline.json']:
+for f in ['scout.json', 'scout.jsonl', 'holistic.json', 'holistic.jsonl',
+          'group-1.json', 'group-1.jsonl', 'group-2.jsonl', 'synthesis.jsonl',
+          'disprove.json', 'disprove.jsonl', 'pipeline.json']:
     if os.path.exists('$TMPDIR/' + f):
         remaining.append(f)
 print(f'remaining={remaining}')
@@ -286,14 +286,14 @@ print(os.path.exists('$TMPDIR/verify-tracking-1.md'),
   echo '{"type":"result"}' > "$TMPDIR/session.jsonl"
   echo '{}' > "$TMPDIR/meta.json"
   echo "prior" > "$TMPDIR/prior.md"
-  echo "holistic" > "$TMPDIR/holistic.md"
+  echo "holistic" > "$TMPDIR/holistic.json"
 
   result=$(_py "
 import os, pathlib
 mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
 kept = [f for f in ['review.md', 'session.jsonl', 'meta.json', 'prior.md']
         if os.path.exists('$TMPDIR/' + f)]
-print(f'kept={kept},holistic={os.path.exists(\"$TMPDIR/holistic.md\")}')
+print(f'kept={kept},holistic={os.path.exists(\"$TMPDIR/holistic.json\")}')
 ")
   echo "$result"
   [ "$result" = "kept=['review.md', 'session.jsonl', 'meta.json', 'prior.md'],holistic=False" ]

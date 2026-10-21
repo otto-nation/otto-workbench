@@ -117,7 +117,7 @@ def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> 
 def phase_output_path(review_file: str, phase: Phase, index: int | None = None) -> str:
     """Where ``phase`` writes its findings artifact for the review at ``review_file``.
 
-    Raises for a phase that writes the review document itself. Unlike a
+    Raises for a phase that writes no findings artifact of its own. Unlike a
     missing log there is nothing to fall back to, and an empty name would
     derive to the review directory — a wrong path that reads as a real one.
     """
@@ -150,6 +150,15 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
         for p in REVIEW_PHASES
         for name in (PHASES[p].output_filename, PHASES[p].log_filename)
         if name
+    ]
+    # ceiling: a run from before agents wrote JSON named each artifact
+    # `<phase>.md`; swept alongside the JSON names so such a directory, once
+    # regenerated, keeps only its deliverable. review.md names no phase and is
+    # never matched. Upgrade trigger: delete this block once SCHEMA_VERSION
+    # moves past 2, when a directory that old is stale on every other path too.
+    patterns += [
+        str(Path(PHASES[p].output_filename).with_suffix(".md")).format("*")
+        for p in REVIEW_PHASES if PHASES[p].output_filename
     ]
     return [f for pat in patterns for f in review_dir.glob(pat) if f.is_file()]
 

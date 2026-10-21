@@ -15,6 +15,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import agent.types
+from agent.registry import PHASES
 from agent.types import ItemScaling, PhaseSpec
 from core.phases import Mode, Phase, PhaseDomain, PhaseShape
 
@@ -76,19 +78,23 @@ class TestPhaseSpecArtifactNames:
     def test_both_names_share_the_phase_as_their_stem(self):
         spec = self._review(Phase.HOLISTIC)
         assert spec.log_filename == "holistic.jsonl"
-        assert spec.output_filename == "holistic.md"
+        assert spec.output_filename == "holistic.json"
 
     def test_the_fan_out_phase_carries_an_index(self):
         spec = self._review(Phase.GROUP)
         assert spec.log_filename == "group-{}.jsonl"
-        assert spec.output_filename == "group-{}.md"
+        assert spec.output_filename == "group-{}.json"
 
     def test_single_names_no_log_of_its_own(self):
         # It writes to the job's log, which the caller may point anywhere.
         assert self._review(Phase.SINGLE).log_filename == ""
 
-    def test_a_phase_that_writes_the_review_file_names_no_artifact(self):
-        for phase in (Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX):
+    def test_single_and_synthesis_write_json_artifacts(self):
+        assert self._review(Phase.SINGLE).output_filename == "single.json"
+        assert self._review(Phase.SYNTHESIS).output_filename == "synthesis.json"
+
+    def test_a_phase_that_writes_no_findings_artifact(self):
+        for phase in (Phase.FIX, Phase.FIX_VERIFY):
             assert self._review(phase).output_filename == ""
 
     def test_a_phase_outside_review_names_no_review_artifact(self):

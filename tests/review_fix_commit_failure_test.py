@@ -34,12 +34,10 @@ import review.paths
 from git.land import CommitStatus
 
 from review_fix_pass_support import _PUSHED, _make_job, _run, git_wt
+from review_record_support import finding, record
 
 _COMMIT_FAILED_LINE = "✗ commit failed: Running pre-commit checks..."
-_REVIEW = (
-    "## Must fix\n"
-    "- [ ] **[M1]** `helper.py:1` — Missing helper\n"
-)
+_REVIEW = record(finding("M1", "Missing helper", path="helper.py", checkbox=True))
 
 ITEM = batch.model.Item(
     key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="s",
@@ -134,7 +132,7 @@ class TestAFormatterAutoFixIsRestaged:
         self, git_wt, tmp_path, live_git_hooks,
     ):
         _install_auto_fix_hook(tmp_path)
-        job = _make_job(git_wt, tmp_path, _REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=_REVIEW)
         before = _head(git_wt)
 
         _run(job, {"M1": "fixed"},
@@ -157,7 +155,7 @@ class TestARefusedCommitIsAFailedPass:
         self, git_wt, tmp_path, live_git_hooks,
     ):
         _install_refusing_hook(tmp_path)
-        job = _make_job(git_wt, tmp_path, _REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=_REVIEW)
         before = _head(git_wt)
 
         with patch("git.push.push", return_value=_PUSHED) as mock_push:

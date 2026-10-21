@@ -187,7 +187,7 @@ result = mod.build_prompt(mod.Phase.SINGLE, job, max_turns=15)
 print(result)
 ')
   [[ "$result" == *"PR #99"* ]]
-  [[ "$result" == *"/tmp/review.md"* ]]
+  [[ "$result" == *"/tmp/single.json"* ]]
 }
 
 @test "build_prompt: group includes holistic block when content set" {
@@ -206,9 +206,9 @@ job = mod.ReviewJob(
 result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
-    holistic_content="Watch for API mismatches",
+    holistic_content="## Holistic context\nWatch for API mismatches",
 )
-print("FOUND" if "Holistic context" in result else "MISSING")
+print("FOUND" if "Watch for API mismatches" in result else "MISSING")
 ')
   [ "$result" = "FOUND" ]
 }

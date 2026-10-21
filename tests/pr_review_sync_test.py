@@ -22,7 +22,7 @@ from pr.review_sync import sync_review_domain
 import review.completion
 from review.paths import FILENAME_RECORD, ReviewMeta, write_review_meta
 from review.summary import ReviewSummaryReport, build_review_summary, json_summary
-from review_record_support import store_review
+from review_record_support import finding, record, store_record
 
 
 def test_sync_review_domain_is_the_writer(tmp_path):
@@ -111,8 +111,9 @@ def test_review_summary_report_to_json_matches_the_legacy_dict(tmp_path):
     Key order and values must stay byte-identical to the previous return so
     REVIEW_SUMMARY consumers and the golden json_summary tests keep passing.
     """
-    content = "## Nit\n- **[N1]** path:1 — style\n"
-    review = store_review(tmp_path / "review.md", content)
+    review = store_record(
+        tmp_path / "review.md", record(finding("N1", "path:1 — style", path="")),
+    )
 
     report = build_review_summary("org/repo", "42", str(review))
     expected = {
@@ -220,7 +221,9 @@ def test_repair_on_a_stale_dir_with_group_files_rebuilds_and_syncs(tmp_path):
         repo="org/repo", pr_number=42, head_sha="abc123def456",
     ))
     group = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
-    group.write_text("## Nit\n- **[N1]** **`a.py:1`** — x\n")
+    group.write_text(json.dumps({
+        "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}],
+    }))
     ctx = make_ctx(
         repo="org/repo", branch="feat/x", pr_number=42,
         worktree_root=tmp_path / "wt", head_sha="abc123def456",
@@ -238,7 +241,9 @@ def test_repair_on_a_stale_dir_with_group_files_rebuilds_and_syncs(tmp_path):
 
 
 def test_record_domain_syncs_a_stored_review(tmp_path):
-    review_file = store_review(tmp_path / "review.md", "## Nit\n- **[N1]** path:1 — style\n")
+    review_file = store_record(
+        tmp_path / "review.md", record(finding("N1", "path:1 — style", path="")),
+    )
     ctx = make_ctx(
         repo="org/repo", branch="feat/x", pr_number=42,
         worktree_root=tmp_path / "wt", head_sha="abc123def456",

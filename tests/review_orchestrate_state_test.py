@@ -15,7 +15,10 @@ import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
 from review.render import failures_body
-from review.state import failures_of
+from review.state import (
+    PIPELINE_SCHEMA_VERSION, PipelineState, _validate_resume_state, failures_of,
+)
+from review.types import Group
 
 
 def _failures_md(state):
@@ -268,15 +271,15 @@ class TestFailuresSectionInReview:
         )
 
     @staticmethod
-    def _body(text, state):
-        from review.ingest import ingest_review
+    def _body(rec, state):
         from review.render import render_body
         from review.state import apply_failures
-        return render_body(apply_failures(ingest_review(text, strict=False), state))
+        return render_body(apply_failures(rec, state))
 
     def test_mechanical_fallback_includes_failures(self):
         """When synthesis falls back, the review includes ## Agent Failures."""
-        result = self._body("## Summary\n\nnote\n", self._state())
+        from review_record_support import record
+        result = self._body(record(summary="note"), self._state())
         assert "## Agent Failures" in result
         assert "group-2: api" in result
         assert "quota exhausted" in result
@@ -284,19 +287,27 @@ class TestFailuresSectionInReview:
         assert "fallback" in result
 
     def test_the_section_sits_above_the_summary(self):
-        result = self._body("## Summary\n\nnote\n\n## Verdict\n\nApprove\n", self._state())
+        from review_record_support import record
+        result = self._body(record(summary="note", verdict="Approve"), self._state())
         assert result.index("## Agent Failures") < result.index("## Summary")
 
     def test_a_review_with_no_summary_still_gets_the_section(self):
         """A run that never reached synthesis has no Summary to sit above, and
         the failures are the only account of why."""
-        result = self._body("## Must fix\n\n- **[M1]** **`a.py:1`** — bug\n", self._state())
+        from review_record_support import finding, record
+        result = self._body(record(finding("M1", "bug")), self._state())
         assert "## Agent Failures" in result
         assert result.index("## Agent Failures") < result.index("## Must fix")
 
     def test_a_rerun_that_failed_nothing_drops_the_section(self):
+        from review.record import AgentFailure
+        from review_record_support import record
         result = self._body(
-            "## Agent Failures\n\nold table\n\n## Summary\n\nnote\n", self._clean_state(),
+            record(
+                summary="note",
+                failures=(AgentFailure("old", "table", "failed"),),
+            ),
+            self._clean_state(),
         )
         assert "## Agent Failures" not in result
         assert "## Summary" in result
@@ -324,13 +335,13 @@ class TestInjectFailuresAndStatus:
 
     def _seed(self, tmp_path, status=None):
         from pr.domains import ReviewStatus
-        from review.ingest import ingest_review
         from review.store import write_review
         from review.types import ReviewMeta
+        from review_record_support import record
         review_file = tmp_path / "review.md"
         write_review(
             review_file,
-            ingest_review("## Summary\n\nAll good.\n", strict=False),
+            record(summary="All good."),
             ReviewMeta(status=status if status is not None else ReviewStatus.COMPLETED),
         )
         return review_file
@@ -361,13 +372,13 @@ class TestInjectFailuresAndStatus:
         from review.state import PipelineState
         from review.state import _inject_failures_and_status
         from review.types import ReviewMeta
-        from review.ingest import ingest_review
         from review.store import write_review
+        from review_record_support import record
 
         review_file = tmp_path / "review.md"
         write_review(
             review_file,
-            ingest_review("## Summary\n\nAll good.\n", strict=False),
+            record(summary="All good."),
             ReviewMeta(),
         )
         self._make_pipeline_json(tmp_path, failure_reason="")
@@ -400,3 +411,12 @@ class TestInjectFailuresAndStatus:
 
         content = review_file.read_text()
         assert content.count("<!-- status:") == 1
+
+
+def test_a_pipeline_state_from_before_json_artifacts_is_stale():
+    """X8: a run interrupted before the upgrade is not resumed onto .md artifacts."""
+    groups = [Group(name="g1", files=["a.py"], lines=1)]
+    old = PipelineState(head_sha="abc", group_names=["g1"])
+    new = PipelineState(head_sha="abc", group_names=["g1"], schema_version=PIPELINE_SCHEMA_VERSION)
+    assert not _validate_resume_state(old, "abc", groups)
+    assert _validate_resume_state(new, "abc", groups)

@@ -33,6 +33,7 @@ class TestSharedPromptBodies:
     def _vars(self, phase, output, mode=Mode.PR, **extra):
         job = _make_job(_make_preflight(), mode=mode)
         common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+        extra = {**extra, "artifact": review.registry.for_phase(phase).artifact}
         built = review.registry.for_phase(phase).build(job, common, extra, output)
         return built.builder.vars
 
@@ -61,7 +62,8 @@ class TestSharedPromptBodies:
         }
         assert set(self_) - set(pr) == {"branch_name"}
         # The re-review preamble is worded per mode, so it is expected to differ.
-        common_keys = (set(pr) & set(self_)) - {"prior_section"}
+        # output_block carries the mode-keyed JSON example (D7).
+        common_keys = (set(pr) & set(self_)) - {"prior_section", "output_block"}
         assert all(pr[k] == self_[k] for k in common_keys)
 
     def test_synthesis_variants_differ_only_in_identity_and_prior_reviews(self):
@@ -75,7 +77,8 @@ class TestSharedPromptBodies:
         # synthesis.md, 9 in self-review-synthesis.md. Expected to differ, and
         # held against the templates by
         # test_synthesis_cross_cutting_step_matches_its_template.
-        common_keys = (set(pr) & set(self_)) - {"execution_claim_guard"}
+        # output_block carries the mode-keyed JSON example (D7).
+        common_keys = (set(pr) & set(self_)) - {"execution_claim_guard", "output_block"}
         assert all(pr[k] == self_[k] for k in common_keys)
         assert pr["execution_claim_guard"] != self_["execution_claim_guard"]
 

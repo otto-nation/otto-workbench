@@ -19,22 +19,18 @@ import review.types  # noqa: E402
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from review_record_support import seed_review  # noqa: E402
+from review_record_support import finding, record, seed_record  # noqa: E402
 
-_REVIEW_MD = """## Must fix
-- **[M1]** a.py:1 — bug
-
-## Should fix
-- **[S1]** b.py:2 — smell
-
-## Nits
-- **[N1]** c.py:3 — spacing
-"""
+_REVIEW = record(
+    finding("M1", "a.py:1 — bug", path=""),
+    finding("S1", "b.py:2 — smell", path=""),
+    finding("N1", "c.py:3 — spacing", path=""),
+)
 
 
-def _review(reviews_dir, name="widget-42", body=_REVIEW_MD, **meta):
+def _review(reviews_dir, name="widget-42", rec=_REVIEW, **meta):
     """One finding per severity, which is what the vocabulary tests read."""
-    return seed_review(reviews_dir, name=name, body=body, **meta)
+    return seed_record(reviews_dir, name=name, rec=rec, **meta)
 
 
 # ── rows ────────────────────────────────────────────────────────────────────
@@ -72,7 +68,8 @@ def test_a_row_is_attributed_by_the_sidecar_not_the_directory_name(reviews_dir):
 def test_a_review_predating_the_sidecar_is_still_listed(reviews_dir):
     """Unattributed is a fact about that review; dropping it would hide one the
     consumer can still open."""
-    _review(reviews_dir)
+    d = _review(reviews_dir)
+    (d / "meta.json").unlink()
 
     row, = review.listing.rows()
 

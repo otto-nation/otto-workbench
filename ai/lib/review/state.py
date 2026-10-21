@@ -40,6 +40,11 @@ from core.text import plural
 
 _state_lock = threading.Lock()
 
+# The shape of what a run leaves on disk for a resume to pick up. A state file
+# that predates JSON agent artifacts carries no version (0), and resuming it
+# would look for group-N.json where the run wrote group-N.md.
+PIPELINE_SCHEMA_VERSION = 1
+
 
 # ── The state file ───────────────────────────────────────────────────────────
 
@@ -77,6 +82,9 @@ class PipelineState:
     review_type: ReviewType = ReviewType.FULL
     prior_sha: str = ""
     skipped_groups: list[int] = field(default_factory=list)
+    # 0 is a state file written before versioning; a resume refuses it
+    # (see `_validate_resume_state`).
+    schema_version: int = 0
 
     @property
     def scanned(self) -> bool:
@@ -284,12 +292,11 @@ def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
 def _validate_resume_state(
     state: PipelineState, head_sha: str, groups: list[Group],
 ) -> bool:
+    if state.schema_version != PIPELINE_SCHEMA_VERSION:
+        return False
     if state.head_sha != head_sha:
         return False
-    current_names = [g.name for g in groups]
-    if state.group_names != current_names:
-        return False
-    return True
+    return state.group_names == [g.name for g in groups]
 
 
 def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
@@ -385,7 +392,7 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     if not state:
         return RecoveryPlan()
     if not _validate_resume_state(state, job.pr.head_sha, groups):
-        core.log.warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
+        core.log.warn("Pipeline state is stale (SHA, groups or artifact format changed) — starting fresh")
         Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return RecoveryPlan()
 

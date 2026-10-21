@@ -137,9 +137,9 @@ class TestReviewTitle:
 class TestRead:
     def test_a_document_on_disk_reads_back_parsed(self, tmp_path):
         from review.types import ReviewMeta
-        from review_record_support import store_review
-        review = store_review(
-            tmp_path / "review.md", "## Summary\nx\n", ReviewMeta(head_sha="abc"),
+        from review_record_support import record, store_record
+        review = store_record(
+            tmp_path / "review.md", record(summary="x"), ReviewMeta(head_sha="abc"),
         )
         document = ReviewDocument.read(review)
         assert document is not None
@@ -157,8 +157,8 @@ class TestRead:
         assert ReviewDocument.read(tmp_path) is None
 
     def test_a_path_given_as_a_string_reads_the_same(self, tmp_path):
-        from review_record_support import store_review
-        review = store_review(tmp_path / "review.md", "## Summary\nx\n")
+        from review_record_support import record, store_record
+        review = store_record(tmp_path / "review.md", record(summary="x"))
         assert ReviewDocument.read(str(review)) == ReviewDocument.read(review)
 
 

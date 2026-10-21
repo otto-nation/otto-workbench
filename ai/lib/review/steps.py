@@ -23,18 +23,23 @@ from pathlib import Path
 import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
-from core.phases import Phase
+from core.phases import Mode, Phase
+from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
-from review.ingest import (
-    IngestError, IngestOutcome, IngestRejected, ingest_review, ingest_with_repair,
+from review.artifacts import (
+    GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
 )
-from review.merge import merge_records
+from review.ingest import (
+    ArtifactOutcome, IngestError, IngestRejected, ingest_artifact,
+    load_artifact,
+)
+from review.merge import append_findings, merge_records
 from review.outcome import (
     _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
     _post_process_review, _publish, _reconcile_and_verify, _write_clean_review,
-    _write_mechanical_fallback, agent_output_complete,
+    _write_mechanical_fallback,
 )
 from review.paths import phase_log_path, phase_output_path
 from review.phases import (
@@ -46,9 +51,11 @@ from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _with_sids
 from review.reconcile import passed_over
-from review.record import ProseSection, ReviewRecord, SeveritySection
+from review.record import (
+    Disposition, ProseSection, RecordFinding, ReviewRecord, SeveritySection,
+)
 from review.registry import build_prompt
-from review.render import render_body, render_findings, render_review
+from review.render import render_body
 from review.retry import GroupFailure, _has_output, _retry_missing_output
 from review.state import (
     PipelineState, _inject_failures_and_status, _write_pipeline_state,
@@ -58,10 +65,14 @@ from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
 )
 from review.verdict import BUDGET_SUMMARY, SKIPPED_SUMMARY, open_counts
-from review.verify import apply_disprove, parse_disprove_output
+from review.verify import apply_disprove
 from core.text import plural
 
 DISPROVE_MIN_FINDINGS = 3
+
+# Dispositions synthesis may copy. Anything else would re-open if shown as
+# group JSON, so it is held out of the prompt and restored afterwards.
+_SYNTHESIS_KEEP = (Disposition.OPEN, Disposition.DECLINED)
 
 
 @dataclass(frozen=True)
@@ -81,23 +92,90 @@ class DisproveRun:
 
 @dataclass(frozen=True)
 class Merged:
-    """The groups' findings as one record, and the text synthesis is shown.
+    """The groups' findings as one record — what every writer publishes from.
 
-    Two forms of one merge: the record is what every writer publishes from;
-    the text is the record rendered (sids kept, as the merge always kept them)
-    plus anything carried forward, which is what the synthesis prompt quotes.
+    `text` is what the synthesis prompt quotes: the record as the JSON a group
+    writes, so synthesis copies findings, evidence, sids and ledger entries
+    forward structurally rather than translating them. The harness's own
+    sections (`extra`: the `Review gaps` naming each group no agent reviewed)
+    have no field in that JSON, so they follow it as markdown: synthesis must
+    still know which files nobody looked at.
     """
 
     record: ReviewRecord
-    text: str
 
-    def carry(self, record: ReviewRecord, text: str) -> "Merged":
+    @property
+    def text(self) -> str:
+        shown = f"```json\n{example_json(as_group_artifact(self._for_synthesis()))}\n```"
+        harness = render_body(ReviewRecord(extra=self.record.extra)).strip()
+        return f"{shown}\n\n{harness}" if harness else shown
+
+    def carry(self, record: ReviewRecord) -> "Merged":
         notes = self.record.severity_sections + record.severity_sections
-        return Merged(
-            replace(self.record, findings=self.record.findings + record.findings,
-                    severity_sections=notes),
-            f"{self.text}\n{text}" if text else self.text,
+        return Merged(replace(
+            append_findings(self.record, record.findings),
+            severity_sections=notes,
+        ))
+
+    def _for_synthesis(self) -> ReviewRecord:
+        # as_group_artifact renders anything other than OPEN/DECLINED as a
+        # plain open finding, so those stay off the page synthesis copies.
+        return replace(
+            self.record,
+            findings=tuple(
+                f for f in self.record.findings if f.disposition in _SYNTHESIS_KEEP
+            ),
         )
+
+
+def _finding_identity(finding: RecordFinding) -> frozenset[str]:
+    return frozenset(token for token in (finding.stable_id, finding.sid) if token)
+
+
+def _take_held(
+    finding: RecordFinding, held: list[RecordFinding],
+) -> RecordFinding | None:
+    keys = _finding_identity(finding)
+    for index, candidate in enumerate(held):
+        if keys & _finding_identity(candidate):
+            return held.pop(index)
+    return None
+
+
+def _restore_held_findings(merged: ReviewRecord, record: ReviewRecord) -> ReviewRecord:
+    """Keep findings synthesis was not shown, unless it also emitted them.
+
+    Identity is the non-empty {stable_id, sid}. A synthesis copy that matches
+    a held finding is dropped. When severities match, the held finding takes
+    that slot and the copy's id so synthesis prose still names it; otherwise
+    the copy's id becomes a gap and the held finding is appended with a fresh
+    id. Remaining unmatched held findings are appended the same way.
+    """
+    held = [f for f in merged.findings if f.disposition not in _SYNTHESIS_KEEP]
+    if not held:
+        return record
+    kept: list[RecordFinding] = []
+    leftover: list[RecordFinding] = []
+    for finding in record.findings:
+        match = _take_held(finding, held)
+        if match is None:
+            kept.append(finding)
+            continue
+        if match.severity == finding.severity:
+            kept.append(replace(match, id=finding.id))
+        else:
+            leftover.append(match)
+    restored = append_findings(
+        replace(record, findings=tuple(kept)), leftover + held,
+    )
+    ids = [f.id for f in restored.findings]
+    if len(ids) != len(set(ids)):
+        # Unreachable by construction: same-severity replacements take the
+        # copy's id (unique in the synthesis artifact), a severity mismatch
+        # leaves the copy's slot empty, and leftover held findings get fresh
+        # ids from append_findings.
+        raise ValueError(f"held restore produced duplicate ids: {ids}")
+    return restored
 
 
 def _holistic_skip_reason(
@@ -152,7 +230,7 @@ def _run_holistic_phase(
         core.log.info(f"Phase 1: {label} skipped (exists)")
         return PhaseResult(
             log=phase_log_path(job.review_file, phase),
-            content=read_scan(phase, Path(output).read_text()),
+            content=read_scan(phase, output),
             output=output,
         )
 
@@ -286,7 +364,10 @@ def _phase_synthesis(
     group_count: int, merged: Merged,
     skipped_groups: int = 0,
 ) -> PhaseResult:
-    Path(job.review_file).write_text("")
+    output = phase_output_path(job.review_file, Phase.SYNTHESIS)
+    # Emptied, not just created: a resumed run's earlier attempt must not read
+    # as this agent having written.
+    Path(output).write_text("")
 
     max_turns = _synthesis_max_turns(merged.record)
     runner = PhaseRunner(job, Phase.SYNTHESIS)
@@ -342,16 +423,14 @@ def _phase_synthesis(
         core.log.blank()
         return result
 
-    # The result is intentionally ignored: success is judged below by
-    # `agent_output_complete`, which also catches output that exists but is partial.
     run_with_overflow_recovery(
         prompt,
         invoke=invoke_logged,
         after=lambda text: _retry_missing_output(
-            invoke, text, synthesis_log, job.review_file,
+            invoke, text, synthesis_log, output,
             label="Synthesis", max_turns=max_turns,
         ),
-        has_output=lambda: _has_output(job.review_file),
+        has_output=lambda: _has_output(output),
         rebuild=lambda ladder: build_prompt(
             Phase.SYNTHESIS, job, max_turns=max_turns,
             ladder_bytes=ladder, **synth_kwargs,
@@ -359,21 +438,28 @@ def _phase_synthesis(
     )
 
     outcome = (
-        ingest_with_repair(
-            job.review_file, sent, invoke,
-            diagnose=lambda: diagnose_missing_output(
-                synthesis_log, job.review_file,
-            ),
+        ingest_artifact(
+            output, sent, invoke, ReviewArtifact,
+            diagnose=lambda: diagnose_missing_output(synthesis_log, output),
         )
-        if agent_output_complete(job.review_file) else IngestOutcome(None)
+        if _has_output(output) else ArtifactOutcome(None)
     )
     if outcome.ok:
+        record = replace(
+            outcome.artifact.to_record(
+                checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
+            ),
+            # `Review gaps` and anything else the harness wrote into the merge
+            # are the run's own sections; an agent has no field to copy them into.
+            extra=merged.record.extra,
+        )
+        record = _restore_held_findings(merged.record, record)
         _post_process_review(
-            job, outcome.record, skipped_groups=skipped_groups, total_groups=group_count,
+            job, record, skipped_groups=skipped_groups, total_groups=group_count,
         )
         diagnosis = None
     else:
-        reason = "no output" if not _has_output(job.review_file) else "incomplete output"
+        reason = "no output" if not _has_output(output) else "incomplete output"
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
         core.log.warn(f"Synthesis agent {detail} — falling back to mechanical merge")
         _write_mechanical_fallback(
@@ -396,7 +482,6 @@ def _carry_forward_prior_findings(
     if prior is None or not skip_indices:
         return None
     carried = ReviewRecord()
-    texts = []
     for i, grp in enumerate(groups, 1):
         if i not in skip_indices:
             continue
@@ -416,10 +501,7 @@ def _carry_forward_prior_findings(
                 findings=carried.findings + scoped.findings,
                 severity_sections=carried.severity_sections + notes,
             )
-            texts.append(
-                f"### Carried forward: {grp.name}\n{render_findings(scoped, sids=True)}"
-            )
-    return Merged(carried, "\n\n".join(texts) + "\n") if texts else None
+    return Merged(carried) if carried.findings else None
 
 
 def _identify_incremental_skips(
@@ -450,19 +532,21 @@ def _build_group_skips(
     return skips
 
 
-def _phase_disprove(job: ReviewJob, record: ReviewRecord, review_content: str) -> DisproveRun:
+def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
     counts = record.open_counts
     ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
         core.log.info(f"{label} skipped — no must-fix or should-fix findings")
         return DisproveRun(PhaseResult(), record)
+    # The gate reads the record rendered with its evidence: the findings it
+    # challenges, their locations, and the code each one quotes.
     result = run_phase(job, Phase.DISPROVE,
                        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
-                       review_content=review_content)
-    if not result.content:
+                       review_content=render_body(record, evidence=True))
+    if result.artifact is None:
         return DisproveRun(result, record)
-    applied = apply_disprove(record, parse_disprove_output(result.content))
+    applied = apply_disprove(record, result.artifact)
     if applied.summary.get("falsified", 0) > 0:
         core.log.info(f"{label}: {applied.summary['survived']} survived, {applied.summary['falsified']} falsified")
         _log_disprove_falsified(applied.summary)
@@ -509,7 +593,7 @@ def _run_disprove_gate(
         counts = open_counts(ReviewDocument.from_stored(stored) if stored else None)
         ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
         if stored and (disprove is True or ms_count >= DISPROVE_MIN_FINDINGS):
-            run = _phase_disprove(job, stored.record, render_review(stored.record, stored.meta))
+            run = _phase_disprove(job, stored.record)
             write_review(Path(job.review_file), run.record, stored.meta)
             result, failure = run.result, run.result.diagnosis
         else:
@@ -529,15 +613,19 @@ def _run_disprove_gate(
 def _phase_merge(
     group_outputs: list[str], failed_groups: list[GroupFailure],
     group_names: tuple[str, ...],
+    *,
+    declinable: frozenset[str],
 ) -> Merged:
     core.log.info("Phase 3: Merging findings...")
-    ingested = _ingest_group_outputs(group_outputs, failed_groups, group_names)
+    ingested = _ingest_group_outputs(
+        group_outputs, failed_groups, group_names, declinable,
+    )
     record = merge_records(list(ingested.records))
     if ingested.gaps:
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
             f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
         record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
-    return Merged(record, render_body(record, sids=True, evidence=True))
+    return Merged(record)
 
 
 @dataclass(frozen=True)
@@ -562,6 +650,7 @@ def _malformed_gap(
 def _ingest_group_outputs(
     group_outputs: list[str], failed_groups: list[GroupFailure],
     group_names: tuple[str, ...],
+    declinable: frozenset[str],
 ) -> _GroupIngest:
     # group_outputs lists every group's path, so a rejected file is usually an
     # already-failed group rather than stale recovery output. A rejection whose
@@ -572,8 +661,13 @@ def _ingest_group_outputs(
     for i, path in enumerate(group_outputs):
         if not Path(path).exists():
             continue
+        # A failed group's pre-created file is empty (or whitespace); it is
+        # not a malformed artifact.
+        if not Path(path).read_text().strip():
+            continue
         try:
-            records.append(ingest_review(Path(path).read_text()))
+            # A carried decline is believed only for a finding the prior round held (D19).
+            records.append(load_artifact(path, GroupArtifact).to_record(declinable=declinable))
         except IngestRejected as exc:
             core.log.warn(f"{path} rejected ({exc}) — excluding from merge")
             _malformed_gap(

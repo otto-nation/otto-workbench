@@ -48,6 +48,7 @@ from agent.templates import build_execution_claim_guard, build_output_block
 from agent.types import EFFORT_PRESETS
 from core.phases import Mode, Phase
 from pr.domains import ReviewVerdict
+from review.artifacts import output_format
 from review.budget import (
     FileFit, MIN_DIFF_BYTES,
     fit_files, fixed_preflight_bytes, model_window_tokens,
@@ -56,18 +57,18 @@ from review.collect import (
     PreflightBlock, build_project_context, format_preflight_data, trim_commit_log,
 )
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
-from review.prompt_prior import _build_prior_section, _build_unaccounted_section
+from review.prompt_prior import (
+    _build_prior_section, _build_unaccounted_section,
+)
 from review.prompt_sections import (
-    _build_delta_section, _build_env_section, _build_holistic_block,
+    _build_delta_section, _build_env_section,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
     _build_reply_threads_section, _build_reviews_section,
     _build_state_context_section, _is_incremental,
 )
 from review.types import PreflightData, PromptVerification, ReviewJob
 
-# The verdicts the prompt offers, written from the same members the review's
-# `## Verdict` line is parsed against — the wording an agent is asked for cannot
-# drift from the wording that is recognised.
+# The verdicts the prompt offers for the artifact's `verdict` field.
 VERDICT_OPTIONS = " / ".join(v.prose for v in ReviewVerdict)
 
 
@@ -131,10 +132,16 @@ class PromptBuilder:
             self._vars[key] = getattr(self._common, key)
         return self
 
-    def output(self, output_path: str, *, stdout_warning: bool = False) -> "PromptBuilder":
-        return self.set(
-            "output_block", build_output_block(output_path, stdout_warning=stdout_warning),
-        )
+    def output(
+        self, output_path: str, *, output_format: str, stdout_warning: bool = False,
+    ) -> "PromptBuilder":
+        """How the agent saves its file, then the JSON shape it writes.
+
+        The write recipe is `agent.templates`' and is not changed here. The
+        format follows it so the agent reads where to write before what to write.
+        """
+        block = build_output_block(output_path, stdout_warning=stdout_warning)
+        return self.set("output_block", f"{block}\n\n{output_format}")
 
     def execution_claim_guard(self, *, cross_cutting_step: int | None = None) -> "PromptBuilder":
         """The ban on claiming a command was run, for a write-first template.
@@ -775,14 +782,14 @@ _REREVIEW_CTX: dict[Mode, str] = {
         "This is a re-review. Below are the findings from the previous review. "
         "For each prior finding:\n"
         "- If the issue is still present, carry it forward\n"
-        "- If the issue has been fixed, leave it out of the severity sections\n"
+        "- If the issue has been fixed, leave it out of `findings`\n"
         "- Add any new findings from changes since the last review"
     ),
     Mode.SELF: (
         "This is a re-review of your own code. Below are the findings from the previous self-review. "
         "For each prior finding:\n"
         "- If the issue is still present, carry it forward\n"
-        "- If the issue has been fixed, leave it out of the severity sections\n"
+        "- If the issue has been fixed, leave it out of `findings`\n"
         "- Add any new findings from changes since the last review"
     ),
 }
@@ -815,6 +822,15 @@ def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
         b.set(key, value)
 
 
+def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False) -> str:
+    """The Output section's JSON example and field guide for this phase's artifact.
+
+    `rereview` is whether this prompt carries prior findings to account for.
+    Only then does the example show the fields that carry one forward (D20).
+    """
+    return output_format(extra["artifact"], job.mode, rereview=rereview)
+
+
 def _prompt_single(job, common, extra, output):
     """The one-agent review, of an open PR or of the working branch.
 
@@ -837,7 +853,7 @@ def _prompt_single(job, common, extra, output):
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
     b.execution_claim_guard()
-    b.output(output, stdout_warning=True)
+    b.output(output, stdout_warning=True, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
     b.fit(job)
     return BuiltPrompt(b, "")
 
@@ -863,14 +879,14 @@ def _prompt_synthesis(job, common, extra, output):
     b.set("prior_section", _build_unaccounted_section(extra.get("unaccounted_prior") or []))
     b.set("group_count", extra["group_count"])
     b.set("verdict_options", VERDICT_OPTIONS)
-    b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
+    b.set("holistic_content", extra.get("holistic_content") or "## Phase 1 context\n_No holistic assessment available._")
     b.set("merged_content", extra["merged_content"])
     # The step that authors new cross-cutting findings is numbered by the
     # template, and the two modes number it differently.
     b.execution_claim_guard(
         cross_cutting_step=_SYNTHESIS_CROSS_CUTTING_STEP[job.mode],
     )
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra, rereview=job.prior is not None))
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
     b.fit(job, skip_file_contents=True, min_diff=0)
@@ -892,7 +908,7 @@ def _survey_prompt(job, common, extra, output):
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("all_files_formatted", job.pr.all_files_formatted)
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra))
     b.fit(job)
     return BuiltPrompt(b, "")
 
@@ -902,17 +918,14 @@ def _prompt_group(job, common, extra, output):
     file_filter = group_files or None
     prior_ctx = _incremental_prior_ctx(job, (
         "This is a re-review. Below are the prior findings for YOUR files. "
-        "Carry forward the ones still present; leave fixed ones out of the "
-        "severity sections."
+        "Carry forward the ones still present; leave fixed ones out of `findings`."
     ))
     prior_section = _build_prior_section(
         job.prior, prior_ctx,
         file_filter=file_filter,
         reply_threads=job.reply_threads,
     )
-    holistic_block = _build_holistic_block(
-        extra.get("holistic_content", ""), job.pr.changed_files,
-    )
+    holistic = extra.get("holistic_content", "")
     b = PromptBuilder(common)
     b.shared("issue_section", "env_section", "omitted_guidance", "max_turns")
     b.set("pr_number", job.pr_number)
@@ -922,14 +935,14 @@ def _prompt_group(job, common, extra, output):
     ))
     b.set("reply_threads", _build_reply_threads_section(job.reply_threads, file_filter=file_filter))
     b.set("project_context", build_project_context(job.preflight, file_filter=file_filter) if job.preflight else "")
-    b.set("holistic_block", holistic_block)
+    b.set("holistic_block", f"\n{holistic}" if holistic else "")
     b.set("prior_section", prior_section)
     b.set("group_idx", extra["group_idx"])
     b.set("group_count", extra["group_count"])
     b.set("group_name", extra["group_name"])
     b.set("group_files_formatted", extra["group_files_formatted"])
     b.execution_claim_guard()
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
     b.fit(job, file_filter=file_filter, skip_project_context=True)
     return BuiltPrompt(b, str(extra["group_idx"]))
 
@@ -938,7 +951,7 @@ def _prompt_disprove(job, common, extra, output):
     b = PromptBuilder(common)
     b.shared("max_turns")
     b.set("review_content", extra.get("review_content", ""))
-    b.output(output)
+    b.output(output, output_format=_artifact_format(job, extra))
     return BuiltPrompt(b, "")
 
 

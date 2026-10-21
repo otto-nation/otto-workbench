@@ -62,38 +62,38 @@ class TestExtractDeniedContent:
 class TestTryRecoverOutput:
     def test_recover_from_denied_write(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
-        output = tmp_path / "output.md"
+        output = tmp_path / "output.json"
         log.write_text(json.dumps({
             "type": "result",
             "permission_denials": [{
-                "tool_input": {"content": "## Must fix\n- **[M1]** finding\n"}
+                "tool_input": {"content": "{\"summary\": \"finding\"}"}
             }],
         }) + "\n")
         assert ro.try_recover_output(str(log), str(output)) is True
         assert output.exists()
-        assert "## Must fix" in output.read_text()
+        assert json.loads(output.read_text())["summary"] == "finding"
 
     def test_recover_from_bash_heredoc(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
-        output = tmp_path / "output.md"
+        output = tmp_path / "output.json"
         log.write_text(json.dumps({
             "type": "result",
             "permission_denials": [{
-                "tool_input": {"command": "cat << EOF\n## Should fix\ncontent\nEOF"}
+                "tool_input": {"command": "cat << EOF\n{\"summary\": \"content\"}\nEOF"}
             }],
         }) + "\n")
         assert ro.try_recover_output(str(log), str(output)) is True
-        assert "## Should fix" in output.read_text()
+        assert json.loads(output.read_text())["summary"] == "content"
 
     def test_no_denials(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
-        output = tmp_path / "output.md"
+        output = tmp_path / "output.json"
         log.write_text(json.dumps({"type": "result", "permission_denials": []}) + "\n")
         assert ro.try_recover_output(str(log), str(output)) is False
 
     def test_denial_no_section_headers(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
-        output = tmp_path / "output.md"
+        output = tmp_path / "output.json"
         log.write_text(json.dumps({
             "type": "result",
             "permission_denials": [{
@@ -110,22 +110,21 @@ class TestTryRecoverOutput:
         mid-draft recovers the draft and discards the finished review.
         """
         log = tmp_path / "session.jsonl"
-        output = tmp_path / "output.md"
+        output = tmp_path / "output.json"
         log.write_text(json.dumps({
             "type": "result",
             "permission_denials": [
-                {"tool_input": {"content": "## Must fix\n- draft\n"}},
-                {"tool_input": {"content": "## Must fix\n- final\n"}},
+                {"tool_input": {"content": "{\"summary\": \"draft\"}"}},
+                {"tool_input": {"content": "{\"summary\": \"final\"}"}},
             ],
         }) + "\n")
         assert ro.try_recover_output(str(log), str(output)) is True
-        assert "final" in output.read_text()
-        assert "draft" not in output.read_text()
+        assert json.loads(output.read_text())["summary"] == "final"
 
     def test_missing_log_file(self, ro, tmp_path):
         assert ro.try_recover_output(
             str(tmp_path / "missing.jsonl"),
-            str(tmp_path / "output.md"),
+            str(tmp_path / "output.json"),
         ) is False
 
 

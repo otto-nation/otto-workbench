@@ -51,13 +51,11 @@ DEFAULT_RETRY_CEILING = 30
 
 # The phases that write no findings artifact of their own, and the fan-out
 # phases whose artifacts carry an index. Both are read by `PhaseSpec` below.
-# `single` and `synthesis` write the review document; `fix` edits it in place;
-# the verify gate writes neither — its checklist is the fix engine's file, named
-# by the engine rather than derived from a phase. Its session log is indexed
-# the same way `group` is, one file per chunk.
-_NO_FINDINGS_ARTIFACT = frozenset(
-    {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX, Phase.FIX_VERIFY},
-)
+# `fix` edits the review through the record; the verify gate writes neither —
+# its checklist is the fix engine's file, named by the engine rather than
+# derived from a phase. Its session log is indexed the same way `group` is, one
+# file per chunk. Every other review phase writes `<phase>.json`.
+_NO_FINDINGS_ARTIFACT = frozenset({Phase.FIX, Phase.FIX_VERIFY})
 _INDEXED = frozenset({Phase.GROUP, Phase.FIX_VERIFY})
 
 
@@ -320,9 +318,13 @@ class PhaseSpec:
     def output_filename(self) -> str:
         """The findings artifact this phase writes into the review directory.
 
-        Empty for a phase that writes no findings artifact of its own:
-        ``single`` and ``synthesis`` produce ``review.md``, ``fix`` edits it in
-        place, and ``fix_verify`` answers on the fix engine's checklist. Raises
-        for a phase outside the review domain, as ``log_filename`` does.
+        Empty for a phase that writes no findings artifact of its own: `fix`
+        edits the review through its record, and `fix_verify` answers on the
+        fix engine's checklist. `single` and `synthesis` write `single.json`
+        and `synthesis.json`; `review.md` is rendered, never written by an
+        agent. Raises for a phase outside the review domain, as
+        ``log_filename`` does.
         """
-        return "" if self.phase in _NO_FINDINGS_ARTIFACT else f"{self._stem}.md"
+        if self.phase in _NO_FINDINGS_ARTIFACT:
+            return ""
+        return f"{self._stem}.json"

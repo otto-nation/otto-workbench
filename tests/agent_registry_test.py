@@ -340,24 +340,22 @@ class TestPhaseOutputNames:
 
     def test_preserves_current_filenames(self):
         expected = {
-            Phase.SINGLE: "",
-            Phase.HOLISTIC: "holistic.md",
-            Phase.SCOUT: "scout.md",
-            Phase.GROUP: "group-{}.md",
-            Phase.SYNTHESIS: "",
-            Phase.DISPROVE: "disprove.md",
+            Phase.SINGLE: "single.json",
+            Phase.HOLISTIC: "holistic.json",
+            Phase.SCOUT: "scout.json",
+            Phase.GROUP: "group-{}.json",
+            Phase.SYNTHESIS: "synthesis.json",
+            Phase.DISPROVE: "disprove.json",
             Phase.FIX: "",
             Phase.FIX_VERIFY: "",
         }
         assert {p: PHASES[p].output_filename for p in REVIEW_PHASES} == expected
 
     def test_phases_that_write_no_findings_artifact(self):
-        # single and synthesis produce review.md, fix edits it in place, and
-        # the verify gate answers on the fix engine's own checklist.
+        # fix edits the review through the record, and the verify gate answers
+        # on the fix engine's own checklist.
         empty = {p for p in REVIEW_PHASES if not PHASES[p].output_filename}
-        assert empty == {
-            Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX, Phase.FIX_VERIFY,
-        }
+        assert empty == {Phase.FIX, Phase.FIX_VERIFY}
 
     def test_every_artifact_name_is_distinct(self):
         names = [
@@ -380,6 +378,5 @@ class TestPhaseOutputNames:
         ]
         assert specs
         for spec in specs:
-            assert spec.log_filename.removesuffix(".jsonl") == (
-                spec.output_filename.removesuffix(".md")
-            )
+            stem = spec.output_filename.removesuffix(".md").removesuffix(".json")
+            assert spec.log_filename.removesuffix(".jsonl") == stem

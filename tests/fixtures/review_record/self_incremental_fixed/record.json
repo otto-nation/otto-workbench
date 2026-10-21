@@ -1,0 +1,90 @@
+{
+  "schema_version": 2,
+  "summary": "The branch claims each slot in the same transaction as the ledger legs; the design is sound.",
+  "approach": null,
+  "findings": [
+    {
+      "id": "S1",
+      "severity": "S",
+      "path": "workflows/schedule.go",
+      "line": 261,
+      "end_line": null,
+      "body": "The reuse policy is added without a version gate.",
+      "evidence": "",
+      "stable_id": "a9a3cddf",
+      "sid": "",
+      "disposition": "skipped",
+      "reason": "a person should verify the replay comparison.",
+      "unverified": false,
+      "checkbox": true,
+      "filed": ""
+    },
+    {
+      "id": "N1",
+      "severity": "N",
+      "path": "ledger/lock_order.go",
+      "line": 18,
+      "end_line": null,
+      "body": "`compareUUIDs` calls `orderUUIDs` just to reuse byte order.",
+      "evidence": "",
+      "stable_id": "",
+      "sid": "",
+      "disposition": "fixed",
+      "reason": "",
+      "unverified": false,
+      "checkbox": true,
+      "filed": ""
+    },
+    {
+      "id": "N2",
+      "severity": "N",
+      "path": "service/lock_test.go",
+      "line": 30,
+      "end_line": null,
+      "body": "The test ignores `low`.",
+      "evidence": "",
+      "stable_id": "3645a131",
+      "sid": "",
+      "disposition": "declined",
+      "reason": "the test passes {high, mid, low}, so the locker must take low first.",
+      "unverified": false,
+      "checkbox": true,
+      "filed": ""
+    },
+    {
+      "id": "N3",
+      "severity": "N",
+      "path": "service/reconcile.go",
+      "line": 48,
+      "end_line": null,
+      "body": "The claim transaction is not checked.",
+      "evidence": "",
+      "stable_id": "",
+      "sid": "",
+      "disposition": "fixed",
+      "reason": "the suite did not run",
+      "unverified": true,
+      "checkbox": true,
+      "filed": ""
+    }
+  ],
+  "questions": [],
+  "verified": [],
+  "focus": [],
+  "triage": null,
+  "static_analysis": "All checks passed.",
+  "failures": [],
+  "verdict": "",
+  "severity_sections": [
+    {
+      "severity": "S",
+      "note": ""
+    },
+    {
+      "severity": "N",
+      "note": ""
+    }
+  ],
+  "ledger": [],
+  "extra": []
+}

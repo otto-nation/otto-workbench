@@ -8,11 +8,14 @@
 <!-- base_ref: main -->
 <!-- review_type: full -->
 <!-- generator: review 1.42.0 / otto-workbench 1.47.0 (6c990742) -->
+<!-- rendered from review.json — edits here are overwritten; change the record -->
 
 ## File Triage
+
 - `src/app.py` — reviewed; adds the retry loop.
 
 ## Summary
+
 The retry loop is a good direction, but M1 blocks: the timeout is never honoured.
 
 <!-- verification-drops -->
@@ -20,9 +23,11 @@ The retry loop is a good direction, but M1 blocks: the timeout is never honoured
 > - Must fix — `src/cli.py`: evidence mismatch at char 3
 
 ## Must fix
+
 ## Should fix
-- **[S1]** **`src/app.py:2`** — The retry loop never sleeps between attempts.
+
+- **[S1]** `src/app.py:2` — The retry loop never sleeps between attempts.
 
 ## Verdict
-Needs discussion — 1 should-fix after evidence verification removed 1 finding.
 
+Needs discussion — 1 should-fix after evidence verification removed 1 finding.

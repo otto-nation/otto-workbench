@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from conftest import make_ctx
-from review_record_support import seed_review
+from review_record_support import seed_record
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -95,7 +95,7 @@ def test_the_exclusivity_prose_drops_the_leading_comma_for_a_single_flag():
 
 def test_summary_runs_without_executing_the_binary(reviews_dir, capsys):
     """`--summary` is reachable by import, which is what the move bought."""
-    review = seed_review(reviews_dir, name="owner-repo-42") / "review.md"
+    review = seed_record(reviews_dir, name="owner-repo-42") / "review.md"
     with mock.patch("cli.review_modes.find_review_file", return_value=review), \
          mock.patch("cli.review_modes.json_summary", return_value='{"ok":true}'):
         rc = cli.review_modes.summary([], make_ctx())

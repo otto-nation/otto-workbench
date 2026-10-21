@@ -20,6 +20,7 @@ import review.gc
 
 # cr and reviews_dir are pytest fixtures: imported by name so tests here can request them.
 from review_entry_support import cr, reviews_dir
+from review_record_support import record, seed_record
 
 
 # ── review_file_path ─────────────────────────────────────────────────────────
@@ -54,14 +55,12 @@ def _seed_review(reviews_dir, name, repo="", pr_number="", **meta):
     a review is for comes from meta.json, and a test that spells both the same
     way cannot tell the two apart.
     """
-    d = reviews_dir / name
-    d.mkdir()
-    (d / "review.md").write_text("## Summary\n")
-    if repo or meta:
-        (d / "meta.json").write_text(json.dumps(
-            {"repo": repo, "pr_number": pr_number, **meta},
-        ))
-    return d
+    extra = dict(meta)
+    if repo:
+        extra["repo"] = repo
+    if pr_number != "":
+        extra["pr_number"] = pr_number
+    return seed_record(reviews_dir, name=name, rec=record(), **extra)
 
 
 def test_walk_classifies_every_entry_at_the_root(cr, reviews_dir):
@@ -89,7 +88,8 @@ def test_walk_attributes_a_review_from_its_meta_not_its_name(cr, reviews_dir):
 
 
 def test_walk_attributes_nothing_to_a_directory_with_no_meta(cr, reviews_dir):
-    _seed_review(reviews_dir, "widget-42")
+    d = _seed_review(reviews_dir, "widget-42")
+    (d / "meta.json").unlink()
 
     assert not next(iter_review_entries(reviews_dir)).is_for("acme/widget", "42")
 
@@ -140,6 +140,7 @@ def test_find_review_file_rejects_a_canonical_directory_another_repo_owns(cr, re
 def test_find_review_file_takes_a_canonical_directory_that_claims_no_repo(cr, reviews_dir):
     """A review from before meta.json carried attribution still resolves."""
     d = _seed_review(reviews_dir, "widget-42")
+    (d / "meta.json").unlink()
 
     assert find_review_file("acme/widget", "42") == d / "review.md"
 

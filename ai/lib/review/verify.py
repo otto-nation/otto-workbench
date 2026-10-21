@@ -21,9 +21,9 @@ the quote no longer has, which makes a verbatim quote fail to match itself.
 
 The disprove gate is adversarial. Each must-fix and should-fix finding is
 challenged by an agent, and one that cannot survive the challenge is marked
-`FALSIFIED` on the record — kept, never rendered. Reading that agent's
-verdicts back and applying them is `apply_disprove`; whether the gate runs at
-all is `review.phases`'.
+`FALSIFIED` on the record — kept, never rendered. The agent writes a
+`DisproveArtifact`; `apply_disprove` reads those verdicts onto the record.
+Whether the gate runs at all is `review.phases`'.
 
 The synthesis agent wrote the Summary and the Verdict before either gate ran,
 so both can describe findings that are no longer visible. Regenerating them
@@ -44,14 +44,13 @@ says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review.verdict`'s. The
-finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from the record, the
-same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path` — against the files the diff changed first, as
-the poster does, and the tracked tree only when the diff has no match — so a
-finding is not placed against one file and verified against another.
+Which verdict a tally supports in the first place is `review.verdict`'s. A
+finding's evidence is the code on the record, and the file it is checked
+against is `path` — resolved with the poster's `review.format.resolve_path`
+against the files the diff changed first, as the poster does, and the tracked
+tree only when the diff has no match — so a finding is not placed against one
+file and verified against another. A finding with no path names no file, and
+is not checked.
 """
 
 # doc-group: findings
@@ -67,13 +66,10 @@ from pathlib import Path
 import core.log
 import git.client
 from pr.domains import ReviewVerdict
-from review.grammar import (
-    VERIFY_FINDING_RE, strip_line_suffix,
-)
 from review.format import resolve_path
 from review.merge import renumber_record
-from review.record import Disposition, RecordFinding, ReviewRecord
-from review.render import finding_line
+from review.artifacts import DisproveArtifact, DisproveOutcome
+from review.record import Disposition, ReviewRecord
 from review.types import (
     SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key,
 )
@@ -81,28 +77,6 @@ from review.verdict import counts_prose, verdict_from_counts
 from core.text import plural
 
 # ── Evidence verification ────────────────────────────────────────────────────
-
-_EVIDENCE_RE = re.compile(
-    r">\s*```\w*\n(.*?)\n\s*>\s*```",
-    re.DOTALL,
-)
-
-
-def _extract_evidence(body: str) -> str | None:
-    m = _EVIDENCE_RE.search(body)
-    if not m:
-        return None
-    lines = m.group(1).split("\n")
-    cleaned = []
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped.startswith("> "):
-            stripped = stripped[2:]
-        elif stripped.startswith(">"):
-            stripped = stripped[1:]
-        cleaned.append(stripped.rstrip())
-    return "\n".join(ln for ln in cleaned if ln)
-
 
 def _normalize_code(text: str) -> str:
     lines = text.strip().split("\n")
@@ -264,17 +238,6 @@ def _match_evidence(
     return detail
 
 
-def _verification_detail(
-    finding: dict, evidence: str | None, wt_path: str,
-    tracked: Callable[[], Collection[str]] = _no_tracked_files,
-    changed: Collection[str] = (),
-) -> dict:
-    detail = _match_evidence(finding["path"], evidence, wt_path, tracked, changed)
-    detail["id"] = finding["id"]
-    detail["severity"] = finding["severity"]
-    return detail
-
-
 def _drop_reason(detail: dict) -> str:
     reason = "file not found" if not detail["file_exists"] else "evidence mismatch"
     if detail.get("longest_match_prefix") is not None:
@@ -288,41 +251,30 @@ class PostProcessed:
     verification: dict | None
 
 
-def _verification_text(f: RecordFinding, head: str) -> str:
-    """The finding's words and its evidence, in the shape `_extract_evidence` reads."""
-    rest = f.body.split("\n")[1:]
-    below = [line.rstrip() for line in [*rest, *f.evidence.split("\n")] if line.strip()]
-    return "\n".join([head, *below] if head else below)
-
-
-def _verification_finding(f: RecordFinding) -> dict | None:
-    """The finding as evidence verification walks it, or None if it is not a finding line."""
-    m = VERIFY_FINDING_RE.match(finding_line(f, sids=True).split("\n", 1)[0])
-    if not m:
-        return None
-    written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
-    return {
-        "id": f.id, "severity": f.severity, "path": f.path or written,
-        "body": _verification_text(f, m.group(5)),
-    }
-
-
 def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str]) -> PostProcessed:
+    """Drop each must-fix and should-fix finding whose evidence is not in its file.
+
+    A finding with no path names no file to check, so it is not checked: a
+    label such as `**Documentation**` is not a file the gate can open. A
+    finding already marked FIXED is not checked: its evidence quotes the
+    pre-fix code.
+    """
     dropped: list[str] = []
     details: list[dict] = []
     tracked = functools.cache(lambda: _tracked_files(wt_path))
     for f in record.visible:
-        if f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD):
+        if (
+            f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD)
+            or not f.path
+            or f.disposition is Disposition.FIXED
+        ):
             continue
-        finding = _verification_finding(f)
-        if finding is None:
-            continue
-        evidence = _extract_evidence(finding["body"])
-        detail = _verification_detail(finding, evidence, wt_path, tracked, changed)
+        detail = _match_evidence(f.path, f.evidence or None, wt_path, tracked, changed)
+        detail.update(id=f.id, severity=f.severity)
         details.append(detail)
         if not detail["match_result"]:
             dropped.append(f.id)
-            core.log.info(f"Dropping {f.id} ({finding['path']}): {_drop_reason(detail)}")
+            core.log.info(f"Dropping {f.id} ({f.path}): {_drop_reason(detail)}")
     gone = set(dropped)
     kept = tuple(f for f in record.findings if not (f.visible and f.id in gone))
     return PostProcessed(replace(record, findings=kept), {
@@ -376,48 +328,23 @@ def _reconciled_record(record: ReviewRecord, verification: dict) -> ReviewRecord
 # ── Disprove-it gate ─────────────────────────────────────────────────────────
 
 
-@dataclass
-class DisproveResult:
-    finding_id: str
-    verdict: str  # "SURVIVES" or "FALSIFIED"
-    reason: str
-
-
-_RESULT_RE = re.compile(
-    r"^- \[([A-Z]\d+)\]\s+(SURVIVES|FALSIFIED)\s*(?:—|--)\s*(.+)",
-)
-
-
-def parse_disprove_output(text: str) -> list[DisproveResult]:
-    results: list[DisproveResult] = []
-    for line in text.splitlines():
-        m = _RESULT_RE.match(line.strip())
-        if m:
-            results.append(DisproveResult(
-                finding_id=m.group(1),
-                verdict=m.group(2),
-                reason=m.group(3).strip(),
-            ))
-    return results
-
-
 @dataclass(frozen=True)
 class DisproveApplied:
     record: ReviewRecord
     summary: dict
 
 
-def apply_disprove(record: ReviewRecord, results: list[DisproveResult]) -> DisproveApplied:
+def apply_disprove(record: ReviewRecord, artifact: DisproveArtifact) -> DisproveApplied:
     """Mark each finding the gate falsified; kept on the record, never rendered."""
-    falsified = {r.finding_id for r in results if r.verdict == "FALSIFIED"}
-    reasons = {r.finding_id: r.reason for r in results if r.verdict == "FALSIFIED"}
+    falsified = {v.id: v.reason for v in artifact.verdicts if v.outcome is DisproveOutcome.FALSIFIED}
     marked = tuple(
         replace(f, disposition=Disposition.FALSIFIED) if f.visible and f.id in falsified else f
         for f in record.findings
     )
     return DisproveApplied(replace(record, findings=marked), {
-        "total_challenged": len(results), "survived": len(results) - len(falsified),
-        "falsified": len(falsified), "falsified_ids": sorted(falsified), "reasons": reasons,
+        "total_challenged": len(artifact.verdicts),
+        "survived": len(artifact.verdicts) - len(falsified),
+        "falsified": len(falsified), "falsified_ids": sorted(falsified), "reasons": falsified,
     })
 
 
@@ -439,7 +366,7 @@ def post_process_record(
         if verification["dropped"]:
             core.log.info(f"Dropped {len(verification['dropped'])} unverified findings: "
                           f"{', '.join(verification['dropped'])}")
-    record = replace(record, findings=tuple(replace(f, sid="") for f in record.findings), ledger="")
+    record = replace(record, findings=tuple(replace(f, sid="") for f in record.findings), ledger=())
     record = renumber_record(record)
     if verification:
         record = _reconciled_record(record, verification)

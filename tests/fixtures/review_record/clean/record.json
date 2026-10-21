@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "summary": "No findings across 3 files in 2 groups. Synthesis did not run \u2014 no group reported a finding.",
+  "approach": null,
+  "findings": [],
+  "questions": [],
+  "verified": [],
+  "focus": [],
+  "triage": [
+    {
+      "path": "src/app.py",
+      "note": "reviewed; nothing to report."
+    }
+  ],
+  "static_analysis": "",
+  "failures": [],
+  "verdict": "Approve \u2014 clean review.",
+  "severity_sections": [],
+  "ledger": [],
+  "extra": []
+}

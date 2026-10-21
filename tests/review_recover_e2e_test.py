@@ -25,7 +25,6 @@ from pathlib import Path
 
 import pytest
 
-from conftest import synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -45,12 +44,16 @@ _DENIED_RECORD = json.dumps({
 })
 _OK_RECORD = json.dumps({"type": "result", "subtype": "success", "num_turns": 3})
 
-_GROUP_FINDING = "## Nit\n- **[N1]** `a/one.py:1` — naming\n"
-_REVIEW_BODY = synthetic_review()
-_REVIEW_WITH_FINDING = synthetic_review(
-    findings="## Must fix\n- **[M1]** `a/one.py:1` — bug\n",
-    verdict="Request changes",
-)
+_GROUP_FINDING = json.dumps({"findings": [{"id": "N1", "path": "a/one.py", "line": 1, "body": "naming"}]})
+_SCOUT_DOC = json.dumps({"leads": []})
+_HOLISTIC_DOC = json.dumps({"assessment": "ok"})
+_DISPROVE_DOC = json.dumps({"verdicts": []})
+_REVIEW_BODY = json.dumps({"summary": "Synthesized.", "verdict": "Approve"})
+_REVIEW_WITH_FINDING = json.dumps({
+    "summary": "Synthesized.",
+    "findings": [{"id": "M1", "path": "a/one.py", "line": 1, "body": "bug"}],
+    "verdict": "Request changes",
+})
 
 _FILES = ("a/one.py", "a/two.py", "b/three.py", "b/four.py")
 _RECOVER_HINT = "Run `pr review --recover`"
@@ -93,9 +96,16 @@ class _Agent:
 
         self._append(log_path, self._ok_record(phase))
         if phase == "synthesis":
-            Path(self.review_file).write_text(self.review_body)
+            Path(invocation.output_path).write_text(self.review_body)
         else:
-            log_path.with_suffix(".md").write_text(_GROUP_FINDING)
+            docs = {
+                "scout.json": _SCOUT_DOC,
+                "holistic.json": _HOLISTIC_DOC,
+                "disprove.json": _DISPROVE_DOC,
+            }
+            Path(invocation.output_path).write_text(
+                docs.get(Path(invocation.output_path).name, _GROUP_FINDING),
+            )
         return 0
 
     def _ok_record(self, phase: str) -> str:
@@ -260,7 +270,9 @@ class TestRecoverAcrossASchemaChange:
         self._downgrade(job, "agent error: model not available")
         # Synthesis rewrites the review file each run, so the section injected
         # from the prior run is not what is under test here.
-        Path(job.review_file).write_text(_REVIEW_BODY)
+        Path(job.review_file).write_text(
+            "# Review\n## Summary\nSynthesized.\n\n## Verdict\nApprove\n",
+        )
 
         review.state._inject_failures_and_status(
             job.review_file, review.state._read_pipeline_state(job),
@@ -313,6 +325,7 @@ class TestTheDisproveGateRecordsItsOwnOutcome:
         Path(review.state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
             "groups_done": [1, 2], "done": ["synthesis"],
+            "schema_version": 1,
         }))
 
     def test_a_gate_that_declined_to_run_still_records_itself(self, job, run):
@@ -395,6 +408,7 @@ class TestRecoverDeclinesTheWorkItShould:
         Path(review.state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
             "groups_done": [1, 2], "done": ["synthesis", "disprove"],
+            "schema_version": 1,
         }))
 
         assert run(job).phases == []

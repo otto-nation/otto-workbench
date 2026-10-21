@@ -1,6 +1,6 @@
 """Rebuild review.md from group finding files.
 
-Reads group-N.md files from the review directory, merges findings,
+Reads group-N.json files from the review directory, merges findings,
 post-processes them, and writes a new review.md. Used to recover from
 synthesis agent formatting drift or corrupted review files.
 """

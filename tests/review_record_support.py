@@ -23,9 +23,8 @@ def fixture_meta(case: str) -> ReviewMeta:
 
 
 def expected_text(case: str) -> str:
-    """`expected.md` when the case reorders sections (D2/D4), else `input.md`."""
-    path = FIXTURES / case / "expected.md"
-    return path.read_text() if path.exists() else fixture_text(case, "input.md")
+    """The rendered review.md a case's record must reproduce."""
+    return fixture_text(case, "expected.md")
 
 
 def canonical(md: str) -> str:
@@ -46,45 +45,66 @@ def copy_tree(dest: Path) -> Path:
     return dest
 
 
-def store_review(review_file, text: str, meta=None):
-    """A review directory as the pipeline leaves it: review.json, meta.json, review.md."""
-    from review.ingest import ingest_review
-    from review.store import write_review
-    from review.types import ReviewMeta
-    review_file = Path(review_file)
-    write_review(review_file, ingest_review(text, strict=False), meta or ReviewMeta())
-    return review_file
-
-
-def seed_review(reviews_dir: Path, name: str = "widget-42",
-                body: str | None = None, **meta) -> Path:
-    """A review directory the reviews walk will classify as a review.
-
-    One builder rather than one per suite, because the on-disk shape — a
-    directory holding `review.md` beside a `meta.json` sidecar — is what the
-    walk classifies on, and a second copy of it drifts the moment the layout
-    moves. `meta.json` is written only when a caller passes attribution, so the
-    default stands in for a review predating the sidecar.
-    """
-    d = reviews_dir / name
-    d.mkdir()
-    text = "## Must fix\n- **[M1]** a.py:1 — bug\n" if body is None else body
-    store_review(
-        d / "review.md", text,
-        review_meta_from_dict(meta) if meta else ReviewMeta(),
-    )
-    return d
-
-
 def written_review(directory: Path) -> Path:
     """A `review.md` on disk holding one Must-fix finding.
 
     Shared because three review-flow suites each defined a near-identical
     helper for the same on-disk shape — a review file with one finding, which
     is all a caller checking "did the flow leave a review behind" needs.
-    Unlike `seed_review`, this takes the review's own directory directly and
+    Unlike `seed_record`, this takes the review's own directory directly and
     creates any missing parents, since callers here build ad hoc paths rather
     than seeding into an existing `reviews_dir`.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    return store_review(directory / "review.md", "## Must fix\n- **[M1]** boom\n")
+    return store_record(directory / "review.md", record(finding("M1", "boom", path="")))
+
+
+def fixture_record(case: str, name: str = "record.json"):
+    """A fixture case's record, as `save_record` wrote it at schema 2."""
+    from review.record import load_record
+    rec = load_record(FIXTURES / case, name)
+    assert rec is not None, f"{case}/{name} did not load"
+    return rec
+
+
+def finding(fid: str, body: str = "x", *, path: str = "a.py", line: int | None = 1, **fields):
+    """A record finding: severity from `fid`, stable ID as ingest computes it.
+
+    `path=""` builds a finding about the PR as a whole and drops its line. Any
+    other `RecordFinding` field may be passed, `stable_id` included: a test
+    pinning a stored identity passes it, and the computed one is not used.
+    """
+    from review.grammar import FindingIdentity
+    from review.record import RecordFinding
+    line = line if path else None
+    fields.setdefault("stable_id", FindingIdentity.of_fields(path, line, body).stable_id)
+    return RecordFinding(id=fid, severity=fid[0], path=path, line=line, body=body, **fields)
+
+
+def record(*findings, **fields):
+    """A review record holding `findings`, and any other `ReviewRecord` field by keyword."""
+    from review.record import ReviewRecord
+    return ReviewRecord(findings=tuple(findings), **fields)
+
+
+def store_record(review_file, rec, meta=None):
+    """A review directory as the pipeline leaves it — review.json, meta.json, review.md — from a record."""
+    from review.store import write_review
+    review_file = Path(review_file)
+    write_review(review_file, rec, meta or ReviewMeta())
+    return review_file
+
+
+def seed_record(reviews_dir: Path, name: str = "widget-42", rec=None, **meta) -> Path:
+    """A review directory holding `rec` (default: one Must-fix finding).
+
+    `meta.json` is always written; a test of a review predating the sidecar
+    unlinks it after seeding.
+    """
+    d = reviews_dir / name
+    d.mkdir()
+    store_record(
+        d / "review.md", rec if rec is not None else record(finding("M1", "bug")),
+        review_meta_from_dict(meta) if meta else ReviewMeta(),
+    )
+    return d

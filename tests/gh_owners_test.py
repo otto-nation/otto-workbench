@@ -203,3 +203,95 @@ def test_the_override_is_exactly_one(monkeypatch):
         assert not gh.owners.upstream_allowed_by_user()
     monkeypatch.delenv(gh.owners.ALLOW_UPSTREAM_ENV)
     assert not gh.owners.upstream_allowed_by_user()
+
+
+@pytest.mark.parametrize("command", [
+    "gh pr close 3 -c --repo=ours/svc",
+    "gh issue close 3 --comment --repo=ours/svc",
+    "gh pr merge 3 --subject --repo=ours/svc",
+    "gh label create foo -d --repo=ours/svc",
+])
+def test_a_repo_flag_after_a_value_flag_is_refused_from_a_stranger_checkout(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    stranger = remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    assert not gh.owners.check_command(command, str(stranger)).ok
+    assert gh.owners.check_command(command, str(ours)).ok
+
+
+def test_hostname_after_a_value_flag_unions_the_default_host(github_owners, tmp_path):
+    github_owners({"work": ["ghe.corp/acme"]})
+    verdict = gh.owners.check_command(
+        "gh api -X POST -q --hostname=ghe.corp repos/acme/x/issues", str(tmp_path))
+    assert not verdict.ok
+    assert gh.owners.check_command(
+        "gh api -X POST --hostname ghe.corp repos/acme/x/issues", str(tmp_path)).ok
+
+
+@pytest.mark.parametrize("command", [
+    "export GH_REPO+=stranger/lib; gh issue comment 1 -b hi",
+    "GH_REPO+=stranger/lib; export GH_REPO; gh issue comment 1 -b hi",
+    "GH_REPO+=stranger/lib gh issue comment 1 -b hi",
+])
+def test_plus_equals_gh_repo_is_an_assignment(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    assert not gh.owners.check_command(command, str(repo)).ok
+
+
+@pytest.mark.parametrize("command", [
+    "unset GH_REPO; gh issue comment 1 -b hi",
+    "unset GH_HOST; gh issue comment 1 -b hi",
+])
+def test_unset_gh_repo_or_host_refuses_a_cwd_write(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    assert not gh.owners.check_command(command, str(repo)).ok
+
+
+def test_inherited_gh_repo_is_the_target_without_a_repo_flag(
+        github_owners, tmp_path, monkeypatch):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    monkeypatch.setenv("GH_REPO", "stranger/lib")
+    verdict = gh.owners.check_command("gh issue comment 1 -b hi", str(repo))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "eval 'gh issue create --title x'",
+    "env -i GH_REPO=ours/svc gh issue comment 1 -b hi",
+    "env -u X GH_REPO=stranger/lib gh issue comment 1 -b hi",
+    "bash -c 'gh issue create --title x'",
+    "sh -c 'gh pr comment 1 --body x'",
+    "zsh -c 'gh issue create --title x'",
+    "command gh issue create --title x",
+    "exec gh issue create --title x",
+    "xargs gh issue create --title",
+    "sudo gh issue create --title x",
+    "time gh issue create --title x",
+])
+def test_opaque_wrappers_are_refused_even_at_home(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    assert not gh.owners.check_command(command, str(repo)).ok
+
+
+def test_plain_env_assignment_stays_resolvable(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    assert gh.owners.check_command(
+        "env GH_REPO=ours/svc gh issue create --title x", str(tmp_path)).ok
+
+
+def test_issue_transfer_to_a_stranger_is_refused(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    verdict = gh.owners.check_command("gh issue transfer 12 stranger/lib", str(repo))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+def test_issue_transfer_to_our_owner_is_allowed(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    assert gh.owners.check_command("gh issue transfer 12 ours/other", str(repo)).ok

@@ -26,6 +26,7 @@ from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Mode, Phase
 from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
+from review.convergence import change_set
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
@@ -50,7 +51,6 @@ from review.phases import (
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _with_sids
-from review.convergence import change_set
 from review.reconcile import passed_over
 from review.record import (
     Disposition, ProseSection, RecordFinding, ReviewRecord, SeveritySection,

@@ -9,13 +9,14 @@ import agent.retry  # noqa: E402
 import review.outcome  # noqa: E402
 import review.phases  # noqa: E402
 import review.steps  # noqa: E402
+from core.phases import Mode  # noqa: E402
 from review.convergence import change_set  # noqa: E402
 from review.reconcile import DispositionSource, passed_over, reconcile  # noqa: E402
 from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.store import StoredReview  # noqa: E402
 from review.types import PreflightData, PriorDisposition, ReviewMeta  # noqa: E402
 from review.verify import PostProcessed  # noqa: E402
-from review_convergence_support import finding, merged, review_job  # noqa: E402
+from review_convergence_support import committed_repo, finding, head, merged, review_job  # noqa: E402
 
 PRIOR_HEAD = "p" * 40
 DECLINED = finding("S1", "uses a module global", path="a.py", line=3,
@@ -58,6 +59,21 @@ def test_a_settled_decline_is_not_passed_over():
     assert passed_over(_prior(DECLINED), ReviewRecord(), changed=frozenset()) == []
 
 
+def test_a_ledger_fixed_outranks_an_untouched_decline():
+    review = ReviewRecord(ledger="- **[S1]** `a.py` — Fixed")
+    (rec,) = reconcile(_prior(DECLINED), review, changed=frozenset()).records
+    assert (rec.disposition, rec.source) == (PriorDisposition.FIXED, DispositionSource.LEDGER)
+
+
+def test_a_restated_finding_outranks_an_untouched_decline():
+    restated = finding("S1", "uses a module global", path="a.py", line=3)
+    (rec,) = reconcile(_prior(DECLINED), ReviewRecord(findings=(restated,)),
+                       changed=frozenset()).records
+    assert (rec.disposition, rec.source) == (
+        PriorDisposition.STILL_OPEN, DispositionSource.CARRIED,
+    )
+
+
 def test_change_set_is_the_delta_on_an_incremental_review(tmp_path):
     job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40,
                      prior=_prior(), preflight=_preflight(["b.py"]))
@@ -65,8 +81,20 @@ def test_change_set_is_the_delta_on_an_incremental_review(tmp_path):
 
 
 def test_change_set_is_empty_when_the_prior_covers_head(tmp_path):
-    job = review_job(tmp_path, tmp_path / "r", head_sha=PRIOR_HEAD, prior=_prior())
+    job = review_job(tmp_path, tmp_path / "r", mode=Mode.PR, head_sha=PRIOR_HEAD, prior=_prior())
     assert change_set(job) == frozenset()
+
+
+def test_a_self_review_covering_head_includes_the_working_tree(tmp_path):
+    repo = committed_repo(tmp_path, {"a.py": "one\n", "b.py": "two\n"})
+    sha = head(repo)
+    (repo / "a.py").write_text("edited\n")
+    prior = StoredReview(ReviewRecord(), ReviewMeta(head_sha=sha, dirty_files=("b.py",)))
+    job = review_job(repo, tmp_path / "r", head_sha=sha, prior=prior)
+    job.full_review = True
+    changed = change_set(job)
+    assert "a.py" in changed
+    assert "b.py" in changed
 
 
 def test_change_set_is_unknown_on_a_full_review_with_a_moved_head(tmp_path):

@@ -62,7 +62,7 @@ PYEOF
   result=$(_py_here <<'PYEOF'
 from review.record import RecordFinding, ReviewRecord
 prior = ReviewRecord(findings=(
-    RecordFinding(id="M1", severity="M", path="src/auth.go", line=10, body="auth bug", checkbox=True),
+    RecordFinding(id="M1", severity="M", path="", body="auth bug", checkbox=True),
 ))
 scoped = mod._scoped(prior, ['src/unrelated.go'])
 print([f.id for f in scoped.findings])

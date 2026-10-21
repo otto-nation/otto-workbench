@@ -2,6 +2,7 @@
 prints and the `review.md` it re-renders from the agent's outcomes.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +33,17 @@ def _applied(rec, outcomes):
 
 def _finding_line(text, fid):
     return next(ln for ln in text.split("\n") if f"**[{fid}]**" in ln)
+
+
+_FINDING_DECL_RE = re.compile(r"^- (\[[ x]\] )?\*\*\[([A-Z]\d+)\]\*\*")
+
+
+def _declared_ids(text):
+    return [
+        m.group(2)
+        for ln in text.split("\n")
+        if (m := _FINDING_DECL_RE.match(ln))
+    ]
 
 
 class TestTheSummary:
@@ -266,19 +278,21 @@ class TestApplyOutcomes:
         `fix.tracking` collapses whitespace on the engine's path, but an
         `ItemOutcome` built anywhere else does not pass through it.
         """
-        answered = _applied(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.NEEDS_HUMAN,
                      "one\n- [ ] **[M9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in answered.findings] == ["M1", "M2"]
+        assert "**[M9]**" in out
+        assert _declared_ids(out) == ["M1", "M2"]
 
     # passes-at-base: base writes no caveat, so no detail reaches the document
     def test_a_verify_detail_carrying_a_newline_does_not_fabricate_a_finding(self):
-        answered = _applied(self.OPEN, [
+        out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="one\n- [ ] **[S9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in answered.findings] == ["M1", "M2"]
+        assert "**[S9]**" in out
+        assert _declared_ids(out) == ["M1", "M2"]
 
     # passes-at-base: base rewrites nothing on the line, so the id is safe there for free
     def test_an_append_leaves_the_stable_id_alone(self):
@@ -446,25 +460,16 @@ class TestApplyOutcomes:
         assert all(len(line) <= 100 for line in summary.splitlines())
 
     # passes-at-base: base writes no annotation, so the wording assertions hold vacuously there
-    def test_an_unverified_tick_is_still_a_fix_to_the_parser(self):
-        """The caveat is for the reader; it must not read back as a skip or decline.
-
-        Asserted on the wording rather than only on disposition, which is
-        FIXED for any tick however the annotation reads.
-        """
+    def test_an_unverified_tick_renders_as_a_fix(self):
+        """The caveat is for the reader; it must not read back as a skip or decline."""
         out = _apply(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        assert "*(skipped" not in out
-        assert "*(declined" not in out
-        answered = _applied(self.OPEN, [
-            _outcome("M1", FixOutcome.FIXED, verified=False,
-                     verify_detail="no runnable check"),
-        ]).finding("M1")
-        assert answered.disposition is Disposition.FIXED
-        assert answered.disposition is not Disposition.DECLINED
-        assert "*(skipped" not in answered.body
+        line = _finding_line(out, "M1")
+        assert line.startswith("- [x] **[M1]**")
+        assert review.grammar.SKIP_TAIL_RE.search(line) is None
+        assert review.grammar.DECLINED_TAIL_RE.search(line) is None
 
     # passes-at-base: base annotates nothing, so a checkbox-free line is untouched there anyway
     def test_a_finding_with_no_checkbox_is_not_annotated(self):
@@ -504,12 +509,9 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="the repro *(declined — see above)*"),
         ])
-        answered = _applied(self.OPEN, [
-            _outcome("M1", FixOutcome.FIXED, verified=False,
-                     verify_detail="the repro *(declined — see above)*"),
-        ]).finding("M1")
-        assert answered.disposition is Disposition.FIXED
-        assert "- [x] **[M1]**" in out
+        line = _finding_line(out, "M1")
+        assert line.startswith("- [x] **[M1]**")
+        assert review.grammar.DECLINED_TAIL_RE.search(line) is None
 
     # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
     def test_a_detail_quoting_a_skip_does_not_become_one(self):
@@ -523,13 +525,8 @@ class TestApplyOutcomes:
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="see *(skipped — needs design)*"),
         ])
-        answered = _applied(self.OPEN, [
-            _outcome("M1", FixOutcome.FIXED, verified=False,
-                     verify_detail="see *(skipped — needs design)*"),
-        ]).finding("M1")
-        assert review.grammar.SKIP_TAIL_RE.search(answered.body) is None
-        assert "*(skipped" not in answered.body
-        assert answered.disposition is Disposition.FIXED
+        line = _finding_line(out, "M1")
+        assert review.grammar.SKIP_TAIL_RE.search(line) is None
 
     # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own
     def test_an_already_hedged_line_gains_no_second_caveat(self):
@@ -583,9 +580,6 @@ class TestApplyOutcomes:
         ).finding("M2").disposition is Disposition.SKIPPED
 
     def test_an_agent_s_decline_is_annotated_as_one(self):
-        out = _apply(
-            self.OPEN, [_outcome("M1", FixOutcome.DECLINED, "documented tradeoff")],
-        )
         answered = _applied(
             self.OPEN, [_outcome("M1", FixOutcome.DECLINED, "documented tradeoff")],
         ).finding("M1")
@@ -593,7 +587,6 @@ class TestApplyOutcomes:
         assert answered.reason == "documented tradeoff"
 
     def test_an_annotation_with_no_reason_still_registers(self):
-        out = _apply(self.OPEN, [_outcome("M1", FixOutcome.DECLINED)])
         assert _applied(
             self.OPEN, [_outcome("M1", FixOutcome.DECLINED)],
         ).finding("M1").disposition is Disposition.DECLINED

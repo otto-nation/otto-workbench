@@ -117,6 +117,7 @@ EOF
     --review-dir "$TMPDIR/review" --pr ""
 
   grep -q "# Self-Review: org/repo — feat/self" "$TMPDIR/review/review.md"
+  grep -q "## $nit_section" "$TMPDIR/review/review.md"
   run ! grep -q "## Verdict" "$TMPDIR/review/review.md"
 }
 

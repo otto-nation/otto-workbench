@@ -473,3 +473,22 @@ lib/ui.sh" ]
   run _validate_test_refs
   [ "$status" -eq 0 ]
 }
+
+@test "--paths-file replaces the diff" {
+  local listed="$BATS_TEST_TMPDIR/paths"
+  printf 'bin/local/select-tests\n' > "$listed"
+  run "$REPO_ROOT/bin/local/select-tests" --paths-file "$listed" --base no-such-ref
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tests/select_tests.bats"* ]]
+}
+
+@test "--paths-file with no value is a usage error" {
+  run "$REPO_ROOT/bin/local/select-tests" --paths-file
+  [ "$status" -eq 2 ]
+}
+
+@test "--base with no value is a usage error" {
+  run "$REPO_ROOT/bin/local/select-tests" --base
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--base requires an argument"* ]]
+}

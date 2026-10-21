@@ -11,7 +11,7 @@
 # positionals — declares them on a `# select-on: PATTERN...` line (see
 # _declared_patterns).
 #
-# Usage: select-tests [--base REF] [--validate]
+# Usage: select-tests [--base REF] [--paths-file FILE] [--validate] [--all]
 #   --base REF     Diff against REF (default: origin/main)
 #   --validate     Fail if any test file has neither refs nor a select-on
 #                  declaration (catches renames that silently break the map), if a
@@ -453,24 +453,47 @@ _changed_paths() {
   git ls-files --others --exclude-standard 2>/dev/null || true
 }
 
+# _input_paths BASE FILE — the paths listed in FILE when one was given, else the
+# diff from BASE. A fix pass hands its own paths so the selection it re-runs at
+# its pre-pass tree is the selection it ran, rather than a diff of that tree.
+_input_paths() {
+  local base="$1" file="$2"
+  if [[ -n "$file" ]]; then
+    cat "$file"
+    return 0
+  fi
+  _changed_paths "$base"
+}
+
 main() {
   local base="origin/main"
   local validate=false
   local print_all=false
+  local paths_file=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --base) shift; base="$1" ;;
+      --base)
+        [[ -n "${2:-}" ]] || { err "--base requires an argument"; exit 2; }
+        shift; base="$1" ;;
+      --paths-file)
+        [[ -n "${2:-}" ]] || { err "--paths-file requires an argument"; exit 2; }
+        shift; paths_file="$1" ;;
       --validate) validate=true ;;
       --all) print_all=true ;;
       -h|--help)
-        echo "Usage: select-tests [--base REF] [--validate] [--all]"
+        echo "Usage: select-tests [--base REF] [--paths-file FILE] [--validate] [--all]"
         exit 0
         ;;
       *) err "Unknown option: $1"; exit 1 ;;
     esac
     shift
   done
+
+  if [[ -n "$paths_file" && ! -r "$paths_file" ]]; then
+    err "--paths-file: cannot read $paths_file"
+    exit 2
+  fi
 
   if $print_all; then
     _all_test_files
@@ -481,7 +504,7 @@ main() {
   local -a changed_files=()
   while IFS= read -r f; do
     [[ -n "$f" ]] && changed_files+=("$f")
-  done < <(_changed_paths "$base" | LC_ALL=C sort -u)
+  done < <(_input_paths "$base" "$paths_file" | LC_ALL=C sort -u)
 
   if [[ ${#changed_files[@]} -eq 0 ]]; then
     # No changes detected — run everything

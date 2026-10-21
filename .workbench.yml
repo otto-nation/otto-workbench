@@ -5,7 +5,8 @@ fix:
   # What a fix pass runs against its own edits before it writes the commit body
   # claiming they worked. `--changed` selects what the working tree reaches,
   # diffed from WORKBENCH_FIX_BASE — the commit the pass started from — so a
-  # pass verifies the tests its own edits reach; the branch as a whole stays
-  # the pre-push gate's job.
-  verify_command: bin/local/run-tests --changed
+  # pass verifies the tests its own edits reach directly (`--direct`: a test's
+  # own imports, one hop through its support modules); the transitive closure
+  # and the branch as a whole stay the pre-push gate's job.
+  verify_command: bin/local/run-tests --changed --direct
   verify_timeout: 900

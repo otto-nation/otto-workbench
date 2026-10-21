@@ -422,6 +422,9 @@ class PriorFinding:
     ref: FindingRef
     stable_id: str
     text: str = ""
+    # Whether the prior round declined it, read from the record's disposition
+    # rather than re-parsed from the rendered annotation.
+    declined: bool = False
 
 
 # ── What is under review ─────────────────────────────────────────────────────

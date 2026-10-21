@@ -717,6 +717,19 @@ module decides how a review is *reached* — which worktree, which checks, which
 prompts — and the flows differ throughout. This one decides what a finished
 review *means*, and nothing here differs at all.
 
+### review/convergence.py
+
+What keeps successive self-review rounds converging instead of circling.
+
+A round reviews what changed, settles what it can without an agent, and leaves
+the next round less to do. Each rule here closes one way the loop used to fail
+to terminate: a decline re-stated every round, a design call handed back to
+the fix agent every round, new nits on files nobody touched, a killed pass
+whose leftovers looked like author edits, and a fix commit that always moved
+HEAD past the review that produced it.
+
+`change_set` is what "did not change" means for all of them.
+
 ### review/document.py
 
 The header vocabulary of a review, and the read view of a stored one.

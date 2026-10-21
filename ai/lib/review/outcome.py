@@ -24,6 +24,7 @@ import git.client
 from core.phases import Mode
 from pr.domains import ReviewStatus
 from review.collect import uncommitted_files
+from review.convergence import change_set
 from review.document import covers
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
@@ -209,7 +210,7 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     # Reconciliation reads the ledger, which post-processing then clears.
     record_prior_findings(job.review_file, job.prior, record, job.wt_path,
-                          head_sha=job.pr.head_sha)
+                          head_sha=job.pr.head_sha, changed=change_set(job))
     done = post_process_record(record, job.wt_path, [f["path"] for f in job.pr.files])
     job.verification = done.verification
     return done.record

@@ -50,6 +50,7 @@ from review.phases import (
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _with_sids
+from review.convergence import change_set
 from review.reconcile import passed_over
 from review.record import (
     Disposition, ProseSection, RecordFinding, ReviewRecord, SeveritySection,
@@ -62,7 +63,7 @@ from review.state import (
 )
 from review.store import StoredReview, read_review, write_review
 from review.types import (
-    SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
+    SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, PriorFinding, ReviewJob,
 )
 from review.verdict import BUDGET_SUMMARY, SKIPPED_SUMMARY, open_counts
 from review.verify import apply_disprove
@@ -359,6 +360,12 @@ def _run_synthesis_or_fallback(
     return result
 
 
+def _unaccounted(job: ReviewJob, record: ReviewRecord) -> list[PriorFinding]:
+    """The prior findings `record` leaves for synthesis: neither stated nor settled."""
+    return passed_over(job.prior, record, job.wt_path, job.pr.head_sha,
+                       changed=change_set(job))
+
+
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged: Merged,
@@ -375,7 +382,7 @@ def _phase_synthesis(
     # The same reconciliation the run ends with, asked one phase early, while
     # there is still an agent that can act on the answer. Afterwards the only
     # thing left to do about a prior finding nobody accounted for is report it.
-    unaccounted = passed_over(job.prior, merged.record, job.wt_path, job.pr.head_sha)
+    unaccounted = _unaccounted(job, merged.record)
     if unaccounted:
         core.log.dim(
             f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "

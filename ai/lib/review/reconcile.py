@@ -91,6 +91,7 @@ def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
             ref=FindingRef(f.id, f.path),
             stable_id=f.stable_id,
             text="\n".join(raw.strip() for raw in line.split("\n")).strip(),
+            declined=f.disposition is Disposition.DECLINED,
         ))
     return out
 
@@ -124,13 +125,17 @@ class DispositionSource(StrEnum):
 
     LEDGER = "ledger"
     CARRIED = "carried"
+    # The prior round declined it, and the file it names has not changed since.
+    # A verdict a review stated, carried rather than re-stated.
+    PRIOR = "prior"
     TREE = "tree"
     NONE = "none"
 
     @property
     def stated(self) -> bool:
         """Whether the review said this, rather than the pipeline inferring it."""
-        return self in (DispositionSource.LEDGER, DispositionSource.CARRIED)
+        return self in (DispositionSource.LEDGER, DispositionSource.CARRIED,
+                        DispositionSource.PRIOR)
 
 
 class UndecidedReason(StrEnum):
@@ -366,6 +371,7 @@ def _settle(
     carried: set[str],
     ledger: list[LedgerLine],
     tree: _Tree,
+    changed: frozenset[str] | None = None,
 ) -> PriorRecord:
     """The disposition of one prior finding, from the first source that has one.
 
@@ -373,6 +379,8 @@ def _settle(
     — a judgement no amount of reading the tree recovers. A carry-forward comes
     next and means the finding is still open, whatever the tree looks like: a
     reviewer who just looked at the code outranks an inference about it.
+    A prior decline whose file is outside `changed` comes third: it is the prior
+    review's statement, outranked only by this review's own.
     """
     entry = next((e for e in ledger if e.covers(finding.ref)), None)
     if entry is not None:
@@ -381,6 +389,9 @@ def _settle(
     if finding.stable_id in carried:
         return PriorRecord(finding.ref, PriorDisposition.STILL_OPEN,
                            DispositionSource.CARRIED, "this review restates it")
+    if _declined_and_untouched(finding, changed):
+        return PriorRecord(finding.ref, PriorDisposition.DECLINED, DispositionSource.PRIOR,
+                           f"declined last round, and `{finding.ref.path}` has not changed since")
     inference = tree.infer(finding)
     if inference.disposition:
         return PriorRecord(finding.ref, inference.disposition, DispositionSource.TREE,
@@ -389,11 +400,24 @@ def _settle(
                        inference.reason)
 
 
+def _declined_and_untouched(finding: PriorFinding, changed: frozenset[str] | None) -> bool:
+    """Whether the prior round's decline still stands with nobody restating it.
+
+    A decline is a judgement about code; while the file it names is outside the
+    change set the code is the code that was judged, so asking an agent to say
+    "Declined" again is the cost with no answer it could change. Unknown change
+    set, or no file named, settles nothing.
+    """
+    path = finding.ref.path
+    return finding.declined and bool(path) and changed is not None and path not in changed
+
+
 def reconcile(
     prior: StoredReview,
     review: ReviewRecord,
     wt_path: str = "",
     head_sha: str = "",
+    changed: frozenset[str] | None = None,
 ) -> Reconciliation:
     """What `review` made of every finding the prior review reported.
 
@@ -403,6 +427,7 @@ def reconcile(
     """
     return _reconcile_findings(
         _prior_findings(prior.record), prior.meta, review, wt_path, head_sha,
+        changed,
     )
 
 
@@ -412,6 +437,7 @@ def _reconcile_findings(
     review: ReviewRecord,
     wt_path: str,
     head_sha: str,
+    changed: frozenset[str] | None = None,
 ) -> Reconciliation:
     """`reconcile()`'s body, taking the prior findings already parsed.
 
@@ -425,13 +451,14 @@ def _reconcile_findings(
         prior_sha=tree.prior_sha,
         prior_date=prior_meta.date,
         head_sha=head_sha or (git.client.head_sha(wt_path) if wt_path else ""),
-        records=[_settle(finding, carried, ledger, tree) for finding in findings],
+        records=[_settle(finding, carried, ledger, tree, changed) for finding in findings],
     )
 
 
 def passed_over(
     prior: StoredReview | None, review: ReviewRecord, wt_path: str = "",
     head_sha: str = "",
+    changed: frozenset[str] | None = None,
 ) -> list[PriorFinding]:
     """The prior findings `review` left out that the tree at `wt_path` still holds.
 
@@ -456,7 +483,7 @@ def passed_over(
         return []
     findings = _prior_findings(prior.record)
     reconciliation = _reconcile_findings(
-        findings, prior.meta, review, wt_path, head_sha,
+        findings, prior.meta, review, wt_path, head_sha, changed,
     )
     return [
         finding
@@ -518,6 +545,7 @@ def record_prior_findings(
     review: ReviewRecord,
     wt_path: str = "",
     head_sha: str = "",
+    changed: frozenset[str] | None = None,
 ) -> Reconciliation | None:
     """Reconcile `review` against `prior` and record it beside `review_file`.
 
@@ -530,7 +558,7 @@ def record_prior_findings(
     """
     if prior is None:
         return None
-    reconciliation = reconcile(prior, review, wt_path, head_sha)
+    reconciliation = reconcile(prior, review, wt_path, head_sha, changed=changed)
     if not reconciliation.records:
         return None
     _report(reconciliation, _write(review_file, reconciliation))

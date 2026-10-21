@@ -34,6 +34,7 @@ def _a_configured_model(monkeypatch):
     (see eval_run_models_test) rather than label results with nothing."""
     monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
 
+
 class TestGroupMatches:
     def test_every_token_must_be_present(self):
         assert eval.scoring_skill.group_matches(

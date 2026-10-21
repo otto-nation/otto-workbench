@@ -242,7 +242,6 @@ class TestPhaseRunnerReachesBackend:
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_GROUP_MODEL", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
 
         import agent.invoke
 

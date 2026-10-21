@@ -32,11 +32,12 @@ _agent_model_tier_value() {
   local tier="$1" key line value
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0
   for key in "AI_${tier}_MODEL" "ANTHROPIC_DEFAULT_${tier}_MODEL"; do
-    line="$(grep -E "^export ${key}=" "$ENV_LOCAL_FILE" | tail -1 || true)"
+    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_LOCAL_FILE" | tail -1 || true)"
     [[ -n "$line" ]] || continue
-    value="${line#export "${key}"=}"
-    value="${value%\"}"; value="${value#\"}"
-    value="${value%\'}"; value="${value#\'}"
+    value="${line#*"${key}"=}"
+    if [[ "$value" =~ ^\"([^\"]*)\" ]]; then value="${BASH_REMATCH[1]}"
+    elif [[ "$value" =~ ^\'([^\']*)\' ]]; then value="${BASH_REMATCH[1]}"
+    else value="${value%%[[:space:]]#*}"; value="${value%"${value##*[![:space:]]}"}"; fi
     if [[ -n "$value" ]]; then
       printf '%s' "$value"
       return 0

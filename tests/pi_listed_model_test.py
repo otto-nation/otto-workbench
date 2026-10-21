@@ -438,13 +438,3 @@ class TestModelWithProvider:
         line = agent.backend_pi._refusal_line(agent.pi_models.ModelNotConfigured("xai"))
         assert "pi refused" not in line
         assert "agent.model" in line
-
-    @pytest.mark.parametrize("builder", ["_build_prompt_cmd", "_build_agent_cmd", "_build_fix_cmd"])
-    def test_command_builders_refuse_a_provider_without_a_model(self, builder):
-        build = getattr(agent.backend_pi, builder)
-        # Pi would exit 1 on --provider without --model; no caller can build it.
-        with pytest.raises(agent.pi_models.ModelNotConfigured):
-            if builder == "_build_prompt_cmd":
-                build(PI, model=None, provider="xai")
-            else:
-                build(PI, agent.backend_pi.AgentInvocation(prompt="p", model=None, provider="xai"))

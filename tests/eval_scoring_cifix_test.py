@@ -39,6 +39,7 @@ def _a_configured_model(monkeypatch):
     (see eval_run_models_test) rather than label results with nothing."""
     monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
 
+
 def _cifix_cases() -> list[Path]:
     cases = []
     for manifest in sorted(CORPUS.glob("*/manifest.json")):

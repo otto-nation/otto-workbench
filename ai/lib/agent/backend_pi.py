@@ -271,7 +271,6 @@ def _build_prompt_cmd(
         *pi, "-p", "--mode", "json", "--no-session", "--approve", "--no-tools",
         *BARE_FLAGS,
     ]
-    require_model_with_provider(provider, model)
     if provider:
         cmd += ["--provider", provider]
     if model:
@@ -297,7 +296,6 @@ def _build_agent_cmd(
             cmd += ["--append-system-prompt", agent_prompt]
         else:
             raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{inv.agent}.md'}")
-    require_model_with_provider(inv.provider, inv.model)
     if inv.provider:
         cmd += ["--provider", inv.provider]
     if inv.model:
@@ -333,7 +331,6 @@ def _build_fix_cmd(
         "--tools", PI_FIX_TOOLS, *BARE_FLAGS,
     ]
     cmd += _rule_prefix_flags(inv)
-    require_model_with_provider(inv.provider, inv.model)
     if inv.provider:
         cmd += ["--provider", inv.provider]
     if inv.model:

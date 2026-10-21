@@ -112,7 +112,7 @@ def is_checkable(model: str | None) -> bool:
     ("sonnet", "opus") name nothing to look up — treat them as unknown rather
     than reporting a bogus missing-quota failure.
     """
-    return bool(model) and model.startswith((_MODEL_ID_PREFIX, _PUBLISHER_PREFIX))
+    return model is not None and model.startswith((_MODEL_ID_PREFIX, _PUBLISHER_PREFIX))
 
 
 def resolve_vertex_model_id(model: str) -> str:

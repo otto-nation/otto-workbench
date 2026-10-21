@@ -159,5 +159,3 @@ class TestPhaseSpecTemplates:
         spec = self._review(Phase.SINGLE, declared)
         declared[Mode.PR] = "other.md"
         assert spec.template_for(Mode.PR) == "a.md"
-
-

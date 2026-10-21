@@ -44,16 +44,6 @@ class TestDedupIgnoresWhereARangeEnds:
     The start line is still read — `TestDedupStaysLineSensitive` pins that half.
     """
 
-    def test_ranges_sharing_a_start_line_collapse(self):
-        a = FindingIdentity.of_fields("ai/lib/x.py", 12, DESC)
-        b = FindingIdentity.of_fields("ai/lib/x.py", 12, DESC)
-        assert a.dedup_key == b.dedup_key
-
-    def test_a_range_collapses_with_the_bare_line_it_starts_at(self):
-        a = FindingIdentity.of_fields("ai/lib/x.py", 12, DESC)
-        b = FindingIdentity.of_fields("ai/lib/x.py", 12, DESC)
-        assert a.dedup_key == b.dedup_key
-
     def test_ranges_starting_at_different_lines_stay_apart(self):
         a = FindingIdentity.of_fields("ai/lib/x.py", 12, DESC)
         b = FindingIdentity.of_fields("ai/lib/x.py", 30, DESC)

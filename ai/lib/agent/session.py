@@ -459,7 +459,20 @@ def _json_documents(text: str) -> list[str]:
     if start == -1 or end < start:
         return []
     span = text[start:end + 1]
-    return [span] if _json_object(span) is not None else []
+    if _json_object(span) is not None:
+        return [span]
+    # Braces in the prose, or two separate objects: decode from each `{`.
+    docs, decoder, pos = [], json.JSONDecoder(), start
+    while pos != -1 and pos <= end:
+        try:
+            value, stop = decoder.raw_decode(text, pos)
+        except ValueError:
+            pos = text.find("{", pos + 1)
+            continue
+        if isinstance(value, dict):
+            docs.append(text[pos:stop])
+        pos = text.find("{", stop)
+    return docs
 
 
 # Closing tags of an XML-shaped call written out as text:

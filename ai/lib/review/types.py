@@ -190,7 +190,7 @@ class ReplyState(StrEnum):
 class GroupSkip(StrEnum):
     """Why the group phase is not running a group.
 
-    The two reasons disagree about what a missing ``group-N.md`` means, so they
+    The two reasons disagree about what a missing ``group-N.json`` means, so they
     stay distinct all the way to the executor. A recovery skip reuses a prior
     attempt's output, which must therefore be on disk — its absence is a real
     failure. A carried skip never had output: an incremental run takes that

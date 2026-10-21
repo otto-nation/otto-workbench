@@ -10,6 +10,8 @@ All expectations are derived dynamically from source — no hardcoded lists.
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +30,8 @@ import agent.registry  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 import core.serde  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
+from core.strict import load_strict  # noqa: E402
+from review.artifacts import ReviewArtifact  # noqa: E402
 import review.types  # noqa: E402
 
 from review_contracts_support import _template_files
@@ -313,3 +317,31 @@ def test_python_script_help_exits_zero(script):
         f"stdout: {result.stdout[:500]}\n"
         f"stderr: {result.stderr[:500]}"
     )
+
+
+# ── 6. Reviewer protocol JSON artifact (D15) ─────────────────────────────────
+
+AGENTS = REPO_ROOT / "ai" / "claude" / "agents"
+_JSON_BLOCK = re.compile(r"```json\n(.*?)\n```", re.DOTALL)
+
+
+def test_the_reviewer_protocol_shows_a_review_artifact_the_reader_accepts():
+    """D15: the interactive shape is the pipeline's shape, held by the same reader."""
+    blocks = _JSON_BLOCK.findall((AGENTS / "reviewer.md").read_text())
+    assert blocks, "reviewer.md shows no JSON artifact"
+    for block in blocks:
+        assert load_strict(ReviewArtifact, json.loads(block)).problems() == ()
+
+
+def test_the_interactive_example_comes_after_the_whole_protocol():
+    """reviewer.md is the single, holistic and synthesis system prompt; their own shape must not read as overridden."""
+    text = (AGENTS / "reviewer.md").read_text()
+    assert text.index("## Constraints") < text.index("```json")
+
+
+@pytest.mark.parametrize("agent", ["reviewer.md", "reviewer-lite.md"])
+def test_neither_protocol_describes_the_markdown_skeleton(agent):
+    text = (AGENTS / agent).read_text()
+    assert "Use the Write tool" not in text
+    assert "## Must fix\n- **[M1]**" not in text
+    assert "Section headers MUST be exactly" not in text

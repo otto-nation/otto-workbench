@@ -36,7 +36,7 @@ Categorize all changed files into review tiers:
 - **Tier 2 (deep-review):** Application logic, business rules, shared libraries, test files
 - **Tier 3 (scan):** Generated files (verify generator input instead), vendored code, pure formatting/rename changes
 
-Write the triage as a `## File Triage` section in the review output, listing every file with its tier. Then review files in tier order — all Tier 1 files first, then Tier 2, then Tier 3. No file may be silently skipped. The section stays in the local review file for coverage tracking; it is stripped before the summary is posted to the PR
+When the prompt's Output section has a `triage` field, write one entry per file with its tier there. Then review files in tier order — all Tier 1 files first, then Tier 2, then Tier 3. No file may be silently skipped. The section stays in the local review file for coverage tracking; it is stripped before the summary is posted to the PR
 - If pre-collected data includes review checklists and architecture.md, use those directly. Otherwise: check for `.claude/review/` in the project root and read `.claude/architecture.md` Known Constraints section if it exists
 - For each checklist file, match its `paths:` frontmatter against the files in the diff. Load matching checklists as supplementary review criteria for Phases 3–8
 - Use architecture.md Known Constraints to avoid findings that contradict known project constraints
@@ -73,12 +73,12 @@ Write the triage as a `## File Triage` section in the review output, listing eve
      - Check each prior finding against the current code to determine if it was addressed
      - Use thread state annotations (`[CONTESTED]`, `[ACKNOWLEDGED]`, `[RESOLVED]`) as signals, but verify against the actual diff — a `[RESOLVED]` thread still needs code verification, and an `[ACKNOWLEDGED]` response without a corresponding code change is still open
      - When the author contested a finding, re-evaluate: if their argument is valid, note it as resolved; if the finding still holds, note it as still open with a response to their point
-     - **Do not repeat unresolved findings in the severity sections** — those sections are for genuinely new findings only. Unresolved prior findings should be responded to in their original threads, not re-posted
-     - **Do reference them.** Include a `## Prior findings` section after `## Summary` that lists each prior finding with its disposition and a link to the original thread. This keeps them visible without restating them
-     - The disposition is one of exactly three words, written first on the line: `Fixed`, `Still open`, or `Declined`. Those are the only three the ledger parser reads — anything else (`contested`, `partially fixed`, `no longer applicable`) is dropped, and the finding falls to the tree check. A finding the author contested is `Still open` when it still holds and `Declined` when their argument carries; one the change made moot is `Fixed`
-     - Qualify after the verdict, never inside it: `Fixed — only on the happy path` parses, `Fixed, but only on the happy path` does not and is read as no verdict at all
-     - This section is bookkeeping and is **not** posted to the PR — it is stripped before publish, because its IDs number the prior review rather than this one. Write it for reconciliation, not for the author
-     - Start each line with the prior finding's ID and path copied verbatim — `- **[M1]** \`path/to/file.py\` — Still open — <thread link>`. Reconciliation matches on those two, and a prior finding missing from this section is reported as unaccounted for
+     - **Do not repeat unresolved findings as new ones.** `findings` is for genuinely new findings and for prior findings you carry forward as the prompt asks — a carried finding keeps the prior finding's `sid`
+     - A prior finding you carry forward as declined keeps its `sid` and sets `declined` to the reason. A decline that names no prior finding's `sid` is not kept: only a judgement the prior round recorded, or one you reach on a prior finding, can be declined
+     - **Do account for them.** Fill `prior_findings` with one entry per prior finding: its `id` and `path` copied verbatim from the prior review, a `disposition`, and any detail in `note`
+     - The disposition is exactly one of `Fixed`, `Still open`, or `Declined` — the reader rejects anything else and you are asked to fix it. A finding the author contested is `Still open` when it still holds and `Declined` when their argument carries; one the change made moot is `Fixed`
+     - Put the detail in `note`, never in `disposition`: `"disposition": "Fixed", "note": "only on the happy path"`
+     - `prior_findings` is bookkeeping and is **not** posted to the PR — it is stripped before publish, because its IDs number the prior review rather than this one. A prior finding missing from it is reported as unaccounted for
 
 ### 1. Context
 - If the repo's instructions file (AGENTS.md, or a legacy CLAUDE.md) is provided in pre-collected data, use it directly. Otherwise read it (and any sub-files it references). Use project-specific rules as review criteria throughout
@@ -219,23 +219,20 @@ For each such finding:
 
 This allows `pr review --post` to convert references into GitHub permalink URLs when posting. Links resolve against the PR's base branch for unchanged files and the PR head branch for new/modified files — no special formatting is needed.
 
-### 9a. Evidence blocks for Must-fix and Should-fix
+### 9a. Evidence for Must-fix and Should-fix
 
-For every Must-fix and Should-fix finding, include a verbatim code snippet from the referenced location as an evidence block. Format as a blockquote with a fenced code block immediately after the finding line:
+Every Must-fix and Should-fix finding carries `evidence`: a snippet from the referenced location, copied verbatim, as plain code — no `>` markers and no fence. It is checked against the file after you write.
 
-```markdown
-- **[M1]** **`pkg/handler.go:42`** — missing error check on `db.Query()`
-  > ```go
-  > result := db.Query(query)
-  > ```
+```text
+{"id": "M1", "path": "pkg/handler.go", "line": 42, "end_line": null,
+ "body": "missing error check on `db.Query()`", "evidence": "result := db.Query(query)"}
 ```
 
 Rules:
 - The snippet must appear verbatim in the file at the referenced location — do not paraphrase or reconstruct from memory
 - Keep snippets to 1–5 lines — enough to prove the claim, not the whole function
-- Infer the language tag from the file extension (`.go` → `go`, `.py` → `python`, `.sh` → `bash`, `.ts` → `typescript`)
-- Indent the evidence block 2 spaces from the finding line
-- Nit and Idiom findings do not require evidence blocks
+- Separate two excerpts that are not adjacent with a line holding only `...`
+- Nit and Idiom findings do not require evidence
 
 ### 9b. Fix suggestions must address root causes
 
@@ -254,50 +251,17 @@ When a finding includes a suggested fix, the fix itself must pass the same revie
 - **Nit [N]** — cosmetic, style, documentation wording, trivial inconsistency; no functional impact. Includes commit message issues, step summary formatting, and test artifacts left in diffs
 - **Idiom [I]** — language-specific best practice that doesn't affect correctness (covered in Phase 8)
 
-### 10. Verdict
+### 10. Writing the review
 
-Use the Write tool to save the review to the output path specified in the prompt. Do NOT print the review to stdout — it must be written as a file.
+Write the review to the output path the prompt names, as ONE JSON document — nothing before or after it, no code fence. Do NOT print it to stdout; it only counts if it lands in the file.
 
-Write no `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not.
+The prompt's `## Output` section shows the exact shape for the phase you are running and what each field holds. It is generated from the reader that checks your file, so follow it exactly: a key it does not show is rejected, and you are given one turn to fix a rejected file. That shape is the one to write even where it differs from anything else in this protocol — a holistic scan writes an assessment, not a review.
 
-```markdown
-# Review: <repo>#<pr_number> — <PR title>
+Write no title and no metadata. The harness renders `review.md` from your document and from what it already knows about the run — the commit reviewed, the mode, the date.
 
-## File Triage
-- `path/to/file.go` — **Tier 2** (application logic)
-- `AGENTS.md`, `CLAUDE.md` — **Tier 1** (AI config)
-...
+Set the verdict field, where the shape has one, to Approve / Needs discussion / Request changes / Disapprove, then why. When no prompt names a shape — an interactive review — write the one under "Interactive output shape" at the end of this file.
 
-## Summary
-One sentence on what the change does and overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — the `## Prior findings` ledger is the record of what became of them, and a tally written twice is a tally that can disagree with itself
-
-## Must fix
-- **[M1]** **`<file>:<line>`** — <finding>
-  > ```lang
-  > verbatim snippet
-  > ```
-
-## Should fix
-- **[S1]** **`<file>:<line>`** — <finding>
-  > ```lang
-  > verbatim snippet
-  > ```
-
-## Nit
-- **[N1]** **`<file>:<line>`** — <finding>
-
-## Idioms
-- **[I1]** **`<file>:<line>`** — <finding>
-
-## Verdict
-Approve / Needs discussion / Request changes / Disapprove
-```
-
-Section headers MUST be exactly `## Must fix`, `## Should fix`, `## Nit`, `## Idioms`, `## Verdict` — h2 level, no hyphens, no nesting under a parent like `## Findings`. The posting tool parses these headers mechanically.
-
-Omit severity sections with no findings. Skip files with no issues.
-
-After writing, print the file path so the user can review and edit before drafting.
+After writing, print the file path so the user can review it.
 
 ### 11. Next steps
 
@@ -308,18 +272,18 @@ Do not post the review automatically. The user should verify the file first. Pub
 - `pr review --post <PR>` — posts the review file as a PENDING review
 - `pr review --post --submit <PR>` — posts it and submits it as a COMMENT review
 
-`--post` finds the review file, strips the `## File Triage` and `## Prior findings` sections, turns references into permalinks, and places inline comments. Never rebuild that by hand with `gh api .../reviews` — a hand-rolled post skips all of it and diverges from what the tooling tracks.
+`pr review --post` posts the review a `pr review` run recorded in its review directory (`review.json`), leaving out the File Triage and the prior-findings bookkeeping, turning references into permalinks and placing inline comments. A JSON file you wrote by hand in an interactive session is not what it reads: run `pr review` to produce a review it can post. Never rebuild a post by hand with `gh api .../reviews` — a hand-rolled post skips all of it and diverges from what the tooling tracks.
 
 ### Supplemental reviews
 
 When the prompt specifies additional review criteria (e.g., "now focus on code repetition" or "review for config-driven issues"), this is an additive pass on an existing review:
 
-1. Read the existing review file at the output path
-2. Preserve all existing findings (resolved and open)
-3. Add new findings with IDs that continue the existing sequence (e.g., if the last must-fix is `[M7]`, new ones start at `[M8]`)
-4. Update the summary to cover both the original and supplemental scope
-5. Update the verdict if the new findings change the assessment
-6. Write the merged result to the same output path
+1. Read the existing JSON review at the output path
+2. Keep every existing finding in `findings`
+3. Add new findings with IDs that continue the existing sequence (if the last must-fix is `M7`, new ones start at `M8`)
+4. Update `summary` to cover both the original and supplemental scope
+5. Update `verdict` if the new findings change the assessment
+6. Write the whole document back to the same output path
 
 Do NOT create a separate review file — all findings for a PR belong in one file.
 
@@ -328,3 +292,54 @@ Do NOT create a separate review file — all findings for a PR belong in one fil
 - NEVER approve changes you haven't reviewed — if the diff is truncated, say so
 - You are a reviewer, not a fixer. Your output is findings and a verdict
 - NEVER post reviews to GitHub yourself — that is `pr review --post` (see Next steps), and only when the user asks
+
+## Interactive output shape
+
+Only for a review no prompt gave an `## Output` section to. Inside the pipeline the prompt's shape always wins.
+
+```json
+{
+  "summary": "Moves retry handling into one helper. Sound overall; the top risk is M1, a dropped query error on the hot path.",
+  "findings": [
+    {
+      "id": "M1",
+      "path": "pkg/handler.go",
+      "line": 42,
+      "end_line": 44,
+      "body": "`db.Query`'s error is dropped, so a failed query reads as an empty result.\nReturn the error before ranging over `rows`.",
+      "evidence": "rows, _ := db.Query(query)\nfor rows.Next() {"
+    },
+    {
+      "id": "S1",
+      "path": "pkg/retry.go",
+      "line": 18,
+      "end_line": null,
+      "body": "The retry budget is fixed at three attempts.",
+      "evidence": "for attempt := 0; attempt < 3; attempt++ {"
+    },
+    {
+      "id": "N1",
+      "path": null,
+      "line": null,
+      "end_line": null,
+      "body": "The PR title says docs-only, but the change edits code.",
+      "evidence": ""
+    }
+  ],
+  "triage": [
+    {
+      "path": "pkg/handler.go",
+      "note": "**Tier 2** (application logic) \u2014 M1"
+    }
+  ],
+  "verdict": "Request changes \u2014 M1 loses query failures."
+}
+```
+
+- `summary` is one sentence on what the change does and overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself
+- `findings[].id` — M (must fix), S (should fix), N (nit), I (idiom) and a number from 1, sequential per severity
+- `path` — relative to the repository root, with no `:line`; null for a finding about the PR as a whole. The line goes in `line` and `end_line`
+- `body` — markdown; the first line states the defect
+- `evidence` — see 9a; "" for nits and idioms
+- `triage` — Phase 0's tier for every changed file
+- `verdict` — Approve / Needs discussion / Request changes / Disapprove, then why

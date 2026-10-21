@@ -95,14 +95,19 @@ def mark_skips(
 ) -> dict[str, StickySkip]:
     """A mark for each finding this pass handed to a person, keyed by its anchor.
 
-    None for a finding whose file is in *committed*, the pass's own commit
-    scope: that file changed in this very pass, so the change a mark waits for
-    has already happened, and the blob it would record is one nobody reviewed.
+    Only findings `apply_outcomes` actually set to SKIPPED (`Finding.skipped`).
+    A `NEEDS_HUMAN` that `_answered` left OPEN — an unverified tail from an
+    earlier round — is not a skip and gets no mark. None for a finding whose
+    file is in *committed*, the pass's own commit scope: that file changed in
+    this very pass, so the change a mark waits for has already happened, and
+    the blob it would record is one nobody reviewed.
     """
     marks: dict[str, StickySkip] = {}
     for outcome in outcomes:
         f = findings.get(outcome.id)
         if outcome.outcome is not FixOutcome.NEEDS_HUMAN or f is None or not f.path:
+            continue
+        if not f.skipped:
             continue
         if f.path in committed:
             continue

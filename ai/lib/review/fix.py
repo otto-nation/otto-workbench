@@ -78,7 +78,7 @@ from review.record import (
 from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
 )
-from review.store import update_review
+from review.store import read_review, update_review
 from review.retry import _has_output
 from review.types import Finding, ReviewJob, severity_by_key
 from core.trail import Trail
@@ -883,9 +883,17 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
         Accumulated rather than replaced, as static declines are: a round that
         skips nothing does not retract an earlier round's call. `changed` is
         the commit scope `landing` stored; a skip in a file it holds is left
-        unmarked (`mark_skips`).
+        unmarked (`mark_skips`). Marks follow `apply_outcomes`: a NEEDS_HUMAN
+        that left the finding OPEN is not a skip.
         """
-        marks = mark_skips(self.findings, outcomes, self.workdir, self.changed or set())
+        stored = read_review(Path(self.job.review_file))
+        findings = self.findings
+        if stored is not None:
+            findings = {
+                f.id: f.view()
+                for f in apply_outcomes(stored.record, outcomes).visible
+            }
+        marks = mark_skips(findings, outcomes, self.workdir, self.changed or set())
         if not marks:
             return
         review_dir = Path(self.job.artifact_dir)

@@ -81,10 +81,11 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
                  status: ReviewStatus | None = None) -> ReviewMeta:
     """This run's sidecar, header facts included — the one thing review.md's header renders from.
 
-    Built from the job, except `static_declined` and `sticky_skips`, which accumulate across rounds
-    (see `ReviewMeta.static_declined`), so they are carried from the sidecar
-    already on disk. Rebuilding them from the job alone erased every earlier
-    decline before `_inject_static_analysis_section` could read it.
+    Built from the job, except `static_declined` and `sticky_skips`. Those
+    accumulate across rounds — they carry every earlier decline and skip
+    mark — so they are read from the sidecar already on disk. Rebuilding
+    them from the job alone erased every earlier decline before
+    `_inject_static_analysis_section` could read it.
     """
     carried = read_review_meta(Path(job.artifact_dir))
     meta = replace(_job_meta(job), static_declined=dict(carried.static_declined),

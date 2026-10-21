@@ -61,6 +61,29 @@ def test_a_publish_applies_a_live_mark(tmp_path):
     assert anchor_key("a.py", 3) in stored.meta.sticky_skips
 
 
+def test_a_publish_prunes_a_stale_mark(tmp_path):
+    wt = _repo(tmp_path)
+    job = review_job(wt, tmp_path / "rev", head_sha=git_out(wt, "rev-parse", "HEAD").strip())
+    write_review_meta(Path(job.artifact_dir), ReviewMeta(sticky_skips={
+        anchor_key("a.py", 3): StickySkip(blob_of(wt, "a.py"), "S", "design call")}))
+    (wt / "a.py").write_text("x = 2\n")
+    review.outcome._publish(job, ReviewRecord(findings=(finding("S1", "x", path="a.py", line=3),)))
+    stored = read_review(Path(job.review_file))
+    assert stored.meta.sticky_skips == {}
+    assert stored.record.findings[0].disposition is Disposition.OPEN
+
+
+def test_a_live_mark_does_not_relabel_a_settled_finding(tmp_path):
+    wt = _repo(tmp_path)
+    marks = {anchor_key("a.py", 3): StickySkip(blob_of(wt, "a.py"), "S", "design call")}
+    declined = finding("S1", "x", path="a.py", line=3,
+                       disposition=Disposition.DECLINED, reason="no")
+    fixed = finding("S2", "y", path="a.py", line=3, disposition=Disposition.FIXED)
+    applied = apply_sticky_skips(ReviewRecord(findings=(declined, fixed)), marks, wt)
+    assert [f.disposition for f in applied.record.findings] == [
+        Disposition.DECLINED, Disposition.FIXED]
+
+
 def _fix_job(tmp_path, wt, *findings):
     job = review_job(wt, tmp_path / "reviews", head_sha="abc1234", files=["a.py", "b.py"])
     write_review(Path(job.review_file), ReviewRecord(findings=findings), ReviewMeta())
@@ -93,9 +116,20 @@ NEEDS_A_PERSON = [ItemOutcome(id="S1", outcome=FixOutcome.NEEDS_HUMAN, reason="d
 
 def test_mark_skips_leaves_out_an_anchor_the_pass_committed(tmp_path):
     wt = _repo(tmp_path)
-    found = {"S1": finding("S1", "x", path="a.py", line=3).view()}
+    found = {"S1": finding("S1", "x", path="a.py", line=3,
+                           disposition=Disposition.SKIPPED).view()}
     assert mark_skips(found, NEEDS_A_PERSON, wt, committed={"a.py"}) == {}
     assert list(mark_skips(found, NEEDS_A_PERSON, wt)) == ["a.py:3"]
+
+
+def test_mark_skips_leaves_out_a_needs_human_that_stayed_open(tmp_path):
+    """An unverified tail from an earlier round: apply_outcomes left it OPEN."""
+    wt = _repo(tmp_path)
+    found = {"S1": finding(
+        "S1", "x *(unverified — no runnable check)*", path="a.py", line=3,
+    ).view()}
+    assert found["S1"].skipped is False
+    assert mark_skips(found, NEEDS_A_PERSON, wt) == {}
 
 
 def test_no_mark_when_the_pass_committed_the_anchor_file(tmp_path):

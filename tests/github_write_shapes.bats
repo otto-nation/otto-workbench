@@ -52,18 +52,6 @@ _pi_publishes() {
   " -- "$1" "${2:-}"
 }
 
-# _path_without_owners_check — PATH with every directory holding an
-# owners-check dropped, so a guard copy with none beside it really finds none.
-_path_without_owners_check() {
-  local dir kept=""
-  local -a dirs
-  IFS=: read -ra dirs <<<"$PATH"
-  for dir in "${dirs[@]}"; do
-    [[ -e "$dir/owners-check" ]] || kept+="${kept:+:}$dir"
-  done
-  printf '%s' "$kept"
-}
-
 # _guard_copy CHECKER_BODY — a copy of the guard at $TMPDIR/tree/ai/claude/bin,
 # with an owners-check at ai/bin holding CHECKER_BODY, or none when it is empty.
 # Prints the copy's path.

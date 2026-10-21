@@ -65,7 +65,13 @@ the Python classifier stays the only copy of the write shapes. Anything but exit
 with exactly `read` on stdout — missing, crashed (an uncaught exception exits
 1), timed out, unexpected output — counts as a write. The checker is the
 checkout's `ai/bin/owners-check`, or an `owners-check` on PATH when the
-extensions run from somewhere without one.
+extensions run from somewhere without one. `runOwnersCheck` is the one runner
+and timeout every owners-check call goes through.
+
+upstream-guard is the owner boundary, in every session mode: for a command the
+pre-filter matches it runs `owners-check --cwd`, which allows reads and decides
+whether a write's target is one of our owners (`github.owners`). A refusal, or a
+check that could not run, blocks the command.
 
 ## Overriding one
 

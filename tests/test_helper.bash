@@ -607,6 +607,12 @@ _review_sandbox() {
   local branch="$1" state="${2:-}" sandbox="$BATS_TEST_TMPDIR/review-sandbox"
   rm -rf "$sandbox"
   mkdir -p "$sandbox/repo" "$sandbox/state/reviews"
+  # The owner boundary refuses every GitHub write when github.owners is unset,
+  # and the guards these sandboxes exercise run it in every session. The repo's
+  # origin is otto-nation, so declaring that owner keeps the boundary out of
+  # the answer each suite is asking about.
+  mkdir -p "$sandbox/config"
+  printf 'github:\n  owners:\n    work: [otto-nation]\n' > "$sandbox/config/config.yml"
 
   git -C "$sandbox/repo" init -q -b "$branch"
   git -C "$sandbox/repo" remote add origin git@github.com:otto-nation/otto-workbench.git
@@ -625,11 +631,11 @@ _review_sandbox() {
 }
 
 # _guard_in SANDBOX PAYLOAD — the Claude guard, run from SANDBOX/repo with
-# SANDBOX/state as the state root.
+# SANDBOX/state as the state root and SANDBOX/config as the config root.
 _guard_in() {
   echo "$2" | (
     cd "$1/repo" || exit 1
-    WORKBENCH_STATE_DIR="$1/state" "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
+    WORKBENCH_STATE_DIR="$1/state" WORKBENCH_CONFIG_DIR="$1/config" "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
   )
 }
 
@@ -645,6 +651,52 @@ _json_command_payload() {
 import json, sys
 print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
 ' "$1"
+}
+
+# _json_command_payload_at CWD COMMAND — the claude-bash-guard hook payload for
+# COMMAND with CWD as the session's cwd, which the owner boundary resolves the
+# write's repository from. JSON built the same way as _json_command_payload.
+_json_command_payload_at() {
+  python3 -c '
+import json, sys
+print(json.dumps({"cwd": sys.argv[1], "tool_input": {"command": sys.argv[2]}}))
+' "$1" "$2"
+}
+
+# _owners_config OWNER — a config.yml under $WORKBENCH_CONFIG_DIR declaring
+# OWNER as the only github.owners entry. Shared by claude_upstream_guard.bats
+# and pi_extensions_upstream.bats, which ask both harnesses the same questions.
+_owners_config() {
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'github:\n  owners:\n    work: [%s]\n' "$1" > "$WORKBENCH_CONFIG_DIR/config.yml"
+}
+
+# _upstream_repo REMOTE... — a repo at $TMPDIR/repo whose origin is the first
+# REMOTE and whose further remotes, named r1, r2…, are the rest.
+_upstream_repo() {
+  local n=0 url
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init -q
+  for url in "$@"; do
+    if (( n == 0 )); then
+      git -C "$TMPDIR/repo" remote add origin "$url"
+    else
+      git -C "$TMPDIR/repo" remote add "r$n" "$url"
+    fi
+    n=$((n + 1))
+  done
+}
+
+# _path_without_owners_check — PATH with every directory holding an
+# owners-check dropped, so a guard copy with none beside it really finds none.
+_path_without_owners_check() {
+  local dir kept=""
+  local -a dirs
+  IFS=: read -ra dirs <<<"$PATH"
+  for dir in "${dirs[@]}"; do
+    [[ -e "$dir/owners-check" ]] || kept+="${kept:+:}$dir"
+  done
+  printf '%s' "$kept"
 }
 
 # _hold_tree TREE — hold LOCK_SH on TREE in the background until killed.

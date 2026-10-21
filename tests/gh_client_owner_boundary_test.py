@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -10,12 +11,22 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import cli.boundary
+import cli.locks
 import cli.pr_describe
+import cli.review_orchestrate
+import fix.comment_replies
 import gh.client
 import gh.owners
+import pr.attribution
 import pr.comments
 import pr.context
+import pr.describe
+import pr.gh_token
+import pr.thread_models
+import pr.thread_replies
+import review.orchestrate
 from core.proc import CmdResult
+from git.land import CommitStatus
 
 from conftest import remote_repo
 
@@ -132,3 +143,117 @@ def test_a_decorated_cli_main_maps_a_refusal_to_exit_one(capsys, monkeypatch):
     err = capsys.readouterr().err
     assert "stranger is not one of our GitHub owners" in err
     assert "Refused at the owner boundary" in err
+
+
+def _trail():
+    class Trail:
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
+
+        def error(self, action, detail, data=None):
+            self.calls.append((action, detail))
+
+    return Trail()
+
+
+def test_reraise_trails_a_refusal_as_policy():
+    trail = _trail()
+    refusal = gh.owners.OwnerBoundaryError(
+        gh.owners.Verdict.refuse("stranger is not one of our GitHub owners"),
+    )
+    with pytest.raises(gh.owners.OwnerBoundaryError):
+        try:
+            raise refusal
+        except Exception as exc:
+            cli.boundary.reraise(trail, exc)
+    assert trail.calls == [("owner_boundary", "stranger is not one of our GitHub owners")]
+
+
+def test_reraise_leaves_every_other_failure_to_the_shared_recorder():
+    trail = _trail()
+    with pytest.raises(RuntimeError):
+        try:
+            raise RuntimeError("boom")
+        except Exception as exc:
+            cli.boundary.reraise(trail, exc)
+    assert trail.calls == [("unexpected_error", "boom")]
+
+
+def test_review_orchestrate_maps_a_refusal_to_exit_one(capsys, monkeypatch, tmp_path):
+    verdict = gh.owners.Verdict.refuse("stranger is not one of our GitHub owners")
+
+    def refuse(*args, **kwargs):
+        raise gh.owners.OwnerBoundaryError(verdict)
+
+    monkeypatch.setattr(review.orchestrate, "run_orchestrate", refuse)
+    review_file = tmp_path / "review.md"
+    review_file.write_text("# review\n")
+    rc = cli.review_orchestrate.main([
+        "--pr", "1",
+        "--review-file", str(review_file),
+        "--repo-dir", str(tmp_path),
+        "--repo", "stranger/lib",
+    ])
+    assert rc == cli.boundary.OWNER_BOUNDARY_EXIT
+    err = capsys.readouterr().err
+    assert "stranger is not one of our GitHub owners" in err
+    assert "Refused at the owner boundary" in err
+
+
+def test_stub_gh_puts_yq_on_path_wherever_it_lives(stub_gh, monkeypatch, tmp_path):
+    yq_dir = tmp_path / "opt-homebrew-bin"
+    yq_dir.mkdir()
+    yq = yq_dir / "yq"
+    yq.write_text("#!/bin/sh\nexit 0\n")
+    yq.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{yq_dir}:/usr/bin:/bin")
+    stub_gh("echo ok")
+    assert str(yq_dir) in os.environ["PATH"].split(":")
+
+
+def test_settle_fixed_hints_an_enterprise_host(monkeypatch, tmp_path):
+    seen: list[str] = []
+    monkeypatch.setattr(pr.thread_replies, "reply_to_fixed", lambda *a, **k: ())
+    monkeypatch.setattr(
+        pr.comments, "resolve_thread",
+        lambda tid, repo="": seen.append(repo) or True,
+    )
+    item = pr.thread_models.CommentItem(id="t1")
+    threads = {"t1": pr.thread_models.ReportThread(id="t1")}
+    cp = pr.attribution.CommitPushResult(
+        sha="abc", status=CommitStatus.PUSHED, error="",
+    )
+    fix.comment_replies.settle_fixed(
+        [item], threads, repo="acme/svc", pr_number=1, cp=cp,
+        wt_path=tmp_path, host="ghe.corp",
+    )
+    assert seen == ["ghe.corp/acme/svc"]
+
+
+def test_a_cli_write_refusal_propagates_from_the_client(
+    stub_gh, github_owners, tmp_path, monkeypatch, capsys,
+):
+    github_owners({"x": ["otto-nation"]})
+    calls = stub_gh("echo ok")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    ctx = pr.context.ResolvedContext(
+        repo="stranger/lib",
+        branch="feat",
+        pr_number=7,
+        worktree_root=wt,
+        head_sha="deadbeef",
+        target_dir=tmp_path / "target",
+    )
+    monkeypatch.setattr(pr.context, "resolve", lambda **kwargs: ctx)
+    monkeypatch.setattr(cli.locks, "claim_declared", lambda *a, **k: None)
+    monkeypatch.setattr(pr.gh_token, "ready_for_publishing", lambda worktree: True)
+    body = "## Summary\n\nsame\n\n## Changes\n\nsame\n\n## Testing\n\nsame"
+    monkeypatch.setattr(pr.describe, "_fetch_pr_body", lambda *a, **k: ("old title", body))
+    rc = cli.pr_describe.main(["--post", "--title", "feat: x", "--body", body])
+    assert rc == cli.boundary.OWNER_BOUNDARY_EXIT
+    err = capsys.readouterr().err
+    assert "Refused at the owner boundary" in err
+    assert "stranger" in err
+    written = calls.read_text() if calls.exists() else ""
+    assert "pr edit" not in written

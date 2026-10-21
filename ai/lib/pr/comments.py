@@ -692,8 +692,9 @@ def fetch_review_body_comments(
 def resolve_thread(thread_id: str, repo: str = "") -> bool:
     """Resolve a review thread on GitHub via GraphQL mutation.
 
-    *repo* is the ``OWNER/REPO`` the thread belongs to, for the owner boundary
-    in ``gh.client``; without it the client checks the cwd's remotes.
+    *repo* is the ``OWNER/REPO`` the thread belongs to, or ``HOST/OWNER/REPO``
+    on Enterprise, for the owner boundary in ``gh.client``; without it the
+    client checks the cwd's remotes.
     """
     if not core.publishing.enabled():
         core.publishing.draft(f"resolve thread {thread_id}")

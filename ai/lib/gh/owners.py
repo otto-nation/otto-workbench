@@ -135,6 +135,22 @@ class OwnerBoundaryError(RuntimeError):
         self.verdict = verdict
 
 
+def boundary_repo(repo: str, host: str = "") -> str:
+    """The GraphQL ``target_repo`` hint for *repo* on *host*.
+
+    A two-part ``OWNER/REPO`` is resolved on ``GH_HOST`` or github.com. When
+    *host* is known it is prefixed so an enterprise thread is checked on that
+    host rather than public GitHub. A three-part spec is returned unchanged.
+    """
+    repo = (repo or "").strip()
+    host = (host or "").strip()
+    if not repo or not host:
+        return repo
+    if len(repo.split("/")) >= 3:
+        return repo
+    return f"{host}/{repo}"
+
+
 def upstream_allowed_by_user() -> bool:
     """Whether the user set ``WORKBENCH_ALLOW_UPSTREAM=1`` — exactly ``1``."""
     return os.environ.get(ALLOW_UPSTREAM_ENV) == "1"

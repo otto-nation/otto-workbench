@@ -17,6 +17,7 @@ import functools
 import sys
 from collections.abc import Callable
 
+import core.errors
 import gh.owners
 
 OWNER_BOUNDARY_EXIT = 1
@@ -32,3 +33,17 @@ def reports_owner_boundary(main: Callable[..., int]) -> Callable[..., int]:
             print(f"✗ Refused at the owner boundary: {exc}", file=sys.stderr)
             return OWNER_BOUNDARY_EXIT
     return wrapper
+
+
+def reraise(trail, exc: BaseException):
+    """Record *exc* on *trail*, then re-raise it. A boundary refusal is policy, not a fault.
+
+    Call it as the whole body of an entry point's `except Exception as exc:`
+    clause, as `core.errors.reraise` is. An owner-boundary refusal is trailed
+    as `owner_boundary`; anything else is left to `core.errors.reraise`, which
+    keeps an operator error distinct from an unexpected one.
+    """
+    if isinstance(exc, gh.owners.OwnerBoundaryError):
+        trail.error("owner_boundary", str(exc))
+        raise
+    core.errors.reraise(trail, exc)

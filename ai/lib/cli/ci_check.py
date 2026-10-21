@@ -133,6 +133,6 @@ def main(argv: list[str] | None = None, *,
             core.log.error(str(exc))
             return 1
         except Exception as exc:
-            core.errors.reraise(trail, exc)
+            cli.boundary.reraise(trail, exc)
         finally:
             trail.finish()

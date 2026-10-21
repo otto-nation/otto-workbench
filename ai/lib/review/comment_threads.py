@@ -27,6 +27,7 @@ import core.run_lock
 import fix.comments
 from git.land import CommitStatus
 from gh.pr_data import PRData, fetch_pr_data
+import gh.owners
 import pr.comments
 import pr.comments_fix
 import pr.comments_state
@@ -194,7 +195,8 @@ def run_threads(trail, args, ctx) -> int:
     # this runs too — otherwise the "nothing was published" message it prints
     # is false: GitHub already got the resolutions this loop sent.
     if args.triage or (args.finish and fetched.complete):
-        resolved_count = resolve_verified_threads(threads_raw, threads, repo=repo)
+        resolved_count = resolve_verified_threads(
+            threads_raw, threads, repo=gh.owners.boundary_repo(repo, ctx.host))
         if resolved_count:
             core.log.info(f"Resolved {resolved_count} verified threads")
 

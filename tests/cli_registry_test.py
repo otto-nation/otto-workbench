@@ -502,14 +502,15 @@ def test_pr_help_imports_no_delegate():
     assert loaded, "the probe loaded no cli module at all — it did not run `pr`"
     # `cli.pr` is the entry point the shim imports; `cli.pr_commands` is the
     # four internal handlers, `cli.dispatch` the seam that calls one,
-    # `cli.locks` the dispatcher's declared-lock helper, and `cli.schema` the
-    # document `--tool-schema` serves. None is a delegate. A delegate showing
-    # up here (`cli.ci_check`, `cli.review_entry`, …) is the regression: those
-    # are what `handler` keeps as a string so that dispatch, not import, pays
+    # `cli.locks` the dispatcher's declared-lock helper, `cli.schema` the
+    # document `--tool-schema` serves, and `cli.boundary` the owner-boundary
+    # mapper on `main`. None is a delegate. A delegate showing up here
+    # (`cli.ci_check`, `cli.review_entry`, …) is the regression: those are
+    # what `handler` keeps as a string so that dispatch, not import, pays
     # for them.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
                       "cli.pr_commands", "cli.pr_batch", "cli.dispatch",
-                      "cli.locks", "cli.schema"}, loaded
+                      "cli.locks", "cli.schema", "cli.boundary"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────

@@ -153,6 +153,6 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        core.errors.reraise(trail, exc)
+        cli.boundary.reraise(trail, exc)
     finally:
         trail.finish()

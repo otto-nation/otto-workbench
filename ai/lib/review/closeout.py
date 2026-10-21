@@ -37,6 +37,7 @@ import git.client
 import git.land
 import git.push
 from git.land import CommitStatus
+import gh.owners
 import pr.attribution
 import pr.comments
 import pr.context
@@ -260,7 +261,8 @@ def post_pending_fix_replies(
             pr.history_rewrite.reconciled_commit(record, record.commit_status, wt_path), wt_path,
             host,
         )
-        resolved += pr.settlement.resolve_fixed_threads(fixed, threads_by_id, repo=repo)
+        resolved += pr.settlement.resolve_fixed_threads(
+            fixed, threads_by_id, repo=gh.owners.boundary_repo(repo, host))
     elif fixed:
         withheld = True
         if landing is pr.attribution.FixLanding.UNPUSHED:
@@ -273,7 +275,8 @@ def post_pending_fix_replies(
         fix.replies_posted += pr.thread_replies.post_already_addressed_replies(
             addressed, threads_by_id, repo, pr_number, wt_path, host=host,
         )
-        resolved += pr.settlement.resolve_fixed_threads(addressed, threads_by_id, repo=repo)
+        resolved += pr.settlement.resolve_fixed_threads(
+            addressed, threads_by_id, repo=gh.owners.boundary_repo(repo, host))
 
     # Not resolved, unlike the other two: telling a reviewer their premise does
     # not hold is the reply most likely to be argued with, so the thread stays

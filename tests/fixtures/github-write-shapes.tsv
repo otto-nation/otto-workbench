@@ -1,0 +1,77 @@
+# The GitHub write-shape corpus: <write|read><TAB><command>.
+# Drives three implementations of one predicate and fails whichever drifts:
+#   ai/claude/bin/claude-bash-guard (_command_writes_github)  tests/github_write_shapes.bats
+#   ai/pi/extensions/_shared/github-writes.ts (isGithubWrite)  tests/github_write_shapes.bats
+#   ai/lib/gh/write_shapes.py (command_is_write)               tests/gh_write_shapes_test.py
+write	gh issue create --title x --body y
+write	gh issue comment 5 --body x
+write	gh issue edit 5 --body x
+write	gh issue close 5
+write	gh issue reopen 5
+write	gh issue delete 5 --yes
+write	gh pr create --draft --title x
+write	gh pr comment 1 --body x
+write	gh pr review 1 --comment -b x
+write	gh pr edit 1 --body x
+write	gh pr merge 1 --squash
+write	gh pr close 1
+write	gh pr reopen 1
+write	gh pr ready 1
+write	gh release create v1.0.0
+write	gh release edit v1.0.0 --notes x
+write	gh release delete v1.0.0
+write	gh release upload v1.0.0 dist.tgz
+write	gh label create follow-up --repo o/r
+write	gh api -X POST /repos/o/r/issues
+write	gh api --method PATCH repos/o/r/pulls/1
+write	gh api --method=PUT repos/o/r/issues/1/lock
+write	gh api -XDELETE repos/o/r/issues/1/lock
+write	gh api -X "POST" repos/o/r/git/refs
+write	gh api repos/o/r/issues -f title=x
+write	gh api repos/o/r/issues/1/comments -F body=@notes.md
+write	gh api repos/o/r/pulls/1/reviews --input review.json
+write	gh api repos/o/r/issues --raw-field=title=x
+write	gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "x"}) { thread { id } } }'
+write	gh api graphql --input mutation.json
+write	gh --repo o/r issue create --title x
+write	gh -R o/r pr merge 1
+write	"gh" issue create --title x
+write	gh "issue" create --title x
+write	/usr/local/bin/gh pr comment 1 --body x
+write	GH_REPO=o/r gh issue create --title x
+write	cd /tmp && gh issue create --title x
+write	gh issue list; gh issue create --title x
+write	pr create --draft
+write	pr --repo-dir /tmp/x create --draft
+write	pr describe --post
+write	pr comments --finish --post
+write	pr fix --post
+write	pr ci --post
+write	pr review 123
+write	review 123
+write	pr-describe --post
+write	review-post
+write	review-threads --post
+read	gh issue list
+read	gh issue view 1
+read	gh pr view 1
+read	gh pr checks 1
+read	gh pr diff 1
+read	gh release view v1
+read	gh label list
+read	gh repo view
+read	gh api repos/o/r/issues
+read	gh api -X GET repos/o/r/issues -f state=open
+read	gh api graphql -f query='query { viewer { login } }'
+read	gh api graphql -F owner=o -f query='query($owner: String!) { repositoryOwner(login: $owner) { id } }'
+read	echo 'gh issue create'
+read	grep -rn "gh pr merge" ai/
+read	pr comments --triage
+read	pr describe --draft
+read	pr ci
+read	pr review --self --fix
+read	pr review 123 --no-post
+read	pr status
+read	review --self
+read	pr-describe
+read	review-threads --triage

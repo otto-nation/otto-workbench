@@ -6171,6 +6171,42 @@ before the checkout or it never comes at all.
 rather than who was compared, so a caller pairs it with whatever it calls the
 branch and renders the two together.
 
+### gh/write_shapes.py
+
+Which shell statements, and which gh argvs, write to GitHub.
+
+The shape half of the owner boundary. Both agent guards carry their own copy of
+this predicate — ``_command_writes_github`` in ``ai/claude/bin/claude-bash-guard``
+and ``isGithubWrite`` in ``ai/pi/extensions/_shared/github-writes.ts`` — because
+they run on every shell call and cannot afford a Python start-up to find out a
+command is a read. Three copies of one predicate are held to one answer by
+``tests/fixtures/github-write-shapes.tsv``: a row any of them disagrees with
+fails that copy's suite.
+
+A write is:
+
+* ``gh issue|pr|release|label`` with a verb in ``GH_WRITES``. A leading
+  ``-R/--repo`` is gh's own flag and is skipped.
+* ``gh api graphql`` whose text holds ``mutation``, or whose body comes from
+  ``--input`` and is not in hand.
+* ``gh api`` with ``-X/--method`` POST, PATCH, PUT or DELETE — or, with no
+  method, with a field or body (``-f/-F/--field/--raw-field/--input``): gh
+  sends POST then, and that is the call that lands.
+* The workbench's own posting commands: ``pr create``; ``pr describe|comments|fix|ci``
+  with ``--post``; ``pr review`` and ``review`` unless ``--self``,
+  ``--no-post``, ``--summary`` or ``--list`` says it posts nothing. The
+  hyphenated shims of those commands — ``pr-describe --post``,
+  ``review-post``, ``review-threads --post`` — are the same writes.
+
+``NAME=value`` prefixes are carried on ``Invocation.env`` (``GH_REPO`` and
+``GH_HOST`` decide a target), and the program is matched on its basename, so
+``/usr/local/bin/gh`` is gh.
+
+ceiling: ``sudo gh``, ``command gh``, ``env GH_REPO=x gh`` and a gh reached
+through an alias or a wrapper script are not matched. Upgrade trigger: the
+first such spelling seen in an agent transcript; the guards read it the same
+way, so all three change together through the corpus.
+
 ### git/client.py
 
 One way to run git, and the reads every caller was hand-rolling.

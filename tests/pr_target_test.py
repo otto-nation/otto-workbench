@@ -432,6 +432,21 @@ def test_repo_key_from_origin_reads_the_remote(tmp_path, origin, expected):
     assert pr.target.repo_key_from_origin(str(_git_repo(tmp_path / "wt", origin))) == expected
 
 
+@pytest.mark.parametrize("origin,slug", [
+    ("https://github.com/Acme/Widget.git", "Acme/Widget"),
+    ("https://github.com/Acme/Widget.git", "acme/widget"),
+    ("https://github.com/acme/widget.git", "Acme/Widget"),
+])
+def test_repo_key_for_slug_matches_a_github_origin(tmp_path, origin, slug):
+    wt = _git_repo(tmp_path / "wt", origin)
+    assert pr.target.repo_key_for_slug(slug) == pr.target.repo_key_from_origin(str(wt))
+
+
+def test_repo_key_for_slug_is_none_when_empty():
+    assert pr.target.repo_key_for_slug("") is None
+    assert pr.target.repo_key_for_slug("  //  ") is None
+
+
 def test_repo_key_from_origin_is_none_without_an_origin(tmp_path):
     path = tmp_path / "wt"
     path.mkdir()

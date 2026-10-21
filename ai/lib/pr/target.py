@@ -558,6 +558,21 @@ def repo_key_from_origin(cwd: str | None = None) -> str | None:
     return identity.key if identity else None
 
 
+def repo_key_for_slug(slug: str) -> str | None:
+    """The key an origin whose canonical form is *slug* would have.
+
+    Surrounding slashes and whitespace are stripped, then the A–Z fold is
+    applied, then ``_key_for`` with no declared host. Empty after that is
+    None. Ignores a ``.workbench.yml`` ``github.host`` declaration: the
+    digest is of the folded slug alone, as a public-github origin produces.
+    """
+    # ceiling: a repo that declares a non-github.com host keys differently
+    # from its origin; upgrade trigger: once a batch run is saved with a GHE
+    # item and no recorded repo_key.
+    folded = fold_case(slug.strip().strip("/"))
+    return _key_for(folded) if folded else None
+
+
 def targets_root() -> Path:
     """The directory every run's target lives under, before the repo-branch key.
 

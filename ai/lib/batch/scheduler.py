@@ -28,7 +28,7 @@ from batch.model import (STEP_ORDER, CancelState, Decision, DecisionKind, DirtyR
                          EvidenceKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
                          StepStatus, stacked_on_items)
 from batch.plan import PlanRow
-from batch.requests import Cancel, Decide, Outcome
+from batch.requests import Cancel, Decide, Outcome, Release
 from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure_worktree,
                          restore_generated_dirt, step_argv)
 from config.workbench_config import BatchConfig
@@ -175,6 +175,11 @@ def emit_outcome(run: Run, outcome: Outcome, *,
     if isinstance(request, Cancel):
         emit("cancel_requested", run=run.id, kill=request.kill, **failed)
         return
+    if isinstance(request, Release):
+        for key in outcome.finished:
+            emit("item_finished", run=run.id, item=key, status=run.item(key).status.value,
+                 **failed)
+        return
     decided = isinstance(request, Decide)
     emit("decision_resolved", run=run.id, decision=request.decision if decided else "",
          action=request.action if decided else "", **failed)
@@ -216,15 +221,16 @@ class Scheduler:
                  commits: Callable[[str, str], list[str] | None] = _new_commits,
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None,
-                 release: Callable[[Run], object] | None = None,
+                 release: Callable[[Run, frozenset[str]], object] | None = None,
                  machine: batch.machine.Machine | batch.machine.PerRun | None = None,
                  hold_tree: Callable[[Item], str] | None = None,
                  branch: Callable[[str], str] = checked_out_branch):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
-        # Called with the run after every commit a tick makes, so the driver
-        # can give back the target lock of an item that is now terminal. A
+        # Called with the run and the items whose step is still live after
+        # every commit a tick makes, so the driver can give back the target
+        # lock of an item that is now terminal and has no process running. A
         # scheduler built without one (a test, a dry tick) holds nothing.
-        self._release = release or (lambda run: None)
+        self._release = release or (lambda run, live: None)
         self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
@@ -290,6 +296,12 @@ class Scheduler:
 
     def _finish(self, live: _Live, code: int) -> None:
         item, rec = live.item, live.rec
+        if item.terminal:
+            rec.exit_code, rec.ended_at, rec.status = (
+                code, batch.store.now_iso(), StepStatus.INTERRUPTED)
+            self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
+                       status=rec.status.value, exit_code=code)
+            return
         # The HEAD the step's first attempt started from: trailers and movement
         # are read across every attempt, so a retry that commits nothing cannot
         # hide a `Fix-Checks: red` commit an earlier attempt left drafted.
@@ -691,6 +703,12 @@ class Scheduler:
         for live in self._live.values():
             live.proc.kill()
 
+    def _kill_terminal_live(self) -> None:
+        """SIGTERM the live step of every item that is now terminal (a release)."""
+        for live in self._live.values():
+            if live.item.terminal:
+                live.proc.kill()
+
     def _blocked_status(self, cancel: CancelState | None) -> RunStatus | None:
         if self._live:
             return None
@@ -711,9 +729,13 @@ class Scheduler:
         # The inbox reports each outcome as it is applied; the returned list is
         # not emitted again here.
         self.session.drain(settle=False)
+        # A release may have made a live item terminal: stop its step so
+        # `_finish` cannot requeue it. Its locks stay held until the step has
+        # exited and been reaped; `live` below is what keeps them.
+        self._kill_terminal_live()
         # The drain committed after each request, so an item a queued drop-pr
         # finished is on disk: its lock goes now, not after an inline publish.
-        self._release(self.run)
+        self._release(self.run, frozenset(self._live))
         cancel = self.run.cancel
         kill = cancel is not None and cancel.kill
         if kill:
@@ -722,7 +744,7 @@ class Scheduler:
         if cancel is None:
             self._admit()
         self.session.commit()
-        self._release(self.run)
+        self._release(self.run, frozenset(self._live))
         return self._blocked_status(cancel)
 
     def _loop(self) -> RunStatus:

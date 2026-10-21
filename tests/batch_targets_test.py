@@ -83,6 +83,17 @@ def test_item_repo_key_reads_origin_when_unset(repo):
         pr.target.repo_key_from_origin(str(repo)))
 
 
+def test_item_repo_key_for_a_relative_repo_dir_uses_the_slug_not_cwd(tmp_path, monkeypatch):
+    cwd_repo = repo_with_origin(tmp_path / "cwd")
+    monkeypatch.chdir(cwd_repo)
+    item = _item(".", "feat/a", 1)
+    item.repo = "Other/Repo"
+    item.key = "Other/Repo#1"
+    got = batch.targets.item_repo_key(item)
+    assert got == pr.target.repo_key_for_slug("Other/Repo")
+    assert got != pr.target.repo_key_from_origin(str(cwd_repo))
+
+
 def test_run_repo_keys_are_sorted_and_deduplicated(repo):
     key = pr.target.repo_key_from_origin(str(repo))
     a = _item(repo, "feat/a", 1)
@@ -248,3 +259,16 @@ def test_item_holds_release_every_target_left_when_the_block_ends(repo):
         assert holds.release_finished(run) == []
         assert core.run_lock.is_held(ta)
     assert not core.run_lock.is_held(ta)
+
+
+def test_item_holds_keep_a_terminal_items_target_while_its_step_is_live(repo):
+    """A released item whose killed step has not exited yet keeps its lock."""
+    a = _item(repo, "feat/a", 1)
+    run = Run(id="r", started_at="t", steps=[Step.REVIEW], pool=1, auto_publish=[], items=[a])
+    ta = batch.targets.item_target_dir(a)
+    with batch.targets.ItemHolds() as holds:
+        _holding(holds, (ta, [a.key]))
+        a.status = ItemStatus.DROPPED
+        assert holds.release_finished(run, live={a.key}) == []
+        assert core.run_lock.is_held(ta)
+        assert holds.release_finished(run, live=set()) == [ta]

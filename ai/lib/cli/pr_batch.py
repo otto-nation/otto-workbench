@@ -5,6 +5,7 @@
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
+    pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
@@ -12,7 +13,7 @@ Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished coverin
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 """
 
 # doc-group: cli
@@ -45,7 +46,7 @@ import core.run_lock
 import core.serde
 import pr.target
 from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step
-from batch.requests import Cancel, Decide, Outcome
+from batch.requests import Cancel, Decide, Outcome, Release
 from batch.store import Role
 from core.trail import TRAIL_ROOT_ENV, Trail
 
@@ -154,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("cancel", help="Stop the run; a recorded cancel is final")
     c.add_argument("run_id", nargs="?", help=f"Run to cancel (default: {_DEFAULT_RUN_REFUSES})")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
+
+    g = sub.add_parser("release", help="Free one PR from a run without cancelling it")
+    g.add_argument("run_id", help="Run holding the PR")
+    g.add_argument("pr", help="Item key owner/repo#N, or a PR number unique in the run")
+    g.add_argument("--kill", action="store_true",
+                   help="Also terminate the item's running step")
 
     s = sub.add_parser("status", help="Print a run's report: what needs action, and why (JSON)")
     s.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
@@ -440,6 +447,24 @@ def _tree_holder(holds: batch.targets.ItemHolds) -> Callable[[Item], str]:
     return hold
 
 
+def _skip_held(rows: list[batch.plan.PlanRow]) -> list[batch.plan.PlanRow]:
+    """Drop rows an unfinished run still holds; name that run and how to free each."""
+    held = batch.store.held_items()
+    kept = []
+    for row in rows:
+        holder = next((h for h in held if batch.store.holds_item(
+            h, row.pr, row.repo, row.repo_key)), None)
+        if holder is None:
+            kept.append(row)
+            continue
+        age = batch.store.started_ago(holder.started_at)
+        print(f"pr batch: skipping {row.key} — run {holder.run_id} (started {age}) "
+              f"still holds it; free it with `pr batch release {holder.run_id} {row.key}` "
+              f"or `pr batch cancel {holder.run_id}`", file=sys.stderr)
+        batch.events.emit("item_skipped_held", item=row.key, holder=holder.run_id)
+    return kept
+
+
 def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox) -> _Started:
     """Mint the run from *plan*, open it with `batch.store.create` on *held*, hold its items, commit.
 
@@ -452,6 +477,7 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox)
     try:
         keys = {k for k in args.prs.split(",") if k}
         rows = [r for r in plan.rows if not keys or r.key in keys]
+        rows = _skip_held(rows)
         _require_batch_locks(_row_repo_keys(rows), "run not started")
         selected = {s.key: s.steps for s in args.select} if args.select else None
         dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
@@ -576,7 +602,7 @@ def _unreachable(run_id: str) -> str:
             f"will be applied by the next session to open it")
 
 
-def _deliver(run_id: str, request: Decide | Cancel, bin_dir: Path,
+def _deliver(run_id: str, request: Decide | Cancel | Release, bin_dir: Path,
              verb: str) -> batch.inbox.Delivery:
     """`batch.inbox.deliver`, naming on stderr each earlier request the same drain failed."""
     delivery = batch.inbox.deliver(run_id, request,
@@ -690,6 +716,63 @@ def _cmd_cancel(args, bin_dir: Path) -> int:
     return 1 if error else EXIT_OK
 
 
+def _resolve_item(run: Run, given: str) -> Item | str:
+    """The item *given* names, or an error to print."""
+    if given.isdigit():
+        matches = [i for i in run.items if i.pr == int(given)]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            return f"run {run.id} has no PR {given}"
+        listed = ", ".join(i.key for i in matches)
+        return f"PR {given} matches more than one item ({listed}); pass owner/repo#N"
+    try:
+        return run.item(given)
+    except KeyError:
+        listed = ", ".join(i.key for i in run.items) or "none"
+        return f"run {run.id} has no item {given} (have {listed})"
+
+
+def _release_view(item: Item, *, run_id: str, queued: bool, released: bool) -> dict:
+    drafted = [{"step": r.step.value, "commits": list(r.commits)}
+               for r in item.steps if r.drafted]
+    closeout = ""
+    if item.repo_dir and Path(item.repo_dir).is_dir():
+        try:
+            closeout = batch.plan.closeout_debt(item.repo_dir, item.branch).describe()
+        except (OSError, TypeError, ValueError):
+            closeout = ""
+    return {"released": released, "run": run_id, "item": item.key, "queued": queued,
+            "worktree": item.worktree, "drafted": drafted, "closeout": closeout}
+
+
+def _cmd_release(args, bin_dir: Path) -> int:
+    run_id = args.run_id
+    try:
+        run = batch.store.load(run_id)
+    except batch.store.RunNotFound:
+        return _err(f"no run {run_id}")
+    item = _resolve_item(run, args.pr)
+    if isinstance(item, str):
+        return _err(item)
+    try:
+        delivery = _deliver(run_id, Release(item=item.key, kill=args.kill), bin_dir, "release")
+    except batch.store.RunNotFound:
+        return _err(f"no run {run_id}")
+    except batch.store.RunUnreachable:
+        return _err(_unreachable(run_id))
+    error = "" if delivery.queued else _own_error(run_id, delivery)
+    if error:
+        print(f"pr batch: {error}", file=sys.stderr)
+    try:
+        current = batch.store.load(run_id).item(item.key)
+    except (batch.store.RunNotFound, KeyError):
+        current = item
+    core.report.emit_json(_release_view(current, run_id=run_id, queued=delivery.queued,
+                                        released=not error))
+    return 1 if error else EXIT_OK
+
+
 def _cmd_status(args) -> int:
     """`status` and `next`: the report, a projection of it, or what it summarises."""
     run_id = _run_id(args.run_id)
@@ -743,6 +826,8 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
             return _cmd_resolve(args, bin_dir)
         if args.command == "cancel":
             return _cmd_cancel(args, bin_dir)
+        if args.command == "release":
+            return _cmd_release(args, bin_dir)
         # status and next
         return _cmd_status(args)
     except batch.plan.PlanError as exc:

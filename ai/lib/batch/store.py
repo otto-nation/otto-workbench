@@ -4,7 +4,7 @@
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
-    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
+    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions, cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
@@ -64,11 +64,12 @@ from typing import Protocol
 
 import batch.plan
 import batch.requests
+import batch.targets
 import core.run_lock
 import core.serde
 import core.workbench_paths
 from batch.model import FINISHED_RUN, CancelState, Item, Run
-from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Request
+from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Release, Request
 
 STATE_FILE = "state.json"
 # The cancel sidecar older `pr batch cancel` wrote. `session()` folds it into
@@ -189,6 +190,86 @@ class FailedRequest:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def started_ago(started_at: str) -> str:
+    """How long ago *started_at* (ISO) was: ``<1m ago``, ``Nm ago``, ``Nh ago``, ``Nd ago``.
+
+    Unparsable or empty becomes ``at an unknown time``.
+    """
+    try:
+        started = datetime.fromisoformat(started_at)
+    except (TypeError, ValueError):
+        return "at an unknown time"
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    seconds = max(0, int(
+        (datetime.now(timezone.utc) - started.astimezone(timezone.utc)).total_seconds()))
+    if seconds < 60:
+        return "<1m ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
+
+
+@dataclass(frozen=True)
+class HeldItem:
+    """A non-terminal item of an unfinished run, as planning skip names it."""
+
+    run_id: str
+    started_at: str
+    item_key: str
+    repo_key: str
+    repo: str
+    pr: int
+
+
+def holds_item(held: HeldItem, pr: int, repo: str, repo_key: str) -> bool:
+    """Whether *held* is the same PR as (*pr*, *repo*, *repo_key*).
+
+    Same PR number, then origin key when both sides have one, else the
+    owner/repo label case-insensitively. One matcher so planning skip and
+    anything else that asks cannot drift.
+    """
+    if pr != held.pr:
+        return False
+    if repo_key and held.repo_key:
+        return repo_key == held.repo_key
+    return repo.casefold() == held.repo.casefold()
+
+
+def _held_of(run: Run) -> list[HeldItem]:
+    """Non-terminal items of *run* as HeldItem rows."""
+    found = []
+    for item in run.items:
+        if item.terminal:
+            continue
+        found.append(HeldItem(
+            run_id=run.id, started_at=run.started_at, item_key=item.key,
+            repo_key=batch.targets.item_repo_key(item) or "",
+            repo=item.repo, pr=item.pr))
+    return found
+
+
+def held_items(exclude: str = "") -> list[HeldItem]:
+    """Non-terminal items of every unfinished run except *exclude*, oldest run first.
+
+    A run whose status is in ``FINISHED_RUN`` holds nothing. Unreadable runs
+    are skipped. ``repo_key`` is ``batch.targets.item_repo_key`` or empty.
+    """
+    found = []
+    for run_id in run_ids():
+        if run_id == exclude:
+            continue
+        run = _try_load(run_id)
+        if run is None or run.status in FINISHED_RUN:
+            continue
+        found.extend(_held_of(run))
+    return found
 
 
 def batch_root() -> Path:
@@ -322,7 +403,7 @@ def _requests_dir(run_id: str) -> Path:
     return run_dir(run_id) / REQUESTS_DIR
 
 
-def write_request(run_id: str, request: Decide | Cancel) -> str:
+def write_request(run_id: str, request: Decide | Cancel | Release) -> str:
     """Queue *request* in *run_id*'s inbox and return the file name it was written under.
 
     Names sort by write time, which is the order a drain applies them in, after
@@ -548,7 +629,7 @@ class Session:
         self._inbox.report(self._run, outcome)
         return outcome
 
-    def apply(self, request: Decide | Cancel) -> Outcome:
+    def apply(self, request: Decide | Cancel | Release) -> Outcome:
         """Apply a request that never sat in the inbox, and report it as a drained one is.
 
         For a holder that synthesizes requests (the scheduler's auto-publish

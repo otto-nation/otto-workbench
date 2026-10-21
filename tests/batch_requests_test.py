@@ -14,7 +14,7 @@ import batch.model  # noqa: E402
 import batch.requests  # noqa: E402
 import batch.store  # noqa: E402
 import core.serde  # noqa: E402
-from batch.requests import Cancel, Decide, Envelope, Kind, Malformed  # noqa: E402
+from batch.requests import Cancel, Decide, Envelope, Kind, Malformed, Release  # noqa: E402
 
 RID = "20261014T120000-abcd"
 
@@ -38,6 +38,13 @@ def test_kind_decide_parses_as_decide():
         "d1", "accept", reason="r", body_file="/b", commit="abc")
 
 
+def test_kind_release_parses_item_and_kill():
+    assert batch.requests.parse(
+        {"kind": "release", "item": "o/r#1"}) == Release("o/r#1")
+    assert batch.requests.parse(
+        {"kind": "release", "item": "o/r#1", "kill": True}) == Release("o/r#1", kill=True)
+
+
 def test_kind_cancel_parses_kill_as_bool():
     assert batch.requests.parse({"kind": "cancel"}) == Cancel()
     assert batch.requests.parse({"kind": "cancel", "kill": True}) == Cancel(kill=True)
@@ -53,6 +60,8 @@ def test_kind_cancel_parses_kill_as_bool():
     ({"kind": "decide", "decision": "d1"}, "action"),
     ({"decision": 1, "action": "retry"}, "decision"),
     ({"decision": "d1", "action": 1}, "action"),
+    ({"kind": "release"}, "item"),
+    ({"kind": "release", "item": 1}, "item"),
 ])
 def test_parse_malformed_names_the_problem(raw, needle):
     got = batch.requests.parse(raw)
@@ -64,13 +73,17 @@ def test_to_dict_always_carries_kind():
     assert batch.requests.to_dict(Decide("d1", "retry"))["kind"] == Kind.DECIDE.value
     assert batch.requests.to_dict(Cancel(kill=True)) == {
         "kind": Kind.CANCEL.value, "kill": True}
+    assert batch.requests.to_dict(Release("o/r#1", kill=True)) == {
+        "kind": Kind.RELEASE.value, "item": "o/r#1", "kill": True}
 
 
 def test_to_dict_round_trips_through_parse():
     decide = Decide("d1", "reply", body_file="/b")
     cancel = Cancel(kill=True)
+    release = Release("o/r#1", kill=True)
     assert batch.requests.parse(batch.requests.to_dict(decide)) == decide
     assert batch.requests.parse(batch.requests.to_dict(cancel)) == cancel
+    assert batch.requests.parse(batch.requests.to_dict(release)) == release
 
 
 def test_drain_order_puts_every_cancel_first_then_sorts_by_name():
@@ -80,9 +93,11 @@ def test_drain_order_puts_every_cancel_first_then_sorts_by_name():
         Envelope("c.json", Cancel(kill=True)),
         Envelope("d.json", Malformed("x")),
         Envelope("e.json", Decide("d2", "retry")),
+        Envelope("f.json", Release("o/r#1")),
     ]
     ordered = batch.requests.drain_order(envelopes)
-    assert [e.name for e in ordered] == ["a.json", "c.json", "b.json", "d.json", "e.json"]
+    assert [e.name for e in ordered] == [
+        "a.json", "c.json", "b.json", "d.json", "e.json", "f.json"]
     assert isinstance(ordered[0].request, Cancel)
     assert isinstance(ordered[1].request, Cancel)
 

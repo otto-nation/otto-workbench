@@ -930,6 +930,14 @@ Takes no flags.
 | `[<run-id>]` | Run to cancel (default: this repo's newest unfinished covering run, else its newest covering; refused when several unfinished runs cover this repo). |
 | `--kill` | Also terminate running steps. |
 
+**`pr batch release`** — Free one PR from a run without cancelling it
+
+| Flag | Description |
+|------|-------------|
+| `<run-id>` | Run holding the PR. |
+| `<pr>` | Item key owner/repo#N, or a PR number unique in the run. |
+| `--kill` | Also terminate the item's running step. |
+
 **`pr batch status`** — Print a run's report: what needs action, and why (JSON)
 
 | Flag | Description |

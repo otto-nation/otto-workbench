@@ -200,7 +200,7 @@ def _batch_need(argv: Sequence[str]) -> Need:
     command's own parser printed help, so `--prs --help` — a value, or an
     error — still declares the locks. A failure to compute keys takes nothing
     and never raises: the handler then refuses a run whose repos are not held. `resolve` and
-    `cancel` declare nothing: they write the inbox and take the run resource
+    `cancel` and `release` declare nothing: they write the inbox and take the run resource
     as `applier` only when no holder is draining, never the per-repo lock, so
     they reach a live run. `status`, `next` and `plan` only read.
     """

@@ -133,6 +133,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import git.client
+import git.remote_url
 import config.workbench_config
 import core.workbench_paths
 
@@ -146,23 +147,13 @@ _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 # the same repo, so the two spellings have to reduce to one canonical form.
 _SLASHES_RE = re.compile(r"/+")
 
-# A remote names a host two ways: an explicit scheme (https://, ssh://, git://),
-# or scp-style host:path. Everything else is a filesystem path
-# (/srv/git/widget.git, ../widget, and file://.../srv/git/widget.git, which is one
-# wearing a scheme) — no host means no namespace to qualify the key with, so such
-# a remote keeps its single trailing segment.
-_SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.-]*)://", re.IGNORECASE)
+# The remote-URL grammar is git.remote_url's; pr.target reads through it so the
+# key, the rendered host and gh.owners cannot disagree about one URL. The name
+# stays because `_web_base` below asks it whether a declared host has a scheme.
+_SCHEME_RE = git.remote_url.SCHEME_RE
 # The forge every URL builder falls back to. A remote that names no host has
 # always rendered public GitHub, and an unthreaded call site still does.
 PUBLIC_GITHUB_HOST = "github.com"
-# The one scheme that names no host. git parses a file URL's authority and then
-# discards it: `git clone file://bogushost/srv/git/widget.git` clones
-# /srv/git/widget.git, and records the URL verbatim in remote.origin.url.
-_LOCAL_SCHEME = "file"
-# No "user@" requirement: git reads any colon before the first slash as the
-# host/path separator, so an ~/.ssh/config alias (gitbox:acme/widget.git) is
-# scp-style too, and dropping it here would collide every repo behind that alias.
-_SCP_RE = re.compile(r"^[^/:]+:")
 
 # The case fold, as codepoint arithmetic: U+0041-U+005A map to U+0061-U+007A and
 # every other codepoint is left alone. Not str.lower() — see the module
@@ -181,74 +172,19 @@ def slug(branch: str) -> str:
 
 
 def _remote_path(url: str) -> tuple[str, bool]:
-    """A remote's path, and whether a host qualified it.
-
-    Hosted is decided by the scheme, not by the authority. Deciding on the
-    authority made ``file://localhost/srv/git/widget.git`` key as hosted
-    (``srv-git-widget``) while the identical clone spelled ``/srv/git/widget.git``
-    keyed ``widget`` — one target, two state dirs, two locks.
-
-    A ``file`` URL still yields the path *below* its authority, unhosted: the
-    authority is git's to discard, so ``file://localhost/`` names no path and no
-    repo, rather than naming a repo called ``localhost``.
-    """
-    scheme = _SCHEME_RE.match(url)
-    if scheme:
-        _authority, _, path = url[scheme.end():].partition("/")
-        return path, scheme.group(1).lower() != _LOCAL_SCHEME
-    scp = _SCP_RE.match(url)
-    return (url[scp.end():], True) if scp else (url, False)
+    """A remote's path, and whether a host qualified it — see ``git.remote_url.parse``."""
+    loc = git.remote_url.parse(url)
+    return loc.path, loc.hosted
 
 
 def _remote_host(url: str) -> str:
-    """The forge host *url* is served from, or ``""`` when it names none.
+    """The forge host *url* is served from, or ``""`` — see ``git.remote_url.parse``.
 
     Beside ``_remote_path`` and deliberately not inside it: the path decides the
     key and must keep collapsing every spelling of one repo, while the host is
-    what a rendered URL needs. Two answers from one string, kept apart so a
-    change to either cannot move the other.
-
-    Any ``user:password@`` prefix is dropped. A token in a remote URL would
-    otherwise be rendered into a review body, which is a secret leak rather than
-    a wrong link. The port goes too: it belongs to git's transport, not to the
-    forge's web UI, and ``ssh://git@host:2222/`` serves its pages on 443.
-
-    ``""`` for a path, for ``file://``, and for an scp-style authority that
-    names no domain:
-
-    # ceiling: a dotless scp authority is read as an ~/.ssh/config alias and
-    # yields no host, so a single-label intranet host (ghe:acme/widget) falls
-    # back to public GitHub rather than being honoured. An alias and a
-    # single-label host are the same string here, and only ssh config tells
-    # them apart. Upgrade trigger: anyone whose forge is reachable only by a
-    # single-label name, at which point resolve it with `ssh -G <alias>` and
-    # cache the answer per identity.
+    what a rendered URL needs.
     """
-    scheme = _SCHEME_RE.match(url)
-    if scheme:
-        if scheme.group(1).lower() == _LOCAL_SCHEME:
-            return ""
-        authority, _, _path = url[scheme.end():].partition("/")
-        return _bare_host(authority)
-    if not _SCP_RE.match(url):
-        return ""
-    authority, _, _path = url.partition(":")
-    host = _bare_host(authority)
-    # A dotted name is a domain; a bare word is an ssh alias. See the ceiling.
-    return host if "." in host else ""
-
-
-def _bare_host(authority: str) -> str:
-    """An authority reduced to its hostname — no credentials, no port.
-
-    Bracketed IPv6 literals keep their brackets, which is how a URL spells them
-    and how one has to be written back into a link.
-    """
-    host = authority.rpartition("@")[2]
-    if host.startswith("["):
-        bracket = host.find("]")
-        return host[: bracket + 1] if bracket != -1 else host
-    return host.partition(":")[0]
+    return git.remote_url.parse(url).host
 
 
 def fold_case(text: str) -> str:

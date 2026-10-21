@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -45,6 +46,7 @@ import agent.invoke
 import agent.phases
 import agent.retry
 import agent.templates
+import fix.baseline
 import fix.blame
 import fix.scope
 import fix.suite
@@ -820,6 +822,7 @@ def _verify_suite(
     changed: set[str] | None, trail: Trail | None,
     by_id: dict[str, FixItem] | None = None,
     *, base: str = "", left_out: set[str] | frozenset[str] = frozenset(),
+    baseline_ref: str = "", dirty_before: frozenset[str] = frozenset(),
 ) -> fix.suite.SuiteResult:
     """Run the repo's declared checks over the pass's work and apply the verdict.
 
@@ -843,12 +846,16 @@ def _verify_suite(
     if not adapter.verifies_with_suite or not fix.suite.should_run(outcomes, changed):
         return fix.suite.SuiteResult()
     config = adapter.config or load_config_or_default(adapter.workdir)
-    result = fix.suite.run(
-        adapter.workdir, config.fix.verify_command,
-        config.fix.verify_timeout, trail, base=base,
+    result = _run_checks(
+        adapter, config, trail, base=base, baseline_ref=baseline_ref,
+        paths=(changed or set()) | dirty_before,
     )
     result = fix.suite.scoped_to(result, set(left_out))
     fix.suite.apply_to(outcomes, result)
+    if result.status is fix.suite.SuiteStatus.PREEXISTING:
+        # Not demoting — the pass did not make the tree red — but held all the
+        # same: nothing should push or reply off a red tree, whoever made it so.
+        core.publishing.hold("the repo's checks were already red before this pass")
     if result.demotes:
         # Only on red, and only as a lead. `fix.blame` reads the pass's own
         # diff against the failure text; it changes no outcome, because one
@@ -873,6 +880,27 @@ def _verify_suite(
                   data={"item": pointer.item_id, "file": pointer.file,
                         "symbols": list(pointer.symbols)})
     return result
+
+
+def _run_checks(
+    adapter: FixAdapter, config: WorkbenchConfig, trail: Trail | None, *,
+    base: str, baseline_ref: str, paths: set[str] | frozenset[str],
+) -> fix.suite.SuiteResult:
+    """The declared command over the pass's tree, and a red verdict re-asked at its base.
+
+    *paths* is everything the tree differs from HEAD in — the agent's edits and
+    whatever was dirty before them — written to a file both runs are handed, so
+    the baseline selects the tests the pass run selected.
+    """
+    with tempfile.TemporaryDirectory(prefix="fix-paths-") as scratch:
+        listed = Path(scratch) / "paths"
+        listed.write_text("".join(f"{p}\n" for p in sorted(paths)))
+        command, timeout_s = config.fix.verify_command, config.fix.verify_timeout
+        result = fix.suite.run(adapter.workdir, command, timeout_s, trail,
+                               base=base, paths_file=str(listed))
+        return fix.baseline.label_preexisting(
+            adapter.workdir, result, command, timeout_s, trail,
+            ref=baseline_ref, paths_file=str(listed))
 
 
 def _anchors(
@@ -987,6 +1015,10 @@ def run(
               f"{len(dirty_before)} file(s) already modified before the pass",
               data={"paths": sorted(dirty_before), "workdir": str(adapter.workdir)})
 
+    # Taken before the agent runs, for the one question asked of a red verify
+    # run: was the tree already red? Skipped for a domain whose checks never run.
+    baseline_ref = fix.baseline.snapshot(adapter.workdir) if adapter.verifies_with_suite else ""
+
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)
     name = PHASES[adapter.phase].label
@@ -1046,7 +1078,8 @@ def run(
     # stays FIXED. `_verify_suite` holds publishing itself for that.
     adapter.suite = _verify_suite(
         adapter, settled.outcomes, changed, trail, by_id,
-        base=head_before, left_out=left_out)
+        base=head_before, left_out=left_out,
+        baseline_ref=baseline_ref, dirty_before=frozenset(dirty_before))
 
     # Between the verdicts and the push, which is the only window that works:
     # both gates have spoken here — the per-item one above and the batch suite

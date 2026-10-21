@@ -5704,6 +5704,29 @@ re-point a root before invoking a subprocess — and an import-time constant
 would capture whichever value happened to be live when the first importer
 loaded this module.
 
+### fix/baseline.py
+
+Telling a red verify run the pass caused from one it inherited.
+
+`fix.suite` runs the repo's checks over the tree a fix pass is about to commit,
+and a red result withdraws every fix the pass claimed. That is right when the
+pass broke something, and wrong when the tree was red before the pass began —
+a hand commit's failure then demotes an unrelated import hoist, and the commit
+body tells the reader the pass is to blame.
+
+So a red run is asked once more, of the tree the pass started from. The engine
+snapshots that tree before the agent runs (`snapshot`), and on red this module
+checks it out into a throwaway worktree and runs the same command with the same
+selection — `fix.suite.FIX_PATHS_ENV` names the pass's paths, so a selector
+that reads it picks the same tests over the older code. A failure both runs
+share is inherited. Only when every failure the pass run names is inherited
+does the verdict become `PREEXISTING`; a new failure beside an old one stays
+`RED`, with the old ones named in the note.
+
+Re-running the same selection, not just the failing tests, keeps the repo the
+owner of its runner: the engine cannot know how to run one test in an arbitrary
+repo, and `fix.suite` explains why it does not invent one.
+
 ### fix/suite.py
 
 Running the repo's own checks against what a fix pass just edited.

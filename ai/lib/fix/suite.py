@@ -137,7 +137,15 @@ TRAIL_ENV = (core.trail.TRAIL_ROOT_ENV, "WORKBENCH_DEBUG")
 # The lines a runner names a failing test on: pytest's short summary
 # (`FAILED <nodeid>`, `ERROR <nodeid>`) and TAP's `not ok <n> <name>`, the
 # number dropped because a narrower selection renumbers the same test.
-_FAILURE_LINE = re.compile(r"^(?:FAILED|ERROR) (\S+)|^not ok \d+ (.+?)(?: # .*)?$", re.M)
+# Pytest's nodeid is `.+?` up to ` - ` because a parametrized id can contain
+# spaces (`test_p[a b]`); `\S+` would cut it at the first one. A bats
+# `--timing` suffix (`in 18ms`) and a TAP directive (`# skip`) are stripped
+# so two runs of the same test compare equal.
+_FAILURE_LINE = re.compile(
+    r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$"
+    r"|^not ok \d+ (.+?)(?: in \d+(?:\.\d+)?m?s(?:ec)?)?(?: # .*)?$",
+    re.M,
+)
 
 
 class SuiteStatus(StrEnum):

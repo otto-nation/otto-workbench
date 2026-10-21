@@ -15,7 +15,7 @@
 # nothing the failure output does not. A caller that wants it back passes it
 # after --.
 #
-# Usage: bin/local/run-tests [--bats|--pytest] [--shard N/M] [--changed] [--direct] [-- RUNNER_ARGS...]
+# Usage: bin/local/run-tests [--bats|--pytest] [--shard N/M] [--changed] [--direct] [--files LIST] [--base REF] [-- RUNNER_ARGS...]
 # Exit code: 0 when every suite it ran passed, 1 otherwise.
 
 set -e
@@ -128,7 +128,7 @@ report_jobs() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--bats|--pytest] [--shard N/M] [-- RUNNER_ARGS...]
+Usage: $(basename "$0") [--bats|--pytest] [--shard N/M] [--changed] [--direct] [--files LIST] [--base REF] [-- RUNNER_ARGS...]
 
 Run the test suites with the repo's parallelism settings. With no suite flag,
 runs bats and then pytest, stopping at the first failure.
@@ -145,7 +145,8 @@ Options:
                   The pytest counterpart of --files.
   --changed       Run only the files the diff can reach, working tree
                   included, via select-tests and select-pytest. Falls back to
-                  the whole suite when a selector is missing or declines.
+                  the whole suite when a selector is missing or declines,
+                  except under WORKBENCH_FIX_BASELINE, which exits 75 instead.
   --base REF      With --changed: diff against REF. Default: WORKBENCH_FIX_BASE
                   when set (a fix pass's starting commit), else origin/main.
   --direct        With --changed: select pytest files by direct import only

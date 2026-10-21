@@ -38,13 +38,18 @@ def snapshot(workdir: Path) -> str:
     """A commit holding the tree as the pass found it — HEAD plus tracked edits.
 
     `git stash create` writes that commit without touching the worktree or the
-    stash list. It prints nothing on a clean tree, which is HEAD's answer.
+    stash list. It prints nothing on a clean tree, which is HEAD's answer. A
+    non-zero exit is not a clean tree — it is no snapshot, so there is no
+    baseline to compare against.
     """
     # ceiling: untracked files that were present before the pass are not in the
     # snapshot, so the baseline tree lacks them. Upgrade trigger: if a failure
     # is ever labelled new because a pre-existing untracked file was missing at
     # the baseline, copy the pass's untracked dirty_before paths into it.
-    return git.client.out("stash", "create", cwd=workdir) or git.client.head_sha(cwd=workdir)
+    created = git.client.run("stash", "create", cwd=workdir)
+    if not created.ok:
+        return ""
+    return created.stdout.strip() or git.client.head_sha(cwd=workdir)
 
 
 def label_preexisting(
@@ -65,16 +70,19 @@ def label_preexisting(
         return result
     before = set(baseline.failures)
     inherited = tuple(f for f in result.failures if f in before)
-    tinfo(trail, "fix_verify_baseline",
-          f"{len(inherited)} of {len(result.failures)} failure(s) also fail at {git.client.abbrev(ref)}",
-          data={"ref": ref, "inherited": list(inherited), "failures": list(result.failures)})
     if not inherited:
-        return result
-    if len(inherited) == len(result.failures):
+        labelled = result
+    elif len(inherited) == len(result.failures):
         core.log.warn(f"Every failing check also fails before this pass ({git.client.abbrev(ref)})"
                       " — not withdrawing the pass's fixes")
-        return replace(result, status=fix.suite.SuiteStatus.PREEXISTING, inherited=inherited)
-    return replace(result, inherited=inherited)
+        labelled = replace(result, status=fix.suite.SuiteStatus.PREEXISTING, inherited=inherited)
+    else:
+        labelled = replace(result, inherited=inherited)
+    tinfo(trail, "fix_verify_baseline",
+          f"{len(inherited)} of {len(result.failures)} failure(s) also fail at {git.client.abbrev(ref)}",
+          data={"ref": ref, "inherited": list(inherited),
+                "failures": list(result.failures), "status": str(labelled.status)})
+    return labelled
 
 
 def _run_at(
@@ -86,6 +94,11 @@ def _run_at(
     registered with the directory gone, and registrations nobody prunes
     accumulate in every later `git worktree list`.
     """
+    if not git.client.ok("rev-parse", "--verify", f"{ref}^{{commit}}", cwd=workdir):
+        # A bad ref must not prune: the registrations sitting there are not
+        # this run's, and clearing them is a side effect of a comparison that
+        # cannot happen.
+        return None
     with tempfile.TemporaryDirectory(prefix="fix-baseline-") as scratch:
         tree = Path(scratch) / "tree"
         git.client.run("worktree", "prune", cwd=workdir)

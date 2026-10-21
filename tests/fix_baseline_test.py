@@ -11,7 +11,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -20,9 +20,12 @@ if str(LIB_DIR) not in sys.path:
 
 import agent.invoke  # noqa: E402
 import core.publishing  # noqa: E402
+import core.proc  # noqa: E402
 import core.trail  # noqa: E402
+import fix.baseline  # noqa: E402
 import fix.engine  # noqa: E402
 import fix.suite  # noqa: E402
+import git.client  # noqa: E402
 from config.workbench_config import FixConfig, WorkbenchConfig  # noqa: E402
 from conftest import commit_all, git_out, init_repo  # noqa: E402
 
@@ -64,9 +67,34 @@ def _editing(adapter, text):
 
 
 def test_failing_tests_reads_pytest_and_bats_lines():
-    out = f"{OLD}\nERROR tests/y_test.py::test_e\nnot ok 3 a bats case # in 1s\nok 4 fine\n"
+    out = (
+        f"{OLD}\nERROR tests/y_test.py::test_e\n"
+        "FAILED tests/x_test.py::test_p[a b] - boom\n"
+        "not ok 1 a failing case in 18ms\n"
+        "not ok 2 another in 1s\n"
+        "not ok 3 a third in 1.2s\n"
+        "not ok 4 a fourth in 1sec\n"
+        "not ok 5 skipped case # skip\n"
+        "ok 6 fine\n"
+    )
     assert fix.suite.failing_tests(out) == (
-        "a bats case", "tests/x_test.py::test_old", "tests/y_test.py::test_e")
+        "a failing case", "a fourth", "a third", "another", "skipped case",
+        "tests/x_test.py::test_old", "tests/x_test.py::test_p[a b]",
+        "tests/y_test.py::test_e",
+    )
+
+
+def test_bats_timing_suffixes_do_not_change_the_name():
+    first = fix.suite.failing_tests("not ok 1 a failing case in 18ms\n")
+    second = fix.suite.failing_tests("not ok 1 a failing case in 1.2s\n")
+    assert first == second == ("a failing case",)
+
+
+def test_pytest_param_ids_with_spaces_are_distinct():
+    a = "FAILED tests/x_test.py::test_p[a b] - boom"
+    c = "FAILED tests/x_test.py::test_p[a c] - boom"
+    assert fix.suite.failing_tests(a) == ("tests/x_test.py::test_p[a b]",)
+    assert fix.suite.failing_tests(c) == ("tests/x_test.py::test_p[a c]",)
 
 
 def test_a_failure_the_pre_pass_tree_shares_does_not_withdraw_the_claim(
@@ -92,6 +120,21 @@ def test_a_new_failure_beside_an_old_one_still_withdraws(tmp_path, landed, snaps
     assert run.suite.inherited == ("tests/x_test.py::test_old",)
     assert run.outcomes[0].verified is False
     assert "tests/x_test.py::test_old" in run.suite.note
+
+
+def test_a_new_spaced_param_beside_an_old_one_stays_red(tmp_path, landed, snapshots):
+    """`[a c]` next to an inherited `[a b]` is a new failure, not the same id."""
+    old = "FAILED tests/x_test.py::test_p[a b] - boom"
+    new = "FAILED tests/x_test.py::test_p[a c] - boom"
+    wt = _repo(tmp_path)
+    body = f'grep -q BROKEN a.py && echo "{new}"; echo "{old}"; exit 1'
+    adapter = _adapter(wt, _script(tmp_path, body))
+    snapshots.side_effect = _reads(set(), {"a.py"})
+    with patch.object(agent.invoke, "run_fix", _editing(adapter, "BROKEN\n")):
+        run = fix.engine.run(adapter)
+    assert run.suite.status is fix.suite.SuiteStatus.RED
+    assert run.suite.inherited == ("tests/x_test.py::test_p[a b]",)
+    assert run.outcomes[0].verified is False
 
 
 def test_preexisting_still_holds_publishing(tmp_path, landed, snapshots, publishing_on):
@@ -198,3 +241,45 @@ def test_preexisting_qualifies_the_tally_and_does_not_demote():
     assert not result.demotes and result.ran
     assert fix.suite.qualify_tally("1 fixed, 0 skipped", result) == (
         "1 fixed, 0 skipped (unverified: the repo's checks were already red before this pass)")
+
+
+def test_a_failed_stash_create_is_no_baseline(tmp_path):
+    wt = _repo(tmp_path)
+    failed = core.proc.CmdResult(returncode=128, stderr="fatal")
+    with patch.object(git.client, "run", return_value=failed), \
+            patch.object(git.client, "head_sha", return_value="deadbeef") as head:
+        assert fix.baseline.snapshot(wt) == ""
+        head.assert_not_called()
+
+
+def test_an_empty_successful_stash_create_falls_back_to_head(tmp_path):
+    wt = _repo(tmp_path)
+    head = git_out(wt, "rev-parse", "HEAD").strip()
+    assert fix.baseline.snapshot(wt) == head
+
+
+def test_a_bad_ref_does_not_prune(tmp_path):
+    wt = _repo(tmp_path)
+    stale = tmp_path / "stale-tree"
+    git_out(wt, "worktree", "add", "--detach", str(stale), "HEAD")
+    shutil.rmtree(stale)
+    assert len(git_out(wt, "worktree", "list").splitlines()) == 2
+    assert fix.baseline._run_at(wt, "not-a-commit", "true", 30, "") is None
+    assert len(git_out(wt, "worktree", "list").splitlines()) == 2
+
+
+def test_the_baseline_trail_event_carries_the_final_status():
+    trail = MagicMock()
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.RED, command="c",
+        failures=("t::a",),
+    )
+    prior = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.RED, command="c",
+        failures=("t::a",),
+    )
+    with patch.object(fix.baseline, "_run_at", return_value=prior):
+        labelled = fix.baseline.label_preexisting(
+            Path("."), result, "c", 30, trail, ref="abc1234")
+    assert labelled.status is fix.suite.SuiteStatus.PREEXISTING
+    assert trail.info.call_args.kwargs["data"]["status"] == "preexisting"

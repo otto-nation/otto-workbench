@@ -420,3 +420,10 @@ def test_an_unreadable_paths_file_is_an_error(tmp_path, capsys):
     missing = tmp_path / "nope"
     assert sp.main(["--paths-file", str(missing)]) == 2
     assert capsys.readouterr().err == f"--paths-file: cannot read {missing}\n"
+
+
+def test_a_binary_paths_file_is_an_error(tmp_path, capsys):
+    binary = tmp_path / "paths"
+    binary.write_bytes(b"\xff\xfe\x00not-utf8")
+    assert sp.main(["--paths-file", str(binary)]) == 2
+    assert capsys.readouterr().err == f"--paths-file: cannot read {binary}\n"

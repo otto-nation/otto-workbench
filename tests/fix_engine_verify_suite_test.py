@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import agent.invoke  # noqa: E402
+import fix.baseline  # noqa: E402
 import fix.engine  # noqa: E402
 from fix.types import FixItem  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
@@ -324,9 +325,11 @@ class TestVerifySuite:
         adapter.config = WorkbenchConfig()
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
-            run = fix.engine.run(adapter)
+        with patch.object(fix.baseline, "snapshot") as snap:
+            with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+                run = fix.engine.run(adapter)
 
+        snap.assert_not_called()
         assert run.suite.status is fix.suite.SuiteStatus.NOT_DECLARED
         assert run.outcomes[0].verified is None
 

@@ -1016,8 +1016,14 @@ def run(
               data={"paths": sorted(dirty_before), "workdir": str(adapter.workdir)})
 
     # Taken before the agent runs, for the one question asked of a red verify
-    # run: was the tree already red? Skipped for a domain whose checks never run.
-    baseline_ref = fix.baseline.snapshot(adapter.workdir) if adapter.verifies_with_suite else ""
+    # run: was the tree already red? Skipped for a domain whose checks never
+    # run, and when the repo names no command — a snapshot nobody will compare.
+    config = adapter.config or load_config_or_default(adapter.workdir)
+    baseline_ref = (
+        fix.baseline.snapshot(adapter.workdir)
+        if adapter.verifies_with_suite and (config.fix.verify_command or "").strip()
+        else ""
+    )
 
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)

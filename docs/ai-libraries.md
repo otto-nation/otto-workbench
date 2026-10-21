@@ -3599,6 +3599,7 @@ still the head the batch planned from (`Item.remote_sha`):
 |---|---|
 | the fetch failed | refuse: `fetch_failed` |
 | the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
+| a commit a step drafted is not on the branch, as itself, a patch-equivalent, or a replay `git.replay` can follow | refuse: `drafted_dropped` |
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
@@ -3618,7 +3619,17 @@ to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
 `--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. A branch the operator rebased
+appeared since is refused again) or drops the PR. A `drafted_dropped` one lists
+the drafted commits the branch no longer carries — a hand `reset --hard`, a
+rebase that dropped one, a hand push without it — and is answered by
+cherry-picking them back and retrying, or by `force-publish` past exactly that
+list. A commit whose replay git could not determine is listed too, marked
+unverifiable: the gate fails closed. Confirmations accumulate on the item
+(`Item.forced`), so confirming one refusal never reopens the other.
+
+A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
+of the old lease that the local branch already contains (`remote_fast_forwarded`)
+— the push that follows is a fast-forward and loses nothing. A branch the operator rebased
 by hand with `--fork-point` reaches that refusal too: the commits the fork
 point skipped are the ones listed, and the rebase's start tip stays the one
 the batch saw before the hand rebase (`batch.resolve`, `force`), so
@@ -3683,8 +3694,8 @@ Apply an operator's answer to one decision, then move the item on.
 | `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` and its target lock released / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry also `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
-| `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry adopts a remote that fast-forwarded the lease to a commit the local branch holds, and otherwise `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
+| `failed` | `force-publish` | only `reason: not_incorporated_remote` or `drafted_dropped`; same as `publish` past exactly the commits listed in the refusal, added to those the item was already forced past (a newly appeared commit refuses again) |
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done` and its target lock released; local commits stay and nothing is pushed |
 

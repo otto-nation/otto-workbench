@@ -8,6 +8,7 @@ still the head the batch planned from (`Item.remote_sha`):
 |---|---|
 | the fetch failed | refuse: `fetch_failed` |
 | the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
+| a commit a step drafted is not on the branch, as itself, a patch-equivalent, or a replay `git.replay` can follow | refuse: `drafted_dropped` |
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
@@ -27,7 +28,17 @@ to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
 `--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. A branch the operator rebased
+appeared since is refused again) or drops the PR. A `drafted_dropped` one lists
+the drafted commits the branch no longer carries — a hand `reset --hard`, a
+rebase that dropped one, a hand push without it — and is answered by
+cherry-picking them back and retrying, or by `force-publish` past exactly that
+list. A commit whose replay git could not determine is listed too, marked
+unverifiable: the gate fails closed. Confirmations accumulate on the item
+(`Item.forced`), so confirming one refusal never reopens the other.
+
+A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
+of the old lease that the local branch already contains (`remote_fast_forwarded`)
+— the push that follows is a fast-forward and loses nothing. A branch the operator rebased
 by hand with `--fork-point` reaches that refusal too: the commits the fork
 point skipped are the ones listed, and the rebase's start tip stays the one
 the batch saw before the hand rebase (`batch.resolve`, `force`), so
@@ -46,6 +57,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import git.client
+import git.replay
 import rebase.target
 from batch.model import Item, Step
 from pr.comments_fix import CloseoutDebt
@@ -59,6 +71,7 @@ class Refusal(StrEnum):
     NOT_INCORPORATED_REMOTE = "not_incorporated_remote"
     FETCH_FAILED = "fetch_failed"
     UNLANDED_FIXES = "unlanded_fixes"
+    DRAFTED_DROPPED = "drafted_dropped"
 
 
 @dataclass(frozen=True)
@@ -72,7 +85,10 @@ class TreeState:
     commits as equivalents rather than ancestors, and counts as incorporated.
     ``unincorporated`` names the remote commits (``"<sha> <subject>"``) with no
     patch-equivalent in the local branch — what a force-push of a diverged
-    branch would throw away.
+    branch would throw away. ``dropped`` names the commits a step drafted that
+    the local branch no longer carries (``"<sha> <subject>"``, suffixed
+    ``(unverifiable)`` where git could not say) — what publishing the branch as
+    it stands would lose.
     """
 
     local: str
@@ -81,6 +97,7 @@ class TreeState:
     fetched: bool = True
     incorporated: bool = True
     unincorporated: tuple[str, ...] = ()
+    dropped: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,6 +143,47 @@ def _start_incorporated(item: Item, cwd: str) -> bool:
     return _unincorporated(item, cwd, item.pre_rebase_head) == ()
 
 
+def drafted_commits(item: Item) -> list[str]:
+    """Every commit *item*'s steps recorded, in step order, each once."""
+    return list(dict.fromkeys(sha for rec in item.steps for sha in rec.commits))
+
+
+def _carried(wt: str, branch: str, sha: str, finder: git.replay.ReplayFinder) -> bool | None:
+    """Whether *branch* still carries *sha*; None when git could not say.
+
+    On the branch as itself, or as a patch-equivalent (`git cherry` against
+    *sha* alone), or as the replay `git.replay` follows through git's rewrite
+    record — a conflict resolution or a squash keeps the work under a
+    different patch. An ambiguous replay counts as carried: two commits holding
+    the change is not the change lost.
+    """
+    ref = f"refs/heads/{branch}"
+    if git.client.ok("merge-base", "--is-ancestor", sha, ref, cwd=wt):
+        return True
+    if _cherry_plus(wt, ref, sha, f"{sha}^") == ():
+        return True
+    replay = finder.find(sha)
+    if replay.status is git.replay.ReplayStatus.NONE:
+        return False
+    if replay.status is git.replay.ReplayStatus.UNKNOWN:
+        return None
+    return True
+
+
+def _dropped(item: Item, wt: str) -> tuple[str, ...]:
+    """The drafted commits *item*'s branch no longer carries, labelled for the refusal."""
+    finder = git.replay.ReplayFinder(Path(wt))
+    dropped: list[str] = []
+    for sha in drafted_commits(item):
+        carried = _carried(wt, item.branch, sha, finder)
+        if carried:
+            continue
+        subject = git.client.out("log", "-1", "--format=%s", sha, cwd=wt)
+        label = f"{git.client.abbrev(sha)} {subject}".rstrip()
+        dropped.append(label if carried is False else f"{label} (unverifiable)")
+    return tuple(dropped)
+
+
 def read_tree(item: Item) -> TreeState:
     """Fetch *item*'s branch alone and compare it with the local branch."""
     wt, branch = item.worktree, item.branch
@@ -149,7 +207,9 @@ def read_tree(item: Item) -> TreeState:
             divergence = RefDivergence()
         else:
             unincorporated = found
-    return TreeState(local, remote, divergence, fetched, incorporated, unincorporated)
+    dropped = _dropped(item, wt) if item.worktree else ()
+    return TreeState(local, remote, divergence, fetched, incorporated, unincorporated,
+                     dropped)
 
 
 def _has_staged(wt: str) -> bool:
@@ -185,6 +245,23 @@ def try_adopt_equivalent_remote(item: Item, tree: TreeState) -> bool:
     return git.client.run("reset", "--keep", tree.remote, cwd=wt).ok
 
 
+def remote_fast_forwarded(item: Item, tree: TreeState) -> bool:
+    """Whether the remote moved forward from the lease to a commit the local branch holds.
+
+    ``lease ⊑ remote ⊑ local``: pushing the local branch over that remote is a
+    fast-forward, so nothing anyone pushed is lost. Fails closed on a fetch that
+    failed, a missing ref, or an ancestry git will not confirm. Does not write
+    the lease — the caller does.
+    """
+    if not (tree.fetched and tree.remote and tree.local and item.remote_sha):
+        return False
+    if tree.remote == item.remote_sha or not item.worktree:
+        return False
+    wt = item.worktree
+    return (git.client.ok("merge-base", "--is-ancestor", item.remote_sha, tree.remote, cwd=wt)
+            and git.client.ok("merge-base", "--is-ancestor", tree.remote, tree.local, cwd=wt))
+
+
 def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> PublishPlan:
     return PublishPlan(refusal=refusal, detail=detail, commits=list(commits or []))
 
@@ -212,9 +289,10 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
          no_verify: bool = False) -> PublishPlan:
     """The commands that publish *item* given *tree*, or the refusal that stops it.
 
-    *confirmed* is the operator's ``force-publish``: the remote commits listed
-    in the refusal they answered. It pushes past those and past nothing else —
-    a remote commit that appeared since is refused again, with the full list.
+    *confirmed* is the operator's ``force-publish``: the commits listed in the
+    refusals they answered, remote or drafted. It pushes past those and past
+    nothing else — a commit that appeared since is refused again, with the full
+    list.
     *closeout* is what `pr` recorded as owed to the PR; when it is owed the
     comments command runs even with nothing drafted or to push.
     """
@@ -234,6 +312,10 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
             Refusal.UNLANDED_FIXES,
             "the fix commit was refused, or the worktree still holds staged fixes",
         )
+    if set(tree.dropped) - set(confirmed):
+        return _refuse(Refusal.DRAFTED_DROPPED,
+                       f"{len(tree.dropped)} commit(s) the batch drafted are not on "
+                       f"{item.branch}", list(tree.dropped))
     commands: list[list[str]] = []
     if div.diverged:
         if not tree.incorporated:

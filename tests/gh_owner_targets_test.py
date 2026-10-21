@@ -42,11 +42,60 @@ def _no_inherited_gh_env(monkeypatch):
     (["gh", "api", "-X", "POST", "/repos/acme/widget/issues"], "acme"),
     (["gh", "api", "-X", "POST", "repos/acme/widget/issues", "--hostname", "ghe.corp"], "ghe.corp/acme"),
     (["pr", "review", "https://ghe.corp/acme/widget/pull/9"], "ghe.corp/acme"),
+    (["gh", "issue", "create", "-Rstranger/lib"], "stranger"),
+    (["gh", "issue", "create", "-R=stranger/lib"], "stranger"),
+    (["gh", "-Rstranger/lib", "issue", "create"], "stranger"),
+    (["gh", "pr", "merge", "HTTPS://GitHub.com/stranger/lib/pull/3"], "stranger"),
 ])
 def test_an_explicit_target_wins(tmp_path, words, expected):
     resolution = _resolve(words, tmp_path)
     assert resolution.ok
     assert resolution.target.owners == (_owner(expected),)
+
+
+def test_a_repo_flag_inside_a_body_is_not_a_target(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:stranger/lib.git")
+    resolution = _resolve(
+        ["gh", "issue", "create", "-t", "x", "-b", "--repo=ours/svc"], repo)
+    assert resolution.ok
+    assert resolution.target.source is gh.owner_targets.TargetSource.REMOTES
+    assert resolution.target.owners == (_owner("stranger"),)
+
+
+def test_env_builtin_prefix_is_an_explicit_target(tmp_path):
+    resolution = _resolve(
+        ["env", "GH_REPO=acme/widget", "gh", "issue", "create"], tmp_path)
+    assert resolution.ok
+    assert resolution.target.owners == (_owner("acme"),)
+
+
+def test_gh_resolved_pointing_at_a_stranger_is_a_candidate(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    git_in(repo, "config", "remote.origin.gh-resolved", "base:stranger/lib")
+    resolution = _resolve(["gh", "issue", "comment", "1"], repo)
+    assert resolution.ok
+    assert resolution.target.source is gh.owner_targets.TargetSource.REMOTES
+    assert resolution.target.owners == (_owner("ours"), _owner("stranger"))
+
+
+def test_gh_resolved_base_keeps_the_remote_already_in_the_set(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    git_in(repo, "config", "remote.origin.gh-resolved", "base")
+    resolution = _resolve(["gh", "issue", "comment", "1"], repo)
+    assert resolution.target.owners == (_owner("ours"),)
+
+
+@pytest.mark.parametrize("endpoint", [
+    "repos/ours/svc/../../stranger/lib/issues",
+    "repos/ours/svc/./issues",
+    "repos/ours/svc/%2e%2e/stranger/lib/issues",
+    "repos/ours/svc/%2E%2e/stranger/lib/issues",
+    "repos/ours%2flib/issues",
+])
+def test_api_dot_segments_are_unresolvable(tmp_path, endpoint):
+    resolution = _resolve(["gh", "api", "-X", "POST", endpoint], tmp_path)
+    assert not resolution.ok
+    assert "segment" in resolution.reason or "repos/" in resolution.reason or "%" in resolution.reason
 
 
 def test_a_body_url_is_not_an_explicit_target(tmp_path):

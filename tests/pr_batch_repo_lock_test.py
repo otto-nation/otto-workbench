@@ -117,6 +117,12 @@ def test_batch_need_noid_resume_reads_keys_from_the_covering_run(monkeypatch):
     assert need.locks == frozenset({_scope("cover-key-cccccccc")})
 
 
+def test_batch_need_release_and_cancel_take_no_locks():
+    empty = Need(NONE, update=False, locks=NO_LOCK)
+    assert _need(["cancel", "20261001T120000-aaaa"]) == empty
+    assert _need(["release", "20261001T120000-aaaa", "o/r#1", "--kill"]) == empty
+
+
 def test_batch_need_with_no_subcommand_takes_no_locks_and_does_no_io(monkeypatch):
     seen = []
 

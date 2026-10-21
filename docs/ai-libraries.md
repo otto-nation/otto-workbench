@@ -3481,6 +3481,7 @@ NDJSON progress events for live consumers of `pr batch run`.
 The state file is authoritative; events only save a consumer from polling it.
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 `generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
+`item_skipped_held` is a PR a new `run` left out because an unfinished run still holds it.
 
 ### batch/gc.py
 
@@ -3511,18 +3512,21 @@ process that predates claims and is still fetching.
 Apply one inbound request to a loaded run, and settle a run that is idle.
 
 `apply_one` is the policy: a `Decide` goes through `batch.resolve.apply`
-unless the decision already carries that action (an idempotent replay), and a
+unless the decision already carries that action (an idempotent replay), a
 `Cancel` records `Run.cancel` — `kill` only upgrades, `requested_at` is set
-the first time only. A cancel against `DONE` is an error; against `CANCELLED`
-it is a no-op success. `settle_idle` turns a recorded cancel into `CANCELLED`,
-or every item terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is
-what a caller holds: apply, settle, report.
+the first time only — and a `Release` drops one item, resolving its open
+decisions as `released`. A cancel against `DONE` is an error; against
+`CANCELLED` it is a no-op success. A release against a finished run, an
+unknown or already-terminal item, or a running item without `--kill`, is an
+error. `settle_idle` turns a recorded cancel into `CANCELLED`, or every item
+terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is what a
+caller holds: apply, settle, report.
 
-`deliver` is the one path for `pr batch resolve` and `cancel`: it writes the
-request, then either applies it in an `APPLIER` session or returns `queued`
-when a live holder that drains will apply it. A request reported `queued` is
-applied by that holder or its hand-off, or, if the holder dies, by the next
-session to open the run.
+`deliver` is the one path for `pr batch resolve`, `cancel` and `release`: it
+writes the request, then either applies it in an `APPLIER` session or returns
+`queued` when a live holder that drains will apply it. A request reported
+`queued` is applied by that holder or its hand-off, or, if the holder dies,
+by the next session to open the run.
 
 ### batch/live.py
 
@@ -3743,12 +3747,12 @@ run never saw, or heads that moved since it ran, `hint` says so and points at
 
 ### batch/requests.py
 
-Typed inbound requests for a `pr batch` run: decide, cancel, or malformed.
+Typed inbound requests for a `pr batch` run: decide, cancel, release, or malformed.
 
 A request file without ``kind`` parses as a ``Decide``, so files queued by
 older code stay valid. ``to_dict`` always writes the tag. ``drain_order``
-puts every ``Cancel`` ahead of decisions so a cancel never loses to a
-publish queued beside it.
+puts every ``Cancel`` ahead of everything else (by name) so a cancel never
+loses to a publish or release queued beside it.
 
 ### batch/resolve.py
 
@@ -3803,7 +3807,7 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
-    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
+    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions, cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
@@ -7056,6 +7060,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
+    pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
@@ -7063,7 +7068,7 @@ Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished coverin
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 
 ### cli/pr_commands.py
 

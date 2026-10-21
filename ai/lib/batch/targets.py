@@ -57,12 +57,20 @@ def origin_key(directory: str) -> str:
 
 
 def item_repo_key(item: Item) -> str | None:
-    """*item*'s origin key, recorded at plan time, or read from its checkout.
+    """*item*'s origin key, recorded at plan time, or derived without guessing cwd.
 
-    None when the item was saved without a key and the checkout has no
-    `origin`, or is vanished or unreadable.
+    ``item.repo_key`` if the plan recorded one. Else the checkout's origin
+    key, but only when ``item.repo_dir`` is absolute: runs saved before
+    repo_dir was made absolute recorded ``.``, and reading that resolves
+    against the caller's cwd — another repo. A relative dir falls back to
+    ``pr.target.repo_key_for_slug(item.repo)``. None when none of those
+    name a repo.
     """
-    return item.repo_key or origin_key(item.repo_dir) or None
+    if item.repo_key:
+        return item.repo_key
+    if os.path.isabs(item.repo_dir):
+        return origin_key(item.repo_dir) or None
+    return pr.target.repo_key_for_slug(item.repo)
 
 
 def item_target_dir(item: Item) -> Path | None:

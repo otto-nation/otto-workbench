@@ -696,7 +696,7 @@ pr batch status [RUN_ID]                 # the run report (JSON); --offline skip
 pr batch status [RUN_ID] --full          # the raw run state
 pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  # JSON `applied`; `queued`+`holder` when deferred
-pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` if a holder will apply it
+pr batch cancel [RUN_ID] [--kill]        # final; `release RUN PR [--kill]` frees one PR
 ```
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where

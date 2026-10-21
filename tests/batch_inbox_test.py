@@ -20,7 +20,7 @@ from batch.model import (  # noqa: E402
     Decision, DecisionKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
 )
 from batch.publish import TreeState  # noqa: E402
-from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome  # noqa: E402
+from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Release  # noqa: E402
 from batch.store import Role  # noqa: E402
 from batch_session_support import holding, open_session, seed  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
@@ -185,6 +185,72 @@ def test_apply_one_cancel_on_a_cancelled_run_is_ok_and_changes_nothing():
     out = batch.inbox.apply_one(run, Cancel(kill=True), ApplyContext(pr_bin="pr"))
     assert out.ok
     assert run.cancel == batch.model.CancelState(kill=False, requested_at="t0")
+
+
+def test_apply_one_release_on_a_done_run_is_an_error():
+    run = _run(status=RunStatus.DONE)
+    out = batch.inbox.apply_one(run, Release("o/r#1"), ApplyContext(pr_bin="pr"))
+    assert not out.ok
+    assert out.error == "run r1 is done"
+    assert run.items[0].status is ItemStatus.AWAITING_DECISION
+
+
+def test_apply_one_release_unknown_item_is_an_error():
+    run = _run()
+    out = batch.inbox.apply_one(run, Release("o/r#99"), ApplyContext(pr_bin="pr"))
+    assert not out.ok
+    assert out.error == "run r1 has no item o/r#99"
+
+
+def test_apply_one_release_of_a_terminal_item_is_an_error():
+    run = _run()
+    run.items[0].status = ItemStatus.DROPPED
+    out = batch.inbox.apply_one(run, Release("o/r#1"), ApplyContext(pr_bin="pr"))
+    assert not out.ok
+    assert out.error == "o/r#1 is already dropped"
+
+
+def test_apply_one_release_of_a_running_item_without_kill_is_an_error():
+    run = _run()
+    run.items[0].status = ItemStatus.RUNNING
+    out = batch.inbox.apply_one(run, Release("o/r#1"), ApplyContext(pr_bin="pr"))
+    assert not out.ok
+    assert "pass --kill" in out.error
+    assert run.items[0].status is ItemStatus.RUNNING
+
+
+def test_apply_one_release_drops_the_item_and_resolves_only_its_open_decisions(monkeypatch):
+    other = Item(
+        key="o/r#2", repo="o/r", repo_dir="/r", pr=2, branch="c", head_sha="s",
+        worktree="/wt2", status=ItemStatus.AWAITING_DECISION)
+    mine = _d(DecisionKind.DIRTY_WORKTREE, "worktree")
+    theirs = _d(DecisionKind.FAILED, "review", id="d2")
+    theirs.item = "o/r#2"
+    closed = _d(DecisionKind.INTERRUPTED, "rebase", id="d0")
+    closed.resolution = "retry"
+    closed.resolved_at = "t0"
+    run = _run(mine, closed, theirs)
+    run.items.append(other)
+    monkeypatch.setattr(batch.store, "now_iso", lambda: "t-rel")
+    out = batch.inbox.apply_one(run, Release("o/r#1"), ApplyContext(pr_bin="pr"))
+    assert out.ok and out.finished == ("o/r#1",)
+    assert run.items[0].status is ItemStatus.DROPPED
+    assert run.items[0].wait_reason == ""
+    assert run.decision("d1").resolution == "released"
+    assert run.decision("d1").resolved_at == "t-rel"
+    assert run.decision("d0").resolution == "retry"
+    assert run.decision("d2").open
+    assert run.items[1].status is ItemStatus.AWAITING_DECISION
+
+
+def test_apply_one_release_of_a_running_item_with_kill_drops_it():
+    run = _run(_d(DecisionKind.FAILED, "review"))
+    run.items[0].status = ItemStatus.RUNNING
+    out = batch.inbox.apply_one(
+        run, Release("o/r#1", kill=True), ApplyContext(pr_bin="pr"))
+    assert out.ok and out.finished == ("o/r#1",)
+    assert run.items[0].status is ItemStatus.DROPPED
+    assert run.decision("d1").resolution == "released"
 
 
 def test_settle_idle_cancel_wins_over_every_item_terminal():

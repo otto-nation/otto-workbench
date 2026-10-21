@@ -16,7 +16,7 @@ import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.model import CancelState, DecisionKind, RunStatus, Step  # noqa: E402
-from batch.requests import Cancel, Decide, Malformed, Outcome  # noqa: E402
+from batch.requests import Cancel, Decide, Malformed, Outcome, Release  # noqa: E402
 from batch_scheduler_support import (  # noqa: E402,F401
     NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row,
 )
@@ -147,6 +147,14 @@ def test_emit_outcome_reports_a_cancel_with_its_kill_flag():
     run = _new_run(row(1))
     assert _recorded(run, Outcome(name="c.json", request=Cancel(kill=True))) == [
         ("cancel_requested", {"run": run.id, "kill": True})]
+
+
+def test_emit_outcome_reports_a_release_as_item_finished():
+    run = _new_run(row(1))
+    run.items[0].status = batch.model.ItemStatus.DROPPED
+    assert _recorded(run, Outcome(name="r.json", request=Release("o/r#1"),
+                                  finished=("o/r#1",))) == [
+        ("item_finished", {"run": run.id, "item": "o/r#1", "status": "dropped"})]
 
 
 def test_ci_not_rechecked_lists_published_items_whose_ci_was_never_read():

@@ -1,18 +1,21 @@
 """Apply one inbound request to a loaded run, and settle a run that is idle.
 
 `apply_one` is the policy: a `Decide` goes through `batch.resolve.apply`
-unless the decision already carries that action (an idempotent replay), and a
+unless the decision already carries that action (an idempotent replay), a
 `Cancel` records `Run.cancel` — `kill` only upgrades, `requested_at` is set
-the first time only. A cancel against `DONE` is an error; against `CANCELLED`
-it is a no-op success. `settle_idle` turns a recorded cancel into `CANCELLED`,
-or every item terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is
-what a caller holds: apply, settle, report.
+the first time only — and a `Release` drops one item, resolving its open
+decisions as `released`. A cancel against `DONE` is an error; against
+`CANCELLED` it is a no-op success. A release against a finished run, an
+unknown or already-terminal item, or a running item without `--kill`, is an
+error. `settle_idle` turns a recorded cancel into `CANCELLED`, or every item
+terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is what a
+caller holds: apply, settle, report.
 
-`deliver` is the one path for `pr batch resolve` and `cancel`: it writes the
-request, then either applies it in an `APPLIER` session or returns `queued`
-when a live holder that drains will apply it. A request reported `queued` is
-applied by that holder or its hand-off, or, if the holder dies, by the next
-session to open the run.
+`deliver` is the one path for `pr batch resolve`, `cancel` and `release`: it
+writes the request, then either applies it in an `APPLIER` session or returns
+`queued` when a live holder that drains will apply it. A request reported
+`queued` is applied by that holder or its hand-off, or, if the holder dies,
+by the next session to open the run.
 """
 
 # doc-group: batch
@@ -28,8 +31,8 @@ import batch.publish
 import batch.resolve
 import batch.store
 import core.run_lock
-from batch.model import FINISHED_RUN, CancelState, Item, Run, RunStatus
-from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome
+from batch.model import FINISHED_RUN, CancelState, Item, ItemStatus, Run, RunStatus
+from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Release
 from batch.store import Holder, Role
 from pr.comments_fix import CloseoutDebt
 
@@ -48,7 +51,7 @@ class ApplyContext:
     report: Callable[[Run, Outcome], None] = _ignore
 
 
-def apply_one(run: Run, request: Decide | Cancel, ctx: ApplyContext, *,
+def apply_one(run: Run, request: Decide | Cancel | Release, ctx: ApplyContext, *,
               name: str = "") -> Outcome:
     """Apply *request* to *run* and return the outcome.
 
@@ -60,6 +63,8 @@ def apply_one(run: Run, request: Decide | Cancel, ctx: ApplyContext, *,
     """
     if isinstance(request, Cancel):
         return _apply_cancel(run, request, name)
+    if isinstance(request, Release):
+        return _apply_release(run, request, name)
     return _apply_decide(run, request, ctx, name)
 
 
@@ -98,6 +103,30 @@ def _apply_cancel(run: Run, request: Cancel, name: str) -> Outcome:
     if request.kill and not existing.kill:
         run.cancel = CancelState(kill=True, requested_at=existing.requested_at)
     return Outcome(name=name, request=request)
+
+
+def _apply_release(run: Run, request: Release, name: str) -> Outcome:
+    if run.status in FINISHED_RUN:
+        return Outcome(name=name, request=request,
+                       error=f"run {run.id} is {run.status.value}")
+    try:
+        item = run.item(request.item)
+    except KeyError:
+        return Outcome(name=name, request=request,
+                       error=f"run {run.id} has no item {request.item}")
+    if item.terminal:
+        return Outcome(name=name, request=request,
+                       error=f"{item.key} is already {item.status.value}")
+    if item.status is ItemStatus.RUNNING and not request.kill:
+        return Outcome(name=name, request=request,
+                       error=f"{item.key} is running a step; wait for it to finish, or pass --kill")
+    now = batch.store.now_iso()
+    for decision in run.open_decisions(item.key):
+        decision.resolution = "released"
+        decision.resolved_at = now
+    item.status = ItemStatus.DROPPED
+    item.wait_reason = ""
+    return Outcome(name=name, request=request, finished=(item.key,))
 
 
 def settle_idle(run: Run) -> bool:
@@ -186,7 +215,7 @@ def _attempt(run_id: str, name: str, ctx: ApplyContext, command: str) -> Deliver
                     holder=None)
 
 
-def deliver(run_id: str, request: Decide | Cancel, ctx: ApplyContext, *,
+def deliver(run_id: str, request: Decide | Cancel | Release, ctx: ApplyContext, *,
             command: str) -> Delivery:
     """Queue *request* in *run_id*'s inbox, then apply it here or leave it to a holder that will.
 

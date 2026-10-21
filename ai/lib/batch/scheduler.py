@@ -28,7 +28,7 @@ from batch.model import (STEP_ORDER, CancelState, Decision, DecisionKind, DirtyR
                          EvidenceKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
                          StepStatus, stacked_on_items)
 from batch.plan import PlanRow
-from batch.requests import Cancel, Decide, Outcome
+from batch.requests import Cancel, Decide, Outcome, Release
 from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure_worktree,
                          restore_generated_dirt, step_argv)
 from config.workbench_config import BatchConfig
@@ -175,6 +175,11 @@ def emit_outcome(run: Run, outcome: Outcome, *,
     if isinstance(request, Cancel):
         emit("cancel_requested", run=run.id, kill=request.kill, **failed)
         return
+    if isinstance(request, Release):
+        for key in outcome.finished:
+            emit("item_finished", run=run.id, item=key, status=run.item(key).status.value,
+                 **failed)
+        return
     decided = isinstance(request, Decide)
     emit("decision_resolved", run=run.id, decision=request.decision if decided else "",
          action=request.action if decided else "", **failed)
@@ -290,6 +295,12 @@ class Scheduler:
 
     def _finish(self, live: _Live, code: int) -> None:
         item, rec = live.item, live.rec
+        if item.terminal:
+            rec.exit_code, rec.ended_at, rec.status = (
+                code, batch.store.now_iso(), StepStatus.INTERRUPTED)
+            self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
+                       status=rec.status.value, exit_code=code)
+            return
         # The HEAD the step's first attempt started from: trailers and movement
         # are read across every attempt, so a retry that commits nothing cannot
         # hide a `Fix-Checks: red` commit an earlier attempt left drafted.
@@ -691,6 +702,12 @@ class Scheduler:
         for live in self._live.values():
             live.proc.kill()
 
+    def _kill_terminal_live(self) -> None:
+        """SIGTERM the live step of every item that is now terminal (a release)."""
+        for live in self._live.values():
+            if live.item.terminal:
+                live.proc.kill()
+
     def _blocked_status(self, cancel: CancelState | None) -> RunStatus | None:
         if self._live:
             return None
@@ -711,6 +728,9 @@ class Scheduler:
         # The inbox reports each outcome as it is applied; the returned list is
         # not emitted again here.
         self.session.drain(settle=False)
+        # A release (or drop-pr) may have made a live item terminal: stop its
+        # step so `_finish` cannot requeue it, then give the lock back.
+        self._kill_terminal_live()
         # The drain committed after each request, so an item a queued drop-pr
         # finished is on disk: its lock goes now, not after an inline publish.
         self._release(self.run)

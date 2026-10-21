@@ -83,6 +83,17 @@ def test_item_repo_key_reads_origin_when_unset(repo):
         pr.target.repo_key_from_origin(str(repo)))
 
 
+def test_item_repo_key_for_a_relative_repo_dir_uses_the_slug_not_cwd(tmp_path, monkeypatch):
+    cwd_repo = repo_with_origin(tmp_path / "cwd")
+    monkeypatch.chdir(cwd_repo)
+    item = _item(".", "feat/a", 1)
+    item.repo = "Other/Repo"
+    item.key = "Other/Repo#1"
+    got = batch.targets.item_repo_key(item)
+    assert got == pr.target.repo_key_for_slug("Other/Repo")
+    assert got != pr.target.repo_key_from_origin(str(cwd_repo))
+
+
 def test_run_repo_keys_are_sorted_and_deduplicated(repo):
     key = pr.target.repo_key_from_origin(str(repo))
     a = _item(repo, "feat/a", 1)

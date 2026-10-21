@@ -41,6 +41,7 @@ class ReviewReport(Protocol):
     cache_read_tokens: int
     cache_write_tokens: int
     unpushed_fix_commit: str
+    reviewed_through: str
 
 
 def sync_review_domain(
@@ -87,6 +88,7 @@ def sync_review_domain(
         domain.failure_detail = report.failure_detail
         domain.recoverable = report.recoverable
         domain.unpushed_fix_commit = report.unpushed_fix_commit
+        domain.reviewed_through = report.reviewed_through or report.head_sha or ""
         domain.cost_usd = report.cost_usd
         domain.total_tokens = (
             report.input_tokens + report.output_tokens

@@ -75,6 +75,10 @@ class ReviewSummaryReport:
     # in-process by `review.completion.record_domain`. Putting it on the wire
     # would widen a published contract for a value nothing out there reads.
     unpushed_fix_commit: str = ""
+    # The latest commit this review answers "is a re-run needed" for
+    # (`ReviewMeta.reviewed_through`). Not in `to_json` for the same reason
+    # `unpushed_fix_commit` is not: in-process readers take the typed report.
+    reviewed_through: str = ""
 
     def to_json(self) -> dict:
         """The summary as the dict written to stdout."""
@@ -166,6 +170,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
         cache_write_tokens=usage.cache_write_tokens,
         duration_ms=usage.duration_ms,
         unpushed_fix_commit=meta.unpushed_fix_commit,
+        reviewed_through=meta.reviewed_through,
     )
 
 

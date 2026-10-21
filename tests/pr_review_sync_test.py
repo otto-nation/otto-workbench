@@ -35,6 +35,7 @@ def test_sync_review_domain_is_the_writer(tmp_path):
         review_file="/r.md",
         review_type="full",
         head_sha="abc",
+        reviewed_through="def",
         findings={
             "must_fix": 1, "should_fix": 0, "nit": 2, "idiom": 0, "total": 3,
         },
@@ -58,6 +59,8 @@ def test_sync_review_domain_is_the_writer(tmp_path):
     assert loaded.review.verdict == ReviewVerdict.CHANGES_REQUESTED.value
     assert loaded.review.cost_usd == pytest.approx(1.5)
     assert loaded.review.recoverable is False
+    assert written.reviewed_through == "def"
+    assert loaded.review.reviewed_through == "def"
     assert loaded.identity.pr_number == 7
     assert loaded.identity.head_sha == "abc"
 

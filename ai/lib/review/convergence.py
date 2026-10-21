@@ -381,13 +381,24 @@ def fix_coverage(
     if run.suite.status is not fix.suite.SuiteStatus.GREEN:
         return FixCoverage(why=f"the repo's checks were {run.suite.status.value}, not green")
     fixed = [o for o in run.outcomes if o.outcome.counts_as_fixed]
-    if not fixed or any(o.verified is not True for o in fixed):
+    if not fixed:
+        return FixCoverage(why="no fix to vouch for")
+    if any(o.verified is not True for o in fixed):
         return FixCoverage(why="not every fix was verified by the gate")
-    return _scope_coverage(run, set(committed or ()), item_files, landed.sha)
+    if committed is None:
+        return FixCoverage(why="commit scope unknown")
+    return _scope_coverage(run, committed, item_files, landed.sha)
 
 
-def _anchor(outcome: ItemOutcome, item_files: dict[str, str]) -> str:
-    return outcome.file or item_files.get(outcome.id, "")
+def _anchor(
+    item_id: str, item_files: dict[str, str], outcomes_by_id: dict[str, ItemOutcome],
+) -> str:
+    """The file *item_id* is anchored in: the handed item first, then the outcome."""
+    path = item_files.get(item_id, "")
+    if path:
+        return path
+    outcome = outcomes_by_id.get(item_id)
+    return outcome.file if outcome is not None else ""
 
 
 def _scope_coverage(
@@ -397,14 +408,21 @@ def _scope_coverage(
 
     Attribution is by path (`fix/scope.py`'s ceiling), so a committed file that
     is the anchor of a skipped, declined or deferred item holds an edit no
-    verified fix stands behind, whichever item it answered.
+    verified fix stands behind, whichever item it answered. The anchor comes
+    from the review's handed items first; an outcome's `file` is only the
+    fallback when the item has none. Unfixed is every handed item the pass did
+    not count as fixed — including one whose section the agent deleted.
     """
-    fixed = {_anchor(o, item_files) for o in run.outcomes if o.outcome.counts_as_fixed} - {""}
-    unfixed = {_anchor(o, item_files) for o in run.outcomes
-               if not o.outcome.counts_as_fixed} - {""}
+    by_id = {o.id: o for o in run.outcomes}
+    fixed_ids = {o.id for o in run.outcomes if o.outcome.counts_as_fixed}
+    handed = set(item_files) | set(by_id)
+    fixed = {_anchor(i, item_files, by_id) for i in fixed_ids} - {""}
+    unfixed = {_anchor(i, item_files, by_id) for i in handed if i not in fixed_ids} - {""}
+    if not committed:
+        return FixCoverage(why="nothing committed")
     stray = sorted(p for p in committed if not fix.scope.anchor_or_test(p, fixed))
-    if not committed or stray:
-        return FixCoverage(why=f"it commits {', '.join(stray) or 'nothing'} that no fix names")
+    if stray:
+        return FixCoverage(why=f"it commits {', '.join(stray)} that no fix names")
     owed = sorted(committed & unfixed)
     if owed:
         return FixCoverage(why=f"it commits {', '.join(owed)}, the file of an item it did not fix")

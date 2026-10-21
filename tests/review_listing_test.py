@@ -47,12 +47,24 @@ def test_a_row_reports_what_the_sidecar_attributes_it_to(reviews_dir):
     assert row.repo == "acme/widget"
     assert row.pr_number == 42
     assert row.head_sha == "abc123"
+    assert row.reviewed_through == "abc123"
     assert row.head_ref == "isaac/feat/x"
     assert row.base_ref == "main"
     assert row.review_type == "full"
     assert row.mode == "pr"
     assert row.started_at == "2026-08-18T13:47:03+00:00"
     assert row.reviewed_at == "2026-08-18T14:02:11+00:00"
+
+
+def test_a_row_reports_reviewed_through_from_covered_sha(reviews_dir):
+    """Currency is covered_sha when set, not the original head."""
+    _review(reviews_dir, repo="acme/widget", pr_number=42, head_sha="abc123",
+            covered_sha="def456")
+
+    row, = review.listing.rows()
+
+    assert row.head_sha == "abc123"
+    assert row.reviewed_through == "def456"
 
 
 def test_a_row_is_attributed_by_the_sidecar_not_the_directory_name(reviews_dir):

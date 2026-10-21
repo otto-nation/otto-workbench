@@ -88,11 +88,13 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
     accumulate across rounds — they carry every earlier decline and skip
     mark — so they are read from the sidecar already on disk. Rebuilding
     them from the job alone erased every earlier decline before
-    `_inject_static_analysis_section` could read it.
+    `_inject_static_analysis_section` could read it. `covered_sha` is not
+    carried: a new review does not inherit a prior pass's coverage.
     """
     carried = read_review_meta(Path(job.artifact_dir))
     meta = replace(_job_meta(job), static_declined=dict(carried.static_declined),
-                   sticky_skips=dict(carried.sticky_skips))
+                   sticky_skips=dict(carried.sticky_skips),
+                   covered_sha="")
     if meta.review_type != ReviewType.INCREMENTAL:
         return replace(meta, date=date.today().isoformat(), status=status)
     return replace(

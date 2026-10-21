@@ -15,6 +15,7 @@ from review.summary import (
     ReviewSummaryReport, build_review_summary, format_findings_line,
     format_usage, format_verdict, json_summary,
 )
+from review.types import ReviewMeta
 from review_record_support import finding, record, store_record
 
 # cr is a pytest fixture: imported by name so tests here can request it.
@@ -342,6 +343,17 @@ def test_json_summary_includes_metadata(cr, tmp_path):
     assert data["head_ref"] == "feat/my-branch"
     assert data["base_ref"] == "main"
     assert data["review_type"] == "full"
+
+
+def test_build_review_summary_fills_reviewed_through(tmp_path):
+    review = store_record(
+        tmp_path / "review.md", record(finding("N1", "path:1 — style", path="")),
+        ReviewMeta(head_sha="abc123", covered_sha="def456"),
+    )
+    report = build_review_summary("org/repo", "42", str(review))
+    assert report.head_sha == "abc123"
+    assert report.reviewed_through == "def456"
+    assert "reviewed_through" not in report.to_json()
 
 
 def test_json_summary_null_metadata_without_meta_json(cr, tmp_path):

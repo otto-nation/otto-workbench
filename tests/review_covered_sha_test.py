@@ -11,6 +11,7 @@ import fix.engine  # noqa: E402
 import fix.suite  # noqa: E402
 import git.land  # noqa: E402
 import review.fix  # noqa: E402
+import review.outcome  # noqa: E402
 from conftest import commit_all, git_out  # noqa: E402
 from fix.gate import Verdict  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
@@ -178,3 +179,62 @@ def test_the_header_shows_covered_sha_only_when_it_differs(tmp_path):
     assert "covered_sha" not in f.read_text()
     write_review(f, ReviewRecord(), ReviewMeta(head_sha="1" * 40, covered_sha="2" * 40))
     assert f"<!-- covered_sha: {'2' * 40} -->" in f.read_text()
+
+
+def test_publish_resets_covered_sha(tmp_path):
+    """A new review does not inherit a prior pass's coverage."""
+    repo = committed_repo(tmp_path / "repo", {"a.py": "x = 1\n"})
+    reviewed = head(repo)
+    covered = "c" * 40
+    job = review_job(repo, tmp_path / "reviews", head_sha=reviewed, files=["a.py"])
+    write_review(Path(job.review_file), ReviewRecord(summary="s"),
+                 ReviewMeta(head_sha=reviewed, covered_sha=covered))
+    assert read_review_meta(Path(job.artifact_dir)).covered_sha == covered
+    review.outcome._publish(job, ReviewRecord(summary="s"))
+    assert read_review_meta(Path(job.artifact_dir)).covered_sha == ""
+
+
+def test_an_unfixed_item_with_an_empty_outcome_file_uses_item_files(tmp_path):
+    """The handed item's path is the anchor when the outcome names none."""
+    repo, reviewed, fixed = _history(tmp_path)
+    run = _run_of(fixed, reviewed, outcomes=[
+        FIXED_N1, ItemOutcome(id="S1", outcome=FixOutcome.NEEDS_HUMAN, file="")])
+    coverage = fix_coverage(run, {"a.py"}, {"N1": "a.py", "S1": "a.py"}, reviewed, repo)
+    assert not coverage.covered and "did not fix" in coverage.why
+
+
+def test_a_rewritten_tracking_heading_does_not_cover_the_item_file(tmp_path):
+    """FIXED N1 headed as b.py while the handed item is a.py: committing b.py is not coverage."""
+    repo, reviewed, fixed = _history(tmp_path)
+    run = _run_of(fixed, reviewed, outcomes=[
+        ItemOutcome(id="N1", outcome=FixOutcome.FIXED, verified=True, file="b.py")])
+    coverage = fix_coverage(run, {"b.py"}, {"N1": "a.py"}, reviewed, repo)
+    assert not coverage.covered and "b.py" in coverage.why
+
+
+def test_a_deleted_unfixed_section_still_blocks_coverage(tmp_path):
+    """M2 in a.py vanished from outcomes; N1 fixed in a.py does not cover the commit."""
+    repo, reviewed, fixed = _history(tmp_path)
+    coverage = fix_coverage(_run_of(fixed, reviewed), {"a.py"},
+                            {"N1": "a.py", "M2": "a.py"}, reviewed, repo)
+    assert not coverage.covered and "did not fix" in coverage.why
+
+
+def test_zero_fixes_says_no_fix_to_vouch_for(tmp_path):
+    repo, reviewed, fixed = _history(tmp_path)
+    run = _run_of(fixed, reviewed, outcomes=[
+        ItemOutcome(id="N1", outcome=FixOutcome.NEEDS_HUMAN, file="a.py")])
+    coverage = fix_coverage(run, {"a.py"}, {"N1": "a.py"}, reviewed, repo)
+    assert coverage.why == "no fix to vouch for"
+
+
+def test_unknown_commit_scope_says_so(tmp_path):
+    repo, reviewed, fixed = _history(tmp_path)
+    coverage = fix_coverage(_run_of(fixed, reviewed), None, {"N1": "a.py"}, reviewed, repo)
+    assert coverage.why == "commit scope unknown"
+
+
+def test_an_empty_commit_says_nothing_committed(tmp_path):
+    repo, reviewed, fixed = _history(tmp_path)
+    coverage = fix_coverage(_run_of(fixed, reviewed), set(), {"N1": "a.py"}, reviewed, repo)
+    assert coverage.why == "nothing committed"

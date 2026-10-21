@@ -121,6 +121,24 @@ def test_cmd_fix_skips_review_when_no_findings_on_this_commit(mock_load, mock_ca
     assert not _calls_containing(mock_call, "review")
 
 
+@patch("core.publishing.call_entry_point", return_value=0)
+@patch("pr.state.load_state")
+def test_cmd_fix_skips_review_when_head_is_a_covered_fix_commit(mock_load, mock_call):
+    """A qualifying fix commit counts as reviewed: pr fix does not re-run it."""
+    import pr.state
+    state = pr.state.new_state("repo", "branch", pr_number=1, head_sha="a",
+                               worktree_root="/wt")
+    pr.state.apply(state, pr.domains.ReviewSummary(
+        finding_counts={}, verdict=pr.domains.ReviewVerdict.APPROVE.value,
+        head_sha="0ldc0mmit", reviewed_through="abc123", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_call.return_value = 0
+    rc = _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert rc == 0
+    assert not _calls_containing(mock_call, "review")
+
+
 # ── A cached "nothing to do" is only about the commit it was measured on ─────
 #
 # `pr fix` decides whether to run its passes from the state file, and used to

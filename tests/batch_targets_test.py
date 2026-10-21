@@ -259,3 +259,16 @@ def test_item_holds_release_every_target_left_when_the_block_ends(repo):
         assert holds.release_finished(run) == []
         assert core.run_lock.is_held(ta)
     assert not core.run_lock.is_held(ta)
+
+
+def test_item_holds_keep_a_terminal_items_target_while_its_step_is_live(repo):
+    """A released item whose killed step has not exited yet keeps its lock."""
+    a = _item(repo, "feat/a", 1)
+    run = Run(id="r", started_at="t", steps=[Step.REVIEW], pool=1, auto_publish=[], items=[a])
+    ta = batch.targets.item_target_dir(a)
+    with batch.targets.ItemHolds() as holds:
+        _holding(holds, (ta, [a.key]))
+        a.status = ItemStatus.DROPPED
+        assert holds.release_finished(run, live={a.key}) == []
+        assert core.run_lock.is_held(ta)
+        assert holds.release_finished(run, live=set()) == [ta]

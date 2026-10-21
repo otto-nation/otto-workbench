@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from pathlib import Path
 
 import core.run_lock
@@ -193,16 +193,20 @@ class ItemHolds:
         """The targets still held, in the order they were taken."""
         return list(self._stacks)
 
-    def release_finished(self, run: Run) -> list[Path]:
+    def release_finished(self, run: Run, live: Collection[str] = ()) -> list[Path]:
         """Release every held target whose items are all terminal in *run*; return those released.
 
         A target shared by several items stays held until the last of them is
-        terminal. Call it only after the change that made an item terminal is
-        committed, so a crash cannot leave a run on disk still owning an item
-        whose lock was given away. Raises `KeyError` for a held key *run* lacks.
+        terminal. *live* names items that still have a step process running —
+        a released item whose step was just killed — and keeps their targets
+        (and worktrees) held until the process is gone, so a manual `pr`
+        command cannot start under a step that has not exited. Call it only
+        after the change that made an item terminal is committed, so a crash
+        cannot leave a run on disk still owning an item whose lock was given
+        away. Raises `KeyError` for a held key *run* lacks.
         """
         done = [t for t, keys in self._keys.items()
-                if all(run.item(k).terminal for k in keys)]
+                if all(run.item(k).terminal and k not in live for k in keys)]
         for target in done:
             self._release(target)
         return done

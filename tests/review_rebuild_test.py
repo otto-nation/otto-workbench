@@ -14,7 +14,7 @@ from core.phases import Phase  # noqa: E402
 from review.paths import FILENAME_PRIOR_RECORD, ReviewMeta, read_review_meta, write_review_meta  # noqa: E402
 from review.record import Disposition, load_record, save_record  # noqa: E402
 from review.rebuild import rebuild  # noqa: E402
-from review_record_support import finding, record  # noqa: E402
+from review_record_support import finding, record, store_record  # noqa: E402
 
 
 def _group(review_dir, n):
@@ -52,9 +52,11 @@ def test_rebuild_skips_a_group_file_carrying_the_render_banner(tmp_path, capsys)
     path = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
     path.write_text(f"{BANNER}\n## Findings\n- **[M1]** **`a.py:1`** \u2014 x\n")
     write_review_meta(tmp_path, ReviewMeta(repo="acme/widget", pr_number=1))
-    assert review.rebuild.rebuild(tmp_path, "1", script="review-rebuild") == 0
-    assert load_record(tmp_path).visible == ()
-    assert "skipped" in capsys.readouterr().err
+    assert review.rebuild.rebuild(tmp_path, "1", script="review-rebuild") == 1
+    seen = capsys.readouterr().err
+    assert "skipped" in seen
+    assert "none of 1 group files" in seen
+    assert not (tmp_path / "review.md").exists()
 
 
 def test_rebuild_preserves_sidecar_fields_other_than_date_and_status(tmp_path):
@@ -107,6 +109,23 @@ def test_a_whitespace_only_group_file_is_skipped_silently(tmp_path, capsys):
     assert "invalid_json" not in seen.out + seen.err
     assert "skipped" not in seen.out + seen.err
     assert [f.id for f in load_record(tmp_path).visible] == ["M1"]
+
+
+def test_rebuild_does_not_overwrite_when_no_group_loads(tmp_path, capsys):
+    """Malformed group files must not replace an existing stored review."""
+    store_record(
+        tmp_path / "review.md",
+        record(finding("M1", "keep me")),
+        ReviewMeta(repo="acme/widget", pr_number=1),
+    )
+    json_bytes = (tmp_path / "review.json").read_bytes()
+    md_bytes = (tmp_path / "review.md").read_bytes()
+    (tmp_path / "group-1.json").write_text("{not json")
+    (tmp_path / "group-2.json").write_text("{also not")
+    assert rebuild(tmp_path, "1", script="test") == 1
+    assert "none of 2 group files" in capsys.readouterr().err
+    assert (tmp_path / "review.json").read_bytes() == json_bytes
+    assert (tmp_path / "review.md").read_bytes() == md_bytes
 
 
 def test_a_rejected_group_file_is_skipped_and_the_rest_rebuilt(tmp_path):

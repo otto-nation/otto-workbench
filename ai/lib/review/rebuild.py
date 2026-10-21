@@ -4,8 +4,9 @@ Loads the `group-N.json` artifacts, merges their records, post-processes them
 and writes a new review through the store. It is the recovery path when
 synthesis drifted or the review file was corrupted; `cli.review_rebuild` is
 the command over it. A group file that no longer loads is skipped with a
-warning, because rebuilding exists to salvage. A directory holding only the
-`group-N.md` files of a run from before agents wrote JSON is refused by name.
+warning, because rebuilding exists to salvage. When none of them load, the
+existing review is left untouched. A directory holding only the `group-N.md`
+files of a run from before agents wrote JSON is refused by name.
 """
 
 # doc-group: findings
@@ -73,9 +74,9 @@ def _group_records(group_files: list[str], declinable: frozenset[str]) -> list[R
 def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> int:
     """Rebuild *review_dir*'s review from its group finding files.
 
-    Returns 1 when there are no group files or the sidecar names no repo, and
-    `core.proc.INTERRUPT_RETURNCODE` on an interrupt. *script* is the name the
-    trail records — the binary the operator ran.
+    Returns 1 when there are no group files, none of them load, or the sidecar
+    names no repo, and `core.proc.INTERRUPT_RETURNCODE` on an interrupt.
+    *script* is the name the trail records — the binary the operator ran.
     """
     review_file = review_dir / "review.md"
 
@@ -111,6 +112,14 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
 
         # --repair exists to salvage: a group file that no longer loads is skipped.
         records = _group_records(group_files, declinable_sids(read_prior(review_dir)))
+        # Overwriting the review when none of them loaded would destroy the last
+        # good record.
+        if not records:
+            core.log.error(
+                f"none of {len(group_files)} group files in {review_dir} "
+                f"could be read — nothing rebuilt"
+            )
+            return 1
         merged = merge_records(records)
         trail.info("merge_records", "merged group outputs", data={"group_count": len(group_files)})
         done = post_process_record(merged)

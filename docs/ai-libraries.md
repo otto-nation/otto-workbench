@@ -1477,8 +1477,9 @@ Loads the `group-N.json` artifacts, merges their records, post-processes them
 and writes a new review through the store. It is the recovery path when
 synthesis drifted or the review file was corrupted; `cli.review_rebuild` is
 the command over it. A group file that no longer loads is skipped with a
-warning, because rebuilding exists to salvage. A directory holding only the
-`group-N.md` files of a run from before agents wrote JSON is refused by name.
+warning, because rebuilding exists to salvage. When none of them load, the
+existing review is left untouched. A directory holding only the `group-N.md`
+files of a run from before agents wrote JSON is refused by name.
 
 ### review/reconcile.py
 

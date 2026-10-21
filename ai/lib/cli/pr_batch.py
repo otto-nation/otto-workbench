@@ -32,6 +32,7 @@ import batch.admission
 import batch.events
 import batch.inbox
 import batch.live
+import batch.machine
 import batch.plan
 import batch.report
 import batch.scheduler
@@ -273,11 +274,13 @@ def _drive(session: batch.store.Session, reporter: _Reporter, holds: batch.targe
     so publishes that the final drain applies stay narrowed to their items.
     Returns the status the scheduler stopped at.
     """
-    scheduler = batch.scheduler.Scheduler(session, pr_bin=str(bin_dir / "pr"), cfg=cfg,
-                                          verbose=verbose, release=holds.release_finished)
-    reporter.counting = False
-    stopped = scheduler.run_until_blocked()
-    reporter.counting = True
+    with batch.machine.register(session.run.id) as machine:
+        scheduler = batch.scheduler.Scheduler(session, pr_bin=str(bin_dir / "pr"), cfg=cfg,
+                                              verbose=verbose, release=holds.release_finished,
+                                              machine=machine)
+        reporter.counting = False
+        stopped = scheduler.run_until_blocked()
+        reporter.counting = True
     session.finish()
     return stopped
 

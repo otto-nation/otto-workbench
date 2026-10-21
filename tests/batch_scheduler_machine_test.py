@@ -54,7 +54,7 @@ def _first_tick(h):
 def test_a_driver_with_nothing_running_waits_without_the_floor_slot():
     """Regression: every driver started its first step whatever memory said, so N
     concurrent batches started N steps on a host with room for one."""
-    machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB, live=1), floor=False)
+    machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB), floor=False)
     h = Harness([row(1, ONLY_REVIEW)], host=TIGHT, machine=machine)
     item = _first_tick(h)
     assert h.spawned == []
@@ -65,7 +65,7 @@ def test_a_driver_with_nothing_running_waits_without_the_floor_slot():
 
 
 def test_the_floor_slot_starts_one_step_on_a_starved_host():
-    machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB, live=1), floor=True)
+    machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB), floor=True)
     h = Harness([row(1, ONLY_REVIEW), row(2, ONLY_REVIEW)], host=TIGHT, machine=machine)
     h.sched._once()
     assert len(h.spawned) == 1
@@ -85,7 +85,7 @@ def test_other_drivers_pending_memory_comes_off_the_host():
 
 
 def test_the_floor_is_not_asked_for_while_a_step_of_ours_runs():
-    machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB, live=1), floor=True)
+    machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB), floor=True)
     h = Harness([row(1, ONLY_REVIEW), row(2, ONLY_REVIEW)], host=TIGHT, machine=machine)
     h.sched._once()
     assert machine.asked == 1
@@ -117,3 +117,22 @@ def test_two_real_drivers_on_a_starved_host_start_one_step_between_them(tmp_path
         b.sched._once()
         assert (len(a.spawned), len(b.spawned)) == (1, 0)
         assert "waiting for memory" in b.run.items[0].wait_reason
+
+
+def test_floor_refused_while_a_peer_has_a_step_live(tmp_path):
+    starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
+    healthy = batch.admission.HostSample(64 * GiB, 1.0, 0.0)
+    with batch.machine.register("run-a", tmp_path) as ma, \
+            batch.machine.register("run-b", tmp_path) as mb:
+        a = Harness([row(1, ONLY_REVIEW)], host=healthy, machine=ma)
+        b = Harness([row(2, ONLY_REVIEW)], host=starved, machine=mb)
+        a.sched._once()
+        b.sched._once()
+        assert (len(a.spawned), len(b.spawned)) == (1, 0)
+
+
+def test_registry_write_failure_does_not_raise(tmp_path):
+    with batch.machine.register("run-w", tmp_path) as m:
+        m._root = tmp_path / "gone"
+        m.settle([], waiting=False)
+        assert m.take_floor() in (True, False)

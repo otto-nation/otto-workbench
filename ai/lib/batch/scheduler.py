@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import batch.admission
-import batch.machine
 import batch.events
+import batch.machine
 import batch.outcomes
 import batch.plan
 import batch.report
@@ -548,7 +548,8 @@ class Scheduler:
                 estimate=self._estimates.get(item.repo, rec.step), cfg=self.cfg,
                 floor=floor, elsewhere=self._peers.live)
         verdict = ask(False)
-        if verdict.admit or self._live or not self._machine.take_floor():
+        if (verdict.admit or self._live or self._peers.live
+                or not self._machine.take_floor()):
             return verdict
         return ask(True)
 

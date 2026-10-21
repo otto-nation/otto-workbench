@@ -158,6 +158,7 @@ class Machine:
                  clock: Callable[[], float] = time.time):
         self.run_id, self._fd, self._root, self._clock = run_id, fd, root, clock
         self._floor_fd: int | None = None
+        self._write_failed = False
         self._waiting_since: float | None = None
         self._live: list[LiveStep] = []
         self._peers: list[DriverState] = []
@@ -167,7 +168,12 @@ class Machine:
     def _write(self) -> None:
         state = DriverState(self.run_id, os.getpid(), self._clock(), self._waiting_since,
                             list(self._live))
-        core.serde.write_json(self._root / f"{self.run_id}.json", asdict(state))
+        try:
+            core.serde.write_json(self._root / f"{self.run_id}.json", asdict(state))
+        except OSError as exc:
+            if not self._write_failed:
+                core.log.warn(f"batch admission registry not updated ({exc})")
+            self._write_failed = True
 
     def _release_floor(self) -> None:
         if self._floor_fd is None:
@@ -222,7 +228,10 @@ class Machine:
             self._write()
         if not self._queue_head():
             return False
-        fd = os.open(self._root / FLOOR, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+        try:
+            fd = os.open(self._root / FLOOR, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+        except OSError:
+            return False
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

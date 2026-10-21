@@ -120,6 +120,9 @@ def _apply_release(run: Run, request: Release, name: str) -> Outcome:
     if item.status is ItemStatus.RUNNING and not request.kill:
         return Outcome(name=name, request=request,
                        error=f"{item.key} is running a step; wait for it to finish, or pass --kill")
+    # Applying only marks the item DROPPED. A RUNNING item's step is killed by
+    # the driver's scheduler, which owns the process; a non-driver applier
+    # relies on the driver having reaped any stale step.
     now = batch.store.now_iso()
     for decision in run.open_decisions(item.key):
         decision.resolution = "released"

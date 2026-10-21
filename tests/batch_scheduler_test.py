@@ -379,10 +379,19 @@ def test_cancel_kill_force_kills_what_the_tracked_step_already_outlived():
 def test_release_kill_of_a_live_step_does_not_requeue_the_item():
     """A killed step exits a tick later: its item's locks are given back only then,
     and the step's exit does not requeue the released item."""
+    import contextlib
+    import pathlib
     released = []
     h = Harness([row(1)])
-    h.sched._release = lambda run, live: released.append(
-        [i.key for i in run.items if i.terminal and i.key not in live])
+    holds = batch.targets.ItemHolds()
+    target = pathlib.Path("/t")
+    holds.take(target, ["o/r#1"], contextlib.nullcontext())
+
+    def release(run, live):
+        if holds.release_finished(run, live):
+            released.append(["o/r#1"])
+
+    h.sched._release = release
     orig = h._spawn
 
     def spawn(argv, **kw):
@@ -411,9 +420,9 @@ def test_release_kill_of_a_live_step_does_not_requeue_the_item():
     h.sched._once()
     item = h.run.items[0]
     assert item.status is batch.model.ItemStatus.DROPPED
-    assert all("o/r#1" not in keys for keys in released)
+    assert not released and holds.held() == [target]
     h.sched._once()
-    assert ["o/r#1"] in released
+    assert ["o/r#1"] in released and holds.held() == []
     assert item.status is batch.model.ItemStatus.DROPPED
     rec = next(r for r in item.steps if r.status is not batch.model.StepStatus.PENDING
                and r.status is not batch.model.StepStatus.SKIPPED)

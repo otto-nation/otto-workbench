@@ -165,6 +165,31 @@ def test_glob_special_leftover_is_stashed_as_a_literal_pathspec(tmp_path):
     assert "a.py" not in names
 
 
+def test_a_partial_stash_clears_the_record_and_does_not_repeat(
+        tmp_path, monkeypatch, capsys):
+    wt = _repo(tmp_path)
+    (wt / "a.py").write_text("x = 2\n")
+    review_dir, _ = _stopped(tmp_path, wt, ["a.py"])
+    real_run = git.client.run
+
+    def fail_after_stash(*args, **kwargs):
+        if args[:2] == ("stash", "push"):
+            real_run(*args, **kwargs)
+            return CmdResult(returncode=1, stderr="partial write")
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(git.client, "run", fail_after_stash)
+    flags = SimpleNamespace(fix=True, recover=False)
+    assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
+    assert read_review_meta(review_dir).fix_interrupted is None
+    sha = git_out(wt, "rev-parse", "refs/stash").strip()
+    err = capsys.readouterr().err
+    assert sha in err
+    stash_list = git_out(wt, "stash", "list")
+    assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
+    assert git_out(wt, "stash", "list") == stash_list
+
+
 def test_a_failed_set_aside_does_not_resume(tmp_path, monkeypatch):
     wt = _repo(tmp_path)
     (wt / "a.py").write_text("x = 2\n")

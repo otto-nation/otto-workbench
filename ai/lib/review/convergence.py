@@ -20,6 +20,7 @@ from pathlib import Path
 import core.log
 import git.client
 from core.phases import Mode
+from core.proc import CmdResult
 from core.trail import Trail, tinfo
 from pr.fix import FixOutcome, ItemOutcome
 from review.collect import uncommitted_files
@@ -256,16 +257,19 @@ def _clear_interruption(review_dir: Path, extra_dirty: tuple[str, ...] = ()) -> 
 
 
 def _stash_push_failed(
-    review_dir: Path, wt_path: str, stashed, before: str,
-    trail: Trail | None, moved: list[str],
+    review_dir: Path, wt_path: str, stashed: CmdResult, before: str,
+    trail: Trail | None, moved: list[str], untouched: list[str],
 ) -> str:
     after = _stash_ref(wt_path)
     if after and after != before:
-        core.log.warn(f"stash push failed but refs/stash moved to {after} — "
-                      f"a partial stash exists; not repeating. {stashed.stderr.strip()}")
+        names = ", ".join(untouched)
+        core.log.warn(
+            f"stash push failed but refs/stash moved to {after} — "
+            f"a partial stash of {names} exists; restore with `git stash pop {after}`. "
+            f"{stashed.stderr.strip()}")
         _clear_interruption(review_dir)
         tinfo(trail, "fix_leftovers_set_aside", "partial stash; record cleared",
-              data={"stashed": [], "left": moved, "partial": after})
+              data={"stashed": untouched, "left": moved, "partial": after})
         return ""
     core.log.warn(f"could not set the interrupted pass's edits aside: "
                   f"{stashed.stderr.strip()}")
@@ -317,7 +321,8 @@ def set_aside_leftovers(
     stashed = git.client.run("stash", "push", "--include-untracked", "-m", message,
                              "--", *(f":(literal){p}" for p in untouched), cwd=wt_path)
     if not stashed.ok:
-        return _stash_push_failed(review_dir, wt_path, stashed, before, trail, moved)
+        return _stash_push_failed(
+            review_dir, wt_path, stashed, before, trail, moved, untouched)
     core.log.warn(f"Set the interrupted fix pass's edits aside ({message}): "
                   f"{', '.join(untouched)} — `git stash pop` restores them")
     _clear_interruption(review_dir, tuple(untouched))

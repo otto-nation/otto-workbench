@@ -200,6 +200,22 @@ step_instructions_report() {
   printf '  %s\n' "${hints[@]}"
 }
 
+# step_github_owners_notice — says so when github.owners is unset or unreadable.
+#
+# Unset is not a neutral state: every GitHub write an agent or the workbench
+# makes is refused until it is configured (general.md § Upstream Repositories).
+# The refusal names the fix as well; this is the same sentence one step earlier,
+# on every sync until it is answered. Never fatal — a check that cannot run is
+# reported, not a reason to stop a sync.
+step_github_owners_notice() {
+  local reason
+  if reason="$("$AI_SRC_DIR/bin/owners-check" --configured 2>&1)"; then
+    return 0
+  fi
+  warn "${reason:-owners-check --configured failed with no message}"
+  return 0
+}
+
 # sync_ai — dispatches to each installed AI sub-tool's sync function.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_ai() {
@@ -227,6 +243,9 @@ sync_ai() {
 
   # Harness-neutral, so ahead of the per-tool syncs and whatever they select.
   step_instructions_report
+
+  # Harness-neutral, like the report above: both guards and gh.client read it.
+  step_github_owners_notice
 
   while IFS= read -r _tool; do
     [[ -z "$_tool" ]] && continue

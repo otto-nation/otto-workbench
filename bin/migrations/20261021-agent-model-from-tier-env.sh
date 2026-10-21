@@ -25,9 +25,8 @@
 # can write a pre-migration copy — no agent.model — back into the config root
 # after this has run, and that copy needs the same carry-over.
 
-# _agent_model_tier_value TIER — the exported value for TIER (SONNET, OPUS,
-# HAIKU) in ~/.env.local: AI_<TIER>_MODEL, else ANTHROPIC_DEFAULT_<TIER>_MODEL.
-# Commented lines are ignored; surrounding quotes are stripped.
+# _agent_model_unquote VALUE — the text after KEY= on an env line: a quoted
+# value without its quotes, else the value up to an inline `#` comment, trimmed.
 _agent_model_unquote() {
   local value="$1"
   if [[ "$value" =~ ^\"([^\"]*)\" ]]; then printf '%s' "${BASH_REMATCH[1]}"; return 0; fi
@@ -36,6 +35,9 @@ _agent_model_unquote() {
   printf '%s' "${value%"${value##*[![:space:]]}"}"
 }
 
+# _agent_model_tier_value TIER — the exported value for TIER (SONNET, OPUS,
+# HAIKU) in ~/.env.local: AI_<TIER>_MODEL, else ANTHROPIC_DEFAULT_<TIER>_MODEL.
+# Bare, indented and `export` lines count; commented lines are ignored.
 _agent_model_tier_value() {
   local tier="$1" key line value
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0

@@ -52,9 +52,17 @@ def _incremental(tmp_path, prior=None):
 
 def test_a_new_nit_outside_the_delta_is_dropped():
     record = ReviewRecord(findings=(NIT_OUT, NIT_IN, MUST_OUT, CARRIED_NIT, WHOLE_PR))
-    out = drop_out_of_delta_nits(record, ["new.py"], frozenset())
+    out = drop_out_of_delta_nits(record, ["new.py"], frozenset({"abc"}))
     assert [f.id for f in out.record.findings] == ["N2", "M1", "N3", "I1"]
     assert [f.id for f in out.dropped] == ["N1"]
+
+
+def test_a_sid_no_prior_round_held_does_not_make_a_nit_carried():
+    """Synthesis sees every merged finding with a sid — its own stable id where it had none."""
+    stamped = replace(NIT_OUT, sid=NIT_OUT.stable_id)
+    out = drop_out_of_delta_nits(ReviewRecord(findings=(stamped,)), ["new.py"], frozenset({"abc"}))
+    assert [f.id for f in out.dropped] == ["N1"]
+    assert new_nit_ids(ReviewRecord(findings=(stamped,)), frozenset()) == frozenset({"sidn1"})
 
 
 def test_a_restated_prior_nit_on_an_unchanged_file_is_kept(tmp_path, monkeypatch):
@@ -133,7 +141,7 @@ def test_new_nit_ids_reads_the_sid_and_never_counts_a_finding_with_no_identity()
         finding("N4", "carried, no path, no identity", stable_id=""),
         finding("M1", "bug", path="a.py", line=3),
     ))
-    assert new_nit_ids(record, frozenset({"sidkept"})) == frozenset({"sidn1"})
+    assert new_nit_ids(record, frozenset({"sidkept", "t2"})) == frozenset({"sidn1"})
 
 
 def test_an_incremental_round_adds_to_the_held_set_and_a_full_one_clears_it(tmp_path):
@@ -185,9 +193,11 @@ def test_a_held_nit_stays_out_of_fix_work_until_a_full_round(tmp_path, monkeypat
     wt = committed_repo(tmp_path / "wt", {"a.py": "x = 1\n", "b.py": "y = 1\n"})
     nit = finding("N1", "new nit", path="a.py", line=1, checkbox=True)
     must = finding("M1", "bug", path="a.py", line=1, checkbox=True)
-    # Carried from an earlier round under a stable id this prior does not hold: its sid says so.
+    # Carried, and reworded into a stable id the prior does not hold: its sid names a prior finding.
     carried = finding("N2", "carried nit", path="b.py", line=1, checkbox=True, sid="t9")
-    base = StoredReview(ReviewRecord(), ReviewMeta(head_sha="p" * 40))
+    base = StoredReview(ReviewRecord(findings=(
+        finding("N7", "earlier wording", path="b.py", line=1, stable_id="t9"),
+    )), ReviewMeta(head_sha="p" * 40))
 
     round_n = _published(tmp_path, wt, ReviewRecord(findings=(nit, must, carried)), prior=base)
     assert read_review_meta(Path(round_n.artifact_dir)).held_nits == ("sidn1",)

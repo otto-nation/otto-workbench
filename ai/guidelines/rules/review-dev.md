@@ -111,8 +111,8 @@ More rules keep an incremental round from re-raising settled work, all in
 `review.convergence`. A prior finding the prior round declined, whose file is
 outside `change_set(job)`, settles as `Declined` from `DispositionSource.PRIOR`
 without a ledger line. A finding with a path and no line is scoped to the group
-holding its file, so a skipped group carries it. New Nit and Idiom findings — no
-sid, and a stable id the prior record does not hold (`is_new_nit`) — are dropped
+holding its file, so a skipped group carries it. New Nit and Idiom findings — neither
+their sid nor their stable id is one the prior record holds (`is_new_nit`) — are dropped
 at merge when their file is outside the delta (`drop_out_of_delta_nits`). The
 ones inside it stay open but out of the fix pass's work set: `_reconcile_and_verify`
 reads them while the record still carries sids (`new_nit_ids`), `_publish` adds

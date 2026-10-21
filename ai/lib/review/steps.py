@@ -493,9 +493,8 @@ def _phase_synthesis(
         )
         record = _restore_held_findings(merged.record, record)
         if _is_incremental(job):
-            # ceiling: a carried nit reworded without its sid marker reads as
-            # new and is dropped. Upgrade trigger: once findings carry identity
-            # as a field (the JSON-artifact PR), match on sid not stable_id.
+            # Synthesis may add cross-cutting nits of its own. A carried one it
+            # rewords keeps the prior's `sid`, which `is_new_nit` matches.
             record = drop_out_of_delta_nits(
                 record, job.preflight.delta_files, prior_ids(job)).record
         _post_process_review(

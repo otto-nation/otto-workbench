@@ -141,11 +141,15 @@ def prior_ids(job: ReviewJob) -> frozenset[str]:
 def is_new_nit(severity: str, sid: str, stable_id: str, prior: frozenset[str]) -> bool:
     """Whether a finding is a nit or idiom this round raised for the first time.
 
-    New means no carried `sid` and a `stable_id` the prior record does not
-    hold. A re-run group restating a prior nit gives it a fresh ID and no sid
-    but the same stable id — a carry, not a new finding.
+    New means neither its `sid` nor its `stable_id` is one the prior record
+    holds. A re-run group restating a prior nit gives it a fresh ID and no sid
+    but the same stable id — a carry, not a new finding. A synthesis rewording
+    a carried nit keeps the prior's sid. Having a sid is not enough on its own:
+    synthesis is shown every merged finding with one (its own stable id, where
+    it arrived with none), so a nit a group raised this round comes back from
+    synthesis carrying a sid no prior round held.
     """
-    return severity in NIT_SEVERITIES and not sid and stable_id not in prior
+    return severity in NIT_SEVERITIES and sid not in prior and stable_id not in prior
 
 
 @dataclass(frozen=True)

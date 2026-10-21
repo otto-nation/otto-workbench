@@ -7,37 +7,21 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review.ingest import ingest_review
 from review.merge import merge_records
 from review.record import ReviewRecord, TriageEntry
 from review_record_support import record
-from review.types import SEVERITIES
-
-
-def _review(**by_key: str) -> ReviewRecord:
-    """One group's record, built from severity-keyed markdown snippets."""
-    parts = [f"## {s.section}\n{by_key[s.key]}" for s in SEVERITIES if by_key.get(s.key)]
-    return ingest_review("\n".join(parts) + "\n", strict=False) if parts else ReviewRecord()
-
-
-def _merge(**by_key: str) -> ReviewRecord:
-    return merge_records([_review(**by_key)])
-
-
-def _triage(*lines: str) -> ReviewRecord:
-    return ingest_review("## File Triage\n" + "\n".join(lines) + "\n", strict=False)
 
 
 def _group_of(*findings) -> ReviewRecord:
-    """One group's record holding `findings` — the builder twin of `_review`."""
+    """One group's record holding `findings`."""
     return record(*findings)
 
 
 def _merged_of(*findings) -> ReviewRecord:
-    """`findings` as one group, merged — the builder twin of `_merge`."""
+    """`findings` as one group, merged."""
     return merge_records([record(*findings)])
 
 
 def _triaged(*entries: TriageEntry) -> ReviewRecord:
-    """A record holding only `entries` as its File Triage — the builder twin of `_triage`."""
+    """A record holding only `entries` as its File Triage."""
     return ReviewRecord(triage=entries)

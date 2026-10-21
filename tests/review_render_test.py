@@ -12,7 +12,6 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review.ingest import ingest_review
 from review.record import (
     Disposition, LedgerLine, ProseSection, RecordFinding, ReviewRecord,
     SeveritySection, TriageEntry, load_record,
@@ -22,7 +21,7 @@ from review.render import BANNER, evidence_block, finding_line, ledger_line, ren
 from review.types import PriorDisposition, ReviewMeta
 
 from review_record_support import (
-    canonical, expected_text, fixture_meta, fixture_record, fixture_text, finding, record,
+    canonical, expected_text, fixture_meta, fixture_record, finding, record,
 )
 
 PARITY_CASES = [
@@ -186,13 +185,3 @@ def test_a_ledger_line_renders_id_path_disposition_and_note():
     assert ledger_line(LedgerLine("S2", PriorDisposition.DECLINED)) == "- **[S2]** — Declined"
 
 
-# Deleted in Task 14 with the markdown fixtures: until then each record.json
-# must be exactly its input.md ingested, so a suite moved to the JSON reads the
-# same review the markdown suites still read.
-@pytest.mark.parametrize("case, md, name", [
-    *((case, "input.md", "record.json") for case in PARITY_CASES),
-    ("evidence_dropped", "raw.md", "raw.json"),
-    ("fix_annotated", "before.md", "before.json"),
-])
-def test_every_fixture_record_is_its_markdown_ingested(case, md, name):
-    assert fixture_record(case, name) == ingest_review(fixture_text(case, md))

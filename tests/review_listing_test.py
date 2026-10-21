@@ -68,7 +68,8 @@ def test_a_row_is_attributed_by_the_sidecar_not_the_directory_name(reviews_dir):
 def test_a_review_predating_the_sidecar_is_still_listed(reviews_dir):
     """Unattributed is a fact about that review; dropping it would hide one the
     consumer can still open."""
-    _review(reviews_dir)
+    d = _review(reviews_dir)
+    (d / "meta.json").unlink()
 
     row, = review.listing.rows()
 

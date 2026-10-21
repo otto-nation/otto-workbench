@@ -18,9 +18,6 @@ from review.types import Finding, FindingScope, PriorDisposition, ReviewMeta
 from review.record import Disposition
 from review.render import BANNER, render_review
 
-from review_record_support import fixture_text
-
-
 def _kinds(text: str) -> list[IngestErrorKind]:
     with pytest.raises(IngestRejected) as exc:
         ingest_review(text)
@@ -81,6 +78,17 @@ class TestRejections:
             strict=False,
         )
         assert [f.id for f in record.findings] == ["N1", "N1"]
+
+
+# The sections of a synthesis review, inline: the fixture this suite read them
+# from is deleted with the markdown captures, and this suite goes with the ingest.
+_SECTIONED = (
+    "## File Triage\n- `apps/desktop/package.json` — reviewed; entitlements config added.\n- `packages/shared/src/index.ts` — reviewed; types and constant only.\n\n"
+    "## Agent Failures\n\n| Agent | Reason | Status |\n|-------|--------|--------|\n| disprove | agent completed (subtype=success) but did not write output | failed |\n\n"
+    "Run `pr review --recover` to retry failed agents.\n\n## Summary\nAdds speech-to-text in the composer behind a mic button.\n\n## Must fix\n(none)\n\n"
+    "## Should fix\n- **[S1]** **`apps/server/src/voice/transcriber.ts:343`** — The ENOENT retry clears `buildPromise` with no guard.\n- **[S2]** **`apps/web/src/stores/voice.ts:131`** — The `finally` in `stopRecording` resets `recording`. See [S1].\n\n"
+    "## Nit\n- **[N1]** **`apps/desktop/main.js:354`** — `requestingUrl` is passed an origin.\n- **[N2]** **`apps/server/src/voice/transcriber.test.ts:88`** — The download-cap test depends on test order.\n\n## Idioms\n- **[I1]** `apps/web/src/stores/voice.ts` — `loadStatus` uses a module-level guard.\n\n## Verdict\n**Approve.** There are no must-fix issues; the should-fix items can follow up.\n"
+)
 
 
 class TestWhatIsRead:
@@ -171,7 +179,7 @@ class TestWhatIsRead:
         assert f.stable_id == FindingIdentity.of(line).stable_id
 
     def test_sections_land_in_their_fields(self):
-        record = ingest_review(fixture_text("synthesis_pr", "input.md"))
+        record = ingest_review(_SECTIONED)
         assert record.summary.startswith("Adds speech-to-text")
         assert record.verdict.startswith("**Approve.**")
         assert [e.path for e in record.triage] == ["apps/desktop/package.json", "packages/shared/src/index.ts"]

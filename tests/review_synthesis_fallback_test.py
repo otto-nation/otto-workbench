@@ -12,13 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
-from review.ingest import ingest_review
+from review.record import TriageEntry
 from review.steps import Merged
 from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
+from review_record_support import finding, record
 
 
-def _merged(text: str) -> Merged:
-    return Merged(ingest_review(text, strict=False))
+def _merged(*findings, **fields) -> Merged:
+    return Merged(record(*findings, **fields))
 
 
 class TestRunSynthesisOrFallback:
@@ -27,7 +28,7 @@ class TestRunSynthesisOrFallback:
     # A merge with one finding in it, so the step has something to carry: the
     # clean-review shortcut returns before synthesis and would answer for every
     # test below whatever the branch under test does.
-    MERGED = _merged("## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n")
+    MERGED = _merged(finding("S1", "cleanup", path="api.go", line=10))
 
     def _make_state(self, ro):
         return ro.PipelineState(
@@ -141,7 +142,7 @@ class TestRunSynthesisOrFallback:
         monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         result = ro._run_synthesis_or_fallback(
-            job, state, "", 1, _merged("No findings.\n"), [], 0, 0.0, 20.0,
+            job, state, "", 1, _merged(), [], 0, 0.0, 20.0,
         )
         assert result == review.pipeline.PhaseResult()
 
@@ -160,7 +161,7 @@ class TestRunSynthesisOrFallback:
 
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1,
-            _merged("## File Triage\n- `api.go` — reviewed, [M1] was fixed here\n"), [],
+            _merged(triage=(TriageEntry("api.go", "reviewed, [M1] was fixed here"),)), [],
             0, 0.0, 20.0,
         )
         assert result == review.pipeline.PhaseResult()

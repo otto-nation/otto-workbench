@@ -23,9 +23,8 @@ def fixture_meta(case: str) -> ReviewMeta:
 
 
 def expected_text(case: str) -> str:
-    """`expected.md` when the case reorders sections (D2/D4), else `input.md`."""
-    path = FIXTURES / case / "expected.md"
-    return path.read_text() if path.exists() else fixture_text(case, "input.md")
+    """The rendered review.md a case's record must reproduce."""
+    return fixture_text(case, "expected.md")
 
 
 def canonical(md: str) -> str:
@@ -46,43 +45,13 @@ def copy_tree(dest: Path) -> Path:
     return dest
 
 
-def store_review(review_file, text: str, meta=None):
-    """A review directory as the pipeline leaves it: review.json, meta.json, review.md."""
-    from review.ingest import ingest_review
-    from review.store import write_review
-    from review.types import ReviewMeta
-    review_file = Path(review_file)
-    write_review(review_file, ingest_review(text, strict=False), meta or ReviewMeta())
-    return review_file
-
-
-def seed_review(reviews_dir: Path, name: str = "widget-42",
-                body: str | None = None, **meta) -> Path:
-    """A review directory the reviews walk will classify as a review.
-
-    One builder rather than one per suite, because the on-disk shape — a
-    directory holding `review.md` beside a `meta.json` sidecar — is what the
-    walk classifies on, and a second copy of it drifts the moment the layout
-    moves. `meta.json` is written only when a caller passes attribution, so the
-    default stands in for a review predating the sidecar.
-    """
-    d = reviews_dir / name
-    d.mkdir()
-    text = "## Must fix\n- **[M1]** a.py:1 — bug\n" if body is None else body
-    store_review(
-        d / "review.md", text,
-        review_meta_from_dict(meta) if meta else ReviewMeta(),
-    )
-    return d
-
-
 def written_review(directory: Path) -> Path:
     """A `review.md` on disk holding one Must-fix finding.
 
     Shared because three review-flow suites each defined a near-identical
     helper for the same on-disk shape — a review file with one finding, which
     is all a caller checking "did the flow leave a review behind" needs.
-    Unlike `seed_review`, this takes the review's own directory directly and
+    Unlike `seed_record`, this takes the review's own directory directly and
     creates any missing parents, since callers here build ad hoc paths rather
     than seeding into an existing `reviews_dir`.
     """
@@ -127,10 +96,10 @@ def store_record(review_file, rec, meta=None):
 
 
 def seed_record(reviews_dir: Path, name: str = "widget-42", rec=None, **meta) -> Path:
-    """The directory `seed_review` makes, holding `rec` (default: one Must-fix finding).
+    """A review directory holding `rec` (default: one Must-fix finding).
 
-    `meta.json` carries attribution only when a caller passes it, as in
-    `seed_review`, whose callers move here in Task 13.
+    `meta.json` is always written; a test of a review predating the sidecar
+    unlinks it after seeding.
     """
     d = reviews_dir / name
     d.mkdir()

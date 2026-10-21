@@ -19,9 +19,7 @@ import git.push
 import review.fix
 from pr.fix import FixOutcome, ItemOutcome
 from gh.types import PRContext, PRMetadata
-from review.ingest import ingest_review
-from review.paths import write_review_meta
-from review.record import ReviewRecord, save_record
+from review.record import ReviewRecord
 from review.store import write_review
 from review.types import Finding, ReviewJob, ReviewMeta
 import fix.verify
@@ -68,11 +66,10 @@ def _committed_paths(wt: Path) -> set[str]:
 
 
 def _make_job(
-    git_wt, tmp_path, review_content: str = "", *,
-    rec: ReviewRecord | None = None,
+    git_wt, tmp_path, *, rec: ReviewRecord | None = None,
     files: list[str] | None = None, base: str = "main",
 ) -> ReviewJob:
-    """A review whose deliverable is `review_content`, over `git_wt`.
+    """A review holding `rec`, over `git_wt`; with no `rec`, an empty review file.
 
     A real `ReviewJob` rather than a mock: the adapter reads the review's
     effort, model, config and artifact directory off it, and a mock answers
@@ -80,17 +77,13 @@ def _make_job(
 
     `files` is the branch's changed-file list against `base` — the same
     shape `job.pr.files` carries for a real PR or stacked self-review.
-    `rec` builds the review from a record instead; Task 14 removes `review_content`.
     """
     review_file = tmp_path / "reviews" / "review.md"
     review_file.parent.mkdir(exist_ok=True)
     if rec is not None:
         write_review(review_file, rec, ReviewMeta())
     else:
-        review_file.write_text(review_content)
-        if review_content.strip():
-            save_record(review_file.parent, ingest_review(review_content, strict=False))
-            write_review_meta(review_file.parent, ReviewMeta())
+        review_file.write_text("")
     file_dicts = [
         {"path": p, "additions": 1, "deletions": 0} for p in (files or [])
     ]

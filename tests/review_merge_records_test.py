@@ -27,7 +27,7 @@ def _groups():
 
 def test_merging_the_fixture_groups_matches_todays_merge():
     rendered = render_body(merge_records(_groups()), sids=True, evidence=True)
-    assert canonical(rendered) == canonical(fixture_text("merged", "input.md"))
+    assert canonical(rendered) == canonical(fixture_text("merged", "expected.md"))
 
 
 def test_an_empty_severity_section_renders_no_placeholder():

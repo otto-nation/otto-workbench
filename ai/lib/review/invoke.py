@@ -78,6 +78,7 @@ class OrchestrateRequest:
     recover_sha: str = ""
     fix_pass: bool = False
     may_publish: bool = False
+    full_review: bool = False
 
 
 def build_argv(request: OrchestrateRequest) -> list[str]:
@@ -136,6 +137,8 @@ def build_argv(request: OrchestrateRequest) -> list[str]:
         args.append("--generated")
     if request.recover_sha:
         args += ["--recover-sha", request.recover_sha]
+    if request.full_review:
+        args.append("--full-review")
     return args
 
 

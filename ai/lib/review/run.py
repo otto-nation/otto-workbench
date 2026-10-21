@@ -367,6 +367,7 @@ def run_self_review(
         disprove=flags.disprove, generated=flags.generated,
         recover_sha=recover_sha, fix_pass=flags.fix,
         may_publish=flags.may_publish,
+        full_review=flags.force,
     )
 
     # The pin is released as soon as the pipeline is done with it, and before

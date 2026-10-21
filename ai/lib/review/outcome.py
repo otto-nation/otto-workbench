@@ -19,7 +19,12 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
+import core.log
+import git.client
+from core.phases import Mode
 from pr.domains import ReviewStatus
+from review.collect import uncommitted_files
+from review.document import covers
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
@@ -94,9 +99,47 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
 def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
              total_groups: int = 0, status: ReviewStatus | None = None) -> None:
     """Write `record` and this run's sidecar, and render review.md from both."""
-    write_review(Path(job.review_file), record, _review_meta(
-        job, skipped_groups=skipped_groups, total_groups=total_groups, status=status,
-    ))
+    meta = _review_meta(job, skipped_groups=skipped_groups, total_groups=total_groups,
+                        status=status)
+    write_review(Path(job.review_file), record, replace(
+        meta, head_moved_to=_head_moved_to(job), dirty_files=_dirty_files(job)))
+
+
+def _pinned_here(job: ReviewJob) -> str:
+    """The pinned head, when this is a self-review whose worktree holds it, else "".
+
+    Self mode only: there the pinned head was read from this same worktree, so
+    the worktree can be asked what changed since. In PR mode the pin is
+    GitHub's head and the local checkout is not the review's subject. A pinned
+    SHA the worktree does not hold says nothing either way.
+    """
+    pinned = job.pr.head_sha
+    if job.mode != Mode.SELF or not pinned or not Path(job.wt_path).is_dir():
+        return ""
+    held = git.client.out("cat-file", "-t", pinned, cwd=job.wt_path) == "commit"
+    return pinned if held else ""
+
+
+def _head_moved_to(job: ReviewJob) -> str:
+    """The live HEAD when a commit landed after this self-review pinned its head, else ""."""
+    pinned = _pinned_here(job)
+    live = git.client.head_sha(cwd=job.wt_path) if pinned else ""
+    if not live or covers(pinned, live):
+        return ""
+    core.log.warn(
+        f"HEAD moved to {git.client.abbrev(live)} while this review ran — it covers "
+        f"{git.client.abbrev(pinned)} only; the next run reviews the rest")
+    return live
+
+
+def _dirty_files(job: ReviewJob) -> tuple[str, ...]:
+    """The files the tree differs from the pinned head in, for the next round to re-read.
+
+    What this self-review read uncommitted, and on a raced run also the raced
+    commit's files and any mid-run edit (see `ReviewMeta.dirty_files`).
+    """
+    pinned = _pinned_here(job)
+    return tuple(uncommitted_files(job.wt_path, pinned)) if pinned else ()
 
 
 def is_complete_review(review_file: str) -> bool:
@@ -165,7 +208,8 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
 
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     # Reconciliation reads the ledger, which post-processing then clears.
-    record_prior_findings(job.review_file, job.prior, record, job.wt_path)
+    record_prior_findings(job.review_file, job.prior, record, job.wt_path,
+                          head_sha=job.pr.head_sha)
     done = post_process_record(record, job.wt_path, [f["path"] for f in job.pr.files])
     job.verification = done.verification
     return done.record

@@ -159,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--recover-sha", default="",
                         help="Commit a --recover run must complete against "
                              "(pins metadata to the failed run's HEAD)")
+    parser.add_argument("--full-review", action="store_true",
+                        help="Review a self-review's commit in full even when the "
+                             "working tree gives it a delta (set by review --self --force)")
     add_trail_args(parser)
     args = parser.parse_args(argv)
 

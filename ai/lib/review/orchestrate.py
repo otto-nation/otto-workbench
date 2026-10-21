@@ -460,6 +460,9 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         model=args.model, effort=resolve_effort(args.effort),
         skip_phases=phase_skips(args),
         include_generated=args.generated,
+        # getattr: the suites build `args` by hand, and an absent flag is the
+        # ordinary case.
+        full_review=getattr(args, "full_review", False),
     )
     job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
 

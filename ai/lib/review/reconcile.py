@@ -517,6 +517,7 @@ def record_prior_findings(
     prior: StoredReview | None,
     review: ReviewRecord,
     wt_path: str = "",
+    head_sha: str = "",
 ) -> Reconciliation | None:
     """Reconcile `review` against `prior` and record it beside `review_file`.
 
@@ -524,10 +525,12 @@ def record_prior_findings(
     which the review still says what it made of the prior findings. Returns
     None when there is nothing to reconcile — no prior review, or a prior
     review that reported no findings. `review_file` is the sidecar path only.
+    `head_sha` is the commit the run pinned; the range is labelled with it
+    rather than with a live HEAD that may have moved since.
     """
     if prior is None:
         return None
-    reconciliation = reconcile(prior, review, wt_path)
+    reconciliation = reconcile(prior, review, wt_path, head_sha)
     if not reconciliation.records:
         return None
     _report(reconciliation, _write(review_file, reconciliation))

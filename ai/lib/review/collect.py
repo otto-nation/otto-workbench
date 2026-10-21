@@ -657,8 +657,9 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
 
     Every reason to review the whole PR instead is decided here: no prior
     review, a prior review that recorded no SHA, one recorded against the
-    commit already checked out, and one naming a commit this worktree cannot
-    resolve.
+    commit already checked out (unless a self-review's tree differs from what
+    that review read, which is its delta, and `--force` was not given), and
+    one naming a commit this worktree cannot resolve.
     """
     if job.prior is None:
         core.log.info("No prior review record — running full review")
@@ -668,6 +669,14 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
         core.log.info("Prior sidecar has no head SHA — running full review")
         return ""
     if covers(prior_sha, job.pr.head_sha):
+        # Self-review reads the working tree, so a run on the reviewed commit
+        # has a delta when the tree differs from it, or when the last round read
+        # files dirty that are clean now (`ReviewMeta.dirty_files`). `--force`
+        # keeps the full re-review this case always got (`ReviewJob.full_review`).
+        if job.mode == Mode.SELF and not job.full_review and _self_delta_files(job, prior_sha):
+            core.log.info("Prior review is on current HEAD and the tree differs from what it "
+                          "read — reviewing the difference incrementally")
+            return job.pr.head_sha
         core.log.info("Prior review is on current HEAD — running full review")
         return ""
     if git.client.out("cat-file", "-t", prior_sha, cwd=job.wt_path) != "commit":
@@ -676,6 +685,39 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
             "— running full review")
         return ""
     return prior_sha
+
+
+def uncommitted_files(wt_path: str, since: str) -> list[str]:
+    """Every path the working tree differs from *since* in, untracked files included.
+
+    Read from numstat, which no prompt budget clips: a file list a delta acts
+    on must not depend on how much of the patch fitted. `--no-renames` makes a
+    rename a deletion plus an addition, so both paths are listed rather than
+    one `old => new` entry that names neither file. Untracked files come
+    through `_diff_untracked`, as in `worktree_diff`.
+    """
+    tracked = git.client.out("diff", "--numstat", "--no-renames", since, cwd=wt_path)
+    untracked = _diff_untracked(wt_path, _untracked_files(wt_path), counts_only=True)
+    counted = git.numstat.parse_numstat(_join_nonempty(tracked, untracked))
+    return sorted(f["path"] for f in counted.files)
+
+
+def _self_delta_files(job: ReviewJob, since: str) -> list[str]:
+    """The surface files a self-review's delta from *since* covers.
+
+    What the tree differs from *since* in, plus what the prior round read dirty
+    (`ReviewMeta.dirty_files`): a file whose edit was reverted since matches
+    *since* again while differing from what was reviewed, and only the record
+    says so. Narrowed to the review's surface, as the patch is — the re-read
+    paths too: a file whose only change on the branch was the reverted edit
+    has left the surface, so no group holds it, and when it is the only
+    difference the round falls back to a full review of the same HEAD, as
+    every such round did before.
+    """
+    reread = set(job.prior.meta.dirty_files) if job.prior else set()
+    surface = {f["path"] for f in job.pr.files}
+    paths = set(uncommitted_files(job.wt_path, since)) | reread
+    return sorted(p for p in paths if not surface or p in surface)
 
 
 def _collect_delta(job: ReviewJob) -> DeltaScope:
@@ -705,7 +747,8 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
             core.log.warn(
                 f"No ref resolves {base} — the delta covers every commit "
                 "since the prior review, the base's included")
-        files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
+        files = (_self_delta_files(job, prior_sha) if job.mode == Mode.SELF
+                 else [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)])
         return DeltaScope(
             delta_diff, delta_log, files, 0, prior_sha,
             DeltaAttribution.UNATTRIBUTED,

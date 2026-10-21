@@ -226,6 +226,11 @@ class ReviewMeta:
     host: str = ""
     pr_number: int | None = None
     head_sha: str = ""
+    # HEAD when the review was published, recorded only when a commit landed
+    # after the run pinned `head_sha` and before it wrote the review. The review
+    # covers `head_sha` and nothing later; this says so rather than re-pinning
+    # to a commit the review never read. Empty is the ordinary case.
+    head_moved_to: str = ""
     head_ref: str = ""
     base_ref: str = ""
     title: str = ""
@@ -242,6 +247,15 @@ class ReviewMeta:
     # rather than a list so the frozen dataclass is frozen all the way down.
     prior_sha: str = ""
     delta_files: tuple[str, ...] = ()
+    # The files the working tree differed from `head_sha` in when this
+    # self-review was published: what it read uncommitted, plus anything that
+    # moved while it ran — an edit made mid-run and, when a commit raced in
+    # (`head_moved_to` set), that commit's files, which the review never read.
+    # The next self-mode incremental round adds them to its change set, so a
+    # file whose edit was reverted in between — back to matching HEAD,
+    # invisible to any diff — is read again; over-listing costs a re-read,
+    # never a skipped file. Empty on a PR review and on a clean tree.
+    dirty_files: tuple[str, ...] = ()
     # Two timestamps because a review run has two moments worth recording and
     # they are not the same one. `started_at` is taken when the run begins;
     # `reviewed_at` is stamped only where a run reached its end with a review in
@@ -511,6 +525,9 @@ class ReviewJob:
     # cannot do once the two sources read the same.
     skip_phases: frozenset[Phase] = frozenset()
     include_generated: bool = False
+    # Keep a same-HEAD self-review full even when the working tree gives it a
+    # delta — what `pr review --self --force` asks for.
+    full_review: bool = False
     reply_threads: ReplyThreads | None = None
     verification: dict | None = None
     pr_state_data: "PRState | None" = None

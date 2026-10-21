@@ -54,6 +54,7 @@ class MetaKey(StrEnum):
     MODE = "mode"
     PR = "pr"
     HEAD_SHA = "head_sha"
+    HEAD_MOVED_TO = "head_moved_to"
     HEAD_REF = "head_ref"
     BASE_REF = "base_ref"
     REVIEW_TYPE = "review_type"
@@ -92,6 +93,7 @@ class ReviewHeader:
     mode: Mode | None = None
     pr_number: int | None = None
     head_sha: str = ""
+    head_moved_to: str = ""
     head_ref: str = ""
     base_ref: str = ""
     review_type: ReviewType = ReviewType.FULL
@@ -116,6 +118,7 @@ class ReviewHeader:
             (MetaKey.MODE, self.mode.value if self.mode else None),
             (MetaKey.PR, self.pr_number),
             (MetaKey.HEAD_SHA, self.head_sha or None),
+            (MetaKey.HEAD_MOVED_TO, self.head_moved_to or None),
             (MetaKey.HEAD_REF, self.head_ref or None),
             (MetaKey.BASE_REF, self.base_ref or None),
             (MetaKey.REVIEW_TYPE, self.review_type),
@@ -156,6 +159,7 @@ class ReviewHeader:
             mode=meta.mode,
             pr_number=meta.pr_number,
             head_sha=meta.head_sha,
+            head_moved_to=meta.head_moved_to,
             head_ref=meta.head_ref,
             base_ref=meta.base_ref,
             review_type=meta.review_type or ReviewType.FULL,

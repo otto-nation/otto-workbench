@@ -128,3 +128,29 @@ _run_migration() {
   [ "$status" -eq 3 ]
   [ "$(yq '.agent.model' "$CONFIG")" = "claude-sonnet-5-5" ]
 }
+
+@test "reads a bare KEY=value line, and an indented export" {
+  printf 'agent: {}\n' > "$CONFIG"
+  printf 'AI_SONNET_MODEL=claude-sonnet-5-5\n' > "$ENV_FILE"
+  run _run_migration pi
+  [ "$status" -eq 0 ]
+  [ "$(yq '.agent.model' "$CONFIG")" = "claude-sonnet-5-5" ]
+  printf 'agent: {}\n' > "$CONFIG"
+  printf '   export   AI_SONNET_MODEL=claude-sonnet-5\n' > "$ENV_FILE"
+  run _run_migration pi
+  [ "$status" -eq 0 ]
+  [ "$(yq '.agent.model' "$CONFIG")" = "claude-sonnet-5" ]
+}
+
+@test "an inline comment is not part of the value; a quoted value keeps its spaces" {
+  printf 'agent: {}\n' > "$CONFIG"
+  printf 'export AI_SONNET_MODEL=claude-sonnet-5-5   # pinned for vertex\n' > "$ENV_FILE"
+  run _run_migration pi
+  [ "$status" -eq 0 ]
+  [ "$(yq '.agent.model' "$CONFIG")" = "claude-sonnet-5-5" ]
+  printf 'agent: {}\n' > "$CONFIG"
+  printf "export AI_SONNET_MODEL='odd model' # comment\n" > "$ENV_FILE"
+  run _run_migration pi
+  [ "$status" -eq 0 ]
+  [ "$(yq '.agent.model' "$CONFIG")" = "odd model" ]
+}

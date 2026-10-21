@@ -1057,9 +1057,11 @@ stripped of the sections that were bookkeeping rather than findings, annotated
 with what the author said in reply to each finding, and followed by the
 instruction that asks for a disposition for every finding it carries.
 
-Scoping the prior review to a group's files keeps findings that name a line of
-one of those files. A finding without a line is file-level and is not in any
-group's slice.
+Scoping the prior review to a group's files keeps every finding that names one
+of those files, at a line or not. A finding without a line is about its file as
+a whole, and the group holding that file is the one that can carry it forward
+or settle it. Left in no group's slice it was unaccounted on every incremental
+run, and synthesis was asked to settle it each time.
 
 `_LEDGER_FIELDS_INSTRUCTION` is the one place the ledger's shape is written
 down for an agent; both sections here interpolate it rather than restating it,

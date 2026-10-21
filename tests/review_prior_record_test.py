@@ -50,9 +50,10 @@ def test_the_prompt_quotes_the_prior_record_without_bookkeeping():
     assert BANNER not in section
 
 
-def test_scoping_keeps_only_located_findings_in_the_group():
+def test_scoping_keeps_line_less_findings_by_path():
+    """`[I1]` names `voice.ts` with no line; the group holding the file carries it."""
     scoped = _scoped(_prior().record, ["apps/web/src/stores/voice.ts"])
-    assert [f.id for f in scoped.findings] == ["S2"]
+    assert [f.id for f in scoped.findings] == ["S2", "I1"]
 
 
 def test_a_stale_prior_means_no_prior_section():

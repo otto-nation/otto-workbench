@@ -118,7 +118,7 @@ def test_batch_need_noid_resume_reads_keys_from_the_covering_run(monkeypatch):
     assert run.id == "20261001T120000-aaaa"
 
 
-def test_batch_need_empty_and_help_take_no_locks_and_do_no_io(monkeypatch):
+def test_batch_need_with_no_subcommand_takes_no_locks_and_does_no_io(monkeypatch):
     seen = []
 
     def boom(*_a, **_k):
@@ -130,9 +130,7 @@ def test_batch_need_empty_and_help_take_no_locks_and_do_no_io(monkeypatch):
     monkeypatch.setattr(batch.store, "load", boom)
     empty = Need(NONE, update=False, locks=NO_LOCK)
     assert _need([]) == empty
-    assert _need(["run", "--help"]) == empty
-    assert _need(["run", "--help", "--checkout", "/r"]) == empty
-    assert _need(["resume", "-h"]) == empty
+    assert _need(["--verbose"]) == empty
     assert seen == []
 
 
@@ -179,6 +177,43 @@ def test_a_run_over_the_same_repo_is_refused_naming_the_lock(monkeypatch, tmp_pa
     assert "run 20261013T000000-abcd" in err
 
 
+def test_help_as_a_flag_value_does_not_skip_the_repos_batch_lock(tmp_path, capsys):
+    """`--prs --help` is not help: argparse consumes it as a value, or errors."""
+    repo = repo_with_origin(tmp_path / "repo")
+    with live_pid() as pid, held_elsewhere(
+            _path(_key(repo)), {"pid": pid, "command": "pr batch run", "started": "t0"}), \
+         patch("cli.pr_batch._cmd_run") as run:
+        code = _main(["batch", "run", "--checkout", str(repo), "--prs", "--help"])
+    assert code == 1
+    assert f"owns this global batch-{_key(repo)}" in capsys.readouterr().err
+    run.assert_not_called()
+
+
+def test_end_of_options_help_does_not_skip_the_repos_batch_lock(tmp_path, capsys):
+    """`pr batch run --checkout R -- --help` is not the parser answering help."""
+    repo = repo_with_origin(tmp_path / "repo")
+    with live_pid() as pid, held_elsewhere(
+            _path(_key(repo)), {"pid": pid, "command": "pr batch run", "started": "t0"}), \
+         patch("cli.pr_batch._cmd_run") as run:
+        code = _main(["batch", "run", "--checkout", str(repo), "--", "--help"])
+    assert code == 1
+    assert f"owns this global batch-{_key(repo)}" in capsys.readouterr().err
+    run.assert_not_called()
+
+
+def test_end_of_options_help_does_not_skip_the_batch_lock_on_resume(capsys):
+    """`pr batch resume RUN -- --help` is not the parser answering help."""
+    run = _saved(repo_key="acme-widget-12345678")
+    with live_pid() as pid, held_elsewhere(
+            _path("acme-widget-12345678"),
+            {"pid": pid, "command": "pr batch run", "started": "t0"}), \
+         patch("cli.pr_batch._cmd_resume") as resume:
+        code = _main(["batch", "resume", run.id, "--", "--help"])
+    assert code == 1
+    assert "owns this global batch-acme-widget-12345678" in capsys.readouterr().err
+    resume.assert_not_called()
+
+
 def test_the_handler_refuses_when_a_chosen_runs_key_is_not_held(monkeypatch, tmp_path, capsys):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(
@@ -191,7 +226,7 @@ def test_the_handler_refuses_when_a_chosen_runs_key_is_not_held(monkeypatch, tmp
 
 def test_require_batch_locks_names_keys_this_process_does_not_hold():
     with pytest.raises(cli.pr_batch._Refused, match="the batch lock for missing-key is not held"):
-        cli.pr_batch._require_batch_locks(["missing-key"])
+        cli.pr_batch._require_batch_locks(["missing-key"], "run not started")
 
 
 # ── no-id resume / cancel / status ────────────────────────────────────────────
@@ -254,3 +289,17 @@ def test_dispatch_holds_the_repo_batch_lock_before_it_resolves(tmp_path):
         cli.pr.main(["batch", "run", "--checkout", str(repo)], bin_dir=BIN_DIR)
     assert seen["held"] is True
     assert not core.run_lock.is_global_held(_scope(key))
+
+
+def test_resume_refuses_a_run_whose_repo_lock_was_not_taken(monkeypatch, capsys):
+    """The declaration and the handler can disagree on the run; the handler checks."""
+    run = _saved(repo_key="acme-widget-87654321")
+    monkeypatch.setattr(cli.registry, "_batch_locks", lambda argv: NO_LOCK)
+    driven = []
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
+    code = _main(["batch", "resume", run.id])
+    assert code == 1
+    assert driven == []
+    assert (f"run {run.id} not resumed: the batch lock for acme-widget-87654321 is not held"
+            in capsys.readouterr().err)

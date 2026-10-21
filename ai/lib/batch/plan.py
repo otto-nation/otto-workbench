@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import batch.targets
 import core.log
 import core.serde
 import core.session_lock
@@ -616,14 +617,6 @@ def _fetch_branches(data: dict, repo_dirs: dict[str, str]) -> dict[str, list[str
     return {d: sorted(b) for d, b in needed.items()}
 
 
-def _origin_key(repo_dir: str) -> str:
-    """The checkout's origin key, or empty when it has none or cannot be read."""
-    try:
-        return pr.target.repo_key_from_origin(repo_dir) or ""
-    except OSError:
-        return ""
-
-
 def rows_from_search(data: dict, repo_dirs: dict[str, str],
                      namespaces: dict[str, str] | None = None,
                      remote_heads: dict[str, dict[str, str] | None] | None = None,
@@ -641,7 +634,7 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
         repo_dir = repo_dirs[slug]
         if repo_dir not in heads:
             heads[repo_dir] = _local_heads(repo_dir)
-            keys[repo_dir] = _origin_key(repo_dir)
+            keys[repo_dir] = batch.targets.origin_key(repo_dir)
         rows.append(_row(
             n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), ""),
             (namespaces or {}).get(repo_dir, ""), viewer,

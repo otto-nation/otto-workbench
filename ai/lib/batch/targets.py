@@ -43,18 +43,26 @@ _MARKERS = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV,
             core.run_lock.GLOBAL_LOCK_ENV)
 
 
+def origin_key(directory: str) -> str:
+    """The origin key of the checkout at *directory*, or "" when it has no
+    `origin`, or is vanished or unreadable.
+
+    The one place a batch reads a checkout's key: planning records it, the
+    lock declaration and the driver read it back, and all of them must agree.
+    """
+    try:
+        return pr.target.repo_key_from_origin(directory) or ""
+    except OSError:
+        return ""
+
+
 def item_repo_key(item: Item) -> str | None:
     """*item*'s origin key, recorded at plan time, or read from its checkout.
 
     None when the item was saved without a key and the checkout has no
     `origin`, or is vanished or unreadable.
     """
-    if item.repo_key:
-        return item.repo_key
-    try:
-        return pr.target.repo_key_from_origin(item.repo_dir)
-    except OSError:
-        return None
+    return item.repo_key or origin_key(item.repo_dir) or None
 
 
 def item_target_dir(item: Item) -> Path | None:

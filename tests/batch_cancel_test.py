@@ -85,7 +85,11 @@ def test_resume_drives_only_a_run_it_loaded_under_the_run_lock(monkeypatch):
     monkeypatch.setattr(batch.store, "load", spy)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "resume", run.id]) == 10
-    assert loads[0][0] is True
+    # Reads before the run lock only name the per-repo batch locks to take
+    # and check (`cli.registry._batch_need`, `cli.pr_batch._require_batch_locks`):
+    # a run's items are fixed at creation, so its repos cannot change under
+    # them. What is driven must still be the load made under the lock.
+    assert any(held for held, _ in loads)
     assert [held for held, loaded in loads if loaded is driven["run"]] == [True]
 
 

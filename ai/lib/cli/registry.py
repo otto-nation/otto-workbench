@@ -140,14 +140,6 @@ def _flag_values(argv: Sequence[str], name: str) -> list[str]:
     return values
 
 
-def _origin_key(directory: str) -> str | None:
-    """`repo_key_from_origin(*directory*)`, or None when it cannot be read."""
-    try:
-        return pr.target.repo_key_from_origin(directory)
-    except OSError:
-        return None
-
-
 def _keys_from_plan(path: str) -> set[str]:
     """Origin keys recorded on each row of a saved plan file."""
     data = json.loads(Path(path).read_text())
@@ -157,7 +149,7 @@ def _keys_from_plan(path: str) -> set[str]:
             continue
         key = row.get("repo_key") or ""
         if not key:
-            key = _origin_key(row.get("repo_dir") or "") or ""
+            key = batch.targets.origin_key(row.get("repo_dir") or "")
         if key:
             keys.add(key)
     return keys
@@ -166,7 +158,7 @@ def _keys_from_plan(path: str) -> set[str]:
 def _batch_keys_for_run(argv: Sequence[str]) -> set[str]:
     keys: set[str] = set()
     for directory in _flag_values(argv, "--checkout"):
-        if key := _origin_key(directory):
+        if key := batch.targets.origin_key(directory):
             keys.add(key)
     for path in _flag_values(argv, "--plan"):
         keys.update(_keys_from_plan(path))
@@ -188,7 +180,7 @@ def _batch_keys_for_resume(argv: Sequence[str]) -> set[str]:
 
 
 def _batch_locks(argv: Sequence[str]) -> frozenset:
-    if not argv or {"-h", "--help"} & set(argv):
+    if not argv:
         return NO_LOCK
     sub = next((a for a in argv if not a.startswith("-")), "")
     if sub not in _BATCH_EXCLUSIVE:
@@ -200,9 +192,11 @@ def _batch_locks(argv: Sequence[str]) -> frozenset:
 def _batch_need(argv: Sequence[str]) -> Need:
     """`batch`'s need: `run` and `resume` hold one lock per repo they cover; the rest take nothing.
 
-    Empty argv, no subcommand, or `-h`/`--help` anywhere takes nothing and
-    does no I/O. A failure to compute keys also takes nothing: the handler
-    then refuses if the chosen run's repos are not held. `resolve` and
+    Empty argv or no subcommand takes nothing and does no I/O. A `--help`
+    token is not special here: the dispatcher skips every lock only when the
+    command's own parser printed help, so `--prs --help` — a value, or an
+    error — still declares the locks. A failure to compute keys takes nothing
+    and never raises: the handler then refuses a run whose repos are not held. `resolve` and
     `cancel` declare nothing: they write the inbox and take the run resource
     as `applier` only when no holder is draining, never the per-repo lock, so
     they reach a live run. `status`, `next` and `plan` only read.

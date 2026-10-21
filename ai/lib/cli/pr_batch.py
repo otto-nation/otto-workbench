@@ -337,27 +337,25 @@ def _held_batch_key(key: str) -> bool:
         core.run_lock.global_lock_path(batch.store.batch_lock(key).name))
 
 
-def _require_batch_locks(keys: list[str]) -> None:
-    """Raise `_Refused` unless this process holds every per-repo batch lock in *keys*."""
+def _require_batch_locks(keys: list[str], refused: str) -> None:
+    """Raise `_Refused` unless this process holds every per-repo batch lock in *keys*.
+
+    The dispatcher took the locks `_batch_need` declared before this handler
+    chose the run; a run whose repos differ from those (a plan file edited, a
+    covering run that changed in between) is refused rather than driven
+    unlocked. *refused* opens the message: "run not started", "run X not resumed".
+    """
     missing = [k for k in keys if not _held_batch_key(k)]
     if missing:
         raise _Refused(
-            "run not started: the batch lock for "
-            f"{', '.join(missing)} is not held — the repos changed since "
-            "the command started; re-run")
-
-
-def _row_repo_key(row: batch.plan.PlanRow) -> str:
-    if row.repo_key:
-        return row.repo_key
-    try:
-        return pr.target.repo_key_from_origin(row.repo_dir) or ""
-    except OSError:
-        return ""
+            f"{refused}: the batch lock for {', '.join(missing)} is not held — "
+            "the repos changed since the command started; re-run")
 
 
 def _row_repo_keys(rows: list[batch.plan.PlanRow]) -> list[str]:
-    return sorted({k for r in rows if (k := _row_repo_key(r))})
+    """The origin keys *rows* cover: recorded at plan time, or read from a saved
+    plan's checkout that predates the field."""
+    return sorted({k for r in rows if (k := r.repo_key or batch.targets.origin_key(r.repo_dir))})
 
 
 def _note_batch_locks(run: Run) -> None:
@@ -454,7 +452,7 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox)
     try:
         keys = {k for k in args.prs.split(",") if k}
         rows = [r for r in plan.rows if not keys or r.key in keys]
-        _require_batch_locks(_row_repo_keys(rows))
+        _require_batch_locks(_row_repo_keys(rows), "run not started")
         selected = {s.key: s.steps for s in args.select} if args.select else None
         dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
         cfg = _cfg(dirs)
@@ -557,7 +555,8 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     if not run_id:
         return _err("no batch run covers this repo; pass a run id")
     try:
-        _require_batch_locks(batch.targets.run_repo_keys(batch.store.load(run_id)))
+        _require_batch_locks(batch.targets.run_repo_keys(batch.store.load(run_id)),
+                             f"run {run_id} not resumed")
     except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
     except _Refused as exc:

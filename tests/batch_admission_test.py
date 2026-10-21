@@ -88,19 +88,34 @@ def test_refuses_on_memory_pressure():
     assert not batch.admission.decide(s, running=1, limit=3, estimate=1, cfg=CFG).admit
 
 
-def test_floor_admits_one_even_on_a_busy_host():
-    s = batch.admission.HostSample(mem_available=1 * GiB, cpu_some_avg10=99.0, mem_some_avg10=50.0)
-    assert batch.admission.decide(s, running=0, limit=3, estimate=4 * GiB, cfg=CFG).admit
+BUSY = batch.admission.HostSample(mem_available=1 * GiB, cpu_some_avg10=99.0, mem_some_avg10=50.0)
+
+
+def test_the_floor_slot_admits_one_even_on_a_busy_host():
+    assert batch.admission.decide(BUSY, running=0, limit=3, estimate=4 * GiB, cfg=CFG,
+                                  floor=True).admit
+
+
+def test_nothing_running_no_longer_admits_on_its_own():
+    """Regression: every driver admitted its first step, so N batches started N
+    steps on a host with no memory for one."""
+    v = batch.admission.decide(BUSY, running=0, limit=3, estimate=4 * GiB, cfg=CFG)
+    assert not v.admit and "waiting for memory" in v.reason
 
 
 def test_without_metrics_uses_the_static_pool_default():
-    # running=0 always admits before sample.supports_admission is even read
-    # (decide's own early return), so only running=1 reaches the pool_default
-    # branch this test is named for.
     s = batch.admission.HostSample(None, None, None)
     cfg = BatchConfig(pool_max=3, pool_default=1)
     v = batch.admission.decide(s, running=1, limit=3, estimate=1, cfg=cfg)
     assert not v.admit and "pool_default" in v.reason
+
+
+def test_without_metrics_the_pool_default_counts_every_driver_on_the_machine():
+    s = batch.admission.HostSample(None, None, None)
+    cfg = BatchConfig(pool_max=3, pool_default=2)
+    assert batch.admission.decide(s, running=0, limit=3, estimate=1, cfg=cfg, elsewhere=1).admit
+    v = batch.admission.decide(s, running=0, limit=3, estimate=1, cfg=cfg, elsewhere=2)
+    assert not v.admit and "2 step(s) running machine-wide" in v.reason
 
 
 def test_refuses_without_crashing_on_a_malformed_mem_reserve():
@@ -116,6 +131,32 @@ def test_estimates_start_at_defaults_and_keep_the_running_max():
     e.observe("o/a", Step.REVIEW, 1 * GiB)
     assert batch.admission.Estimates.load().get("o/a", Step.REVIEW) == 5 * GiB
     assert batch.admission.Estimates.load().get("o/b", Step.REVIEW) == batch.admission.DEFAULT_ESTIMATES[Step.REVIEW]
+
+
+def test_concurrent_observers_both_land():
+    """Regression: each driver rewrote the file from its own copy, so the last
+    writer erased the other's peak."""
+    a, b = batch.admission.Estimates.load(), batch.admission.Estimates.load()
+    a.observe("o/a", Step.REVIEW, 5 * GiB)
+    b.observe("o/b", Step.CI, 3 * GiB)
+    fresh = batch.admission.Estimates.load()
+    assert (fresh.get("o/a", Step.REVIEW), fresh.get("o/b", Step.CI)) == (5 * GiB, 3 * GiB)
+
+
+def test_a_merge_keeps_the_larger_peak_whoever_wrote_it():
+    a, b = batch.admission.Estimates.load(), batch.admission.Estimates.load()
+    a.observe("o/a", Step.REVIEW, 5 * GiB)
+    b.observe("o/a", Step.REVIEW, 3 * GiB)
+    assert batch.admission.Estimates.load().get("o/a", Step.REVIEW) == 5 * GiB
+
+
+def test_observe_survives_an_unwritable_lock_file(monkeypatch):
+    def deny(*a, **k):
+        raise PermissionError("read-only")
+    monkeypatch.setattr(batch.admission.os, "open", deny)
+    e = batch.admission.Estimates.load()
+    e.observe("o/a", Step.REVIEW, 5 * GiB)
+    assert e.get("o/a", Step.REVIEW) == 5 * GiB
 
 
 def test_tree_rss_sums_a_process_and_its_descendants(tmp_path):

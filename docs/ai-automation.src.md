@@ -528,11 +528,11 @@ Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` a
 
 A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues a waiting or interrupted run; a recorded cancel is final and resume refuses it. `open-chat` is UI-only.
 
-Admission starts a step when free memory
-minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
-under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
-one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no
-pressure metrics (macOS) use `batch.pool_default` (1). State lives under
+Admission counts every batch driver on the machine: a step starts when free memory, less other
+drivers' pending steps and `batch.mem_reserve`, covers its observed peak and pressure stays under
+`batch.cpu_pressure_max` / `batch.mem_pressure_max`. Drivers that queued first start first, and with
+nothing running anywhere the queue's head starts one step regardless ([`batch/machine.py`](ai-libraries.md#batchmachinepy)). `--pool` and `batch.pool_max` (default 2)
+cap a run; with no pressure metrics (macOS) `batch.pool_default` (1) caps steps machine-wide. State lives under
 `~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces that have no live claim and no run ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### The Pi package the sync declares, and who gets it

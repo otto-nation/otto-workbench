@@ -14,6 +14,7 @@ from typing import Callable
 
 import batch.admission
 import batch.events
+import batch.machine
 import batch.outcomes
 import batch.plan
 import batch.report
@@ -211,7 +212,8 @@ class Scheduler:
                  commits: Callable[[str, str], list[str] | None] = _new_commits,
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None,
-                 release: Callable[[Run], object] | None = None):
+                 release: Callable[[Run], object] | None = None,
+                 machine: batch.machine.Machine | batch.machine.PerRun | None = None):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
         # Called with the run after every commit a tick makes, so the driver
         # can give back the target lock of an item that is now terminal. A
@@ -232,6 +234,13 @@ class Scheduler:
         self._contains = contains
         self._dirty, self._rebasing = dirty, rebasing
         self._unpublished = unpublished
+        # What other drivers on the machine are running, and the floor slot.
+        # Without one the scheduler sees only itself (`PerRun`), as before.
+        self._machine = machine or batch.machine.PerRun()
+        self._peers = batch.machine.Peers()
+        # Whether this pass refused a step on the host's say: the driver is
+        # waiting, and with nothing running it queues for the floor slot.
+        self._refused = False
         self._descends, self._commits = descends, commits
 
     @property
@@ -450,10 +459,16 @@ class Scheduler:
                        step=rec.step.value, reason=reason)
         item.status, item.wait_reason = ItemStatus.WAITING_ADMISSION, reason
 
+    def _live_steps(self) -> list[batch.machine.LiveStep]:
+        return [batch.machine.LiveStep(live.item.key, live.rec.step.value, live.item.repo,
+                                       self._estimates.get(live.item.repo, live.rec.step),
+                                       live.peak)
+                for live in self._live.values()]
+
     def _host_for_admit(self) -> batch.admission.HostSample:
         sample = self._host()
-        pending = sum(max(0, self._estimates.get(live.item.repo, live.rec.step) - live.peak)
-                      for live in self._live.values())
+        own = sum(s.pending for s in self._live_steps())
+        pending = own + self._peers.pending
         if sample.mem_available is None or not pending:
             return sample
         return batch.admission.HostSample(max(0, sample.mem_available - pending),
@@ -524,8 +539,34 @@ class Scheduler:
             if bases and all(self.run.item(k).terminal for k in bases):
                 self.session.apply(Decide(decision=d.id, action="retry"))
 
+    def _verdict(self, item: Item, rec: StepRecord) -> batch.admission.Verdict:
+        """The host's answer for *rec*, and the floor slot's when the host refuses
+        a driver with nothing running. A driver that queued first goes first."""
+        def ask(floor: bool) -> batch.admission.Verdict:
+            return batch.admission.decide(
+                self._host_for_admit(), running=len(self._live), limit=max(1, self.run.pool),
+                estimate=self._estimates.get(item.repo, rec.step), cfg=self.cfg,
+                floor=floor, elsewhere=self._peers.live)
+        if ahead := self._machine.ahead():
+            if not self._live:
+                self._machine.queue()
+            return batch.admission.Verdict(
+                False, f"waiting behind batch run {ahead}, which queued for the machine first")
+        verdict = ask(False)
+        if verdict.admit or self._live or not self._machine.take_floor():
+            return verdict
+        return ask(True)
+
     def _admit(self) -> None:
         self._release_stacked()
+        self._peers = self._machine.sync(self._live_steps())
+        self._admit_items()
+        # Waiting for the floor means refused with nothing running; a driver
+        # with a step live is not in the queue.
+        self._machine.settle(self._live_steps(), waiting=self._refused and not self._live)
+
+    def _admit_items(self) -> None:
+        self._refused = False
         for item in self.run.items:
             if not self._ready(item) or not self._ensure_worktree(item):
                 continue
@@ -540,11 +581,9 @@ class Scheduler:
             if self._repo_busy(item, rec):
                 self._refuse(item, rec, f"another rebase or CI step is fetching in {item.repo_dir}")
                 continue
-            verdict = batch.admission.decide(self._host_for_admit(), running=len(self._live),
-                                       limit=max(1, self.run.pool),
-                                       estimate=self._estimates.get(item.repo, rec.step),
-                                       cfg=self.cfg)
+            verdict = self._verdict(item, rec)
             if not verdict.admit:
+                self._refused = True
                 self._refuse(item, rec, verdict.reason)
                 continue
             fresh = self._confirm(item, rec)

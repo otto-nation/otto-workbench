@@ -483,8 +483,8 @@ class BatchConfig:
 
     `pool_max` caps whatever a caller asks for. The rest feed admission
     control, which decides actual concurrency from host pressure;
-    `pool_default` is the fixed concurrency used where the host exposes no
-    pressure metrics.
+    `pool_default` is the fixed concurrency, counted across every batch
+    driver on the machine, used where the host exposes no pressure metrics.
     """
 
     pool_max: int = 2

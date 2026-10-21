@@ -35,7 +35,7 @@ from review.ingest import (
     ArtifactOutcome, IngestError, IngestRejected, ingest_artifact,
     load_artifact,
 )
-from review.merge import merge_records
+from review.merge import append_findings, merge_records
 from review.outcome import (
     _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
     _post_process_review, _publish, _reconcile_and_verify, _write_clean_review,
@@ -51,7 +51,9 @@ from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _with_sids
 from review.reconcile import passed_over
-from review.record import Disposition, ProseSection, ReviewRecord, SeveritySection
+from review.record import (
+    Disposition, ProseSection, RecordFinding, ReviewRecord, SeveritySection,
+)
 from review.registry import build_prompt
 from review.render import render_body
 from review.retry import GroupFailure, _has_output, _retry_missing_output
@@ -67,6 +69,10 @@ from review.verify import apply_disprove
 from core.text import plural
 
 DISPROVE_MIN_FINDINGS = 3
+
+# Dispositions synthesis may copy. Anything else would re-open if shown as
+# group JSON, so it is held out of the prompt and restored afterwards.
+_SYNTHESIS_KEEP = (Disposition.OPEN, Disposition.DECLINED)
 
 
 @dataclass(frozen=True)
@@ -106,33 +112,51 @@ class Merged:
 
     def carry(self, record: ReviewRecord) -> "Merged":
         notes = self.record.severity_sections + record.severity_sections
-        return Merged(replace(self.record, findings=self.record.findings + record.findings,
-                              severity_sections=notes))
+        return Merged(replace(
+            append_findings(self.record, record.findings),
+            severity_sections=notes,
+        ))
 
     def _for_synthesis(self) -> ReviewRecord:
         # as_group_artifact renders anything other than OPEN/DECLINED as a
         # plain open finding, so those stay off the page synthesis copies.
-        keep = (Disposition.OPEN, Disposition.DECLINED)
         return replace(
             self.record,
-            findings=tuple(f for f in self.record.findings if f.disposition in keep),
+            findings=tuple(
+                f for f in self.record.findings if f.disposition in _SYNTHESIS_KEEP
+            ),
         )
+
+
+def _finding_identity(finding: RecordFinding) -> frozenset[str]:
+    return frozenset(token for token in (finding.stable_id, finding.sid) if token)
+
+
+def _take_held(
+    finding: RecordFinding, held: list[RecordFinding],
+) -> RecordFinding | None:
+    keys = _finding_identity(finding)
+    for index, candidate in enumerate(held):
+        if keys & _finding_identity(candidate):
+            return held.pop(index)
+    return None
 
 
 def _restore_held_findings(merged: ReviewRecord, record: ReviewRecord) -> ReviewRecord:
     """Keep findings synthesis was not shown, unless it also emitted them.
 
-    Match by stable_id so a finding synthesis restated is not duplicated.
+    Identity is the non-empty {stable_id, sid}. A synthesis copy that matches
+    a held finding is dropped; the held finding keeps that slot, disposition
+    unchanged. Remaining held findings are appended with fresh IDs.
     """
-    keep = (Disposition.OPEN, Disposition.DECLINED)
-    held = tuple(f for f in merged.findings if f.disposition not in keep)
+    held = [f for f in merged.findings if f.disposition not in _SYNTHESIS_KEEP]
     if not held:
         return record
-    emitted = {f.stable_id for f in record.findings if f.stable_id}
-    extra = tuple(f for f in held if f.stable_id not in emitted)
-    if not extra:
-        return record
-    return replace(record, findings=record.findings + extra)
+    kept: list[RecordFinding] = []
+    for finding in record.findings:
+        match = _take_held(finding, held)
+        kept.append(match if match is not None else finding)
+    return append_findings(replace(record, findings=tuple(kept)), held)
 
 
 def _holistic_skip_reason(

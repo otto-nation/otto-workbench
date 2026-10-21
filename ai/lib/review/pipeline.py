@@ -67,7 +67,7 @@ from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
 from review.prompt_sections import _is_incremental
 from review.registry import build_prompt
-from review.phases import PhaseResult, PhaseRunner, _should_disprove, _touch
+from review.phases import PhaseResult, PhaseRunner, _should_disprove
 from review.steps import (
     _build_group_skips, _carry_forward_prior_findings, _identify_incremental_skips,
     _phase_disprove, _phase_merge, _run_disprove_gate, _run_group_phase,
@@ -160,7 +160,9 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     core.log.info(f"Running review agent on {label}...")
     core.log.blank()
     output = phase_output_path(job.review_file, Phase.SINGLE)
-    _touch(output)
+    # Emptied, not just created: a resumed run's earlier attempt must not read
+    # as this agent having written.
+    Path(output).write_text("")
 
     # `rc` tracks the latest attempt so the failure message below reports the
     # retry's exit code, not the first attempt's. `sent` is the prompt the last

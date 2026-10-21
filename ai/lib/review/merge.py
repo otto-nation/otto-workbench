@@ -68,6 +68,7 @@ pooled map answers with whichever group happens to have declared that number.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from review.grammar import (
@@ -220,6 +221,29 @@ def renumber_record(
         for severity in SEVERITIES
     }
     return _rewrite_record(record, _renumbering(declared, merged_into or {}))
+
+
+def append_findings(
+    base: ReviewRecord, added: Sequence[RecordFinding],
+) -> ReviewRecord:
+    """Append *added* with IDs above each severity's highest in *base*.
+
+    `renumber_record` maps by old ID and cannot split two findings that share
+    one, so newcomers are numbered first and the gap-closer runs after.
+    """
+    if not added:
+        return base
+    highest: dict[str, int] = {}
+    for finding in base.findings:
+        if not finding.visible:
+            continue
+        highest[finding.severity] = max(highest.get(finding.severity, 0), finding.seq)
+    numbered = []
+    for finding in added:
+        next_seq = highest.get(finding.severity, 0) + 1
+        highest[finding.severity] = next_seq
+        numbered.append(replace(finding, id=f"{finding.severity}{next_seq}"))
+    return renumber_record(replace(base, findings=base.findings + tuple(numbered)))
 
 
 # ── Triage and deduplication ─────────────────────────────────────────────────

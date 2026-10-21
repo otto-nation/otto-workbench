@@ -458,3 +458,20 @@ def test_the_single_agent_keeps_a_decline_only_for_a_prior_finding(tmp_path, mon
     review.pipeline.run_single_agent(job, disprove=False)
     by_body = {f.body: f.disposition for f in load_record(tmp_path).findings}
     assert by_body == {"kept": Disposition.DECLINED, "invented": Disposition.OPEN}
+
+
+def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):
+    job = _make_job(tmp_path)
+    (tmp_path / "single.json").write_text(json.dumps({
+        "summary": "old run", "verdict": "Approve",
+    }))
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    with pytest.raises(SystemExit):
+        review.pipeline.run_single_agent(job, disprove=False)
+    assert not Path(job.review_file).exists()

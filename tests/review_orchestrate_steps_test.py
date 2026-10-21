@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from conftest import git_out
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
@@ -431,6 +433,74 @@ class TestPhaseSynthesis:
         loaded = load_record(tmp_path)
         assert [f.disposition for f in loaded.findings] == [Disposition.FIXED]
         assert "already fixed" not in seen.get("merged_content", "")
+
+    def test_restored_findings_never_share_an_id(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({
+                "summary": "s", "verdict": "Approve",
+                "findings": [
+                    {"id": "N1", "path": "a.py", "line": 1, "body": "synth one"},
+                    {"id": "N2", "path": "a.py", "line": 2, "body": "synth two"},
+                ],
+            }))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        held = record(
+            finding("N1", "skipped thing", path="b.py",
+                    disposition=Disposition.SKIPPED),
+            finding("N2", "already fixed", path="c.py",
+                    disposition=Disposition.FIXED),
+        )
+        ro._phase_synthesis(job, "", 3, Merged(held))
+        ids = [f.id for f in load_record(tmp_path).findings]
+        assert len(ids) == 4
+        assert len(set(ids)) == 4
+
+    @pytest.mark.parametrize(
+        "emitted",
+        [
+            {"id": "N1", "path": "a.py", "line": 1, "body": "already fixed"},
+            {"id": "N1", "path": "a.py", "line": 1, "body": "reworded",
+             "sid": "3f9a2c1d"},
+        ],
+        ids=["same-anchor", "same-sid"],
+    )
+    def test_a_re_emitted_held_finding_keeps_its_disposition(
+        self, ro, tmp_path, monkeypatch, emitted,
+    ):
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({
+                "summary": "s", "verdict": "Approve", "findings": [emitted],
+            }))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        held = finding(
+            "N1", "already fixed", sid="3f9a2c1d",
+            disposition=Disposition.FIXED,
+        )
+        ro._phase_synthesis(job, "", 3, Merged(record(held)))
+        loaded = load_record(tmp_path).findings
+        assert len(loaded) == 1
+        assert loaded[0].disposition is Disposition.FIXED
+        assert loaded[0].body == "already fixed"
+
+
+def test_carried_findings_never_share_an_id():
+    base = Merged(record(finding("N1", "from groups")))
+    extra = record(finding(
+        "N1", "from prior", path="b.py", disposition=Disposition.FIXED,
+    ))
+    ids = [f.id for f in base.carry(extra).record.findings]
+    assert len(ids) == 2
+    assert len(set(ids)) == 2
 
 
 class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:

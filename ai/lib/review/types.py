@@ -312,6 +312,14 @@ class ReviewMeta:
     # schema depend on a module it otherwise knows nothing about.
     fix_commit_sha: str = ""
     fix_commit_status: str = ""
+    # The fix commit this review counts as reviewed, set only when the fix pass
+    # that made it qualified: its one parent is a commit this review covers, the
+    # repo's checks were green, the gate verified every fix, and it committed
+    # nothing but fixed files and their tests (`review.convergence.fix_coverage`).
+    # Empty otherwise, and for a sidecar written before the field — both read as
+    # "nothing beyond head_sha". Never the base of a later delta: that is always
+    # `head_sha`.
+    covered_sha: str = ""
     # A fix pass that was stopped before it landed. Its own field rather than a
     # `fix_commit_status` value: that one is `CommitStatus`'s vocabulary, and an
     # interruption is not something `land` reports. Cleared once the leftovers
@@ -363,6 +371,11 @@ class ReviewMeta:
         if not self.fix_commit_status:
             return ""
         return self.fix_commit_sha if commit_unpushed(self.fix_commit_status) else ""
+
+    @property
+    def reviewed_through(self) -> str:
+        """The latest commit this review answers "is a re-run needed" for."""
+        return self.covered_sha or self.head_sha
 
 
 def meta_enum(enum_cls, value):

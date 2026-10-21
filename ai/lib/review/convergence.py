@@ -18,6 +18,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import core.log
+import fix.engine
+import fix.scope
+import fix.suite
 import git.client
 from core.phases import Mode
 from core.proc import CmdResult
@@ -329,3 +332,80 @@ def set_aside_leftovers(
     tinfo(trail, "fix_leftovers_set_aside", f"{len(untouched)} stashed, {len(moved)} left",
           data={"stashed": untouched, "left": moved})
     return message
+
+
+def commit_parents(sha: str, wt_path: str | Path) -> tuple[str, ...]:
+    """The parents of commit *sha*, read from the repository; () when none can be read."""
+    return tuple(git.client.lines("rev-parse", f"{sha}^@", cwd=wt_path))
+
+
+@dataclass(frozen=True)
+class FixCoverage:
+    """The fix commit a pass may count as reviewed, or why it may not."""
+
+    sha: str = ""
+    why: str = ""
+
+    @property
+    def covered(self) -> bool:
+        return bool(self.sha)
+
+
+def fix_coverage(
+    run: fix.engine.FixRun, committed: set[str] | None, item_files: dict[str, str],
+    reviewed_through: str, wt_path: str | Path,
+) -> FixCoverage:
+    """Whether the commit *run* landed adds nothing a re-review would need to read.
+
+    Five conditions, each the reason a re-review would otherwise be owed: the
+    commit exists; it has exactly one parent, and the review covers it; the
+    repo's checks were green over it; the gate verified every fix it claims;
+    and it touches only the files those fixes are anchored in and their tests,
+    and no file an item it did not fix is anchored in.
+
+    The parent is read from the commit, not taken from `run.head_before`: that
+    is read before the agent runs, so a commit made while the agent worked
+    sits between it and the fix commit unseen. *reviewed_through* is the
+    review's `ReviewMeta.reviewed_through`, so a pass on top of a covered fix
+    commit can be covered in turn.
+    """
+    landed = run.landed
+    if landed is None or not landed.sha:
+        return FixCoverage(why="no commit landed")
+    parents = commit_parents(landed.sha, wt_path)
+    if len(parents) != 1:
+        return FixCoverage(why=f"it has {len(parents)} parents; only a single-parent commit "
+                               "can be covered")
+    if not covers(reviewed_through, parents[0]):
+        return FixCoverage(why="its only parent is not a commit this review covers")
+    if run.suite.status is not fix.suite.SuiteStatus.GREEN:
+        return FixCoverage(why=f"the repo's checks were {run.suite.status.value}, not green")
+    fixed = [o for o in run.outcomes if o.outcome.counts_as_fixed]
+    if not fixed or any(o.verified is not True for o in fixed):
+        return FixCoverage(why="not every fix was verified by the gate")
+    return _scope_coverage(run, set(committed or ()), item_files, landed.sha)
+
+
+def _anchor(outcome: ItemOutcome, item_files: dict[str, str]) -> str:
+    return outcome.file or item_files.get(outcome.id, "")
+
+
+def _scope_coverage(
+    run: fix.engine.FixRun, committed: set[str], item_files: dict[str, str], sha: str,
+) -> FixCoverage:
+    """Condition five: fixed items' files and their tests, and nothing an unfixed item names.
+
+    Attribution is by path (`fix/scope.py`'s ceiling), so a committed file that
+    is the anchor of a skipped, declined or deferred item holds an edit no
+    verified fix stands behind, whichever item it answered.
+    """
+    fixed = {_anchor(o, item_files) for o in run.outcomes if o.outcome.counts_as_fixed} - {""}
+    unfixed = {_anchor(o, item_files) for o in run.outcomes
+               if not o.outcome.counts_as_fixed} - {""}
+    stray = sorted(p for p in committed if not fix.scope.anchor_or_test(p, fixed))
+    if not committed or stray:
+        return FixCoverage(why=f"it commits {', '.join(stray) or 'nothing'} that no fix names")
+    owed = sorted(committed & unfixed)
+    if owed:
+        return FixCoverage(why=f"it commits {', '.join(owed)}, the file of an item it did not fix")
+    return FixCoverage(sha=sha)

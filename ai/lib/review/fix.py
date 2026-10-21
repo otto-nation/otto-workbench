@@ -68,7 +68,7 @@ import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
-from review.convergence import blob_of, fix_work_set, mark_skips
+from review.convergence import FixCoverage, blob_of, fix_coverage, fix_work_set, mark_skips
 from review.document import ReviewDocument
 import review.fix_logs
 from review.grammar import UNVERIFIED_TAIL_RE
@@ -974,7 +974,7 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
             review.fix_logs.keep(review_dir, job.started_at)
         except Exception as exc:  # noqa: BLE001 - keep must not replace the pass
             core.log.warn(f"could not keep the fix-pass logs: {exc}")
-    _record_commit(job, run)
+    _record_commit(job, run, adapter)
     if (run.landed is not None
             and run.landed.status is git.land.CommitStatus.COMMIT_FAILED):
         return 1
@@ -1088,7 +1088,9 @@ def _report_unpushed(job: ReviewJob) -> None:
         )
 
 
-def _record_commit(job: ReviewJob, run: fix.engine.FixRun) -> None:
+def _record_commit(
+    job: ReviewJob, run: fix.engine.FixRun, adapter: ReviewFixAdapter | None = None,
+) -> None:
     """Record the fix pass's commit in the review's sidecar, and say what is owed.
 
     The push is gated and the commit is not, so the ordinary end of
@@ -1110,6 +1112,11 @@ def _record_commit(job: ReviewJob, run: fix.engine.FixRun) -> None:
     reports that as `NO_CHANGES` or `COMMIT_FAILED`, never as `None`, and both
     carry an empty `sha` — the tell that nothing here should overwrite an
     earlier round's real commit.
+
+    It also records whether the commit counts as reviewed (`covered_sha`), from
+    *adapter*'s commit scope and items and the commit's own parent — see
+    `review.convergence.fix_coverage`. Without an adapter the scope is unknown,
+    so the commit is recorded and never covered.
     """
     if run.landed is None or not run.landed.sha:
         return
@@ -1122,10 +1129,21 @@ def _record_commit(job: ReviewJob, run: fix.engine.FixRun) -> None:
         core.log.warn(f"Fix pass reported an unrecordable commit ({status!r}) — not stamped")
         return
     review_dir = Path(job.artifact_dir)
-    write_review_meta(review_dir, replace(
-        read_review_meta(review_dir),
-        fix_commit_sha=sha,
-        fix_commit_status=str(status),
-    ))
+    # No adapter, no commit scope to judge the commit by: recorded, never covered.
+    coverage = (
+        fix_coverage(run, adapter.changed, {i.id: i.file for i in adapter.items()},
+                     read_review_meta(review_dir).reviewed_through, job.wt_path)
+        if adapter is not None else FixCoverage(why="no commit scope was handed to the recorder")
+    )
+    changes = dict(fix_commit_sha=sha, fix_commit_status=str(status), covered_sha=coverage.sha)
+    # Through `update_review` so review.md's header states the coverage too; a
+    # stale directory has no record to re-render, and keeps the sidecar line.
+    if update_review(Path(job.review_file), **changes) is None:
+        write_review_meta(review_dir, replace(read_review_meta(review_dir), **changes))
+    if coverage.covered:
+        core.log.info(f"Fix commit {git.client.abbrev(sha)} counts as reviewed — "
+                      "no re-review is needed for it")
+    else:
+        core.log.dim(f"Fix commit {git.client.abbrev(sha)} needs a re-review: {coverage.why}")
     if run.landed.resume:
         core.log.info(f"Fix commit held locally — {run.landed.resume}")

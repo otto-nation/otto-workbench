@@ -234,19 +234,15 @@ def _record_section(record: ReviewRecord, header: str) -> str:
     }
     if key in by_key:
         return by_key[key].strip()
+    # review.render imports this module; a top-level import here is circular.
+    from review.render import failures_body, ledger_line, triage_line
     if key == SECTION_PRIOR_FINDINGS.lower():
-        # review.render imports this module; a top-level import here is circular.
-        from review.render import ledger_line
         return "\n".join(ledger_line(e) for e in record.ledger)
     if key == SECTION_FILE_TRIAGE.lower():
-        # review.render imports this module; a top-level import here is circular.
-        from review.render import triage_line
         return "\n".join(triage_line(e) for e in record.triage or ()).strip()
     if key == SECTION_FAILURES.lower():
         if not record.failures:
             return ""
-        # review.render imports this module; a top-level import here is circular.
-        from review.render import failures_body
         return failures_body(record.failures)
     return next((e.body.strip() for e in record.extra if e.heading.lower() == key), "")
 

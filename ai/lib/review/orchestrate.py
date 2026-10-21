@@ -50,7 +50,7 @@ import pr.target
 from agent.registry import phase_skips
 from core.phases import Backend, Effort, Mode
 from review.paths import (
-    read_review_meta, stamp_reviewed,
+    read_review_meta, stamp_reviewed, write_review_meta,
 )
 # The function rather than the module: `git.client` binds `run` and `ok`, which
 # `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
@@ -358,6 +358,10 @@ def _run_phases(trail, args, job) -> _PhasesRun:
     function does, and a phase added here is swept without anyone remembering
     to sweep it.
     """
+    # getattr: `--fix` has callers that build their own args, as
+    # `_file_open_findings` notes; an absent flag is the ordinary run.
+    if getattr(args, "resume_fix", False):
+        return _resume_fix_pass(trail, args, job)
     if _is_no_op_rereview(job):
         trail.decision(
             "empty_delta", "no agent ran",
@@ -420,6 +424,29 @@ def _run_phases(trail, args, job) -> _PhasesRun:
         trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
 
     return _PhasesRun(pipeline=pipeline, fix_rc=rc)
+
+
+def _resume_fix_pass(trail, args, job) -> _PhasesRun:
+    """The fix pass alone, over the review this HEAD already has.
+
+    The review is not redone: nothing it read has changed, and the pass that
+    stopped had already been handed its findings. The leftovers were set aside
+    before this process started (`review.run._interrupted_pass`), so the pass
+    starts clean. No publish happens on this path, so the sidecar's
+    `started_at` is stamped with this run's start first — `review.fix_logs`
+    keeps the pass's logs under it and the summary looks them up by it.
+    """
+    trail.decision("fix_pass", "resuming an interrupted fix pass",
+                   reason="the last fix pass on this HEAD stopped before it committed")
+    core.log.info("Resuming the interrupted fix pass — the review on this HEAD stands")
+    review_dir = Path(job.artifact_dir)
+    write_review_meta(review_dir, replace(read_review_meta(review_dir),
+                                          started_at=job.started_at))
+    _inject_static_analysis_section(job)
+    with trail.span("fix_pass"):
+        rc = run_fix_pass(job, trail)
+    _file_open_findings(args, job, trail)
+    return _PhasesRun(pipeline=Pipeline.SINGLE, fix_rc=rc)
 
 
 def run_orchestrate(trail, args, repo, session_log) -> int:

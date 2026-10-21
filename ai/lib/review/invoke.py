@@ -77,6 +77,7 @@ class OrchestrateRequest:
     generated: bool = False
     recover_sha: str = ""
     fix_pass: bool = False
+    resume_fix: bool = False
     may_publish: bool = False
     full_review: bool = False
 
@@ -116,6 +117,8 @@ def build_argv(request: OrchestrateRequest) -> list[str]:
     args += ["--generator-version", request.generator_version]
     if request.fix_pass:
         args.append("--fix")
+        if request.resume_fix:
+            args.append("--resume-fix")
     # The publishing gate is process-wide and the fix pass runs in there, so the
     # only way it learns this run may publish is to be told on its own argv.
     if request.may_publish:

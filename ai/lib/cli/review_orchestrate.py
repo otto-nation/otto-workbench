@@ -144,6 +144,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Max file groups in multi-phase reviews (default: effort-based)")
     parser.add_argument("--fix", action="store_true",
                         help="Run fix pass after review to apply findings")
+    parser.add_argument("--resume-fix", action="store_true",
+                        help="Skip the review and resume the fix pass a stop "
+                             "interrupted on this HEAD (set by review --self --fix)")
     parser.add_argument("--post", action="store_true",
                         help="Let the fix pass push its commit; without it the "
                              "push is drafted")

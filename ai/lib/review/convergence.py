@@ -20,12 +20,14 @@ from pathlib import Path
 import core.log
 import git.client
 from core.phases import Mode
+from core.trail import Trail, tinfo
 from pr.fix import FixOutcome, ItemOutcome
 from review.collect import uncommitted_files
 from review.document import covers
+from review.paths import read_review_meta, write_review_meta
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.types import (
-    SEVERITY_IDIOMS, SEVERITY_NIT, Finding, ReviewJob, StickySkip,
+    SEVERITY_IDIOMS, SEVERITY_NIT, Finding, FixInterruption, ReviewJob, StickySkip,
 )
 
 
@@ -229,3 +231,54 @@ def fix_work_set(findings: list[Finding], held: tuple[str, ...]) -> list[Finding
         core.log.info(f"Incremental: {len(withheld)} nit/idiom finding(s) left open for a "
                       f"person or the next full review ({', '.join(withheld)})")
     return [f for f in findings if f.id not in withheld]
+
+
+def interrupted_fix(review_dir: Path, wt_path: str) -> FixInterruption | None:
+    """The interruption the review at *review_dir* records, if HEAD is still its head."""
+    meta = read_review_meta(review_dir)
+    stopped = meta.fix_interrupted
+    if stopped is None:
+        return None
+    live = git.client.head_sha(cwd=wt_path)
+    return stopped if live and covers(meta.head_sha, live) else None
+
+
+def set_aside_leftovers(
+    review_dir: Path, wt_path: str, stopped: FixInterruption, trail: Trail | None,
+) -> str:
+    """Stash the stopped pass's own untouched edits and clear its record.
+
+    Returns the stash message, or "" when nothing was stashed. Set aside rather
+    than adopted: the fix pass never commits a file that was dirty when it
+    started (`fix.scope.agent_changed`), so a resumed pass over these leftovers
+    could never land further work in them. A file changed since the pass
+    stopped is someone's edit and is left in place. Modified, new and deleted
+    files are all stashed alike — a deletion was recorded as "" and still
+    matches while the file is absent.
+
+    The stashed paths join `meta.dirty_files`, so the run that follows treats
+    them as changed: without `--fix` it reviews them incrementally rather than
+    reviewing an unchanged commit in full.
+    """
+    untouched = sorted(p for p, blob in stopped.leftovers.items() if blob_of(wt_path, p) == blob)
+    moved = sorted(set(stopped.leftovers) - set(untouched))
+    if moved:
+        core.log.warn(f"{len(moved)} file(s) the interrupted fix pass edited have changed "
+                      f"since — left in place: {', '.join(moved)}")
+    message = f"pr review: interrupted fix pass at {git.client.abbrev(stopped.head_before)}"
+    if untouched:
+        stashed = git.client.run("stash", "push", "--include-untracked", "-m", message,
+                                 "--", *untouched, cwd=wt_path)
+        if not stashed.ok:
+            core.log.warn(f"could not set the interrupted pass's edits aside: "
+                          f"{stashed.stderr.strip()}")
+            return ""
+        core.log.warn(f"Set the interrupted fix pass's edits aside ({message}): "
+                      f"{', '.join(untouched)} — `git stash pop` restores them")
+    meta = read_review_meta(review_dir)
+    write_review_meta(review_dir, replace(
+        meta, fix_interrupted=None,
+        dirty_files=tuple(sorted(set(meta.dirty_files) | set(untouched)))))
+    tinfo(trail, "fix_leftovers_set_aside", f"{len(untouched)} stashed, {len(moved)} left",
+          data={"stashed": untouched, "left": moved})
+    return message if untouched else ""

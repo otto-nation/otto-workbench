@@ -146,17 +146,36 @@ def _restore_held_findings(merged: ReviewRecord, record: ReviewRecord) -> Review
     """Keep findings synthesis was not shown, unless it also emitted them.
 
     Identity is the non-empty {stable_id, sid}. A synthesis copy that matches
-    a held finding is dropped; the held finding keeps that slot, disposition
-    unchanged. Remaining held findings are appended with fresh IDs.
+    a held finding is dropped. When severities match, the held finding takes
+    that slot and the copy's id so synthesis prose still names it; otherwise
+    the copy's id becomes a gap and the held finding is appended with a fresh
+    id. Remaining unmatched held findings are appended the same way.
     """
     held = [f for f in merged.findings if f.disposition not in _SYNTHESIS_KEEP]
     if not held:
         return record
     kept: list[RecordFinding] = []
+    leftover: list[RecordFinding] = []
     for finding in record.findings:
         match = _take_held(finding, held)
-        kept.append(match if match is not None else finding)
-    return append_findings(replace(record, findings=tuple(kept)), held)
+        if match is None:
+            kept.append(finding)
+            continue
+        if match.severity == finding.severity:
+            kept.append(replace(match, id=finding.id))
+        else:
+            leftover.append(match)
+    restored = append_findings(
+        replace(record, findings=tuple(kept)), leftover + held,
+    )
+    ids = [f.id for f in restored.findings]
+    if len(ids) != len(set(ids)):
+        # Unreachable by construction: same-severity replacements take the
+        # copy's id (unique in the synthesis artifact), a severity mismatch
+        # leaves the copy's slot empty, and leftover held findings get fresh
+        # ids from append_findings.
+        raise ValueError(f"held restore produced duplicate ids: {ids}")
+    return restored
 
 
 def _holistic_skip_reason(

@@ -492,6 +492,131 @@ class TestPhaseSynthesis:
         assert loaded[0].disposition is Disposition.FIXED
         assert loaded[0].body == "already fixed"
 
+    def test_re_emitted_held_findings_take_the_copy_ids(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """Held N1 SKIPPED (sid) and N2 FIXED (c.py:7) vs synthesis N1–N4.
+
+        Synthesis emits its own N1/N2, N3 as the same-anchor copy of held N2,
+        and N4 as a reworded copy with the SKIPPED finding's sid. Each held
+        finding takes the copy's id so the slot stays unique and summary prose
+        that names the copy still names it.
+        """
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({
+                "summary": "see [N3]", "verdict": "Approve",
+                "findings": [
+                    {"id": "N1", "path": "a.py", "line": 1, "body": "synth one"},
+                    {"id": "N2", "path": "a.py", "line": 2, "body": "synth two"},
+                    {"id": "N3", "path": "c.py", "line": 7, "body": "already fixed"},
+                    {"id": "N4", "path": "d.py", "line": 1, "body": "reworded",
+                     "sid": "aaaa1111"},
+                ],
+            }))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        held = record(
+            finding("N1", "skipped thing", path="b.py", sid="aaaa1111",
+                    disposition=Disposition.SKIPPED),
+            finding("N2", "already fixed", path="c.py", line=7,
+                    disposition=Disposition.FIXED),
+        )
+        ro._phase_synthesis(job, "", 3, Merged(held))
+        loaded = load_record(tmp_path)
+        ids = [f.id for f in loaded.findings]
+        assert ids == ["N1", "N2", "N3", "N4"]
+        assert len(set(ids)) == 4
+        by_id = {f.id: f for f in loaded.findings}
+        assert by_id["N3"].disposition is Disposition.FIXED
+        assert by_id["N3"].body == "already fixed"
+        assert by_id["N4"].disposition is Disposition.SKIPPED
+        assert by_id["N4"].sid == "aaaa1111"
+        assert loaded.summary == "see [N3]"
+
+    def test_a_carried_held_finding_takes_the_copy_slot(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """Groups N1/N2 plus carried N3 SKIPPED/N4 FIXED vs synthesis N1–N4.
+
+        Synthesis copies held N4 into N3 and emits a new N4. The held FIXED
+        finding takes the copy's N3 slot; the unmatched SKIPPED is appended.
+        """
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({
+                "summary": "see [N3]", "verdict": "Approve",
+                "findings": [
+                    {"id": "N1", "path": "a.py", "line": 1, "body": "from groups one"},
+                    {"id": "N2", "path": "a.py", "line": 2, "body": "from groups two"},
+                    {"id": "N3", "path": "c.py", "line": 7, "body": "already fixed"},
+                    {"id": "N4", "path": "a.py", "line": 4, "body": "new from synth"},
+                ],
+            }))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        merged = record(
+            finding("N1", "from groups one"),
+            finding("N2", "from groups two", line=2),
+            finding("N3", "skipped thing", path="b.py",
+                    disposition=Disposition.SKIPPED),
+            finding("N4", "already fixed", path="c.py", line=7,
+                    disposition=Disposition.FIXED),
+        )
+        ro._phase_synthesis(job, "", 3, Merged(merged))
+        loaded = load_record(tmp_path)
+        ids = [f.id for f in loaded.findings]
+        assert ids == ["N1", "N2", "N3", "N4", "N5"]
+        assert len(set(ids)) == 5
+        by_id = {f.id: f for f in loaded.findings}
+        assert by_id["N3"].disposition is Disposition.FIXED
+        assert by_id["N3"].body == "already fixed"
+        assert by_id["N4"].body == "new from synth"
+        assert by_id["N5"].disposition is Disposition.SKIPPED
+        assert loaded.summary == "see [N3]"
+
+    def test_a_held_finding_re_emitted_at_another_severity_keeps_its_severity(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """Held S1 re-emitted as N-something via sid is not put in that slot.
+
+        Prose referring to that copy's id may then dangle (accepted, rare):
+        the copy's id becomes a gap that renumbering closes.
+        """
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({
+                "summary": "see [N1]", "verdict": "Approve",
+                "findings": [
+                    {"id": "N1", "path": "a.py", "line": 1, "body": "reworded",
+                     "sid": "aaaa1111"},
+                    {"id": "N2", "path": "a.py", "line": 2, "body": "other"},
+                ],
+            }))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        held = record(finding(
+            "S1", "skipped should", sid="aaaa1111",
+            disposition=Disposition.SKIPPED,
+        ))
+        ro._phase_synthesis(job, "", 3, Merged(held))
+        loaded = load_record(tmp_path)
+        ids = [f.id for f in loaded.findings]
+        assert len(ids) == len(set(ids))
+        skipped = [f for f in loaded.findings if f.disposition is Disposition.SKIPPED]
+        assert len(skipped) == 1
+        assert skipped[0].severity == "S"
+        assert skipped[0].id.startswith("S")
+
 
 def test_carried_findings_never_share_an_id():
     base = Merged(record(finding("N1", "from groups")))

@@ -340,28 +340,28 @@ class TestWriteCleanReview:
 
 
 class TestIsCompleteReview:
+    @staticmethod
+    def _store(tmp_path, **kw):
+        from review.record import ReviewRecord, save_record
+        save_record(tmp_path, ReviewRecord(**kw))
+        return str(tmp_path / "review.md")
+
     def test_has_summary(self, ro, tmp_path):
+        assert ro.is_complete_review(self._store(tmp_path, summary="Looks good.")) is True
+
+    def test_has_verdict(self, ro, tmp_path):
+        assert ro.is_complete_review(self._store(tmp_path, verdict="Approve.")) is True
+
+    def test_missing_summary_and_verdict(self, ro, tmp_path):
+        assert ro.is_complete_review(self._store(tmp_path)) is False
+
+    def test_markdown_without_record_is_incomplete(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("# Review\n\n## Summary\nLooks good.\n")
         assert ro.is_complete_review(str(f)) is False
 
-    def test_has_verdict(self, ro, tmp_path):
-        f = tmp_path / "review.md"
-        f.write_text("# Review\n\n## Verdict\nApprove.\n")
-        assert ro.is_complete_review(str(f)) is False
-
-    def test_missing_headers(self, ro, tmp_path):
-        f = tmp_path / "review.md"
-        f.write_text("# Review\n\nSome content without required headers.\n")
-        assert ro.is_complete_review(str(f)) is False
-
     def test_file_not_exists(self, ro, tmp_path):
         assert ro.is_complete_review(str(tmp_path / "nonexistent.md")) is False
-
-    def test_empty_file(self, ro, tmp_path):
-        f = tmp_path / "review.md"
-        f.write_text("")
-        assert ro.is_complete_review(str(f)) is False
 
 
 # ── _write_review_sidecar enriched meta.json ────────────────────────────────

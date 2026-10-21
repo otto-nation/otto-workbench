@@ -25,7 +25,7 @@ Do NOT write a summary or a verdict — those are added in a synthesis step.
 Must-fix and should-fix findings must carry `evidence`: the lines of the referenced file that prove the claim, copied verbatim. Nit and idiom findings do not need evidence.
 Skip or downgrade to a nit any finding in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
-A prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
+On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write a complete findings file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify specific concerns and rewrite the file.

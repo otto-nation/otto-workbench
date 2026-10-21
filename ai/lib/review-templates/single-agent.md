@@ -12,7 +12,7 @@ ${output_block}
 
 Must-fix and should-fix findings must carry `evidence`: the lines of the referenced file that prove the claim, copied verbatim.
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
-A prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
+On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
 Set `verdict` to one of ${verdict_options}, then why. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead.
 
 ## Turn budget

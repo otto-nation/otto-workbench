@@ -74,7 +74,7 @@ Every Must-fix and Should-fix finding carries `evidence`: 1–5 lines copied ver
 
 ## Output format
 
-Write your output to the path the prompt names, as ONE JSON document — nothing before or after it, no code fence. The scout, group and disprove phases each write their own shape: the prompt's `## Output` section shows it, with what every field holds, and that example is generated from the reader that checks your file. A key the example does not show is rejected, and you are given one turn to fix a rejected file.
+Write your output to the path the prompt names, as ONE JSON document — nothing before or after it, no code fence. Every phase that runs this agent writes its own shape: the prompt's `## Output` section shows it, with what every field holds, and that example is generated from the reader that checks your file. An unknown key is rejected; a first-round example omits the re-review carry fields, which the reader still accepts. You are given one turn to fix a rejected file.
 
 Every finding has an `id` (M, S, N or I and a number), a `path` (repo-relative, no `:line`, or null for the PR as a whole), `line`/`end_line`, and a markdown `body` whose first line states the defect. `triage` stays in the local review for coverage tracking; it is stripped before the review is posted. A re-review fills `prior_findings` when the prompt asks for it, each entry's `disposition` exactly one of `Fixed`, `Still open`, or `Declined`; it is bookkeeping and is stripped before the review is posted.
 

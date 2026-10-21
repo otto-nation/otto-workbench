@@ -36,7 +36,7 @@ Categorize all changed files into review tiers:
 - **Tier 2 (deep-review):** Application logic, business rules, shared libraries, test files
 - **Tier 3 (scan):** Generated files (verify generator input instead), vendored code, pure formatting/rename changes
 
-When the prompt's Output section has a `triage` field, write one entry per file with its tier there. Then review files in tier order — all Tier 1 files first, then Tier 2, then Tier 3. No file may be silently skipped. The section stays in the local review file for coverage tracking; it is stripped before the summary is posted to the PR
+When the prompt's Output section has a `triage` field, write one entry per file with its tier there. Then review files in tier order — all Tier 1 files first, then Tier 2, then Tier 3. No file may be silently skipped. The field stays in the local review file for coverage tracking; it is stripped before the summary is posted to the PR
 - If pre-collected data includes review checklists and architecture.md, use those directly. Otherwise: check for `.claude/review/` in the project root and read `.claude/architecture.md` Known Constraints section if it exists
 - For each checklist file, match its `paths:` frontmatter against the files in the diff. Load matching checklists as supplementary review criteria for Phases 3–8
 - Use architecture.md Known Constraints to avoid findings that contradict known project constraints
@@ -255,7 +255,7 @@ When a finding includes a suggested fix, the fix itself must pass the same revie
 
 Write the review to the output path the prompt names, as ONE JSON document — nothing before or after it, no code fence. Do NOT print it to stdout; it only counts if it lands in the file.
 
-The prompt's `## Output` section shows the exact shape for the phase you are running and what each field holds. It is generated from the reader that checks your file, so follow it exactly: a key it does not show is rejected, and you are given one turn to fix a rejected file. That shape is the one to write even where it differs from anything else in this protocol — a holistic scan writes an assessment, not a review.
+The prompt's `## Output` section shows the exact shape for the phase you are running and what each field holds. It is generated from the reader that checks your file, so follow it exactly. An unknown key is rejected; a first-round example omits the re-review carry fields (`sid`, `declined`, `prior_findings`), which the reader still accepts. You are given one turn to fix a rejected file. That shape is the one to write even where it differs from anything else in this protocol — a holistic scan writes an assessment, not a review.
 
 Write no title and no metadata. The harness renders `review.md` from your document and from what it already knows about the run — the commit reviewed, the mode, the date.
 

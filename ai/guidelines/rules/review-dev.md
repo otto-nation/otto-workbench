@@ -107,6 +107,38 @@ passing a finding by. `_report()` prints them grouped in declaration order
 list, and the whole reconciliation, settled and not, is written to
 `prior-findings.json`.
 
+More rules keep an incremental round from re-raising settled work, all in
+`review.convergence`. A prior finding the prior round declined, whose file is
+outside `change_set(job)`, settles as `Declined` from `DispositionSource.PRIOR`
+without a ledger line. A finding with a path and no line is scoped to the group
+holding its file, so a skipped group carries it. New Nit and Idiom findings — no
+sid, and a stable id the prior record does not hold (`is_new_nit`) — are dropped
+at merge when their file is outside the delta (`drop_out_of_delta_nits`). The
+ones inside it stay open but out of the fix pass's work set: `_reconcile_and_verify`
+reads them while the record still carries sids (`new_nit_ids`), `_publish` adds
+them to `ReviewMeta.held_nits` (the prior round's held set plus this round's new
+ones; empty after a full round), and `fix_work_set` withholds every nit whose
+stable id is held. When the groups that ran produced nothing and `passed_over` is empty, synthesis
+and the disprove gate are both skipped and `_write_settled_review` ships the
+merge, with a mechanical verdict where the mode states one.
+
+A self-review records the files it read uncommitted (`ReviewMeta.dirty_files`),
+and the next self-mode incremental round adds them to its change set, so an edit
+reverted between rounds is read again. The self-mode delta's file list comes
+from `review.worktree_delta.uncommitted_files` (numstat), never from the
+budget-truncated patch. `--force` keeps a same-HEAD self-review full
+(`ReviewJob.full_review`).
+
+A sticky skip is not recorded when the pass committed the anchor file: the
+change a mark waits for has already happened. A file already dirty before the
+pass is attributed by path (`fix.scope.agent_changed`), so an edit there is
+neither staged nor marked. A rename's old path is never on the review surface —
+the file is gone, so nothing is unreviewed. `covered_sha` is GREEN over the tree
+as the pass left it, including operator files that were dirty going in, and
+before any pre-commit hook rewrite; tests qualify by filename stem
+(`fix.scope.anchor_or_test`). `pr batch` passes `--force` on every review, so a
+batch-driven same-HEAD dirty self-review stays full.
+
 Because the ledger is cleared, `Declined` also has to survive on the finding
 itself: a declined finding is carried forward with its prior `sid` and its
 `declined` reason, and the runner believes the decline only when that sid is
@@ -133,10 +165,13 @@ posted after one, which is the run these two answers exist for.
 pass rather than by a review, and `Disposition.SKIPPED` is its single owner. It is
 what `review.fix.apply_outcomes` records for a `needs a person` outcome,
 the way it records `Disposition.DECLINED` for a declined one and
-`Disposition.FIXED` for a fix. A skip still belongs to the work set — the next
-`--fix` retries it — but a finding that already carries either disposition is
-left as it is: that verdict was reached before this pass ran, and a second
-annotation on one finding leaves the document saying two things about it.
+`Disposition.FIXED` for a fix. A skip is not work: `run_fix_pass` leaves it out of
+the next pass, and `ReviewFixAdapter` records a `StickySkip` in `meta.json` keyed
+by `path:line` with the anchor file's blob. Every publish applies the live marks
+(`review.convergence.apply_sticky_skips`): a later round's finding at the same
+anchor and severity is skipped while the file still hashes to the recorded blob,
+and the mark is dropped once it does not. A finding that already carries a
+disposition is left as it is: that verdict was reached before this pass ran.
 
 The pass itself is `fix_engine`'s: `ReviewFixAdapter` supplies the open
 findings, the path-scoped commit and the re-render, and the batching, the
@@ -152,8 +187,9 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 |------|-----------------|---------|
 | `review.json` | yes | Typed review record — the source of truth |
 | `review.md` | yes | Rendered from `review.json` + `meta.json`; never parsed back |
-| `meta.json` | yes | Run sidecar: SHAs, mode, status, dates, generator |
+| `meta.json` | yes | Run sidecar: SHAs (`head_sha`, `covered_sha`, `head_moved_to`), mode, status, dates, generator, the files read uncommitted, the nits withheld from fix work, static declines, sticky skips, an interrupted fix pass |
 | `session.jsonl` | yes | Agent cost/usage/errors |
+| `fix-logs/<stamp>/` | yes (newest 5) | Each fix pass's `fix.jsonl` and `fix_verify-<n>.jsonl`, kept per pass; `Usage:` reads this run's |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |
 | `prior.json` | yes | Prior round's record — what a re-review reads |
 | `prior-meta.json` | yes | Prior round's sidecar, copied when a re-review archives |

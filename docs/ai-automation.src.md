@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 624 -->
+<!-- doc-budget: 668 -->
 
 # AI Automation
 
@@ -166,6 +166,50 @@ next write overwrites the edit; nothing reads it back.
 - **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
 - **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
 - `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
+
+### How self-review rounds converge
+
+A `pr review --self --fix` round ends with a fix commit, and a fix commit moves
+HEAD past the review that produced it. Left there, the loop never terminates.
+These are what end it:
+
+- **A qualifying fix commit counts as reviewed.** The fix pass records
+  `covered_sha` in `meta.json` and in review.md's header when its commit
+  landed on the reviewed commit, the repo's checks were green, the verify
+  gate verified every fix, and the commit touches only the fixed findings'
+  files and their tests, and no file of a finding the pass left unfixed.
+  `pr batch` and the self-review protocol read it; a
+  later review still measures its delta from `head_sha`.
+- **Re-reviews do only new work.** A self-review on the reviewed HEAD with
+  uncommitted edits, or with edits the last round read since reverted,
+  reviews those files incrementally; `pr review --self --force` keeps it
+  full. New nits on files outside the delta are dropped, and the new nits
+  inside it are reported but not handed to the fix pass until a full review
+  (`meta.json` keeps them as `held_nits`). A prior decline on
+  an unchanged file, and a "needs a person" skip on an unchanged anchor,
+  settle without an agent. When nothing new turned up and every prior
+  finding is settled, synthesis and the disprove gate are skipped.
+- **Verify is narrower and honest.** This repo's `fix.verify_command` is
+  `bin/local/run-tests --changed --direct`, which selects direct importers
+  only. A red run is re-run at the pass's base in a throwaway worktree, with
+  `WORKBENCH_FIX_BASELINE` set so it never widens to a whole suite; when
+  every failure was red before the pass, the commit reads
+  `Fix-Checks: preexisting`, the fixes are not withdrawn, and publishing is
+  still held. The run sees `WORKBENCH_FIX_PATHS_FILE` and none of the
+  trail's environment.
+- **An interrupted pass resumes.** Stopping a fix pass records it in
+  `meta.json` and the trail. The next run on the same HEAD stashes the
+  pass's untouched edits, naming each, and with `--fix` resumes the fix
+  step instead of reviewing again; without it, the stashed files are
+  reviewed incrementally.
+- **A raced commit is recorded.** A commit made while a self-review runs is
+  named as `head_moved_to` in the header; the review covers the pinned head
+  only, and the next run reviews the rest.
+
+What each round cost includes the fix pass and its gate: the `Usage:` line
+and `REVIEW_SUMMARY` read the per-pass copies under `fix-logs/`. Every usage
+ledger row carries the trail `invocation` it ran under, and review rows carry
+the repo, PR and branch.
 
 ### How a review's verdict is decided
 

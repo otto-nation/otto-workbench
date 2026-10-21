@@ -16,7 +16,7 @@ A repository, framework, or library we do not own is never where a bug is assume
 - Prove it is not our misuse with a minimal reproduction outside our code — a fresh project, the documented invocation, nothing of ours in it. If the bug only reproduces through our code, it is our bug until shown otherwise
 - State, for every way we could be misusing it, what rules that out. "Looks like an upstream bug" with no reproduction and no ruled-out alternatives is a hypothesis about our code, not a finding about theirs
 - When the due diligence finds our misuse — the expected outcome — fix our code and say what the misreading was. Do not file upstream to ask for a clearer error or a doc change unless the user asks for it
-- A workaround for a genuine upstream bug goes in our code with a `// ceiling:` comment naming the upstream issue as its trigger, so it is removed when the fix lands
+- A workaround for a genuine upstream bug goes in our code with a `ceiling:` comment naming the upstream issue as its trigger, so it is removed when the fix lands
 
 ## Choosing What to Recommend
 

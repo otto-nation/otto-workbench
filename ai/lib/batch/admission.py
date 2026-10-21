@@ -184,8 +184,11 @@ class Estimates:
             return
         self._peaks[key] = peak_rss
         root = batch_root()
-        root.mkdir(parents=True, exist_ok=True)
-        fd = os.open(root / self.LOCK, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            fd = os.open(root / self.LOCK, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+        except OSError:
+            return  # advisory estimate: keep it in memory, never stop the run
         try:
             with contextlib.suppress(OSError):
                 # No flock on this filesystem: the re-read and max-merge still

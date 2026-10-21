@@ -150,6 +150,15 @@ def test_a_merge_keeps_the_larger_peak_whoever_wrote_it():
     assert batch.admission.Estimates.load().get("o/a", Step.REVIEW) == 5 * GiB
 
 
+def test_observe_survives_an_unwritable_lock_file(monkeypatch):
+    def deny(*a, **k):
+        raise PermissionError("read-only")
+    monkeypatch.setattr(batch.admission.os, "open", deny)
+    e = batch.admission.Estimates.load()
+    e.observe("o/a", Step.REVIEW, 5 * GiB)
+    assert e.get("o/a", Step.REVIEW) == 5 * GiB
+
+
 def test_tree_rss_sums_a_process_and_its_descendants(tmp_path):
     for pid, ppid, kb in [(10, 1, 100), (11, 10, 200), (12, 11, 300), (13, 1, 999)]:
         d = tmp_path / "proc" / str(pid)

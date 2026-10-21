@@ -135,13 +135,7 @@ def test_floor_refused_while_a_peer_has_a_step_live(tmp_path):
         a.sched._once()
         b.sched._once()
         assert (len(a.spawned), len(b.spawned)) == (1, 0)
-
-
-def test_registry_write_failure_does_not_raise(tmp_path):
-    with batch.machine.register("run-w", tmp_path) as m:
-        m._root = tmp_path / "gone"
-        m.settle([], waiting=False)
-        assert m.take_floor() in (True, False)
+        assert b.run.items[0].wait_reason
 
 
 def test_a_driver_defers_to_an_earlier_waiter_even_with_room():

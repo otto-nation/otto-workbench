@@ -23,7 +23,6 @@ import core.log
 import git.client
 from core.phases import Mode
 from pr.domains import ReviewStatus
-from review.collect import uncommitted_files
 from review.convergence import (
     apply_sticky_skips, change_set, held_nits, new_nit_ids, prior_ids,
 )
@@ -33,6 +32,7 @@ from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
 from review.record import ReviewRecord
 from review.state import PipelineState, apply_failures, pipeline_status
+from review.worktree_delta import uncommitted_files
 from review.store import StoredReview, read_review, write_review
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (

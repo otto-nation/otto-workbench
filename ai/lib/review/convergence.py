@@ -26,13 +26,13 @@ from core.phases import Mode
 from core.proc import CmdResult
 from core.trail import Trail, tinfo
 from pr.fix import FixOutcome, ItemOutcome
-from review.collect import uncommitted_files
 from review.document import covers
 from review.paths import read_review_meta, write_review_meta
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.types import (
     SEVERITY_IDIOMS, SEVERITY_NIT, Finding, FixInterruption, ReviewJob, StickySkip,
 )
+from review.worktree_delta import uncommitted_files
 
 
 def change_set(job: ReviewJob) -> frozenset[str] | None:

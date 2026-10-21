@@ -14,6 +14,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import review.collect
+import review.worktree_delta
 from review.collect import fetch_branch_metadata
 
 
@@ -277,12 +278,12 @@ class TestWorktreeDiff:
         return repo
 
     def test_patch_form_covers_tracked_and_untracked(self, tmp_path):
-        diff = review.collect.worktree_diff(str(self._repo(tmp_path)), "HEAD")
+        diff = review.worktree_delta.worktree_diff(str(self._repo(tmp_path)), "HEAD")
         assert "func edited" in diff
         assert "three" in diff
 
     def test_numstat_form_names_the_same_files(self, tmp_path):
-        numstat = review.collect.worktree_diff(str(self._repo(tmp_path)), "HEAD", counts_only=True)
+        numstat = review.worktree_delta.worktree_diff(str(self._repo(tmp_path)), "HEAD", counts_only=True)
         paths = sorted(line.split("\t")[-1] for line in numstat.splitlines())
         assert paths == ["new.go", "tracked.go"]
         assert "3\t0\tnew.go" in numstat

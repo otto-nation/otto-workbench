@@ -40,7 +40,6 @@ branch that changed nothing.
 
 from __future__ import annotations
 
-import os
 import re
 import stat
 from dataclasses import dataclass, field
@@ -52,6 +51,7 @@ import core.log
 import core.project_context
 import git.numstat
 import pr.context
+import review.worktree_delta
 from gh.types import PRMetadata
 from core.phases import Mode
 from review.budget import (
@@ -153,55 +153,6 @@ def fork_point(wt_path: str, base: str) -> str:
     return git.client.out("merge-base", ref, "HEAD", cwd=wt_path) or "HEAD"
 
 
-def _untracked_files(wt_path: str) -> list[str]:
-    """Paths git does not track and .gitignore does not exclude."""
-    return git.client.lines("ls-files", "--others", "--exclude-standard", cwd=wt_path)
-
-
-def _diff_untracked(wt_path: str, paths: list[str], counts_only: bool = False) -> str:
-    """Diff each untracked path against nothing, as a whole-file addition."""
-    flags = ["--numstat"] if counts_only else []
-    parts = []
-    for path in paths:
-        # --no-index exits 1 whenever the two sides differ, which is always here,
-        # so the exit code is read past rather than through `out`.
-        out = git.client.run(
-            "diff", "--no-index", *flags, "--", os.devnull, path, cwd=wt_path,
-        ).stdout.strip()
-        if not out:
-            continue
-        # numstat names the pair "/dev/null => <path>"; the diff body is already clean.
-        parts.append(out.rsplit("\t", 1)[0] + "\t" + path if counts_only else out)
-    return "\n".join(parts)
-
-
-def _join_nonempty(*parts: str) -> str:
-    return "\n".join(p for p in parts if p)
-
-
-def worktree_diff(wt_path: str, since: str, *, counts_only: bool = False) -> str:
-    """Every change from ``since`` to the working tree, untracked files included.
-
-    ``counts_only`` asks for the per-file add/delete counts instead of the
-    patch, so the file list a review reports and the diff it sends come off
-    the same range rather than off two commands that could disagree.
-
-    ``since`` bounds the tracked half only. Untracked files have no history to
-    compare against, so they come through whole every time — on a delta review
-    that means one lingering across runs is re-shown rather than dropped.
-    """
-    # ceiling: untracked files ignore `since`; a non-ignored untracked file
-    # also makes every same-HEAD self-review incremental over it and lands in
-    # dirty_files each round (bounded to the surface). Upgrade to diffing
-    # against the prior review's copy if repeated deltas start drowning in
-    # re-shown files.
-    flags = ["--numstat"] if counts_only else []
-    return _join_nonempty(
-        git.client.out("diff", *flags, since, cwd=wt_path),
-        _diff_untracked(wt_path, _untracked_files(wt_path), counts_only=counts_only),
-    )
-
-
 def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     """Describe a branch from its worktree, the way a PR describes itself.
 
@@ -231,7 +182,7 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     # matches the diff `worktree_diff` builds for self-review: committed,
     # uncommitted and untracked changes alike.
     counts = git.numstat.parse_numstat(
-        worktree_diff(wt_path, fork_point(wt_path, base), counts_only=True)
+        review.worktree_delta.worktree_diff(wt_path, fork_point(wt_path, base), counts_only=True)
     )
 
     return PRMetadata(
@@ -481,8 +432,8 @@ def _scope_to_surface(raw_diff: str, pr_files: list[dict]) -> str:
 
     It does not bound it by *authorship*: a base commit touching a file the PR
     also touches survives this filter, because the file is in the surface. That
-    is what `_author_delta` answers instead, and why the delta's file list is
-    read back out of this diff only when the ancestry walk could not run.
+    is what `_author_delta` answers instead. When that walk cannot run, the
+    file list is the same range's untruncated numstat, not this patch.
     """
     if not pr_files:
         return raw_diff
@@ -645,7 +596,7 @@ def _delta_diff_and_log(
         # to `_delta_head`: the working tree is the subject here, and the header
         # recording the last commit under it errs toward re-reviewing, not
         # toward skipping.
-        raw_diff = worktree_diff(job.wt_path, prior_sha)
+        raw_diff = review.worktree_delta.worktree_diff(job.wt_path, prior_sha)
     else:
         raw_diff = git.client.out("diff", f"{prior_sha}..{head}", cwd=job.wt_path)
     raw_diff = _scope_to_surface(raw_diff, job.pr.files)
@@ -655,7 +606,7 @@ def _delta_diff_and_log(
     )
 
 
-def _prior_sha_for_delta(job: ReviewJob) -> str:
+def _prior_sha_for_delta(job: ReviewJob, self_files: list[str] | None = None) -> str:
     """The commit this re-review is a delta against, or empty for a full one.
 
     Every reason to review the whole PR instead is decided here: no prior
@@ -663,6 +614,10 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
     commit already checked out (unless a self-review's tree differs from what
     that review read, which is its delta, and `--force` was not given), and
     one naming a commit this worktree cannot resolve.
+
+    *self_files* is the self-delta list `_collect_delta` already computed, so
+    a same-HEAD run does not numstat the tree twice. Direct callers omit it
+    and this computes the list itself.
     """
     if job.prior is None:
         core.log.info("No prior review record — running full review")
@@ -676,7 +631,10 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
         # has a delta when the tree differs from it, or when the last round read
         # files dirty that are clean now (`ReviewMeta.dirty_files`). `--force`
         # keeps the full re-review this case always got (`ReviewJob.full_review`).
-        if job.mode == Mode.SELF and not job.full_review and _self_delta_files(job, prior_sha):
+        files = self_files
+        if files is None and job.mode == Mode.SELF and not job.full_review:
+            files = review.worktree_delta._self_delta_files(job, prior_sha)
+        if job.mode == Mode.SELF and not job.full_review and files:
             core.log.info("Prior review is on current HEAD and the tree differs from what it "
                           "read — reviewing the difference incrementally")
             return job.pr.head_sha
@@ -690,37 +648,17 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
     return prior_sha
 
 
-def uncommitted_files(wt_path: str, since: str) -> list[str]:
-    """Every path the working tree differs from *since* in, untracked files included.
-
-    Read from numstat, which no prompt budget clips: a file list a delta acts
-    on must not depend on how much of the patch fitted. `--no-renames` makes a
-    rename a deletion plus an addition, so both paths are listed rather than
-    one `old => new` entry that names neither file. Untracked files come
-    through `_diff_untracked`, as in `worktree_diff`.
-    """
-    tracked = git.client.out("diff", "--numstat", "--no-renames", since, cwd=wt_path)
-    untracked = _diff_untracked(wt_path, _untracked_files(wt_path), counts_only=True)
-    counted = git.numstat.parse_numstat(_join_nonempty(tracked, untracked))
-    return sorted(f["path"] for f in counted.files)
-
-
-def _self_delta_files(job: ReviewJob, since: str) -> list[str]:
-    """The surface files a self-review's delta from *since* covers.
-
-    What the tree differs from *since* in, plus what the prior round read dirty
-    (`ReviewMeta.dirty_files`): a file whose edit was reverted since matches
-    *since* again while differing from what was reviewed, and only the record
-    says so. Narrowed to the review's surface, as the patch is — the re-read
-    paths too: a file whose only change on the branch was the reverted edit
-    has left the surface, so no group holds it, and when it is the only
-    difference the round falls back to a full review of the same HEAD, as
-    every such round did before.
-    """
-    reread = set(job.prior.meta.dirty_files) if job.prior else set()
-    surface = {f["path"] for f in job.pr.files}
-    paths = set(uncommitted_files(job.wt_path, since)) | reread
-    return sorted(p for p in paths if not surface or p in surface)
+def _fallback_delta_files(
+    job: ReviewJob, prior_sha: str, head: str, self_files: list[str] | None,
+) -> list[str]:
+    """Untruncated file list when the ancestry walk cannot attribute the range."""
+    if job.mode != Mode.SELF:
+        return review.worktree_delta._range_delta_files(
+            job.wt_path, prior_sha, head, job.pr.files,
+        )
+    if self_files is not None:
+        return self_files
+    return review.worktree_delta._self_delta_files(job, prior_sha)
 
 
 def _collect_delta(job: ReviewJob) -> DeltaScope:
@@ -734,7 +672,11 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
     Self-review keeps the whole range: its surface is the working tree, which
     has no commits to attribute, so its delta is never attributed.
     """
-    prior_sha = _prior_sha_for_delta(job)
+    self_files = None
+    prior = job.prior
+    if job.mode == Mode.SELF and not job.full_review and prior is not None and prior.meta.head_sha:
+        self_files = review.worktree_delta._self_delta_files(job, prior.meta.head_sha)
+    prior_sha = _prior_sha_for_delta(job, self_files)
     if not prior_sha:
         return DeltaScope()
 
@@ -750,13 +692,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
             core.log.warn(
                 f"No ref resolves {base} — the delta covers every commit "
                 "since the prior review, the base's included")
-        # ceiling: `_self_delta_files` is computed twice per same-HEAD run
-        # (`_prior_sha_for_delta` and here); two numstat calls. A tree change
-        # between them can yield an empty file list. Upgrade trigger: once
-        # collect.py is split below the cap, compute the list once in
-        # `_collect_delta`.
-        files = (_self_delta_files(job, prior_sha) if job.mode == Mode.SELF
-                 else [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)])
+        files = _fallback_delta_files(job, prior_sha, head, self_files)
         return DeltaScope(
             delta_diff, delta_log, files, 0, prior_sha,
             DeltaAttribution.UNATTRIBUTED,
@@ -770,7 +706,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         # The log is rebuilt without the ancestry exclusion so that it and the
         # file list describe the same range: a log missing the base's commits
         # beside a list naming their files reads as a contradiction.
-        files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
+        files = _fallback_delta_files(job, prior_sha, head, self_files)
         return DeltaScope(
             delta_diff, _delta_log(job, prior_sha, "", head), files, 0, prior_sha,
             DeltaAttribution.UNATTRIBUTED,
@@ -809,7 +745,7 @@ def _collect_git_data(
     commit_log = _truncate_log(commit_log, MAX_COMMIT_LOG_BYTES)
 
     if include_worktree:
-        return worktree_diff(wt_path, fork_point(wt_path, base)), commit_log
+        return review.worktree_delta.worktree_diff(wt_path, fork_point(wt_path, base)), commit_log
 
     diff = git.client.out("diff", f"{ref}...{head}", cwd=wt_path)
     if not diff and pr_files:

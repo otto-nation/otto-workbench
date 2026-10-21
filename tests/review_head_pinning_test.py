@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review.collect  # noqa: E402
+import review.worktree_delta  # noqa: E402
 import review.invoke  # noqa: E402
 import review.issue  # noqa: E402
 import review.orchestrate  # noqa: E402
@@ -121,6 +122,24 @@ def test_the_self_delta_lists_files_past_the_diff_budget(tmp_path, monkeypatch):
     assert review.collect._collect_delta(job).files == ["a.py", "b.py"]
 
 
+def test_a_same_head_dirty_self_run_computes_the_self_delta_once(tmp_path, monkeypatch):
+    """Two numstat reads of a tree that moved between them can yield an empty list."""
+    wt = _repo(tmp_path)
+    head = _head(wt)
+    (wt / "a.py").write_text("x = 2\n")
+    job = _job(wt, tmp_path, mode=Mode.SELF, head=head, prior_head=head)
+    calls = {"n": 0}
+    real = review.worktree_delta._self_delta_files
+
+    def counting(job, since):
+        calls["n"] += 1
+        return real(job, since)
+
+    monkeypatch.setattr(review.worktree_delta, "_self_delta_files", counting)
+    assert review.collect._collect_delta(job).files == ["a.py"]
+    assert calls["n"] == 1
+
+
 def test_a_rename_lists_both_paths(tmp_path):
     """Rename detection would fold the pair into one `a.py => d.py` entry naming neither file."""
     wt = _repo(tmp_path)
@@ -129,7 +148,7 @@ def test_a_rename_lists_both_paths(tmp_path):
     git_out(wt, "mv", "a.py", "d.py")
     job = _job(wt, tmp_path, mode=Mode.SELF, head=head, prior_head=head,
                files=("a.py", "b.py", "d.py"))
-    assert review.collect.uncommitted_files(str(wt), head) == ["a.py", "d.py"]
+    assert review.worktree_delta.uncommitted_files(str(wt), head) == ["a.py", "d.py"]
     assert review.collect._collect_delta(job).files == ["a.py", "d.py"]
 
 

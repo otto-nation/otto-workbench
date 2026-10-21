@@ -1287,6 +1287,16 @@ That is a different question from `git.topology`, which starts from a git cwd
 and asks which of *its* worktrees holds a branch. Topology has no GitHub-slug
 lookup, no `~/git` walk, and no `gh`. The slug-to-clone path is `find_repo_root`.
 
+### review/worktree_delta.py
+
+Worktree and range file lists a review's delta is built from.
+
+A self-review's incremental file list is the working tree against the prior
+head, plus files that round already read dirty; a PR-mode fallback's is
+``prior_sha..head`` — both from numstat, which no prompt budget clips.
+`worktree_diff` is the matching patch (and its counts-only form) so the
+files a review reports and the diff it sends come off one range.
+
 ## Findings
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.

@@ -722,9 +722,8 @@ its own paused replay or restoring unstaged generated files. A mise toml is trus
 An item that closes with drafted work, an owed closeout (`pr status`'s `⚠ closeout owed`),
 or local commits the planned head lacks (`unpublished`, never auto-published) opens one
 `publish` decision. Publish fetches the branch and refuses (`failed`) with `fetch_failed`,
-`remote_moved`, `not_comparable`, `not_incorporated`,
-`not_incorporated_remote`, or `drafted_dropped` (a commit a step drafted is no
-longer on the branch, as itself, a patch-equivalent, or a replay git recorded). Otherwise it fast-forwards with
+`remote_moved`, `not_comparable`, `not_incorporated`, `not_incorporated_remote`,
+or `drafted_dropped` (a drafted commit left the branch; see `batch.publish`). Otherwise it fast-forwards with
 `pr push --expect <planned head>`, or force-pushes with
 `pr rebase --push-only --expect <planned head>`, then runs
 `pr comments --finish --post` when the comments step drafted, items were

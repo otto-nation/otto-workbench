@@ -19,6 +19,7 @@ from pathlib import Path
 
 import agent.backend_events
 import agent.usage
+import core.trail
 
 
 def _tee(path: str | None):
@@ -113,5 +114,6 @@ def record_from_log(
         script=script, entry_point=entry_point, backend=backend,
         model=model, usage=usage, exit_code=exit_code,
         task=task, repo=repo, pr=pr,
+        invocation=core.trail.inherited_root(),
     )
     return 0

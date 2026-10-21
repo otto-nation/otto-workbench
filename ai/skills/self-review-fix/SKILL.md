@@ -80,7 +80,8 @@ pr review --self --fix --push --branch <branch_name>
 Run synchronously — do **not** background this command. Step 4 reads
 the completed review file; backgrounding produces stale results.
 
-A run on a HEAD whose last fix pass was interrupted does not review again: it sets
+A run on a HEAD whose last fix pass was interrupted does not review again
+unless `--force` or the set-aside fails: it sets
 the interrupted pass's untouched edits aside in `git stash`, names each file it
 stashed, and resumes the fix pass. `git stash list` names the entry; `git stash pop`
 restores it. Without `--fix`, the run reviews the stashed files incrementally.

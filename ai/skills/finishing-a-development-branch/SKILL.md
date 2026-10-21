@@ -102,8 +102,9 @@ the PR. No `--push` here — `pr create` pushes in Step 4.
 
 Read the review from `~/.local/state/workbench/reviews/`, present what the fix
 pass did — fixed, skipped, and why — and work through whatever it left open as
-your human partner directs. A review covers exactly the SHA in its `<!-- head_sha: -->`, plus the fix commit
-in its `<!-- covered_sha: -->` when the pass qualified it — landed on the reviewed
+your human partner directs. A review covers exactly the SHA in its
+`<!-- head_sha: -->`, plus the fix commit in its `<!-- covered_sha: -->` when
+the pass qualified it — landed on the reviewed
 commit, checks green, every fix verified, nothing but fixed files and their tests,
 and no file of a finding it left unfixed.
 Before opening the PR, check `git rev-parse HEAD` against that value; if it is

@@ -114,13 +114,15 @@ without a ledger line. A finding with a path and no line is scoped to the group
 holding its file, so a skipped group carries it. New Nit and Idiom findings — neither
 their sid nor their stable id is one the prior record holds (`is_new_nit`) — are dropped
 at merge when their file is outside the delta (`drop_out_of_delta_nits`). The
-ones inside it stay open but out of the fix pass's work set: `_reconcile_and_verify`
-reads them while the record still carries sids (`new_nit_ids`), `_publish` adds
-them to `ReviewMeta.held_nits` (the prior round's held set plus this round's new
-ones; empty after a full round), and `fix_work_set` withholds every nit whose
-stable id is held. When the groups that ran produced nothing and `passed_over` is empty, synthesis
-and the disprove gate are both skipped and `_write_settled_review` ships the
-merge, with a mechanical verdict where the mode states one.
+ones inside it stay open but out of the fix pass's work set:
+`_reconcile_and_verify` reads them while the record still carries sids
+(`new_nit_ids`), `_publish` adds them to `ReviewMeta.held_nits` (the prior
+round's held set plus this round's new ones; empty after a full round), and
+`fix_work_set` withholds every nit whose stable id is held. When the round is
+incremental, no group failed, the groups that ran produced nothing and
+`passed_over` is empty, synthesis and the disprove gate are both skipped and
+`_write_settled_review` ships the merge, with a mechanical verdict where the
+mode states one.
 
 A self-review records the files it read uncommitted (`ReviewMeta.dirty_files`),
 and the next self-mode incremental round adds them to its change set, so an edit

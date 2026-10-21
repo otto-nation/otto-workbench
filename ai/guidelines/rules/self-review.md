@@ -146,9 +146,11 @@ green the review file looks.
    names it as `<!-- covered_sha: -->`. It qualifies only when the commit landed on the
    reviewed commit, the repo's checks were green over it, the verify gate verified every
    fix it claims, and it touches nothing but the fixed findings' files and their tests —
-   never the file of a finding the pass left unfixed. When the header carries no `covered_sha`, or HEAD has moved past it, the fixes are
-   unreviewed: re-run with `--fix` before creating the PR. A commit you make by hand is
-   never covered, and neither is a fix commit with a hand commit beneath it
+   never the file of a finding the pass left unfixed. A later fix pass that lands on a
+   covered fix commit is covered in turn. When the header carries no `covered_sha`, or
+   HEAD has moved past it, the fixes are unreviewed: re-run with `--fix` before creating
+   the PR. A commit you make by hand is never covered, and neither is a fix commit with
+   a hand commit beneath it
 3. If the branch already has an open PR and you have pushed to it, re-run the review with
    `--fix --push` (see Before PR Creation above). A push you made by hand needs a PR comment
    saying what changed; the review's own push does not. See `git-operations.md` § A Branch

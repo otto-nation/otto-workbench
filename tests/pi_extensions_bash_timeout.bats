@@ -98,3 +98,10 @@ _finding() {
   _finding 'timeout 2m pytest tests/' 60
   [ "$output" = "short_on_writer pytest" ]
 }
+
+@test "bash-timeout-guard: an unparseable timeout duration is unbounded and -k argument is not the program" {
+  _finding 'timeout $T git fetch origin' 15
+  [ "$output" = "short_on_writer git" ]
+  _finding 'timeout -k 5 600 git fetch origin' 30
+  [ "$output" = "short_on_writer git" ]
+}

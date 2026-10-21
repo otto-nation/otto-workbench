@@ -71,12 +71,19 @@ function program(statement: string): string {
 
 const UNIT_SECONDS: Record<string, number> = { "": 1, s: 1, m: 60, h: 3600, d: 86400 };
 
+interface Wrapper {
+  // Seconds the wrapper allows; Infinity when the duration does not parse.
+  seconds: number;
+  // The command the wrapper runs, "" when there is none.
+  command: string;
+}
+
 /**
- * The duration a coreutils `timeout` statement gives its command, in seconds,
- * or null when it is not one or the duration does not parse. Its own flags
- * (`-s KILL`, `--kill-after=5`, `-k 5`) are skipped to reach the duration.
+ * The coreutils `timeout` a statement is led by, or null when it is not one.
+ * Its own flags (`-s KILL`, `--kill-after=5`, `-k 5`) are skipped to reach the
+ * duration; the wrapped command is the word after that same index.
  */
-function wrapperSeconds(statement: string): number | null {
+function wrapper(statement: string): Wrapper | null {
   const words = tokenize(statement).filter((t) => !t.operator).map((t) => t.value);
   const at = words.findIndex((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
   if (at < 0 || basename(words[at]) !== "timeout") return null;
@@ -88,9 +95,12 @@ function wrapperSeconds(statement: string): number | null {
     }
     if (word.startsWith("-")) continue;
     const m = /^(\d+(?:\.\d+)?)([smhd]?)$/.exec(word);
-    return m === null ? null : Number(m[1]) * UNIT_SECONDS[m[2]];
+    return {
+      seconds: m === null ? Infinity : Number(m[1]) * UNIT_SECONDS[m[2]],
+      command: i + 1 < words.length ? words[i + 1] : "",
+    };
   }
-  return null;
+  return { seconds: Infinity, command: "" };
 }
 
 /**
@@ -103,19 +113,12 @@ function wrapperSeconds(statement: string): number | null {
  * test runners.
  */
 function unboundedWriter(statement: string, timeout: number): string {
-  const wrapper = wrapperSeconds(statement);
-  if (wrapper !== null && wrapper < timeout) return "";
-  const prog = wrapper === null ? program(statement) : wrappedProgram(statement);
+  const w = wrapper(statement);
+  if (w !== null && w.seconds < timeout) return "";
+  const prog = w === null ? program(statement) : w.command;
   if (prog === "") return "";
   if (prog.includes("bin/local/")) return prog;
   return WRITERS.includes(basename(prog)) ? basename(prog) : "";
-}
-
-/** The command a coreutils `timeout` statement runs: the first word after its duration. */
-function wrappedProgram(statement: string): string {
-  const words = tokenize(statement).filter((t) => !t.operator).map((t) => t.value);
-  const at = words.findIndex((w) => /^\d+(?:\.\d+)?[smhd]?$/.test(w));
-  return at >= 0 && at + 1 < words.length ? words[at + 1] : "";
 }
 
 /**

@@ -70,6 +70,30 @@ def test_a_vanished_checkout_has_no_target():
     assert batch.targets.item_target_dir(_item("/r", "feat/a", 1)) is None
 
 
+def test_item_repo_key_prefers_the_recorded_key():
+    item = _item("/r", "feat/a", 1)
+    item.repo_key = "recorded-key-aaaaaaaa"
+    assert batch.targets.item_repo_key(item) == "recorded-key-aaaaaaaa"
+    assert batch.targets.item_target_dir(item) == pr.target.target_dir(
+        "recorded-key-aaaaaaaa", "feat/a")
+
+
+def test_item_repo_key_reads_origin_when_unset(repo):
+    assert batch.targets.item_repo_key(_item(repo, "feat/a", 1)) == (
+        pr.target.repo_key_from_origin(str(repo)))
+
+
+def test_run_repo_keys_are_sorted_and_deduplicated(repo):
+    key = pr.target.repo_key_from_origin(str(repo))
+    a = _item(repo, "feat/a", 1)
+    a.repo_key = key
+    b = _item(repo, "feat/b", 2)
+    b.repo_key = key
+    c = _item("/missing", "feat/c", 3)
+    run = Run(id="r", started_at="t", steps=[], pool=1, auto_publish=[], items=[a, b, c])
+    assert batch.targets.run_repo_keys(run) == [key]
+
+
 def test_child_env_names_only_the_items_target_when_this_process_holds_it(repo, monkeypatch):
     monkeypatch.setenv(LOCK_ENV, "/x:/y")
     monkeypatch.setenv(TREE_LOCK_ENV, "/tree")

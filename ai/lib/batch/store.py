@@ -3,7 +3,7 @@
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
-    <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
+    <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
@@ -12,10 +12,11 @@
 
 `state.json` is written only by a `Session` that loaded it under the run's
 resource. The resource has no `WORKBENCH_RUN_LOCK` marker: a child neither
-inherits it nor passes through it. Lock order is `Global("batch")`, then the
-run resource, then item TARGETs, then CHECKOUT. Every take is non-blocking, so
-the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own
-TARGET before `reap` takes run resources.
+inherits it nor passes through it. Lock order is `Global("batch-<repo_key>")`
+for each repo the batch covers, then the run resource, then item TARGETs, then
+CHECKOUT. Every take is non-blocking, so the order cannot deadlock. One
+exception: `pr gc`'s dispatcher takes its own TARGET before `reap` takes run
+resources.
 
 `reap` renames the run directory to the tombstone while still holding the
 flock. `os.rename` moves `run.lock` with the directory; the flock stays on
@@ -66,7 +67,7 @@ import batch.requests
 import core.run_lock
 import core.serde
 import core.workbench_paths
-from batch.model import FINISHED_RUN, CancelState, Run
+from batch.model import FINISHED_RUN, CancelState, Item, Run
 from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Request
 
 STATE_FILE = "state.json"
@@ -76,10 +77,25 @@ LEGACY_CANCEL_FILE = "cancel"
 REQUESTS_DIR = "requests"
 REJECTED_DIR = "rejected"
 
-# The machine-wide lock every `pr batch run` and `resume` holds for its life.
-# The lock itself refuses a second batch; there is no separate active-run
-# check. Outside run_dir: it guards the choice of run, not one run's files.
-BATCH_LOCK = core.run_lock.Global("batch")
+# One lock per repo a `pr batch run`/`resume` covers, held for its life.
+# The lock itself refuses a second batch over that repo; there is no
+# separate active-run check. Outside run_dir: it guards the choice of run,
+# not one run's files. Repo keys are a slug+digest, a valid path component.
+def batch_lock(repo_key: str) -> core.run_lock.Global:
+    return core.run_lock.Global(f"batch-{repo_key}")
+
+
+@dataclass(frozen=True)
+class RepoRef:
+    """A repo a covering query is about: origin key, and the owner/repo label.
+
+    *key* is the origin key (`acme-widget-1a2b3c4d`). *label* is the
+    canonical `owner/repo` form, used only when an item was saved before
+    `Item.repo_key` existed.
+    """
+
+    key: str
+    label: str
 
 
 class RunNotFound(LookupError):
@@ -241,40 +257,55 @@ def _try_load(run_id: str) -> Run | None:
         return None
 
 
-def _covering_runs(repo: str) -> list[Run]:
-    """Readable runs with an item whose repo matches *repo*, case-folded, oldest first."""
-    wanted = repo.casefold()
+def _item_covers(item: Item, ref: RepoRef) -> bool:
+    """Whether *item* belongs to *ref*: origin key, else the label for older items."""
+    if item.repo_key:
+        return item.repo_key == ref.key
+    return item.repo.casefold() == ref.label.casefold()
+
+
+def _covering_runs(ref: RepoRef | None) -> list[Run]:
+    """Readable runs with an item covering *ref*, oldest first; empty when *ref* is None."""
+    if ref is None:
+        return []
     runs = (_try_load(run_id) for run_id in run_ids())
     return [run for run in runs
-            if run and any(item.repo.casefold() == wanted for item in run.items)]
+            if run and any(_item_covers(item, ref) for item in run.items)]
 
 
-def ids_covering(repo: str) -> list[str]:
-    """Run ids with an item whose repo matches *repo*, case-folded, oldest first.
+def ids_covering(ref: RepoRef | None) -> list[str]:
+    """Run ids with an item covering *ref*, oldest first.
 
     A run whose state cannot be read is skipped, as it is by `unfinished_covering`.
     """
-    return [run.id for run in _covering_runs(repo)]
+    return [run.id for run in _covering_runs(ref)]
 
 
-def unfinished_covering(repo: str) -> list[str]:
-    """`ids_covering(repo)` narrowed to runs not yet finished, oldest first."""
-    return [run.id for run in _covering_runs(repo) if run.status not in FINISHED_RUN]
+def unfinished_covering(ref: RepoRef | None) -> list[str]:
+    """`ids_covering(ref)` narrowed to runs not yet finished, oldest first."""
+    return [run.id for run in _covering_runs(ref) if run.status not in FINISHED_RUN]
 
 
-def default_run_id(repo: str | None) -> str | None:
-    """The run a no-id `pr batch` read should show.
+def covering_run_id(ref: RepoRef | None) -> str | None:
+    """The run a no-id `pr batch` mutation should act on.
 
-    Newest unfinished run covering *repo*; else the newest covering *repo*;
-    else `latest_run_id()`. *repo* None, empty, or unmatched is the last arm.
+    Newest unfinished run covering *ref*; else the newest covering *ref*;
+    else None. Never falls back to the machine-latest run.
     """
-    if not repo:
-        return latest_run_id()
-    covering = _covering_runs(repo)
+    covering = _covering_runs(ref)
     unfinished = [run.id for run in covering if run.status not in FINISHED_RUN]
     if unfinished:
         return unfinished[-1]
-    return covering[-1].id if covering else latest_run_id()
+    return covering[-1].id if covering else None
+
+
+def default_run_id(ref: RepoRef | None) -> str | None:
+    """The run a no-id `pr batch` read should show.
+
+    Newest unfinished run covering *ref*; else the newest covering *ref*;
+    else `latest_run_id()`. *ref* None or unmatched is the last arm.
+    """
+    return covering_run_id(ref) or latest_run_id()
 
 
 def state_mtime(run_id: str) -> float:

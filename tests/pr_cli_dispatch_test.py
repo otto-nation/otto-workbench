@@ -31,13 +31,12 @@ import core.run_lock  # noqa: E402
 import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
 import review.gc  # noqa: E402
-import batch.store  # noqa: E402
 import cli.pr_batch  # noqa: E402
 import cli.review_modes  # noqa: E402
 import core.tool_parser  # noqa: E402
 import pr.context  # noqa: E402
 from core.run_lock import CHECKOUT, TARGET  # noqa: E402
-from run_lock_support import flocked, git_dir, held_elsewhere, live_pid  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
 
 from pr_cli_support import _cmd_fix, _TEST_PR, _run_main, _lock_file, _dispatch_stage
 
@@ -426,7 +425,6 @@ def test_command_fetches_only_if_it_always_did(command, tmp_path):
 _NO = frozenset()
 _T = frozenset({TARGET})
 _TC = frozenset({TARGET, CHECKOUT})
-_BATCH = frozenset({batch.store.BATCH_LOCK})
 
 _DECLARED_LOCKS = {
     ("create", ()): _TC,
@@ -455,8 +453,8 @@ _DECLARED_LOCKS = {
     ("push", ("--expect", "abc")): _TC,
     ("describe", ()): _TC,
     ("batch", ()): _NO,
-    ("batch", ("run", "--checkout", "/r")): _BATCH,
-    ("batch", ("resume",)): _BATCH,
+    ("batch", ("run", "--checkout", "/r")): _NO,
+    ("batch", ("resume",)): _NO,
     ("batch", ("resolve", "r", "d", "--action", "accept")): _NO,
     ("batch", ("cancel",)): _NO,
     ("batch", ("status",)): _NO,
@@ -523,22 +521,6 @@ def test_review_target_shape_locks_at_dispatch(argv, pr_number, checkout, worktr
     assert seen == {"target": True, "checkout": checkout}
 
 
-@pytest.mark.parametrize("sub", ["run", "resume"])
-def test_dispatch_holds_the_batch_lock_before_it_resolves_anything(sub):
-    seen = {}
-    real = pr.context.resolve_at
-
-    def spy(*args, **kwargs):
-        seen["held"] = core.run_lock.is_global_held(batch.store.BATCH_LOCK)
-        return real(*args, **kwargs)
-
-    with patch("pr.context.resolve_at", side_effect=spy), \
-         patch("cli.pr._dispatch", return_value=0):
-        _run_main("batch", sub)
-    assert seen["held"] is True
-    assert not core.run_lock.is_global_held(batch.store.BATCH_LOCK)
-
-
 def test_help_skips_locks_so_a_live_batch_still_prints_it(capsys):
     """`pr batch run --help` must not contend for the global a live run holds."""
     record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
@@ -546,42 +528,6 @@ def test_help_skips_locks_so_a_live_batch_still_prints_it(capsys):
         code = _run_main("batch", "run", "--help")
     assert code == 0
     assert "--checkout" in capsys.readouterr().out
-
-
-def test_help_as_a_flag_value_does_not_skip_the_batch_lock(capsys):
-    """`--prs --help` is not help: argparse consumes it as a value, or errors."""
-    with live_pid() as pid, \
-         held_elsewhere(core.run_lock.global_lock_path("batch"),
-                        {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0"}), \
-         patch("cli.pr_batch._cmd_run") as run:
-        code = _run_main("batch", "run", "--checkout", "/r", "--prs", "--help")
-    assert code == 1
-    assert "owns this global batch" in capsys.readouterr().err
-    run.assert_not_called()
-
-
-def test_end_of_options_help_does_not_skip_the_batch_lock(capsys):
-    """`pr batch run -- --help` is not the parser answering help."""
-    with live_pid() as pid, \
-         held_elsewhere(core.run_lock.global_lock_path("batch"),
-                        {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0"}), \
-         patch("cli.pr_batch._cmd_run") as run:
-        code = _run_main("batch", "run", "--", "--help")
-    assert code == 1
-    assert "owns this global batch" in capsys.readouterr().err
-    run.assert_not_called()
-
-
-def test_end_of_options_help_does_not_skip_the_batch_lock_on_resume(capsys):
-    """`pr batch resume -- --help` is not the parser answering help."""
-    with live_pid() as pid, \
-         held_elsewhere(core.run_lock.global_lock_path("batch"),
-                        {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0"}), \
-         patch("cli.pr_batch._cmd_resume") as resume:
-        code = _run_main("batch", "resume", "--", "--help")
-    assert code == 1
-    assert "owns this global batch" in capsys.readouterr().err
-    resume.assert_not_called()
 
 
 def test_dispatch_holds_target_and_checkout_before_it_fetches(worktree):

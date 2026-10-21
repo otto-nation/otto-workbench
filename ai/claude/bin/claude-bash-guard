@@ -43,6 +43,12 @@ block() {
 # hook does not run in, and tests/pi_extensions_tokenize.bats holds the two to one value.
 SLEEP_WAIT_THRESHOLD_SECONDS=10
 
+# Program names that can write to GitHub: gh and the workbench commands that
+# post. The pre-filter's word list, kept in step with _GITHUB_COMMANDS in
+# ai/lib/gh/write_shapes.py and GITHUB_WRITE_PROGRAMS in
+# ai/pi/extensions/_shared/github-writes.ts.
+GITHUB_WRITE_PROGRAMS='gh pr pr-describe review review-post review-threads review-orchestrate'
+
 # _branch_review_has_open_findings — true when a self-review for the current
 # branch is sitting on unticked findings.
 #
@@ -224,71 +230,120 @@ _statement_words() {
   done
 }
 
-# True when STATEMENT files an issue or writes to a PR. Own function so other
-# agent_id checks stay theirs — this one is only the publishing command set.
-# Word matches, not regexes over the raw statement, so quoting a command name
-# or subcommand is not a way around the rule.
-_statement_publishes() {
-  local statement="$1"
-  _statement_words "$statement"
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == issue && "${STATEMENT_WORDS[2]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == linear && "${STATEMENT_WORDS[1]}" == issue && "${STATEMENT_WORDS[2]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == edit ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == comment ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == review ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == comments && " ${STATEMENT_WORDS[*]} " == *" --post "* ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == describe && " ${STATEMENT_WORDS[*]} " == *" --post "* ]] && return 0
-  _gh_api_publishes "$statement" && return 0
-  return 1
-}
-
-# True when STATEMENT is `gh api` with a mutating method on an issues/pulls path.
-_gh_api_publishes() {
-  local word method=""
-  local -i i touches=0
+# _statement_files_linear STATEMENT — true when STATEMENT runs `linear issue
+# create`. Its own case because the GitHub classifier does not know Linear.
+# Word matches, so quoting the command name is not a way around it.
+#
+# ceiling: `linear` behind a wrapper (`env linear …`) or an alias is not
+# matched. Upgrade if one shows up in an agent transcript; Pi's
+# filesLinearIssue reads it the same way.
+_statement_files_linear() {
   _statement_words "$1"
-  (( ${#STATEMENT_WORDS[@]} >= 3 )) || return 1
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == api ]] || return 1
-  for ((i = 2; i < ${#STATEMENT_WORDS[@]}; i++)); do
-    word="${STATEMENT_WORDS[$i]}"
-    case "$word" in
-      -X|--method)
-        method="${STATEMENT_WORDS[i+1]:-}"
-        i=$((i + 1))
-        ;;
-      --method=*)
-        method="${word#--method=}"
-        ;;
-      -X?*)
-        method="${word#-X}"
-        ;;
-      *)
-        [[ "$word" =~ (^|/)(issues|pulls)(/|$) ]] || continue
-        touches=1
-        ;;
-    esac
-  done
-  [[ "$touches" -eq 1 ]] || return 1
-  method="${method#[\'\"]}"
-  method="${method%[\'\"]}"
-  case "${method^^}" in
-    POST|PATCH|PUT|DELETE) return 0 ;;
-  esac
-  return 1
+  [[ "${STATEMENT_WORDS[0]:-}" == linear && "${STATEMENT_WORDS[1]:-}" == issue &&
+     "${STATEMENT_WORDS[2]:-}" == create ]]
 }
 
-# True when any scanned statement publishes. Reads SCAN_STATEMENTS, the same
-# split every other rule in this file uses.
-_command_publishes() {
-  local statement
-  for statement in "${SCAN_STATEMENTS[@]}"; do
-    if _statement_publishes "$statement"; then
+# _statement_might_write_github STATEMENT — the cheap superset half of "does
+# this write to GitHub": true when STATEMENT mentions a GITHUB_WRITE_PROGRAMS
+# name anywhere, as a word, a path's last part, an `--opt=` value, inside
+# quotes, or ending an option cluster (`-Sgh`). False means not a write; true
+# only means ask owners-check --classify.
+#
+# Read twice — quotes and backslashes deleted (`"g"h`, `g\h` are `gh` to the
+# shell) and quotes as separators (`-S'gh …'`) — because the classifier reads
+# it both ways too, and a superset has to cover both. No fork.
+_statement_might_write_github() {
+  local text tok
+  local -a toks
+  text="${1//[\\\'\"]/} ${1//[\'\"]/ }"
+  text="${text//[^A-Za-z0-9_.-]/ }"
+  read -ra toks <<<"$text"
+  for tok in "${toks[@]}"; do
+    [[ " $GITHUB_WRITE_PROGRAMS " == *" $tok "* ]] && return 0
+    if [[ "$tok" == -[!-]* ]] && _cluster_ends_in_program "$tok"; then
       return 0
     fi
   done
   return 1
+}
+
+# _cluster_ends_in_program TOKEN — true when the short-option cluster TOKEN
+# ends in a GITHUB_WRITE_PROGRAMS name after its first option letter (`-Sgh`),
+# where an attached command string would start.
+_cluster_ends_in_program() {
+  local name
+  for name in $GITHUB_WRITE_PROGRAMS; do
+    if [[ "$1" == -?*"$name" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# True when any scanned statement might write to GitHub. Reads SCAN_STATEMENTS,
+# so a heredoc body — content, not commands — never matches.
+_command_might_write_github() {
+  local statement
+  for statement in "${SCAN_STATEMENTS[@]}"; do
+    if _statement_might_write_github "$statement"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# _locate_owners_check — set OWNERS_CHECK to ai/bin/owners-check, or to empty
+# when it cannot be found.
+#
+# Found beside this script first — the otto-ai-tools tarball flattens ai/bin and
+# ai/claude/bin into one bin/ — then at ../../bin in a checkout. The installed
+# ~/.local/bin symlink is followed first, as claude-edit-guard does, so a
+# checkout install resolves into the repo.
+_locate_owners_check() {
+  local self dir candidate
+  OWNERS_CHECK=""
+  self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+  dir="${self%/*}"
+  [[ "$dir" == "$self" ]] && dir=.
+  for candidate in "$dir/owners-check" "$dir/../../bin/owners-check"; do
+    if [[ -x "$candidate" ]]; then
+      OWNERS_CHECK="$candidate"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# True unless owners-check --classify answers that $cmd does not write (exit 1).
+# Fails closed: not found, no python3, a crash — all count as a write, because
+# the caller refuses a write and a guard that allowed on its own inability to
+# answer would be no guard. Unbounded here; the Claude Code hook timeout bounds
+# the whole hook.
+_command_classifies_as_write() {
+  local status=0
+  _locate_owners_check
+  [[ -n "$OWNERS_CHECK" ]] || return 0
+  "$OWNERS_CHECK" --classify -- "$cmd" >/dev/null 2>&1 || status=$?
+  (( status != 1 ))
+}
+
+# True when $cmd files a Linear issue or writes to GitHub — what a subagent may
+# not do. The GitHub half is the pre-filter, then owners-check --classify
+# (ai/lib/gh/write_shapes.py), the one write classifier: a bash copy of its
+# wrapper peeling would be a second implementation of a security boundary,
+# free to drift. The pre-filter keeps every command that names no GitHub
+# program off the Python path. Same set as isPublishing in
+# ai/pi/extensions/oneshot-publish-guard/detect.ts; tests/github_write_shapes.bats
+# drives tests/fixtures/github-write-shapes.tsv through both.
+_command_publishes() {
+  local statement
+  for statement in "${SCAN_STATEMENTS[@]}"; do
+    if _statement_files_linear "$statement"; then
+      return 0
+    fi
+  done
+  _command_might_write_github || return 1
+  _command_classifies_as_write
 }
 
 # The one fork left on the hot path, and it stays.
@@ -641,10 +696,10 @@ _scan() {
 _scan "$cmd"
 
 # A dispatched subagent reports deferrals to its parent; it does not file or
-# edit. Same command set as ai/pi/extensions/oneshot-publish-guard. Empty
-# agent_id is the main session and is left to the rules below.
+# write to GitHub. Same command set as ai/pi/extensions/oneshot-publish-guard.
+# Empty agent_id is the main session and is left to the rules below.
 if [[ -n "$agent_id" ]] && _command_publishes; then
-  block 'A dispatched subagent does not file issues or post to a PR — report the deferral (what, why, suggested title) and any proposed PR text to the parent, which files or edits. See git-operations.md § Subagent Publishing.'
+  block 'A dispatched subagent does not file issues, post to a PR, or write to GitHub any other way — report the deferral (what, why, suggested title) and any proposed PR text to the parent, which files or edits. See git-operations.md § Subagent Publishing.'
 fi
 
 # ── Whole-command rules ──────────────────────────────────────────────────────

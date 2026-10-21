@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for oneshot-publish-guard: refuse issue/PR writes in json/print sessions.
+# Tests for oneshot-publish-guard: refuse GitHub writes and Linear filings in json/print sessions.
 # select-on: ai/pi/extensions/*
 setup() {
   load 'test_helper'
@@ -40,7 +40,12 @@ _publishes() {
     'pr comments --post' \
     'pr comments --finish --post' \
     'pr describe --post' \
-    'pr create --draft'; do
+    'pr create --draft' \
+    'gh pr merge 1' \
+    'gh issue close 5' \
+    'gh api -X POST /repos/o/r/git/refs' \
+    'gh api graphql -f query=mutation{x}' \
+    'pr review 123'; do
     _publishes "$cmd"
     [ "$status" -eq 0 ]
     [ "$output" = true ] || {
@@ -166,6 +171,12 @@ _agree_publish() {
     'gh api GET /repos/o/r/issues' \
     'gh api -X GET /repos/o/r/issues' \
     'gh api -X POST /repos/o/r/git/refs' \
+    'gh pr merge 1' \
+    'gh release create v1' \
+    'gh --repo o/r issue create' \
+    'GH_REPO=o/r gh issue create' \
+    'pr review 123' \
+    'pr review --self --fix' \
     'pr comments --triage' \
     'pr describe --draft' \
     "echo 'gh issue create'"; do

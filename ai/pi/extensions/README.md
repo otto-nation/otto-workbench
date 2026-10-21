@@ -59,6 +59,11 @@ A json/print process exits at the end of the turn, so naming `job_start` there
 — even when the tool is listed, as it is in a default subagent — points at work
 that cannot outlive the process.
 
+`github-writes.ts` answers whether a command writes to GitHub: an in-process
+superset pre-filter, then `ai/bin/owners-check --classify` for the verdict, so
+the Python classifier stays the only copy of the write shapes. Anything but
+"not a write" from the checker — missing, crashed, timed out — counts as a write.
+
 ## Overriding one
 
 `~/.config/workbench/overrides/ai/pi/extensions/<name>/` replaces the extension

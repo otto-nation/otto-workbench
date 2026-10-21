@@ -1,8 +1,9 @@
 # The GitHub write-shape corpus: <write|read><TAB><command>.
-# Drives three implementations of one predicate and fails whichever drifts:
-#   ai/claude/bin/claude-bash-guard (_command_writes_github)  tests/github_write_shapes.bats
-#   ai/pi/extensions/_shared/github-writes.ts (isGithubWrite)  tests/github_write_shapes.bats
-#   ai/lib/gh/write_shapes.py (command_is_write)               tests/gh_write_shapes_test.py
+# ai/lib/gh/write_shapes.py (command_is_write) is the one classifier; both agent
+# guards keep only a superset pre-filter and ask it through owners-check --classify.
+#   ai/lib/gh/write_shapes.py (command_is_write)                    tests/gh_write_shapes_test.py
+#   ai/claude/bin/claude-bash-guard (subagent rule)                 tests/github_write_shapes.bats
+#   ai/pi/extensions/oneshot-publish-guard/detect.ts (isPublishing) tests/github_write_shapes.bats
 write	gh issue create --title x --body y
 write	gh issue comment 5 --body x
 write	gh issue edit 5 --body x

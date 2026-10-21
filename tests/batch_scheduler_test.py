@@ -1,3 +1,4 @@
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ import batch.events  # noqa: E402
 import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+import batch.targets  # noqa: E402
 from batch.requests import Cancel, Decide, Envelope, Malformed, Release  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
@@ -379,12 +381,10 @@ def test_cancel_kill_force_kills_what_the_tracked_step_already_outlived():
 def test_release_kill_of_a_live_step_does_not_requeue_the_item():
     """A killed step exits a tick later: its item's locks are given back only then,
     and the step's exit does not requeue the released item."""
-    import contextlib
-    import pathlib
     released = []
     h = Harness([row(1)])
     holds = batch.targets.ItemHolds()
-    target = pathlib.Path("/t")
+    target = Path("/t")
     holds.take(target, ["o/r#1"], contextlib.nullcontext())
 
     def release(run, live):

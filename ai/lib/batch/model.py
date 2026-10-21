@@ -121,6 +121,11 @@ class StepRecord:
     explicit: bool = False
     # The next run of this step is the one post-publish CI re-check, not a fix.
     watch: bool = False
+    # The non-merge commits each attempt added (`head_before..HEAD`, full SHAs):
+    # what publish checks the branch still carries. Never recorded for the
+    # rebase step, whose commits are replays of ones already on the branch.
+    # Cleared wherever `drafted` is.
+    commits: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -181,6 +186,11 @@ class Item:
     # That re-check read a final CI report. A re-check that found no checks yet
     # spends the watch without reading CI, so the summary still names the item.
     ci_rechecked: bool = False
+    # The commits the operator has `force-publish`ed past, accumulated across
+    # refusals: one publish can be refused for drafted commits it dropped and
+    # then for remote commits it would drop, and confirming the second must not
+    # unconfirm the first. Cleared once a publish lands.
+    forced: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.remote_sha:

@@ -151,6 +151,10 @@ def prep(decision: Decision, item: Item) -> str | None:
     if kind is DecisionKind.FAILED and \
             p.get("reason") == batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
         return f"check {'; '.join(p.get('commits', []))} against {item.remote_sha}"
+    if kind is DecisionKind.FAILED and \
+            p.get("reason") == batch.publish.Refusal.DRAFTED_DROPPED.value:
+        return (f"cherry-pick {'; '.join(p.get('commits', []))} back onto {item.branch} "
+                f"in {item.worktree} and retry, or force-publish without them")
     if kind is DecisionKind.COMMENT_ITEM:
         where = f"{p['file']}:{p.get('line', 0)}" if p.get("file") else "the PR conversation"
         return f"thread {p.get('id', '')} on {where}: {p.get('summary', '')[:_EXCERPT]}"

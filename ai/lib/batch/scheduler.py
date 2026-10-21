@@ -46,6 +46,18 @@ def _contains_commit(worktree: str, sha: str) -> bool:
     return git.client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=worktree)
 
 
+def _descends(worktree: str, old: str, new: str) -> bool:
+    """Whether *new* is *old* or a descendant of it, read in *worktree*."""
+    return git.client.ok("merge-base", "--is-ancestor", old, new, cwd=worktree)
+
+
+def _new_commits(worktree: str, base: str) -> list[str] | None:
+    """The non-merge commits HEAD gained since *base*, oldest first; None when git
+    could not list them."""
+    r = git.client.run("rev-list", "--reverse", "--no-merges", f"{base}..HEAD", cwd=worktree)
+    return r.stdout.split() if r.ok else None
+
+
 def _unpublished(worktree: str, remote_sha: str) -> bool:
     """Whether *worktree*'s HEAD holds work *remote_sha* lacks: neither it nor an ancestor of it.
 
@@ -195,6 +207,8 @@ class Scheduler:
                  dirty: Callable[[str], bool] = git.client.is_dirty,
                  rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
                  unpublished: Callable[[str, str], bool] = _unpublished,
+                 descends: Callable[[str, str, str], bool] = _descends,
+                 commits: Callable[[str, str], list[str] | None] = _new_commits,
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None,
                  release: Callable[[Run], object] | None = None):
@@ -218,6 +232,7 @@ class Scheduler:
         self._contains = contains
         self._dirty, self._rebasing = dirty, rebasing
         self._unpublished = unpublished
+        self._descends, self._commits = descends, commits
 
     @property
     def run(self) -> Run:
@@ -266,7 +281,10 @@ class Scheduler:
         if rec.watch and batch.outcomes.settled_report(live.proc.stdout()):
             item.ci_rechecked = True
         rec.watch = False
-        moved = self._head(item.worktree) != base
+        head = self._head(item.worktree)
+        moved = head != base
+        if rec.step is not Step.REBASE and head != live.head_before:
+            self._record_commits(item, rec, live.head_before, head)
         # Drafted means this step left work the publish owes the remote: commits
         # since its first attempt started, or — for a comments pass, which drafts
         # its replies even when it commits nothing — any clean exit. Sticky: a
@@ -288,6 +306,21 @@ class Scheduler:
             _decide(self.run, item, rec.step.value, draft.kind, draft.payload, emit=self._emit)
         self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
                    status=rec.status.value, exit_code=code)
+
+    def _record_commits(self, item: Item, rec: StepRecord, before: str, head: str) -> None:
+        """Add the commits this attempt made to *rec*, for publish to check are kept.
+
+        A listing git refused records the attempt's tip instead: a branch that
+        still carries it carries everything beneath it, so the gate stays closed
+        on the work rather than forgetting it.
+        """
+        new = self._commits(item.worktree, before) if before else None
+        if new is None:
+            if before:
+                self._emit("commits_unrecorded", run=self.run.id, item=item.key,
+                           step=rec.step.value, head=head)
+            new = [head] if head else []
+        rec.commits.extend(sha for sha in new if sha not in rec.commits)
 
     # ── admitting ────────────────────────────────────────────────────────
 
@@ -371,13 +404,17 @@ class Scheduler:
 
     def _refresh_remote(self, item: Item, remote: str) -> None:
         """Adopt GitHub's head as the lease only while nothing local was built on
-        the old one, and only when the local branch already contains it — so a
-        colleague's push never becomes the head a force-push leases on."""
+        the old one, only when the local branch already contains it, and only
+        when it moved forward from the old lease — so neither a colleague's push
+        nor a colleague's reset becomes the head a push leases on. A remote reset
+        backwards is left as the lease's problem: adopting it would have the
+        local branch, still holding the removed commits, push them back."""
         if not remote or remote == item.remote_sha:
             return
         if any(r.drafted for r in item.steps):
             return
-        if self._contains(item.worktree, remote):
+        if self._contains(item.worktree, remote) and \
+                self._descends(item.worktree, item.remote_sha, remote):
             item.remote_sha = remote
 
     def _pending(self, item: Item) -> StepRecord | None:

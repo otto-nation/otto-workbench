@@ -476,16 +476,16 @@ its own paused replay or restoring unstaged generated files. A mise toml is trus
 An item that closes with drafted work, an owed closeout (`pr status`'s `⚠ closeout owed`),
 or local commits the planned head lacks (`unpublished`, never auto-published) opens one
 `publish` decision. Publish fetches the branch and refuses (`failed`) with `fetch_failed`,
-`remote_moved`, `not_comparable`, `not_incorporated`, or
-`not_incorporated_remote`. Otherwise it fast-forwards with
+`remote_moved`, `not_comparable`, `not_incorporated`, `not_incorporated_remote`,
+or `drafted_dropped` (a drafted commit left the branch; see `batch.publish`). Otherwise it fast-forwards with
 `pr push --expect <planned head>`, or force-pushes with
 `pr rebase --push-only --expect <planned head>`, then runs
 `pr comments --finish --post` when the comments step drafted, items were
 tracked, or a closeout is owed — with `--track-all` when the owed part is
 a tracking issue. A commit `--finish` pushes becomes the lease.
-`force-publish` answers only `not_incorporated_remote` for the listed
+`force-publish` answers only `not_incorporated_remote` and `drafted_dropped` for the listed
 commits (a hand `--fork-point` rebase: the skipped ones); a new one refuses again.
-A publish `retry` leases on a remote equal to local, or on `remote_moved` resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish STEPS` resolves that
+A publish `retry` leases on a remote equal to local; on `remote_moved` it leases on a remote that fast-forwarded the lease to a commit local holds, or else resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish STEPS` resolves that
 decision when the item closes with no open decision and every drafted
 step is listed and `done`; an owed closeout counts as `comments`.
 `--watch-ci` re-checks CI once after a push and reopens on red;

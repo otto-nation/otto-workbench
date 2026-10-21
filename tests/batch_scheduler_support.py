@@ -120,7 +120,7 @@ class Harness:
                  replan=None, worktrees=None, heads=None, selected=None, cfg=None,
                  runner=None, tree=None, closeout=None, moves=(), stdouts=None,
                  contains=None, dirty=None, rebasing=None, unpublished=None,
-                 watch_ci=False, verbose=False):
+                 descends=None, commits=None, watch_ci=False, verbose=False):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
@@ -151,7 +151,11 @@ class Harness:
             estimates=batch.admission.Estimates({}), closeout=close,
             contains=contains or (lambda wt, sha: True),
             dirty=dirty or (lambda wt: False), rebasing=rebasing or (lambda wt: False),
-            unpublished=unpublished or (lambda wt, sha: False), verbose=verbose)
+            unpublished=unpublished or (lambda wt, sha: False),
+            descends=descends or (lambda wt, old, new: True),
+            # A moved fake head is one commit: the head itself.
+            commits=commits or (lambda wt, base: [self.heads.get(wt, "h0")]),
+            verbose=verbose)
         self.sched = self._make()
 
     @property

@@ -261,21 +261,81 @@ def test_inherited_gh_repo_is_the_target_without_a_repo_flag(
 
 @pytest.mark.parametrize("command", [
     "eval 'gh issue create --title x'",
-    "env -i GH_REPO=ours/svc gh issue comment 1 -b hi",
-    "env -u X GH_REPO=stranger/lib gh issue comment 1 -b hi",
     "bash -c 'gh issue create --title x'",
     "sh -c 'gh pr comment 1 --body x'",
     "zsh -c 'gh issue create --title x'",
-    "command gh issue create --title x",
-    "exec gh issue create --title x",
+    "bash -lc 'gh issue comment 1 -b hi --repo stranger/lib'",
+    "sh -ec 'gh issue comment 1 -b hi'",
+    "zsh -xc 'gh issue create --title x'",
     "xargs gh issue create --title",
-    "sudo gh issue create --title x",
-    "time gh issue create --title x",
+    "xargs -n 1 gh issue create --title",
 ])
 def test_opaque_wrappers_are_refused_even_at_home(github_owners, tmp_path, command):
     github_owners({"work": ["ours"]})
     repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
     assert not gh.owners.check_command(command, str(repo)).ok
+
+
+@pytest.mark.parametrize("command", [
+    "command -v gh",
+    "xargs grep -n 'pr create'",
+    "sudo apt install gh",
+    "time gh pr list",
+    "command gh pr view 3",
+    "env -u FOO gh pr list",
+])
+def test_transparent_wrapper_reads_are_allowed_unconfigured(github_owners, command):
+    github_owners({"work": "not-a-list"})
+    assert gh.owners.check_command(command, "/").ok
+
+
+@pytest.mark.parametrize("command", [
+    "command gh issue comment 1 -b hi",
+    "exec gh issue comment 1 -b hi",
+    "sudo gh issue comment 1 -b hi",
+    "time gh issue comment 1 -b hi",
+    "env -u FOO gh issue comment 1 -b hi",
+])
+def test_transparent_wrapper_writes_resolve_normally(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    stranger = remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    assert gh.owners.check_command(command, str(ours)).ok
+    assert not gh.owners.check_command(command, str(stranger)).ok
+
+
+def test_env_unsetting_gh_repo_refuses_a_cwd_write(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    assert not gh.owners.check_command(
+        "env -u GH_REPO gh issue comment 1 -b hi", str(repo)).ok
+
+
+def test_placeholder_hostname_after_value_flag_unions_the_default_host(
+        github_owners, tmp_path):
+    github_owners({"work": ["ghe.corp/acme"]})
+    verdict = gh.owners.check_command(
+        "GH_REPO=acme/x gh api -X POST -q --hostname=ghe.corp repos/{owner}/{repo}/issues",
+        str(tmp_path))
+    assert not verdict.ok
+
+
+@pytest.mark.parametrize("command", [
+    "gh pr merge 3 --squash --repo ours/svc",
+    "gh pr merge 3 --merge --repo ours/svc",
+    "gh pr merge 3 --rebase --repo ours/svc",
+    "gh pr merge 3 --delete-branch --repo ours/svc",
+    "gh pr merge 3 -d --repo ours/svc",
+    "gh pr merge 3 --auto --repo ours/svc",
+    "gh pr merge 3 --admin --repo ours/svc",
+])
+def test_boolean_merge_flags_do_not_union_cwd_for_a_following_repo(
+        github_owners, tmp_path, command, monkeypatch):
+    github_owners({"work": ["ours"]})
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert gh.owners.check_command(command, str(plain)).ok
 
 
 def test_plain_env_assignment_stays_resolvable(github_owners, tmp_path):

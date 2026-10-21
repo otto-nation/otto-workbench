@@ -232,6 +232,47 @@ def test_issue_transfer_destination_is_a_candidate(tmp_path):
 
 def test_an_opaque_wrapper_is_unresolvable(tmp_path):
     repo = remote_repo(tmp_path / "r", "git@github.com:acme/widget.git")
-    resolution = _resolve(["sudo", "gh", "issue", "create", "--title", "x"], repo)
+    resolution = _resolve(["xargs", "gh", "issue", "create", "--title"], repo)
     assert not resolution.ok
     assert "wrapper" in resolution.reason
+
+
+def test_ambiguous_hostname_unions_hosts_for_owner_placeholder(tmp_path):
+    resolution = _resolve(
+        ["GH_REPO=acme/x", "gh", "api", "-X", "POST", "-q", "--hostname=ghe.corp",
+         "repos/{owner}/{repo}/issues"],
+        tmp_path)
+    assert resolution.ok
+    assert _owner("ghe.corp/acme") in resolution.target.owners
+    assert _owner("acme") in resolution.target.owners
+
+
+def test_ambiguous_hostname_unions_hosts_for_graphql(tmp_path):
+    resolution = gh.owner_targets.resolve_gh_call(
+        ("api", "graphql", "-q", "--hostname=ghe.corp", "--input", "-"),
+        cwd=str(tmp_path), target_repo="acme/x", known_hosts=KNOWN)
+    assert resolution.ok
+    assert _owner("ghe.corp/acme") in resolution.target.owners
+    assert _owner("acme") in resolution.target.owners
+
+
+def test_a_boolean_flag_does_not_union_cwd_for_a_following_repo(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:stranger/lib.git")
+    resolution = _resolve(
+        ["gh", "pr", "merge", "3", "--squash", "--repo=ours/svc"], repo)
+    assert resolution.target.owners == (_owner("ours"),)
+
+
+def test_pr_merge_short_d_is_boolean_so_repo_is_explicit(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:stranger/lib.git")
+    resolution = _resolve(
+        ["gh", "pr", "merge", "3", "-d", "--repo=ours/svc"], repo)
+    assert resolution.target.owners == (_owner("ours"),)
+
+
+def test_label_short_d_still_unions_cwd_for_a_following_repo(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:stranger/lib.git")
+    resolution = _resolve(
+        ["gh", "label", "create", "foo", "-d", "--repo=ours/svc"], repo)
+    assert _owner("ours") in resolution.target.owners
+    assert _owner("stranger") in resolution.target.owners

@@ -53,6 +53,13 @@ write	exec gh issue create --title x
 write	xargs gh issue create --title
 write	sudo gh issue create --title x
 write	time gh issue create --title x
+write	bash -lc 'gh issue comment 1 -b hi --repo stranger/lib'
+write	sh -ec 'gh pr comment 1 --body x'
+write	zsh -xc 'gh issue create --title x'
+write	command gh issue comment 1 -b hi
+write	sudo -u bob gh issue comment 1 -b hi
+write	env -u FOO gh issue comment 1 -b hi
+write	xargs -n 1 gh issue create --title
 write	cd /tmp && gh issue create --title x
 write	gh issue list; gh issue create --title x
 write	pr create --draft
@@ -89,3 +96,10 @@ read	pr status
 read	review --self
 read	pr-describe
 read	review-threads --triage
+read	command -v gh
+read	xargs grep -n 'pr create'
+read	sudo apt install gh
+read	time gh pr list
+read	command gh pr view 3
+read	env -u FOO gh pr list
+read	git ls-files | xargs grep -l review

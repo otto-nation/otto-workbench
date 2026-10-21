@@ -22,7 +22,6 @@ from pathlib import Path
 import agent.diagnosis
 import agent.invoke
 import agent.phases
-import config.workbench_config
 import agent.usage
 import review.prompt
 import review.prompt_prior
@@ -41,6 +40,7 @@ import review.retry
 import review.state
 import review.types
 
+import config.workbench_config
 import core.log
 import core.module_proxy
 import pr.state

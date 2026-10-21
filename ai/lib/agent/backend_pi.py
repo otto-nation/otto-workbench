@@ -995,7 +995,6 @@ def _refusal_line(err: ModelNotServed | PiUnresolvable | ModelNotConfigured) -> 
     return f"pi refused the run: {err}"
 
 
-
 def _checked_spawn(
     cwd: str, model: str | None, provider: str | None, env: Mapping[str, str],
 ) -> PiSpawn:

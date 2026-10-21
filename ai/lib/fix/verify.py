@@ -29,6 +29,10 @@ execution as the operator, with their credentials and their network.
 
 from __future__ import annotations
 
+import textwrap
+from dataclasses import replace
+
+import agent.backend_events
 import agent.invoke
 import agent.phases
 import agent.templates
@@ -41,6 +45,10 @@ from fix.types import FixItem
 
 # What the gate calls one unit of its work, in the prompt's own words.
 _NOUN = "fix"
+
+# How much of the first refusal reason a verdict quotes. `test-pipe-guard`'s
+# reason is several hundred characters of remedy; the verdict needs the gist.
+REFUSAL_SHOWN = 160
 
 
 def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
@@ -99,9 +107,36 @@ def _run_chunk(
     )
     core.log.blank()
 
-    return {
+    verdicts = {
         item_id: Verdict(ok=ok, detail=detail)
         for item_id, (ok, detail) in fix.tracking.parse_verdicts(path).items()
+    }
+    return _with_refusals(
+        verdicts, agent.backend_events.guard_refusals(adapter.verify_session_log(chunk)))
+
+
+def _with_refusals(
+    verdicts: dict[str, Verdict], refusals: tuple[str, ...],
+) -> dict[str, Verdict]:
+    """*verdicts*, each one the gate did not verify naming the refusals it hit.
+
+    A gate refused its test runs answers "not verified — pytest unavailable",
+    which reads as a machine missing pytest. The refusal is the real cause, and
+    it is a fact about the chunk rather than about any item, so it is appended
+    to every unverified verdict in the chunk and to none that verified.
+    Nothing is added for an item the gate never answered: an added verdict
+    would be read as one, and silence must stay unverified.
+    """
+    if not refusals:
+        return verdicts
+    first = textwrap.shorten(refusals[0], REFUSAL_SHOWN)
+    core.log.warn(
+        f"Verify gate: {len(refusals)} tool call(s) refused by a guard — first: {first}")
+    note = f"the gate's tool calls were refused {len(refusals)}× (first: {first})"
+    return {
+        item_id: v if v.ok is True else replace(
+            v, detail=f"{v.detail}; {note}" if v.detail else note)
+        for item_id, v in verdicts.items()
     }
 
 

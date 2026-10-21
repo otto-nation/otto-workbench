@@ -75,7 +75,7 @@ from agent.rule_prefix import (
     release as release_rule_prefix,
 )
 from agent.backend_events import (
-    _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
+    _log_stderr, parse_pi_cost, parse_pi_event, pi_prompt_result,
     pi_run_error, pi_tool_signature, pi_wrote_output,
 )
 from agent.backend_pi_rpc import (
@@ -1141,7 +1141,7 @@ def _finish(proc: subprocess.Popen, stream: StreamResult, session_log: str) -> i
     # Reading stderr blocks until the child closes it, so it is only safe once
     # the child is gone. A group that survived SIGKILL never closes it.
     if _wait_for_exit(proc, abandoned=stream.error is not None):
-        _log_stderr_on_failure(proc, session_log)
+        _log_stderr(proc, session_log)
     return _exit_code(proc, stream)
 
 

@@ -19,7 +19,7 @@ import core.run_lock  # noqa: E402
 import pr.context  # noqa: E402
 import pr.thread_replies  # noqa: E402
 import review.review_body_reply  # noqa: E402
-from run_lock_support import flocked, git_dir, held_elsewhere, live_pid  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere, live_pid, repo_with_origin  # noqa: E402
 
 
 def _ctx(worktree):
@@ -58,9 +58,11 @@ def test_a_command_declaring_nothing_takes_nothing(worktree):
     assert not (ctx.target_dir / core.run_lock.LOCK_FILE).exists()
 
 
-def test_a_global_lock_is_never_claimed_for_a_process(worktree):
+def test_a_global_lock_is_never_claimed_for_a_process(worktree, tmp_path):
+    repo = repo_with_origin(tmp_path / "repo")
     with pytest.raises(ValueError):
-        cli.locks.claim_declared("batch", ["run"], _ctx(worktree), command="pr batch run")
+        cli.locks.claim_declared("batch", ["run", "--checkout", str(repo)],
+                                 _ctx(worktree), command="pr batch run")
 
 
 def test_contention_exits_1_naming_the_holder_and_the_target(worktree, capsys):

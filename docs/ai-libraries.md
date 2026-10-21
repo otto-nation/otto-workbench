@@ -3795,7 +3795,7 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
-    <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
+    <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
@@ -3804,10 +3804,11 @@ Where a `pr batch` run lives on disk; the only module that touches it.
 
 `state.json` is written only by a `Session` that loaded it under the run's
 resource. The resource has no `WORKBENCH_RUN_LOCK` marker: a child neither
-inherits it nor passes through it. Lock order is `Global("batch")`, then the
-run resource, then item TARGETs, then CHECKOUT. Every take is non-blocking, so
-the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own
-TARGET before `reap` takes run resources.
+inherits it nor passes through it. Lock order is `Global("batch-<repo_key>")`
+for each repo the batch covers, then the run resource, then item TARGETs, then
+CHECKOUT. Every take is non-blocking, so the order cannot deadlock. One
+exception: `pr gc`'s dispatcher takes its own TARGET before `reap` takes run
+resources.
 
 `reap` renames the run directory to the tombstone while still holding the
 flock. `os.rename` moves `run.lock` with the directory; the flock stays on
@@ -7032,7 +7033,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
-Omitting RUN_ID on resume/status/next/cancel picks this checkout's newest unfinished covering run, else its newest covering, else the latest on the machine. cancel and resume without an id refuse when more than one unfinished run covers this checkout.
+Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 

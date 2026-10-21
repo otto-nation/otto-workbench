@@ -17,9 +17,14 @@ from batch_session_support import seed  # noqa: E402
 RID = "20261001T120000-abcd"
 
 
-def _run(run_id=RID, *, repo="o/r", status=None):
+def _ref(label, key=""):
+    return batch.store.RepoRef(key=key, label=label)
+
+
+def _run(run_id=RID, *, repo="o/r", status=None, repo_key=""):
     item = batch.model.Item(key=f"{repo}#1", repo=repo, repo_dir="/r", pr=1, branch="b", head_sha="aaa",
-                  steps=[batch.model.StepRecord(batch.model.Step.REBASE), batch.model.StepRecord(batch.model.Step.REVIEW)])
+                  steps=[batch.model.StepRecord(batch.model.Step.REBASE), batch.model.StepRecord(batch.model.Step.REVIEW)],
+                  repo_key=repo_key)
     run = batch.model.Run(id=run_id, started_at="t", steps=[batch.model.Step.REBASE, batch.model.Step.REVIEW], pool=2,
                  auto_publish=[batch.model.Step.REBASE], items=[item],
                  decisions=[batch.model.Decision(id="d1", item=f"{repo}#1", step="rebase",
@@ -87,28 +92,30 @@ def test_latest_run_id_is_the_newest():
 def test_ids_covering_matches_repo_casefold():
     seed(_run("20261001T120000-aaaa", repo="Acme/Widget"))
     seed(_run("20261002T120000-bbbb", repo="other/r"))
-    assert batch.store.ids_covering("acme/widget") == ["20261001T120000-aaaa"]
+    assert batch.store.ids_covering(_ref("acme/widget")) == ["20261001T120000-aaaa"]
 
 
 def test_default_run_id_prefers_unfinished_matching_over_newer_finished_other():
     seed(_run("20261001T120000-aaaa", repo="o/r"))
     seed(_run("20261002T120000-bbbb", repo="other/r", status=batch.model.RunStatus.DONE))
     assert batch.store.latest_run_id() == "20261002T120000-bbbb"
-    assert batch.store.default_run_id("o/r") == "20261001T120000-aaaa"
+    assert batch.store.default_run_id(_ref("o/r")) == "20261001T120000-aaaa"
 
 
 def test_default_run_id_all_finished_falls_back_to_newest_matching():
     seed(_run("20261001T120000-aaaa", repo="o/r", status=batch.model.RunStatus.DONE))
     seed(_run("20261002T120000-bbbb", repo="o/r", status=batch.model.RunStatus.CANCELLED))
     seed(_run("20261003T120000-cccc", repo="x/y", status=batch.model.RunStatus.DONE))
-    assert batch.store.default_run_id("o/r") == "20261002T120000-bbbb"
+    assert batch.store.default_run_id(_ref("o/r")) == "20261002T120000-bbbb"
 
 
 def test_default_run_id_no_repo_or_unmatched_falls_back_to_latest():
     seed(_run("20261001T120000-aaaa"))
     seed(_run("20261002T120000-bbbb"))
     assert batch.store.default_run_id(None) == "20261002T120000-bbbb"
-    assert batch.store.default_run_id("no/such") == "20261002T120000-bbbb"
+    assert batch.store.default_run_id(_ref("no/such")) == "20261002T120000-bbbb"
+    assert batch.store.covering_run_id(_ref("no/such")) is None
+    assert batch.store.covering_run_id(None) is None
 
 
 def test_open_decisions_excludes_resolved():
@@ -143,6 +150,23 @@ def test_ids_covering_and_default_skip_an_unreadable_run():
     seed(_run("20261001T120000-aaaa", repo="o/r"))
     seed(_run("20261002T120000-bbbb", repo="o/r"))
     (batch.store.run_dir("20261002T120000-bbbb") / batch.store.STATE_FILE).write_text("{not json")
-    assert batch.store.ids_covering("o/r") == ["20261001T120000-aaaa"]
-    assert batch.store.unfinished_covering("o/r") == ["20261001T120000-aaaa"]
-    assert batch.store.default_run_id("o/r") == "20261001T120000-aaaa"
+    assert batch.store.ids_covering(_ref("o/r")) == ["20261001T120000-aaaa"]
+    assert batch.store.unfinished_covering(_ref("o/r")) == ["20261001T120000-aaaa"]
+    assert batch.store.default_run_id(_ref("o/r")) == "20261001T120000-aaaa"
+
+
+def test_covering_matches_by_repo_key_even_when_the_label_differs():
+    seed(_run("20261001T120000-aaaa", repo="other/label", repo_key="acme-widget-abcd1234"))
+    seed(_run("20261002T120000-bbbb", repo="o/r", repo_key="other-key-ffff9999"))
+    ref = _ref("cwd/label", key="acme-widget-abcd1234")
+    assert batch.store.ids_covering(ref) == ["20261001T120000-aaaa"]
+    assert batch.store.covering_run_id(ref) == "20261001T120000-aaaa"
+    assert batch.store.default_run_id(ref) == "20261001T120000-aaaa"
+
+
+def test_covering_falls_back_to_the_label_when_an_item_has_no_repo_key():
+    seed(_run("20261001T120000-aaaa", repo="o/r"))
+    seed(_run("20261002T120000-bbbb", repo="other/r", repo_key="k"))
+    ref = _ref("o/r", key="unrelated-key-00000000")
+    assert batch.store.ids_covering(ref) == ["20261001T120000-aaaa"]
+    assert batch.store.covering_run_id(ref) == "20261001T120000-aaaa"

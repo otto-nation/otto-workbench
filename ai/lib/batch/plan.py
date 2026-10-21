@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import batch.targets
 import core.log
 import core.serde
 import core.session_lock
@@ -149,6 +150,9 @@ class PlanRow:
     ref_namespace: str = ""
     # What pr's saved state says is owed (CloseoutDebt.describe()), "" when nothing is.
     closeout: str = ""
+    # Origin key of the repo (pr.target.repo_key_from_origin) taken at plan time;
+    # the per-repo batch lock is named after it. "" when the checkout had no origin.
+    repo_key: str = ""
 
     @property
     def key(self) -> str:
@@ -565,7 +569,7 @@ def _local_heads(repo_dir: str) -> dict[str, str]:
 
 def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
          ref_namespace: str = "", viewer: str = "",
-         remote_heads: dict[str, str] | None = None) -> PlanRow:
+         remote_heads: dict[str, str] | None = None, repo_key: str = "") -> PlanRow:
     branch, head = node["headRefName"], node["headRefOid"]
     base = node.get("baseRefName") or ""
     fork = bool(node.get("isCrossRepository"))
@@ -586,6 +590,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
         local_head=local_head, base_ref=base, is_fork=fork, ci_state=ci_state,
         ref_namespace=ref_namespace,
         closeout=_closeout_from(state).describe(),
+        repo_key=repo_key,
     )
 
 
@@ -621,6 +626,7 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
     viewer = (data.get("viewer") or {}).get("login", "")
     heads: dict[str, dict[str, str]] = {}
+    keys: dict[str, str] = {}
     rows = []
     for n in (data.get("search") or {}).get("nodes") or []:
         name = (n.get("repository") or {}).get("nameWithOwner") or ""
@@ -630,10 +636,11 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
         repo_dir = repo_dirs[slug]
         if repo_dir not in heads:
             heads[repo_dir] = _local_heads(repo_dir)
+            keys[repo_dir] = batch.targets.origin_key(repo_dir)
         rows.append(_row(
             n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), ""),
             (namespaces or {}).get(repo_dir, ""), viewer,
-            (remote_heads or {}).get(repo_dir)))
+            (remote_heads or {}).get(repo_dir), repo_key=keys[repo_dir]))
     return sorted(rows, key=lambda r: (r.repo, r.pr))
 
 
@@ -726,4 +733,5 @@ def replan_row(row: PlanRow) -> PlanRow | None:
     if node.get("state") != "OPEN":
         return None
     return _row(node, row.repo_dir, row.repo, row.local_head, row.ref_namespace,
-                (data.get("viewer") or {}).get("login", ""))
+                (data.get("viewer") or {}).get("login", ""),
+                repo_key=row.repo_key)

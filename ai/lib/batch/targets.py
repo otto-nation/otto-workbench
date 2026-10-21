@@ -43,6 +43,28 @@ _MARKERS = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV,
             core.run_lock.GLOBAL_LOCK_ENV)
 
 
+def origin_key(directory: str) -> str:
+    """The origin key of the checkout at *directory*, or "" when it has no
+    `origin`, or is vanished or unreadable.
+
+    The one place a batch reads a checkout's key: planning records it, the
+    lock declaration and the driver read it back, and all of them must agree.
+    """
+    try:
+        return pr.target.repo_key_from_origin(directory) or ""
+    except OSError:
+        return ""
+
+
+def item_repo_key(item: Item) -> str | None:
+    """*item*'s origin key, recorded at plan time, or read from its checkout.
+
+    None when the item was saved without a key and the checkout has no
+    `origin`, or is vanished or unreadable.
+    """
+    return item.repo_key or origin_key(item.repo_dir) or None
+
+
 def item_target_dir(item: Item) -> Path | None:
     """*item*'s target directory, or None when its checkout has no `origin` to
     key it on, or is vanished or unreadable.
@@ -53,13 +75,18 @@ def item_target_dir(item: Item) -> Path | None:
     # ceiling: a checkout-local .workbench.yml github.host the worktree does
     # not inherit would hash two keys for one item; upgrade if a batch item
     # can declare a host on the worktree that its repo_dir does not.
-    try:
-        key = pr.target.repo_key_from_origin(item.repo_dir)
-    except OSError:
-        # A vanished or unreadable checkout counts as "no target", same as an
-        # item with no origin.
-        return None
+    key = item_repo_key(item)
     return pr.target.target_dir(key, item.branch) if key else None
+
+
+def run_repo_keys(run: Run) -> list[str]:
+    """Sorted, deduplicated origin keys of every item in *run*; skips unknown."""
+    keys = []
+    for item in run.items:
+        key = item_repo_key(item)
+        if key:
+            keys.append(key)
+    return sorted(set(keys))
 
 
 def checkout_git_dir(worktree: str) -> Path | None:

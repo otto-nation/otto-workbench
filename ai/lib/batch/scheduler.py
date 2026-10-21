@@ -99,7 +99,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                            explicit=explicit and s in chosen)
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
-                          head_sha=r.head_sha, steps=recs, base_ref=r.base_ref))
+                          head_sha=r.head_sha, steps=recs, base_ref=r.base_ref,
+                          repo_key=r.repo_key))
     # A fork's head branch names a branch in another repo — often `main` —
     # so keying it under the base repo would stack every PR based on `main`.
     by_branch = {(r.repo, r.branch): r.key for r in rows if not r.is_fork}
@@ -119,7 +120,8 @@ def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRo
     # The remote sha, not head_sha: a replan that echoes its input must never
     # read as GitHub reporting the plan-time head again.
     return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.remote_sha, False,
-                   {}, local_head=local_head, ref_namespace=ref_namespace)
+                   {}, local_head=local_head, ref_namespace=ref_namespace,
+                   repo_key=item.repo_key)
 
 
 def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,

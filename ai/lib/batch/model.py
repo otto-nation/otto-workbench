@@ -191,6 +191,9 @@ class Item:
     # then for remote commits it would drop, and confirming the second must not
     # unconfirm the first. Cleared once a publish lands.
     forced: list[str] = field(default_factory=list)
+    # The origin key of the item's checkout, recorded at plan time.
+    # Empty in runs saved before it existed.
+    repo_key: str = ""
 
     def __post_init__(self) -> None:
         if not self.remote_sha:

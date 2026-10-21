@@ -197,6 +197,7 @@ Every key any of them accepts:
 | `issues.labels` | list of string | `[follow-up]` |
 | `github.ssh_over_443` | boolean | `false` |
 | `github.host` | string | — |
+| `github.owners` | any | `{}` |
 | `rebase.regenerate` | list of string | `[]` |
 | `fix.verify_command` | string | — |
 | `fix.verify_timeout` | integer | `900` |
@@ -218,6 +219,8 @@ Every key any of them accepts:
 `fix.verify_timeout` may only be written at container, project scope: it bounds this repo's own checks, and the budget that is generous for one repo's selected tests cuts another's off mid-run.
 
 `github.host` may only be written at container, project scope: it describes which GitHub instance this repo is served by, which is a fact about the repo rather than the machine — a machine-wide value would key every other repo on this instance too.
+
+`github.owners` may only be written at global scope: it decides which repositories an agent may post to, and a repo's .workbench.yml is read by everyone who clones it — an upstream clone could otherwise declare itself ours.
 
 `github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
 

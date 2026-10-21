@@ -76,6 +76,7 @@
     "config:fix.verify_timeout",
     "config:github",
     "config:github.host",
+    "config:github.owners",
     "config:github.ssh_over_443",
     "config:issues",
     "config:issues.base_url",

@@ -79,7 +79,7 @@ def test_every_violation_is_reported_not_just_the_first():
 
 def test_an_integer_field_refuses_a_fraction():
     found = _violations({"title": "t", "leaves": [{"name": "a", "count": 1.5}]})
-    assert found == [("$.leaves[0].count", "must be an integer, not a number")]
+    assert found == [("$.leaves[0].count", "must be an integer, not a fractional or float number")]
 
 
 def test_every_hint_kind_has_a_checker():

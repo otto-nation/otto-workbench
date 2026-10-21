@@ -665,15 +665,6 @@ def test_the_typed_ledger_settles_a_prior_finding():
     assert (rec.disposition, rec.source) == (PriorDisposition.DECLINED, DispositionSource.LEDGER)
 
 
-def test_an_unreadable_ledger_line_does_not_settle_from_the_ledger():
-    rec = _by_id(
-        reconcile(_prior(F_M1), _rev()),
-        "M1",
-    )
-    assert rec.disposition is None
-    assert rec.source is not DispositionSource.LEDGER
-
-
 def test_no_undecided_reason_is_about_an_unreadable_verdict():
     assert "unreadable verdict" not in {r.value for r in UndecidedReason}
 

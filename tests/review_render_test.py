@@ -183,5 +183,3 @@ def test_a_ledger_line_renders_id_path_disposition_and_note():
     assert ledger_line(LedgerLine("M1", PriorDisposition.FIXED, "a.py", "moved")) == \
         "- **[M1]** `a.py` — Fixed — moved"
     assert ledger_line(LedgerLine("S2", PriorDisposition.DECLINED)) == "- **[S2]** — Declined"
-
-

@@ -129,6 +129,8 @@ def _scalar_ok(hint, value) -> bool:
 def _check_scalar(hint, args, value, at):
     if _scalar_ok(hint, value):
         return []
+    if hint is int and isinstance(value, float):
+        return [SchemaViolation(at, "must be an integer, not a fractional or float number")]
     return [SchemaViolation(at, f"must be {_SCALAR_NAMES[hint]}, not {_json_type(value)}")]
 
 

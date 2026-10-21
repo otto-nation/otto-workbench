@@ -101,6 +101,28 @@ def test_the_merge_honours_a_group_s_decline_only_for_a_prior_finding(tmp_path):
     assert invented.record.findings[0].disposition is Disposition.OPEN
 
 
+def test_missing_file_skipped(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(GROUP_OK)
+    merged = _phase_merge(
+        [str(path), str(tmp_path / "group-2.json")],
+        [], ("g1", "g2"), declinable=frozenset(),
+    )
+    assert [f.id for f in merged.record.findings] == ["M1"]
+    assert all(s.heading != "Review gaps" for s in merged.record.extra)
+
+
+def test_a_doc_rewritten_mid_run_merges_the_current_bytes(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(GROUP_OK)
+    path.write_text(json.dumps({
+        "triage": [{"path": "a.py", "note": "t"}],
+        "findings": [FINDING, {"id": "S1", "path": "a.py", "line": 2, "body": "later finding"}],
+    }))
+    merged = _phase_merge([str(path)], [], ("g1",), declinable=frozenset())
+    assert any(f.id == "S1" and f.body == "later finding" for f in merged.record.findings)
+
+
 def test_a_disprove_rejected_twice_leaves_the_record_unchanged(tmp_path, monkeypatch):
     rec = record(finding("M1", "x"))
     monkeypatch.setattr(

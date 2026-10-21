@@ -138,6 +138,7 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     assert [(f.path, f.body) for f in merged.record.findings] == [
         ("docker/build.sh", "no USER"),
     ]
+    assert [f.id for f in merged.record.findings] == ["M1"]
     assert all(f.sid for f in merged.record.findings)
     assert any(
         s.note == "### Carried forward: docker" for s in merged.record.severity_sections

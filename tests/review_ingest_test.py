@@ -187,6 +187,12 @@ class TestWhatIsRead:
         ] and record.findings == ()
         assert record.extra[0].heading == "Review gaps"
 
+    def test_an_unreadable_ledger_line_is_dropped(self):
+        record = ingest_review(
+            "## Prior findings\n- **[M1]** `handler.go` — moved to a follow-up\n"
+        )
+        assert record.ledger == ()
+
     def test_the_header_is_not_read(self):
         record = ingest_review(
             "# T\n<!-- head_sha: abc -->\n<!-- summary: HEADER_ONLY_KEY -->\n"

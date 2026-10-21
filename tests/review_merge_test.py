@@ -284,13 +284,6 @@ class TestMergeReviews:
         ))
         assert SECTION_PRIOR_FINDINGS not in result
 
-    def test_missing_file_skipped(self):
-        result = _merged_text(_group(
-            files={"a.go": "reviewed"},
-            findings=(finding("M1", "issue", path="a.go"),),
-        ))
-        assert "[M1]" in result
-
     def test_empty_group_file(self):
         result = _merged_text(record())
         assert "## File Triage" in result
@@ -348,8 +341,8 @@ class TestMergeReviews:
 
 
 class TestReaderToleranceForIncrementalWrites:
-    """A6b's net: merge_records already accepts a short complete doc, an
-    empty doc, and a rewrite of the file between calls. Do not tighten this.
+    """A6b's net: merge_records already accepts a short complete doc and an
+    empty doc. File reads live on `_phase_merge`; do not tighten this.
     """
 
     _SHORT = record(
@@ -368,16 +361,3 @@ class TestReaderToleranceForIncrementalWrites:
         result = _merged_text(record())
         assert "## File Triage" in result
         assert "[M1]" not in result
-
-    # passes-at-base: _merged_text reads the path at call time, so a rewrite is a later read
-    def test_a_doc_rewritten_mid_run_merges_the_current_bytes(self):
-        first = _merged_text(self._SHORT)
-        second = _merged_text(record(
-            finding("M1", "issue"),
-            finding("S1", "later finding", line=2),
-            triage=(TriageEntry("a.py", "Tier 2"),),
-        ))
-        assert "[M1]" in first
-        assert "[S1]" not in first
-        assert "[M1]" in second
-        assert "[S1]" in second

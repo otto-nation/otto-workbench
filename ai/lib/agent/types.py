@@ -241,7 +241,8 @@ class PhaseSpec:
     label: str
     template: str | Mapping[Mode, str] = ""
     optional: bool = False
-    model: str = "sonnet"
+    # No built-in model: the backend's own default serves a phase nothing configures.
+    model: str | None = None
     thinking: Thinking | None = None
     max_turns: int = 15
     max_budget: float | None = None

@@ -299,6 +299,10 @@ def get_task(name: str) -> EvalTask:
     return _TASK_FACTORIES[name]()
 
 
+class EvalModelUnset(ValueError):
+    """No `--models` and no configured model for the task's phase."""
+
+
 def resolved_model(task: EvalTask, explicit: str) -> str:
     """The model *task* runs: *explicit* when given, else its production phase's.
 
@@ -306,6 +310,14 @@ def resolved_model(task: EvalTask, explicit: str) -> str:
     results and where the task invokes the agent, so the label and the model
     that served it cannot disagree. Resolving through `agent.phases.phase_model`
     pins what production uses rather than falling through to the backend's
-    interactive default.
+    interactive default — and when production configures nothing, there is no
+    model to label the results with, so this raises `EvalModelUnset`.
     """
-    return explicit or agent.phases.phase_model(task.phase, None)
+    model = explicit or agent.phases.phase_model(task.phase, None)
+    if not model:
+        raise EvalModelUnset(
+            f"no model for the {task.phase} phase: pass --models, or set agent.model "
+            "or WORKBENCH_AI_MODEL so the results can be labelled with the model "
+            "that served them"
+        )
+    return model

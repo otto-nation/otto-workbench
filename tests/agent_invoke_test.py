@@ -316,6 +316,12 @@ class TestRunAgentQuotaRetry:
         assert agent.invoke.run_agent(self._inv(tmp_path)) == 0
         assert len(calls) == 2
 
+    def test_a_quota_failure_with_no_model_is_retried_too(self, monkeypatch, tmp_path):
+        """A phase on the backend's default model hits quota like any other."""
+        calls = self._agent(monkeypatch, [1, 0])
+        assert agent.invoke.run_agent(self._inv(tmp_path, model=None)) == 0
+        assert len(calls) == 2
+
     def test_any_other_failure_is_returned_as_is(self, monkeypatch, tmp_path):
         calls = self._agent(monkeypatch, [1], quota=False)
         assert agent.invoke.run_agent(self._inv(tmp_path)) == 1

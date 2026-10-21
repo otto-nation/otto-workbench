@@ -215,7 +215,10 @@ def _resolve_entry_model(entry: dict) -> str:
         task = eval.task.get_task(eval.task.task_name(entry["manifest"]))
     except KeyError as exc:
         sys.exit(f"error: {exc.args[0]}")
-    return eval.task.resolved_model(task, "")
+    try:
+        return eval.task.resolved_model(task, "")
+    except eval.task.EvalModelUnset as exc:
+        sys.exit(f"error: {exc}")
 
 
 def _model_banner(explicit: list[str] | None, entries: list[dict]) -> list[str]:

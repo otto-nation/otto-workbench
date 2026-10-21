@@ -86,20 +86,25 @@ class TestTheBudgetComesFromTheModel:
             model, Backend.CLAUDE, cwd=".",
         )
 
-    def test_an_unresolved_alias_takes_its_tier_floor(self):
-        """The ordinary first-party-API setup, and not an error.
+    def test_an_unset_model_takes_the_floor(self):
+        """No configured model is an ordinary setup, and not an error.
 
-        `phase_model` returns the literal string "sonnet" when
-        ANTHROPIC_DEFAULT_SONNET_MODEL is unset, which is what a machine on the
-        first-party API looks like rather than a misconfiguration. Refusing
-        would take out every phase at once on those machines; budgeting
-        against the tier's narrowest window is safe whichever concrete model
-        it turns out to name.
+        `phase_model` returns None when no layer names a model, and the
+        backend then serves the phase from its own default — unknown here, so
+        budgeted against the narrowest window in common use.
         """
-        from review.budget import ALIAS_FLOOR_TOKENS, model_window_tokens
+        from review.budget import UNSET_MODEL_FLOOR_TOKENS, model_window_tokens
 
-        assert model_window_tokens("sonnet", cwd=".") == ALIAS_FLOOR_TOKENS
-        assert prompt_budget_bytes("sonnet", cwd=".") == prompt_budget_bytes("claude-sonnet-4-6", cwd=".")
+        assert model_window_tokens(None, cwd=".") == UNSET_MODEL_FLOOR_TOKENS
+        assert model_window_tokens("", cwd=".") == UNSET_MODEL_FLOOR_TOKENS
+        assert prompt_budget_bytes(None, cwd=".") == prompt_budget_bytes("claude-sonnet-4-6", cwd=".")
+
+    def test_a_tier_word_is_an_unknown_model(self):
+        """`sonnet` is no longer rewritten, so it has no window on record."""
+        from review.budget import UnknownModelWindow, model_window_tokens
+
+        with pytest.raises(UnknownModelWindow):
+            model_window_tokens("sonnet", cwd=".")
 
     def test_the_ladder_plans_below_the_ceiling_it_is_refused_at(self):
         """The reserve only holds bytes back if the ladder never sees them.
@@ -112,7 +117,7 @@ class TestTheBudgetComesFromTheModel:
         """
         from review.budget import RENDER_MARKUP_RESERVE_BYTES, ladder_target_bytes
 
-        for model in ("claude-sonnet-5", "sonnet"):
+        for model in ("claude-sonnet-5", None):
             gap = prompt_budget_bytes(model, cwd=".") - ladder_target_bytes(model, cwd=".")
             assert gap == RENDER_MARKUP_RESERVE_BYTES, model
 
@@ -131,15 +136,15 @@ class TestTheBudgetComesFromTheModel:
         with pytest.raises(UnknownModelWindow, match="exhaust"):
             prompt_budget_bytes("tiny", cwd=".")
 
-    def test_the_alias_floor_is_never_more_generous_than_a_real_window(self):
+    def test_the_unset_floor_is_never_more_generous_than_a_real_window(self):
         """Guessing wide is the expensive direction.
 
         The floor stands in for a model nobody has named, so it has to be no
         larger than the narrowest window it could turn out to be.
         """
-        from review.budget import ALIAS_FLOOR_TOKENS, MODEL_CONTEXT_TOKENS
+        from review.budget import MODEL_CONTEXT_TOKENS, UNSET_MODEL_FLOOR_TOKENS
 
-        assert ALIAS_FLOOR_TOKENS <= min(MODEL_CONTEXT_TOKENS.values())
+        assert UNSET_MODEL_FLOOR_TOKENS <= min(MODEL_CONTEXT_TOKENS.values())
 
     def test_an_unknown_model_names_the_ones_on_record(self):
         from review.budget import UnknownModelWindow
@@ -156,14 +161,10 @@ class TestTheBudgetComesFromTheModel:
         The tokenizer is generation-specific — sonnet-5 counts the same text
         ~27% denser than sonnet-4-5 — so a budget recorded without its model
         cannot be compared against another run's.
-
-        The alias is resolved explicitly rather than left to the environment:
-        a developer's shell exports `ANTHROPIC_DEFAULT_SONNET_MODEL` and CI
-        does not, so reading it would assert a different model in each place.
         """
         from review.registry import build_prompt
 
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", TEST_MODEL)
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", TEST_MODEL)
         job = _make_job(_make_preflight())
         job.review_file = str(tmp_path / "review.md")
         build_prompt(Phase.SCOUT, job, max_turns=10)
@@ -173,27 +174,57 @@ class TestTheBudgetComesFromTheModel:
         assert record["budget_window_tokens"] == 1_000_000
         assert record["budget_bytes"] == prompt_budget_bytes(TEST_MODEL, cwd=".")
 
-    def test_an_alias_records_the_window_it_actually_budgeted_against(
+    def test_an_unset_model_records_the_window_it_actually_budgeted_against(
         self, tmp_path, monkeypatch,
     ):
-        """The alias path is ordinary, so its record has to read as ordinary.
+        """The unset path is ordinary, so its record has to read as ordinary.
 
         A window of 0 beside a nonzero budget reads as a bug in the budget
-        rather than as the documented tier-floor path, which is exactly the
+        rather than as the documented floor path, which is exactly the
         diagnostic this field exists to serve.
         """
-        from review.budget import ALIAS_FLOOR_TOKENS
+        from review.budget import UNSET_MODEL_FLOOR_TOKENS
         from review.registry import build_prompt
 
-        monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         job = _make_job(_make_preflight())
         job.review_file = str(tmp_path / "review.md")
         build_prompt(Phase.SCOUT, job, max_turns=10)
 
         record = json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
-        assert record["budget_model"] == "sonnet"
-        assert record["budget_window_tokens"] == ALIAS_FLOOR_TOKENS
-        assert record["budget_bytes"] == prompt_budget_bytes("sonnet", cwd=".")
+        assert record["budget_model"] is None
+        assert record["budget_window_tokens"] == UNSET_MODEL_FLOOR_TOKENS
+        assert record["budget_bytes"] == prompt_budget_bytes(None, cwd=".")
+
+
+class TestCollectionBudget:
+    """Collection is read by every review phase, so it fits the tightest one."""
+
+    def _clean(self, monkeypatch):
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
+        for phase in Phase:
+            monkeypatch.delenv(phase.model_env_key, raising=False)
+
+    def test_no_configured_model_budgets_at_the_floor(self, tmp_path, monkeypatch):
+        from review.budget import collection_budget_bytes, ladder_target_bytes
+
+        self._clean(monkeypatch)
+        assert collection_budget_bytes(project_root=tmp_path) == ladder_target_bytes(None, cwd=tmp_path)
+
+    def test_an_unset_phase_bounds_collection_below_a_wide_model(self, tmp_path, monkeypatch):
+        from review.budget import collection_budget_bytes, ladder_target_bytes
+
+        self._clean(monkeypatch)
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", TEST_MODEL)
+        assert ladder_target_bytes(TEST_MODEL, cwd=tmp_path) > ladder_target_bytes(None, cwd=tmp_path)
+        assert collection_budget_bytes(project_root=tmp_path) == ladder_target_bytes(None, cwd=tmp_path)
+
+    def test_every_phase_set_budgets_at_their_tightest(self, tmp_path, monkeypatch):
+        from review.budget import collection_budget_bytes, ladder_target_bytes
+
+        self._clean(monkeypatch)
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", TEST_MODEL)
+        assert collection_budget_bytes(project_root=tmp_path) == ladder_target_bytes(TEST_MODEL, cwd=tmp_path)
 
     def test_the_refusal_names_the_budget_it_was_measured_against(self):
         """An over-budget phase is skipped, so its message is the whole report.

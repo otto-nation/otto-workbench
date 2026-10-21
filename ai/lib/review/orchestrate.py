@@ -40,6 +40,7 @@ import review.retry
 import review.state
 import review.types
 
+import config.workbench_config
 import core.log
 import core.module_proxy
 import pr.state
@@ -47,7 +48,7 @@ import core.proc
 
 import pr.target
 from agent.registry import phase_skips
-from core.phases import Effort, Mode
+from core.phases import Backend, Effort, Mode
 from review.paths import (
     read_review_meta, stamp_reviewed,
 )
@@ -66,7 +67,8 @@ from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
-from agent.phases import ModelAlias, collect_phase_models, resolve_effort
+from agent.phases import collect_phase_models, resolve_effort, unset_review_phases
+from agent.pi_models import ModelNotConfigured
 from review.pipeline import (
     EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
@@ -96,18 +98,33 @@ def _log_ai_backend(trail) -> None:
     trail.info("ai_backend", "resolved AI backend configuration", data=data)
 
 
+def _models_cover_provider(explicit: str | None, cwd: str, trail) -> bool:
+    """Whether every review phase has a model, when Pi runs with a provider.
+
+    Pi exits 1 on ``--provider`` without ``--model``, so a phase that names no
+    model would refuse at spawn — after the review has paid for metadata and
+    collection. Checked here instead, beside the other preflights.
+    """
+    if agent.backend.selected_backend() is not Backend.PI:
+        return True
+    cfg = config.workbench_config.load_config_or_default(cwd)
+    provider = agent.phases.phase_provider(cfg)
+    unset = unset_review_phases(explicit, cwd)
+    if not provider or not unset:
+        return True
+    err = ModelNotConfigured(provider)
+    core.log.error(f"Cannot start the review: {err} Phases without one: {', '.join(unset)}.")
+    trail.decision("model_preflight", "aborting review", reason=str(err))
+    return False
+
+
 def _budgets_are_derivable(phase_models, trail, cwd: str) -> bool:
     """Whether every phase's model has a context window to budget against.
 
     Checked here, beside the backend preflight, because the alternative is
     discovering it once per phase after the review has already paid for
-    metadata and preflight collection.
-
-    An unresolved tier alias is not a failure — it is what `AI_SONNET_MODEL`
-    being unset looks like, which is the ordinary first-party-API setup — but
-    it does mean the budget is the tier's conservative floor rather than the
-    model's real window, so it is said out loud rather than left to be
-    inferred from a smaller review.
+    metadata and preflight collection. Phases with no configured model are
+    absent from `phase_models` and budget against the unset-model floor.
     """
     for model, phases in sorted(phase_models.items()):
         named = ", ".join(str(p) for p in phases)
@@ -119,18 +136,6 @@ def _budgets_are_derivable(phase_models, trail, cwd: str) -> bool:
                 "prompt_budget", "aborting review", reason=str(exc),
             )
             return False
-        alias = ModelAlias.parse(model)
-        if alias is not None:
-            core.log.warn(
-                f"{model!r} is an unresolved tier alias, so the tier floor "
-                f"({budget // 1024}KB) is the budget for {named} rather than "
-                f"the model's own window. Set {alias.env_key} to budget "
-                f"against the real one."
-            )
-            trail.decision(
-                "prompt_budget", "budgeting against the tier floor",
-                reason=f"{model} did not resolve to a concrete model id",
-            )
     return True
 
 
@@ -422,6 +427,8 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     # Against the worktree's own config, not just the global scope: this is the
     # same resolution `ReviewJob.config` makes, and checking a different one
     # would clear a model the review never runs while missing the one it does.
+    if not _models_cover_provider(args.model, args.repo_dir, trail):
+        return 1
     phase_models = collect_phase_models(args.model, args.repo_dir)
     if not agent.backend.preflight(phase_models, trail):
         return 1

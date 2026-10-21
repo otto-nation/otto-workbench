@@ -186,12 +186,15 @@ def run_agent(
         throttle.wait_if_needed()
 
     rc = agent.backend.invoke_agent(inv)
-    if rc != 0 and inv.model and agent.session.is_quota_error(inv.session_log):
+    if rc != 0 and agent.session.is_quota_error(inv.session_log):
+        # A phase on the backend's default model has no id to name, and hits
+        # quota like any other.
+        model = inv.model or "the provider default"
         if throttle:
-            wait = throttle.report_exhausted(inv.model)
+            wait = throttle.report_exhausted(model)
             time.sleep(wait)
         else:
-            core.log.warn(f"Quota exhausted on {inv.model} — retrying once after 30s backoff")
+            core.log.warn(f"Quota exhausted on {model} — retrying once after 30s backoff")
             time.sleep(30)
         rc = _invoke_once(inv)
     return rc

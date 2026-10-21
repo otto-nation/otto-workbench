@@ -67,7 +67,8 @@ import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
 from agent.pi_binary import PiSpawn, PiUnresolvable
-from agent.pi_models import ModelNotServed, not_served_message, require_listed_model
+from agent.pi_models import ModelNotConfigured, ModelNotServed, not_served_message
+from agent.pi_models import require_listed_model, require_model_with_provider
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
@@ -950,7 +951,7 @@ def _prompt_with_dirs(inv: AgentInvocation) -> str:
 
 
 def _refused_before_spawn(
-    err: ModelNotServed | PiUnresolvable, session_log: str, model: str | None,
+    err: ModelNotServed | PiUnresolvable | ModelNotConfigured, session_log: str, model: str | None,
 ) -> int:
     """Record a refusal raised before any spawn the way every other refusal is recorded.
 
@@ -986,9 +987,11 @@ def _exit_code(proc: subprocess.Popen, stream: StreamResult) -> int:
     return proc.returncode
 
 
-def _refusal_line(err: ModelNotServed | PiUnresolvable) -> str:
+def _refusal_line(err: ModelNotServed | PiUnresolvable | ModelNotConfigured) -> str:
     if isinstance(err, PiUnresolvable):
         return f"cannot choose a pi binary: {err}"
+    if isinstance(err, ModelNotConfigured):
+        return f"not started: {err}"
     return f"pi refused the run: {err}"
 
 
@@ -997,9 +1000,11 @@ def _checked_spawn(
 ) -> PiSpawn:
     """How to start the pi for *cwd* from *env*, with *model* checked against its catalogue.
 
-    Raises `PiUnresolvable` or `ModelNotServed`. Resolved first so the model is
-    checked by the same binary, started the same way, that will be spawned.
+    Raises `ModelNotConfigured`, `PiUnresolvable` or `ModelNotServed`. Resolved
+    first so the model is checked by the same binary, started the same way,
+    that will be spawned.
     """
+    require_model_with_provider(provider, model)
     spawn = agent.pi_binary.resolve(cwd).spawn(env)
     require_listed_model(model, provider, pi=spawn.argv)
     return spawn
@@ -1037,7 +1042,7 @@ def prompt(
     env = agent.machine_env.base_env(cwd)
     try:
         spawn = _checked_spawn(cwd, model, provider, env)
-    except (ModelNotServed, PiUnresolvable) as err:
+    except (ModelNotServed, PiUnresolvable, ModelNotConfigured) as err:
         core.log.error(_refusal_line(err))
         return "", _RPC_ERROR_EXIT_CODE, None
     cmd = _build_prompt_cmd(spawn.argv, model=model, provider=provider, thinking=thinking)
@@ -1071,7 +1076,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
     """
     try:
         spawn = _checked_spawn(inv.cwd, inv.model, inv.provider, _spawn_env(inv))
-    except (ModelNotServed, PiUnresolvable) as err:
+    except (ModelNotServed, PiUnresolvable, ModelNotConfigured) as err:
         return _refused_before_spawn(err, inv.session_log, inv.model)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(spawn.argv, inv, extension=ext)
@@ -1148,7 +1153,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
     """
     try:
         spawn = _checked_spawn(inv.cwd, inv.model, inv.provider, _spawn_env(inv))
-    except (ModelNotServed, PiUnresolvable) as err:
+    except (ModelNotServed, PiUnresolvable, ModelNotConfigured) as err:
         return _refused_before_spawn(err, inv.session_log, inv.model)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(spawn.argv, inv, extension=ext)

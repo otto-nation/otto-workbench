@@ -29,7 +29,6 @@ from pathlib import Path
 import agent.pi_binary
 import core.proc
 import core.timeouts
-from agent.phases import origin_of
 
 # Matches ai/pi/settings.json and `_pi_default_provider` in ai/pi/steps.sh.
 DEFAULT_PROVIDER = "google-vertex-claude"
@@ -107,22 +106,14 @@ def unserved_message(
     """The error for an id this provider does not serve."""
     named = model or "the requested model"
     provider_name = effective_provider(provider)
-    origin = origin_of(named)
-    head = f"pi's {provider_name} provider does not serve model {named!r}"
-    if origin:
-        head += f" (from {origin})"
-    parts = [head]
+    parts = [f"pi's {provider_name} provider does not serve model {named!r}"]
     close = closest_listed(named, listed)
     if close:
         parts.append("Closest listed ids: " + ", ".join(close))
-    if origin:
-        override = f"Set --model or agent.model to a listed id, or fix {origin}"
-    else:
-        override = (
-            "Set --model or agent.model to an id listed by `pi --list-models`, "
-            "or fix AI_SONNET_MODEL / ANTHROPIC_DEFAULT_SONNET_MODEL"
-        )
-    parts.append(override)
+    parts.append(
+        "Set --model, agent.model, WORKBENCH_AI_MODEL or WORKBENCH_AI_<PHASE>_MODEL "
+        "to an id listed by `pi --list-models`"
+    )
     return ". ".join(parts) + "."
 
 
@@ -205,6 +196,29 @@ def catalogue_for(cwd: str | Path) -> str:
 def listed_models(provider: str | None, *, pi: tuple[str, ...]) -> frozenset[str]:
     """Ids *pi* lists under *provider* right now. Empty when the catalogue is unread."""
     return parse_listed_ids(catalogue_text(pi), effective_provider(provider))
+
+
+class ModelNotConfigured(RuntimeError):
+    """A provider is set and no layer names a model for it.
+
+    Pi refuses ``--provider`` without ``--model`` and has no per-provider
+    default for extension providers, so this is a configuration error, raised
+    before a spawn with the keys that fix it.
+    """
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        super().__init__(
+            f"Pi needs a model when a provider is set (provider {provider!r}). "
+            "Set agent.model, WORKBENCH_AI_MODEL or WORKBENCH_AI_<PHASE>_MODEL, "
+            "or pass --model."
+        )
+
+
+def require_model_with_provider(provider: str | None, model: str | None) -> None:
+    """Raise ``ModelNotConfigured`` for a provider with no model."""
+    if provider and not model:
+        raise ModelNotConfigured(provider)
 
 
 def require_listed_model(

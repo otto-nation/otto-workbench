@@ -12,10 +12,10 @@ the fallback when the catalogue cannot be read or lacks the model. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
-them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
-takes its tier's floor rather than failing, because an unset
-`AI_*_MODEL` is the ordinary first-party-API setup; only a
-concrete model nobody has measured raises `UnknownModelWindow`.
+them. `prompt_budget_bytes` is that derivation. A phase with no configured
+model takes the unset-model floor rather than failing, because leaving the
+choice to the backend is an ordinary setup; only a concrete model nobody has
+measured raises `UnknownModelWindow`.
 
 The byte figure can only ever be conservative: no byte count bounds a token
 count without knowing the content's density, so `BYTES_PER_TOKEN_FLOOR` assumes
@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import agent.pi_models
-from agent.phases import ModelAlias, collect_phase_models
+from agent.phases import collect_phase_models, unset_review_phases
 from agent.pi_models import listing_rows
 from core.phases import Backend
 from review.grouping import classify_tier, format_profiles_section
@@ -63,14 +63,14 @@ MODEL_CONTEXT_TOKENS = {
     "claude-haiku-4-5": 200_000,
 }
 
-# What an unresolved tier alias is worth. `agent.phases.phase_model` returns the
-# literal "sonnet" when AI_SONNET_MODEL is unset, which is the
-# ordinary first-party-API setup rather than a misconfiguration — so this is a
-# case to budget conservatively for, not one to refuse. The figure is the
-# narrowest window any model in that tier has: assuming the smallest is safe
-# whichever concrete model the alias turns out to name, where assuming the
-# largest would budget a 200k model against a 1M window.
-ALIAS_FLOOR_TOKENS = 200_000
+# What a phase with no configured model is worth. `agent.phases.phase_model`
+# returns None when no layer names a model, and the backend then serves the call
+# from its own default — a model preflight cannot name, so its window is
+# unknown here. That is an ordinary setup, not a misconfiguration, so it is
+# budgeted conservatively rather than refused: the narrowest window in common
+# use is safe whichever model the backend picks, where assuming a large one
+# would budget a 200k model against a 1M window.
+UNSET_MODEL_FLOOR_TOKENS = 200_000
 
 # The reply is not free and comes out of the same window. Sized over the
 # largest review output observed rather than the typical one, since the cost of
@@ -259,9 +259,9 @@ class UnknownModelWindow(RuntimeError):
     """A model that is in neither pi's catalogue nor the fallback table.
 
     Raised rather than defaulted, because a model nobody has measured is as
-    likely to be narrower than the alias floor as wider, and guessing wide is
-    the expensive direction. An unresolved alias is not this case — see
-    `ALIAS_FLOOR_TOKENS`.
+    likely to be narrower than the floor as wider, and guessing wide is the
+    expensive direction. A phase with no configured model is not this case —
+    see `UNSET_MODEL_FLOOR_TOKENS`.
     """
 
     def __init__(
@@ -311,13 +311,16 @@ class UnknownModelWindow(RuntimeError):
         ))
 
 
-def model_window_tokens(model: str, *, cwd: Path | str) -> int:
+def model_window_tokens(model: str | None, *, cwd: Path | str) -> int:
     """The context window ``model`` is budgeted against, reviewing in *cwd*.
 
-    Order: the provider catalogue of the pi that would run in *cwd*, then
-    `MODEL_CONTEXT_TOKENS`, then the unresolved-alias floor. Anything else
-    raises `UnknownModelWindow`.
+    No model (the backend's default serves the phase) budgets at
+    `UNSET_MODEL_FLOOR_TOKENS`. Otherwise: the provider catalogue of the pi that
+    would run in *cwd*, then `MODEL_CONTEXT_TOKENS`. Anything else raises
+    `UnknownModelWindow`.
     """
+    if not model:
+        return UNSET_MODEL_FLOOR_TOKENS
     catalogue = _pi_catalogue_windows(cwd)
     window = catalogue.get(model)
     if window is not None:
@@ -325,8 +328,6 @@ def model_window_tokens(model: str, *, cwd: Path | str) -> int:
     window = MODEL_CONTEXT_TOKENS.get(model)
     if window is not None:
         return window
-    if ModelAlias.parse(model) is not None:
-        return ALIAS_FLOOR_TOKENS
     raise UnknownModelWindow(model, catalogue=catalogue)
 
 
@@ -346,7 +347,7 @@ def overhead_reserve_tokens(backend: Backend | None = None) -> int:
 
 
 def prompt_budget_tokens(
-    model: str, backend: Backend | None = None, *, cwd: Path | str,
+    model: str | None, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What one prompt to ``model`` may cost, in tokens.
 
@@ -361,7 +362,7 @@ def prompt_budget_tokens(
 
 
 def prompt_budget_bytes(
-    model: str, backend: Backend | None = None, *, cwd: Path | str,
+    model: str | None, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What one prompt to ``model`` may cost, in bytes of rendered prompt.
 
@@ -382,7 +383,7 @@ def prompt_budget_bytes(
 
 
 def ladder_target_bytes(
-    model: str, backend: Backend | None = None, *, cwd: Path | str,
+    model: str | None, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What the budget ladder may plan to spend, below the refusal ceiling.
 
@@ -416,11 +417,14 @@ def collection_budget_bytes(
     Without it the phases resolve against the global scope alone and collection
     can be sized against a ceiling no phase actually budgets to. It is also
     the directory whose pi supplies the context windows.
+
+    A phase with no configured model counts at the unset-model floor, so
+    collection never outgrows what that phase's prompt is budgeted against.
     """
-    return min(
-        ladder_target_bytes(model, backend, cwd=project_root)
-        for model in collect_phase_models(explicit_model, project_root)
-    )
+    models: list[str | None] = list(collect_phase_models(explicit_model, project_root))
+    if unset_review_phases(explicit_model, project_root):
+        models.append(None)
+    return min(ladder_target_bytes(model, backend, cwd=project_root) for model in models)
 
 
 def fixed_preflight_bytes(

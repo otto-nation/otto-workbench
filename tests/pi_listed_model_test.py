@@ -67,7 +67,8 @@ class TestRequireListedModel:
             agent.pi_models.require_listed_model(UNLISTED, PROVIDER, pi=PI)
         msg = str(caught.value)
         assert UNLISTED in msg
-        assert "AI_SONNET_MODEL" in msg
+        assert "WORKBENCH_AI_MODEL" in msg
+        assert "AI_SONNET_MODEL" not in msg
         assert PROVIDER in msg
         assert LISTED in msg
         assert "--model" in msg
@@ -94,7 +95,8 @@ class TestNotServedMessage:
         )
         assert msg is not None
         assert UNLISTED in msg
-        assert "AI_SONNET_MODEL" in msg
+        assert "WORKBENCH_AI_MODEL" in msg
+        assert "AI_SONNET_MODEL" not in msg
         assert LISTED in msg
         assert "--model" in msg
         assert "agent.model" in msg
@@ -164,7 +166,8 @@ class TestInvokeUsesTheConfiguredId:
         assert exit_code != 0
         logged = Path(session_log).read_text()
         assert UNLISTED in logged
-        assert "AI_SONNET_MODEL" in logged
+        assert "WORKBENCH_AI_MODEL" in logged
+        assert "AI_SONNET_MODEL" not in logged
         assert LISTED in logged
         assert '"is_error": true' in logged
 
@@ -370,8 +373,68 @@ class TestUndeliveredNamesTheModel:
         assert "Model \"claude-sonnet-5-5\" not found" in text
         assert "--model" in text
         assert "agent.model" in text
-        assert "AI_SONNET_MODEL" in text
+        assert "WORKBENCH_AI_MODEL" in text
+        assert "AI_SONNET_MODEL" not in text
         assert "stdin was already closed" not in text
         record = json.loads(text.splitlines()[0])
         assert record["success"] is False
         assert "not found" in record["error"].lower() or UNLISTED in record["error"]
+
+
+class TestModelWithProvider:
+    """Pi refuses --provider without --model; the workbench says so first, clearly."""
+
+    def test_a_provider_without_a_model_is_refused_naming_the_keys(self):
+        with pytest.raises(agent.pi_models.ModelNotConfigured) as caught:
+            agent.pi_models.require_model_with_provider("xai", None)
+        msg = str(caught.value)
+        assert "xai" in msg
+        assert "agent.model" in msg
+        assert "WORKBENCH_AI_MODEL" in msg
+        assert "--model" in msg
+
+    def test_an_empty_model_counts_as_none(self):
+        with pytest.raises(agent.pi_models.ModelNotConfigured):
+            agent.pi_models.require_model_with_provider("xai", "")
+
+    @pytest.mark.parametrize("provider, model", [(None, None), (None, "grok-4.7"), ("xai", "grok-4.7")])
+    def test_other_combinations_pass(self, provider, model):
+        assert agent.pi_models.require_model_with_provider(provider, model) is None
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_agent_and_fix_refuse_before_spawning(self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
+
+        def fake_popen(*_a, **_kw):
+            raise AssertionError("spawned pi with a provider and no model")
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        session_log = str(tmp_path / "s.jsonl")
+        exit_code = getattr(agent.backend_pi, entry_point)(
+            agent.backend_pi.AgentInvocation(
+                prompt="p", cwd=str(tmp_path), session_log=session_log,
+                model=None, provider=PROVIDER,
+            )
+        )
+        assert exit_code != 0
+        logged = Path(session_log).read_text()
+        assert "agent.model" in logged
+        assert '"is_error": true' in logged
+
+    def test_prompt_refuses_before_spawning(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
+
+        def fake_run(*_a, **_kw):
+            raise AssertionError("spawned pi with a provider and no model")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        _reply, exit_code, usage = agent.backend_pi.prompt(
+            "hi", cwd=str(tmp_path), model=None, provider=PROVIDER,
+        )
+        assert exit_code != 0
+        assert usage is None
+
+    def test_the_refusal_line_does_not_blame_pi(self):
+        line = agent.backend_pi._refusal_line(agent.pi_models.ModelNotConfigured("xai"))
+        assert "pi refused" not in line
+        assert "agent.model" in line

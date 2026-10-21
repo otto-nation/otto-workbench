@@ -78,7 +78,7 @@ from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
-from agent.phases import ModelAlias, collect_phase_models, resolve_effort
+from agent.phases import collect_phase_models, resolve_effort
 from review.pipeline import (
     DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",
-                        help="Override model for all agents (e.g. sonnet, opus)")
+                        help="Override model for all agents: an id from the provider's catalogue (e.g. claude-sonnet-5)")
     parser.add_argument("--effort", type=enum_arg(Effort), choices=list(Effort), default=None,
                         help="Effort preset controlling thinking, budget, phase skipping "
                              "(default: review.effort in config.yml, else medium)")

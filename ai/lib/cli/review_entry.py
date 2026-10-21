@@ -112,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-cost", type=float, metavar="USD",
                         help="Max total review cost in USD")
     parser.add_argument("--model", metavar="NAME",
-                        help="Override the model for all agents (e.g. sonnet, opus)")
+                        help="Override the model for all agents: an id from the provider's catalogue (e.g. claude-sonnet-5)")
     parser.add_argument("--effort", choices=["low", "medium", "high"], default=None,
                         help="Effort preset (default: review.effort in config.yml, else medium)")
     parser.add_argument("--max-groups", type=int, default=None, metavar="N",

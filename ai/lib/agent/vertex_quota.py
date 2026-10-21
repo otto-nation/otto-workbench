@@ -105,14 +105,14 @@ class VertexQuotaResult:
         return self.verdict is not QuotaVerdict.NOT_PROVISIONED
 
 
-def is_checkable(model: str) -> bool:
+def is_checkable(model: str | None) -> bool:
     """Whether a model string is a concrete id we can match against quota.
 
-    CLI shorthands ("sonnet", "opus") only become concrete model ids inside
-    the Claude Code CLI, so there is nothing to look up — treat them as
-    unknown rather than reporting a bogus missing-quota failure.
+    No model (the backend's default serves the phase) and CLI shorthands
+    ("sonnet", "opus") name nothing to look up — treat them as unknown rather
+    than reporting a bogus missing-quota failure.
     """
-    return model.startswith((_MODEL_ID_PREFIX, _PUBLISHER_PREFIX))
+    return model is not None and model.startswith((_MODEL_ID_PREFIX, _PUBLISHER_PREFIX))
 
 
 def resolve_vertex_model_id(model: str) -> str:

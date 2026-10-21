@@ -334,7 +334,7 @@ scores the result against that case's `manifest.json`.
 
 ```bash
 eval-models --dry-run                          # validate the corpus, run nothing
-eval-models --models sonnet,opus --runs 3      # compare models
+eval-models --models claude-sonnet-5,grok-4.7 --runs 3   # compare models
 eval-models --compare                          # diff against eval/results/ baselines
 eval-models --save-baselines                   # record new baselines
 ```

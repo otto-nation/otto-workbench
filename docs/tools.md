@@ -813,7 +813,7 @@ Takes no flags.
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
 | `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |
-| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
+| `--model` `<name>` | Override the model for all agents: an id from the provider's catalogue (e.g. claude-sonnet-5). |
 | `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
 | `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
 | `--generated` | Include tier3-generated files (skipped by default). |
@@ -1093,7 +1093,7 @@ resolution, model selection, and Vertex quota preflight are in
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
 | `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |
-| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
+| `--model` `<name>` | Override the model for all agents: an id from the provider's catalogue (e.g. claude-sonnet-5). |
 | `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
 | `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
 | `--generated` | Include tier3-generated files (skipped by default). |

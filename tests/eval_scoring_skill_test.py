@@ -28,6 +28,13 @@ import agent.phases
 from eval_scoring_skill_support import _run, _artifacts, _skill_case
 
 
+@pytest.fixture(autouse=True)
+def _a_configured_model(monkeypatch):
+    """Production configures a model for eval runs; with none, eval refuses
+    (see eval_run_models_test) rather than label results with nothing."""
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
+
+
 class TestGroupMatches:
     def test_every_token_must_be_present(self):
         assert eval.scoring_skill.group_matches(

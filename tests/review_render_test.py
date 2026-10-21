@@ -17,6 +17,7 @@ from review.record import (
     Disposition, LedgerLine, ProseSection, RecordFinding, ReviewRecord,
     SeveritySection, TriageEntry, load_record,
 )
+from review.document import MetaKey
 from review.render import BANNER, evidence_block, finding_line, ledger_line, render_body, render_review, triage_line
 from review.types import PriorDisposition, ReviewMeta
 
@@ -58,8 +59,13 @@ def test_prompt_text_omits_the_banner():
 
 def test_the_header_is_meta_json_s():
     """D6: a key an agent typed into its header is not on the rendered page."""
-    rendered = render_review(record(summary="x"), ReviewMeta(repo="a/b", pr_number=1))
-    assert "weird" not in rendered
+    meta = ReviewMeta(repo="a/b", pr_number=1, head_sha="abc")
+    rendered = render_review(record(summary="x"), meta)
+    header = rendered.split("## ", 1)[0]
+    assert "<!-- head_sha: abc -->" in header
+    keys = re.findall(r"<!-- (\w+):", header)
+    assert "weird" not in keys
+    assert set(keys) <= {k.value for k in MetaKey}
 
 
 def test_a_falsified_finding_is_not_rendered():

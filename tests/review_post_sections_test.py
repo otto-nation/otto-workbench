@@ -103,8 +103,3 @@ class TestReviewSections:
         rec = record(finding("M1", "bug", path="a.go", line=1))
         sections = _sections(rp, rec)
         assert sections.before_findings() == []
-
-    def test_severity_alias_nits_ignored(self, rp):
-        rec = record(finding("N1", "nit", path="a.go", line=1))
-        sections = _sections(rp, rec)
-        assert sections.get("nits") == ""

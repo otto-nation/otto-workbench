@@ -138,29 +138,21 @@ class TestFindings:
         assert yaml_lines[0] != yaml_lines[0].lstrip()
 
     def test_strikethrough_skipped(self):
-        findings = _findings(finding("M2", "Still open", path="file.go", line=20))
+        findings = _findings(
+            finding("M1", "Resolved", path="file.go", line=10,
+                    disposition=Disposition.FALSIFIED),
+            finding("M2", "Still open", path="file.go", line=20),
+        )
         assert [f.id for f in findings] == ["M2"]
 
-    def test_sub_headers_handled(self):
-        findings = _findings(
-            finding("M1", "First", path="a.go", line=1),
-            finding("M2", "Second", path="b.go", line=2),
-        )
-        assert [f.body for f in findings] == ["First", "Second"]
-
-    def test_h3_severity_under_findings_parent(self):
-        findings = _findings(
-            finding("S1", "Issue found", path="file.go", line=10),
-            finding("N1", "Style issue", path="file.go", line=20),
-        )
-        assert [f.severity for f in findings] == ["S", "N"]
-
     def test_non_severity_section_stops_parsing(self):
-        findings = _findings(
+        line = "This is not a finding: - **[M2]** **`b.go:2`** — Not parsed"
+        document = _doc(
             finding("M1", "A finding", path="a.go", line=1),
-            verdict="This is not a finding: - **[M2]** **`b.go:2`** — Not parsed",
+            verdict=line,
         )
-        assert len(findings) == 1
+        assert line in document.section("Verdict")
+        assert [f.id for f in document.findings] == ["M1"]
 
     def test_empty_input(self):
         assert _findings() == []
@@ -171,54 +163,14 @@ class TestFindings:
     def test_no_severity_sections(self):
         assert _doc(summary="Nothing here.").findings == []
 
-    def test_the_metadata_header_declares_no_findings(self):
-        """The frame is read off before the body, so a header can never be
-        mistaken for a declaration."""
-        findings = _findings(finding("M1", "A finding", path="a.go", line=1))
-        assert [f.id for f in findings] == ["M1"]
-
     def test_finding_with_no_body(self):
         assert _findings(finding("N1", "", path="file.go", line=10))[0].body == ""
 
-    def test_case_insensitive_section_headers(self):
-        findings = _findings(
-            finding("M1", "Bug found", path="file.go", line=10),
-            finding("S1", "Cleanup needed", path="file.go", line=20),
-            finding("N1", "Style issue", path="file.go", line=30),
-        )
-        assert [(f.severity, f.body) for f in findings] == [
-            ("M", "Bug found"), ("S", "Cleanup needed"), ("N", "Style issue"),
-        ]
-
-    def test_stray_text_between_sections_does_not_corrupt_previous_finding(self):
-        findings = _findings(
-            finding("S1", "Real should-fix body", path="a.go", line=10),
-            finding("N1", "Real nit body", path="b.go", line=20),
-        )
-        by_id = {f.id: f for f in findings}
-        assert len(findings) == 2
-        assert by_id["S1"].body == "Real should-fix body"
-        assert by_id["N1"].body == "Real nit body"
-
-    def test_empty_section_markers_do_not_corrupt_adjacent_findings(self):
-        findings = _findings(
-            finding("S1", "Should body", path="a.go", line=1),
-            finding("S2", "Last should body", path="b.go", line=2),
-            finding("N1", "First nit", path="c.go", line=3),
-            finding("I1", "First idiom", path="d.go", line=4),
-        )
-        by_id = {f.id: f for f in findings}
-        assert len(findings) == 4
-        assert by_id["S1"].body == "Should body"
-        assert by_id["S2"].body == "Last should body"
-        assert by_id["N1"].body == "First nit"
-        assert by_id["I1"].body == "First idiom"
-
     def test_finding_with_stable_id_comment(self):
-        findings = _findings(finding(
-            "M1", "body text", path="file.go", line=10, sid="abc12345",
-        ))
+        built = finding("M1", "body text", path="file.go", line=10)
+        findings = _findings(built)
         assert len(findings) == 1
+        assert findings[0].stable_id == built.stable_id
         assert (findings[0].id, findings[0].path, findings[0].line) == ("M1", "file.go", 10)
 
     def test_idioms_section(self):

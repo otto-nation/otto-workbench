@@ -42,7 +42,10 @@ class TestOpenCounts:
         assert document.open_counts == {"M": 2, "S": 1, "N": 0, "I": 0}
 
     def test_a_resolved_finding_is_no_longer_counted(self):
-        document = _doc(finding("M1", "active", path=""))
+        document = _doc(
+            finding("M1", "active", path=""),
+            finding("M2", "resolved", path="", disposition=Disposition.FALSIFIED),
+        )
         assert document.open_counts["M"] == 1
 
     def test_the_fix_passes_checkbox_does_not_hide_a_finding(self):
@@ -64,14 +67,10 @@ class TestOpenCounts:
         """Wider than the fix pass's predicate: the review judged this one, so
         it is not work, but nothing fixed it either."""
         document = _doc(finding(
-            "M1", "path:1 —", path="",
+            "M1", "", path="",
             disposition=Disposition.DECLINED, reason="by design",
         ))
         assert [f.id for f in document.open_findings] == ["M1"]
-        assert document.open_counts["M"] == 1
-
-    def test_an_indented_finding_is_counted(self):
-        document = _doc(finding("M1", "indented under something", path=""))
         assert document.open_counts["M"] == 1
 
     def test_a_finding_line_outside_a_severity_section_is_not_counted(self):
@@ -105,10 +104,6 @@ class TestOpenCounts:
         assert open_counts(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
         document = _doc(finding("M1", "bug", path="a.py", line=1))
         assert open_counts(document) == document.open_counts
-
-    def test_a_reference_to_a_finding_is_not_a_second_finding(self):
-        document = _doc(finding("M1", "bug\n  - see [M1] above", path=""))
-        assert document.open_counts["M"] == 1
 
 
 class TestVerdict:

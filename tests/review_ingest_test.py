@@ -14,9 +14,9 @@ from review.ingest import (
     _finalize_finding, ends_finding_body, finding_spans,
     is_section_boundary, severity_of_heading, starts_finding_or_section,
 )
-from review.types import Finding, FindingScope, PriorDisposition
+from review.types import Finding, FindingScope, PriorDisposition, ReviewMeta
 from review.record import Disposition
-from review.render import BANNER
+from review.render import BANNER, render_review
 
 from review_record_support import fixture_text
 
@@ -202,6 +202,127 @@ class TestWhatIsRead:
         assert record.verdict == ""
         assert "HEADER_ONLY_KEY" not in repr(record)
         assert "would be the summary" not in repr(record)
+
+
+class TestIngestedMarkdownSubjects:
+    """Markdown-only subjects moved off the document/post/render suites."""
+
+    def test_strikethrough_skipped(self):
+        rec = ingest_review(
+            "## Must fix\n\n"
+            "- ~~**[M1]** **`file.go:10`** — Resolved~~\n"
+            "- **[M2]** **`file.go:20`** — Still open\n"
+        )
+        assert [f.id for f in rec.findings] == ["M2"]
+
+    def test_non_severity_section_stops_parsing(self):
+        rec = ingest_review(
+            "## Must fix\n\n"
+            "- **[M1]** **`a.go:1`** — A finding\n\n"
+            "## Verdict\n\n"
+            "This is not a finding: - **[M2]** **`b.go:2`** — Not parsed\n"
+        )
+        assert [f.id for f in rec.findings] == ["M1"]
+        assert "**[M2]**" in rec.verdict
+
+    def test_sub_headers_handled(self):
+        rec = ingest_review(
+            "## Must fix\n\n"
+            "### Group A\n\n"
+            "- **[M1]** **`a.go:1`** — First\n\n"
+            "### Group B\n\n"
+            "- **[M2]** **`b.go:2`** — Second\n"
+        )
+        assert [f.body for f in rec.findings] == ["First", "Second"]
+
+    def test_h3_severity_under_findings_parent(self):
+        rec = ingest_review(
+            "## Findings\n\n"
+            "### Should-fix\n\n"
+            "- **[S1]** **`file.go:10`** — Issue found\n\n"
+            "### Nit\n\n"
+            "- **[N1]** **`file.go:20`** — Style issue\n"
+        )
+        assert [f.severity for f in rec.findings] == ["S", "N"]
+
+    def test_the_metadata_header_declares_no_findings(self):
+        rec = ingest_review(
+            "# Code Review\n\n"
+            "<!-- head_sha: abc123 -->\n\n"
+            "## Must fix\n\n- **[M1]** **`a.go:1`** — A finding\n"
+        )
+        assert [f.id for f in rec.findings] == ["M1"]
+
+    def test_case_insensitive_section_headers(self):
+        rec = ingest_review(
+            "## Must Fix\n\n"
+            "- **[M1]** **`file.go:10`** — Bug found\n\n"
+            "## SHOULD FIX\n\n"
+            "- **[S1]** **`file.go:20`** — Cleanup needed\n\n"
+            "## nit\n\n"
+            "- **[N1]** **`file.go:30`** — Style issue\n"
+        )
+        assert [(f.severity, f.body) for f in rec.findings] == [
+            ("M", "Bug found"), ("S", "Cleanup needed"), ("N", "Style issue"),
+        ]
+
+    def test_stray_text_between_sections_does_not_corrupt_previous_finding(self):
+        rec = ingest_review(
+            "## Should fix\n"
+            "- **[S1]** **`a.go:10`** — Real should-fix body\n\n"
+            "## Nit\n"
+            "_None in this file group._\n"
+            "- **[N1]** **`b.go:20`** — Real nit body\n"
+        )
+        by_id = {f.id: f for f in rec.findings}
+        assert len(rec.findings) == 2
+        assert by_id["S1"].body == "Real should-fix body"
+        assert by_id["N1"].body == "Real nit body"
+
+    def test_empty_section_markers_do_not_corrupt_adjacent_findings(self):
+        rec = ingest_review(
+            "## Must fix\n"
+            "_None in this file group._\n"
+            "## Should fix\n"
+            "- **[S1]** **`a.go:1`** — Should body\n"
+            "- **[S2]** **`b.go:2`** — Last should body\n\n"
+            "## Nit\n"
+            "_None in this file group._\n"
+            "- **[N1]** **`c.go:3`** — First nit\n\n"
+            "## Idioms\n"
+            "_None in this file group._\n"
+            "- **[I1]** **`d.go:4`** — First idiom\n"
+        )
+        by_id = {f.id: f for f in rec.findings}
+        assert len(rec.findings) == 4
+        assert by_id["S1"].body == "Should body"
+        assert by_id["S2"].body == "Last should body"
+        assert by_id["N1"].body == "First nit"
+        assert by_id["I1"].body == "First idiom"
+
+    def test_an_indented_finding_is_counted(self):
+        rec = ingest_review(
+            "## Must fix\n"
+            "  - **[M1]** path:1 — indented under something\n"
+        )
+        assert [f.id for f in rec.findings] == ["M1"]
+
+    def test_a_reference_to_a_finding_is_not_a_second_finding(self):
+        rec = ingest_review(
+            "## Must fix\n"
+            "- **[M1]** path:1 — bug\n"
+            "  - see [M1] above\n"
+        )
+        assert [f.id for f in rec.findings] == ["M1"]
+
+    def test_severity_alias_nits_ignored(self):
+        rec = ingest_review("## Nits\n\n- **[N1]** **`a.go:1`** — nit\n")
+        assert [f.id for f in rec.findings] == ["N1"]
+        assert rec.extra == ()
+
+    def test_the_header_is_meta_json_s(self):
+        rec = ingest_review("# T\n<!-- weird: 1 -->\n\n## Summary\nx\n")
+        assert "weird" not in render_review(rec, ReviewMeta(repo="a/b", pr_number=1))
 
 # ── The span walk ────────────────────────────────────────────────────────────
 

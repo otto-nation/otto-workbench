@@ -384,7 +384,12 @@ _init_test_repo() {
 # ai/bin sits under a `bin/` of its own, so the longest granted directory has to
 # win — naming it `bin/review-post` would suggest a path that does not exist.
 @test "reposcript hook: names the ai/bin path in full" {
-  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/ai/bin/review-post --pr 1"}}'
+  # review-post writes to GitHub, so the owner boundary sees it first. Declaring
+  # this checkout's owner and answering from it keeps the boundary out of the
+  # answer this test is asking about.
+  export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
+  _owners_config otto-nation
+  run _run_guard "$(_json_command_payload_at "$REPO_ROOT" '/Users/me/git/repo/ai/bin/review-post --pr 1')"
   [ "$status" -eq 2 ]
   [[ "$output" == *"'ai/bin/review-post'"* ]]
 }

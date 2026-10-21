@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { statements } from "./statements.ts";
@@ -68,7 +68,8 @@ export function locateOwnersCheck(besideCheckout: string = CHECKOUT_OWNERS_CHECK
 export const OWNERS_CHECK = locateOwnersCheck();
 
 /**
- * How long a classify call may take before it counts as a check that could not
+ * How long any owners-check call — the classify call here, upstream-guard's
+ * owner-boundary check — may take before it counts as a check that could not
  * run. claude-bash-guard's OWNERS_CHECK_TIMEOUT_SECONDS is the same bound in
  * seconds; tests/pi_extensions_tokenize.bats holds the two to one value.
  */
@@ -109,6 +110,24 @@ export function mightWriteGithub(command: string): boolean {
 }
 
 /**
+ * Run OWNERS_CHECK with ARGS for at most TIMEOUT_MS, stdout and stderr captured
+ * as text. The one runner every owners-check call goes through, so the bound and
+ * the spawn options cannot differ between callers. A spawn failure or timeout
+ * is on the result's `error` (`status` is then null), never thrown.
+ */
+export function runOwnersCheck(
+  args: readonly string[],
+  ownersCheck: string = OWNERS_CHECK,
+  timeoutMs: number = CLASSIFY_TIMEOUT_MS,
+): SpawnSyncReturns<string> {
+  return spawnSync(ownersCheck, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+    timeout: timeoutMs,
+  });
+}
+
+/**
  * True unless owners-check --classify answers that COMMAND does not write:
  * exit 0 with exactly `read` on stdout.
  *
@@ -122,11 +141,7 @@ export function classifiesAsWrite(
   ownersCheck: string = OWNERS_CHECK,
   timeoutMs: number = CLASSIFY_TIMEOUT_MS,
 ): boolean {
-  const run = spawnSync(ownersCheck, ["--classify", "--", command], {
-    stdio: ["ignore", "pipe", "ignore"],
-    encoding: "utf8",
-    timeout: timeoutMs,
-  });
+  const run = runOwnersCheck(["--classify", "--", command], ownersCheck, timeoutMs);
   return !(run.status === 0 && typeof run.stdout === "string" && run.stdout.trim() === NOT_A_WRITE_ANSWER);
 }
 

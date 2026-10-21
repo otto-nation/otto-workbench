@@ -62,6 +62,12 @@ GITHUB_WRITE_PROGRAMS='gh pr pr-describe review review-post review-threads revie
 # tests/pi_extensions_tokenize.bats holds the two to one value.
 OWNERS_CHECK_TIMEOUT_SECONDS=15
 
+# The user's override for publishing upstream. Spelled once here for the rule
+# refusing any command that names it; ALLOW_UPSTREAM_ENV in ai/lib/gh/owners.py
+# is what gh.client reads, and ai/pi/extensions/upstream-guard/detect.ts spells
+# it for Pi. tests/pi_extensions_upstream.bats holds the three to one value.
+UPSTREAM_OVERRIDE_VAR=WORKBENCH_ALLOW_UPSTREAM
+
 # _branch_review_has_open_findings — true when a self-review for the current
 # branch is sitting on unticked findings.
 #
@@ -330,10 +336,11 @@ _locate_owners_check() {
   return 0
 }
 
-# _run_owners_check ARGS... — run "$OWNERS_CHECK" ARGS... for at most
+# _run_owners_check STREAM ARGS... — run "$OWNERS_CHECK" ARGS... for at most
 # OWNERS_CHECK_TIMEOUT_SECONDS. Sets OWNERS_CHECK_STATUS to its exit status, or
 # to empty when it did not finish in time (it is killed), and
-# OWNERS_CHECK_OUTPUT to its stdout. stderr is discarded.
+# OWNERS_CHECK_OUTPUT to the stream STREAM names — `stdout` (--classify's
+# answer) or `stderr` (--cwd's refusal reason). The other stream is discarded.
 #
 # Bash builtins only: coreutils `timeout` is not on stock macOS. The checker
 # runs in a process substitution that reports its pid and then its exit status
@@ -341,12 +348,17 @@ _locate_owners_check() {
 # start on a fresh line so output without a trailing newline cannot swallow
 # them.
 _run_owners_check() {
-  local fd line runner="" child="" left
+  local stream="$1" fd line runner="" child="" left
   local -i deadline=$((SECONDS + OWNERS_CHECK_TIMEOUT_SECONDS))
+  shift
   OWNERS_CHECK_STATUS="" OWNERS_CHECK_OUTPUT=""
   exec {fd}< <(
     status=0
-    "$OWNERS_CHECK" "$@" 2>/dev/null &
+    if [[ "$stream" == stderr ]]; then
+      "$OWNERS_CHECK" "$@" 2>&1 >/dev/null &
+    else
+      "$OWNERS_CHECK" "$@" 2>/dev/null &
+    fi
     printf '\npid %s %s\n' "$BASHPID" "$!"
     wait "$!" || status=$?
     printf '\nexit %s\n' "$status"
@@ -375,7 +387,7 @@ _command_classifies_as_write() {
   local answer
   _locate_owners_check
   [[ -n "$OWNERS_CHECK" ]] || return 0
-  _run_owners_check --classify -- "$cmd"
+  _run_owners_check stdout --classify -- "$cmd"
   answer="${OWNERS_CHECK_OUTPUT#"${OWNERS_CHECK_OUTPUT%%[![:space:]]*}"}"
   answer="${answer%"${answer##*[![:space:]]}"}"
   [[ "$OWNERS_CHECK_STATUS" != 0 || "$answer" != read ]]
@@ -400,6 +412,38 @@ _command_publishes() {
   _command_classifies_as_write
 }
 
+# _owner_boundary_refusal — set OWNER_BOUNDARY_REFUSAL to why $cmd may not run
+# at the owner boundary, or to empty when it may.
+#
+# owners-check --cwd answers from the session's cwd ($hook_cwd, else this
+# hook's own): exit 0 allows — a read always is — and 2 refuses with the reason
+# on stderr. Everything else fails closed: not found, a crash, no answer within
+# OWNERS_CHECK_TIMEOUT_SECONDS. A write that cannot be checked is a write that
+# was not refused, and the boundary exists to refuse it.
+_owner_boundary_refusal() {
+  local said why
+  OWNER_BOUNDARY_REFUSAL=""
+  _locate_owners_check
+  if [[ -z "$OWNERS_CHECK" ]]; then
+    why="owners-check could not run: it is not beside this hook, at ../../bin, or on PATH"
+  else
+    _run_owners_check stderr --cwd "${hook_cwd:-$PWD}" -- "$cmd"
+    said="${OWNERS_CHECK_OUTPUT%$'\n'}"
+    said="${said//$'\n'/ }"
+    case "$OWNERS_CHECK_STATUS" in
+      0) return 0 ;;
+      2)
+        OWNER_BOUNDARY_REFUSAL="This GitHub write is refused at the owner boundary: $said. The user posts upstream themselves — draft the command and the text for them to run. See general.md § Upstream Repositories."
+        return 0
+        ;;
+      "") why="owners-check gave no answer within ${OWNERS_CHECK_TIMEOUT_SECONDS}s, so it could not run to completion" ;;
+      *) why="owners-check could not run cleanly (exit $OWNERS_CHECK_STATUS${said:+: $said})" ;;
+    esac
+  fi
+  OWNER_BOUNDARY_REFUSAL="The owner-boundary check failed — $why — and a GitHub write that cannot be checked is refused. See general.md § Upstream Repositories."
+  return 0
+}
+
 # The one fork left on the hot path, and it stays.
 #
 # A bash-native extractor was measured at 0.27 ms against jq's 5.7 ms, and
@@ -419,16 +463,28 @@ _command_publishes() {
 # Fail open: a malformed payload must not block every Bash call.
 #
 # The same single call reads every other field a rule needs, so this stays the
-# only fork: its first line is `run_in_background<TAB>agent_id`, the rest is the
-# command verbatim. agent_id is non-empty only when the call comes from a
+# only fork: its first line is `run_in_background<TAB>agent_id`, its second the
+# session's `cwd`, the rest the command verbatim. agent_id is non-empty only when the call comes from a
 # subagent — the main session sends null or nothing. It goes last because tab
 # is IFS whitespace: `read` strips an empty leading field, which would shift
 # run_in_background into agent_id.
 payload_fields=$(jq -r '"\(.tool_input.run_in_background == true)\t\(.agent_id // "" | tostring)",
-  (.tool_input.command // "")' 2>/dev/null) || exit 0
+  (.cwd // "" | tostring | gsub("\n"; " ")), (.tool_input.command // "")' 2>/dev/null) || exit 0
 IFS=$'\t' read -r run_in_background agent_id <<<"${payload_fields%%$'\n'*}"
+# The session's cwd is the payload's second line: the owner boundary resolves
+# the repository a write targets from it, and the hook's own cwd is the project
+# root, not wherever the session's shell has moved to. A newline in it would
+# shift the command, so jq flattens one; such a path then resolves nowhere,
+# which the boundary refuses rather than allows.
+hook_cwd=""
 cmd=""
-[[ "$payload_fields" == *$'\n'* ]] && cmd=${payload_fields#*$'\n'}
+if [[ "$payload_fields" == *$'\n'* ]]; then
+  payload_rest=${payload_fields#*$'\n'}
+  hook_cwd=${payload_rest%%$'\n'*}
+  if [[ "$payload_rest" == *$'\n'* ]]; then
+    cmd=${payload_rest#*$'\n'}
+  fi
+fi
 [[ -n "$cmd" ]] || exit 0
 
 # A subagent's end of turn returns to its parent, so a run_in_background Bash
@@ -794,6 +850,28 @@ fi
 re_issue_create='(^|[;&|][[:space:]]*)gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
 if [[ "$stripped" =~ $re_issue_create ]] && _branch_review_has_open_findings; then
   block "This branch's self-review has open findings, and filing an issue for one is a deferral that needs my agreement first — read what the fix pass did before acting on any finding yourself. If this issue is unrelated to the review, say so and file it. See general.md § Code Quality."
+fi
+
+# ── The owner boundary ───────────────────────────────────────────────────────
+# Every session, not only subagents: nothing an agent runs posts to GitHub
+# outside the owners in github.owners. The pre-filter is in process and costs
+# no fork; the policy — whether the command writes, which owners are ours,
+# which repository it targets — is ai/lib/gh/owners.py behind
+# ai/bin/owners-check, paid for only when the pre-filter matches, so every
+# command naming no GitHub program keeps the no-Python path. Below pr-create
+# and issue-defer, whose narrower messages win.
+# ai/pi/extensions/upstream-guard is the same rule under Pi, and
+# tests/pi_extensions_upstream.bats holds the two to one set of answers.
+#
+# The override variable is the user's, set in their own shell for the
+# workbench's own publishing. owners-check never reads it, and a command that
+# names it is refused outright, so an agent cannot set its way past this.
+if [[ "$cmd" == *"$UPSTREAM_OVERRIDE_VAR"* ]]; then
+  block "$UPSTREAM_OVERRIDE_VAR is the user's override for publishing upstream, and an agent command may not name it. Draft the command and the text for the user to run themselves. See general.md § Upstream Repositories."
+fi
+if _command_might_write_github; then
+  _owner_boundary_refusal
+  [[ -z "$OWNER_BOUNDARY_REFUSAL" ]] || block "$OWNER_BOUNDARY_REFUSAL"
 fi
 
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then

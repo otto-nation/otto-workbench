@@ -665,13 +665,15 @@ _referenced_home_paths() {
   # Detached HEAD names no branch, and a repo with no origin names no repo.
   # Either way the guard cannot resolve a review, and a guard that blocked on
   # its own uncertainty would be worse than the mistake it prevents.
+  # --repo keeps the owner boundary resolvable after origin is removed, so the
+  # fail-open under test is the issue-defer guard's.
   git -C "$sandbox/repo" checkout -q --detach
-  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x --repo otto-nation/otto-workbench"}}'
   [ "$status" -eq 0 ]
 
   git -C "$sandbox/repo" checkout -q "isaac/fix/thing"
   git -C "$sandbox/repo" remote remove origin
-  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x"}}'
+  run _guard_in "$sandbox" '{"tool_input":{"command":"gh issue create --title x --repo otto-nation/otto-workbench"}}'
   [ "$status" -eq 0 ]
 }
 

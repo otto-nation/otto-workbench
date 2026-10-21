@@ -21,6 +21,7 @@
     "command:eval-models",
     "command:otto-log",
     "command:otto-mcp-server",
+    "command:owners-check",
     "command:pr",
     "command:pr-describe",
     "command:pr-rebase",

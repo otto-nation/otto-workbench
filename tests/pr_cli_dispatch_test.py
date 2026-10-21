@@ -35,8 +35,10 @@ import cli.pr_batch  # noqa: E402
 import cli.review_modes  # noqa: E402
 import core.tool_parser  # noqa: E402
 import pr.context  # noqa: E402
+import pr.target  # noqa: E402
+import batch.store  # noqa: E402
 from core.run_lock import CHECKOUT, TARGET  # noqa: E402
-from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere, repo_with_origin  # noqa: E402
 
 from pr_cli_support import _cmd_fix, _TEST_PR, _run_main, _lock_file, _dispatch_stage
 
@@ -505,7 +507,7 @@ def test_dispatch_takes_exactly_the_declared_target_and_checkout(command, argv, 
     declared = _DECLARED_LOCKS[(command, argv)]
     assert seen["target"] is (TARGET in declared)
     assert seen["checkout"] is (CHECKOUT in declared)
-    assert not core.run_lock.global_lock_path("batch").exists()
+    assert not list(core.run_lock.global_lock_path("batch-x").parent.glob("batch-*"))
 
 
 @pytest.mark.parametrize("argv,pr_number,checkout", [
@@ -521,11 +523,13 @@ def test_review_target_shape_locks_at_dispatch(argv, pr_number, checkout, worktr
     assert seen == {"target": True, "checkout": checkout}
 
 
-def test_help_skips_locks_so_a_live_batch_still_prints_it(capsys):
-    """`pr batch run --help` must not contend for the global a live run holds."""
+def test_help_skips_locks_so_a_live_batch_still_prints_it(tmp_path, capsys):
+    """`pr batch run --help` must not contend for the repo lock a live run holds."""
+    repo = repo_with_origin(tmp_path / "repo")
+    key = pr.target.repo_key_from_origin(str(repo))
     record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
-    with held_elsewhere(core.run_lock.global_lock_path("batch"), record):
-        code = _run_main("batch", "run", "--help")
+    with held_elsewhere(core.run_lock.global_lock_path(batch.store.batch_lock(key).name), record):
+        code = _run_main("batch", "run", "--checkout", str(repo), "--help")
     assert code == 0
     assert "--checkout" in capsys.readouterr().out
 

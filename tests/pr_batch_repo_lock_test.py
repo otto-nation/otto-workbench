@@ -109,13 +109,12 @@ def test_batch_need_resume_reads_keys_from_the_saved_run():
 
 
 def test_batch_need_noid_resume_reads_keys_from_the_covering_run(monkeypatch):
-    run = _saved(repo="o/r", repo_key="cover-key-cccccccc")
+    _saved(repo="o/r", repo_key="cover-key-cccccccc")
     monkeypatch.setattr(
         pr.target, "repo_identity_from_origin",
         lambda cwd=None: pr.target.RepoIdentity(label="other/label", key="cover-key-cccccccc"))
     need = _need(["resume"])
     assert need.locks == frozenset({_scope("cover-key-cccccccc")})
-    assert run.id == "20261001T120000-aaaa"
 
 
 def test_batch_need_with_no_subcommand_takes_no_locks_and_does_no_io(monkeypatch):
@@ -132,11 +131,6 @@ def test_batch_need_with_no_subcommand_takes_no_locks_and_does_no_io(monkeypatch
     assert _need([]) == empty
     assert _need(["--verbose"]) == empty
     assert seen == []
-
-
-def test_batch_need_help_still_prints_via_the_real_entry(capsys):
-    assert _main(["batch", "run", "--help"]) == 0
-    assert "--checkout" in capsys.readouterr().out
 
 
 def test_batch_need_broken_input_yields_no_lock_not_an_exception(tmp_path):

@@ -123,7 +123,10 @@ _BATCH_EXCLUSIVE = frozenset({"run", "resume"})
 
 
 def _flag_values(argv: Sequence[str], name: str) -> list[str]:
-    """Values of *name* in *argv*, accepting `--flag DIR` and `--flag=DIR`."""
+    """Values of *name* in *argv*, accepting `--flag DIR` and `--flag=DIR`.
+
+    An empty `--flag=` value is ignored, as is a following token that looks like a flag.
+    """
     values: list[str] = []
     prefix = f"{name}="
     awaiting = False

@@ -190,14 +190,17 @@ def _assign_target_var(word: str) -> frozenset[str]:
 
 
 def _builtin_assigns(words: Sequence[str]) -> frozenset[str]:
-    if not words or words[0] not in _ENV_BUILTINS:
+    if not words:
         return frozenset()
-    stop_on_word = words[0] == "env"
+    program = words[0].rsplit("/", 1)[-1]
+    if program == "env":
+        inv = gh.write_shapes.with_env_builtin(gh.write_shapes.Invocation(words=tuple(words)))
+        return frozenset(inv.env) & _GH_TARGET_VARS
+    if program not in _ENV_BUILTINS:
+        return frozenset()
     names: set[str] = set()
     for word in words[1:]:
         names.update(_assign_target_var(word))
-        if stop_on_word and not word.startswith("-") and not _is_assign(word):
-            break
     return frozenset(names)
 
 
@@ -209,8 +212,11 @@ def _unset_names(words: Sequence[str]) -> frozenset[str]:
 
 def _gh_env_names(statement: Sequence[str]) -> frozenset[str]:
     inv = gh.write_shapes.invocation(statement)
+    extra = frozenset()
+    if inv.program == "env":
+        extra = gh.write_shapes.env_unsets(inv.args) & _GH_TARGET_VARS
     return (frozenset(_GH_TARGET_VARS.intersection(inv.env))
-            | _builtin_assigns(inv.words) | _unset_names(inv.words))
+            | _builtin_assigns(inv.words) | _unset_names(inv.words) | extra)
 
 
 def _own_gh_env(statement: Sequence[str]) -> frozenset[str]:

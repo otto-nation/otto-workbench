@@ -86,7 +86,12 @@ _URL_VALUE_PREFIXES = (
 # as value-taking so a following ``-R/--repo`` or ``--hostname`` unions cwd.
 _BOOLEAN_FLAGS = frozenset({
     "--web", "-w", "--draft", "--fill", "--yes", "-y",
+    "--squash", "--merge", "--rebase", "--delete-branch",
+    "--auto", "--admin",
 })
+_BOOLEAN_SHORT = {
+    ("pr", "merge"): frozenset({"-d"}),
+}
 _WRAPPER_REASON = (
     "the command reaches GitHub through a wrapper, so its target cannot be"
     " checked — draft it for the user to run")
@@ -175,18 +180,33 @@ def _content_span(word: str) -> int:
     return 0
 
 
-def _could_be_value_taking_flag(word: str) -> bool:
+def _subcommand_pair(args: Sequence[str]) -> tuple[str, ...]:
+    i = gh.write_shapes.skip_repo_flags(args)
+    found: list[str] = []
+    while i < len(args) and len(found) < 2:
+        if not args[i].startswith("-"):
+            found.append(args[i])
+        i += 1
+    return tuple(found)
+
+
+def _booleans_for(args: Sequence[str]) -> frozenset[str]:
+    return _BOOLEAN_FLAGS | _BOOLEAN_SHORT.get(_subcommand_pair(args)[:2], frozenset())
+
+
+def _could_be_value_taking_flag(word: str, booleans: frozenset[str]) -> bool:
     """True when *word* might consume the next word as its value."""
     if not word.startswith("-") or word == "-":
         return False
-    if word in _BOOLEAN_FLAGS:
+    if word in booleans:
         return False
     if word.startswith("--") and "=" in word:
         return False
     return word.startswith("--") or len(word) == 2
 
 
-def _collect_flag(args: Sequence[str], take) -> tuple[tuple[str, ...], bool]:
+def _collect_flag(args: Sequence[str], take,
+                  booleans: frozenset[str] = _BOOLEAN_FLAGS) -> tuple[tuple[str, ...], bool]:
     """Every value *take* finds, and whether any could be a previous flag's value."""
     specs: list[str] = []
     ambiguous = False
@@ -198,7 +218,7 @@ def _collect_flag(args: Sequence[str], take) -> tuple[tuple[str, ...], bool]:
             continue
         if spec is not None:
             specs.append(spec)
-        if i > 0 and _could_be_value_taking_flag(args[i - 1]):
+        if i > 0 and _could_be_value_taking_flag(args[i - 1], booleans):
             ambiguous = True
         i = nxt
     return tuple(specs), ambiguous
@@ -223,6 +243,14 @@ def _union_owners(left: Resolution, right: Resolution) -> Resolution:
     owners = tuple(dict.fromkeys((*left.target.owners, *right.target.owners)))
     detail = f"{left.target.detail}, {right.target.detail}"
     return Resolution(Target(owners, left.target.source, detail))
+
+
+def _across_hosts(hosts: Sequence[str], resolve_one) -> Resolution:
+    combined: Resolution | None = None
+    for host in hosts:
+        item = resolve_one(host)
+        combined = item if combined is None else _union_owners(combined, item)
+    return combined if combined is not None else Resolution(reason=_SHIFTED_HOST_REASON)
 
 
 def _long_value(word: str, args: Sequence[str], i: int, long: str) -> tuple[str, int] | None:
@@ -412,8 +440,9 @@ def _api_path(endpoint: str, hosts: Sequence[str], gh_args: Sequence[str],
             f"{endpoint or 'this gh api call'} is not under repos/OWNER/REPO, so its"
             f" target cannot be checked"))
     if match.group(1) == _OWNER_PLACEHOLDER:
-        return _explicit(gh_args, env, hosts[0], shifted_env=shifted_env) or _remotes(
-            cwd, after_cd, hosts[0], known_hosts, shifted_env)
+        return _across_hosts(hosts, lambda host: _explicit(
+            gh_args, env, host, shifted_env=shifted_env) or _remotes(
+            cwd, after_cd, host, known_hosts, shifted_env))
     owners = tuple(dict.fromkeys(
         config.github_owners.owner(item, match.group(1)) for item in hosts))
     return Resolution(Target(owners, TargetSource.API_PATH, endpoint))
@@ -427,15 +456,15 @@ def _api(args: Sequence[str], gh_args: Sequence[str], env: Mapping[str, str], ho
         return hosts
     endpoint = _api_endpoint(args)
     if endpoint == "graphql":
-        return _graphql(target_repo, hosts[0], cwd, after_cd, known_hosts,
-                        graphql_from_cwd, shifted_env)
+        return _across_hosts(hosts, lambda host: _graphql(
+            target_repo, host, cwd, after_cd, known_hosts, graphql_from_cwd, shifted_env))
     return _api_path(endpoint, hosts, gh_args, env, cwd, after_cd, known_hosts, shifted_env)
 
 
 def _gh_repo_target(args: Sequence[str], env: Mapping[str, str], host: str, cwd: str,
                     after_cd: bool, known_hosts: frozenset[str],
                     shifted_env: frozenset[str]) -> Resolution:
-    _, ambiguous = _collect_flag(args, gh.write_shapes.take_repo_flag)
+    _, ambiguous = _collect_flag(args, gh.write_shapes.take_repo_flag, _booleans_for(args))
     explicit = _explicit(args, env, host, shifted_env=shifted_env)
     if explicit is not None and not explicit.ok:
         return explicit
@@ -506,7 +535,10 @@ def resolve_statement(statement: Sequence[str], cwd: str, *, after_cd: bool,
     """The target of one shell statement already judged a write."""
     if gh.write_shapes.opaque_github_write(statement):
         return Resolution(reason=_WRAPPER_REASON)
-    inv = gh.write_shapes.with_env_builtin(gh.write_shapes.invocation(statement))
+    inv = gh.write_shapes.peel_transparent(
+        gh.write_shapes.with_env_builtin(gh.write_shapes.invocation(statement)))
+    if inv is None or not inv.words:
+        return Resolution(reason=_WRAPPER_REASON)
     if inv.program == "gh":
         return _gh(inv.args, inv.env, cwd, after_cd, known_hosts, "", False, shifted_env)
     return _workbench(inv.args, inv.env, cwd, after_cd, known_hosts, shifted_env)

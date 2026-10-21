@@ -28,20 +28,24 @@
 # _agent_model_tier_value TIER — the exported value for TIER (SONNET, OPUS,
 # HAIKU) in ~/.env.local: AI_<TIER>_MODEL, else ANTHROPIC_DEFAULT_<TIER>_MODEL.
 # Commented lines are ignored; surrounding quotes are stripped.
+_agent_model_unquote() {
+  local value="$1"
+  if [[ "$value" =~ ^\"([^\"]*)\" ]]; then printf '%s' "${BASH_REMATCH[1]}"; return 0; fi
+  if [[ "$value" =~ ^\'([^\']*)\' ]]; then printf '%s' "${BASH_REMATCH[1]}"; return 0; fi
+  value="${value%%[[:space:]]#*}"
+  printf '%s' "${value%"${value##*[![:space:]]}"}"
+}
+
 _agent_model_tier_value() {
   local tier="$1" key line value
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0
   for key in "AI_${tier}_MODEL" "ANTHROPIC_DEFAULT_${tier}_MODEL"; do
     line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_LOCAL_FILE" | tail -1 || true)"
     [[ -n "$line" ]] || continue
-    value="${line#*"${key}"=}"
-    if [[ "$value" =~ ^\"([^\"]*)\" ]]; then value="${BASH_REMATCH[1]}"
-    elif [[ "$value" =~ ^\'([^\']*)\' ]]; then value="${BASH_REMATCH[1]}"
-    else value="${value%%[[:space:]]#*}"; value="${value%"${value##*[![:space:]]}"}"; fi
-    if [[ -n "$value" ]]; then
-      printf '%s' "$value"
-      return 0
-    fi
+    value="$(_agent_model_unquote "${line#*"${key}"=}")"
+    [[ -n "$value" ]] || continue
+    printf '%s' "$value"
+    return 0
   done
 }
 

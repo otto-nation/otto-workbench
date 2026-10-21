@@ -401,6 +401,20 @@ def _anchor(
     return outcome.file if outcome is not None else ""
 
 
+def _unfixed_anchors(
+    item_id: str, item_files: dict[str, str], outcomes_by_id: dict[str, ItemOutcome],
+) -> set[str]:
+    """Both the handed path and the tracking file, when either names one."""
+    files: set[str] = set()
+    path = item_files.get(item_id, "")
+    if path:
+        files.add(path)
+    outcome = outcomes_by_id.get(item_id)
+    if outcome is not None and outcome.file:
+        files.add(outcome.file)
+    return files
+
+
 def _scope_coverage(
     run: fix.engine.FixRun, committed: set[str], item_files: dict[str, str], sha: str,
 ) -> FixCoverage:
@@ -408,16 +422,21 @@ def _scope_coverage(
 
     Attribution is by path (`fix/scope.py`'s ceiling), so a committed file that
     is the anchor of a skipped, declined or deferred item holds an edit no
-    verified fix stands behind, whichever item it answered. The anchor comes
-    from the review's handed items first; an outcome's `file` is only the
-    fallback when the item has none. Unfixed is every handed item the pass did
-    not count as fixed — including one whose section the agent deleted.
+    verified fix stands behind, whichever item it answered. A fixed item's
+    anchor is the handed path first; an outcome's `file` is only the fallback
+    when the item has none. An unfixed item blocks on both the handed path and
+    the tracking file when they differ — the more cautious union. Unfixed is
+    every handed item the pass did not count as fixed — including one whose
+    section the agent deleted.
     """
     by_id = {o.id: o for o in run.outcomes}
     fixed_ids = {o.id for o in run.outcomes if o.outcome.counts_as_fixed}
     handed = set(item_files) | set(by_id)
     fixed = {_anchor(i, item_files, by_id) for i in fixed_ids} - {""}
-    unfixed = {_anchor(i, item_files, by_id) for i in handed if i not in fixed_ids} - {""}
+    unfixed: set[str] = set()
+    for item_id in handed:
+        if item_id not in fixed_ids:
+            unfixed |= _unfixed_anchors(item_id, item_files, by_id)
     if not committed:
         return FixCoverage(why="nothing committed")
     stray = sorted(p for p in committed if not fix.scope.anchor_or_test(p, fixed))

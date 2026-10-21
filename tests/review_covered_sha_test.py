@@ -194,6 +194,17 @@ def test_publish_resets_covered_sha(tmp_path):
     assert read_review_meta(Path(job.artifact_dir)).covered_sha == ""
 
 
+def test_an_unfixed_item_blocks_coverage_from_both_its_paths(tmp_path):
+    """Unfixed S1 tracking c.py / handed d.py: committing c.py is not coverage."""
+    repo, reviewed, fixed = _history(tmp_path)
+    run = _run_of(fixed, reviewed, outcomes=[
+        ItemOutcome(id="N1", outcome=FixOutcome.FIXED, verified=True, file="c.py"),
+        ItemOutcome(id="S1", outcome=FixOutcome.NEEDS_HUMAN, file="c.py"),
+    ])
+    coverage = fix_coverage(run, {"c.py"}, {"N1": "c.py", "S1": "d.py"}, reviewed, repo)
+    assert not coverage.covered and "c.py" in coverage.why
+
+
 def test_an_unfixed_item_with_an_empty_outcome_file_uses_item_files(tmp_path):
     """The handed item's path is the anchor when the outcome names none."""
     repo, reviewed, fixed = _history(tmp_path)

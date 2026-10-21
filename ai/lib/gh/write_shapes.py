@@ -27,14 +27,17 @@ A write is:
 ``GH_HOST`` decide a target), and the program is matched on its basename, so
 ``/usr/local/bin/gh`` is gh.
 
-``eval`` and ``bash|sh|zsh`` with a ``-c`` cluster (``-c``, ``-lc``, ``-ec``)
-that mention gh or a workbench posting command are writes whose target cannot
-be resolved — the policy refuses them. ``xargs`` wrapping a GitHub write is
-the same: the arguments come from stdin.
+``env``, ``sudo``, ``time``, ``command`` and ``exec`` are stripped in a loop
+by ``gh.shell_wrappers.peel`` — the one peeling function the target resolver
+uses too — and the program they run is classified. A wrapper option that
+cannot be read with confidence, or that changes directory or re-parses a
+string (``env -C``, ``env -S``, ``sudo -D``), makes the statement opaque.
 
-``command`` (except ``-v``/``-V``), ``time``, ``sudo``, ``exec``, and ``env``
-with options are transparent: they are stripped and the inner command is
-classified and resolved normally.
+Opaque statements, ``eval``, and ``bash|sh|zsh`` with a ``-c`` cluster
+(``-c``, ``-lc``, ``-ec``) are writes when their words mention gh or a
+workbench posting command, and the policy refuses them: their target cannot be
+resolved. ``xargs`` wrapping a GitHub write is the same — the arguments come
+from stdin.
 
 ceiling: a gh reached through a shell alias or a wrapper script whose name is
 not in that set is not matched. Upgrade trigger: the first such spelling seen
@@ -50,6 +53,8 @@ import re
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+
+import gh.shell_wrappers
 
 GH_WRITES: Mapping[str, frozenset[str]] = {
     "issue": frozenset({"create", "comment", "edit", "reopen", "close", "delete", "transfer"}),
@@ -68,22 +73,11 @@ _WORKBENCH_PR_SUBCOMMANDS = frozenset({
 })
 _POSTING_SUBCOMMANDS = frozenset({"describe", "comments", "fix", "ci"})
 _REVIEW_READ_FLAGS = frozenset({"--self", "--no-post", "--summary", "--list"})
-_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 _SHELLS = frozenset({"bash", "sh", "zsh"})
 _GITHUB_COMMANDS = frozenset({
     "gh", "pr", "review", "pr-describe", "review-post", "review-threads",
 })
-_XARGS_VALUE_FLAGS = frozenset({
-    "-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s",
-    "--arg-file", "--delimiter", "--eof", "--replace",
-    "--max-lines", "--max-args", "--max-procs", "--max-chars",
-})
-_SUDO_VALUE_FLAGS = frozenset({
-    "-u", "-g", "-h", "-C", "-D", "-R", "-p", "-U",
-    "--user", "--group", "--host", "--close-from", "--chdir", "--chroot",
-    "--prompt", "--other-user",
-})
-_EXEC_VALUE_FLAGS = frozenset({"-a"})
+_TOKEN_SPLIT = re.compile(r"[\s='\"]+")
 _OPERATOR_CHARS = ";&|()\n"
 _HEREDOC_OPEN = re.compile(r"<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
 
@@ -97,7 +91,7 @@ class Invocation:
 
     @property
     def program(self) -> str:
-        return self.words[0].rsplit("/", 1)[-1] if self.words else ""
+        return gh.shell_wrappers.basename(self.words[0]) if self.words else ""
 
     @property
     def args(self) -> tuple[str, ...]:
@@ -160,12 +154,14 @@ def split_statements(command: str) -> list[list[str]]:
 def invocation(statement: Sequence[str]) -> Invocation:
     """*statement* with its leading ``NAME=value`` assignments lifted off."""
     env: dict[str, str] = {}
-    start = 0
-    while start < len(statement) and _ASSIGNMENT.match(statement[start]):
-        name, _, value = statement[start].partition("=")
-        env[name.removesuffix("+")] = value
-        start += 1
+    start = gh.shell_wrappers.lift_assignments(statement, env)
     return Invocation(env=env, words=tuple(statement[start:]))
+
+
+def peeled_statement(statement: Sequence[str]) -> gh.shell_wrappers.Peeled:
+    """*statement* with its assignments lifted and its transparent wrappers peeled off."""
+    inv = invocation(statement)
+    return gh.shell_wrappers.peel(inv.env, inv.words)
 
 
 def take_repo_flag(args: Sequence[str], i: int) -> tuple[str | None, int]:
@@ -199,59 +195,6 @@ def skip_repo_flags(args: Sequence[str]) -> int:
             break
         i = nxt
     return i
-
-
-def _take_env_prefix(args: Sequence[str], env: dict[str, str], unset: set[str]) -> int:
-    """Fill *env*/*unset* from ``env`` options and assignments; return the command index."""
-    i = 0
-    while i < len(args):
-        word = args[i]
-        if word == "--":
-            return i + 1
-        if word in ("-u", "--unset") and i + 1 < len(args):
-            unset.add(args[i + 1])
-            i += 2
-            continue
-        if word.startswith("--unset="):
-            unset.add(word[len("--unset="):])
-            i += 1
-            continue
-        if word.startswith("-u") and len(word) > 2 and not word.startswith("--"):
-            unset.add(word[2:])
-            i += 1
-            continue
-        if word in ("-S", "--split-string", "-C", "--chdir"):
-            i += 2
-            continue
-        if word.startswith("--split-string=") or word.startswith("--chdir="):
-            i += 1
-            continue
-        if word.startswith("-") and not _ASSIGNMENT.match(word):
-            i += 1
-            continue
-        if _ASSIGNMENT.match(word):
-            name, _, value = word.partition("=")
-            env[name.removesuffix("+")] = value
-            i += 1
-            continue
-        return i
-    return i
-
-
-def with_env_builtin(inv: Invocation) -> Invocation:
-    """Lift ``env [opts] NAME=value ... cmd`` the same way leading ``NAME=value`` prefixes are."""
-    if inv.program != "env":
-        return inv
-    env = dict(inv.env)
-    i = _take_env_prefix(inv.args, env, set())
-    return Invocation(env=env, words=tuple(inv.args[i:]))
-
-
-def env_unsets(args: Sequence[str]) -> frozenset[str]:
-    """Names ``env -u/--unset`` removes, from the words after ``env``."""
-    unset: set[str] = set()
-    _take_env_prefix(args, {}, unset)
-    return frozenset(unset)
 
 
 def _api_is_write(args: Sequence[str], input_text: str | None) -> bool:
@@ -319,11 +262,24 @@ def _basename_tokens(words: Sequence[str]) -> list[str]:
     tokens: list[str] = []
     for word in words:
         tokens.extend(word.split())
-    return [token.rsplit("/", 1)[-1] for token in tokens]
+    return [gh.shell_wrappers.basename(token) for token in tokens]
 
 
 def _tokens_mention_github(words: Sequence[str]) -> bool:
     return bool(set(_basename_tokens(words)) & _GITHUB_COMMANDS)
+
+
+def _cluster_mentions_github(token: str) -> bool:
+    """``-Sgh``: an option cluster whose tail could be an attached ``gh`` command string."""
+    if not token.startswith("-") or token.startswith("--"):
+        return False
+    return any(token[at:] in _GITHUB_COMMANDS for at in range(2, len(token)))
+
+
+def _opaque_words_mention_github(words: Sequence[str]) -> bool:
+    """The word search for an opaque wrapper, which also looks inside ``--opt=`` and clusters."""
+    tokens = [gh.shell_wrappers.basename(t) for w in words for t in _TOKEN_SPLIT.split(w) if t]
+    return bool(set(tokens) & _GITHUB_COMMANDS) or any(map(_cluster_mentions_github, tokens))
 
 
 def _has_command_string_flag(args: Sequence[str]) -> bool:
@@ -336,78 +292,39 @@ def _has_command_string_flag(args: Sequence[str]) -> bool:
     return False
 
 
-def _skip_flags(args: Sequence[str], value_flags: frozenset[str]) -> tuple[str, ...]:
-    i = 0
-    while i < len(args):
-        word = args[i]
-        if word == "--":
-            return tuple(args[i + 1:])
-        if not word.startswith("-") or word == "-":
-            return tuple(args[i:])
-        if word in value_flags:
-            i += 2
-            continue
-        if any(word.startswith(flag + "=") for flag in value_flags if flag.startswith("--")):
-            i += 1
-            continue
-        if not word.startswith("--") and len(word) > 2 and word[:2] in value_flags:
-            i += 1
-            continue
-        i += 1
-    return ()
-
-
-def _peel_command(inv: Invocation) -> Invocation | None:
-    args = inv.args
-    i = 0
-    lookup = False
-    while i < len(args) and args[i].startswith("-") and args[i] != "-":
-        cluster = args[i]
-        if cluster in ("-v", "-V") or (
-                not cluster.startswith("--") and ("v" in cluster or "V" in cluster)):
-            lookup = True
-        i += 1
-    if lookup:
-        return None
-    return Invocation(env=inv.env, words=tuple(args[i:]))
-
-
-def peel_transparent(inv: Invocation) -> Invocation | None:
-    """Strip ``command``/``time``/``sudo``/``exec``. None for ``command -v``/``-V``."""
-    if inv.program == "command":
-        return _peel_command(inv)
-    if inv.program == "sudo":
-        return Invocation(env=inv.env, words=_skip_flags(inv.args, _SUDO_VALUE_FLAGS))
-    if inv.program == "exec":
-        return Invocation(env=inv.env, words=_skip_flags(inv.args, _EXEC_VALUE_FLAGS))
-    if inv.program == "time":
-        return Invocation(env=inv.env, words=_skip_flags(inv.args, frozenset()))
-    return inv
+def _reparsed_github_write(words: Sequence[str]) -> bool:
+    program = gh.shell_wrappers.basename(words[0]) if words else ""
+    rest = words[1:]
+    if program == "eval":
+        return _tokens_mention_github(rest)
+    if program in _SHELLS and _has_command_string_flag(rest):
+        return _tokens_mention_github(rest)
+    if program != "xargs":
+        return False
+    options = gh.shell_wrappers.parse_options(gh.shell_wrappers.XARGS, rest)
+    if options is None or not options.rest:
+        return _opaque_words_mention_github(rest)
+    return statement_is_write(options.rest)
 
 
 def opaque_github_write(statement: Sequence[str]) -> bool:
     """Whether *statement* reaches gh through a wrapper whose target cannot be resolved."""
-    inv = invocation(statement)
-    rest = inv.args
-    if inv.program == "eval":
-        return _tokens_mention_github(rest)
-    if inv.program in _SHELLS and _has_command_string_flag(rest):
-        return _tokens_mention_github(rest)
-    if inv.program != "xargs":
+    peeled = peeled_statement(statement)
+    if peeled.opaque:
+        return _opaque_words_mention_github(statement)
+    if peeled.lookup:
         return False
-    inner = _skip_flags(rest, _XARGS_VALUE_FLAGS)
-    if not inner:
-        return _tokens_mention_github(rest)
-    return statement_is_write(inner)
+    return _reparsed_github_write(peeled.words)
 
 
 def statement_is_write(statement: Sequence[str]) -> bool:
     """Whether one statement's words write to GitHub."""
     if opaque_github_write(statement):
         return True
-    inv = peel_transparent(with_env_builtin(invocation(statement)))
-    if inv is None or not inv.words:
+    peeled = peeled_statement(statement)
+    if peeled.opaque or peeled.lookup or not peeled.words:
         return False
+    inv = Invocation(env=peeled.env, words=peeled.words)
     if inv.program == "gh":
         return gh_is_write(inv.args)
     if inv.program == "pr":

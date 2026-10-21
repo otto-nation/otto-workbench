@@ -535,10 +535,10 @@ def resolve_statement(statement: Sequence[str], cwd: str, *, after_cd: bool,
     """The target of one shell statement already judged a write."""
     if gh.write_shapes.opaque_github_write(statement):
         return Resolution(reason=_WRAPPER_REASON)
-    inv = gh.write_shapes.peel_transparent(
-        gh.write_shapes.with_env_builtin(gh.write_shapes.invocation(statement)))
-    if inv is None or not inv.words:
+    peeled = gh.write_shapes.peeled_statement(statement)
+    if peeled.opaque or peeled.lookup or not peeled.words:
         return Resolution(reason=_WRAPPER_REASON)
+    inv = gh.write_shapes.Invocation(env=peeled.env, words=peeled.words)
     if inv.program == "gh":
         return _gh(inv.args, inv.env, cwd, after_cd, known_hosts, "", False, shifted_env)
     return _workbench(inv.args, inv.env, cwd, after_cd, known_hosts, shifted_env)

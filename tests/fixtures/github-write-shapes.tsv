@@ -60,6 +60,29 @@ write	command gh issue comment 1 -b hi
 write	sudo -u bob gh issue comment 1 -b hi
 write	env -u FOO gh issue comment 1 -b hi
 write	xargs -n 1 gh issue create --title
+write	sudo env GH_REPO=stranger/lib gh issue comment 1 -b hi
+write	time sudo gh issue comment 1 -b hi --repo stranger/lib
+write	command time gh issue comment 1 -b hi --repo stranger/lib
+write	time env GH_REPO=stranger/lib gh issue comment 1 -b hi
+write	sudo env -u GH_REPO gh issue comment 1 -b hi
+write	xargs sudo gh issue create --title
+write	xargs -0I {} gh issue comment {} -b hi
+write	env -S 'gh issue comment 1 -b hi --repo stranger/lib'
+write	env -S 'GH_REPO=stranger/lib gh issue comment 1 -b hi'
+write	env --split-string='gh issue comment 1 -b hi'
+write	env -S'gh issue comment 1 -b hi'
+write	env -C ../s gh issue comment 1 -b hi
+write	env --chdir=../s gh issue comment 1 -b hi
+write	env --chd=../s gh issue comment 1 -b hi
+write	sudo -D ../s gh issue comment 1 -b hi
+write	sudo --chdir=../s gh issue comment 1 -b hi
+write	sudo --frobnicate gh issue comment 1 -b hi
+write	sudo -iu bob gh issue comment 1 -b hi --repo stranger/lib
+write	sudo -su bob gh issue comment 1 -b hi
+write	sudo GH_REPO=o/r gh issue comment 1 -b hi
+write	env - gh issue comment 1 -b hi
+write	/usr/bin/time -f %e gh issue comment 1 -b hi
+write	/usr/bin/env GH_REPO=o/r gh issue create --title x
 write	cd /tmp && gh issue create --title x
 write	gh issue list; gh issue create --title x
 write	pr create --draft
@@ -103,3 +126,10 @@ read	time gh pr list
 read	command gh pr view 3
 read	env -u FOO gh pr list
 read	git ls-files | xargs grep -l review
+read	sudo command -v gh
+read	command -pv gh
+read	time sudo gh pr list
+read	sudo env -u FOO gh pr list
+read	sudo -iu bob ls
+read	env -C /tmp ls
+read	/usr/bin/time -f %e make test

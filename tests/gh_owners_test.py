@@ -355,3 +355,72 @@ def test_issue_transfer_to_our_owner_is_allowed(github_owners, tmp_path):
     github_owners({"work": ["ours"]})
     repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
     assert gh.owners.check_command("gh issue transfer 12 ours/other", str(repo)).ok
+
+
+@pytest.mark.parametrize("command", [
+    "sudo env GH_REPO=stranger/lib gh issue comment 1 -b hi",
+    "time sudo gh issue comment 1 -b hi --repo stranger/lib",
+    "command time gh issue comment 1 -b hi --repo stranger/lib",
+    "time env GH_REPO=stranger/lib gh issue comment 1 -b hi",
+    "sudo GH_REPO=stranger/lib gh issue comment 1 -b hi",
+    "sudo -iu bob gh issue comment 1 -b hi --repo stranger/lib",
+    "sudo -su bob gh issue comment 1 -b hi --repo stranger/lib",
+    "/usr/bin/time -f %e gh issue comment 1 -b hi --repo stranger/lib",
+    "/usr/bin/env GH_REPO=stranger/lib gh issue comment 1 -b hi",
+])
+def test_chained_and_clustered_wrappers_resolve_to_the_stranger(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    verdict = gh.owners.check_command(command, str(ours))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "sudo env -u GH_REPO gh issue comment 1 -b hi",
+    "env -S 'gh issue comment 1 -b hi --repo stranger/lib'",
+    "env -S 'GH_REPO=stranger/lib gh issue comment 1 -b hi'",
+    "env -S'gh issue comment 1 -b hi'",
+    "env --split-string='gh issue comment 1 -b hi'",
+    "env -C ../s gh issue comment 1 -b hi",
+    "env --chdir=../s gh issue comment 1 -b hi",
+    "env --chd=../s gh issue comment 1 -b hi",
+    "sudo -D ../s gh issue comment 1 -b hi",
+    "sudo --chdir=../s gh issue comment 1 -b hi",
+    "sudo --frobnicate gh issue comment 1 -b hi",
+    "xargs sudo gh issue comment 1 -b hi",
+    "xargs -0I {} gh issue comment {} -b hi",
+])
+def test_opaque_or_directory_changing_wrappers_are_refused_at_home(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    assert not gh.owners.check_command(command, str(ours)).ok
+
+
+@pytest.mark.parametrize("command", [
+    "time sudo gh issue comment 1 -b hi",
+    "sudo -iu bob gh issue comment 1 -b hi",
+    "command time gh issue comment 1 -b hi",
+    "/usr/bin/time -f %e gh issue comment 1 -b hi",
+    "env - gh issue comment 1 -b hi",
+])
+def test_chained_wrapper_writes_resolve_against_the_cwd(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    stranger = remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    assert gh.owners.check_command(command, str(ours)).ok
+    assert not gh.owners.check_command(command, str(stranger)).ok
+
+
+@pytest.mark.parametrize("command", [
+    "sudo command -v gh",
+    "command -pv gh",
+    "time sudo gh pr list",
+    "sudo env -u FOO gh pr list",
+    "sudo -iu bob ls",
+    "env -C /tmp ls",
+    "/usr/bin/time -f %e make test",
+])
+def test_chained_wrapper_reads_are_allowed_unconfigured(github_owners, command):
+    github_owners({"work": "not-a-list"})
+    assert gh.owners.check_command(command, "/").ok

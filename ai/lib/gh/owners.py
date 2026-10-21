@@ -167,7 +167,7 @@ def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdic
 
 
 _GH_TARGET_VARS = frozenset({"GH_REPO", "GH_HOST"})
-_ENV_BUILTINS = frozenset({"export", "declare", "typeset", "local", "env"})
+_ENV_BUILTINS = frozenset({"export", "declare", "typeset", "local"})
 
 
 def _assign_name(word: str) -> str:
@@ -179,10 +179,6 @@ def _assign_name(word: str) -> str:
     return name if name.isidentifier() else ""
 
 
-def _is_assign(word: str) -> bool:
-    return bool(_assign_name(word))
-
-
 def _assign_target_var(word: str) -> frozenset[str]:
     if word.startswith("-"):
         return frozenset()
@@ -190,13 +186,7 @@ def _assign_target_var(word: str) -> frozenset[str]:
 
 
 def _builtin_assigns(words: Sequence[str]) -> frozenset[str]:
-    if not words:
-        return frozenset()
-    program = words[0].rsplit("/", 1)[-1]
-    if program == "env":
-        inv = gh.write_shapes.with_env_builtin(gh.write_shapes.Invocation(words=tuple(words)))
-        return frozenset(inv.env) & _GH_TARGET_VARS
-    if program not in _ENV_BUILTINS:
+    if not words or words[0].rsplit("/", 1)[-1] not in _ENV_BUILTINS:
         return frozenset()
     names: set[str] = set()
     for word in words[1:]:
@@ -212,24 +202,13 @@ def _unset_names(words: Sequence[str]) -> frozenset[str]:
 
 def _gh_env_names(statement: Sequence[str]) -> frozenset[str]:
     inv = gh.write_shapes.invocation(statement)
-    extra = frozenset()
-    if inv.program == "env":
-        extra = gh.write_shapes.env_unsets(inv.args) & _GH_TARGET_VARS
-    return (frozenset(_GH_TARGET_VARS.intersection(inv.env))
-            | _builtin_assigns(inv.words) | _unset_names(inv.words) | extra)
+    peeled = gh.write_shapes.peeled_statement(statement)
+    named = frozenset(inv.env) | frozenset(peeled.env) | peeled.unset
+    return (named & _GH_TARGET_VARS) | _builtin_assigns(inv.words) | _unset_names(inv.words)
 
 
 def _own_gh_env(statement: Sequence[str]) -> frozenset[str]:
-    inv = gh.write_shapes.with_env_builtin(gh.write_shapes.invocation(statement))
-    return frozenset(_GH_TARGET_VARS.intersection(inv.env))
-
-
-def _is_write(statement: Sequence[str]) -> bool:
-    if gh.write_shapes.statement_is_write(statement):
-        return True
-    inv = gh.write_shapes.with_env_builtin(gh.write_shapes.invocation(statement))
-    rebuilt = [f"{name}={value}" for name, value in inv.env.items()] + list(inv.words)
-    return rebuilt != list(statement) and gh.write_shapes.statement_is_write(rebuilt)
+    return frozenset(_GH_TARGET_VARS.intersection(gh.write_shapes.peeled_statement(statement).env))
 
 
 def _load() -> OwnerMap | Verdict:
@@ -247,7 +226,7 @@ def check_command(command: str, cwd: str) -> Verdict:
     except ValueError as exc:
         return Verdict.refuse(
             f"the command could not be parsed ({exc}), so the GitHub write in it cannot be checked")
-    writes = [s for s in statements if _is_write(s)]
+    writes = [s for s in statements if gh.write_shapes.statement_is_write(s)]
     if not writes:
         return Verdict.allow()
     loaded = _load()

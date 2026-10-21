@@ -1163,12 +1163,20 @@ def _interrupted(
     Nothing here may mask the stop: a failure to record is reported and the
     stop still propagates, which is the one outcome the operator asked for.
     """
-    leftovers = frozenset(fix.scope.agent_changed(adapter.workdir, dirty_before) or ())
-    twarn(trail, "fix_interrupted",
-          f"fix pass stopped with {len(leftovers)} edited file(s) uncommitted",
-          data={"paths": sorted(leftovers), "head_before": head_before,
-                "workdir": str(adapter.workdir)})
     try:
+        changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
+        leftovers = frozenset(changed or ())
+        if changed is None:
+            detail = "fix pass stopped with scope unknown"
+            paths = None
+        else:
+            detail = (
+                f"fix pass stopped with {len(leftovers)} edited file(s) uncommitted"
+            )
+            paths = sorted(leftovers)
+        twarn(trail, "fix_interrupted", detail,
+              data={"paths": paths, "head_before": head_before,
+                    "workdir": str(adapter.workdir)})
         adapter.interrupted(leftovers, head_before)
     except Exception as exc:  # noqa: BLE001 - recording must not replace the stop
         core.log.warn(f"could not record the interrupted fix pass: {exc}")

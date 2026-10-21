@@ -119,3 +119,20 @@ def test_run_fix_pass_clears_before_the_engine_and_keeps_logs_when_it_raises(
     ):
         review.fix.run_fix_pass(job)
     assert order == ["clear", "run", "keep"]
+
+
+def test_keep_failing_does_not_replace_the_engine_exception(git_wt, tmp_path):
+    job = _make_job(
+        git_wt, tmp_path,
+        "## Must fix\n- [ ] **[M1]** `a.py:1` — Still open\n",
+    )
+
+    def _keep(_review_dir, _started_at):
+        raise OSError("disk full")
+
+    with (
+        patch.object(review.fix_logs, "keep", side_effect=_keep),
+        patch.object(fix.engine, "run", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        review.fix.run_fix_pass(job)

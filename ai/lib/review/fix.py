@@ -970,7 +970,10 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
     try:
         run = fix.engine.run(adapter, trail=trail, verify=fix.verify.run)
     finally:
-        review.fix_logs.keep(review_dir, job.started_at)
+        try:
+            review.fix_logs.keep(review_dir, job.started_at)
+        except Exception as exc:  # noqa: BLE001 - keep must not replace the pass
+            core.log.warn(f"could not keep the fix-pass logs: {exc}")
     _record_commit(job, run)
     if (run.landed is not None
             and run.landed.status is git.land.CommitStatus.COMMIT_FAILED):

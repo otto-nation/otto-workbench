@@ -11,14 +11,6 @@ setup() {
   load 'test_helper'
   load 'review_orchestrate_helper'
   common_setup
-  # Model resolution reads these; the developer's own shell usually has them
-  # set. Both spellings: AI_* is what ~/.env.local exports and what wins, and
-  # leaving it set let a real shell value beat the one a test had just written
-  # into the legacy name.
-  unset AI_SONNET_MODEL AI_OPUS_MODEL AI_HAIKU_MODEL
-  unset ANTHROPIC_DEFAULT_SONNET_MODEL
-  unset ANTHROPIC_DEFAULT_OPUS_MODEL
-  unset ANTHROPIC_DEFAULT_HAIKU_MODEL
 }
 
 teardown() {
@@ -55,11 +47,11 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
-@test "model defaults: single default value across all phases" {
+@test "model defaults: no phase names a default model" {
   result=$(_py "
-print(sorted({s.model for s in mod.PHASES.values()}))
+print(sorted({repr(s.model) for s in mod.PHASES.values()}))
 ")
-  [ "$result" = "['sonnet']" ]
+  [ "$result" = "['None']" ]
 }
 
 @test "model defaults: registry covers every phase" {
@@ -74,98 +66,53 @@ print(sorted(mod.PHASES) == sorted(mod.Phase))
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model('haiku', 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+print(mod.resolve_model('claude-haiku-4-5', 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'))
 ")
-  [ "$result" = "haiku" ]
+  [ "$result" = "claude-haiku-4-5" ]
 }
 
 @test "resolve_model: env var beats default" {
   result=$(_py "
 import os
-os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'haiku'
+os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-haiku-4-5'
 os.environ.pop('WORKBENCH_AI_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'))
 del os.environ['WORKBENCH_AI_GROUP_MODEL']
 ")
-  [ "$result" = "haiku" ]
+  [ "$result" = "claude-haiku-4-5" ]
 }
 
 @test "resolve_model: global env var beats default" {
   result=$(_py "
 import os
-os.environ['WORKBENCH_AI_MODEL'] = 'haiku'
+os.environ['WORKBENCH_AI_MODEL'] = 'claude-haiku-4-5'
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'))
 del os.environ['WORKBENCH_AI_MODEL']
 ")
-  [ "$result" = "haiku" ]
+  [ "$result" = "claude-haiku-4-5" ]
 }
 
-@test "resolve_model: default when no override" {
+@test "resolve_model: default when no override, None when there is none" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'), mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', None))
 ")
-  [ "$result" = "sonnet" ]
+  [ "$result" = "claude-sonnet-5 None" ]
 }
 
-@test "resolve_model: alias resolved via AI_<TIER>_MODEL env" {
-  result=$(_py "
-import os
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-os.environ['AI_SONNET_MODEL'] = 'claude-sonnet-5'
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['AI_SONNET_MODEL']
-")
-  [ "$result" = "claude-sonnet-5" ]
-}
-
-@test "resolve_model: alias still resolved via the pre-rename env name" {
-  result=$(_py "
-import os
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-4-5'
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
-")
-  [ "$result" = "claude-sonnet-4-5" ]
-}
-
-@test "resolve_model: the current env name beats the pre-rename one" {
+@test "resolve_model: tier env vars do not rewrite a tier word" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
 os.environ['AI_SONNET_MODEL'] = 'claude-sonnet-5'
 os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-4-5'
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['AI_SONNET_MODEL']
-del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
+print(mod.resolve_model('sonnet', 'WORKBENCH_AI_GROUP_MODEL', None), mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', None))
 ")
-  [ "$result" = "claude-sonnet-5" ]
-}
-
-@test "resolve_model: explicit alias resolved via AI_<TIER>_MODEL env" {
-  result=$(_py "
-import os
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ['AI_OPUS_MODEL'] = 'claude-opus-4-6'
-print(mod.resolve_model('opus', 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['AI_OPUS_MODEL']
-")
-  [ "$result" = "claude-opus-4-6" ]
+  [ "$result" = "sonnet None" ]
 }
 
 # ── Prompt building ──────────────────────────────────────────────────────────

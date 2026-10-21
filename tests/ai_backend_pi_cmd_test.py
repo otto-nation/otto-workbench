@@ -198,7 +198,7 @@ class TestBuildAgentCmdWithSkills:
 class TestProviderFlag:
     def test_agent_cmd_with_provider(self):
         cmd = agent.backend_pi._build_agent_cmd(
-            PI, agent.backend_pi.AgentInvocation(prompt="", provider="bedrock"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", provider="bedrock", model="m"),
         )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
@@ -210,14 +210,14 @@ class TestProviderFlag:
 
     def test_fix_cmd_with_provider(self):
         cmd = agent.backend_pi._build_fix_cmd(
-            PI, agent.backend_pi.AgentInvocation(prompt="", provider="vertex"),
+            PI, agent.backend_pi.AgentInvocation(prompt="", provider="vertex", model="m"),
         )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "vertex"
 
     def test_prompt_cmd_with_provider(self):
-        cmd = agent.backend_pi._build_prompt_cmd(PI, provider="bedrock")
+        cmd = agent.backend_pi._build_prompt_cmd(PI, provider="bedrock", model="m")
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"

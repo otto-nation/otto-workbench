@@ -16,15 +16,12 @@ but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
-``opus``, ``haiku``) is then resolved through ``AI_SONNET_MODEL`` /
-``AI_OPUS_MODEL`` / ``AI_HAIKU_MODEL``, falling back to the
-``ANTHROPIC_DEFAULT_*_MODEL`` names those were renamed from. An alias names a
-tier, not a deployment — on Vertex and Bedrock the account provisions a
-specific model ID, and that is where it lives. A concrete model ID anywhere in
-the chain passes through untouched. The Claude CLI does this resolution itself;
-the Pi backend does not, so it happens here before dispatch and both backends
-land on the same model.
+**No built-in model.** A phase names no default model, so when no layer sets
+one the model is ``None`` and the backend gets no ``--model``: the Claude CLI
+and Pi then use their own defaults. Pi refuses a provider without a model, which
+``agent.pi_models.require_model_with_provider`` reports before anything runs.
+Whatever a layer names is passed through as a model id — there is no tier-alias
+rewriting, so the provider's catalogue decides what an id means.
 """
 
 # doc-group: pipeline
@@ -32,7 +29,6 @@ land on the same model.
 from __future__ import annotations
 
 import os
-from enum import StrEnum
 from pathlib import Path
 
 import config.workbench_config
@@ -51,90 +47,15 @@ PROVIDER_ENV = f"{ENV_PREFIX}PROVIDER"
 OMITTED_FILE_TURNS = 2
 
 
-# ── Model aliases ────────────────────────────────────────────────────────────
-
-
-class ModelAlias(StrEnum):
-    """Short model names that resolve to a concrete model id via env override.
-
-    Anything not listed here is already a concrete id and passes through
-    untouched.
-    """
-
-    SONNET = "sonnet"
-    OPUS = "opus"
-    HAIKU = "haiku"
-
-    @property
-    def env_key(self) -> str:
-        """The variable ~/.env.local sets for this tier.
-
-        Mirrors the ``var`` field of the matching ``ai/models.env.yml`` entry,
-        which is the SSOT for model env var names; ``test_alias_env_keys_match_the_registry``
-        in tests/review_orchestrate_models_test.py fails if the two spellings drift apart again.
-        """
-        return f"AI_{self.upper()}_MODEL"
-
-    @property
-    def legacy_env_key(self) -> str:
-        """The pre-rename name, still read so an un-migrated machine resolves.
-
-        The 20260908 migration renamed these in ~/.env.local but nothing taught
-        the reader the new spelling, so every alias silently stopped resolving
-        and each phase dispatched the bare word ``sonnet`` as a model id. This
-        is the registry's ``target`` field: the name the Claude Code settings
-        mirror still publishes, so a machine that has only ever had the old
-        export keeps working.
-        """
-        return f"ANTHROPIC_DEFAULT_{self.upper()}_MODEL"
-
-    @classmethod
-    def parse(cls, model: str) -> ModelAlias | None:
-        try:
-            return cls(model)
-        except ValueError:
-            return None
-
-
-def resolve_alias(model: str) -> str:
-    """Swap a tier alias for the provisioned model ID. Concrete IDs pass through.
-
-    The current name wins over the pre-rename one, so a machine carrying both
-    (the migration leaves the old export in place under Claude Code's settings
-    mirror) resolves against the value its ~/.env.local actually sets.
-    """
-    alias = ModelAlias.parse(model)
-    if alias is None:
-        return model
-    for key in (alias.env_key, alias.legacy_env_key):
-        provisioned = os.environ.get(key)
-        if provisioned:
-            return provisioned
-    return model
-
-
-def origin_of(model: str) -> str | None:
-    """The env key currently holding *model*, if any.
-
-    ``resolve_alias`` maps a tier name onto this value; the key that supplied
-    it is what an unserved-id error should name. A concrete id that matches
-    no env var has no origin here — it came from ``--model``, ``agent.model``,
-    or a built-in default.
-    """
-    if not model:
-        return None
-    keys = (key for alias in ModelAlias for key in (alias.env_key, alias.legacy_env_key))
-    for key in keys:
-        if os.environ.get(key) == model:
-            return key
-    return None
-
-
 # ── Environment layers ───────────────────────────────────────────────────────
 
 
-def _select_model(explicit: str | None, env_key: str, default: str) -> str:
-    """The winning model name by precedence, before any alias resolution."""
+def resolve_model(explicit: str | None, env_key: str, default: str | None) -> str | None:
+    """Pick the model for a phase by precedence; None when no layer names one.
+
+    Precedence: explicit argument, the phase's own key, WORKBENCH_AI_MODEL, the
+    caller's default (the config file's value, when it has one).
+    """
     if explicit:
         return explicit
     from_env = os.environ.get(env_key)
@@ -144,16 +65,6 @@ def _select_model(explicit: str | None, env_key: str, default: str) -> str:
     if global_env:
         return global_env
     return default
-
-
-def resolve_model(explicit: str | None, env_key: str, default: str) -> str:
-    """Pick the model for a phase, then map any tier alias to its provisioned ID.
-
-    Precedence: explicit argument, the phase's own key, WORKBENCH_AI_MODEL, the
-    caller's default. Whichever wins is resolved through AI_<TIER>_MODEL — so
-    naming a tier anywhere in the chain honors the deployment configured for it.
-    """
-    return resolve_alias(_select_model(explicit, env_key, default))
 
 
 def resolve_thinking(explicit: str | None, env_key: str, default: str | None) -> str | None:
@@ -212,13 +123,14 @@ def _config_model(phase: Phase, cfg: WorkbenchConfig) -> str | None:
 
 def phase_model(
     phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
-) -> str:
-    """Resolve the model for a phase.
+) -> str | None:
+    """Resolve the model for a phase; None when nothing configures one.
 
     Precedence, highest first: the explicit argument, the phase env key, the
     global env key, the config file (phase entry then section), the phase's
-    built-in default. The env layers live in ``resolve_model``; the config and
-    built-in layers collapse into the default handed to it.
+    built-in default (None for every phase today). The env layers live in
+    ``resolve_model``; the config and built-in layers collapse into the default
+    handed to it.
     """
     phase = Phase(phase)
     cfg = _config(cfg)
@@ -251,8 +163,20 @@ def collect_phase_models(
     models: dict[str, list[Phase]] = {}
     cfg = config.workbench_config.load_config_or_default(project_root)
     for phase in REVIEW_PHASES:
-        models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
+        model = phase_model(phase, explicit, cfg)
+        # A phase with no model runs on the backend's default, which preflight
+        # cannot name; `unset_review_phases` reports those for the budget floor.
+        if model:
+            models.setdefault(model, []).append(phase)
     return models
+
+
+def unset_review_phases(
+    explicit: str | None, project_root: Path | str | None = None,
+) -> list[Phase]:
+    """The review phases no layer names a model for (see `collect_phase_models`)."""
+    cfg = config.workbench_config.load_config_or_default(project_root)
+    return [phase for phase in REVIEW_PHASES if not phase_model(phase, explicit, cfg)]
 
 
 def phase_thinking_default(

@@ -33,6 +33,12 @@ CORPUS = REPO_ROOT / "eval" / "corpus"
 VERIFY_TIMEOUT = 60
 
 
+@pytest.fixture(autouse=True)
+def _a_configured_model(monkeypatch):
+    """Production configures a model for eval runs; with none, eval refuses
+    (see eval_run_models_test) rather than label results with nothing."""
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
+
 def _cifix_cases() -> list[Path]:
     cases = []
     for manifest in sorted(CORPUS.glob("*/manifest.json")):

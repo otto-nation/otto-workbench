@@ -123,7 +123,8 @@ def build_prompt(
     The byte ceiling is derived from the phase's own model, so a phase pointed
     at a 200k-window model budgets against that rather than against whatever
     the default happens to be. Raises `review.budget.UnknownModelWindow` when
-    the model has no recorded window — including an unresolved tier alias —
+    the model has no recorded window (a phase with no model budgets at the
+    unset-model floor instead)
     and `PromptTooLarge` when the result exceeds the ceiling even after the
     budget ladder has cut everything it can.
     """

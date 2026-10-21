@@ -83,6 +83,11 @@ class TestIsCheckable:
         assert not agent.vertex_quota.is_checkable("opus")
         assert not agent.vertex_quota.is_checkable("haiku")
 
+    def test_no_model_is_not_checkable(self):
+        """A phase on the backend's default model names nothing to look up."""
+        assert not agent.vertex_quota.is_checkable(None)
+        assert not agent.vertex_quota.is_checkable("")
+
 
 # ── resolve_vertex_model_id ──────────────────────────────────────────────────
 

@@ -116,6 +116,12 @@ class TestCountTokens:
             assert agent.token_count.count_tokens("some prompt", "sonnet") is None
         urlopen.assert_not_called()
 
+    def test_no_model_is_refused_without_a_round_trip(self, monkeypatch):
+        _on_vertex(monkeypatch)
+        with patch("urllib.request.urlopen") as urlopen:
+            assert agent.token_count.count_tokens("some prompt", None) is None
+        urlopen.assert_not_called()
+
     def test_none_when_not_on_vertex(self, monkeypatch):
         monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "0")
         with patch("urllib.request.urlopen") as urlopen:

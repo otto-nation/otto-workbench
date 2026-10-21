@@ -230,7 +230,7 @@ class TestAgentInvocation:
         assert inv.agent is None
         assert inv.max_turns is None
         assert inv.max_budget is None
-        assert inv.model == ""
+        assert inv.model is None
         assert inv.thinking is None
         assert inv.provider is None
         assert inv.label == ""

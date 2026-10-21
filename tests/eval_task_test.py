@@ -207,6 +207,13 @@ class _StubTask:
         return ScoringResult("", "", 0, recall=0.5, cost_usd=artifacts.usage.cost)
 
 
+@pytest.fixture(autouse=True)
+def _a_configured_model(monkeypatch):
+    """Production configures a model for these runs; with none, eval refuses
+    (see eval_run_models_test) rather than label results with nothing."""
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
+
+
 @pytest.fixture
 def stub_run(monkeypatch, tmp_path):
     """Register a stub task and return (task, entry, args) for the runner."""

@@ -560,7 +560,7 @@ def unverified_reason(phase: Phase | None) -> str:
     return "unavailable"
 
 
-def measured_tokens(prompt: str, phase: Phase | None, model: str) -> int | None:
+def measured_tokens(prompt: str, phase: Phase | None, model: str | None) -> int | None:
     """The prompt's exact token count against ``model``.
 
     ``model`` is the one the caller already resolved to derive the budget, not
@@ -676,8 +676,8 @@ def log_prompt_size(
         # The budget is only interpretable against the model it was derived
         # from: the window is per-model and the tokenizer is generation-
         # specific, so a density recorded without its model says nothing.
-        # `model_window_tokens` rather than a table lookup, because an
-        # unresolved alias budgets against its tier floor and a reader of this
+        # `model_window_tokens` rather than a table lookup, because a phase
+        # with no model budgets against the unset-model floor and a reader of this
         # record needs the window the budget actually used — a 0 beside a
         # nonzero `budget_bytes` reads as a bug rather than as that path.
         "budget_model": model,

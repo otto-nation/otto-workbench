@@ -310,10 +310,11 @@ class AgentInvocation:
     agent: AgentKind | None = None
     max_turns: int | None = None
     max_budget: float | None = None
-    model: str = ""
+    # None or empty: no --model, so the backend's own default serves the call.
+    model: str | None = None
     # Not the closed `Thinking` enum: this is read from the environment via
     # _resolve_thinking_level() and can carry values outside that set (e.g.
-    # "xhigh"), same as `model` can carry values outside `ModelAlias`.
+    # "xhigh").
     thinking: str | None = None
     provider: str | None = None
     label: str = ""

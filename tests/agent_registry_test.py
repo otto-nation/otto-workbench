@@ -21,8 +21,9 @@ class TestPhasesRegistry:
     def test_covers_every_phase(self):
         assert set(PHASES) == set(Phase)
 
-    def test_every_phase_defaults_to_sonnet(self):
-        assert {s.model for s in PHASES.values()} == {"sonnet"}
+    def test_no_phase_names_a_default_model(self):
+        """An unconfigured phase runs on the backend's own default, never a tier word."""
+        assert {s.model for s in PHASES.values()} == {None}
 
     def test_every_phase_carries_a_label(self):
         assert all(s.label for s in PHASES.values())

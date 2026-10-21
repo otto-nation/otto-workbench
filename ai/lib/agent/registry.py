@@ -46,9 +46,9 @@ it; ``--no-disprove`` is read off ``skip_phases`` and beats ``--disprove`` —
 ``review.phases._should_disprove``.
 
 Each phase's model is resolved elsewhere: ``agent.phases`` layers
-``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` over the
-default on the spec here, then maps a bare alias (``sonnet``, ``opus``,
-``haiku``) through ``AI_*_MODEL`` / ``ANTHROPIC_DEFAULT_*_MODEL``.
+``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` and the
+config file over the default on the spec here, which is no model at all — an
+unconfigured phase runs on the backend's own default.
 """
 
 # doc-group: pipeline

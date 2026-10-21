@@ -96,14 +96,14 @@ class TestBuildPromptRefusesAnOversizedPrompt:
     UNBUDGETABLE = "x" * (CEILING + 1000)
 
     @pytest.fixture(autouse=True)
-    def _pin_the_alias(self, monkeypatch):
-        """CI leaves ANTHROPIC_DEFAULT_SONNET_MODEL unset and a shell exports it.
+    def _pin_the_model(self, monkeypatch):
+        """`CEILING` is sized against TEST_MODEL, so the run must budget against it.
 
-        Unpinned, `CEILING` is this file's constant while the run resolves the
-        bare alias to the tier floor, so the fixture is sized against one model
-        and the assertion made against another.
+        Unpinned, the phase has no model and budgets at the unset-model floor,
+        so the fixture would be sized against one model and the assertion made
+        against another.
         """
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", TEST_MODEL)
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", TEST_MODEL)
 
     def _job(self, tmp_path, **preflight):
         job = _make_job(_make_preflight(**preflight))
@@ -238,6 +238,9 @@ class TestPromptTokenTelemetry:
 
     def test_records_count_model_and_density_when_measured(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        # The density is recorded against the model that was counted; a phase
+        # with no model has nothing to count against.
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", TEST_MODEL)
         with patch("review.prompt.count_tokens", return_value=1000):
             review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)

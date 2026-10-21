@@ -35,43 +35,19 @@ class TestPromptBudgetsArePreflighted:
     every phase in turn for the same reason.
     """
 
-    def test_an_unresolved_alias_runs_on_the_tier_floor_and_says_so(self, ro):
-        """The ordinary first-party-API setup: allowed, but not silently.
+    def test_a_tier_word_is_an_unknown_model_now(self, ro):
+        """`sonnet` is no longer rewritten through AI_SONNET_MODEL, so it is an
+        id with no recorded window, like any other unmeasured model."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, MagicMock(), ".")
+        assert not ok
 
-        `phase_model` returns the literal "sonnet" when AI_SONNET_MODEL is
-        unset — see `TestPhaseModel`, which asserts exactly that default.
-        Refusing would take out every phase on every machine not using Vertex,
-        so the run continues against the tier's floor; the warning is what
-        stops a smaller review from being the only evidence that happened.
-
-        The variable is named through `ModelAlias` rather than spelled out, for
-        the reason the next test gives: a hardcoded copy here is what kept
-        pointing operators at `ANTHROPIC_DEFAULT_SONNET_MODEL` after the
-        migration renamed it, so setting what the warning asked for fixed
-        nothing.
-        """
-        from agent.phases import ModelAlias
-
+    def test_no_configured_models_passes(self, ro):
+        """Phases with no model are absent and budget at the unset-model floor."""
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, trail, ".")
-        assert ok
-        assert "tier alias" in err.getvalue()
-        assert ModelAlias.SONNET.env_key in err.getvalue()
-        assert trail.decision.called
-
-    def test_the_warning_names_the_variable_that_would_fix_it(self, ro):
-        """The env key comes from `ModelAlias`, not from a second derivation.
-
-        Two copies of the naming convention drift the moment a tier's key stops
-        following the plain uppercase pattern, and the copy in a warning is the
-        one nobody notices is wrong.
-        """
-        from agent.phases import ModelAlias
-
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"haiku": [ro.Phase.SCOUT]}, MagicMock(), ".")
-        assert ModelAlias.HAIKU.env_key in err.getvalue()
+            assert ro._budgets_are_derivable({}, trail, ".")
+        assert err.getvalue() == ""
 
     def test_a_resolved_model_warns_about_nothing(self, ro):
         trail = MagicMock()
@@ -659,3 +635,49 @@ class TestSelfReviewPipeline:
         pipeline, *_ = ro._choose_pipeline(job)
 
         assert pipeline is ro.Pipeline.MULTI
+
+
+class TestProviderNeedsAModel:
+    """A Pi provider with review phases that name no model stops the run early.
+
+    Every such phase would refuse at spawn (Pi exits 1 on --provider without
+    --model); checking here costs nothing, where finding out per agent costs
+    metadata and collection first.
+    """
+
+    def _setup(self, monkeypatch, backend, provider):
+        import agent.backend
+        from core.phases import Backend
+
+        monkeypatch.setattr(agent.backend, "selected_backend", lambda: getattr(Backend, backend))
+        monkeypatch.setenv("WORKBENCH_AI_PROVIDER", provider) if provider else monkeypatch.delenv(
+            "WORKBENCH_AI_PROVIDER", raising=False,
+        )
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
+
+    def test_pi_with_a_provider_and_unset_phases_stops(self, ro, monkeypatch, tmp_path):
+        self._setup(monkeypatch, "PI", "xai")
+        trail = MagicMock()
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            assert not ro._models_cover_provider("", str(tmp_path), trail)
+        assert "agent.model" in err.getvalue()
+        assert trail.decision.called
+
+    def test_a_global_model_covers_every_phase(self, ro, monkeypatch, tmp_path):
+        self._setup(monkeypatch, "PI", "xai")
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "grok-4.7")
+        assert ro._models_cover_provider("", str(tmp_path), MagicMock())
+
+    def test_an_explicit_model_covers_every_phase(self, ro, monkeypatch, tmp_path):
+        self._setup(monkeypatch, "PI", "xai")
+        assert ro._models_cover_provider("grok-4.7", str(tmp_path), MagicMock())
+
+    def test_no_provider_is_fine(self, ro, monkeypatch, tmp_path):
+        self._setup(monkeypatch, "PI", None)
+        import agent.phases
+        monkeypatch.setattr(agent.phases, "phase_provider", lambda cfg=None: None)
+        assert ro._models_cover_provider("", str(tmp_path), MagicMock())
+
+    def test_the_claude_backend_ignores_providers(self, ro, monkeypatch, tmp_path):
+        self._setup(monkeypatch, "CLAUDE", "xai")
+        assert ro._models_cover_provider("", str(tmp_path), MagicMock())

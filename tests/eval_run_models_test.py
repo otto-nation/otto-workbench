@@ -104,3 +104,19 @@ def test_unknown_manifest_task_exits_with_a_message(tmp_path, capsys):
         eval.run.run_eval(_args(tmp_path, dry_run=True), tmp_path)
     # A KeyError's str() is repr(msg); the exit text must be the bare message.
     assert str(exc.value).startswith("error: unknown eval task 'nope'")
+
+
+def test_omitted_models_with_nothing_configured_refuses(tmp_path, monkeypatch):
+    """An eval row must carry the model that served it.
+
+    With no model configured anywhere, the backend would pick its own default
+    and the results could not be labelled or compared, so the run refuses and
+    names what to set.
+    """
+    _make_case(tmp_path / "corpus", "a", task="ci-fix")
+    monkeypatch.setattr(agent.phases, "phase_model", lambda phase, explicit, cfg=None: None)
+    with pytest.raises(SystemExit) as caught:
+        eval.run.run_eval(_args(tmp_path, dry_run=True), tmp_path)
+    msg = str(caught.value)
+    assert "--models" in msg
+    assert "agent.model" in msg

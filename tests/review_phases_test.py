@@ -242,7 +242,7 @@ class TestPhaseRunnerReachesBackend:
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_GROUP_MODEL", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
 
         import agent.invoke
 
@@ -263,7 +263,8 @@ class TestPhaseRunnerReachesBackend:
         assert job.throttle.waited
         inv = seen["inv"]
         assert inv.agent is AgentKind.REVIEWER_LITE
-        assert inv.model == "sonnet"
+        # Nothing configures a model, so none reaches the backend.
+        assert inv.model is None
         assert inv.thinking is Thinking.HIGH
         assert inv.max_budget == 8.0
         # As above: the seam under test is what reaches the backend, and the

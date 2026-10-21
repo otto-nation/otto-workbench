@@ -1,4 +1,4 @@
-"""Model resolution in `agent.phases`: aliases, per-phase models, and the env behind them."""
+"""Model resolution in `agent.phases`: per-phase models and the env behind them."""
 
 import sys
 from pathlib import Path
@@ -25,129 +25,47 @@ def no_model_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
+TIER_ENV = (
+    "AI_SONNET_MODEL", "AI_OPUS_MODEL", "AI_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+)
+
+
 class TestResolveModel:
-    def _clear_alias_envs(self, ro, monkeypatch):
-        for alias in ro.ModelAlias:
-            monkeypatch.delenv(alias.env_key, raising=False)
-            monkeypatch.delenv(alias.legacy_env_key, raising=False)
-
-    def test_alias_env_keys_follow_convention(self, ro):
-        assert ro.ModelAlias.SONNET.env_key == "AI_SONNET_MODEL"
-        assert ro.ModelAlias.OPUS.env_key == "AI_OPUS_MODEL"
-        assert ro.ModelAlias.HAIKU.env_key == "AI_HAIKU_MODEL"
-
-    def test_legacy_alias_env_keys_are_the_pre_rename_names(self, ro):
-        assert ro.ModelAlias.SONNET.legacy_env_key == "ANTHROPIC_DEFAULT_SONNET_MODEL"
-        assert ro.ModelAlias.OPUS.legacy_env_key == "ANTHROPIC_DEFAULT_OPUS_MODEL"
-        assert ro.ModelAlias.HAIKU.legacy_env_key == "ANTHROPIC_DEFAULT_HAIKU_MODEL"
-
-    def test_alias_env_keys_match_the_registry(self, ro):
-        """ai/models.env.yml is the SSOT for these names, and this pins them to it.
-
-        The bug this guards was exactly a drift between the two: the 20260908
-        migration renamed the registry's `var` fields and `resolve_alias` kept
-        reading the old spelling, so every tier alias silently stopped
-        resolving and phases dispatched the bare word `sonnet` as a model id.
-        `var` is what ~/.env.local sets; `target` is what the Claude Code
-        settings mirror publishes, which is the fallback.
-        """
-        from config.workbench_config import read_yaml
-
-        registry = Path(__file__).resolve().parent.parent / "ai" / "models.env.yml"
-        entries = read_yaml(registry)["env"]
-        by_var = {e["var"]: e for e in entries if e.get("role") == "model-tier"}
-
-        assert len(by_var) == len(list(ro.ModelAlias)), (
-            "every model-tier registry entry needs a ModelAlias member and vice versa"
-        )
-        for alias in ro.ModelAlias:
-            assert alias.env_key in by_var, f"{alias.env_key} is not a registry var"
-            assert by_var[alias.env_key]["target"] == alias.legacy_env_key
-
-    def test_current_name_resolves_the_alias(self, ro, monkeypatch):
-        """The rename's own name is the one a migrated ~/.env.local sets."""
-        self._clear_alias_envs(ro, monkeypatch)
-        monkeypatch.setenv("AI_SONNET_MODEL", "claude-sonnet-5")
-        assert ro.resolve_alias("sonnet") == "claude-sonnet-5"
-
-    def test_legacy_name_still_resolves_when_it_is_the_only_one(self, ro, monkeypatch):
-        """An un-migrated machine, or one inheriting Claude Code's mirror."""
-        self._clear_alias_envs(ro, monkeypatch)
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-4-5")
-        assert ro.resolve_alias("sonnet") == "claude-sonnet-4-5"
-
-    def test_current_name_wins_over_the_legacy_one(self, ro, monkeypatch):
-        """Both set is the normal post-migration state, and they can disagree.
-
-        The mirror publishes the old name into Claude Code's settings, so a
-        session started from there carries a value that ~/.env.local may have
-        since moved on from. Asserting the new name wins is what makes this
-        fail against a base that reads only the old one — a test that set just
-        one variable would pass either way.
-        """
-        self._clear_alias_envs(ro, monkeypatch)
-        monkeypatch.setenv("AI_SONNET_MODEL", "claude-sonnet-5")
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-4-5")
-        assert ro.resolve_alias("sonnet") == "claude-sonnet-5"
-
-    def test_unset_everywhere_leaves_the_alias_bare(self, ro, monkeypatch):
-        self._clear_alias_envs(ro, monkeypatch)
-        assert ro.resolve_alias("sonnet") == "sonnet"
-
-    def test_parse_rejects_concrete_model_id(self, ro):
-        assert ro.ModelAlias.parse("claude-sonnet-5") is None
-        assert ro.ModelAlias.parse("sonnet") is ro.ModelAlias.SONNET
-
     def test_explicit(self, ro, no_model_env):
-        assert ro.resolve_model("opus", "SOME_KEY", "sonnet") == "opus"
+        assert ro.resolve_model("claude-opus-5", "SOME_KEY", "claude-sonnet-5") == "claude-opus-5"
 
     def test_env_key(self, ro, no_model_env, monkeypatch):
-        monkeypatch.setenv("MY_MODEL_KEY", "haiku")
-
-        assert ro.resolve_model("", "MY_MODEL_KEY", "sonnet") == "haiku"
+        monkeypatch.setenv("MY_MODEL_KEY", "claude-haiku-4-5")
+        assert ro.resolve_model("", "MY_MODEL_KEY", "claude-sonnet-5") == "claude-haiku-4-5"
 
     def test_global_env(self, ro, no_model_env, monkeypatch):
-        monkeypatch.setenv("WORKBENCH_AI_MODEL", "opus")
-        self._clear_alias_envs(ro, monkeypatch)
-        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "opus"
-
-    def test_global_env_alias_resolved(self, ro, no_model_env, monkeypatch):
-        monkeypatch.setenv("WORKBENCH_AI_MODEL", "opus")
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
-        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "claude-opus-4-6"
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-opus-5")
+        assert ro.resolve_model("", "UNUSED_KEY", "claude-sonnet-5") == "claude-opus-5"
 
     def test_default_fallback(self, ro, no_model_env):
-        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "sonnet"
+        assert ro.resolve_model("", "UNUSED_KEY", "claude-sonnet-5") == "claude-sonnet-5"
 
-    def test_alias_resolved_via_env(self, ro, monkeypatch):
-        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
-        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "claude-sonnet-5"
+    def test_nothing_configured_is_none(self, ro, no_model_env):
+        """No layer names a model: the backend's own default serves the phase."""
+        assert ro.resolve_model("", "UNUSED_KEY", None) is None
 
-    def test_explicit_alias_resolved(self, ro, monkeypatch):
-        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
-        assert ro.resolve_model("opus", "SOME_KEY", "sonnet") == "claude-opus-4-6"
+    def test_tier_env_vars_are_not_read(self, ro, no_model_env, monkeypatch):
+        """The Claude tier variables feed the Claude Code harness, not dispatch.
 
-    def test_env_key_alias_resolved(self, ro, monkeypatch):
-        monkeypatch.setenv("MY_MODEL_KEY", "haiku")
-        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4-5@20251001")
-        assert ro.resolve_model("", "MY_MODEL_KEY", "sonnet") == "claude-haiku-4-5@20251001"
+        A tier word anywhere in the chain is now an ordinary model id, so a
+        machine still exporting AI_SONNET_MODEL does not see it rewritten.
+        """
+        for key in TIER_ENV:
+            monkeypatch.setenv(key, "claude-sonnet-5-5")
+        assert ro.resolve_model("", "UNUSED_KEY", None) is None
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "sonnet")
+        assert ro.resolve_model("", "UNUSED_KEY", None) == "sonnet"
 
-    def test_empty_alias_env_falls_back_to_alias(self, ro, monkeypatch):
-        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "")
-        assert ro.resolve_model("sonnet", "SOME_KEY", "opus") == "sonnet"
-
-    def test_full_model_id_not_resolved(self, ro, monkeypatch):
-        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
-        assert ro.resolve_model("claude-sonnet-5", "SOME_KEY", "sonnet") == "claude-sonnet-5"
+    def test_the_alias_layer_is_gone(self, ro):
+        assert not hasattr(ro, "ModelAlias")
+        assert not hasattr(ro, "resolve_alias")
 
 
 # ── 19b. phase_model / collect_phase_models ─────────────────────────────────
@@ -158,22 +76,27 @@ class TestPhaseModel:
         monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         for phase in ro.Phase:
             monkeypatch.delenv(phase.model_env_key, raising=False)
-        for alias in ro.ModelAlias:
-            monkeypatch.delenv(alias.env_key, raising=False)
+        for key in TIER_ENV:
+            monkeypatch.delenv(key, raising=False)
 
     def test_phase_env_keys_follow_convention(self, ro):
         assert ro.Phase.SCOUT.model_env_key == "WORKBENCH_AI_SCOUT_MODEL"
         assert ro.Phase.SCOUT.thinking_env_key == "WORKBENCH_AI_SCOUT_THINKING"
 
-    def test_default(self, ro, monkeypatch):
+    def test_no_model_when_nothing_is_configured(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
-        assert ro.phase_model("scout", "") == "sonnet"
+        assert ro.phase_model("scout", "") is None
+
+    def test_tier_env_does_not_supply_a_default(self, ro, monkeypatch):
+        self._clean_env(ro, monkeypatch)
+        monkeypatch.setenv("AI_SONNET_MODEL", "claude-sonnet-5-5")
+        assert ro.phase_model("scout", "") is None
 
     def test_env_key_derived_from_phase_name(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         assert ro.phase_model("scout", "") == "claude-haiku-4-5"
-        assert ro.phase_model("group", "") == "sonnet"
+        assert ro.phase_model("group", "") is None
 
     def test_explicit_overrides_env(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
@@ -202,17 +125,33 @@ class TestPhaseModel:
 
     def test_collect_groups_phases_by_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
-        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         models = ro.collect_phase_models("")
         assert models["claude-haiku-4-5"] == ["scout"]
         assert set(models["claude-sonnet-5"]) == set(ro.REVIEW_PHASES) - {"scout"}
 
-    def test_collect_covers_every_review_phase(self, ro, monkeypatch):
+    def test_collect_covers_every_review_phase_with_a_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
         models = ro.collect_phase_models("")
         phases = [p for group in models.values() for p in group]
         assert sorted(phases) == sorted(ro.REVIEW_PHASES)
+
+    def test_collect_skips_phases_with_no_model(self, ro, monkeypatch):
+        """An unset model is not a model to preflight; the budget floor covers it."""
+        self._clean_env(ro, monkeypatch)
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
+        assert ro.collect_phase_models("") == {"claude-haiku-4-5": [ro.Phase.SCOUT]}
+
+    def test_unset_review_phases_names_the_rest(self, ro, monkeypatch):
+        self._clean_env(ro, monkeypatch)
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
+        unset = ro.unset_review_phases("")
+        assert ro.Phase.SCOUT not in unset
+        assert sorted(unset) == sorted(set(ro.REVIEW_PHASES) - {ro.Phase.SCOUT})
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
+        assert ro.unset_review_phases("") == []
 
     def test_a_phase_from_another_entry_point_is_not_preflighted(self, ro, monkeypatch):
         """Preflight resolves the models a *review* is about to run.

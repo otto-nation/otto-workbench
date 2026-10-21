@@ -252,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return _run_locked(trail, args, ctx, route, body)
         except Exception as exc:
-            trail.error("unexpected_error", str(exc))
+            cli.boundary.record_exception(trail, exc)
             raise
         finally:
             trail.finish()

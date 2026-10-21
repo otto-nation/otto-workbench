@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
+        cli.boundary.record_exception(trail, exc)
         raise
     finally:
         trail.finish()

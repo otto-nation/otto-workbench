@@ -459,7 +459,7 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
                if spec.handler == "cli.ci_check:main" else {}),
         )
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
+        cli.boundary.record_exception(trail, exc)
         raise
     finally:
         trail.finish()

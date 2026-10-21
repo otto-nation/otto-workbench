@@ -218,7 +218,7 @@ def _run_review(args, argv: list[str], ctx: pr.context.ResolvedContext,
         return review.run.run_pr_review(
             ctx, _flags(args, argv, generator_version), review_file, trail=trail)
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
+        cli.boundary.record_exception(trail, exc)
         raise
     finally:
         trail.finish()
@@ -361,7 +361,7 @@ def _run_self_review_body(
             recover_head_sha=recover_head_sha, trail=trail,
         )
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
+        cli.boundary.record_exception(trail, exc)
         raise
     finally:
         trail.finish()

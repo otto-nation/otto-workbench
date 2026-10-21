@@ -517,8 +517,9 @@ def graphql(
     The query rides as a raw field (`-f`) and every variable as a typed one
     (`-F`), so gh detects integers and booleans. *input_text* sends a whole
     query document on stdin instead, which is what a mutation with a nested
-    variable needs. *target_repo* is the ``OWNER/REPO`` a mutation acts on, for
-    the owner boundary — a mutation names its target by node ID.
+    variable needs. *target_repo* is the ``OWNER/REPO`` a mutation acts on, or
+    ``HOST/OWNER/REPO`` on Enterprise, for the owner boundary — a mutation
+    names its target by node ID.
 
     A variable whose value is ``None`` is omitted rather than sent. gh builds
     each `-F` from an f-string, so a Python ``None`` would reach the API as the

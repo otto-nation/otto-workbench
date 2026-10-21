@@ -32,3 +32,12 @@ def reports_owner_boundary(main: Callable[..., int]) -> Callable[..., int]:
             print(f"✗ Refused at the owner boundary: {exc}", file=sys.stderr)
             return OWNER_BOUNDARY_EXIT
     return wrapper
+
+
+def record_exception(trail, exc: BaseException) -> None:
+    """Record *exc* on *trail*. A boundary refusal is policy, not a fault."""
+    action = (
+        "owner_boundary" if isinstance(exc, gh.owners.OwnerBoundaryError)
+        else "unexpected_error"
+    )
+    trail.error(action, str(exc))

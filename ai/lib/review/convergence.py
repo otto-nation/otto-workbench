@@ -38,12 +38,13 @@ from review.worktree_delta import uncommitted_files
 def change_set(job: ReviewJob) -> frozenset[str] | None:
     """The files this run's review treats as changed since the prior round, or None.
 
-    The delta when the run is incremental. When the prior review already covers
-    HEAD, a self-review's same-commit change set is the working tree's
-    (uncommitted edits plus the prior round's dirty files); in PR mode it is
-    empty — a file changed only by merging the base counts as unchanged. None
-    when neither holds: a full review with a moved HEAD measured no delta, so
-    "not changed" cannot be answered and nothing may be settled on its strength.
+    The delta when the run is incremental — the author-attributed files; a file
+    changed only by merging the base counts as unchanged. When the prior review
+    already covers HEAD, a self-review's same-commit change set is the working
+    tree's (uncommitted edits plus the prior round's dirty files); in PR mode it
+    is empty. None when neither holds: a full review with a moved HEAD measured
+    no delta, so "not changed" cannot be answered and nothing may be settled on
+    its strength.
     """
     preflight = job.preflight
     if preflight is not None and preflight.prior_head_sha:

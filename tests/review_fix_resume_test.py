@@ -113,7 +113,7 @@ def test_the_run_resumes_only_with_fix_and_never_under_recover(
     wt = _repo(tmp_path)
     (wt / "a.py").write_text("x = 2\n")
     review_dir, _ = _stopped(tmp_path, wt, ["a.py"])
-    flags = SimpleNamespace(fix=fix, recover=recover)
+    flags = SimpleNamespace(fix=fix, recover=recover, force=False)
     assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is resumes
     assert ((wt / "a.py").read_text() == "x = 1\n") is stashes
 
@@ -179,7 +179,7 @@ def test_a_partial_stash_clears_the_record_and_does_not_repeat(
         return real_run(*args, **kwargs)
 
     monkeypatch.setattr(git.client, "run", fail_after_stash)
-    flags = SimpleNamespace(fix=True, recover=False)
+    flags = SimpleNamespace(fix=True, recover=False, force=False)
     assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
     assert read_review_meta(review_dir).fix_interrupted is None
     sha = git_out(wt, "rev-parse", "refs/stash").strip()
@@ -202,7 +202,7 @@ def test_a_failed_set_aside_does_not_resume(tmp_path, monkeypatch):
         return real_run(*args, **kwargs)
 
     monkeypatch.setattr(git.client, "run", fail_stash)
-    flags = SimpleNamespace(fix=True, recover=False)
+    flags = SimpleNamespace(fix=True, recover=False, force=False)
     assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
     assert read_review_meta(review_dir).fix_interrupted == stopped
     assert (wt / "a.py").read_text() == "x = 2\n"
@@ -214,7 +214,7 @@ def test_staged_non_leftover_skips_set_aside(tmp_path, capsys):
     (wt / "e.py").write_text("staged\n")
     git_out(wt, "add", "e.py")
     review_dir, stopped = _stopped(tmp_path, wt, ["a.py"])
-    flags = SimpleNamespace(fix=True, recover=False)
+    flags = SimpleNamespace(fix=True, recover=False, force=False)
     assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
     assert (wt / "a.py").read_text() == "x = 2\n"
     assert read_review_meta(review_dir).fix_interrupted == stopped

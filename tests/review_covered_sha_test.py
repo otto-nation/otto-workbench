@@ -3,6 +3,7 @@
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -243,6 +244,32 @@ def test_unknown_commit_scope_says_so(tmp_path):
     repo, reviewed, fixed = _history(tmp_path)
     coverage = fix_coverage(_run_of(fixed, reviewed), None, {"N1": "a.py"}, reviewed, repo)
     assert coverage.why == "commit scope unknown"
+
+
+def _coverage_adapter():
+    return SimpleNamespace(
+        changed={"a.py", "tests/a_test.py"},
+        items=lambda: [SimpleNamespace(id="N1", file="a.py")],
+    )
+
+
+def test_a_second_pass_chains_through_reviewed_through(tmp_path):
+    """Pass 2 on F1 is covered because the recorder reads reviewed_through, not head_sha."""
+    repo, reviewed, f1 = _history(tmp_path)
+    job = review_job(repo, tmp_path / "reviews", head_sha=reviewed, files=["a.py"])
+    write_review(Path(job.review_file), ReviewRecord(), ReviewMeta(head_sha=reviewed))
+    adapter = _coverage_adapter()
+    review.fix._record_commit(job, _run_of(f1, reviewed), adapter)
+    meta = read_review_meta(Path(job.artifact_dir))
+    assert meta.covered_sha == f1 and meta.reviewed_through == f1
+    assert meta.head_sha == reviewed
+
+    (repo / "a.py").write_text("z = 1\n")
+    commit_all(repo, "fix2")
+    f2 = head(repo)
+    review.fix._record_commit(job, _run_of(f2, f1), adapter)
+    meta = read_review_meta(Path(job.artifact_dir))
+    assert meta.covered_sha == f2 and meta.reviewed_through == f2
 
 
 def test_an_empty_commit_says_nothing_committed(tmp_path):

@@ -129,13 +129,13 @@ def test_a_same_head_dirty_self_run_computes_the_self_delta_once(tmp_path, monke
     (wt / "a.py").write_text("x = 2\n")
     job = _job(wt, tmp_path, mode=Mode.SELF, head=head, prior_head=head)
     calls = {"n": 0}
-    real = review.worktree_delta._self_delta_files
+    real = review.worktree_delta.self_delta_files
 
     def counting(job, since):
         calls["n"] += 1
         return real(job, since)
 
-    monkeypatch.setattr(review.worktree_delta, "_self_delta_files", counting)
+    monkeypatch.setattr(review.worktree_delta, "self_delta_files", counting)
     assert review.collect._collect_delta(job).files == ["a.py"]
     assert calls["n"] == 1
 

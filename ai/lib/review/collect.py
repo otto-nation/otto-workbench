@@ -633,7 +633,7 @@ def _prior_sha_for_delta(job: ReviewJob, self_files: list[str] | None = None) ->
         # keeps the full re-review this case always got (`ReviewJob.full_review`).
         files = self_files
         if files is None and job.mode == Mode.SELF and not job.full_review:
-            files = review.worktree_delta._self_delta_files(job, prior_sha)
+            files = review.worktree_delta.self_delta_files(job, prior_sha)
         if job.mode == Mode.SELF and not job.full_review and files:
             core.log.info("Prior review is on current HEAD and the tree differs from what it "
                           "read — reviewing the difference incrementally")
@@ -653,12 +653,12 @@ def _fallback_delta_files(
 ) -> list[str]:
     """Untruncated file list when the ancestry walk cannot attribute the range."""
     if job.mode != Mode.SELF:
-        return review.worktree_delta._range_delta_files(
+        return review.worktree_delta.range_delta_files(
             job.wt_path, prior_sha, head, job.pr.files,
         )
     if self_files is not None:
         return self_files
-    return review.worktree_delta._self_delta_files(job, prior_sha)
+    return review.worktree_delta.self_delta_files(job, prior_sha)
 
 
 def _collect_delta(job: ReviewJob) -> DeltaScope:
@@ -675,7 +675,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
     self_files = None
     prior = job.prior
     if job.mode == Mode.SELF and not job.full_review and prior is not None and prior.meta.head_sha:
-        self_files = review.worktree_delta._self_delta_files(job, prior.meta.head_sha)
+        self_files = review.worktree_delta.self_delta_files(job, prior.meta.head_sha)
     prior_sha = _prior_sha_for_delta(job, self_files)
     if not prior_sha:
         return DeltaScope()

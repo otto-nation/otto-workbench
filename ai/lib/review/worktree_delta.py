@@ -87,7 +87,7 @@ def _on_surface(paths: set[str], pr_files: list[dict]) -> list[str]:
     return sorted(p for p in paths if not surface or p in surface)
 
 
-def _self_delta_files(job: ReviewJob, since: str) -> list[str]:
+def self_delta_files(job: ReviewJob, since: str) -> list[str]:
     """The surface files a self-review's delta from *since* covers.
 
     What the tree differs from *since* in, plus what the prior round read dirty
@@ -104,7 +104,7 @@ def _self_delta_files(job: ReviewJob, since: str) -> list[str]:
     return _on_surface(paths, job.pr.files)
 
 
-def _range_delta_files(
+def range_delta_files(
     wt_path: str, prior_sha: str, head: str, pr_files: list[dict],
 ) -> list[str]:
     """Every path ``prior_sha..head`` differs in, untruncated, scoped to *pr_files*.

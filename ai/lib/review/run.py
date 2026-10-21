@@ -303,7 +303,7 @@ def _interrupted_pass(review_dir: Path, wt_path: str, flags: ReviewFlags,
         return False
     # `--force` still stashes (the leftovers would otherwise look like author
     # edits) but runs a forced review rather than resuming the stopped pass.
-    if getattr(flags, "force", False):
+    if flags.force:
         return False
     return bool(flags.fix and (set_aside or not stopped.leftovers))
 

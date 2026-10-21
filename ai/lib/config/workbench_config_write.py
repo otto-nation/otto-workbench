@@ -31,9 +31,11 @@ from enum import StrEnum
 from pathlib import Path
 
 import core.timeouts
+import config.github_owners
 from config.workbench_config import (
     CONFIG_HEADER,
     CONTAINER_SCOPE,
+    GITHUB_OWNERS_KEY,
     GLOBAL_SCOPE,
     PROJECT_CONFIG_NAME,
     PROJECT_SCOPE,
@@ -171,30 +173,29 @@ def check_key(key: str) -> KeyCheck:
     return KeyCheck(KeyVerdict.UNKNOWN_INSTALLED, key, str(path))
 
 
-def coerce_value(key: str, value: str) -> bool | int | float | str:
-    """``value`` as the scalar the field behind ``key`` actually holds.
+def coerce_value(key: str, value: str) -> bool | int | float | str | list[str]:
+    """``value`` as the type the field behind ``key`` actually holds.
 
     Everything arriving here is a string, because everything comes off a command
-    line, and the file has to end up holding a real YAML scalar. ``serde``
-    restores an int from ``"3"`` but refuses a bool from ``"true"`` on purpose —
-    ``bool("false")`` is ``True``, so guessing there invents a value rather than
-    recovering one — which makes a boolean written as a quoted string a key that
-    reads back as the field's default with nothing said.
+    line, and the file has to end up holding a real YAML value. A list field
+    takes a YAML flow sequence — ``[a, b]`` — of plain or quoted scalars.
+    ``serde`` restores an int from ``"3"`` but refuses a bool from ``"true"`` on
+    purpose — ``bool("false")`` is ``True``, so guessing there invents a value
+    rather than recovering one — which makes a boolean written as a quoted
+    string a key that reads back as the field's default with nothing said.
 
     Raises ``ConfigValueError`` when the string is not one the field could hold.
     A field whose type the schema does not name keeps its string, permissive in
     the same direction ``schema_type`` and the key walk are.
     """
-    wanted = schema_type(schema_at(surface_schema(), key) or {})
+    fragment = schema_at(surface_schema(), key) or {}
+    wanted = schema_type(fragment)
     if wanted == "array":
-        # One key, one scalar is the whole shape of this writer, and a list
-        # field has no scalar spelling to accept. Refused rather than written,
-        # because serde restores a string where a list belongs as an empty
-        # list: the write would report success and the key would read back
-        # holding nothing.
+        return _coerce_flow_list(key, value, fragment)
+    if wanted == "object":
         raise ConfigValueError(
-            f"{key} is a list, and this writer sets one scalar — edit the file "
-            f"directly, or use `yq -i '.{key} += [\"{value}\"]'`")
+            f"{key} is a mapping, and this writer sets one entry at a time —"
+            f" write {key}.<name> instead")
     if wanted == "boolean":
         spelled = value.strip().lower()
         if spelled not in ("true", "false"):
@@ -225,14 +226,53 @@ def _coerce_number(key: str, value: str, wanted: str) -> int | float:
     return number
 
 
-def _yq_assignment(key: str, value: bool | int | float | str) -> str:
+def _coerce_flow_list(key: str, value: str, fragment: dict) -> list[str]:
+    """``value`` as the list of strings a flow sequence ``[a, 'b c']`` spells.
+
+    A flow sequence rather than repeated flags or a JSON document because it is
+    what ``render_value`` prints a list as, so ``config get`` output pastes back.
+
+    # ceiling: items are split on commas, so an item holding a comma or a
+    # bracket cannot be written here. Upgrade trigger: once a list key holds
+    # values that need either, parse the value as YAML instead.
+    """
+    items_type = schema_type(fragment.get("items") or {})
+    if items_type not in (None, "string"):
+        raise ConfigValueError(
+            f"{key} holds {items_type} items, and this writer only writes strings")
+    text = value.strip()
+    if not (text.startswith("[") and text.endswith("]")):
+        raise ConfigValueError(
+            f"{key} is a list — write it as a YAML flow sequence, e.g. '[a, b]'")
+    inner = text[1:-1].strip()
+    if not inner:
+        return []
+    return [_flow_item(key, part) for part in inner.split(",")]
+
+
+def _flow_item(key: str, part: str) -> str:
+    item = part.strip()
+    if len(item) >= 2 and item[0] == item[-1] and item[0] in "'\"":
+        item = item[1:-1]
+    if not item or any(ch in "[]{}" for ch in item):
+        raise ConfigValueError(
+            f"{key}: {part.strip()!r} is not an item this writer can read —"
+            f" items are plain or quoted strings")
+    return item
+
+
+def _yq_assignment(key: str, value: bool | int | float | str | list[str]) -> str:
     """The ``yq`` expression that writes *value* under *key* with its own type.
 
     A string goes through ``strenv`` so the shell never sees it and yq never
-    reinterprets it. A bool or a number is spelled into the expression instead,
-    because ``strenv`` would quote it back into a string — and it is safe to
-    spell because ``coerce_value`` has already parsed it out of the input.
+    reinterprets it. A list goes through ``strenv`` as JSON and ``from_json``,
+    so yq builds the sequence and no item is reinterpreted. A bool or a number
+    is spelled into the expression instead, because ``strenv`` would quote it
+    back into a string — and it is safe to spell because ``coerce_value`` has
+    already parsed it out of the input.
     """
+    if isinstance(value, list):
+        return f".{key} = (strenv(WB_CONFIG_VALUE) | from_json)"
     if isinstance(value, bool):
         return f".{key} = {'true' if value else 'false'}"
     if isinstance(value, (int, float)):
@@ -260,6 +300,17 @@ class ScopeCheck:
         )
 
 
+def _scope_rule_for(key: str) -> ScopeRule | None:
+    """The rule on *key* itself, or on its nearest restricted ancestor."""
+    rules = scope_rules()
+    parts = key.split(".")
+    for end in range(len(parts), 0, -1):
+        rule = rules.get(".".join(parts[:end]))
+        if rule is not None:
+            return rule
+    return None
+
+
 def check_scope(key: str, scope: str) -> ScopeCheck:
     """Whether ``scope`` is a file ``key`` is allowed to live in.
 
@@ -272,8 +323,12 @@ def check_scope(key: str, scope: str) -> ScopeCheck:
 
     A key that declares nothing may be written anywhere, which is what every key
     could do before this existed.
+
+    A key below a restricted one — a group under ``github.owners`` — inherits the
+    nearest restricted ancestor's rule, so a section-level rule cannot be stepped
+    around by writing one level down.
     """
-    rule = scope_rules().get(key)
+    rule = _scope_rule_for(key)
     if rule is None or scope in rule.allowed:
         return ScopeCheck(True, key, scope)
     return ScopeCheck(False, key, scope, rule)
@@ -308,6 +363,10 @@ def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBA
     The pair is asserted instead: a caller naming its own ``path`` has to name
     the matching ``scope``, and the global default only applies to the global
     file.
+
+    A ``github.owners`` group is checked against the groups already in the file
+    before it lands: an owner in two groups is a ``ConfigValueError``, since the
+    policy reading the map has to know which one group an owner is in.
     """
     if path is None:
         path = global_config_path()
@@ -327,11 +386,14 @@ def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBA
             f"  write it with: otto-workbench config set {key} {value}"
         )
     typed = coerce_value(key, value)
+    if key == GITHUB_OWNERS_KEY or key.startswith(f"{GITHUB_OWNERS_KEY}."):
+        _check_owner_groups(path, key, typed)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(CONFIG_HEADER + "\n")
     if shutil.which("yq"):
-        env = dict(os.environ, WB_CONFIG_VALUE=value)
+        written = json.dumps(typed) if isinstance(typed, list) else value
+        env = dict(os.environ, WB_CONFIG_VALUE=written)
         try:
             subprocess.run(
                 ["yq", "-i", _yq_assignment(key, typed), str(path)],
@@ -341,6 +403,24 @@ def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBA
             raise ConfigError(f"could not write {key} to {path}: {exc}") from exc
         return
     _set_value_with_pyyaml(path, key, typed)
+
+
+def _check_owner_groups(path: Path, key: str, typed: object) -> None:
+    """Refuse a ``github.owners`` write the resolver would reject on read.
+
+    Only a whole group is a value here: ``github.owners`` itself is refused by
+    ``coerce_value`` as a mapping, and a key nested below a group is refused
+    here because it would put a mapping where the resolver expects a list.
+    """
+    group = key[len(GITHUB_OWNERS_KEY) + 1:]
+    if not group or "." in group or not isinstance(typed, list):
+        raise ConfigValueError(
+            f"{key} is not a group — write {GITHUB_OWNERS_KEY}.<group> '[owner, …]'")
+    section = read_yaml(path).get("github")
+    current = section.get("owners") if isinstance(section, dict) else None
+    groups = dict(current) if isinstance(current, dict) else {}
+    groups[group] = typed
+    config.github_owners.owner_index(groups)
 
 
 def set_project_value(key: str, value: str, project_root: Path | str) -> None:
@@ -383,7 +463,7 @@ def set_container_value(key: str, value: str, project_root: Path | str) -> None:
 
 
 def _set_value_with_pyyaml(
-    path: Path, key: str, value: bool | int | float | str,
+    path: Path, key: str, value: bool | int | float | str | list[str],
 ) -> None:
     if yaml is None:
         raise ConfigError("neither yq nor PyYAML is available to write config")

@@ -4510,6 +4510,27 @@ default. `--models` still wins when given.
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
 
+### config/github_owners.py
+
+Which GitHub owners are ours, as ``github.owners`` spells them.
+
+An owner is ``OWNER`` — on public GitHub — or ``HOST/OWNER`` on an Enterprise
+instance. Both parts compare case-insensitively, because GitHub treats logins
+and hosts that way, and the host is part of the identity: ``foo`` and
+``ghe.corp/foo`` are two owners. Whether an owner is a user or an organisation
+makes no difference.
+
+Here rather than beside the policy in ``gh.owners`` because two layers need it:
+``config set`` refuses an owner listed in two groups before it writes, and the
+config layer cannot import ``gh``. ``gh.owners`` builds its ``OwnerMap`` from
+``owner_index`` below, so the writer and the resolver cannot disagree about
+what a duplicate is.
+
+``owner_index`` is the one validator: a group name must be usable as a dotted
+key segment (``github.owners.<group>``), every owner must parse, and no owner
+may sit in two groups — the policy has to know *which* group a reference is
+in, and an owner in two cannot answer.
+
 ### config/reuse_levels.py
 
 The reuse-level vocabulary, its readers and writers, and the two hook bodies

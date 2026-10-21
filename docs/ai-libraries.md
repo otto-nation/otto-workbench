@@ -3658,6 +3658,7 @@ still the head the batch planned from (`Item.remote_sha`):
 
 | Tree | Command |
 |---|---|
+| the worktree stands on another branch than the item's | refuse: `wrong_branch` |
 | the fetch failed | refuse: `fetch_failed` |
 | the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
 | a commit a step drafted is not on the branch, as itself, a patch-equivalent, or a replay `git.replay` can follow | refuse: `drafted_dropped` |
@@ -3839,12 +3840,18 @@ Which `pr` target each batch item is, so a run can hold their locks and hand eac
 
 A batch run holds each unfinished item's target lock until that item is
 terminal (`done`, `dropped`, `skipped_closed`), so a manual `pr` command on one
-of its PRs is refused instead of interleaving with the batch's own step. A
+of its PRs is refused instead of interleaving with the batch's own step. Once
+an item's worktree is known — assigned, or recorded by an earlier run being
+resumed — the run holds that checkout's lock too, on the same stack, so it is
+released with the target: a `pr` command run in the worktree on another branch
+is refused as well, and the driver's own git writes there (restore, fetch,
+reset) are covered by a lock rather than by luck. A
 terminal item is one the scheduler never admits again, so `ItemHolds` releases
 its lock while the run carries on, and the PR is free for manual work at once.
 Its children must get through those locks, and each only through its own: a
-child is started with `WORKBENCH_RUN_LOCK` naming its item's target and nothing
-else, so a step for one PR cannot ride the batch's hold onto another. A child
+child is started with `WORKBENCH_RUN_LOCK` naming its item's target and
+`WORKBENCH_RUN_LOCK_TREE` naming its item's checkout, and nothing else, so a
+step for one PR cannot ride the batch's hold onto another. A child
 started for an item whose lock was released takes its own.
 
 The target is computed the way `pr.context` keys a run — the repo key read off

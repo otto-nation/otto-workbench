@@ -6,6 +6,7 @@ still the head the batch planned from (`Item.remote_sha`):
 
 | Tree | Command |
 |---|---|
+| the worktree stands on another branch than the item's | refuse: `wrong_branch` |
 | the fetch failed | refuse: `fetch_failed` |
 | the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
 | a commit a step drafted is not on the branch, as itself, a patch-equivalent, or a replay `git.replay` can follow | refuse: `drafted_dropped` |
@@ -58,6 +59,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import batch.steps
 import git.client
 import git.replay
 import rebase.target
@@ -74,6 +76,9 @@ class Refusal(StrEnum):
     FETCH_FAILED = "fetch_failed"
     UNLANDED_FIXES = "unlanded_fixes"
     DRAFTED_DROPPED = "drafted_dropped"
+    # Also the reason the scheduler records when a step would start on a
+    # worktree standing on another branch: one value for one condition.
+    WRONG_BRANCH = "wrong_branch"
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,10 @@ class TreeState:
     incorporated: bool = True
     unincorporated: tuple[str, ...] = ()
     dropped: tuple[str, ...] = ()
+    # The branch the worktree stands on (`batch.steps.checked_out_branch`),
+    # "" when git could not say. None only in a tree built without reading
+    # one — a test's — and then not checked.
+    checked_out: str | None = None
 
 
 @dataclass(frozen=True)
@@ -248,7 +257,7 @@ def read_tree(item: Item) -> TreeState:
             unincorporated = found
     dropped = _dropped(item, wt) if item.worktree else ()
     return TreeState(local, remote, divergence, fetched, incorporated, unincorporated,
-                     dropped)
+                     dropped, batch.steps.checked_out_branch(wt))
 
 
 def _has_staged(wt: str) -> bool:
@@ -337,6 +346,10 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
     """
     wt = ["--repo-dir", item.worktree]
     nv = ["--no-verify"] if no_verify else []
+    if tree.checked_out is not None and tree.checked_out != item.branch:
+        return _refuse(Refusal.WRONG_BRANCH,
+                       f"{item.worktree} is on {tree.checked_out or 'no branch git could name'}, "
+                       f"not {item.branch}")
     if not tree.fetched:
         return _refuse(Refusal.FETCH_FAILED, f"could not fetch {item.branch}")
     if not item.remote_sha or tree.remote != item.remote_sha:

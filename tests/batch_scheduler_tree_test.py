@@ -48,7 +48,8 @@ def test_generated_only_dirt_on_assign_is_restored_and_the_step_starts(tmp_path)
     (repo / "gen.ts").write_text(GEN_HEADER + "v2\n")
     branch = git.client.current_branch(cwd=str(repo))
     h = Harness([row(1, ONLY_REVIEW)],
-                worktrees=lambda d, b: batch.steps.ensure_worktree(str(repo), branch))
+                worktrees=lambda d, b: batch.steps.ensure_worktree(str(repo), branch),
+                branch=lambda wt: "b1")
     h.sched.run_until_blocked()
     assert (repo / "gen.ts").read_text() == GEN_HEADER + "v1\n"
     assert not any(d.kind is DecisionKind.DIRTY_WORKTREE for d in h.run.decisions)
@@ -63,7 +64,7 @@ def test_generated_only_dirt_before_a_retry_is_restored(tmp_path):
     wt = str(repo)
     h = Harness([row(1, ONLY_REVIEW)],
                 worktrees=lambda d, b: WorktreeResult(wt, False, ""),
-                codes={("review", wt): 1})
+                codes={("review", wt): 1}, branch=lambda wt: "b1")
     assert h.sched.run_until_blocked() is RunStatus.WAITING
     failed = h.run.open_decisions()[0]
     (repo / "gen.ts").write_text(GEN_HEADER + "v2\n")

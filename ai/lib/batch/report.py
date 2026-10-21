@@ -152,6 +152,9 @@ def prep(decision: Decision, item: Item) -> str | None:
             p.get("reason") == batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
         return f"check {'; '.join(p.get('commits', []))} against {item.remote_sha}"
     if kind is DecisionKind.FAILED and \
+            p.get("reason") == batch.publish.Refusal.WRONG_BRANCH.value:
+        return f"check out {item.branch} in {item.worktree}, then retry"
+    if kind is DecisionKind.FAILED and \
             p.get("reason") == batch.publish.Refusal.DRAFTED_DROPPED.value:
         return (f"cherry-pick {'; '.join(p.get('commits', []))} back onto {item.branch} "
                 f"in {item.worktree} and retry, or force-publish without them")

@@ -277,7 +277,7 @@ def _drive(session: batch.store.Session, reporter: _Reporter, holds: batch.targe
     with batch.machine.register(session.run.id) as machine:
         scheduler = batch.scheduler.Scheduler(session, pr_bin=str(bin_dir / "pr"), cfg=cfg,
                                               verbose=verbose, release=holds.release_finished,
-                                              machine=machine)
+                                              machine=machine, hold_tree=_tree_holder(holds))
         reporter.counting = False
         stopped = scheduler.run_until_blocked()
         reporter.counting = True
@@ -334,7 +334,9 @@ def _hold_items(held: contextlib.ExitStack, run, verb: str) -> batch.targets.Ite
     scheduler can release a target once its items are terminal. Terminal items
     are not held. All or nothing: a busy target refuses the whole batch, and
     targets already taken are released as the stack unwinds. An item with no
-    `origin` is named on stderr; its steps take their own locks.
+    `origin` is named on stderr; its steps take their own locks. An item whose
+    worktree an earlier run recorded has that checkout held too, with its
+    target; the scheduler holds the rest as it assigns them.
     """
     targets: dict[Path, list[Item]] = {}
     for item in run.items:
@@ -346,17 +348,42 @@ def _hold_items(held: contextlib.ExitStack, run, verb: str) -> batch.targets.Ite
                   f"{item.repo_dir}) — its steps lock it themselves", file=sys.stderr)
             continue
         targets.setdefault(target, []).append(item)
-    holds = held.enter_context(batch.targets.ItemHolds())
     started = batch.store.now_iso()
+    command = f"pr batch {verb} {run.id}"
+
+    def checkout(worktree: str) -> contextlib.AbstractContextManager:
+        return core.run_lock.hold({core.run_lock.CHECKOUT}, worktree=Path(worktree),
+                                  command=command, started=started)
+
+    holds = held.enter_context(batch.targets.ItemHolds(checkout))
     for target in sorted(targets):
         items = targets[target]
         try:
-            holds.take(target, [i.key for i in items], core.run_lock.hold(
-                {core.run_lock.TARGET}, target_dir=target, target_label=items[0].key,
-                command=f"pr batch {verb} {run.id}", started=started))
+            _hold_target(holds, target, items, command=command, started=started)
         except core.run_lock.LockBusy as exc:
             raise _Refused(_busy_item(run, items[0], verb, exc)) from exc
     return holds
+
+
+def _hold_target(holds: batch.targets.ItemHolds, target: Path, items: list[Item], *,
+                 command: str, started: str) -> None:
+    """Hold *target* for *items*, then each worktree they recorded; raises LockBusy."""
+    holds.take(target, [i.key for i in items], core.run_lock.hold(
+        {core.run_lock.TARGET}, target_dir=target, target_label=items[0].key,
+        command=command, started=started))
+    for item in items:
+        holds.hold_checkout(item.key, item.worktree)
+
+
+def _tree_holder(holds: batch.targets.ItemHolds):
+    """The scheduler's `hold_tree`: hold an item's new worktree, or say who holds it."""
+    def hold(item: Item) -> str:
+        try:
+            holds.hold_checkout(item.key, item.worktree)
+        except core.run_lock.LockBusy as exc:
+            return f"{item.worktree} is held by {exc.holder_text}"
+        return ""
+    return hold
 
 
 def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox) -> _Started:

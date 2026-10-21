@@ -314,19 +314,6 @@ def _fetch_args(monkeypatch):
     return seen
 
 
-def _fetch_calls(monkeypatch):
-    real = batch.plan.git.client.run
-    seen = []
-
-    def spy(*args, **kwargs):
-        if args and args[0] == "fetch":
-            seen.append((args, kwargs))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(batch.plan.git.client, "run", spy)
-    return seen
-
-
 def test_a_read_plan_does_not_write_refs_and_still_counts_behind(
         tmp_path, monkeypatch):
     pair = remote_and_clone(tmp_path)
@@ -407,26 +394,39 @@ def test_a_read_plan_prefers_the_local_branch_over_the_remote_head(
     assert plan.rows[0].needs[Step.REBASE].needed is False
 
 
+def _fetch_argvs(monkeypatch):
+    """The full argv of every fetch, as `git.client` hands it to `core.proc`."""
+    real = batch.plan.git.client.core.proc.run
+    seen = []
+
+    def spy(cmd, **kwargs):
+        if "fetch" in cmd:
+            seen.append(cmd)
+        return real(cmd, **kwargs)
+
+    monkeypatch.setattr(batch.plan.git.client.core.proc, "run", spy)
+    return seen
+
+
+def _maintenance_off(argv) -> bool:
+    head, args = argv[:argv.index("fetch")], argv[argv.index("fetch"):]
+    return ("maintenance.auto=false" in head and "gc.auto=0" in head
+            and "--no-auto-maintenance" not in args
+            and "--no-write-fetch-head" not in args)
+
+
 def test_fetch_on_both_paths_disables_maintenance_via_config(
         tmp_path, monkeypatch):
     pair = remote_and_clone(tmp_path)
     advance(pair.seed, "main", "upstream")
     _plan_against(monkeypatch)
-    seen = _fetch_calls(monkeypatch)
+    seen = _fetch_argvs(monkeypatch)
     batch.plan.build_plan([str(pair.work)])
-    assert seen and all(
-        kwargs.get("config") == {"maintenance.auto": "false", "gc.auto": "0"}
-        and "--no-auto-maintenance" not in args
-        and "--no-write-fetch-head" not in args
-        for args, kwargs in seen)
+    assert seen and all(_maintenance_off(argv) for argv in seen)
     seen.clear()
     plan = batch.plan.build_run_plan([str(pair.work)])
-    assert seen and all(
-        kwargs.get("config") == {"maintenance.auto": "false", "gc.auto": "0"}
-        and "--no-auto-maintenance" not in args
-        and "--no-write-fetch-head" not in args
-        for args, kwargs in seen)
-    assert any(any(s.startswith("+refs/heads/") for s in args) for args, _ in seen)
+    assert seen and all(_maintenance_off(argv) for argv in seen)
+    assert any(any(s.startswith("+refs/heads/") for s in argv) for argv in seen)
     batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
 
 

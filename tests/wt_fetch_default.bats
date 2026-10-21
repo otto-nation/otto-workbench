@@ -103,6 +103,33 @@ EOF
   export PATH="$dir:$PATH"
 }
 
+# _racing_git MESSAGE FAILURES — real git, except the first FAILURES fetches
+# print MESSAGE and exit 1 without running, the way a fetch that lost a race
+# with another fetch into the same .git does. Each fetch's argv is appended to
+# $TMPDIR/fetches, one line per attempt.
+_racing_git() {
+  local dir="$TMPDIR/racing-git"
+  local real
+  real="$(command -v git)"
+  mkdir -p "$dir"
+  cat > "$dir/git" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  if [[ "\$arg" == "fetch" ]]; then
+    echo "\$*" >> "$TMPDIR/fetches"
+    if (( \$(wc -l < "$TMPDIR/fetches") <= $2 )); then
+      echo "$1" >&2
+      exit 1
+    fi
+    break
+  fi
+done
+exec "$real" "\$@"
+EOF
+  chmod +x "$dir/git"
+  export PATH="$dir:$PATH"
+}
+
 # ── No worktree holds the default branch ─────────────────────────────────────
 
 @test "advances the default branch when no worktree holds it" {
@@ -222,4 +249,36 @@ EOF
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"Usage:"* ]]
+}
+
+# ── A fetch that raced another ───────────────────────────────────────────────
+
+@test "retries a fetch that lost a ref race, with maintenance off" {
+  _make_container
+  _leave_default_branch
+  _advance_origin
+  _racing_git "error: cannot lock ref 'refs/heads/main': is at 1111 but expected 2222" 1
+
+  cd "$TMPDIR/proj/main" || return 1
+  run "$SCRIPT" main
+
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$TMPDIR/fetches")" -eq 2 ]
+  [[ "$(head -n 1 "$TMPDIR/fetches")" == "-c maintenance.auto=false -c gc.auto=0 fetch "* ]]
+  [ "$(_sha main)" = "$(_sha origin/main)" ]
+}
+
+@test "does not retry a fetch that failed for any other reason" {
+  _make_container
+  _leave_default_branch
+  _advance_origin
+  _racing_git "fatal: couldn't find remote ref main" 1
+
+  cd "$TMPDIR/proj/main" || return 1
+  run "$SCRIPT" main
+
+  [ "$status" -ne 0 ]
+  [ "$(wc -l < "$TMPDIR/fetches")" -eq 1 ]
+  [[ "$output" == *"couldn't find remote ref main"* ]]
+  [[ "$output" == *"Refusing to branch from a stale 'main'"* ]]
 }

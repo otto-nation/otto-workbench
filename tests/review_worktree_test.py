@@ -311,8 +311,8 @@ def test_detached_worktree_at_fetches_a_missing_commit(mock_run):
     result = detached_worktree_at("abc1234", "/repos/repo", "recover-pr-42")
 
     assert result is not None
-    assert [c for c in calls if "fetch" in c] == [
-        ["git", "fetch", "origin", "abc1234"]
+    assert [c[c.index("fetch"):] for c in calls if "fetch" in c] == [
+        ["fetch", "origin", "abc1234"]
     ]
 
 

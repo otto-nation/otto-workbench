@@ -276,3 +276,21 @@ def test_label_short_d_still_unions_cwd_for_a_following_repo(tmp_path):
         ["gh", "label", "create", "foo", "-d", "--repo=ours/svc"], repo)
     assert _owner("ours") in resolution.target.owners
     assert _owner("stranger") in resolution.target.owners
+
+
+def test_a_chained_wrapper_resolves_the_inner_env_repo(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    resolution = _resolve(
+        ["sudo", "-iu", "bob", "env", "GH_REPO=stranger/lib", "gh", "issue", "comment", "1"], repo)
+    assert resolution.target.owners == (_owner("stranger"),)
+
+
+@pytest.mark.parametrize("words", [
+    ["env", "-C", "../s", "gh", "issue", "comment", "1"],
+    ["sudo", "--chdir=../s", "gh", "issue", "comment", "1"],
+    ["env", "-S", "gh issue comment 1"],
+])
+def test_a_wrapper_that_moves_or_reparses_is_unresolvable(tmp_path, words):
+    repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
+    resolution = _resolve(words, repo)
+    assert not resolution.ok and "wrapper" in resolution.reason

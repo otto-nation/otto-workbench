@@ -6171,6 +6171,118 @@ before the checkout or it never comes at all.
 rather than who was compared, so a caller pairs it with whatever it calls the
 branch and renders the two together.
 
+### gh/owner_targets.py
+
+Which repository a GitHub write is aimed at, read from its words and its cwd.
+
+In order:
+
+1. Explicit: a ``-R/--repo [HOST/]OWNER/REPO`` (before or after the
+   subcommand), a ``GH_REPO`` prefix or environment variable, or a PR, issue or
+   release URL among the arguments. Every explicit source present counts, so a
+   ``--repo`` cannot launder a URL pointing elsewhere.
+2. ``gh api``: the ``repos/OWNER/REPO/…`` path, on ``--hostname``'s host.
+   ``{owner}`` is gh's placeholder for the cwd repository and resolves as 3.
+3. Otherwise the repository at cwd — every remote, not just ``origin``. ``gh``
+   picks the base repository among the remotes (``gh-resolved``, or the parent
+   of a fork), so a fork with an ``upstream`` remote can post to the third
+   party with no ``--repo``. Each remote is a candidate owner; the policy then
+   requires them all in one group.
+4. Unresolvable, and so refused by the caller: a GraphQL write from a shell
+   (it names its target by node ID), a REST write outside ``repos/``, a cwd
+   that is no repository or has no GitHub remote, and a cwd-resolved write in a
+   command that changes directory — which directory it runs in is not knowable
+   from the text.
+
+A bare ``OWNER/REPO`` is on ``GH_HOST`` when set (prefix, then environment),
+else public GitHub — gh's own default host.
+
+ceiling: gh's default host can also come from ``gh auth``'s configuration (a
+machine logged in only to an Enterprise host), which this does not read. The
+error direction is a refusal — an Enterprise owner read as a github.com owner is
+not one of ours — except where the same login is ours on github.com. Upgrade
+trigger: a report of a refusal or an admission traced to it.
+
+A remote's host is its URL's when that host is public GitHub, ``GH_HOST``, or a
+host ``github.owners`` names. An unrecognised authority in an ssh spelling is
+an ``~/.ssh/config`` alias (``github.com-work``) and is read as the default
+host; an unrecognised ``https`` host is a forge gh does not treat as GitHub, and
+that remote is not a candidate.
+
+ceiling: an ssh alias for an Enterprise host (``ghebox:platform/svc``) reads as
+public GitHub, so an Enterprise owner reached through one is refused as not
+ours. Upgrade trigger: the first such refusal; resolve the alias with
+``ssh -G`` then, as ``git.remote_url``'s ceiling says.
+
+### gh/owners.py
+
+The owner boundary: which GitHub owners are ours, and whether a write may go there.
+
+``general.md`` § Upstream Repositories says nothing is posted to a repository
+we do not own without the user, and that the user does the posting. This
+module is that rule as code, written once and reached from three places:
+
+* ``ai/bin/owners-check`` (``cli.owners_check``) for both agent guards, through
+  ``check_command`` — only after a guard's own shape check matched, so every
+  other shell command stays on the guards' no-Python path.
+* ``gh.client.run`` for every write the workbench itself makes, through
+  ``check_gh_call``, which raises nothing itself: the client raises
+  ``OwnerBoundaryError`` so a refusal is never mistaken for gh's own failure.
+
+Which owners are ours is ``github.owners``, read from the **global** config
+file and nothing else (``OwnerMap.load``). ``load_config`` merges a repo's
+``.workbench.yml`` over it, and a cloned upstream repository's tracked file
+must not be able to declare itself ours. An empty or absent map refuses every
+write: a guard that switched itself off when unconfigured would protect
+nothing on exactly the machines that never configure it. The refusal says how
+to configure it.
+
+A target (``gh.owner_targets``) is one owner, or — resolved from a checkout's
+remotes — several candidates. It is allowed only when every candidate is ours
+and all are in one group; a fork whose ``upstream`` remote is a third party is
+refused with "pass --repo", because gh may pick that remote as the base.
+
+``WORKBENCH_ALLOW_UPSTREAM=1`` in the user's own environment lets the
+workbench's own publishing past an upstream refusal (``gh.client`` asks
+``upstream_allowed_by_user``). ``check_command`` never reads it: the guards are
+for agent commands, and an agent session inherits whatever its harness was
+launched with, so honouring it there would make the override reachable from
+inside the session. Both guards also refuse any command that names it.
+
+### gh/shell_wrappers.py
+
+Transparent command wrappers — ``env``, ``sudo``, ``time``, ``command``, ``exec`` — peeled off.
+
+``sudo env GH_REPO=x time gh issue comment …`` runs ``gh issue comment`` with
+``GH_REPO=x``. ``peel`` strips wrappers in a loop until the head word is not
+one (matched on its basename, so ``/usr/bin/time`` is ``time``), lifting each
+wrapper's ``NAME=value`` assignments and ``env -u`` removals on the way. The
+write-shape predicate and the target resolver both call it, so the two cannot
+disagree about which program a statement runs.
+
+Option parsing is confident or it is nothing. Each wrapper has an explicit
+table of its options: which take no value, which take one (``-u bob``,
+``-ubob``, ``--user bob``, ``--user=bob``), and which take one only when it is
+attached (``xargs -e[EOF]``). A short-option cluster is read character by
+character: a value-taking character takes the rest of the cluster as its value,
+or the next word when it is last (``sudo -iu bob``). Any option outside the
+table — an unknown flag, a GNU long-option abbreviation — makes the statement
+**opaque**: which word is the program cannot be known, and the caller falls
+back to searching the words. So does an option that changes directory or
+re-parses a string — ``env -C/--chdir``, ``env -S/--split-string``,
+``sudo -D/--chdir``, ``sudo -R/--chroot`` — since the target of a write it runs
+cannot be read from the text even when the program can. ``sudo -e`` (edit a
+file) and ``sudo -h`` (a host, or help) are opaque too: neither runs the words
+that follow as a command.
+
+``command -v``/``-V`` looks a name up and runs nothing; ``Peeled.lookup`` says
+so.
+
+``XARGS`` is the same kind of table for ``xargs``. It is not peeled: its
+arguments come from stdin, so a write under it has no target to resolve, but
+which program it runs is still worth knowing — ``xargs grep 'pr create'`` is a
+read.
+
 ### gh/write_shapes.py
 
 Which shell statements, and which gh argvs, write to GitHub.
@@ -6202,10 +6314,22 @@ A write is:
 ``GH_HOST`` decide a target), and the program is matched on its basename, so
 ``/usr/local/bin/gh`` is gh.
 
-ceiling: ``sudo gh``, ``command gh``, ``env GH_REPO=x gh`` and a gh reached
-through an alias or a wrapper script are not matched. Upgrade trigger: the
-first such spelling seen in an agent transcript; the guards read it the same
-way, so all three change together through the corpus.
+``env``, ``sudo``, ``time``, ``command`` and ``exec`` are stripped in a loop
+by ``gh.shell_wrappers.peel`` — the one peeling function the target resolver
+uses too — and the program they run is classified. A wrapper option that
+cannot be read with confidence, or that changes directory or re-parses a
+string (``env -C``, ``env -S``, ``sudo -D``), makes the statement opaque.
+
+Opaque statements, ``eval``, and ``bash|sh|zsh`` with a ``-c`` cluster
+(``-c``, ``-lc``, ``-ec``) are writes when their words mention gh or a
+workbench posting command, and the policy refuses them: their target cannot be
+resolved. ``xargs`` wrapping a GitHub write is the same — the arguments come
+from stdin.
+
+ceiling: a gh reached through a shell alias or a wrapper script whose name is
+not in that set is not matched. Upgrade trigger: the first such spelling seen
+in an agent transcript; the guards read it the same way, so all three change
+together through the corpus.
 
 ### git/client.py
 

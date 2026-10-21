@@ -395,7 +395,8 @@ def run_multi_phase(
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
     merged = _merge_round(job, group_outputs[:], failed_groups,
-                          tuple(g.name for g in groups))
+                          tuple(g.name for g in groups),
+                          declinable=declinable_sids(job.prior))
 
     if carried:
         merged = merged.carry(carried.record)

@@ -18,6 +18,7 @@ from review.record import ReviewRecord  # noqa: E402
 from review.store import write_review  # noqa: E402
 from review.types import ReviewMeta  # noqa: E402
 from review_fix_pass_support import git_wt, _make_job  # noqa: F401,E402
+from review_record_support import finding, record  # noqa: E402
 
 STARTED = "2026-10-21T09:15:02+00:00"
 
@@ -97,7 +98,7 @@ def test_run_fix_pass_clears_before_the_engine_and_keeps_logs_when_it_raises(
         git_wt, tmp_path):
     job = _make_job(
         git_wt, tmp_path,
-        "## Must fix\n- [ ] **[M1]** `a.py:1` — Still open\n",
+        rec=record(finding("M1", "Still open", path="a.py", line=1, checkbox=True)),
     )
     order = []
 
@@ -124,7 +125,7 @@ def test_run_fix_pass_clears_before_the_engine_and_keeps_logs_when_it_raises(
 def test_keep_failing_does_not_replace_the_engine_exception(git_wt, tmp_path):
     job = _make_job(
         git_wt, tmp_path,
-        "## Must fix\n- [ ] **[M1]** `a.py:1` — Still open\n",
+        rec=record(finding("M1", "Still open", path="a.py", line=1, checkbox=True)),
     )
 
     def _keep(_review_dir, _started_at):

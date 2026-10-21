@@ -131,8 +131,8 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     real_write = review.pipeline._write_pipeline_state
     monkeypatch.setattr(review.pipeline, "_write_pipeline_state",
                         lambda job, state: written.append(state) or real_write(job, state))
-    real_merge = review.pipeline._phase_merge
-    monkeypatch.setattr(review.pipeline, "_phase_merge",
+    real_merge = review.pipeline._merge_round
+    monkeypatch.setattr(review.pipeline, "_merge_round",
                         lambda *a, **k: captured.update(declinable=k["declinable"]) or real_merge(*a, **k))
     review.pipeline.run_multi_phase(job, disprove=False)
     merged = captured["merged"]

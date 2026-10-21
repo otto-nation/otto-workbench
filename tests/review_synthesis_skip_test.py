@@ -18,7 +18,6 @@ from review.record import ReviewRecord  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
 from review.types import PreflightData, ReviewMeta  # noqa: E402
-from review.render import BANNER  # noqa: E402
 from review.verdict import BUDGET_SUMMARY, SETTLED_SUMMARY, mechanical_verdict  # noqa: E402
 from review.verify import PostProcessed  # noqa: E402
 from review_convergence_support import finding, merged, review_job  # noqa: E402
@@ -65,9 +64,9 @@ def test_nothing_new_with_everything_settled(tmp_path):
 
 def test_a_rejected_group_is_not_a_counted_zero(tmp_path):
     """A merge-time ingest rejection is not `fresh=0` and does not settle the round."""
-    path = tmp_path / "group-1.md"
-    path.write_text(f"{BANNER}\n## Must fix\n- **[M1]** `a.py:1` — x\n")
-    out = review.steps._phase_merge([str(path)], [], ("g1",))
+    path = tmp_path / "group-1.json"
+    path.write_text("not json")
+    out = review.steps._phase_merge([str(path)], [], ("g1",), declinable=frozenset())
     assert out.fresh is None
     assert not review.steps._nothing_new(_job(tmp_path), out, [])
 

@@ -50,7 +50,7 @@ def _with_sids(record: ReviewRecord) -> ReviewRecord:
 
 def _in_group(finding: RecordFinding, files: set[str]) -> bool:
     """Whether `finding` names one of `files` — at a line, or the file as a whole."""
-    return finding.path in files
+    return bool(finding.path) and finding.path in files
 
 
 def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:

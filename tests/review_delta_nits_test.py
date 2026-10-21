@@ -14,8 +14,9 @@ import review.steps  # noqa: E402
 from review.convergence import (  # noqa: E402
     drop_out_of_delta_nits, fix_work_set, held_nits, new_nit_ids, prior_ids,
 )
-from review.ingest import IngestOutcome  # noqa: E402
-from review.paths import read_review_meta  # noqa: E402
+from core.phases import Phase  # noqa: E402
+from review.ingest import ArtifactOutcome  # noqa: E402
+from review.paths import phase_output_path, read_review_meta  # noqa: E402
 from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
 from review.types import PreflightData, ReviewMeta  # noqa: E402
@@ -102,7 +103,7 @@ def test_a_full_round_keeps_every_nit(tmp_path, monkeypatch):
 
 
 def test_carry_keeps_the_fresh_count():
-    out = merged(fresh=0).carry(ReviewRecord(findings=(CARRIED_NIT,)), "c")
+    out = merged(fresh=0).carry(ReviewRecord(findings=(CARRIED_NIT,)))
     assert out.fresh == 0
 
 
@@ -112,7 +113,7 @@ def test_the_single_agent_path_drops_them_too(tmp_path, monkeypatch):
     monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
 
     def agent(inv, throttle=None):
-        Path(job.review_file).write_text("x")
+        Path(phase_output_path(job.review_file, Phase.SINGLE)).write_text("{}")
         Path(inv.session_log).write_text("")
         return 0
     monkeypatch.setattr(review.phases, "run_agent", agent)
@@ -217,12 +218,13 @@ def test_synthesis_drops_out_of_delta_nits_on_an_incremental_round(tmp_path, mon
     monkeypatch.setattr(review.steps, "build_prompt", lambda *a, **k: "prompt")
 
     def agent(inv, **kwargs):
-        Path(job.review_file).write_text("## Summary\n")
+        Path(phase_output_path(job.review_file, Phase.SYNTHESIS)).write_text("{}")
         Path(inv.session_log).write_text("")
         return 0
     monkeypatch.setattr(review.phases, "run_agent", agent)
-    monkeypatch.setattr(review.steps, "ingest_with_repair",
-                        lambda *a, **k: IngestOutcome(ReviewRecord(findings=(NIT_OUT, NIT_IN))))
+    artifact = SimpleNamespace(to_record=lambda **_: ReviewRecord(findings=(NIT_OUT, NIT_IN)))
+    monkeypatch.setattr(review.steps, "ingest_artifact",
+                        lambda *a, **k: ArtifactOutcome(artifact))
     monkeypatch.setattr(review.steps, "_post_process_review",
                         lambda j, record, **k: seen.update(record=record))
     review.steps._phase_synthesis(job, "", 2, merged(ReviewRecord(findings=(NIT_IN,)), fresh=1))
@@ -235,7 +237,7 @@ def test_single_agent_disprove_sees_the_filtered_record(tmp_path, monkeypatch):
     monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
 
     def agent(inv, throttle=None):
-        Path(job.review_file).write_text("x")
+        Path(phase_output_path(job.review_file, Phase.SINGLE)).write_text("{}")
         Path(inv.session_log).write_text("")
         return 0
     monkeypatch.setattr(review.phases, "run_agent", agent)
@@ -243,11 +245,8 @@ def test_single_agent_disprove_sees_the_filtered_record(tmp_path, monkeypatch):
     monkeypatch.setattr(review.pipeline, "_should_disprove", lambda *a: True)
     monkeypatch.setattr(
         review.pipeline, "_phase_disprove",
-        lambda j, record, content: seen.update(record=record, content=content)
-        or SimpleNamespace(record=record),
+        lambda j, record: seen.update(record=record) or SimpleNamespace(record=record),
     )
     monkeypatch.setattr(review.pipeline, "_post_process_review", lambda *a, **k: None)
     review.pipeline.run_single_agent(job)
     assert [f.id for f in seen["record"].findings] == ["N2"]
-    assert "N2" in seen["content"]
-    assert "N1" not in seen["content"]

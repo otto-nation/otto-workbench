@@ -12,7 +12,7 @@ import review.steps  # noqa: E402
 from core.phases import Mode  # noqa: E402
 from review.convergence import change_set  # noqa: E402
 from review.reconcile import DispositionSource, passed_over, reconcile  # noqa: E402
-from review.record import Disposition, ReviewRecord  # noqa: E402
+from review.record import Disposition, LedgerLine, ReviewRecord  # noqa: E402
 from review.store import StoredReview  # noqa: E402
 from review.types import PreflightData, PriorDisposition, ReviewMeta  # noqa: E402
 from review.verify import PostProcessed  # noqa: E402
@@ -60,7 +60,7 @@ def test_a_settled_decline_is_not_passed_over():
 
 
 def test_a_ledger_fixed_outranks_an_untouched_decline():
-    review = ReviewRecord(ledger="- **[S1]** `a.py` — Fixed")
+    review = ReviewRecord(ledger=(LedgerLine("S1", PriorDisposition.FIXED, "a.py"),))
     (rec,) = reconcile(_prior(DECLINED), review, changed=frozenset()).records
     assert (rec.disposition, rec.source) == (PriorDisposition.FIXED, DispositionSource.LEDGER)
 

@@ -361,6 +361,16 @@ class TestRunSettle:
 
 class TestResolveFixedThreads:
 
+    def test_passes_the_repo_hint(self):
+        fixed = [CommentItem(id="t1")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
+        }
+        with patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
+            pr.settlement.resolve_fixed_threads(
+                fixed, threads_by_id, repo="otto-nation/svc")
+        mock_resolve.assert_called_once_with("t1", repo="otto-nation/svc")
+
     def test_resolves_unresolved_threads(self):
         fixed = [CommentItem(id="t1"), CommentItem(id="t2")]
         threads_by_id = {

@@ -23,6 +23,14 @@ The publishing gate is deliberately not here. `pr.comments` gates its writes on
 gate inside the transport would make a policy decision invisible to the code
 that owns it.
 
+The owner boundary *is* here, for the opposite reason: it is not a choice any
+call site gets to make. `run` refuses a GitHub write whose target is not one of
+our owners (`gh.owners`) before gh starts, by raising `gh.owners.OwnerBoundaryError`,
+so a write site added tomorrow cannot forget it. Reads are not checked and read
+no config. A GraphQL write names no repository, so `graphql` takes a
+`target_repo` hint and falls back to the cwd's remotes. The user's own
+`WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream write through, with a warning.
+
 Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
 silence reads as a hang, so the waiting is announced. Whether a *failed* call is
@@ -47,6 +55,7 @@ import core.proc
 import core.timeouts
 from core.proc import CmdResult
 import gh.budget
+import gh.owners
 
 # What `run` reports when `gh` is not installed. `proc.run` lets
 # `FileNotFoundError` escape, and three call sites caught it while forty-two
@@ -291,17 +300,35 @@ def _spawn(args: tuple[str, ...], *, cwd: str | Path | None, input_text: str | N
     return r
 
 
+def _check_owner_boundary(args: tuple[str, ...], cwd: str | Path | None,
+                          input_text: str | None, target_repo: str) -> None:
+    """Raise `OwnerBoundaryError` for a write outside our owners — see the module docstring."""
+    verdict = gh.owners.check_gh_call(args, cwd=cwd, input_text=input_text, target_repo=target_repo)
+    if verdict.ok:
+        return
+    if gh.owners.upstream_allowed_by_user():
+        core.log.warn(f"{verdict.reason} — publishing anyway because "
+                      f"{gh.owners.ALLOW_UPSTREAM_ENV}=1")
+        return
+    raise gh.owners.OwnerBoundaryError(verdict)
+
+
 def run(
     *args: str,
     cwd: str | Path | None = None,
     input_text: str | None = None,
+    target_repo: str = "",
     _skip_breaker: bool = False,
 ) -> CmdResult:
     """Run gh with *args* in *cwd*, capturing both streams.
 
     Never raises on a non-zero exit, and never raises when gh is missing — both
     arrive as a `CmdResult` the caller reads the same way. A timeout arrives
-    that way too, carrying `proc.TIMEOUT_RETURNCODE`.
+    that way too, carrying `proc.TIMEOUT_RETURNCODE`. The one exception is a
+    GitHub write outside our owners, refused with `gh.owners.OwnerBoundaryError`
+    before gh starts — see the module docstring. *target_repo* names the
+    repository for that check when the argv cannot (a GraphQL write); it is
+    never passed to gh.
 
     There is no `timeout` parameter and no retry here. The bound follows from
     the argv, and retry belongs to `api` and `graphql`, which know they are
@@ -318,6 +345,7 @@ def run(
     *_skip_breaker* is for the probe that reads the reset header, which is the
     one call that must go out while the latch is arming.
     """
+    _check_owner_boundary(args, cwd, input_text, target_repo)
     resource = gh.budget.resource_for(args)
     if not _skip_breaker:
         latch = gh.budget.latched(resource)
@@ -482,13 +510,15 @@ def graphql(
     variables: dict[str, Any] | None = None,
     input_text: str | None = None,
     retry: bool = True,
+    target_repo: str = "",
 ) -> CmdResult:
     """One GraphQL call, retried on the same terms as `api`.
 
     The query rides as a raw field (`-f`) and every variable as a typed one
     (`-F`), so gh detects integers and booleans. *input_text* sends a whole
     query document on stdin instead, which is what a mutation with a nested
-    variable needs.
+    variable needs. *target_repo* is the ``OWNER/REPO`` a mutation acts on, for
+    the owner boundary — a mutation names its target by node ID.
 
     A variable whose value is ``None`` is omitted rather than sent. gh builds
     each `-F` from an f-string, so a Python ``None`` would reach the API as the
@@ -515,7 +545,7 @@ def graphql(
         if value is None:
             continue
         argv += ["-F", f"{key}={value}"]
-    call = functools.partial(run, *argv, input_text=input_text)
+    call = functools.partial(run, *argv, input_text=input_text, target_repo=target_repo)
     return _with_retries(call, "graphql") if retry else call()
 
 

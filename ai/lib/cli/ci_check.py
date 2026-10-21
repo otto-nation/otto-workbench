@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import sys
 
+import cli.boundary
 import cli.locks
 import cli.needs
 import core.log
@@ -81,6 +82,7 @@ def build_parser() -> ToolParser:
     return parser
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None, *,
          install_signal_handler: bool = True) -> int:
     """Parse *argv* and run the CI check it asks for.

@@ -461,8 +461,12 @@ def reconcile_fix_snapshot(
 def resolve_fixed_threads(
     fixed: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
+    repo: str = "",
 ) -> list[ThreadState]:
     """Resolve fixed threads on GitHub. Returns the bucket each one came from.
+
+    *repo* is the ``OWNER/REPO`` the threads belong to, forwarded to
+    ``pr.comments.resolve_thread`` for the owner boundary.
 
     Entries absent from threads_by_id are silently skipped — they are either
     comment items with synthetic IDs (ic-…/rb-…) that are not real review
@@ -480,7 +484,7 @@ def resolve_fixed_threads(
             continue
         if thread.is_resolved:
             continue
-        if pr.comments.resolve_thread(entry.id):
+        if pr.comments.resolve_thread(entry.id, repo=repo):
             # Written back so a second caller over the same report skips it. A
             # combined --fix --finish run resolves the already-addressed bucket
             # in the fix pass and drains it again in the closeout, off the same

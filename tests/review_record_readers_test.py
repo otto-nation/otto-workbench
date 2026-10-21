@@ -22,28 +22,44 @@ from review.sections import ReviewSections
 from review.summary import build_review_summary
 from review.types import ReviewMeta
 
-from review_record_support import fixture_meta, fixture_text, store_review
+from review_record_support import fixture_meta, fixture_record, finding, record, store_record
+
+# A review.md as an agent wrote it before review.json existed: a header naming
+# a head SHA, a summary and a finding. No reader may answer from any of it.
+_BARE_REVIEW_MD = (
+    "# Review: acme/widget#38 — feat: add on-device dictation to the composer\n\n"
+    "<!-- head_sha: 2cb613ec084559a9590f074eabde546c44b284a3 -->\n\n"
+    "## Summary\nAdds speech-to-text in the composer behind a mic button.\n\n"
+    "## Should fix\n"
+    "- **[S1]** **`apps/server/src/voice/transcriber.ts:343`** — The ENOENT retry is unguarded.\n"
+)
 
 
 def test_a_bare_review_md_is_stale(tmp_path):
-    (tmp_path / "review.md").write_text(fixture_text("synthesis_pr", "input.md"))
+    (tmp_path / "review.md").write_text(_BARE_REVIEW_MD)
     assert ReviewDocument.read(tmp_path / "review.md") is None
     assert read_review_sha(tmp_path / "review.md") == ""
 
 
 def test_the_head_sha_is_meta_json_s(tmp_path):
-    path = store_review(tmp_path / "review.md", fixture_text("synthesis_pr", "input.md"), fixture_meta("synthesis_pr"))
+    path = store_record(
+        tmp_path / "review.md", fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"),
+    )
     assert read_review_sha(path) == "2cb613ec084559a9590f074eabde546c44b284a3"
 
 
 def test_editing_review_md_changes_nothing_a_reader_sees(tmp_path):
-    path = store_review(tmp_path / "review.md", fixture_text("synthesis_pr", "input.md"), fixture_meta("synthesis_pr"))
+    path = store_record(
+        tmp_path / "review.md", fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"),
+    )
     path.write_text(path.read_text().replace("**[S1]**", "**[M9]**"))
     assert [f.id for f in ReviewDocument.read(path).findings][0] == "S1"
 
 
 def test_posting_sections_come_from_the_record(tmp_path):
-    path = store_review(tmp_path / "review.md", fixture_text("synthesis_pr", "input.md"), fixture_meta("synthesis_pr"))
+    path = store_record(
+        tmp_path / "review.md", fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"),
+    )
     sections = ReviewSections.from_record(ReviewDocument.read(path).record)
     assert sections.get("summary").startswith("Adds speech-to-text")
     assert sections.get("verdict").startswith("**Approve.**")
@@ -89,7 +105,7 @@ def test_retro_skips_a_directory_without_review_json(tmp_path):
     assert scan.repos == []
 
 
-_STORE_TEXT = "## Should fix\n- **[S1]** path:1 — from json\n"
+_STORE = record(finding("S1", "from json", path=""))
 _MD_LIE = "## Must fix\n- **[M9]** path:9 — from md\n"
 
 
@@ -100,7 +116,7 @@ def test_summary_of_a_stale_dir_ignores_review_md(tmp_path):
 
 
 def test_summary_answers_from_review_json(tmp_path):
-    path = store_review(tmp_path / "review.md", _STORE_TEXT)
+    path = store_record(tmp_path / "review.md", _STORE)
     path.write_text(_MD_LIE)
     report = build_review_summary("org/repo", "42", str(path))
     assert report.findings["must_fix"] == 0
@@ -119,7 +135,7 @@ def test_open_findings_of_a_stale_dir_is_empty(tmp_path, monkeypatch):
 
 
 def test_open_findings_answers_from_review_json(tmp_path, monkeypatch):
-    path = store_review(tmp_path / "review.md", _STORE_TEXT)
+    path = store_record(tmp_path / "review.md", _STORE)
     path.write_text(_MD_LIE)
     monkeypatch.setattr(
         batch.outcomes.review.paths, "self_review_file_path", lambda repo, branch: path,
@@ -127,7 +143,7 @@ def test_open_findings_answers_from_review_json(tmp_path, monkeypatch):
     item = SimpleNamespace(repo="o/r", branch="b")
     found = batch.outcomes.open_findings(item)
     assert found == [
-        {"severity": "should-fix", "title": "path:1 — from json", "declined": False},
+        {"severity": "should-fix", "title": "from json", "declined": False},
     ]
 
 
@@ -150,7 +166,7 @@ def test_run_post_stale_dir_returns_1_and_logs_predates(tmp_path):
 
 
 def test_run_post_answers_from_review_json(tmp_path, capsys):
-    path = store_review(tmp_path / "review.md", _STORE_TEXT)
+    path = store_record(tmp_path / "review.md", _STORE)
     path.write_text(_MD_LIE)
     with patch.object(review.post_file, "_get_diff", return_value=""):
         rc = review.post_file.run_post(

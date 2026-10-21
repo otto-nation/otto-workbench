@@ -17,7 +17,6 @@
 - `src/cli.py` — reviewed; flag parsing.
 
 ## Must fix
-(none)
 - **[M1]** **`src/cli.py:4`** — `--timeout` is compared before it is validated, so a negative timeout is accepted.
 
 ## Should fix

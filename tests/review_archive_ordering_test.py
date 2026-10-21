@@ -74,15 +74,15 @@ def _seeded_review_dir(tmp_path, *, pipeline_state=True):
 
 def test_a_fresh_run_archives_the_prior_record(tmp_path):
     """A non-resumed resolve moves review.json aside and copies its sidecar."""
-    from review.ingest import ingest_review
     from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
     from review.store import write_review
     from review.types import ReviewMeta
+    from review_record_support import record
 
     review_dir = _seeded_review_dir(tmp_path, pipeline_state=False)
     write_review(
         review_dir / "review.md",
-        ingest_review("## Summary\nthis round\n", strict=False),
+        record(summary="this round"),
         ReviewMeta(head_sha="abc1234", date="2026-10-19"),
     )
     record_before = (review_dir / FILENAME_RECORD).read_text()
@@ -118,16 +118,16 @@ def test_cleanup_without_pipeline_state_clears_the_prior_record(tmp_path):
 
 def test_a_resumed_run_does_not_rearchive_the_prior_record(tmp_path):
     """`--recover` keeps reading the existing prior.json; it must not archive again."""
-    from review.ingest import ingest_review
     from review.paths import FILENAME_PRIOR_RECORD, FILENAME_RECORD
     from review.store import write_review
     from review.types import ReviewMeta
+    from review_record_support import record
 
     review_dir = _seeded_review_dir(tmp_path)
     (review_dir / "prior.md").write_text("## Must fix\n- **[M1]** from the failed run\n")
     write_review(
         review_dir / "review.md",
-        ingest_review("## Summary\nthis round\n", strict=False),
+        record(summary="this round"),
         ReviewMeta(head_sha="abc1234", date="2026-10-19"),
     )
     # Simulate a prior archive already sitting beside the in-flight review.

@@ -19,7 +19,6 @@ from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Phase
 from gh.types import PRContext, PRMetadata
 from pr.domains import ReviewStatus
-from review.ingest import ingest_review
 from review.merge import merge_records
 from review.paths import FILENAME_RECORD
 from review.record import Disposition
@@ -31,7 +30,10 @@ from review.types import DeltaAttribution, PreflightData, ReviewJob
 from review.artifacts import DisproveArtifact, DisproveOutcome, DisproveVerdict
 from review.verify import apply_disprove
 
-from review_record_support import FIXTURES, copy_tree, canonical, expected_text, fixture_meta, fixture_text
+from review_record_support import (
+    FIXTURES, copy_tree, canonical, expected_text, fixture_meta, fixture_record,
+    finding, record,
+)
 
 HEAD = "9f1c2e3d4b5a69788796a5b4c3d2e1f00a1b2c3d"
 
@@ -83,21 +85,24 @@ def test_the_synthesis_fallback_publishes_a_record(tmp_path):
 
 def test_the_clean_review_is_published_as_a_record(tmp_path):
     job = _job(tmp_path)
-    review.outcome._write_clean_review(job, 2, ingest_review("## File Triage\n- `src/app.py` — reviewed; nothing to report.\n"))
+    from review.record import TriageEntry
+    review.outcome._write_clean_review(job, 2, record(triage=(
+        TriageEntry("src/app.py", "reviewed; nothing to report."),
+    )))
     assert (Path(job.review_file).parent / FILENAME_RECORD).is_file()
     assert _same_as_fixture(job, "clean")
 
 
 def test_an_agent_review_is_post_processed_and_stamped(tmp_path):
     job = _job(tmp_path)
-    record = ingest_review(fixture_text("evidence_dropped", "raw.md"))
-    review.outcome._post_process_review(job, record)
+    rec = fixture_record("evidence_dropped", "raw.json")
+    review.outcome._post_process_review(job, rec)
     assert _same_as_fixture(job, "evidence_dropped")
     assert job.verification["dropped"] == ["M1"]
 
 
 def test_the_unchanged_review_carries_the_prior_record(tmp_path):
-    prior = StoredReview(ingest_review(fixture_text("synthesis_pr", "input.md")), fixture_meta("synthesis_pr"))
+    prior = StoredReview(fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"))
     job = _job(tmp_path)
     job.prior = prior
     job.preflight = PreflightData(diff="", commit_log="", file_contents={}, file_permissions={},
@@ -118,7 +123,7 @@ def test_completeness_is_read_off_the_record(tmp_path):
 
 def test_the_sidecar_and_the_header_cannot_disagree(tmp_path):
     job = _job(tmp_path)
-    review.outcome._write_clean_review(job, 1, ingest_review("## File Triage\n"))
+    review.outcome._write_clean_review(job, 1, record(triage=()))
     stored = read_review(Path(job.review_file))
     assert stored.meta.head_sha == HEAD
     assert f"<!-- head_sha: {HEAD} -->" in Path(job.review_file).read_text()
@@ -142,13 +147,9 @@ def test_no_synthesis_paths_reconcile_and_verify(tmp_path, skip_synthesis, cost_
     state = PipelineState(
         head_sha=HEAD, group_names=["g1"], done={Phase.HOLISTIC}, groups_done=[1],
     )
-    merged = Merged(
-        ingest_review(
-            "## Should fix\n- **[S1]** **`ghost.go:1`** — gone\n"
-            "  > ```go\n  > not_in_the_tree()\n  > ```\n",
-            strict=False,
-        ),
-    )
+    merged = Merged(record(finding(
+        "S1", "gone", path="ghost.go", line=1, evidence="not_in_the_tree()",
+    )))
     _run_synthesis_or_fallback(job, state, "", 1, merged, [], 0, cost_so_far, 20.0)
     assert job.verification is not None and job.verification["dropped"] == ["S1"]
     assert "verification-drops" in Path(job.review_file).read_text()
@@ -195,7 +196,7 @@ def test_a_disprove_after_failures_keeps_both(tmp_path, monkeypatch):
     job = _job(tmp_path)
     write_review(
         Path(job.review_file),
-        ingest_review(fixture_text("synthesis_pr", "input.md")),
+        fixture_record("synthesis_pr"),
         fixture_meta("synthesis_pr"),
     )
     state = PipelineState(head_sha=HEAD, group_names=["a"],
@@ -218,7 +219,7 @@ def test_the_disprove_gate_hides_a_falsified_finding(tmp_path, monkeypatch):
     job = _job(tmp_path)
     write_review(
         Path(job.review_file),
-        ingest_review(fixture_text("synthesis_pr", "input.md")),
+        fixture_record("synthesis_pr"),
         fixture_meta("synthesis_pr"),
     )
     from review.phases import PhaseResult
@@ -233,7 +234,7 @@ def test_the_disprove_gate_hides_a_falsified_finding(tmp_path, monkeypatch):
 
 def test_an_unchanged_review_does_not_resurrect_a_falsified_finding(tmp_path):
     applied = apply_disprove(
-        ingest_review(fixture_text("synthesis_pr", "input.md")),
+        fixture_record("synthesis_pr"),
         DisproveArtifact(verdicts=(
             DisproveVerdict("S1", DisproveOutcome.FALSIFIED, "not reachable"),)),
     )

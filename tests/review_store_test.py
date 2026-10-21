@@ -14,37 +14,32 @@ from dataclasses import replace
 
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument, ReviewHeader
-from review.ingest import IngestRejected, ingest_review
 from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
 from review.render import BANNER
 from review.store import archive_prior, clear_prior, read_prior, read_review, update_review, write_review
 from review.types import ReviewMeta, SEVERITIES
 
-from review_record_support import FIXTURES, fixture_meta, fixture_text
+from review_record_support import FIXTURES, fixture_meta, fixture_record
 
-_INPUTS = ("input.md", "raw.md", "before.md")
-# Fixture inputs ingest must refuse. The parity test below skips these; the
-# dedicated reject test asserts each still raises, so a silent skip cannot drop.
-_KNOWN_REJECTED_INPUTS: tuple[tuple[str, str], ...] = ()
+_RECORDS = ("record.json", "raw.json", "before.json")
 
 
-def _all_fixture_inputs() -> list[tuple[str, str]]:
+def _fixture_records() -> list[tuple[str, str]]:
+    """Every record fixture: (case, file name), in directory order."""
     return [
-        (case_dir.name, src)
+        (case_dir.name, name)
         for case_dir in sorted(p for p in FIXTURES.iterdir() if p.is_dir())
-        for src in _INPUTS
-        if (case_dir / src).is_file()
+        for name in _RECORDS
+        if (case_dir / name).is_file()
     ]
 
 
-def _fixture_inputs():
-    reject = set(_KNOWN_REJECTED_INPUTS)
-    return [pair for pair in _all_fixture_inputs() if pair not in reject]
+_FIXTURE_RECORDS = _fixture_records()
 
 
 def _stored(tmp_path, case="synthesis_pr"):
     review_file = tmp_path / "review.md"
-    write_review(review_file, ingest_review(fixture_text(case, "input.md")), fixture_meta(case))
+    write_review(review_file, fixture_record(case), fixture_meta(case))
     return review_file
 
 
@@ -94,12 +89,27 @@ class TestTheStore:
         with pytest.raises(RuntimeError, match="render failed"):
             write_review(
                 tmp_path / "review.md",
-                ingest_review(fixture_text("synthesis_pr", "input.md")),
+                fixture_record("synthesis_pr"),
                 fixture_meta("synthesis_pr"),
             )
         assert not (tmp_path / FILENAME_RECORD).exists()
         assert not (tmp_path / FILENAME_META).exists()
         assert not (tmp_path / "review.md").exists()
+
+    def test_every_record_fixture_is_collected(self):
+        """A glob that matched nothing would leave the parity test below with no rows."""
+        assert len(_FIXTURE_RECORDS) == 10
+
+    @pytest.mark.parametrize("case,name", _FIXTURE_RECORDS)
+    def test_from_stored_matches_the_record_just_written(self, tmp_path, case, name):
+        rec = fixture_record(case, name)
+        meta = fixture_meta(case) if (FIXTURES / case / "meta.json").is_file() else ReviewMeta()
+        review_file = tmp_path / "review.md"
+        write_review(review_file, rec, meta)
+        stored = ReviewDocument.from_stored(read_review(review_file))
+        assert [f.id for f in stored.findings] == [f.id for f in rec.visible]
+        assert stored.open_counts == rec.open_counts
+        assert stored.header == ReviewHeader.from_meta(meta)
 
 
 class TestThePriorRound:
@@ -129,7 +139,7 @@ class TestThePriorRound:
         archive_prior(tmp_path)
         write_review(
             tmp_path / "review.md",
-            ingest_review(fixture_text("synthesis_pr", "input.md")),
+            fixture_record("synthesis_pr"),
             fixture_meta("synthesis_pr"),
         )
         (tmp_path / FILENAME_META).unlink()
@@ -161,29 +171,6 @@ class TestARecordBackedDocument:
         with pytest.raises(TypeError, match="bogus"):
             update_review(_stored(tmp_path), lambda r: calls.append(r) or r, bogus=1)
         assert calls == []
-
-    def test_expected_reject_inputs_are_rejected(self):
-        actual = []
-        for case, src in _all_fixture_inputs():
-            try:
-                ingest_review((FIXTURES / case / src).read_text())
-            except IngestRejected:
-                actual.append((case, src))
-        assert set(actual) == set(_KNOWN_REJECTED_INPUTS)
-        for case, src in _KNOWN_REJECTED_INPUTS:
-            with pytest.raises(IngestRejected):
-                ingest_review((FIXTURES / case / src).read_text())
-
-    @pytest.mark.parametrize("case,src", list(_fixture_inputs()))
-    def test_from_stored_matches_the_record_just_written(self, tmp_path, case, src):
-        record = ingest_review((FIXTURES / case / src).read_text())
-        meta = fixture_meta(case) if (FIXTURES / case / "meta.json").is_file() else ReviewMeta()
-        review_file = tmp_path / "review.md"
-        write_review(review_file, record, meta)
-        stored = ReviewDocument.from_stored(read_review(review_file))
-        assert [f.id for f in stored.findings] == [f.id for f in record.visible]
-        assert stored.open_counts == record.open_counts
-        assert stored.header == ReviewHeader.from_meta(meta)
 
     def test_section_on_a_severity_heading_raises(self, tmp_path):
         doc = ReviewDocument.from_stored(read_review(_stored(tmp_path)))

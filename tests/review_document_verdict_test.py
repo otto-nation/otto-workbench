@@ -15,7 +15,8 @@ import pytest
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument, ReviewHeader
-from review.ingest import ingest_review
+from review.record import Disposition, LedgerLine
+from review.types import PriorDisposition
 from review.verdict import (
     CLEAN_VERDICT, MECHANICAL_NOTE,
     counts_prose, mechanical_verdict,
@@ -23,46 +24,38 @@ from review.verdict import (
 )
 
 from review_document_support import _write
+from review_record_support import finding, record, store_record
 
-def _doc(text: str, *, status=None) -> ReviewDocument:
+
+def _doc(*findings, status=None, **fields) -> ReviewDocument:
     header = ReviewHeader(status=status) if status is not None else ReviewHeader()
-    return ReviewDocument(header=header, record=ingest_review(text, strict=False))
-
-
+    return ReviewDocument(header=header, record=record(*findings, **fields))
 
 
 class TestOpenCounts:
     def test_every_severity_is_counted(self):
         document = _doc(
-            "## Must fix\n"
-            "- **[M1]** path:1 — description\n"
-            "- **[M2]** path:2 — description\n"
-            "## Should fix\n"
-            "- **[S1]** path:3 — description\n"
+            finding("M1", "description", path=""),
+            finding("M2", "description", path=""),
+            finding("S1", "description", path=""),
         )
         assert document.open_counts == {"M": 2, "S": 1, "N": 0, "I": 0}
 
     def test_a_resolved_finding_is_no_longer_counted(self):
-        document = _doc(
-            "## Must fix\n"
-            "- **[M1]** path:1 — active\n"
-            "- ~~**[M2]** path:2 — resolved~~\n"
-        )
+        document = _doc(finding("M1", "active", path=""))
         assert document.open_counts["M"] == 1
 
     def test_the_fix_passes_checkbox_does_not_hide_a_finding(self):
         document = _doc(
-            "## Must fix\n"
-            "- [ ] **[M1]** path:1 — with checkbox\n"
-            "- **[M2]** path:2 — without checkbox\n"
+            finding("M1", "with checkbox", path="", checkbox=True),
+            finding("M2", "without checkbox", path=""),
         )
         assert document.open_counts["M"] == 2
 
     def test_a_finding_the_fix_pass_ticked_off_is_not_open(self):
         document = _doc(
-            "## Must fix\n"
-            "- [x] **[M1]** path:1 — fixed\n"
-            "- [ ] **[M2]** path:2 — still open\n"
+            finding("M1", "fixed", path="", checkbox=True, disposition=Disposition.FIXED),
+            finding("M2", "still open", path="", checkbox=True),
         )
         assert [f.id for f in document.open_findings] == ["M2"]
         assert document.open_counts["M"] == 1
@@ -70,29 +63,26 @@ class TestOpenCounts:
     def test_a_declined_finding_is_still_open(self):
         """Wider than the fix pass's predicate: the review judged this one, so
         it is not work, but nothing fixed it either."""
-        document = _doc(
-            "## Must fix\n"
-            "- **[M1]** path:1 — *(declined — by design)*\n"
-        )
+        document = _doc(finding(
+            "M1", "path:1 —", path="",
+            disposition=Disposition.DECLINED, reason="by design",
+        ))
         assert [f.id for f in document.open_findings] == ["M1"]
         assert document.open_counts["M"] == 1
 
     def test_an_indented_finding_is_counted(self):
-        document = _doc(
-            "## Must fix\n"
-            "  - **[M1]** path:1 — indented under something\n"
-        )
+        document = _doc(finding("M1", "indented under something", path=""))
         assert document.open_counts["M"] == 1
 
     def test_a_finding_line_outside_a_severity_section_is_not_counted(self):
         """The prior-findings ledger declares nothing — it reports on the last
         review, and counting it inflated every tally taken over the whole body."""
         document = _doc(
-            "## Must fix\n"
-            "- **[M1]** path:1 — bug\n"
-            "## Prior findings\n"
-            "- **[M1]** `old.go` — Fixed\n"
-            "- **[S1]** `old.go` — Fixed\n"
+            finding("M1", "bug", path=""),
+            ledger=(
+                LedgerLine("M1", PriorDisposition.FIXED, "old.go"),
+                LedgerLine("S1", PriorDisposition.FIXED, "old.go"),
+            ),
         )
         assert document.open_counts == {"M": 1, "S": 0, "N": 0, "I": 0}
 
@@ -100,9 +90,8 @@ class TestOpenCounts:
         """A tally over the parse counts declarations, not distinct IDs: a
         duplicate is a merge bug to see, not one to hide."""
         document = _doc(
-            "## Must fix\n"
-            "- **[M1]** a.py:1 — one\n"
-            "- **[M1]** b.py:2 — two\n"
+            finding("M1", "one", path="a.py", line=1),
+            finding("M1", "two", path="b.py", line=2),
         )
         assert document.open_counts["M"] == 2
 
@@ -114,15 +103,11 @@ class TestOpenCounts:
         """The reader that has no separate answer for absent, unlike the
         verdict below."""
         assert open_counts(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
-        document = _doc("## Must fix\n- **[M1]** a.py:1 — bug\n")
+        document = _doc(finding("M1", "bug", path="a.py", line=1))
         assert open_counts(document) == document.open_counts
 
     def test_a_reference_to_a_finding_is_not_a_second_finding(self):
-        document = _doc(
-            "## Must fix\n"
-            "- **[M1]** path:1 — bug\n"
-            "  - see [M1] above\n"
-        )
+        document = _doc(finding("M1", "bug\n  - see [M1] above", path=""))
         assert document.open_counts["M"] == 1
 
 
@@ -135,21 +120,19 @@ class TestVerdict:
         ("disapprove", ReviewVerdict.DISAPPROVE),
     ])
     def test_the_verdict_section_is_read_however_it_is_worded(self, prose, expected):
-        document = _doc(f"## Verdict\n{prose} — rationale.\n")
+        document = _doc(verdict=f"{prose} — rationale.")
         assert document.verdict is expected
 
     def test_wording_that_states_no_verdict_states_none(self):
-        assert _doc("## Verdict\nLooks fine to me.\n").verdict is None
+        assert _doc(verdict="Looks fine to me.").verdict is None
 
     def test_a_document_with_no_verdict_section_states_none(self):
-        text = "## Summary\nSome findings.\n## Must fix\n- **[M1]** a:1 — bug\n"
-        assert _doc(text).verdict is None
+        assert _doc(finding("M1", "bug", path=""), summary="Some findings.").verdict is None
 
     def test_a_verdict_word_outside_the_section_is_not_the_verdict(self):
         """Prose elsewhere describes the review; only the Verdict section
         declares one."""
-        text = "## Summary\nI would approve this once the tests land.\n"
-        assert _doc(text).verdict is None
+        assert _doc(summary="I would approve this once the tests land.").verdict is None
 
 
 class TestStatesVerdict:
@@ -173,32 +156,34 @@ class TestStatesVerdict:
 
 class TestResolveVerdict:
     def test_the_counts_speak_when_the_prose_does_not(self):
-        document = _doc("## Should fix\n- **[S1]** a.py:1 — improvement\n")
+        document = _doc(finding("S1", "improvement", path="a.py", line=1))
         assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
 
     def test_prose_cannot_under_report_blocking_findings(self):
         document = _doc(
-            "## Must fix\n- **[M1]** a.py:1 — bug\n\n## Verdict\nApprove — looks fine.\n",
+            finding("M1", "bug", path="a.py", line=1),
+            verdict="Approve — looks fine.",
         )
         assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
 
     def test_counts_cannot_discard_a_stronger_call(self):
         document = _doc(
-            "## Nit\n- **[N1]** a.py:1 — style\n\n## Verdict\nRequest changes — rework it.\n",
+            finding("N1", "style", path="a.py", line=1),
+            verdict="Request changes — rework it.",
         )
         assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
 
     def test_disapprove_survives_any_counts(self):
-        document = _doc("## Verdict\nDisapprove — wrong approach.\n")
+        document = _doc(verdict="Disapprove — wrong approach.")
         assert resolve_review_verdict(document) is ReviewVerdict.DISAPPROVE
 
     def test_a_self_review_is_advisory(self):
-        document = _doc("## Must fix\n- **[M1]** a.py:1 — bug\n")
+        document = _doc(finding("M1", "bug", path="a.py", line=1))
         assert resolve_review_verdict(document, mode=Mode.SELF) is None
 
     def test_a_self_review_still_reports_disapprove(self):
         """Disapprove judges the approach, which holds with or without a PR."""
-        document = _doc("## Verdict\nDisapprove — wrong approach.\n")
+        document = _doc(verdict="Disapprove — wrong approach.")
         assert resolve_review_verdict(document, mode=Mode.SELF) is ReviewVerdict.DISAPPROVE
 
     def test_a_review_that_was_never_written_reaches_no_verdict(self):
@@ -215,13 +200,13 @@ class TestResolveVerdict:
         Counted as a review that found nothing, it was reported as `approve`
         by `--json-summary` and the listing alongside `status: error`.
         """
-        document = _doc("## Summary\nNo group reported.\n", status=ReviewStatus.ERROR)
+        document = _doc(summary="No group reported.", status=ReviewStatus.ERROR)
         assert resolve_review_verdict(document) is None
 
     def test_a_partial_review_still_reaches_one(self):
         """The findings the surviving groups reported are real and still count."""
         document = _doc(
-            "## Must fix\n- **[M1]** a.py:1 — bug\n",
+            finding("M1", "bug", path="a.py", line=1),
             status=ReviewStatus.PARTIAL,
         )
         assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
@@ -229,11 +214,13 @@ class TestResolveVerdict:
     def test_the_counts_come_from_the_document_it_was_handed(self, tmp_path):
         """One document, read once — the verdict cannot be resolved against
         counts from a file the caller re-read in between."""
-        from review_record_support import store_review
         document = ReviewDocument.read(
-            store_review(
+            store_record(
                 tmp_path / "review.md",
-                "## Should fix\n- **[S1]** a.py:1 — improvement\n\n## Verdict\nApprove — fine.\n",
+                record(
+                    finding("S1", "improvement", path="a.py", line=1),
+                    verdict="Approve — fine.",
+                ),
             ),
         )
         assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION

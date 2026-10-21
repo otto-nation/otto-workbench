@@ -87,7 +87,7 @@ def written_review(directory: Path) -> Path:
     than seeding into an existing `reviews_dir`.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    return store_review(directory / "review.md", "## Must fix\n- **[M1]** boom\n")
+    return store_record(directory / "review.md", record(finding("M1", "boom", path="")))
 
 
 def fixture_record(case: str, name: str = "record.json"):

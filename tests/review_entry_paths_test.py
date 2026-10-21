@@ -20,6 +20,7 @@ import review.gc
 
 # cr and reviews_dir are pytest fixtures: imported by name so tests here can request them.
 from review_entry_support import cr, reviews_dir
+from review_record_support import record, seed_record
 
 
 # ── review_file_path ─────────────────────────────────────────────────────────
@@ -54,14 +55,12 @@ def _seed_review(reviews_dir, name, repo="", pr_number="", **meta):
     a review is for comes from meta.json, and a test that spells both the same
     way cannot tell the two apart.
     """
-    d = reviews_dir / name
-    d.mkdir()
-    (d / "review.md").write_text("## Summary\n")
-    if repo or meta:
-        (d / "meta.json").write_text(json.dumps(
-            {"repo": repo, "pr_number": pr_number, **meta},
-        ))
-    return d
+    extra = dict(meta)
+    if repo:
+        extra["repo"] = repo
+    if pr_number != "":
+        extra["pr_number"] = pr_number
+    return seed_record(reviews_dir, name=name, rec=record(), **extra)
 
 
 def test_walk_classifies_every_entry_at_the_root(cr, reviews_dir):

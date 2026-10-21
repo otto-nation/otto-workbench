@@ -32,7 +32,7 @@ if LIB_DIR not in sys.path:
 from conftest import make_ctx  # noqa: E402
 from pr.domains import ReviewStatus  # noqa: E402
 from review.types import ReviewMeta  # noqa: E402
-from review_record_support import store_review, written_review  # noqa: E402
+from review_record_support import record, store_record, written_review  # noqa: E402
 
 import review.completion  # noqa: E402
 import review.invoke  # noqa: E402
@@ -158,9 +158,9 @@ def test_main_exits_nonzero_only_when_no_part_of_the_review_ran(
     recorded a review step that reviewed nothing. A partial run keeps 0: its
     verdict is already withheld and the surviving findings are real.
     """
-    review_file = store_review(
+    review_file = store_record(
         tmp_path / "review.md",
-        "## Summary\nx\n",
+        record(summary="x"),
         ReviewMeta(status=ReviewStatus(status)),
     )
     outcome = review.run.ReviewOutcome("owner/repo", "42", review_file)

@@ -12,7 +12,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import commit_all, git_out, init_repo  # noqa: E402
-from review_record_support import store_review  # noqa: E402
+from review.record import Disposition  # noqa: E402
+from review_record_support import finding, record, store_record  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.publish  # noqa: E402
@@ -21,17 +22,22 @@ import pr.fix  # noqa: E402
 ITEM = batch.model.Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="s",
               worktree="/wt")
 
-# Minimal real review document (grammar from tests/test_review_post.py): one
-# checked finding and one open finding. OPEN_TITLE is the body after the em dash.
+# One checked finding, one open, one declined. OPEN_TITLE is the body after
+# the em dash; DECLINED_TITLE is that body plus the annotation view() adds.
 OPEN_TITLE = "genuinely open"
 DECLINED_TITLE = "not worth it *(declined — tradeoff)*"
-REVIEW_WITH_ONE_OPEN_ONE_CHECKED = (
-    "<!-- head_sha: aaa1111bbb2222 -->\n"
-    "## Summary\nOk\n\n"
-    "## Should fix\n"
-    "- [x] **[S1]** **`file.go:4`** — already fixed by the fix pass\n"
-    "- [ ] **[S2]** **`file.go:5`** — genuinely open\n"
-    "- [ ] **[S3]** **`file.go:6`** — not worth it *(declined — tradeoff)*\n"
+REVIEW_WITH_ONE_OPEN_ONE_CHECKED = record(
+    finding(
+        "S1", "already fixed by the fix pass",
+        path="file.go", line=4, checkbox=True, disposition=Disposition.FIXED,
+    ),
+    finding("S2", OPEN_TITLE, path="file.go", line=5, checkbox=True),
+    finding(
+        "S3", "not worth it",
+        path="file.go", line=6, checkbox=True,
+        disposition=Disposition.DECLINED, reason="tradeoff",
+    ),
+    summary="Ok",
 )
 
 
@@ -119,7 +125,7 @@ def test_comment_items_reads_only_owed_outcomes_and_marks_synthetic_ids(monkeypa
 
 def test_open_findings_reads_unchecked_findings(tmp_path, monkeypatch):
     f = tmp_path / "review.md"
-    store_review(f, REVIEW_WITH_ONE_OPEN_ONE_CHECKED)
+    store_record(f, REVIEW_WITH_ONE_OPEN_ONE_CHECKED)
     monkeypatch.setattr(batch.outcomes.review.paths, "self_review_file_path", lambda repo, branch: f)
     assert batch.outcomes.open_findings(ITEM) == [
         {"severity": "should-fix", "title": OPEN_TITLE, "declined": False},

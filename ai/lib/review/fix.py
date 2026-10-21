@@ -69,6 +69,7 @@ from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
 from review.document import ReviewDocument
+import review.fix_logs
 from review.grammar import UNVERIFIED_TAIL_RE
 from review.record import (
     Disposition, RecordFinding, ReviewRecord, defuse_first_line,
@@ -921,10 +922,14 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
         _report_unpushed(job)
         return 0
 
-    run = fix.engine.run(
-        ReviewFixAdapter(job, findings, violations),
-        trail=trail, verify=fix.verify.run,
-    )
+    review.fix_logs.clear(review_dir)
+    adapter = ReviewFixAdapter(job, findings, violations)
+    # In a `finally` so an interrupted pass keeps its logs too: they are the
+    # record of what it was doing when it stopped.
+    try:
+        run = fix.engine.run(adapter, trail=trail, verify=fix.verify.run)
+    finally:
+        review.fix_logs.keep(review_dir, job.started_at)
     _record_commit(job, run)
     if (run.landed is not None
             and run.landed.status is git.land.CommitStatus.COMMIT_FAILED):

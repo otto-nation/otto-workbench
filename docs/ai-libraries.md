@@ -728,6 +728,21 @@ whether a header SHA covers a commit; `review_title` is the `# ...` line
 derived from the same sidecar. `ReviewDocument` answers sections, findings,
 open counts and the verdict off the record, never by parsing `review.md`.
 
+### review/fix_logs.py
+
+Each fix pass's session logs, kept per pass in its review directory.
+
+A fix pass writes `fix.jsonl` and one `fix_verify-<n>.jsonl` per gate chunk.
+Those names are fixed, so the next pass overwrote them, and the success sweep
+removed them — which is how a gate's "pytest unavailable" could not be traced
+to the guard that refused it. A pass now clears the live names before it runs
+(the pass before kept its copy) and copies them aside when it ends, however it
+ends, into `fix-logs/<started_at>/`. Only the newest `PASSES_KEPT` are kept.
+
+The run's summary reads the copy back, which is how `Usage:` comes to count
+the fix pass and its gate: by the time the summary prints, the sweep has
+removed the live logs it used to read.
+
 ### review/gc.py
 
 Removal of review artifacts, at every lifecycle that removes one.

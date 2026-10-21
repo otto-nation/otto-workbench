@@ -24,7 +24,9 @@ import git.client
 from core.phases import Mode
 from pr.domains import ReviewStatus
 from review.collect import uncommitted_files
-from review.convergence import apply_sticky_skips, change_set
+from review.convergence import (
+    apply_sticky_skips, change_set, held_nits, new_nit_ids, prior_ids,
+)
 from review.document import covers
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
@@ -106,7 +108,9 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
                         status=status)
     sticky = apply_sticky_skips(record, meta.sticky_skips, job.wt_path)
     write_review(Path(job.review_file), sticky.record, replace(
-        meta, sticky_skips=sticky.marks, head_moved_to=_head_moved_to(job),
+        meta, sticky_skips=sticky.marks,
+        held_nits=held_nits(job, incremental=_is_incremental(job)),
+        head_moved_to=_head_moved_to(job),
         dirty_files=_dirty_files(job)))
 
 
@@ -212,6 +216,9 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
 
 
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    # Before post-processing clears the sids: a carried finding is known by
+    # its sid, and only this record still has them (D13).
+    job.new_nits = new_nit_ids(record, prior_ids(job)) if _is_incremental(job) else frozenset()
     # Reconciliation reads the ledger, which post-processing then clears.
     record_prior_findings(job.review_file, job.prior, record, job.wt_path,
                           head_sha=job.pr.head_sha, changed=change_set(job))

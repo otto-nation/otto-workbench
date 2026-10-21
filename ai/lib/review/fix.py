@@ -68,7 +68,7 @@ import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
-from review.convergence import mark_skips
+from review.convergence import fix_work_set, mark_skips
 from review.document import ReviewDocument
 import review.fix_logs
 from review.grammar import UNVERIFIED_TAIL_RE
@@ -941,6 +941,9 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
     # (`review.convergence`). Neither is rendered onto the checklist or buys turns.
     findings = [f for f in doc.open_findings if not f.declined and not f.skipped]
     review_dir = Path(job.artifact_dir)
+    # The nits an incremental round withheld stay open on the page and out of
+    # the work set (D13); a full round's sidecar withholds none.
+    findings = fix_work_set(findings, read_review_meta(review_dir).held_nits)
     violations = _static_items(
         job.static_results, read_review_meta(review_dir).static_declined,
     )

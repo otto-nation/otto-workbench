@@ -68,9 +68,10 @@ from review.prompt import PromptTooLarge
 from review.prompt_sections import _is_incremental
 from review.registry import build_prompt
 from review.phases import PhaseResult, PhaseRunner, _should_disprove
+from review.convergence import drop_out_of_delta_nits, prior_ids
 from review.steps import (
     _build_group_skips, _carry_forward_prior_findings, _identify_incremental_skips,
-    _phase_disprove, _phase_merge, _run_disprove_gate, _run_group_phase,
+    _merge_round, _phase_disprove, _run_disprove_gate, _run_group_phase,
     _run_holistic_phase, _run_synthesis_or_fallback,
 )
 from review.retry import GroupFailure, _has_output, _render_reason, _retry_missing_output
@@ -217,6 +218,8 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
     )
+    if _is_incremental(job):
+        record = drop_out_of_delta_nits(record, job.preflight.delta_files, prior_ids(job)).record
     if _should_disprove(job, disprove):
         record = _phase_disprove(job, record).record
     _post_process_review(job, record)
@@ -391,11 +394,8 @@ def run_multi_phase(
             cost_so_far += group_phase.cost
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
-    merged = _phase_merge(
-        group_outputs[:], failed_groups,
-        group_names=tuple(g.name for g in groups),
-        declinable=declinable_sids(job.prior),
-    )
+    merged = _merge_round(job, group_outputs[:], failed_groups,
+                          tuple(g.name for g in groups))
 
     if carried:
         merged = merged.carry(carried.record)

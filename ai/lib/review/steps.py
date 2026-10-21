@@ -26,7 +26,8 @@ from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Mode, Phase
 from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
-from review.convergence import change_set
+from review.convergence import change_set, drop_out_of_delta_nits, prior_ids
+from review.prompt_sections import _is_incremental
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
@@ -104,6 +105,10 @@ class Merged:
     """
 
     record: ReviewRecord
+    # How many visible findings the groups that ran produced this round, before
+    # anything was carried in. None where nobody counted. Synthesis is skipped
+    # when it is 0 and every prior finding is settled — see `_nothing_new`.
+    fresh: int | None = None
 
     @property
     def text(self) -> str:
@@ -113,10 +118,13 @@ class Merged:
 
     def carry(self, record: ReviewRecord) -> "Merged":
         notes = self.record.severity_sections + record.severity_sections
-        return Merged(replace(
-            append_findings(self.record, record.findings),
-            severity_sections=notes,
-        ))
+        return Merged(
+            replace(
+                append_findings(self.record, record.findings),
+                severity_sections=notes,
+            ),
+            fresh=self.fresh,
+        )
 
     def _for_synthesis(self) -> ReviewRecord:
         # as_group_artifact renders anything other than OPEN/DECLINED as a
@@ -632,7 +640,30 @@ def _phase_merge(
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
             f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
         record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
-    return Merged(record)
+    return Merged(record, fresh=len(record.visible))
+
+
+def _without_out_of_delta_nits(merged: Merged, job: ReviewJob) -> Merged:
+    """*merged* minus its new nits outside the delta, recounted."""
+    filtered = drop_out_of_delta_nits(merged.record, job.preflight.delta_files, prior_ids(job))
+    if not filtered.dropped:
+        return merged
+    return Merged(filtered.record, fresh=len(filtered.record.visible))
+
+
+def _merge_round(
+    job: ReviewJob, group_outputs: list[str], failed_groups: list[GroupFailure],
+    group_names: tuple[str, ...], **merge_kwargs,
+) -> Merged:
+    """This round's group findings as one merge, without new nits outside the delta.
+
+    *merge_kwargs* go to `_phase_merge` untouched, so a merge that grows a
+    keyword does not have to grow this signature as well.
+    """
+    merged = _phase_merge(group_outputs, failed_groups, group_names, **merge_kwargs)
+    if not _is_incremental(job):
+        return merged
+    return _without_out_of_delta_nits(merged, job)
 
 
 @dataclass(frozen=True)

@@ -14,16 +14,19 @@ HEAD past the review that produced it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import core.log
 import git.client
 from core.phases import Mode
 from pr.fix import FixOutcome, ItemOutcome
 from review.collect import uncommitted_files
 from review.document import covers
-from review.record import Disposition, ReviewRecord
-from review.types import Finding, ReviewJob, StickySkip
+from review.record import Disposition, RecordFinding, ReviewRecord
+from review.types import (
+    SEVERITY_IDIOMS, SEVERITY_NIT, Finding, ReviewJob, StickySkip,
+)
 
 
 def change_set(job: ReviewJob) -> frozenset[str] | None:
@@ -114,3 +117,115 @@ def mark_skips(
         marks[anchor_key(f.path, f.line)] = StickySkip(
             blob_of(wt_path, f.path), f.severity, outcome.reason or "needs a person")
     return marks
+
+
+# The severities an incremental round may not add on a file outside its delta
+# (D3), and withholds from the fix pass until a full round when it raised them (D13).
+NIT_SEVERITIES = frozenset({SEVERITY_NIT, SEVERITY_IDIOMS})
+
+
+def prior_ids(job: ReviewJob) -> frozenset[str]:
+    """Every stable id and sid the prior round's findings carry; empty with no prior."""
+    if job.prior is None:
+        return frozenset()
+    found = job.prior.record.findings
+    return frozenset({f.stable_id for f in found} | {f.sid for f in found}) - {""}
+
+
+def is_new_nit(severity: str, sid: str, stable_id: str, prior: frozenset[str]) -> bool:
+    """Whether a finding is a nit or idiom this round raised for the first time.
+
+    New means no carried `sid` and a `stable_id` the prior record does not
+    hold. A re-run group restating a prior nit gives it a fresh ID and no sid
+    but the same stable id — a carry, not a new finding.
+    """
+    return severity in NIT_SEVERITIES and not sid and stable_id not in prior
+
+
+@dataclass(frozen=True)
+class NitFilter:
+    """A record without this round's out-of-delta nits, and the nits it dropped."""
+
+    record: ReviewRecord
+    dropped: tuple[RecordFinding, ...] = ()
+
+
+def _out_of_delta_nit(f: RecordFinding, delta: set[str], prior: frozenset[str]) -> bool:
+    return (is_new_nit(f.severity, f.sid, f.stable_id, prior)
+            and bool(f.path) and f.path not in delta)
+
+
+def drop_out_of_delta_nits(
+    record: ReviewRecord, delta_files: list[str], prior: frozenset[str],
+) -> NitFilter:
+    """*record* without the new nits and idioms it raises on files outside the delta.
+
+    New is `is_new_nit`'s answer against *prior*, the prior round's ids. A
+    group re-runs on any one changed file and is shown the whole group's diff,
+    so without this a round could ask for a rename in a file nobody touched —
+    and the fix pass would make it, moving HEAD again. Must-fix and should-fix
+    are kept wherever they are, and a finding about the whole PR names no file
+    to be outside of.
+    """
+    delta = set(delta_files)
+    dropped = tuple(f for f in record.findings if _out_of_delta_nit(f, delta, prior))
+    if not dropped:
+        return NitFilter(record)
+    files = sorted({f.path for f in dropped})
+    core.log.info(f"Incremental: dropped {len(dropped)} new nit/idiom finding(s) on "
+                  f"files outside the delta ({', '.join(files)})")
+    kept = tuple(f for f in record.findings if not _out_of_delta_nit(f, delta, prior))
+    return NitFilter(replace(record, findings=kept), dropped)
+
+
+def new_nit_ids(record: ReviewRecord, prior: frozenset[str]) -> frozenset[str]:
+    """The stable ids of the nits and idioms *record* raises for the first time.
+
+    Read off the record while it still carries sids — `review.outcome` calls
+    this before `post_process_record` clears them — because a carried finding
+    is known by its sid even when synthesis rewords it into a new stable id. A
+    finding with no stable id is never counted: there is nothing to hold it
+    by, and a path-less carried nit with no identity must not be withheld.
+    """
+    return frozenset(f.stable_id for f in record.findings
+                     if f.stable_id and is_new_nit(f.severity, f.sid, f.stable_id, prior))
+
+
+def held_nits(job: ReviewJob, *, incremental: bool) -> tuple[str, ...]:
+    """What this round's sidecar records as `ReviewMeta.held_nits` (D13).
+
+    On an incremental round, the prior round's held nits plus this round's new
+    ones (`job.new_nits`), so a nit stays held while later incremental rounds
+    carry it. A full round holds nothing, which is how a held nit reaches the
+    fix pass. *incremental* is the caller's to answer
+    (`review.prompt_sections._is_incremental`), which keeps this module clear
+    of `review.collect`.
+    """
+    if not incremental:
+        return ()
+    previous = job.prior.meta.held_nits if job.prior else ()
+    return tuple(sorted({*previous, *job.new_nits}))
+
+
+def fix_work_set(findings: list[Finding], held: tuple[str, ...]) -> list[Finding]:
+    """*findings* without the nits and idioms the review withheld from fix work (D13).
+
+    Every fix commit moves HEAD and re-arms a round, and on the rounds that
+    prompted this most of what was fixed was nits. A nit an incremental round
+    raised, and every later incremental round carried, stays open on the page —
+    reported, counted, there for a person or the next full review — but buys
+    no turns and moves HEAD for nothing. *held* is the review's
+    `ReviewMeta.held_nits`, written at publish, so a resumed or later pass gets
+    the answer the publishing round gave; a full round's is empty and hands
+    every severity. Matched by stable id and severity, never by an empty id.
+    """
+    # ceiling: a carried nit that synthesis rewords takes a new stable id and
+    # so leaves the held set. Upgrade trigger: if a fix commit is seen fixing a
+    # nit an earlier incremental round held, hold by sid as well.
+    kept = set(held)
+    withheld = sorted(f.id for f in findings
+                      if f.severity in NIT_SEVERITIES and f.stable_id and f.stable_id in kept)
+    if withheld:
+        core.log.info(f"Incremental: {len(withheld)} nit/idiom finding(s) left open for a "
+                      f"person or the next full review ({', '.join(withheld)})")
+    return [f for f in findings if f.id not in withheld]

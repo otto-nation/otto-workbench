@@ -275,6 +275,12 @@ class ReviewMeta:
     # invisible to any diff — is read again; over-listing costs a re-read,
     # never a skipped file. Empty on a PR review and on a clean tree.
     dirty_files: tuple[str, ...] = ()
+    # The stable ids of the nits and idioms withheld from fix work (D13): on an
+    # incremental round, the prior round's held nits plus this round's new
+    # ones; empty after a full round, which hands every severity to the fix
+    # pass. Read by `run_fix_pass`, so a resumed or later pass on this review
+    # withholds what the publishing round withheld.
+    held_nits: tuple[str, ...] = ()
     # Two timestamps because a review run has two moments worth recording and
     # they are not the same one. `started_at` is taken when the run begins;
     # `reviewed_at` is stamped only where a run reached its end with a review in
@@ -559,6 +565,11 @@ class ReviewJob:
     # Keep a same-HEAD self-review full even when the working tree gives it a
     # delta — what `pr review --self --force` asks for.
     full_review: bool = False
+    # The stable ids of this round's new nits, read by
+    # `review.outcome._reconcile_and_verify` while the record still carries the
+    # sids that tell a carry from a new finding; `_publish` adds them to
+    # `ReviewMeta.held_nits`. Empty on every path that adds no finding.
+    new_nits: frozenset[str] = frozenset()
     reply_threads: ReplyThreads | None = None
     verification: dict | None = None
     pr_state_data: "PRState | None" = None

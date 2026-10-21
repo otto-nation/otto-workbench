@@ -7,6 +7,17 @@
 - When the user references a broken script, tool, or automation, fix the script's code — don't manually perform the action the script was supposed to automate
 - Implement the practical fix before deep-diving into upstream or third-party source code. Ask before spending time on root-cause analysis in code you don't own
 
+## Upstream Repositories
+
+A repository, framework, or library we do not own is never where a bug is assumed to live. When a dependency misbehaves, the cause is almost always our usage of it — a wrong flag, a misread contract, a stale version, a config the docs say to set — and an upstream issue or PR built on that misreading wastes a maintainer's time and puts our mistake on public record.
+
+- Never open an issue, a PR, or a discussion on a repo outside our own organizations, and never comment on one, without the user's explicit approval for that specific filing. Drafting the text is fine; posting it is the user's call
+- Before even proposing an upstream filing, do the due diligence and present it: read the dependency's documentation and changelog for the version we actually run, check that we are on a current release, search the upstream tracker (open *and* closed) for the same report, and read the upstream source along the failing path
+- Prove it is not our misuse with a minimal reproduction outside our code — a fresh project, the documented invocation, nothing of ours in it. If the bug only reproduces through our code, it is our bug until shown otherwise
+- State, for every way we could be misusing it, what rules that out. "Looks like an upstream bug" with no reproduction and no ruled-out alternatives is a hypothesis about our code, not a finding about theirs
+- When the due diligence finds our misuse — the expected outcome — fix our code and say what the misreading was. Do not file upstream to ask for a clearer error or a doc change unless the user asks for it
+- A workaround for a genuine upstream bug goes in our code with a `// ceiling:` comment naming the upstream issue as its trigger, so it is removed when the fix lands
+
 ## Choosing What to Recommend
 
 The recommendation is the option you would still defend a year from now, not the one with the smallest diff. Size, effort, and "fewest files touched" are costs to state, never reasons to choose.

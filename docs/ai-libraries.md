@@ -6212,6 +6212,41 @@ commands a repo declares, how generated files are queued for rebuild, and
 how stale files are reported.  That split is what lets ``git.land`` import
 this module without pulling in ``config`` or ``pr``.
 
+### git/remote_url.py
+
+A remote URL read the way git reads it, and the remotes a checkout has.
+
+``parse`` answers two questions from one string: which path names the repo, and
+which host serves it. They stay separate fields because they serve different
+callers — ``pr.target`` keys a run on the path and collapses every spelling of
+one repo, while a rendered link and ``gh.owners`` need the host.
+
+* **A remote is hosted per its scheme, never per its authority.** ``file`` is
+  never hosted: git discards a file URL's authority and clones the path.
+* **Credentials and port are dropped from the host.** A token in a remote URL
+  would otherwise be rendered into a review body; the port belongs to git's
+  transport, not to the forge.
+* **A dotless scp authority is an ssh alias**, not a host, and yields ``""``.
+  ``ssh`` says the URL is one of the two forms an ``~/.ssh/config`` alias can
+  appear in (scp-style, ``ssh://``), which is what lets ``gh.owners`` read an
+  unrecognised authority there as an alias for the default host rather than as
+  a forge it has never heard of.
+
+  # ceiling: a dotless scp authority is read as an ~/.ssh/config alias and
+  # yields no host, so a single-label intranet host (ghe:acme/widget) falls
+  # back to public GitHub rather than being honoured. An alias and a
+  # single-label host are the same string here, and only ssh config tells
+  # them apart. Upgrade trigger: anyone whose forge is reachable only by a
+  # single-label name, at which point resolve it with `ssh -G <alias>` and
+  # cache the answer per identity.
+
+Lifted out of ``pr.target`` so a layer below ``pr`` — ``gh.owners`` — reads the
+same answer rather than a second parser; ``pr.target`` delegates to it.
+
+``remotes`` lists ``git remote -v``'s fetch URLs: the same list ``gh`` reads
+when it picks a base repository, ``insteadOf`` rewriting applied, which is the
+reading the owner boundary has to share with the tool it guards.
+
 ### git/replay.py
 
 Whether a recorded commit survived a history rewrite, and as which commit.

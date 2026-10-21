@@ -35,6 +35,17 @@ def _finding_line(text, fid):
     return next(ln for ln in text.split("\n") if f"**[{fid}]**" in ln)
 
 
+# Trailing skip/decline on a rendered finding line. Test-local: grammar no
+# longer exports SKIP_TAIL_RE / DECLINED_TAIL_RE. `.+?` (not `[^)]*`) is what
+# lets a quoted annotation inside a caveat still match at end-of-line.
+_DECLINED_TAIL = re.compile(
+    r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*\s*$", re.IGNORECASE,
+)
+_SKIP_TAIL = re.compile(
+    r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*\s*$",
+)
+
+
 _FINDING_DECL_RE = re.compile(r"^- (\[[ x]\] )?\*\*\[([A-Z]\d+)\]\*\*")
 
 
@@ -470,6 +481,8 @@ class TestApplyOutcomes:
         out = _apply(self.OPEN, [outcome])
         line = _finding_line(out, "M1")
         assert line.startswith("- [x] **[M1]**")
+        assert _SKIP_TAIL.search(line) is None
+        assert _DECLINED_TAIL.search(line) is None
         assert _applied(self.OPEN, [outcome]).finding("M1").disposition is Disposition.FIXED
 
     # passes-at-base: base annotates nothing, so a checkbox-free line is untouched there anyway
@@ -511,6 +524,7 @@ class TestApplyOutcomes:
         out = _apply(self.OPEN, [outcome])
         line = _finding_line(out, "M1")
         assert line.startswith("- [x] **[M1]**")
+        assert _DECLINED_TAIL.search(line) is None
         assert _applied(self.OPEN, [outcome]).finding("M1").disposition is Disposition.FIXED
 
     # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
@@ -523,6 +537,9 @@ class TestApplyOutcomes:
         """
         outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
                            verify_detail="see *(skipped — needs design)*")
+        line = _finding_line(_apply(self.OPEN, [outcome]), "M1")
+        assert line.startswith("- [x] **[M1]**")
+        assert _SKIP_TAIL.search(line) is None
         assert _applied(self.OPEN, [outcome]).finding("M1").disposition is Disposition.FIXED
 
     # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own

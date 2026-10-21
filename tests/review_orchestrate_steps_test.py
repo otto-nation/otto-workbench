@@ -172,7 +172,9 @@ class TestPhaseSynthesis:
 
         assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
         assert result.diagnosis.kind == ro.DiagnosisKind.MECHANICAL_FALLBACK
-        assert "invalid_json" in (result.diagnosis.detail or "")
+        assert result.diagnosis.detail == (
+            "line 1, column 1: invalid_json — Expecting value"
+        )
 
     def test_an_unpromptable_synthesis_falls_back_to_the_merge(
         self, ro, tmp_path, monkeypatch,

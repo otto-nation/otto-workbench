@@ -74,11 +74,21 @@ class TestPhaseOutputPath:
                 str(tmp_path / "review.md"), Phase.DISPROVE, 3
             )
 
+    def test_single_writes_single_json(self, tmp_path):
+        assert review.paths.phase_output_path(
+            str(tmp_path / "review.md"), Phase.SINGLE,
+        ) == str(tmp_path / "single.json")
+
+    def test_synthesis_writes_synthesis_json(self, tmp_path):
+        assert review.paths.phase_output_path(
+            str(tmp_path / "review.md"), Phase.SYNTHESIS,
+        ) == str(tmp_path / "synthesis.json")
+
     def test_a_phase_with_no_artifact_raises(self, tmp_path):
         # Unlike phase_log_path there is no caller-side fallback, and an
         # empty name would derive to the review *directory* — a wrong path
         # that reads as a real one.
-        for phase in (Phase.SYNTHESIS, Phase.SINGLE, Phase.FIX):
+        for phase in (Phase.FIX, Phase.FIX_VERIFY):
             with pytest.raises(ValueError):
                 review.paths.phase_output_path(str(tmp_path / "review.md"), phase)
 

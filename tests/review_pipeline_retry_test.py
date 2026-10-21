@@ -18,6 +18,10 @@ import review.types
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Phase
 import core.log
+from review.record import Disposition, load_record
+from review.store import StoredReview
+from review.types import ReviewMeta
+from review_record_support import finding, record
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
@@ -231,8 +235,8 @@ class TestSingleAgentCleanup:
     def _run(self, tmp_path, monkeypatch):
         job = _make_job(tmp_path)
 
-        def _agent(*_args, **_kwargs) -> int:
-            Path(job.review_file).write_text("## Summary\n")
+        def _agent(inv, *_args, **_kwargs) -> int:
+            Path(inv.output_path).write_text(json.dumps({"summary": "s"}))
             Path(job.session_log).write_text(_result("success") + "\n")
             return 0
 
@@ -397,18 +401,60 @@ class TestCompleteReviewReadsSectionConstants:
         from review.document import SECTION_SUMMARY
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_SUMMARY}\n\nAll good.\n")
-        assert review.outcome.agent_output_complete(str(f))
         assert not review.outcome.is_complete_review(str(f))
 
     def test_verdict_section_marks_a_review_complete(self, tmp_path):
         from review.document import SECTION_VERDICT
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_VERDICT}\n\nApprove.\n")
-        assert review.outcome.agent_output_complete(str(f))
         assert not review.outcome.is_complete_review(str(f))
 
     def test_a_body_with_neither_section_is_incomplete(self, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("- **[M1]** **`x.py:1`** — a finding\n")
-        assert not review.outcome.agent_output_complete(str(f))
         assert not review.outcome.is_complete_review(str(f))
+
+
+def test_the_single_agent_writes_single_json_and_review_md_is_rendered(tmp_path, monkeypatch):
+    job = _make_job(tmp_path)
+    doc = json.dumps({"summary": "Looks fine.",
+                      "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "nit"}]})
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(doc)
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    assert json.loads((tmp_path / "single.json").read_text()) == json.loads(doc)
+    rendered = Path(job.review_file).read_text()
+    assert "## Summary" in rendered and "`a.py:1` — nit" in rendered
+
+
+def test_the_single_agent_keeps_a_decline_only_for_a_prior_finding(tmp_path, monkeypatch):
+    """D19: a single agent's decline is believed only for a finding the prior round held.
+
+    Nits, so the evidence gate (must-fix and should-fix only, verify.py's
+    `_verify_record`) leaves both alone: `wt_path` is `tmp_path`, which holds no
+    `a.py`, and an S finding would be dropped as "file not found" before the
+    decline guard mattered. Only `declinable` decides either disposition.
+    """
+    job = _make_job(tmp_path)
+    job.prior = StoredReview(record(finding("N1", "kept", stable_id="3f9a2c1d")), ReviewMeta())
+    carried = {"id": "N1", "path": "a.py", "line": 1, "body": "kept",
+               "sid": "3f9a2c1d", "declined": "documented"}
+    invented = {**carried, "id": "N2", "body": "invented", "sid": "00000000"}
+    doc = json.dumps({"summary": "s", "findings": [carried, invented]})
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(doc)
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    by_body = {f.body: f.disposition for f in load_record(tmp_path).findings}
+    assert by_body == {"kept": Disposition.DECLINED, "invented": Disposition.OPEN}

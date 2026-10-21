@@ -187,7 +187,7 @@ result = mod.build_prompt(mod.Phase.SINGLE, job, max_turns=15)
 print(result)
 ')
   [[ "$result" == *"PR #99"* ]]
-  [[ "$result" == *"/tmp/review.md"* ]]
+  [[ "$result" == *"/tmp/single.json"* ]]
 }
 
 @test "build_prompt: group includes holistic block when content set" {

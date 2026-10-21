@@ -20,7 +20,6 @@ from datetime import date
 from pathlib import Path
 
 from pr.domains import ReviewStatus
-from review.document import SECTION_SUMMARY, SECTION_VERDICT
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
@@ -98,15 +97,6 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
     write_review(Path(job.review_file), record, _review_meta(
         job, skipped_groups=skipped_groups, total_groups=total_groups, status=status,
     ))
-
-
-def agent_output_complete(review_file: str) -> bool:
-    """Whether an agent's raw output carries a section every complete review has."""
-    path = Path(review_file)
-    if not path.exists():
-        return False
-    content = path.read_text()
-    return f"## {SECTION_SUMMARY}" in content or f"## {SECTION_VERDICT}" in content
 
 
 def is_complete_review(review_file: str) -> bool:

@@ -231,9 +231,9 @@ def test_repair_starts_from_the_overflow_rebuilt_prompt(tmp_path, monkeypatch):
         prompts.append(inv.prompt)
         Path(inv.session_log).write_text("{}\n")
         if "Your output was rejected" in inv.prompt:
-            Path(inv.output_path).write_text(GOOD)
+            Path(inv.output_path).write_text(GOOD_REVIEW_JSON)
         elif inv.prompt == "SMALL":
-            Path(inv.output_path).write_text(BAD)
+            Path(inv.output_path).write_text(BAD_REVIEW_JSON)
         return 0
 
     monkeypatch.setattr(review.pipeline, "build_prompt", fake_build)
@@ -296,8 +296,8 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
     def mock_invoke(inv, throttle=None):
         prompts.append(inv.prompt)
         Path(inv.session_log).write_text("")
-        Path(job.review_file).write_text(
-            GOOD_SYNTH if "Your output was rejected" in inv.prompt else BAD_SYNTH
+        Path(inv.output_path).write_text(
+            GOOD_REVIEW_JSON if "Your output was rejected" in inv.prompt else BAD_REVIEW_JSON
         )
         return 0
 
@@ -307,7 +307,7 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
         review.outcome, "post_process_record",
         lambda record, *a, **k: PostProcessed(record, None),
     )
-    merged = Merged(ingest_review(GOOD, strict=False), GOOD)
+    merged = Merged(ingest_review(GOOD, strict=False))
     result = review.steps._phase_synthesis(job, "", 1, merged)
     assert result.diagnosis is None
     written = Path(job.review_file).read_text()
@@ -363,6 +363,24 @@ def test_an_error_names_its_json_path_or_its_line_and_column():
 
 GOOD_JSON = json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]})
 BAD_JSON = json.dumps({"findings": [{"id": "N1", "path": "a.py:1", "body": "x"}]})
+
+
+GOOD_REVIEW_JSON = json.dumps({
+    "summary": "Looks good.",
+    "findings": [
+        {"id": "N1", "path": "a.py", "line": 1, "body": "x"},
+        {"id": "N2", "path": "b.py", "line": 1, "body": "y"},
+    ],
+    "verdict": "Approve.",
+})
+BAD_REVIEW_JSON = json.dumps({
+    "summary": "Looks good.",
+    "findings": [
+        {"id": "N1", "path": "a.py", "line": 1, "body": "x"},
+        {"id": "N1", "path": "b.py", "line": 1, "body": "y"},
+    ],
+    "verdict": "Approve.",
+})
 
 
 def _rejected(tmp_path, text: str):

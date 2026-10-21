@@ -23,20 +23,23 @@ from pathlib import Path
 import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
-from core.phases import Phase
+from core.phases import Mode, Phase
+from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
-from review.artifacts import GroupArtifact
+from review.artifacts import (
+    GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
+)
 from review.ingest import (
-    IngestError, IngestOutcome, IngestRejected, ingest_with_repair,
+    ArtifactOutcome, IngestError, IngestRejected, ingest_artifact,
     load_artifact,
 )
 from review.merge import merge_records
 from review.outcome import (
     _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
     _post_process_review, _publish, _reconcile_and_verify, _write_clean_review,
-    _write_mechanical_fallback, agent_output_complete,
+    _write_mechanical_fallback,
 )
 from review.paths import phase_log_path, phase_output_path
 from review.phases import (
@@ -48,9 +51,9 @@ from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _with_sids
 from review.reconcile import passed_over
-from review.record import ProseSection, ReviewRecord, SeveritySection
+from review.record import Disposition, ProseSection, ReviewRecord, SeveritySection
 from review.registry import build_prompt
-from review.render import render_body, render_findings
+from review.render import render_body
 from review.retry import GroupFailure, _has_output, _retry_missing_output
 from review.state import (
     PipelineState, _inject_failures_and_status, _write_pipeline_state,
@@ -83,23 +86,53 @@ class DisproveRun:
 
 @dataclass(frozen=True)
 class Merged:
-    """The groups' findings as one record, and the text synthesis is shown.
+    """The groups' findings as one record — what every writer publishes from.
 
-    Two forms of one merge: the record is what every writer publishes from;
-    the text is the record rendered (sids kept, as the merge always kept them)
-    plus anything carried forward, which is what the synthesis prompt quotes.
+    `text` is what the synthesis prompt quotes: the record as the JSON a group
+    writes, so synthesis copies findings, evidence, sids and ledger entries
+    forward structurally rather than translating them. The harness's own
+    sections (`extra`: the `Review gaps` naming each group no agent reviewed)
+    have no field in that JSON, so they follow it as markdown: synthesis must
+    still know which files nobody looked at.
     """
 
     record: ReviewRecord
-    text: str
 
-    def carry(self, record: ReviewRecord, text: str) -> "Merged":
+    @property
+    def text(self) -> str:
+        shown = f"```json\n{example_json(as_group_artifact(self._for_synthesis()))}\n```"
+        harness = render_body(ReviewRecord(extra=self.record.extra)).strip()
+        return f"{shown}\n\n{harness}" if harness else shown
+
+    def carry(self, record: ReviewRecord) -> "Merged":
         notes = self.record.severity_sections + record.severity_sections
-        return Merged(
-            replace(self.record, findings=self.record.findings + record.findings,
-                    severity_sections=notes),
-            f"{self.text}\n{text}" if text else self.text,
+        return Merged(replace(self.record, findings=self.record.findings + record.findings,
+                              severity_sections=notes))
+
+    def _for_synthesis(self) -> ReviewRecord:
+        # as_group_artifact renders anything other than OPEN/DECLINED as a
+        # plain open finding, so those stay off the page synthesis copies.
+        keep = (Disposition.OPEN, Disposition.DECLINED)
+        return replace(
+            self.record,
+            findings=tuple(f for f in self.record.findings if f.disposition in keep),
         )
+
+
+def _restore_held_findings(merged: ReviewRecord, record: ReviewRecord) -> ReviewRecord:
+    """Keep findings synthesis was not shown, unless it also emitted them.
+
+    Match by stable_id so a finding synthesis restated is not duplicated.
+    """
+    keep = (Disposition.OPEN, Disposition.DECLINED)
+    held = tuple(f for f in merged.findings if f.disposition not in keep)
+    if not held:
+        return record
+    emitted = {f.stable_id for f in record.findings if f.stable_id}
+    extra = tuple(f for f in held if f.stable_id not in emitted)
+    if not extra:
+        return record
+    return replace(record, findings=record.findings + extra)
 
 
 def _holistic_skip_reason(
@@ -288,7 +321,10 @@ def _phase_synthesis(
     group_count: int, merged: Merged,
     skipped_groups: int = 0,
 ) -> PhaseResult:
-    Path(job.review_file).write_text("")
+    output = phase_output_path(job.review_file, Phase.SYNTHESIS)
+    # Emptied, not just created: a resumed run's earlier attempt must not read
+    # as this agent having written.
+    Path(output).write_text("")
 
     max_turns = _synthesis_max_turns(merged.record)
     runner = PhaseRunner(job, Phase.SYNTHESIS)
@@ -344,16 +380,14 @@ def _phase_synthesis(
         core.log.blank()
         return result
 
-    # The result is intentionally ignored: success is judged below by
-    # `agent_output_complete`, which also catches output that exists but is partial.
     run_with_overflow_recovery(
         prompt,
         invoke=invoke_logged,
         after=lambda text: _retry_missing_output(
-            invoke, text, synthesis_log, job.review_file,
+            invoke, text, synthesis_log, output,
             label="Synthesis", max_turns=max_turns,
         ),
-        has_output=lambda: _has_output(job.review_file),
+        has_output=lambda: _has_output(output),
         rebuild=lambda ladder: build_prompt(
             Phase.SYNTHESIS, job, max_turns=max_turns,
             ladder_bytes=ladder, **synth_kwargs,
@@ -361,21 +395,28 @@ def _phase_synthesis(
     )
 
     outcome = (
-        ingest_with_repair(
-            job.review_file, sent, invoke,
-            diagnose=lambda: diagnose_missing_output(
-                synthesis_log, job.review_file,
-            ),
+        ingest_artifact(
+            output, sent, invoke, ReviewArtifact,
+            diagnose=lambda: diagnose_missing_output(synthesis_log, output),
         )
-        if agent_output_complete(job.review_file) else IngestOutcome(None)
+        if _has_output(output) else ArtifactOutcome(None)
     )
     if outcome.ok:
+        record = replace(
+            outcome.artifact.to_record(
+                checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
+            ),
+            # `Review gaps` and anything else the harness wrote into the merge
+            # are the run's own sections; an agent has no field to copy them into.
+            extra=merged.record.extra,
+        )
+        record = _restore_held_findings(merged.record, record)
         _post_process_review(
-            job, outcome.record, skipped_groups=skipped_groups, total_groups=group_count,
+            job, record, skipped_groups=skipped_groups, total_groups=group_count,
         )
         diagnosis = None
     else:
-        reason = "no output" if not _has_output(job.review_file) else "incomplete output"
+        reason = "no output" if not _has_output(output) else "incomplete output"
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
         core.log.warn(f"Synthesis agent {detail} — falling back to mechanical merge")
         _write_mechanical_fallback(
@@ -398,7 +439,6 @@ def _carry_forward_prior_findings(
     if prior is None or not skip_indices:
         return None
     carried = ReviewRecord()
-    texts = []
     for i, grp in enumerate(groups, 1):
         if i not in skip_indices:
             continue
@@ -418,10 +458,7 @@ def _carry_forward_prior_findings(
                 findings=carried.findings + scoped.findings,
                 severity_sections=carried.severity_sections + notes,
             )
-            texts.append(
-                f"### Carried forward: {grp.name}\n{render_findings(scoped, sids=True)}"
-            )
-    return Merged(carried, "\n\n".join(texts) + "\n") if texts else None
+    return Merged(carried) if carried.findings else None
 
 
 def _identify_incremental_skips(
@@ -545,7 +582,7 @@ def _phase_merge(
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
             f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
         record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
-    return Merged(record, render_body(record, sids=True, evidence=True))
+    return Merged(record)
 
 
 @dataclass(frozen=True)

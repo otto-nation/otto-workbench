@@ -45,7 +45,7 @@ from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
 from core.phases import Mode, Phase
-from review.paths import phase_log_path
+from review.paths import phase_log_path, phase_output_path
 from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
 from agent.backend import selected_backend
@@ -59,9 +59,9 @@ from review.collect import diff_section_sizes, fetch_branch_metadata
 from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
-from review.artifacts import declinable_sids
 from review.overflow import run_with_overflow_recovery
-from review.ingest import ingest_with_repair
+from review.artifacts import ReviewArtifact, declinable_sids
+from review.ingest import ingest_artifact
 from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
@@ -159,7 +159,8 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     label = f"branch {job.pr.head}" if job.mode == Mode.SELF else f"PR #{job.pr_number} ({job.pr.title})"
     core.log.info(f"Running review agent on {label}...")
     core.log.blank()
-    _touch(job.review_file)
+    output = phase_output_path(job.review_file, Phase.SINGLE)
+    _touch(output)
 
     # `rc` tracks the latest attempt so the failure message below reports the
     # retry's exit code, not the first attempt's. `sent` is the prompt the last
@@ -178,16 +179,16 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         prompt,
         invoke=lambda text: invoke(text, max_turns),
         after=lambda text: _retry_missing_output(
-            invoke, text, job.session_log, job.review_file,
+            invoke, text, job.session_log, output,
             label="Review agent", max_turns=max_turns,
         ),
-        has_output=lambda: _has_output(job.review_file),
+        has_output=lambda: _has_output(output),
         rebuild=lambda ladder: build_prompt(
             Phase.SINGLE, job, max_turns=max_turns, ladder_bytes=ladder,
         ),
     ).diagnosis
 
-    if not _has_output(job.review_file):
+    if not _has_output(output):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
         core.log.error(
             f"review agent {detail} and produced no review file "
@@ -196,11 +197,9 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
 
-    outcome = ingest_with_repair(
-        job.review_file, sent, invoke,
-        diagnose=lambda: diagnose_missing_output(
-            job.session_log, job.review_file,
-        ),
+    outcome = ingest_artifact(
+        output, sent, invoke, ReviewArtifact,
+        diagnose=lambda: diagnose_missing_output(job.session_log, output),
     )
     if not outcome.ok:
         if outcome.diagnosis is not None:
@@ -212,7 +211,10 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
             core.log.error(f"review agent output rejected: {listed}")
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
-    record = outcome.record
+    # A carried decline is believed only for a finding the prior round held (D19).
+    record = outcome.artifact.to_record(
+        checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
+    )
     if _should_disprove(job, disprove):
         record = _phase_disprove(job, record).record
     _post_process_review(job, record)
@@ -394,7 +396,7 @@ def run_multi_phase(
     )
 
     if carried:
-        merged = merged.carry(carried.record, carried.text)
+        merged = merged.carry(carried.record)
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)

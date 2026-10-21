@@ -113,7 +113,6 @@ def test_the_unchanged_review_carries_the_prior_record(tmp_path):
 def test_completeness_is_read_off_the_record(tmp_path):
     job = _job(tmp_path)
     Path(job.review_file).write_text("## Summary\nraw agent text\n")
-    assert review.outcome.agent_output_complete(job.review_file)
     assert not review.outcome.is_complete_review(job.review_file)
 
 
@@ -149,7 +148,6 @@ def test_no_synthesis_paths_reconcile_and_verify(tmp_path, skip_synthesis, cost_
             "  > ```go\n  > not_in_the_tree()\n  > ```\n",
             strict=False,
         ),
-        "unused",
     )
     _run_synthesis_or_fallback(job, state, "", 1, merged, [], 0, cost_so_far, 20.0)
     assert job.verification is not None and job.verification["dropped"] == ["S1"]

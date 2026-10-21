@@ -21,15 +21,17 @@ teardown() {
 
 @test "_phase_merge: renders failure reasons in review gaps" {
   result=$(_py_here <<'PYEOF'
+from review.render import render_body
 result = mod._phase_merge([], [
     mod.GroupFailure("orc-card", mod.Diagnosis(
         mod.DiagnosisKind.AGENT_ERROR, detail="model not available")),
     mod.GroupFailure("svc-card", mod.Diagnosis(
         mod.DiagnosisKind.MAX_TURNS, num_turns=10)),
 ], (), declinable=frozenset())
-print(result.text)
+print(render_body(result.record))
 PYEOF
 )
+  [[ "$result" == *"## Review gaps"* ]]
   [[ "$result" == *"- orc-card: agent error: model not available"* ]]
   [[ "$result" == *"- svc-card: agent hit max turns (10)"* ]]
 }

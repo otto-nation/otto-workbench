@@ -25,7 +25,6 @@ from pathlib import Path
 
 import pytest
 
-from conftest import synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -49,11 +48,12 @@ _GROUP_FINDING = json.dumps({"findings": [{"id": "N1", "path": "a/one.py", "line
 _SCOUT_DOC = json.dumps({"leads": []})
 _HOLISTIC_DOC = json.dumps({"assessment": "ok"})
 _DISPROVE_DOC = json.dumps({"verdicts": []})
-_REVIEW_BODY = synthetic_review()
-_REVIEW_WITH_FINDING = synthetic_review(
-    findings="## Must fix\n- **[M1]** `a/one.py:1` — bug\n",
-    verdict="Request changes",
-)
+_REVIEW_BODY = json.dumps({"summary": "Synthesized.", "verdict": "Approve"})
+_REVIEW_WITH_FINDING = json.dumps({
+    "summary": "Synthesized.",
+    "findings": [{"id": "M1", "path": "a/one.py", "line": 1, "body": "bug"}],
+    "verdict": "Request changes",
+})
 
 _FILES = ("a/one.py", "a/two.py", "b/three.py", "b/four.py")
 _RECOVER_HINT = "Run `pr review --recover`"
@@ -96,7 +96,7 @@ class _Agent:
 
         self._append(log_path, self._ok_record(phase))
         if phase == "synthesis":
-            Path(self.review_file).write_text(self.review_body)
+            Path(invocation.output_path).write_text(self.review_body)
         else:
             docs = {
                 "scout.json": _SCOUT_DOC,
@@ -270,7 +270,9 @@ class TestRecoverAcrossASchemaChange:
         self._downgrade(job, "agent error: model not available")
         # Synthesis rewrites the review file each run, so the section injected
         # from the prior run is not what is under test here.
-        Path(job.review_file).write_text(_REVIEW_BODY)
+        Path(job.review_file).write_text(
+            "# Review\n## Summary\nSynthesized.\n\n## Verdict\nApprove\n",
+        )
 
         review.state._inject_failures_and_status(
             job.review_file, review.state._read_pipeline_state(job),

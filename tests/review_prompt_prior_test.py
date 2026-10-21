@@ -176,11 +176,11 @@ class TestBuildPriorSectionLedger:
             "This is a re-review.",
         )
         assert "This is a re-review." in result
-        assert f"## {SECTION_PRIOR_FINDINGS}" in result
+        assert "`prior_findings`" in result
 
     def test_ledger_asked_for_without_a_context(self):
         result = _build_prior_section(_stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"))
-        assert f"## {SECTION_PRIOR_FINDINGS}" in result
+        assert "`prior_findings`" in result
 
     def test_prior_ledger_not_shown_back_to_the_agent(self):
         # Reconciliation strips it before publishing, but a review from an

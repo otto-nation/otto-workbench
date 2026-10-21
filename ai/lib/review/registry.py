@@ -30,7 +30,10 @@ from review.prompt import (
     _survey_prompt,
 )
 from review.prompt_fit import fit_rendered_prompt
-from review.artifacts import DisproveArtifact, GroupArtifact, HolisticArtifact, ScoutArtifact
+from review.artifacts import (
+    DisproveArtifact, GroupArtifact, HolisticArtifact, ReviewArtifact,
+    ScoutArtifact,
+)
 from review.scout import holistic_context, scout_context
 from review.types import ReviewJob
 
@@ -72,7 +75,7 @@ def _scout_context(scan: ScoutArtifact) -> str:
 
 
 _PHASES: dict[Phase, ReviewPhase] = {
-    Phase.SINGLE: ReviewPhase(build=_prompt_single),
+    Phase.SINGLE: ReviewPhase(build=_prompt_single, artifact=ReviewArtifact),
     Phase.HOLISTIC: ReviewPhase(
         build=_survey_prompt,
         scan=PhaseScan("continuing without it", read=holistic_context),
@@ -84,7 +87,7 @@ _PHASES: dict[Phase, ReviewPhase] = {
         artifact=ScoutArtifact,
     ),
     Phase.GROUP: ReviewPhase(build=_prompt_group, artifact=GroupArtifact),
-    Phase.SYNTHESIS: ReviewPhase(build=_prompt_synthesis),
+    Phase.SYNTHESIS: ReviewPhase(build=_prompt_synthesis, artifact=ReviewArtifact),
     Phase.DISPROVE: ReviewPhase(
         build=_prompt_disprove,
         scan=PhaseScan("keeping all findings"),
@@ -137,13 +140,7 @@ def build_prompt(
     # section, which decides whether the carry fields are shown (D20).
     if entry.artifact is not None:
         extra = {**extra, "artifact": entry.artifact}
-    # A phase that names an artifact of its own is told that path; the rest
-    # write the review document. `group_idx` is the only index in play, and
-    # `phase_output_path` rejects it for a phase that writes one artifact.
-    output = (
-        phase_output_path(job.review_file, phase, extra.get("group_idx"))
-        if spec.output_filename else job.review_file
-    )
+    output = phase_output_path(job.review_file, phase, extra.get("group_idx"))
     template_name = spec.template_for(job.mode)
     model = phase_model(phase, job.model or None, job.config)
     return fit_rendered_prompt(

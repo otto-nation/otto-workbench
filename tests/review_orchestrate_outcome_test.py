@@ -340,29 +340,24 @@ class TestIsCompleteReview:
     def test_has_summary(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("# Review\n\n## Summary\nLooks good.\n")
-        assert ro.agent_output_complete(str(f)) is True
         assert ro.is_complete_review(str(f)) is False
 
     def test_has_verdict(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("# Review\n\n## Verdict\nApprove.\n")
-        assert ro.agent_output_complete(str(f)) is True
         assert ro.is_complete_review(str(f)) is False
 
     def test_missing_headers(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("# Review\n\nSome content without required headers.\n")
-        assert ro.agent_output_complete(str(f)) is False
         assert ro.is_complete_review(str(f)) is False
 
     def test_file_not_exists(self, ro, tmp_path):
-        assert ro.agent_output_complete(str(tmp_path / "nonexistent.md")) is False
         assert ro.is_complete_review(str(tmp_path / "nonexistent.md")) is False
 
     def test_empty_file(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("")
-        assert ro.agent_output_complete(str(f)) is False
         assert ro.is_complete_review(str(f)) is False
 
 

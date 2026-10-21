@@ -2,7 +2,6 @@
 
 import json
 import re
-import string
 import sys
 from pathlib import Path
 
@@ -11,20 +10,13 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review.types import (
-    DISPOSITION_TAIL_PROSE,
-    DISPOSITION_TAIL_PUNCTUATION,
-    FindingRef,
-    PriorDisposition,
-    PriorFinding,
-)
+from review.types import FindingRef, PriorDisposition, PriorFinding
 from core.phases import Phase
 
-from review.grammar import parse_ledger_line
 from review.prompt import build_common_sections
 from core.strict import load_strict
 from review.prompt_prior import (
-    _LEDGER_FIELDS_INSTRUCTION, _LEDGER_INSTRUCTION, _build_unaccounted_section,
+    _LEDGER_FIELDS_INSTRUCTION, _build_unaccounted_section,
 )
 from review.record import LedgerLine
 import review.registry
@@ -63,11 +55,11 @@ class TestUnaccountedPriorSection:
 
     def test_the_section_asks_for_the_ledger_the_parser_reads(self):
         """One owner for the ledger's shape — this section states none of its own."""
-        assert _LEDGER_INSTRUCTION in _build_unaccounted_section([self.M1])
+        assert _LEDGER_FIELDS_INSTRUCTION in _build_unaccounted_section([self.M1])
 
     def test_the_findings_come_before_the_instruction_that_says_above(self):
         section = _build_unaccounted_section([self.M1])
-        assert section.index("</unaccounted_findings>") < section.index(_LEDGER_INSTRUCTION)
+        assert section.index("</unaccounted_findings>") < section.index(_LEDGER_FIELDS_INSTRUCTION)
 
     def test_the_synthesis_prompt_carries_them(self):
         job = _make_job(_make_preflight())
@@ -87,91 +79,10 @@ class TestUnaccountedPriorSection:
         assert built.builder.vars["prior_section"] == ""
 
 
-# ── The ledger instruction and the ledger parser ────────────────────────────
-
-
-class TestLedgerInstructionParses:
-    """The form asked for and the form accepted cannot drift apart.
-
-    The instruction is the only description of the ledger an agent ever reads,
-    and reconciliation is the only thing that reads what it writes back. An
-    example the parser rejects is therefore invisible until a whole re-review's
-    bookkeeping is lost, which is what happened when the verdicts the reviews
-    wrote ended in a full stop and the examples all used an em dash.
-    """
-
-    def _examples(self):
-        """The ledger lines the instruction shows, as an agent would copy them.
-
-        Each is a backticked span whose own backticks are escaped, so the one
-        that closes it is the first that no backslash precedes.
-        """
-        spans = (re.match(r"^- `(.+?)(?<!\\)`", line)
-                 for line in _LEDGER_INSTRUCTION.split("\n"))
-        return [m.group(1).replace("\\`", "`") for m in spans if m]
-
-    def test_the_instruction_shows_every_verdict(self):
-        shown = [e for e in self._examples() for d in PriorDisposition if d.value in e]
-        assert len(shown) == len(list(PriorDisposition))
-
-    def test_every_example_parses_to_the_verdict_it_names(self):
-        examples = self._examples()
-        assert examples, "the instruction shows no ledger lines"
-        for example in examples:
-            entry = parse_ledger_line(example)
-            assert entry, f"the instruction's example does not parse: {example}"
-            assert entry.disposition and entry.disposition.value in example
-
-
-class TestLedgerInstructionNamesEveryBreak:
-    """Every break the parser takes is one the instruction told an agent about.
-
-    The prose has gone stale twice — once omitting the opening bracket and the
-    en dash, once the emphasis characters the same commit added. The prose is
-    built from `DISPOSITION_TAIL_PROSE` rather than retyped, so what this pins
-    is the map itself: a character added to the parser's class with no words for
-    it, or with words the sentence never reaches, fails here instead of leaving
-    the prompt describing a shape the parser has outgrown.
-    """
-
-    def test_every_accepted_character_has_words_for_it(self):
-        for char in DISPOSITION_TAIL_PUNCTUATION:
-            assert DISPOSITION_TAIL_PROSE.get(char), f"no prose names {char!r}"
-
-    def test_the_instruction_says_every_one_of_those_words(self):
-        for char, prose in DISPOSITION_TAIL_PROSE.items():
-            assert prose in _LEDGER_INSTRUCTION, (
-                f"the instruction never says {prose!r}, the wording for {char!r}"
-            )
-
-    def test_a_verdict_broken_by_each_character_parses(self):
-        """The words are only worth pinning if what they describe is accepted."""
-        for char in DISPOSITION_TAIL_PUNCTUATION:
-            line = f"- **[M1]** `handler.go` — {PriorDisposition.FIXED} {char}detail{char}"
-            entry = parse_ledger_line(line)
-            assert entry and entry.disposition is PriorDisposition.FIXED, (
-                f"{char!r} is named in the instruction but breaks no verdict"
-            )
-
-    def test_the_parser_accepts_nothing_the_instruction_does_not_name(self):
-        """Asked of the parser, not of the map it is built from.
-
-        Widening the accepted set by editing the regex rather than the map would
-        satisfy every assertion above — they all iterate the map, so a character
-        missing from it is a character they never ask about. This probes the
-        parser with every punctuation mark instead, so whichever end is widened,
-        an unnamed break fails here.
-        """
-        candidates = set(string.punctuation) | set("—–―−")
-        accepted = {
-            c for c in candidates
-            if PriorDisposition.parse(f"{PriorDisposition.FIXED} {c}detail")
-            is PriorDisposition.FIXED
-        }
-        assert accepted == set(DISPOSITION_TAIL_PROSE), (
-            "the parser breaks a verdict on characters the instruction never "
-            f"names: {sorted(accepted - set(DISPOSITION_TAIL_PROSE))}"
-        )
+def test_the_synthesis_remainder_asks_for_the_json_ledger():
+    section = _build_unaccounted_section([TestUnaccountedPriorSection.M1])
+    assert _LEDGER_FIELDS_INSTRUCTION in section
+    assert "`prior_findings`" in section
 
 
 class TestLedgerFieldsInstruction:

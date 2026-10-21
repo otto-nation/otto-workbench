@@ -89,8 +89,12 @@ class TestPhaseSpecArtifactNames:
         # It writes to the job's log, which the caller may point anywhere.
         assert self._review(Phase.SINGLE).log_filename == ""
 
-    def test_a_phase_that_writes_the_review_file_names_no_artifact(self):
-        for phase in (Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX):
+    def test_single_and_synthesis_write_json_artifacts(self):
+        assert self._review(Phase.SINGLE).output_filename == "single.json"
+        assert self._review(Phase.SYNTHESIS).output_filename == "synthesis.json"
+
+    def test_a_phase_that_writes_no_findings_artifact(self):
+        for phase in (Phase.FIX, Phase.FIX_VERIFY):
             assert self._review(phase).output_filename == ""
 
     def test_a_phase_outside_review_names_no_review_artifact(self):

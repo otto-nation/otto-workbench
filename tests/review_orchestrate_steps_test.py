@@ -1,5 +1,6 @@
 """Synthesis in `review.steps`: the phase itself and the fallback around it."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,13 +16,17 @@ import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
 from review.ingest import ingest_review
+from review.record import Disposition, ProseSection, ReviewRecord, load_record
 from review.steps import Merged
+from review.store import StoredReview
+from review.types import ReviewMeta
 from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
 from review.verify import PostProcessed
+from review_record_support import finding, record
 
 
 def _merged(text: str) -> Merged:
-    return Merged(ingest_review(text, strict=False), text)
+    return Merged(ingest_review(text, strict=False))
 
 
 class TestPhaseSynthesis:
@@ -76,11 +81,10 @@ class TestPhaseSynthesis:
 
     def test_successful_synthesis(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
-        review_content = "# Review: org/repo#42 — test PR\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
-            Path(job.review_file).write_text(review_content)
+            Path(inv.output_path).write_text(
+                json.dumps({"summary": "Looks good.", "verdict": "Approve."}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -88,7 +92,6 @@ class TestPhaseSynthesis:
 
         ro._phase_synthesis(job, "", 3, _merged("merged content"))
 
-        from pathlib import Path
         result = Path(job.review_file).read_text()
         assert "## Summary" in result
         assert FALLBACK_SUMMARY not in result
@@ -100,14 +103,15 @@ class TestPhaseSynthesis:
         is not misread as one — the decision is made where the write happened,
         not by scanning the document for these literals."""
         job = self._make_job(ro, tmp_path)
-        review_content = (
-            "# Review: org/repo#42 — test PR\n\n## Summary\n"
-            f"Looks good. Quotes {MECHANICAL_NOTE} and {FALLBACK_SUMMARY} in prose.\n\n"
-            "## Verdict\nApprove.\n"
-        )
 
         def mock_invoke(inv, **kwargs):
-            Path(job.review_file).write_text(review_content)
+            Path(inv.output_path).write_text(json.dumps({
+                "summary": (
+                    f"Looks good. Quotes {MECHANICAL_NOTE} and "
+                    f"{FALLBACK_SUMMARY} in prose."
+                ),
+                "verdict": "Approve.",
+            }))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -119,10 +123,10 @@ class TestPhaseSynthesis:
 
     def test_cost_comes_from_the_session_log(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
-        review_content = "# Review\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
 
         def mock_invoke(inv, **kwargs):
-            Path(job.review_file).write_text(review_content)
+            Path(inv.output_path).write_text(
+                json.dumps({"summary": "Looks good.", "verdict": "Approve."}))
             Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
             return 0
@@ -162,9 +166,7 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
 
         def mock_invoke(inv, **kwargs):
-            Path(job.review_file).write_text(
-                f"{BANNER}\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
-            )
+            Path(inv.output_path).write_text(BANNER)
             Path(inv.session_log).write_text("")
             return 0
 
@@ -174,10 +176,8 @@ class TestPhaseSynthesis:
         result = ro._phase_synthesis(job, "", 3, _merged(merged))
 
         assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
-        assert result.diagnosis == ro.Diagnosis(
-            ro.DiagnosisKind.MECHANICAL_FALLBACK,
-            detail="line 1: rendered_input — this is a rendered review.md; only agent output is ingested",
-        )
+        assert result.diagnosis.kind == ro.DiagnosisKind.MECHANICAL_FALLBACK
+        assert "invalid_json" in (result.diagnosis.detail or "")
 
     def test_an_unpromptable_synthesis_falls_back_to_the_merge(
         self, ro, tmp_path, monkeypatch,
@@ -216,7 +216,6 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
             Path(inv.session_log).write_text("")
             return 1
 
@@ -229,7 +228,6 @@ class TestPhaseSynthesis:
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
         ro._phase_synthesis(job, "", 3, _merged(merged))
 
-        from pathlib import Path
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
 
@@ -237,9 +235,7 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
-            # Write incomplete review (no Summary or Verdict headers)
-            Path(job.review_file).write_text("# Review\nSome partial content\n")
+            Path(inv.output_path).write_text(json.dumps({"summary": ""}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -248,17 +244,14 @@ class TestPhaseSynthesis:
         merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
         ro._phase_synthesis(job, "", 3, _merged(merged))
 
-        from pathlib import Path
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
 
     def test_transient_error_retries_then_succeeds(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
-        review_content = "# Review: org/repo#42 — test PR\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
         calls = []
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
             calls.append(len(calls))
             if len(calls) == 1:
                 Path(inv.session_log).write_text(
@@ -266,7 +259,8 @@ class TestPhaseSynthesis:
                     '"result":"API Error: Connection to the API was lost (FailedToOpenSocket)."}\n'
                 )
                 return 1
-            Path(job.review_file).write_text(review_content)
+            Path(inv.output_path).write_text(
+                json.dumps({"summary": "Looks good.", "verdict": "Approve."}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -274,7 +268,6 @@ class TestPhaseSynthesis:
 
         ro._phase_synthesis(job, "", 3, _merged("merged content"))
 
-        from pathlib import Path
         result = Path(job.review_file).read_text()
         assert "## Summary" in result
         assert FALLBACK_SUMMARY not in result
@@ -285,7 +278,6 @@ class TestPhaseSynthesis:
         calls = []
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
             calls.append(len(calls))
             Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","is_error":true,'
@@ -302,7 +294,6 @@ class TestPhaseSynthesis:
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
         ro._phase_synthesis(job, "", 3, _merged(merged))
 
-        from pathlib import Path
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
         assert len(calls) == 2
@@ -312,7 +303,6 @@ class TestPhaseSynthesis:
         calls = []
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
             calls.append(len(calls))
             Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","is_error":true,'
@@ -329,10 +319,120 @@ class TestPhaseSynthesis:
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
         ro._phase_synthesis(job, "", 3, _merged(merged))
 
-        from pathlib import Path
         result = Path(job.review_file).read_text()
         assert FALLBACK_SUMMARY in result
         assert len(calls) == 1
+
+    def test_a_synthesis_without_a_summary_gets_a_repair_turn(self, ro, tmp_path, monkeypatch):
+        """X4: an incomplete synthesis is repaired once rather than merged mechanically."""
+        job = self._make_job(ro, tmp_path)
+        docs = iter([json.dumps({"summary": ""}),
+                     json.dumps({"summary": "Looks good.", "verdict": "Approve — clean."})])
+        prompts = []
+
+        def mock_invoke(inv, **kwargs):
+            prompts.append(inv.prompt)
+            Path(inv.output_path).write_text(next(docs))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        result = ro._phase_synthesis(job, "", 3, Merged(ReviewRecord()))
+        assert len(prompts) == 2 and "$.summary" in prompts[1]
+        assert result.diagnosis is None
+        assert "Looks good." in Path(job.review_file).read_text()
+
+    def test_synthesis_keeps_the_review_gaps_section(self, ro, tmp_path, monkeypatch):
+        """X3: a section the harness wrote survives an agent that could not copy it."""
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({"summary": "s", "verdict": "Approve"}))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        gaps = ReviewRecord(extra=(ProseSection("Review gaps", "- g2: agent failed"),))
+        ro._phase_synthesis(job, "", 3, Merged(gaps))
+        assert "## Review gaps" in Path(job.review_file).read_text()
+
+    def test_synthesis_is_shown_the_merged_groups_as_json(self, ro, tmp_path, monkeypatch):
+        seen = {}
+        job = self._make_job(ro, tmp_path)
+        self._patch_pipeline(
+            monkeypatch,
+            build_prompt=lambda *a, **kw: seen.update(kw) or "mock prompt",
+            run_agent=lambda inv, **kw: 1,
+        )
+        merged = Merged(record(finding("N1", "x")))
+        ro._phase_synthesis(job, "", 3, merged)
+        body = seen["merged_content"].removeprefix("```json\n").removesuffix("\n```")
+        assert json.loads(body)["findings"][0]["path"] == "a.py"
+
+    def test_synthesis_is_told_which_groups_failed(self, ro, tmp_path, monkeypatch):
+        """D9: `GroupArtifact` has no field for the gaps, so they follow the JSON as markdown."""
+        seen = {}
+        job = self._make_job(ro, tmp_path)
+        self._patch_pipeline(
+            monkeypatch,
+            build_prompt=lambda *a, **kw: seen.update(kw) or "mock prompt",
+            run_agent=lambda inv, **kw: 1,
+        )
+        gaps = ReviewRecord(extra=(ProseSection("Review gaps", "- svc-card: agent hit max turns (10)"),))
+        ro._phase_synthesis(job, "", 3, Merged(gaps))
+        shown = seen["merged_content"]
+        assert shown.startswith("```json\n")
+        assert "## Review gaps" in shown and "- svc-card: agent hit max turns (10)" in shown
+
+    def test_synthesis_keeps_a_decline_only_for_a_prior_finding(self, ro, tmp_path, monkeypatch):
+        """D19: synthesis copies declines forward, and the runner checks each one.
+
+        Nits, so the evidence gate (must-fix and should-fix only) leaves both
+        alone: `a.py` is not on disk under `wt_path`, and an S finding would be
+        dropped as "file not found" before the decline guard mattered.
+        """
+        job = self._make_job(ro, tmp_path)
+        job.wt_path = str(tmp_path)
+        job.prior = StoredReview(record(finding("N1", "kept", stable_id="3f9a2c1d")), ReviewMeta())
+        carried = {"id": "N1", "path": "a.py", "line": 1, "body": "kept",
+                   "sid": "3f9a2c1d", "declined": "documented"}
+        invented = {**carried, "id": "N2", "body": "invented", "sid": "00000000"}
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({"summary": "s", "findings": [carried, invented]}))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        ro._phase_synthesis(job, "", 3, Merged(ReviewRecord()))
+        by_body = {f.body: f.disposition for f in load_record(tmp_path).findings}
+        assert by_body == {"kept": Disposition.DECLINED, "invented": Disposition.OPEN}
+
+    def test_a_carried_fixed_finding_stays_fixed_through_synthesis(self, ro, tmp_path, monkeypatch):
+        """A FIXED finding the merge carried is not shown to synthesis and stays FIXED.
+
+        `as_group_artifact` would re-open it, so the synthesis view drops it and
+        the runner merges it back by stable_id after the agent writes.
+        """
+        seen = {}
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({"summary": "s", "verdict": "Approve"}))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(
+            monkeypatch,
+            build_prompt=lambda *a, **kw: seen.update(kw) or "mock prompt",
+            run_agent=mock_invoke,
+        )
+        fixed = finding("N1", "already fixed", stable_id="3f9a2c1d",
+                        disposition=Disposition.FIXED)
+        ro._phase_synthesis(job, "", 3, Merged(record(fixed)))
+        loaded = load_record(tmp_path)
+        assert [f.disposition for f in loaded.findings] == [Disposition.FIXED]
+        assert "already fixed" not in seen.get("merged_content", "")
 
 
 class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
@@ -386,8 +486,8 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
             return "mock prompt"
 
         def mock_invoke(inv, **kwargs):
-            Path(job.review_file).write_text(
-                "# Review\n\n## Summary\nok.\n\n## Verdict\nApprove.\n")
+            Path(inv.output_path).write_text(
+                json.dumps({"summary": "ok.", "verdict": "Approve."}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -517,7 +617,6 @@ class TestRunSynthesisOrFallback:
         state = self._make_state(ro)
 
         def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
-            from pathlib import Path
             Path(job.review_file).write_text(
                 "# Review\n\n## Summary\nok\n\n## Verdict\nApprove\n")
             return review.pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"), 1.25)

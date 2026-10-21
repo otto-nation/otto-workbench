@@ -58,7 +58,7 @@ from review.collect import (
 )
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt_prior import (
-    _LEDGER_FIELDS_INSTRUCTION, _build_prior_section, _build_unaccounted_section,
+    _build_prior_section, _build_unaccounted_section,
 )
 from review.prompt_sections import (
     _build_delta_section, _build_env_section,
@@ -68,9 +68,7 @@ from review.prompt_sections import (
 )
 from review.types import PreflightData, PromptVerification, ReviewJob
 
-# The verdicts the prompt offers, written from the same members the review's
-# `## Verdict` line is parsed against — the wording an agent is asked for cannot
-# drift from the wording that is recognised.
+# The verdicts the prompt offers for the artifact's `verdict` field.
 VERDICT_OPTIONS = " / ".join(v.prose for v in ReviewVerdict)
 
 
@@ -784,14 +782,14 @@ _REREVIEW_CTX: dict[Mode, str] = {
         "This is a re-review. Below are the findings from the previous review. "
         "For each prior finding:\n"
         "- If the issue is still present, carry it forward\n"
-        "- If the issue has been fixed, leave it out of the severity sections\n"
+        "- If the issue has been fixed, leave it out of `findings`\n"
         "- Add any new findings from changes since the last review"
     ),
     Mode.SELF: (
         "This is a re-review of your own code. Below are the findings from the previous self-review. "
         "For each prior finding:\n"
         "- If the issue is still present, carry it forward\n"
-        "- If the issue has been fixed, leave it out of the severity sections\n"
+        "- If the issue has been fixed, leave it out of `findings`\n"
         "- Add any new findings from changes since the last review"
     ),
 }
@@ -927,7 +925,6 @@ def _prompt_group(job, common, extra, output):
         job.prior, prior_ctx,
         file_filter=file_filter,
         reply_threads=job.reply_threads,
-        ledger=_LEDGER_FIELDS_INSTRUCTION,
     )
     holistic = extra.get("holistic_content", "")
     b = PromptBuilder(common)

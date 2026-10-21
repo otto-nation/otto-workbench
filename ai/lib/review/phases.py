@@ -102,10 +102,10 @@ def _phase_deliverable(
 ) -> str:
     """The one file `phase` is judged on having written, or "" if it has none.
 
-    A group or scout phase writes a named artifact. `single` and `synthesis`
-    write the review document itself, which `phase_output_path` refuses to
-    name. A fix-shaped phase edits a tracking file and has no single
-    deliverable, so it opts out and any write counts as progress there.
+    A named findings artifact is derived from the phase spec. A phase with no
+    artifact of its own would fall back to the review document. A fix-shaped
+    phase edits a tracking file and has no single deliverable, so it opts out
+    and any write counts as progress there.
     """
     if spec.shape is PhaseShape.FIX:
         return ""
@@ -142,9 +142,8 @@ class PhaseRunner:
         # progress against it, so a scratch probe is not mistaken for the
         # agent having produced its output.
         #
-        # A phase with no artifact of its own writes the review document, and
-        # `phase_output_path` raises rather than deriving a name for it. A
-        # fix-shaped phase edits a tracking file instead and keeps the prior
+        # A phase with no artifact of its own would write the review document.
+        # A fix-shaped phase edits a tracking file instead and keeps the prior
         # any-write behaviour, because its deliverable is not one document.
         self.output_path = _phase_deliverable(job, phase, index, spec)
         self.model = agent.phases.phase_model(phase, job.model, cfg)

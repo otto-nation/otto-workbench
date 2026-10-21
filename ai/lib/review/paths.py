@@ -117,7 +117,7 @@ def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> 
 def phase_output_path(review_file: str, phase: Phase, index: int | None = None) -> str:
     """Where ``phase`` writes its findings artifact for the review at ``review_file``.
 
-    Raises for a phase that writes the review document itself. Unlike a
+    Raises for a phase that writes no findings artifact of its own. Unlike a
     missing log there is nothing to fall back to, and an empty name would
     derive to the review directory — a wrong path that reads as a real one.
     """

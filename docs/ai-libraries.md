@@ -1035,9 +1035,9 @@ Scoping the prior review to a group's files keeps findings that name a line of
 one of those files. A finding without a line is file-level and is not in any
 group's slice.
 
-`_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
-an agent; both sections here interpolate it rather than restating it, and
-`review.reconcile` is what reads the ledger back afterwards.
+`_LEDGER_FIELDS_INSTRUCTION` is the one place the ledger's shape is written
+down for an agent; both sections here interpolate it rather than restating it,
+and the strict reader is what checks it afterwards.
 
 Everything else a prompt says about the PR is `review.prompt_sections`'s, and
 which sections a phase asks for is `review.prompt`'s.

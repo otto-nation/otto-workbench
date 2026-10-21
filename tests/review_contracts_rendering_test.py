@@ -444,10 +444,10 @@ class TestOutputBlockContract:
         ((Phase.SCOUT, Mode.PR), "/tmp/reviews/scout.json", False),
         ((Phase.DISPROVE, Mode.PR), "/tmp/reviews/disprove.json", False),
         ((Phase.GROUP, Mode.PR), "/tmp/reviews/group-1.json", False),
-        ((Phase.SYNTHESIS, Mode.PR), "/tmp/reviews/review.md", False),
-        ((Phase.SYNTHESIS, Mode.SELF), "/tmp/reviews/review.md", False),
-        ((Phase.SINGLE, Mode.PR), "/tmp/reviews/review.md", True),
-        ((Phase.SINGLE, Mode.SELF), "/tmp/reviews/review.md", True),
+        ((Phase.SYNTHESIS, Mode.PR), "/tmp/reviews/synthesis.json", False),
+        ((Phase.SYNTHESIS, Mode.SELF), "/tmp/reviews/synthesis.json", False),
+        ((Phase.SINGLE, Mode.PR), "/tmp/reviews/single.json", True),
+        ((Phase.SINGLE, Mode.SELF), "/tmp/reviews/single.json", True),
     ]
 
     @pytest.mark.parametrize(

@@ -73,17 +73,35 @@ def test_the_shim_runs_the_same_check(github_owners, tmp_path):
     assert "stranger" in result.stderr
 
 
-def test_classify_exits_zero_on_a_wrapped_write():
+def test_classify_answers_write_on_a_wrapped_write(capsys):
     assert cli.owners_check.main(
         ["--classify", "--", "sudo gh issue comment 1 -b x"]) == 0
+    assert capsys.readouterr().out == "write\n"
 
 
-def test_classify_exits_one_on_a_read():
-    assert cli.owners_check.main(["--classify", "--", "gh pr list"]) == 1
+def test_classify_answers_read_and_exits_zero_on_a_read(capsys):
+    assert cli.owners_check.main(["--classify", "--", "gh pr list"]) == 0
+    assert capsys.readouterr().out == "read\n"
 
 
-def test_classify_does_not_load_owners(monkeypatch):
+def test_classify_answers_write_on_an_unparseable_command(capsys):
+    assert cli.owners_check.main(["--classify", "--", "gh pr comment 'unterminated"]) == 0
+    assert capsys.readouterr().out == "write\n"
+
+
+def test_classify_does_not_load_owners(monkeypatch, capsys):
     monkeypatch.setattr(
         gh.owners.OwnerMap, "load",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("classify must not load owners")))
-    assert cli.owners_check.main(["--classify", "--", "gh pr list"]) == 1
+    assert cli.owners_check.main(["--classify", "--", "gh pr list"]) == 0
+    assert capsys.readouterr().out == "read\n"
+
+
+def test_the_shim_classifies_with_one_line_on_stdout():
+    shim = str(REPO_ROOT / "ai" / "bin" / "owners-check")
+    write = run_checked([shim, "--classify", "--", "gh issue close 3"],
+                        env=dict(os.environ), check=False)
+    read = run_checked([shim, "--classify", "--", "gh issue view 3"],
+                       env=dict(os.environ), check=False)
+    assert (write.returncode, write.stdout) == (0, "write\n")
+    assert (read.returncode, read.stdout) == (0, "read\n")

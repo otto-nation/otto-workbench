@@ -314,17 +314,20 @@ _locate_owners_check() {
   return 0
 }
 
-# True unless owners-check --classify answers that $cmd does not write (exit 1).
-# Fails closed: not found, no python3, a crash — all count as a write, because
-# the caller refuses a write and a guard that allowed on its own inability to
-# answer would be no guard. Unbounded here; the Claude Code hook timeout bounds
-# the whole hook.
+# True unless owners-check --classify answers that $cmd does not write: exit 0
+# with exactly `read` on stdout. Fails closed on everything else — not found,
+# no python3, a crash (an uncaught exception also exits 1), unexpected output —
+# because the caller refuses a write and a guard that allowed on its own
+# inability to answer would be no guard. Unbounded here; the Claude Code hook
+# timeout bounds the whole hook.
 _command_classifies_as_write() {
-  local status=0
+  local status=0 answer
   _locate_owners_check
   [[ -n "$OWNERS_CHECK" ]] || return 0
-  "$OWNERS_CHECK" --classify -- "$cmd" >/dev/null 2>&1 || status=$?
-  (( status != 1 ))
+  answer="$("$OWNERS_CHECK" --classify -- "$cmd" 2>/dev/null)" || status=$?
+  answer="${answer#"${answer%%[![:space:]]*}"}"
+  answer="${answer%"${answer##*[![:space:]]}"}"
+  (( status != 0 )) || [[ "$answer" != read ]]
 }
 
 # True when $cmd files a Linear issue or writes to GitHub — what a subagent may

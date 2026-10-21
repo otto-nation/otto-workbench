@@ -6107,6 +6107,14 @@ The publishing gate is deliberately not here. `pr.comments` gates its writes on
 gate inside the transport would make a policy decision invisible to the code
 that owns it.
 
+The owner boundary *is* here, for the opposite reason: it is not a choice any
+call site gets to make. `run` refuses a GitHub write whose target is not one of
+our owners (`gh.owners`) before gh starts, by raising `gh.owners.OwnerBoundaryError`,
+so a write site added tomorrow cannot forget it. Reads are not checked and read
+no config. A GraphQL write names no repository, so `graphql` takes a
+`target_repo` hint and falls back to the cwd's remotes. The user's own
+`WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream write through, with a warning.
+
 Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
 silence reads as a hang, so the waiting is announced. Whether a *failed* call is
@@ -7318,6 +7326,18 @@ so it reaches the ledger through this tool instead.
   unwrap   stdin --output-format json envelope -> reply text, raw teed to a file
   record   parse a teed file and append one ledger record
 
+### cli/boundary.py
+
+How an entry point reports a GitHub write refused at the owner boundary.
+
+`gh.client.run` raises `gh.owners.OwnerBoundaryError` before gh starts, from
+whatever depth the write was made at. An entry point that let it escape would
+print a traceback over the one sentence that says what to do; one that caught
+it as a generic failure would hide that the refusal was policy rather than a
+fault. `reports_owner_boundary` wraps a `main` so the sentence is printed and
+the exit is `OWNER_BOUNDARY_EXIT` — 1, because 2 is already `EXIT_USAGE`.
+The guard protocol (`owners-check`) keeps 2 for a refusal.
+
 ### cli/ci_check.py
 
 Fetch CI run data, classify failures, and output status.
@@ -7482,6 +7502,34 @@ the same reason, so `pr review` is one row rather than three.
 A window selects *commands*, not events: a command whose first event predates the
 window is listed whole when any part of it falls inside, because half a timeline
 answers no question anyone asks of it.
+
+### cli/owners_check.py
+
+``owners-check`` — the owner boundary, as both agent guards reach it.
+
+    owners-check --cwd DIR -- COMMAND
+    owners-check --configured
+    owners-check --classify -- COMMAND
+
+The first form is what ``claude-bash-guard`` and Pi's ``upstream-guard`` run
+once their own shape check says a command writes to GitHub. Exit 0 allows;
+exit 2 refuses, with the reason on stderr; anything else — a crash, a missing
+``python3`` — is read by both guards as a check that could not run, and they
+refuse. COMMAND is the whole command line as one argument; several arguments
+are rejoined with their quoting.
+
+The second form exits 0 when ``github.owners`` names at least one owner and 1
+otherwise, with the reason on stderr. ``ai sync`` prints it as a notice.
+
+The third form prints exactly one line on stdout — ``write`` when COMMAND
+writes to GitHub, ``read`` when it does not — and exits 0 for both. It never
+reads config or cwd: both harnesses' subagent-publishing guards use it as the
+one classifier so they do not keep a bash/TS copy of the write shapes. The
+guards take a command as not publishing only on exit 0 with ``read``; any
+other exit or output counts as a write, so a crash (which also exits 1) can
+never read as an answer. An unparseable command is answered ``write``.
+
+``WORKBENCH_ALLOW_UPSTREAM`` is not read here — see ``gh.owners``.
 
 ### cli/pr.py
 

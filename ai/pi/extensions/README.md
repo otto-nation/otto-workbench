@@ -61,8 +61,9 @@ that cannot outlive the process.
 
 `github-writes.ts` answers whether a command writes to GitHub: an in-process
 superset pre-filter, then `ai/bin/owners-check --classify` for the verdict, so
-the Python classifier stays the only copy of the write shapes. Anything but
-"not a write" from the checker — missing, crashed, timed out — counts as a write.
+the Python classifier stays the only copy of the write shapes. Anything but exit 0
+with exactly `read` on stdout — missing, crashed (an uncaught exception exits
+1), timed out, unexpected output — counts as a write.
 
 ## Overriding one
 

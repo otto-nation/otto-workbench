@@ -50,8 +50,8 @@ export const OWNERS_CHECK = fileURLToPath(new URL("../../../bin/owners-check", i
 /** How long a classify call may take before it counts as a check that could not run. */
 export const CLASSIFY_TIMEOUT_MS = 15_000;
 
-/** owners-check --classify's answer for a command that does not write. */
-const NOT_A_WRITE_STATUS = 1;
+/** owners-check --classify's stdout for a command that does not write (with exit 0). */
+const NOT_A_WRITE_ANSWER = "read";
 
 /** Characters a token is made of; everything else separates tokens. */
 const SEPARATOR = /[^A-Za-z0-9_.-]+/;
@@ -85,10 +85,11 @@ export function mightWriteGithub(command: string): boolean {
 }
 
 /**
- * True unless owners-check --classify answers that COMMAND does not write.
+ * True unless owners-check --classify answers that COMMAND does not write:
+ * exit 0 with exactly `read` on stdout.
  *
- * Fails closed: a missing checker, a missing python3, a crash or a timeout
- * all count as a write, because the callers refuse a write and a guard that
+ * Fails closed: a missing checker, a missing python3, a crash (an uncaught
+ * exception also exits 1), unexpected output or a timeout all count as a write, because the callers refuse a write and a guard that
  * allowed on its own inability to answer would be no guard.
  */
 export function classifiesAsWrite(
@@ -97,10 +98,11 @@ export function classifiesAsWrite(
   timeoutMs: number = CLASSIFY_TIMEOUT_MS,
 ): boolean {
   const run = spawnSync(ownersCheck, ["--classify", "--", command], {
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "ignore"],
+    encoding: "utf8",
     timeout: timeoutMs,
   });
-  return run.status !== NOT_A_WRITE_STATUS;
+  return !(run.status === 0 && typeof run.stdout === "string" && run.stdout.trim() === NOT_A_WRITE_ANSWER);
 }
 
 /** True when COMMAND writes to GitHub: the pre-filter, then the classifier. */

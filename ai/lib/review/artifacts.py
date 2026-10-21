@@ -2,8 +2,8 @@
 
 Scout, holistic, group, single, synthesis and disprove each write one of the
 types here. The prompt shows the agent `example()` as `core.serde.to_dict` writes
-it, followed by `FIELD_NOTES` for every field, so what
-the prompt asks for and what `review.ingest` accepts are one schema. A test
+it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
+what `review.ingest` accepts are one schema. A test
 holds each example to the strict reader and to `problems()`, and holds the
 notes to the fields.
 

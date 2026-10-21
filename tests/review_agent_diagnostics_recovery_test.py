@@ -152,3 +152,8 @@ class TestRecoveringAJsonArtifact:
 def test_json_documents_survive_braces_in_prose():
     text = 'Use {x} here: {"a": 1} then {"b": 2} done {y}'
     assert agent.session._json_documents(text) == ['{"a": 1}', '{"b": 2}']
+
+
+def test_json_documents_reads_fenced_blocks_only():
+    text = 'noise {x}\n```json\n{"a": 1}\n```\nmore {"b": 2}'
+    assert agent.session._json_documents(text) == ['{"a": 1}']

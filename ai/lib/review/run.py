@@ -289,13 +289,23 @@ def _interrupted_pass(review_dir: Path, wt_path: str, flags: ReviewFlags,
     the next pass could never commit them, so they are stashed first. With
     `--fix` the run then picks up at the fix step rather than reviewing an
     unchanged commit again. Never under `--recover`, which finishes a review
-    rather than starting a pass.
+    rather than starting a pass. A failed set-aside while leftovers remain
+    falls through to a normal run. `--force` stashes but does not resume.
     """
     stopped = None if flags.recover else review.convergence.interrupted_fix(review_dir, wt_path)
     if stopped is None:
         return False
-    review.convergence.set_aside_leftovers(review_dir, wt_path, stopped, trail)
-    return flags.fix
+    set_aside = review.convergence.set_aside_leftovers(review_dir, wt_path, stopped, trail)
+    if review.convergence.interrupted_fix(review_dir, wt_path) is not None:
+        core.log.warn(
+            "Could not set the interrupted pass's leftovers aside — "
+            "not resuming; a normal review will run instead")
+        return False
+    # `--force` still stashes (the leftovers would otherwise look like author
+    # edits) but runs a forced review rather than resuming the stopped pass.
+    if getattr(flags, "force", False):
+        return False
+    return bool(flags.fix and (set_aside or not stopped.leftovers))
 
 
 def run_self_review(

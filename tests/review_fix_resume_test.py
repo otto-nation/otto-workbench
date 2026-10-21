@@ -9,12 +9,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import git.client  # noqa: E402
 import review.collect  # noqa: E402
 import review.convergence  # noqa: E402
 import review.invoke  # noqa: E402
 import review.orchestrate  # noqa: E402
 import review.run  # noqa: E402
 from conftest import git_out  # noqa: E402
+from core.proc import CmdResult  # noqa: E402
 from review.convergence import blob_of  # noqa: E402
 from review.paths import read_review_meta, write_review_meta  # noqa: E402
 from review.record import ReviewRecord  # noqa: E402
@@ -41,6 +43,14 @@ def test_an_interruption_counts_only_on_the_head_it_happened_on(tmp_path):
     review_dir, stopped = _stopped(tmp_path, wt, [])
     assert review.convergence.interrupted_fix(review_dir, str(wt)) == stopped
     write_review_meta(review_dir, ReviewMeta(head_sha="e" * 40, fix_interrupted=stopped))
+    assert review.convergence.interrupted_fix(review_dir, str(wt)) == stopped
+    drifted = FixInterruption("e" * 40, {})
+    write_review_meta(review_dir, ReviewMeta(head_sha=head(wt), fix_interrupted=drifted))
+    assert review.convergence.interrupted_fix(review_dir, str(wt)) is None
+    empty = FixInterruption("", {})
+    write_review_meta(review_dir, ReviewMeta(head_sha=head(wt), fix_interrupted=empty))
+    assert review.convergence.interrupted_fix(review_dir, str(wt)) == empty
+    write_review_meta(review_dir, ReviewMeta(head_sha="e" * 40, fix_interrupted=empty))
     assert review.convergence.interrupted_fix(review_dir, str(wt)) is None
 
 
@@ -138,3 +148,73 @@ def test_resume_stamps_the_run_start_so_its_logs_are_counted(tmp_path, monkeypat
     monkeypatch.setattr(review.orchestrate, "_inject_static_analysis_section", lambda j: None)
     review.orchestrate._resume_fix_pass(MagicMock(), SimpleNamespace(track=[], track_all=False), job)
     assert read_review_meta(Path(job.artifact_dir)).started_at == job.started_at
+
+
+def test_glob_special_leftover_is_stashed_as_a_literal_pathspec(tmp_path):
+    wt = _repo(tmp_path)
+    (wt / "[ab].py").write_text("new\n")
+    (wt / "a.py").write_text("operator\n")
+    review_dir, stopped = _stopped(tmp_path, wt, ["[ab].py"])
+    message = review.convergence.set_aside_leftovers(review_dir, str(wt), stopped, None)
+    assert message
+    assert not (wt / "[ab].py").exists()
+    assert (wt / "a.py").read_text() == "operator\n"
+    stashed = git_out(wt, "stash", "show", "--name-only", "--include-untracked")
+    names = {line.strip() for line in stashed.splitlines() if line.strip()}
+    assert "[ab].py" in names
+    assert "a.py" not in names
+
+
+def test_a_failed_set_aside_does_not_resume(tmp_path, monkeypatch):
+    wt = _repo(tmp_path)
+    (wt / "a.py").write_text("x = 2\n")
+    review_dir, stopped = _stopped(tmp_path, wt, ["a.py"])
+    real_run = git.client.run
+
+    def fail_stash(*args, **kwargs):
+        if args and args[0] == "stash":
+            return CmdResult(returncode=1, stderr="index.lock")
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(git.client, "run", fail_stash)
+    flags = SimpleNamespace(fix=True, recover=False)
+    assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
+    assert read_review_meta(review_dir).fix_interrupted == stopped
+    assert (wt / "a.py").read_text() == "x = 2\n"
+
+
+def test_staged_non_leftover_skips_set_aside(tmp_path, capsys):
+    wt = _repo(tmp_path)
+    (wt / "a.py").write_text("x = 2\n")
+    (wt / "e.py").write_text("staged\n")
+    git_out(wt, "add", "e.py")
+    review_dir, stopped = _stopped(tmp_path, wt, ["a.py"])
+    flags = SimpleNamespace(fix=True, recover=False)
+    assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
+    assert (wt / "a.py").read_text() == "x = 2\n"
+    assert read_review_meta(review_dir).fix_interrupted == stopped
+    assert "e.py" in capsys.readouterr().err
+    assert git_out(wt, "stash", "list").strip() == ""
+
+
+def test_ignored_leftovers_are_dropped_not_stashed(tmp_path, capsys):
+    wt = _repo(tmp_path)
+    (wt / ".gitignore").write_text("tmp.py\n")
+    (wt / "tmp.py").write_text("scratch\n")
+    review_dir, stopped = _stopped(tmp_path, wt, ["tmp.py"])
+    message = review.convergence.set_aside_leftovers(review_dir, str(wt), stopped, None)
+    assert message == ""
+    assert (wt / "tmp.py").read_text() == "scratch\n"
+    assert git_out(wt, "stash", "list").strip() == ""
+    assert "tmp.py" in capsys.readouterr().err
+    assert read_review_meta(review_dir).fix_interrupted is None
+
+
+def test_force_with_fix_stashes_but_does_not_resume(tmp_path):
+    wt = _repo(tmp_path)
+    (wt / "a.py").write_text("x = 2\n")
+    review_dir, _ = _stopped(tmp_path, wt, ["a.py"])
+    flags = SimpleNamespace(fix=True, recover=False, force=True)
+    assert review.run._interrupted_pass(review_dir, str(wt), flags, None) is False
+    assert (wt / "a.py").read_text() == "x = 1\n"
+    assert read_review_meta(review_dir).fix_interrupted is None

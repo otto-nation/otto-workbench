@@ -240,7 +240,36 @@ def interrupted_fix(review_dir: Path, wt_path: str) -> FixInterruption | None:
     if stopped is None:
         return None
     live = git.client.head_sha(cwd=wt_path)
-    return stopped if live and covers(meta.head_sha, live) else None
+    anchor = stopped.head_before or meta.head_sha
+    return stopped if live and covers(anchor, live) else None
+
+
+def _stash_ref(wt_path: str) -> str:
+    return git.client.out("rev-parse", "-q", "--verify", "refs/stash", cwd=wt_path)
+
+
+def _clear_interruption(review_dir: Path, extra_dirty: tuple[str, ...] = ()) -> None:
+    meta = read_review_meta(review_dir)
+    write_review_meta(review_dir, replace(
+        meta, fix_interrupted=None,
+        dirty_files=tuple(sorted(set(meta.dirty_files) | set(extra_dirty)))))
+
+
+def _stash_push_failed(
+    review_dir: Path, wt_path: str, stashed, before: str,
+    trail: Trail | None, moved: list[str],
+) -> str:
+    after = _stash_ref(wt_path)
+    if after and after != before:
+        core.log.warn(f"stash push failed but refs/stash moved to {after} — "
+                      f"a partial stash exists; not repeating. {stashed.stderr.strip()}")
+        _clear_interruption(review_dir)
+        tinfo(trail, "fix_leftovers_set_aside", "partial stash; record cleared",
+              data={"stashed": [], "left": moved, "partial": after})
+        return ""
+    core.log.warn(f"could not set the interrupted pass's edits aside: "
+                  f"{stashed.stderr.strip()}")
+    return ""
 
 
 def set_aside_leftovers(
@@ -260,25 +289,38 @@ def set_aside_leftovers(
     them as changed: without `--fix` it reviews them incrementally rather than
     reviewing an unchanged commit in full.
     """
-    untouched = sorted(p for p, blob in stopped.leftovers.items() if blob_of(wt_path, p) == blob)
-    moved = sorted(set(stopped.leftovers) - set(untouched))
+    leftover_paths = sorted(stopped.leftovers)
+    ignored = [p for p in leftover_paths
+               if git.client.ok("check-ignore", "-q", "--", p, cwd=wt_path)]
+    if ignored:
+        core.log.warn(f"{len(ignored)} leftover file(s) are now ignored — dropped: "
+                      f"{', '.join(ignored)}")
+    remaining = {p: blob for p, blob in stopped.leftovers.items() if p not in set(ignored)}
+    untouched = sorted(p for p, blob in remaining.items() if blob_of(wt_path, p) == blob)
+    moved = sorted(set(remaining) - set(untouched))
     if moved:
         core.log.warn(f"{len(moved)} file(s) the interrupted fix pass edited have changed "
                       f"since — left in place: {', '.join(moved)}")
     message = f"pr review: interrupted fix pass at {git.client.abbrev(stopped.head_before)}"
-    if untouched:
-        stashed = git.client.run("stash", "push", "--include-untracked", "-m", message,
-                                 "--", *untouched, cwd=wt_path)
-        if not stashed.ok:
-            core.log.warn(f"could not set the interrupted pass's edits aside: "
-                          f"{stashed.stderr.strip()}")
-            return ""
-        core.log.warn(f"Set the interrupted fix pass's edits aside ({message}): "
-                      f"{', '.join(untouched)} — `git stash pop` restores them")
-    meta = read_review_meta(review_dir)
-    write_review_meta(review_dir, replace(
-        meta, fix_interrupted=None,
-        dirty_files=tuple(sorted(set(meta.dirty_files) | set(untouched)))))
+    if not untouched:
+        _clear_interruption(review_dir)
+        tinfo(trail, "fix_leftovers_set_aside", f"0 stashed, {len(moved)} left",
+              data={"stashed": untouched, "left": moved})
+        return ""
+    staged = git.client.lines("diff", "--cached", "--name-only", cwd=wt_path)
+    foreign = sorted(p for p in staged if p not in set(untouched))
+    if foreign:
+        core.log.warn("not setting interrupted leftovers aside — staged files "
+                      f"outside them: {', '.join(foreign)}")
+        return ""
+    before = _stash_ref(wt_path)
+    stashed = git.client.run("stash", "push", "--include-untracked", "-m", message,
+                             "--", *(f":(literal){p}" for p in untouched), cwd=wt_path)
+    if not stashed.ok:
+        return _stash_push_failed(review_dir, wt_path, stashed, before, trail, moved)
+    core.log.warn(f"Set the interrupted fix pass's edits aside ({message}): "
+                  f"{', '.join(untouched)} — `git stash pop` restores them")
+    _clear_interruption(review_dir, tuple(untouched))
     tinfo(trail, "fix_leftovers_set_aside", f"{len(untouched)} stashed, {len(moved)} left",
           data={"stashed": untouched, "left": moved})
-    return message if untouched else ""
+    return message

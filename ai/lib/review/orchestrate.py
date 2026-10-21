@@ -527,6 +527,9 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     # phase that produced none exits the process rather than returning, so
     # nothing below this line runs for it. Stamping here rather than beside the
     # sidecar write is what makes `reviewed_at` mean reviewed.
+    # On `--resume-fix` this records the resume, not a review: `_resume_fix_pass`
+    # does not re-run the review, so `reviewed_at` is when the interrupted pass
+    # finished rather than when the findings were written.
     stamp_reviewed(Path(job.artifact_dir))
 
     result = {

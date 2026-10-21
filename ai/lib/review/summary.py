@@ -26,6 +26,7 @@ import core.log
 from pr.domains import ReviewVerdict
 from review.paths import aggregate_session_usage, read_review_meta
 import review.fix_logs
+from review.convergence import fix_work_set
 from review.document import ReviewDocument
 from review.state import (
     build_failure_detail, build_recoverable, read_pipeline_status,
@@ -37,6 +38,14 @@ from review.verdict import open_counts, resolve_review_verdict
 
 def _empty_findings() -> dict[str, int]:
     return {**{s.json_key: 0 for s in SEVERITIES}, "total": 0}
+
+
+def _workable_count(doc: ReviewDocument, held: tuple[str, ...]) -> int:
+    """Open findings a fix pass would still take."""
+    return len(fix_work_set(
+        [f for f in doc.open_findings if not f.declined and not f.skipped],
+        held,
+    ))
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,10 @@ class ReviewSummaryReport:
     # (`ReviewMeta.reviewed_through`). Not in `to_json` for the same reason
     # `unpushed_fix_commit` is not: in-process readers take the typed report.
     reviewed_through: str = ""
+    # Open findings a fix pass would still take: not declined, not skipped,
+    # and not in `ReviewMeta.held_nits`. Not in `to_json`; `pr.review_sync`
+    # reads the typed report.
+    workable: int = 0
 
     def to_json(self) -> dict:
         """The summary as the dict written to stdout."""
@@ -171,6 +184,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
         duration_ms=usage.duration_ms,
         unpushed_fix_commit=meta.unpushed_fix_commit,
         reviewed_through=meta.reviewed_through,
+        workable=_workable_count(doc, meta.held_nits),
     )
 
 

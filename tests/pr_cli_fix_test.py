@@ -139,6 +139,73 @@ def test_cmd_fix_skips_review_when_head_is_a_covered_fix_commit(mock_load, mock_
     assert not _calls_containing(mock_call, "review")
 
 
+def _covered_review(**fields) -> pr.domains.ReviewSummary:
+    return pr.domains.ReviewSummary(
+        verdict=pr.domains.ReviewVerdict.APPROVE.value,
+        head_sha="0ldc0mmit", reviewed_through="abc123", updated_at="t",
+        **fields,
+    )
+
+
+def test_worth_running_is_false_when_the_only_open_finding_is_not_workable():
+    """A declined or held finding is open in finding_counts, not work."""
+    review = _covered_review(finding_counts={"N": 1}, workable=0)
+    has_work = cli.pr_commands._review_work(review) > 0
+    assert has_work is False
+    assert cli.pr_commands._worth_running(
+        review, "abc123", has_work=has_work, name="Review") is False
+
+
+def test_worth_running_is_true_for_an_open_must_fix_on_a_covered_head():
+    review = _covered_review(finding_counts={"M": 1}, workable=1)
+    has_work = cli.pr_commands._review_work(review) > 0
+    assert has_work is True
+    assert cli.pr_commands._worth_running(
+        review, "abc123", has_work=has_work, name="Review") is True
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
+@patch("pr.state.load_state")
+def test_cmd_fix_skips_when_the_only_open_finding_is_not_workable(mock_load, mock_call):
+    import pr.state
+    state = pr.state.new_state("repo", "branch", pr_number=1, head_sha="a",
+                               worktree_root="/wt")
+    pr.state.apply(state, _covered_review(finding_counts={"N": 1}, workable=0))
+    mock_load.return_value = state
+    mock_call.return_value = 0
+    rc = _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert rc == 0
+    assert not _calls_containing(mock_call, "review")
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
+@patch("pr.state.load_state")
+def test_cmd_fix_reviews_an_open_must_fix_on_a_covered_head(mock_load, mock_call):
+    import pr.state
+    state = pr.state.new_state("repo", "branch", pr_number=1, head_sha="a",
+                               worktree_root="/wt")
+    pr.state.apply(state, _covered_review(finding_counts={"M": 1}, workable=1))
+    mock_load.return_value = state
+    mock_call.return_value = 0
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_call, "review")
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
+@patch("pr.state.load_state")
+def test_cmd_fix_falls_back_to_finding_counts_when_workable_is_absent(
+        mock_load, mock_call):
+    """An older cache has no workable field; open counts still mean work."""
+    import pr.state
+    state = pr.state.new_state("repo", "branch", pr_number=1, head_sha="a",
+                               worktree_root="/wt")
+    pr.state.apply(state, _covered_review(finding_counts={"N": 1}))
+    mock_load.return_value = state
+    mock_call.return_value = 0
+    _cmd_fix([], make_ctx(head_sha="abc123"))
+    assert _calls_containing(mock_call, "review")
+
+
 # ── A cached "nothing to do" is only about the commit it was measured on ─────
 #
 # `pr fix` decides whether to run its passes from the state file, and used to

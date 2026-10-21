@@ -475,6 +475,11 @@ class ReviewSummary(Domain):
     # `verdict_sha` reads as `head_sha` so an older cache still describes the
     # commit it reviewed.
     reviewed_through: str = ""
+    # Open findings a fix pass would still take. `None` on a state file
+    # written before the field, which `pr fix` reads as the old
+    # `finding_counts` sum so an older cache still re-runs when it listed
+    # open findings. `0` is a measured empty work set, not unknown.
+    workable: int | None = None
     cost_usd: float = 0.0
     total_tokens: int = 0
 

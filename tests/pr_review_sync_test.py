@@ -36,6 +36,7 @@ def test_sync_review_domain_is_the_writer(tmp_path):
         review_type="full",
         head_sha="abc",
         reviewed_through="def",
+        workable=3,
         findings={
             "must_fix": 1, "should_fix": 0, "nit": 2, "idiom": 0, "total": 3,
         },
@@ -61,8 +62,22 @@ def test_sync_review_domain_is_the_writer(tmp_path):
     assert loaded.review.recoverable is False
     assert written.reviewed_through == "def"
     assert loaded.review.reviewed_through == "def"
+    assert written.workable == 3
+    assert loaded.review.workable == 3
     assert loaded.identity.pr_number == 7
     assert loaded.identity.head_sha == "abc"
+
+
+def test_sync_review_domain_stores_reviewed_through_as_is(tmp_path):
+    """The head_sha fallback lives on verdict_sha, not on the write."""
+    ctx = make_ctx(target_dir=tmp_path / "pr" / "feat", worktree_root=tmp_path / "wt")
+    written = sync_review_domain(
+        ctx, ReviewSummaryReport(head_sha="abc", reviewed_through=""),
+    )
+    assert written is not None
+    assert written.reviewed_through == ""
+    assert written.head_sha == "abc"
+    assert written.verdict_sha() == "abc"
 
 
 def test_sync_review_domain_keeps_prior_type_when_the_report_omits_it(tmp_path):

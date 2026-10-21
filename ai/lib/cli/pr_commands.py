@@ -160,6 +160,18 @@ def _worktree_head(wt: Path, fallback: str) -> str:
         return fallback
 
 
+def _review_work(review: pr.domains.ReviewSummary) -> int:
+    """How many findings `pr fix` would still hand a fix pass.
+
+    `ReviewSummary.workable` when the cache recorded it; the old
+    `finding_counts` sum when the field is absent, so a state file written
+    before the field still re-runs rather than looking empty.
+    """
+    if review.workable is None:
+        return sum(review.finding_counts.values())
+    return review.workable
+
+
 def _worth_running(domain: pr.domains.Domain, head_sha: str, *,
                    has_work: bool, name: str) -> bool:
     """Whether to run a pass, given what the cache last said about `domain`.
@@ -221,7 +233,7 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     # to look at, which is the silent miss this gate exists to prevent.
     review_sha = _worktree_head(wt, ctx.head_sha)
 
-    review_findings = sum(state.review.finding_counts.values())
+    review_findings = _review_work(state.review)
     if _worth_running(state.review, review_sha,
                       has_work=review_findings > 0, name="Review"):
         core.log.info(f"Fixing {review_findings} review finding(s)..." if review_findings

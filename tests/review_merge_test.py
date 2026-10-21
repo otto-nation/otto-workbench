@@ -15,14 +15,16 @@ if LIB_DIR not in sys.path:
 
 import review.merge
 from review.document import SECTION_PRIOR_FINDINGS
-from review.ingest import ingest_review
 from review.merge import merge_records
+from review.record import LedgerLine, TriageEntry
 from review.render import render_body
+from review.types import PriorDisposition
+
+from review_record_support import finding, record
 
 
-def _merged_text(paths):
-    records = [ingest_review(Path(p).read_text()) for p in paths if Path(p).exists()]
-    return render_body(merge_records(records), sids=True, evidence=True)
+def _merged_text(*records):
+    return render_body(merge_records(list(records)), sids=True, evidence=True)
 
 
 class TestCleanSectionText:
@@ -65,211 +67,151 @@ class TestCleanSectionText:
 
 
 class TestMergeReviewsCleanup:
-    def test_empty_markers_excluded_from_merge(self, tmp_path):
-        g1 = tmp_path / "group-1.md"
-        g1.write_text(
-            "## File Triage\n"
-            "- `file.go` — reviewed\n"
-            "## Must fix\n"
-            "_None._\n"
-            "## Should fix\n"
-            "_None._\n"
-            "## Nit\n"
-            "- **[N1]** **`file.go:10`** — style issue\n"
-            "## Idioms\n"
-            "_(none)_\n"
-        )
-        result = _merged_text([str(g1)])
+    def test_empty_markers_excluded_from_merge(self):
+        result = _merged_text(record(
+            finding("N1", "style issue", path="file.go", line=10),
+            triage=(TriageEntry("file.go", "reviewed"),),
+        ))
         assert "_None._" not in result
         assert "_(none)_" not in result
         assert "## Must fix" not in result
         assert "## Nit" in result
         assert "[N1]" in result
 
-    def test_separators_excluded_from_merge(self, tmp_path):
-        g1 = tmp_path / "group-1.md"
-        g1.write_text(
-            "## File Triage\n"
-            "- `file.go` — reviewed\n"
-            "## Must fix\n"
-            "---\n"
-            "_None._\n"
-            "---\n"
-            "## Nit\n"
-            "---\n"
-            "- **[N1]** **`file.go:10`** — finding\n"
-            "---\n"
-        )
-        result = _merged_text([str(g1)])
+    def test_separators_excluded_from_merge(self):
+        result = _merged_text(record(
+            finding("N1", "finding", path="file.go", line=10),
+            triage=(TriageEntry("file.go", "reviewed"),),
+        ))
         assert "---" not in result
 
 
 # ── 7. merge_records ────────────────────────────────────────────────────────
 
 
+def _group(*, files: dict[str, str], findings=(), ledger=()):
+    """One group's record: triage for `files` and the given findings/ledger."""
+    return record(
+        *findings,
+        triage=tuple(TriageEntry(path, note) for path, note in files.items()),
+        ledger=ledger,
+    )
+
+
 class TestMergeReviews:
-    def test_merge_different_sections(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — issue a\n"
-            "## Should fix\n_None._\n"
-            "## Nit\n_None._\n"
-            "## Idioms\n_None._\n"
+    def test_merge_different_sections(self):
+        result = _merged_text(
+            _group(files={"a.go": "reviewed"}, findings=(finding("M1", "issue a", path="a.go"),)),
+            _group(
+                files={"b.go": "reviewed"},
+                findings=(finding("S1", "issue b", path="b.go", line=5),),
+            ),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — reviewed\n"
-            "## Must fix\n_None._\n"
-            "## Should fix\n- **[S1]** **`b.go:5`** — issue b\n"
-            "## Nit\n_None._\n"
-            "## Idioms\n_None._\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
         assert "[M1]" in result
         assert "[S1]" in result
         assert "`a.go`" in result
         assert "`b.go`" in result
 
-    def test_merge_duplicate_findings(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — same issue\n"
-            "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+    def test_merge_duplicate_findings(self):
+        g = _group(
+            files={"a.go": "reviewed"},
+            findings=(finding("M1", "same issue", path="a.go"),),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — same issue\n"
-            "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
+        result = _merged_text(g, g)
         # Dedup should remove duplicate finding
         assert result.count("same issue") == 1
 
-    def test_merge_renumbering(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n_None._\n"
-            "## Should fix\n- **[S1]** **`a.go:1`** — issue a\n"
-            "## Nit\n_None._\n## Idioms\n_None._\n"
+    def test_merge_renumbering(self):
+        result = _merged_text(
+            _group(files={"a.go": "reviewed"}, findings=(finding("S1", "issue a", path="a.go"),)),
+            _group(
+                files={"b.go": "reviewed"},
+                findings=(finding("S1", "issue b", path="b.go", line=5),),
+            ),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — reviewed\n"
-            "## Must fix\n_None._\n"
-            "## Should fix\n- **[S1]** **`b.go:5`** — issue b\n"
-            "## Nit\n_None._\n## Idioms\n_None._\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
         assert "[S1]" in result
         assert "[S2]" in result
 
-    def test_merge_keeps_each_groups_references_inside_that_group(self, tmp_path):
+    def test_merge_keeps_each_groups_references_inside_that_group(self):
         # Both groups number from S1, so the second group's IDs get offset past
         # the first's. A reference that did not move with them would name the
         # first group's finding — a different file, a different problem.
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Should fix\n"
-            "- **[S1]** **`a.go:1`** — issue a\n"
-            "- **[S2]** **`a.go:2`** — issue b, related to [S1]\n"
-            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        result = _merged_text(
+            _group(files={"a.go": "reviewed"}, findings=(
+                finding("S1", "issue a", path="a.go"),
+                finding("S2", "issue b, related to [S1]", path="a.go", line=2),
+            )),
+            _group(files={"b.go": "reviewed"}, findings=(
+                finding("S1", "issue c", path="b.go"),
+                finding("S2", "issue d, see S1 above", path="b.go", line=2),
+            )),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — reviewed\n"
-            "## Should fix\n"
-            "- **[S1]** **`b.go:1`** — issue c\n"
-            "- **[S2]** **`b.go:2`** — issue d, see S1 above\n"
-            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
 
         assert "- **[S2]** `a.go:2` — issue b, related to [S1]" in result
         assert "- **[S4]** `b.go:2` — issue d, see S3 above" in result
 
-    def test_merge_carries_a_citation_across_severities(self, tmp_path):
+    def test_merge_carries_a_citation_across_severities(self):
         # Both groups number their Should-fix findings from S1, so the second
         # group's are offset past the first's. The second group's Must-fix
         # finding cites its own group's S1 — left behind, it would name the
         # first group's finding, in a different file about a different problem.
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — issue a\n"
-            "## Should fix\n"
-            "- **[S1]** **`a.go:2`** — issue b\n"
-            "- **[S2]** **`a.go:3`** — issue c\n"
-            "## Nit\n_None._\n## Idioms\n_None._\n"
+        result = _merged_text(
+            _group(files={"a.go": "reviewed"}, findings=(
+                finding("M1", "issue a", path="a.go"),
+                finding("S1", "issue b", path="a.go", line=2),
+                finding("S2", "issue c", path="a.go", line=3),
+            )),
+            _group(files={"b.go": "reviewed"}, findings=(
+                finding("M1", "issue d, blocked on [S1]", path="b.go"),
+                finding("S1", "issue e", path="b.go", line=2),
+                finding("N1", "issue f, see S1 above", path="b.go", line=3),
+            )),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`b.go:1`** — issue d, blocked on [S1]\n"
-            "## Should fix\n- **[S1]** **`b.go:2`** — issue e\n"
-            "## Nit\n- **[N1]** **`b.go:3`** — issue f, see S1 above\n"
-            "## Idioms\n_None._\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
 
         assert "- **[S3]** `b.go:2` — issue e" in result
         assert "- **[M2]** `b.go:1` — issue d, blocked on [S3]" in result
         assert "- **[N1]** `b.go:3` — issue f, see S3 above" in result
 
-    def _misdirected_pair(self, tmp_path, *, citing_first: bool) -> str:
+    def _misdirected_pair(self, *, citing_first: bool) -> str:
         """One group citing a Should-fix ID it never declared, and one declaring one."""
-        citing = tmp_path / "citing.md"
-        citing.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — issue a, blocked on [S1]\n"
-            "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        citing = _group(
+            files={"a.go": "reviewed"},
+            findings=(finding("M1", "issue a, blocked on [S1]", path="a.go"),),
         )
-        declaring = tmp_path / "declaring.md"
-        declaring.write_text(
-            "## File Triage\n- `b.go` — reviewed\n"
-            "## Must fix\n_None._\n"
-            "## Should fix\n- **[S1]** **`b.go:2`** — unrelated issue in group two\n"
-            "## Nit\n_None._\n## Idioms\n_None._\n"
+        declaring = _group(
+            files={"b.go": "reviewed"},
+            findings=(finding("S1", "unrelated issue in group two", path="b.go", line=2),),
         )
         order = (citing, declaring) if citing_first else (declaring, citing)
-        return _merged_text([str(path) for path in order])
+        return _merged_text(*order)
 
-    def test_merge_does_not_point_a_dangling_reference_at_another_group(self, tmp_path):
+    def test_merge_does_not_point_a_dangling_reference_at_another_group(self):
         # No group can name another group's finding — every group numbers from
         # [S1] over its own files alone. Resolving this citation through the
         # pooled map lands the reader on a real finding about a different file.
-        result = self._misdirected_pair(tmp_path, citing_first=True)
+        result = self._misdirected_pair(citing_first=True)
         assert "- **[M1]** `a.go:1` — issue a, blocked on [removed]" in result
         assert "- **[S1]** `b.go:2` — unrelated issue in group two" in result
 
-    def test_a_dangling_reference_is_marked_whichever_group_merges_first(self, tmp_path):
-        result = self._misdirected_pair(tmp_path, citing_first=False)
+    def test_a_dangling_reference_is_marked_whichever_group_merges_first(self):
+        result = self._misdirected_pair(citing_first=False)
         assert "- **[M1]** `a.go:1` — issue a, blocked on [removed]" in result
         assert "- **[S1]** `b.go:2` — unrelated issue in group two" in result
 
-    def test_merge_clears_a_gap_the_first_group_left(self, tmp_path):
+    def test_merge_clears_a_gap_the_first_group_left(self):
         # Nothing closes a group's gaps before the merge, so offsetting by the
         # number of findings would drop the second group's S1 onto the first
         # group's S3 — two findings, one ID, and dedup keeps both.
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Should fix\n"
-            "- **[S1]** **`a.go:1`** — issue a\n"
-            "- **[S3]** **`a.go:3`** — issue b\n"
-            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        result = _merged_text(
+            _group(files={"a.go": "reviewed"}, findings=(
+                finding("S1", "issue a", path="a.go"),
+                finding("S3", "issue b", path="a.go", line=3),
+            )),
+            _group(
+                files={"b.go": "reviewed"},
+                findings=(finding("S1", "issue c", path="b.go"),),
+            ),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — reviewed\n"
-            "## Should fix\n- **[S1]** **`b.go:1`** — issue c\n"
-            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
 
         # Offsetting by the count would put issue c on S3, where issue b already
         # sits; the gaps close afterwards, so all three come out distinct.
@@ -277,168 +219,132 @@ class TestMergeReviews:
         assert "- **[S2]** `a.go:3` — issue b" in result
         assert "- **[S3]** `b.go:1` — issue c" in result
 
-    def test_merge_unions_prior_findings_ledgers(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — new issue\n"
-            f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Fixed\n"
+    def test_merge_unions_prior_findings_ledgers(self):
+        result = _merged_text(
+            _group(
+                files={"a.go": "reviewed"},
+                findings=(finding("M1", "new issue", path="a.go"),),
+                ledger=(LedgerLine("M3", PriorDisposition.FIXED, "a.go"),),
+            ),
+            _group(
+                files={"b.go": "reviewed"},
+                ledger=(
+                    LedgerLine("M3", PriorDisposition.FIXED, "a.go"),
+                    LedgerLine("S2", PriorDisposition.STILL_OPEN, "b.go"),
+                ),
+            ),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — reviewed\n"
-            f"## {SECTION_PRIOR_FINDINGS}\n"
-            "- **[M3]** `a.go` — Fixed\n"
-            "- **[S2]** `b.go` — Still open\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
         assert result.count("**[M3]** `a.go` — Fixed") == 1
         assert "**[S2]** `b.go` — Still open" in result
         # Ledger IDs name the prior review, so the merge must not renumber them
         # into the sequence it assigns this review's findings.
         assert "- **[M1]** `a.go:1` — new issue" in result
 
-    def test_merge_keeps_the_still_open_verdict_when_groups_disagree(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Fixed\n"
+    def test_merge_keeps_the_still_open_verdict_when_groups_disagree(self):
+        result = _merged_text(
+            _group(
+                files={"a.go": "reviewed"},
+                ledger=(LedgerLine("M3", PriorDisposition.FIXED, "a.go"),),
+            ),
+            _group(
+                files={"a.go": "reviewed"},
+                ledger=(LedgerLine("M3", PriorDisposition.STILL_OPEN, "a.go"),),
+            ),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Still open\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
         assert "**[M3]** `a.go` — Still open" in result
         assert "Fixed" not in result
 
-    def _ledger_pair(self, tmp_path, first: str, second: str) -> str:
+    def _ledger_pair(self, first: PriorDisposition, second: PriorDisposition) -> str:
         """Two groups dispositioning the same prior finding, merged."""
-        paths = []
-        for name, verdict in (("g1", first), ("g2", second)):
-            path = tmp_path / f"{name}.md"
-            path.write_text(
-                "## File Triage\n- `a.go` — reviewed\n"
-                f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — {verdict}\n"
+        return _merged_text(*(
+            _group(
+                files={"a.go": "reviewed"},
+                ledger=(LedgerLine("M3", verdict, "a.go"),),
             )
-            paths.append(str(path))
-        return _merged_text(paths)
+            for verdict in (first, second)
+        ))
 
-    def test_merge_does_not_reopen_a_declined_finding(self, tmp_path):
+    def test_merge_does_not_reopen_a_declined_finding(self):
         """Still-open used to overwrite whatever was kept, declined included."""
-        result = self._ledger_pair(tmp_path, "Declined", "Still open")
+        result = self._ledger_pair(PriorDisposition.DECLINED, PriorDisposition.STILL_OPEN)
         assert "**[M3]** `a.go` — Declined" in result
         assert "Still open" not in result
 
     def test_merge_lets_a_decline_settle_a_finding_another_group_still_sees(
-        self, tmp_path,
+        self,
     ):
-        result = self._ledger_pair(tmp_path, "Still open", "Declined")
+        result = self._ledger_pair(PriorDisposition.STILL_OPEN, PriorDisposition.DECLINED)
         assert "**[M3]** `a.go` — Declined" in result
         assert "Still open" not in result
 
-    def test_merge_omits_ledger_when_no_group_has_one(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
-        )
-        assert SECTION_PRIOR_FINDINGS not in _merged_text([str(g1)])
+    def test_merge_omits_ledger_when_no_group_has_one(self):
+        result = _merged_text(_group(
+            files={"a.go": "reviewed"},
+            findings=(finding("M1", "issue", path="a.go"),),
+        ))
+        assert SECTION_PRIOR_FINDINGS not in result
 
-    def test_missing_file_skipped(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — reviewed\n"
-            "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
-            "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
-        )
-        result = _merged_text([str(g1), str(tmp_path / "missing.md")])
+    def test_missing_file_skipped(self):
+        result = _merged_text(_group(
+            files={"a.go": "reviewed"},
+            findings=(finding("M1", "issue", path="a.go"),),
+        ))
         assert "[M1]" in result
 
-    def test_empty_group_file(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text("")
-        result = _merged_text([str(g1)])
+    def test_empty_group_file(self):
+        result = _merged_text(record())
         assert "## File Triage" in result
 
-    def test_merge_strips_narrative_from_triage(self, tmp_path):
+    def test_merge_strips_narrative_from_triage(self):
         # An agent that writes prose under File Triage instead of entries: the
         # entries survive the merge, the essay around them does not.
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n"
-            "- `a.go` — Tier 2\n"
-            "\n"
-            "Both files are straightforward. No issues found.\n"
-            "\n"
-            "### a.go\n"
-            "\n"
-            "This file has a simple handler implementation.\n"
-        )
-        result = _merged_text([str(g1)])
+        result = _merged_text(record(triage=(
+            TriageEntry("a.go", "Tier 2"),
+            TriageEntry("", "Both files are straightforward. No issues found."),
+            TriageEntry("", "### a.go"),
+            TriageEntry("", "This file has a simple handler implementation."),
+        )))
         assert "`a.go`" in result
         assert "Both files" not in result
         assert "### a.go" not in result
 
-    def test_merge_dedups_triage_across_groups(self, tmp_path):
+    def test_merge_dedups_triage_across_groups(self):
         # Two groups can share a file, and each triages every file it was given.
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `shared.go` — Tier 1\n- `a.go` — Tier 2\n"
+        result = _merged_text(
+            record(triage=(TriageEntry("shared.go", "Tier 1"), TriageEntry("a.go", "Tier 2"))),
+            record(triage=(TriageEntry("shared.go", "Tier 1"), TriageEntry("b.go", "Tier 2"))),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `shared.go` — Tier 1\n- `b.go` — Tier 2\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
         assert result.count("`shared.go`") == 1
 
-    def test_merge_strips_separators_from_triage(self, tmp_path):
-        g1 = tmp_path / "g1.md"
-        g1.write_text("## File Triage\n- `a.go` — Tier 2\n")
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — Tier 2\n"
-            "\n---\n\nSome paragraph about the files above.\n"
+    def test_merge_strips_separators_from_triage(self):
+        result = _merged_text(
+            record(triage=(TriageEntry("a.go", "Tier 2"),)),
+            record(triage=(
+                TriageEntry("b.go", "Tier 2"),
+                TriageEntry("", "---"),
+                TriageEntry("", "Some paragraph about the files above."),
+            )),
         )
-        assert "---" not in _merged_text([str(g1), str(g2)])
+        assert "---" not in result
 
-    def test_merge_closes_the_gap_a_cross_group_duplicate_leaves(self, tmp_path):
+    def test_merge_closes_the_gap_a_cross_group_duplicate_leaves(self):
         # Four declarations, one of them a duplicate of another group's. The
         # survivor keeps its place and the numbers close up behind the copy.
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## File Triage\n- `a.go` — Tier 2\n"
-            "## Must fix\n"
-            "- **[M1]** **`a.go:10`** — First unique finding\n"
-            "- **[M2]** **`a.go:20`** — Duplicate finding across groups\n"
+        result = _merged_text(
+            _group(files={"a.go": "Tier 2"}, findings=(
+                finding("M1", "First unique finding", path="a.go", line=10),
+                finding("M2", "Duplicate finding across groups", path="a.go", line=20),
+            )),
+            _group(files={"b.go": "Tier 2"}, findings=(
+                finding("M1", "Duplicate finding across groups", path="a.go", line=20),
+                finding("M2", "Second unique finding", path="b.go", line=5),
+            )),
         )
-        g2 = tmp_path / "g2.md"
-        g2.write_text(
-            "## File Triage\n- `b.go` — Tier 2\n"
-            "## Must fix\n"
-            "- **[M1]** **`a.go:20`** — Duplicate finding across groups\n"
-            "- **[M2]** **`b.go:5`** — Second unique finding\n"
-        )
-        result = _merged_text([str(g1), str(g2)])
         assert result.count("Duplicate finding") == 1
         assert "[M1]" in result
         assert "[M2]" in result
         assert "[M3]" in result
         assert "[M4]" not in result
-
-    def test_merge_reads_section_headers_case_insensitively(self, tmp_path):
-        # Agents write the headings the prompt names, in whatever case they
-        # felt like typing; the section a heading opens is the same either way.
-        g1 = tmp_path / "g1.md"
-        g1.write_text(
-            "## Must Fix\n- **[M1]** **`a.go:10`** — bug\n"
-            "## NIT\n- **[N1]** **`a.go:20`** — style\n"
-        )
-        result = _merged_text([str(g1)])
-        assert "[M1]" in result
-        assert "[N1]" in result
 
 
 class TestReaderToleranceForIncrementalWrites:
@@ -446,37 +352,31 @@ class TestReaderToleranceForIncrementalWrites:
     empty doc, and a rewrite of the file between calls. Do not tighten this.
     """
 
-    _SHORT = (
-        "## File Triage\n- `a.py` — Tier 2\n"
-        "## Must fix\n- **[M1]** **`a.py:1`** — issue\n"
+    _SHORT = record(
+        finding("M1", "issue"),
+        triage=(TriageEntry("a.py", "Tier 2"),),
     )
 
     # passes-at-base: merge_records already section-merges a short complete doc
-    def test_a_short_complete_group_doc_merges(self, tmp_path):
-        g = tmp_path / "group-1.md"
-        g.write_text(self._SHORT)
-        result = _merged_text([str(g)])
+    def test_a_short_complete_group_doc_merges(self):
+        result = _merged_text(self._SHORT)
         assert "## File Triage" in result
         assert "[M1]" in result
 
     # passes-at-base: an empty group file already contributes no sections
-    def test_an_empty_group_doc_merges(self, tmp_path):
-        g = tmp_path / "group-1.md"
-        g.write_text("")
-        result = _merged_text([str(g)])
+    def test_an_empty_group_doc_merges(self):
+        result = _merged_text(record())
         assert "## File Triage" in result
         assert "[M1]" not in result
 
     # passes-at-base: _merged_text reads the path at call time, so a rewrite is a later read
-    def test_a_doc_rewritten_mid_run_merges_the_current_bytes(self, tmp_path):
-        g = tmp_path / "group-1.md"
-        g.write_text(self._SHORT)
-        first = _merged_text([str(g)])
-        g.write_text(
-            self._SHORT
-            + "## Should fix\n- **[S1]** **`a.py:2`** — later finding\n"
-        )
-        second = _merged_text([str(g)])
+    def test_a_doc_rewritten_mid_run_merges_the_current_bytes(self):
+        first = _merged_text(self._SHORT)
+        second = _merged_text(record(
+            finding("M1", "issue"),
+            finding("S1", "later finding", line=2),
+            triage=(TriageEntry("a.py", "Tier 2"),),
+        ))
         assert "[M1]" in first
         assert "[S1]" not in first
         assert "[M1]" in second

@@ -8,7 +8,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from review.artifacts import GroupArtifact
-from review.ingest import ingest_review, load_artifact
+from review.ingest import load_artifact
 from review.merge import merge_records, renumber_record
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.render import render_body
@@ -77,12 +77,11 @@ def test_a_falsified_finding_neither_takes_a_number_nor_moves():
 
 
 def test_a_group_ledger_keeps_the_prior_reviews_ids():
-    record = ingest_review(
-        "## Should fix\n- **[S1]** **`a.py:1`** — x\n"
-        "## Prior findings\n- **[S3]** `a.py` — Fixed\n",
-        strict=False,
+    rec = record(
+        finding("S1", "x"),
+        ledger=(LedgerLine("S3", PriorDisposition.FIXED, "a.py"),),
     )
-    merged = merge_records([record])
+    merged = merge_records([rec])
     assert [(e.id, e.disposition, e.path) for e in merged.ledger] == [
         ("S3", PriorDisposition.FIXED, "a.py"),
     ]

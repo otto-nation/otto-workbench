@@ -8,20 +8,20 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from core.phases import Phase
-from review.ingest import ingest_review
 from review.phases import PhaseResult
 from review.prompt_prior import _build_prior_section, _scoped
 from review.reconcile import _prior_findings, passed_over, reconcile
+from review.record import LedgerLine, SeveritySection
 from review.render import BANNER
 from review.steps import _carry_forward_prior_findings
 from review.store import StoredReview
-from review.types import Group, PreflightData, ReviewMeta
+from review.types import Group, PreflightData, PriorDisposition, ReviewMeta
 
-from review_record_support import fixture_meta, fixture_text
+from review_record_support import finding, fixture_meta, fixture_record, record
 
 
 def _prior() -> StoredReview:
-    return StoredReview(ingest_review(fixture_text("synthesis_pr", "input.md")), fixture_meta("synthesis_pr"))
+    return StoredReview(fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"))
 
 
 def test_prior_findings_come_from_the_record():
@@ -30,13 +30,15 @@ def test_prior_findings_come_from_the_record():
 
 
 def test_a_fixed_prior_finding_is_not_reconciled():
-    prior = StoredReview(ingest_review(fixture_text("self_incremental_fixed", "input.md")),
+    prior = StoredReview(fixture_record("self_incremental_fixed"),
                          fixture_meta("self_incremental_fixed"))
     assert "N1" not in [p.ref.finding_id for p in _prior_findings(prior.record)]
 
 
 def test_reconcile_dates_the_prior_from_its_sidecar():
-    review = ingest_review("## Prior findings\n- **[S1]** **`apps/server/src/voice/transcriber.ts:343`** — Fixed\n")
+    review = record(ledger=(LedgerLine(
+        "S1", PriorDisposition.FIXED, "apps/server/src/voice/transcriber.ts",
+    ),))
     result = reconcile(_prior(), review)
     assert result.prior_date == "2026-10-15"
 
@@ -94,11 +96,10 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     )
 
     prior = StoredReview(
-        ingest_review(
-            "## Must fix\n"
-            "- [ ] **[M1]** `src/auth.go:10` — auth bug\n"
-            "- [ ] **[M2]** **`docker/build.sh:50`** — no USER\n",
-            strict=False,
+        record(
+            finding("M1", "auth bug", path="src/auth.go", line=10, checkbox=True),
+            finding("M2", "no USER", path="docker/build.sh", line=50, checkbox=True),
+            severity_sections=(SeveritySection("M"),),
         ),
         ReviewMeta(),
     )
@@ -134,7 +135,9 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
                         lambda *a, **k: captured.update(declinable=k["declinable"]) or real_merge(*a, **k))
     review.pipeline.run_multi_phase(job, disprove=False)
     merged = captured["merged"]
-    assert [f.id for f in merged.record.findings] == ["M2"]
+    assert [(f.path, f.body) for f in merged.record.findings] == [
+        ("docker/build.sh", "no USER"),
+    ]
     assert all(f.sid for f in merged.record.findings)
     assert any(
         s.note == "### Carried forward: docker" for s in merged.record.severity_sections

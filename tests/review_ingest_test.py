@@ -431,3 +431,204 @@ def test_a_triage_line_is_split_into_path_and_note():
     assert (entry.path, entry.note) == ("a.go", "**Tier 2** (logic)")
 
 
+def test_merge_reads_section_headers_case_insensitively():
+    # Agents write the headings the prompt names, in whatever case they
+    # felt like typing; the section a heading opens is the same either way.
+    from review.merge import merge_records
+    from review.render import render_body
+    rec = ingest_review(
+        "## Must Fix\n- **[M1]** **`a.go:10`** — bug\n"
+        "## NIT\n- **[N1]** **`a.go:20`** — style\n",
+        strict=False,
+    )
+    result = render_body(merge_records([rec]), sids=True, evidence=True)
+    assert "[M1]" in result
+    assert "[N1]" in result
+
+
+def _headed(text: str) -> str:
+    if text.lstrip().startswith("## "):
+        return text
+    heading = "## Must fix\n" if "**[M" in text else "## Should fix\n"
+    return heading + text
+
+
+def _parse_findings_for_verification(text: str) -> list[dict]:
+    out = []
+    for f in ingest_review(_headed(text), strict=False).visible:
+        if not f.path:
+            continue
+        out.append({
+            "id": f.id, "severity": f.severity, "path": f.path,
+            "body": f.body, "evidence": f.evidence,
+        })
+    return out
+
+
+class TestParseVerificationStripsLine:
+    def test_path_excludes_line_number(self):
+        text = '- **[M1]** **`pkg/handler.go:42`** — missing error check\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "pkg/handler.go"
+
+    def test_path_excludes_line_range(self):
+        text = '- **[S1]** **`pkg/handler.go:10-20`** — issue\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "pkg/handler.go"
+
+    def test_checkbox_path_excludes_line(self):
+        text = '- [ ] **[M1]** `handler.go:42` — desc\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "handler.go"
+
+
+class TestParseVerificationReadsThePostersLocation:
+    """Verification checks the file the poster will place the finding on.
+
+    The path comes from `finding_location`, not from a second reading of the
+    line. That second reading kept any suffix it did not know as part of the
+    path, so a finding at `replay.py:_short` was stat'd as a file literally
+    named that and dropped as "file not found" while the poster read the same
+    line as `replay.py`.
+    """
+
+    @pytest.mark.parametrize("location, path", [
+        ("ai/lib/git/replay.py:_short", "ai/lib/git/replay.py"),
+        ("ai/lib/git/replay.py:_short:12", "ai/lib/git/replay.py"),
+        ("pkg/x.py:Foo.bar", "pkg/x.py"),
+        ("pkg/x.py:~690", "pkg/x.py"),
+        ("pkg/x.py:L12", "pkg/x.py"),
+    ])
+    def test_a_suffix_that_is_not_a_line_number_comes_off(self, location, path):
+        text = f"- **[S1]** `{location}` — gap\n"
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == path
+
+    def test_agrees_with_the_poster_on_every_location(self):
+        """The property the fix is for, rather than a list of shapes."""
+        locations = [
+            "ai/lib/git/replay.py:_short", "src/x.py:64,82", "pkg/x.py:Foo.bar",
+            "src/my notes.py:12-18", "ai/bin/ci-check", "handler.go:42",
+        ]
+        for location in locations:
+            line = f"- **[S1]** **`{location}`** — gap"
+            verified = _parse_findings_for_verification(line + "\n")
+            posted = ingest_review(_headed(line + "\n"), strict=False).findings[0].path
+            assert verified[0]["path"] == posted, location
+
+
+class TestParseVerificationReadsALineList:
+    """A finding naming two discrete lines still names one file.
+
+    A duplicate declaration is the case that produces this location: the
+    finding cites both offsets, and the path used to keep the whole `:64,82`
+    suffix. `_match_evidence` then stat'd a path no filesystem holds and
+    `_drop_reason` called it "file not found", discarding a correct finding
+    about a file that was right there.
+    """
+
+    def test_a_comma_separated_pair_leaves_the_path(self):
+        text = '- **[S2]** `ai/lib/review/run.py:64,82` — duplicate field\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "ai/lib/review/run.py"
+
+    def test_a_three_line_list_leaves_the_path(self):
+        text = '- **[S2]** `ai/lib/review/run.py:12,18,24` — duplicate field\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "ai/lib/review/run.py"
+
+
+class TestParseVerificationSpacedPaths:
+    def test_spaced_path_finding_is_not_swallowed_by_the_previous_one(self):
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** **`pkg/a.go:1`** — First finding\n"
+            "- [ ] **[M2]** **`src/my notes.py:2`** — Second finding, spaced path\n"
+            "- [ ] **[M3]** **`pkg/c.go:3`** — Third finding\n"
+        )
+        findings = _parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1", "M2", "M3"]
+        assert findings[0]["body"] == "First finding"
+        assert findings[1]["path"] == "src/my notes.py"
+
+    def test_spaced_path_with_line_range(self):
+        text = '- **[S1]** **`src/my notes.py:12-18`** — issue\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "src/my notes.py"
+
+    def test_non_ascii_spaced_path(self):
+        text = '- [ ] **[M1]** **`src/café brûlé.py:42`** — desc\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "src/café brûlé.py"
+
+    def test_spaced_path_in_a_bare_code_span(self):
+        text = '- **[N1]** `docs/release notes.md:3` — stale\n'
+        findings = _parse_findings_for_verification(text)
+        assert findings[0]["path"] == "docs/release notes.md"
+
+    def test_unchecked_and_plain_forms_both_parse(self):
+        text = (
+            "- [ ] **[M1]** **`pkg/a.go:1`** — checkbox form\n"
+            "- **[M2]** **`pkg/b.go:2`** — plain form\n"
+        )
+        findings = _parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1", "M2"]
+        assert [f["body"] for f in findings] == ["checkbox form", "plain form"]
+
+
+class TestVerificationReadsEachFindingsOwnBody:
+    """A finding is checked against the evidence written under it and no other.
+
+    A finding with no path is not checked. A declaration ingest cannot place
+    used to be appended to the finding above it, which is how a finding came
+    to be verified against a quotation belonging to its neighbour.
+    """
+
+    UNREADABLE_LOCATION = (
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "  > ```go\n"
+        "  > x := 1\n"
+        "  > ```\n"
+        "- **[M2]** Nil pointer dereference at handler.go:42\n"
+        "  > ```go\n"
+        "  > y := 2\n"
+        "  > ```\n"
+        "- **[M3]** **`c.go:3`** — three\n"
+    )
+
+    def test_an_unreadable_location_is_not_checked(self):
+        findings = _parse_findings_for_verification(self.UNREADABLE_LOCATION)
+        assert [f["id"] for f in findings] == ["M1", "M3"]
+
+    def test_an_unreadable_location_does_not_join_the_finding_above_it(self):
+        findings = _parse_findings_for_verification(self.UNREADABLE_LOCATION)
+        assert findings[0]["evidence"] == "x := 1"
+
+    def test_a_ledger_entry_is_not_checked(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "## Prior findings\n"
+            "- **[S1]** **`old.go:2`** — Fixed\n"
+        )
+        findings = _parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1"]
+
+    def test_a_body_stops_at_the_resolved_finding_below_it(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  > ```go\n"
+            "  > x := 1\n"
+            "  > ```\n"
+            "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
+            "  > ```go\n"
+            "  > y := 2\n"
+            "  > ```\n"
+        )
+        findings = _parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1"]
+        assert "y := 2" not in findings[0]["body"]
+
+

@@ -22,9 +22,9 @@ from core.proc import CmdResult
 import git.client
 import review.collect
 from gh.types import PRContext, PRMetadata
-from review.ingest import ingest_review
 from review.store import StoredReview
 from review.types import DeltaAttribution, ReviewJob, ReviewMeta
+from review_record_support import record
 
 
 # ── _collect_delta ──────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ def _delta_job(head_sha: str, prior_sha: str | None = None) -> ReviewJob:
     )
     if prior_sha is not None:
         job.prior = StoredReview(
-            ingest_review("## Summary\nprior\n", strict=False),
+            record(summary="prior"),
             ReviewMeta(head_sha=prior_sha),
         )
     return job

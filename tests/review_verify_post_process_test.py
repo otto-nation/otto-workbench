@@ -17,20 +17,18 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review.document import SECTION_PRIOR_FINDINGS
-from review.ingest import ingest_review
+from review.record import LedgerLine, SeveritySection
 from review.render import render_body
-from review.types import SEVERITY_MUST, severity_by_key
+from review.types import PriorDisposition
 from review.verify import post_process_record
 
+from review_record_support import finding, record
 
 
-def _post_process(path, wt_path="", changed_files=()):
+def _post_process(rec, path, wt_path="", changed_files=()):
     """Drive the record pass and write the rendered body back to `path`."""
-    from pathlib import Path as P
-    pth = P(path)
-    if not pth.exists():
-        return None
-    done = post_process_record(ingest_review(pth.read_text(), strict=False), wt_path, changed_files)
+    pth = Path(path)
+    done = post_process_record(rec, wt_path, changed_files)
     pth.write_text(render_body(done.record))
     return done.verification
 
@@ -40,74 +38,48 @@ def _post_process(path, wt_path="", changed_files=()):
 class TestPostProcessFindings:
     def test_skips_verify_when_no_wt_path(self, tmp_path):
         review = tmp_path / "review.md"
-        must = severity_by_key(SEVERITY_MUST).section
-        prefix = SEVERITY_MUST
-        review.write_text(
-            f"## {must}\n"
-            f"- **[{prefix}1]** **`missing.py:10`** — bug\n"
-            "  > ```\n"
-            "  > old_code()\n"
-            "  > ```\n"
-        )
-        _post_process(str(review))
+        rec = record(finding(
+            "M1", "bug", path="missing.py", line=10, evidence="old_code()",
+        ))
+        _post_process(rec, str(review))
         result = review.read_text()
-        assert f"[{prefix}1]" in result
+        assert "[M1]" in result
 
     def test_strips_evidence_blocks(self, tmp_path):
         review = tmp_path / "review.md"
-        must = severity_by_key(SEVERITY_MUST).section
-        prefix = SEVERITY_MUST
-        review.write_text(
-            f"## {must}\n"
-            f"- **[{prefix}1]** **`foo.py:1`** — issue\n"
-            "  > ```python\n"
-            "  > x = 1\n"
-            "  > ```\n"
-        )
-        _post_process(str(review))
+        rec = record(finding("M1", "issue", path="foo.py", evidence="x = 1"))
+        _post_process(rec, str(review))
         assert "```python" not in review.read_text()
 
     def test_strips_stable_ids(self, tmp_path):
         review = tmp_path / "review.md"
-        must = severity_by_key(SEVERITY_MUST).section
-        prefix = SEVERITY_MUST
-        review.write_text(
-            f"## {must}\n"
-            f"- **[{prefix}1]** <!-- sid:abc12345 --> **`foo.py:1`** — issue\n"
-        )
-        _post_process(str(review))
+        rec = record(finding("M1", "issue", path="foo.py", sid="abc12345"))
+        _post_process(rec, str(review))
         assert "sid:" not in review.read_text()
 
     def test_renumbers_findings(self, tmp_path):
         review = tmp_path / "review.md"
-        must = severity_by_key(SEVERITY_MUST).section
-        prefix = SEVERITY_MUST
-        review.write_text(
-            f"## {must}\n"
-            f"- **[{prefix}3]** **`foo.py:1`** — first\n"
-            f"- **[{prefix}7]** **`bar.py:1`** — second\n"
+        rec = record(
+            finding("M3", "first", path="foo.py"),
+            finding("M7", "second", path="bar.py"),
         )
-        _post_process(str(review))
+        _post_process(rec, str(review))
         result = review.read_text()
-        assert f"[{prefix}1]" in result
-        assert f"[{prefix}2]" in result
+        assert "[M1]" in result
+        assert "[M2]" in result
 
     def test_strips_prior_findings_ledger(self, tmp_path):
         review = tmp_path / "review.md"
-        must = severity_by_key(SEVERITY_MUST).section
-        prefix = SEVERITY_MUST
-        review.write_text(
-            f"## {must}\n"
-            f"- **[{prefix}5]** **`foo.py:1`** — still broken\n"
-            f"## {SECTION_PRIOR_FINDINGS}\n"
-            f"- **[{prefix}2]** `bar.py` — Fixed\n"
+        rec = record(
+            finding("M5", "still broken", path="foo.py"),
+            ledger=(LedgerLine("M2", PriorDisposition.FIXED, "bar.py"),),
         )
-        _post_process(str(review))
+        _post_process(rec, str(review))
         result = review.read_text()
         assert SECTION_PRIOR_FINDINGS not in result
         assert "bar.py" not in result
         # Renumbering sees only the findings this review actually reports.
-        assert f"[{prefix}1]" in result
+        assert "[M1]" in result
 
     def test_a_dropped_findings_citation_does_not_survive_it(self, tmp_path):
         # The whole chain: verification drops M1, renumbering pulls M2 into its
@@ -115,20 +87,18 @@ class TestPostProcessFindings:
         src = tmp_path / "handler.go"
         src.write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
         review = tmp_path / "review.md"
-        review.write_text(
-            "## Must fix\n"
-            "- **[M1]** **`handler.go:42`** — evidence no longer in the file\n"
-            "  > ```go\n"
-            "  > result := db.Query(q)\n"
-            "  > ```\n"
-            "- **[M2]** **`handler.go:4`** — real problem\n"
-            "  > ```go\n"
-            "  > \tx := 1\n"
-            "  > ```\n"
-            "## Nit\n"
-            "- **[N1]** **`handler.go:1`** — revisit once [M1] lands\n"
+        rec = record(
+            finding(
+                "M1", "evidence no longer in the file", path="handler.go", line=42,
+                evidence="result := db.Query(q)",
+            ),
+            finding(
+                "M2", "real problem", path="handler.go", line=4,
+                evidence="\tx := 1",
+            ),
+            finding("N1", "revisit once [M1] lands", path="handler.go"),
         )
-        _post_process(str(review), str(tmp_path))
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert "- **[M1]** `handler.go:4` — real problem" in result
@@ -146,19 +116,18 @@ class TestPostProcessFindings:
         (tmp_path / "latin1.sh").write_bytes(b"echo \xb2\xb2 done\n")
         (tmp_path / "handler.go").write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
         review = tmp_path / "review.md"
-        review.write_text(
-            "## Must fix\n"
-            "- **[M1]** **`latin1.sh:1`** — cannot be read to verify\n"
-            "  > ```sh\n"
-            "  > echo done\n"
-            "  > ```\n"
-            "- **[M2]** **`handler.go:4`** — real problem\n"
-            "  > ```go\n"
-            "  > \tx := 1\n"
-            "  > ```\n"
+        rec = record(
+            finding(
+                "M1", "cannot be read to verify", path="latin1.sh",
+                evidence="echo done",
+            ),
+            finding(
+                "M2", "real problem", path="handler.go", line=4,
+                evidence="\tx := 1",
+            ),
         )
 
-        verification = _post_process(str(review), str(tmp_path))
+        verification = _post_process(rec, str(review), str(tmp_path))
 
         result = review.read_text()
         assert "- **[M1]** `handler.go:4` — real problem" in result
@@ -168,12 +137,11 @@ class TestPostProcessFindings:
 
     def test_strips_the_prior_findings_ledger(self, tmp_path):
         review = tmp_path / "review.md"
-        review.write_text(
-            "## Summary\nPrior finding fixed.\n"
-            f"## {SECTION_PRIOR_FINDINGS}\n"
-            "- **[M1]** `handler.go` — Fixed\n"
+        rec = record(
+            summary="Prior finding fixed.",
+            ledger=(LedgerLine("M1", PriorDisposition.FIXED, "handler.go"),),
         )
-        _post_process(str(review))
+        _post_process(rec, str(review))
         assert SECTION_PRIOR_FINDINGS not in review.read_text()
 
 
@@ -189,26 +157,25 @@ class TestReconcileDroppedFindings:
     """
 
     @staticmethod
-    def _review(tmp_path, verdict="Request changes — the unchecked error is a bug.", extra=""):
+    def _sample(tmp_path, verdict="Request changes — the unchecked error is a bug.", extra=()):
         """A review whose Summary names a must-fix that will not verify."""
         (tmp_path / "kept.py").write_text("x = 1\n")
-        review = tmp_path / "review.md"
-        review.write_text(
-            "## Summary\n"
-            "Solid change overall; the most serious problem is the unchecked "
-            "error in `deleted.py`.\n"
-            "## Must fix\n"
-            "- **[M1]** **`deleted.py:10`** — the error is never checked\n"
-            f"{extra}"
-            "## Nit\n"
-            "- **[N1]** **`kept.py:1`** — prefer a constant\n"
-            f"## Verdict\n{verdict}\n"
+        return record(
+            finding("M1", "the error is never checked", path="deleted.py", line=10),
+            *extra,
+            finding("N1", "prefer a constant", path="kept.py"),
+            summary=(
+                "Solid change overall; the most serious problem is the unchecked "
+                "error in `deleted.py`."
+            ),
+            verdict=verdict,
+            severity_sections=(SeveritySection("M"), SeveritySection("N")),
         )
-        return review
 
     def test_drop_leaves_a_note_naming_what_went(self, tmp_path):
-        review = self._review(tmp_path)
-        _post_process(str(review), str(tmp_path))
+        rec = self._sample(tmp_path)
+        review = tmp_path / "review.md"
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Evidence verification removed 1 finding:" in result
@@ -217,8 +184,9 @@ class TestReconcileDroppedFindings:
         assert "the error is never checked" not in result
 
     def test_note_lands_in_the_summary_it_corrects(self, tmp_path):
-        review = self._review(tmp_path)
-        _post_process(str(review), str(tmp_path))
+        rec = self._sample(tmp_path)
+        review = tmp_path / "review.md"
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         summary = result.index("## Summary")
@@ -227,11 +195,12 @@ class TestReconcileDroppedFindings:
 
     def test_note_does_not_cite_renumbered_ids(self, tmp_path):
         # Two must-fix findings, the second surviving and renumbered M2 -> M1.
-        review = self._review(
+        rec = self._sample(
             tmp_path,
-            extra="- **[M2]** **`kept.py:1`** — also worth fixing\n",
+            extra=(finding("M2", "also worth fixing", path="kept.py"),),
         )
-        _post_process(str(review), str(tmp_path))
+        review = tmp_path / "review.md"
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         note = result[result.index("Evidence verification removed"):]
@@ -242,8 +211,9 @@ class TestReconcileDroppedFindings:
         assert "- **[M1]** `kept.py:1`" in result
 
     def test_verdict_is_lowered_to_what_survives(self, tmp_path):
-        review = self._review(tmp_path)
-        _post_process(str(review), str(tmp_path))
+        rec = self._sample(tmp_path)
+        review = tmp_path / "review.md"
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         verdict = result[result.index("## Verdict"):]
@@ -254,19 +224,21 @@ class TestReconcileDroppedFindings:
         # Disapprove means the approach is wrong, which the finding counts do
         # not derive — dropping a finding cannot refute it. The note still says
         # what went, so the reader can weigh the verdict against it.
-        review = self._review(tmp_path, verdict="**Disapprove** — the approach is wrong.")
-        _post_process(str(review), str(tmp_path))
+        rec = self._sample(tmp_path, verdict="**Disapprove** — the approach is wrong.")
+        review = tmp_path / "review.md"
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert "**Disapprove** — the approach is wrong." in result
         assert "Evidence verification removed 1 finding:" in result
 
     def test_verdict_the_counts_still_support_is_left_alone(self, tmp_path):
-        review = self._review(
+        rec = self._sample(
             tmp_path,
-            extra="- **[M2]** **`kept.py:1`** — also worth fixing\n",
+            extra=(finding("M2", "also worth fixing", path="kept.py"),),
         )
-        _post_process(str(review), str(tmp_path))
+        review = tmp_path / "review.md"
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Request changes — the unchecked error is a bug." in result
@@ -275,31 +247,32 @@ class TestReconcileDroppedFindings:
     def test_no_note_when_nothing_dropped(self, tmp_path):
         (tmp_path / "kept.py").write_text("x = 1\n")
         review = tmp_path / "review.md"
-        review.write_text(
-            "## Summary\nOne real problem.\n"
-            "## Must fix\n- **[M1]** **`kept.py:1`** — the error is never checked\n"
-            "## Verdict\nRequest changes — worth fixing.\n"
+        rec = record(
+            finding("M1", "the error is never checked", path="kept.py"),
+            summary="One real problem.",
+            verdict="Request changes — worth fixing.",
         )
-        _post_process(str(review), str(tmp_path))
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Evidence verification" not in result
         assert "Request changes — worth fixing." in result
 
     def test_second_pass_does_not_stack_notes(self, tmp_path):
-        review = self._review(tmp_path)
-        _post_process(str(review), str(tmp_path))
-        _post_process(str(review), str(tmp_path))
-        assert review.read_text().count("Evidence verification removed") == 1
+        rec = self._sample(tmp_path)
+        done = post_process_record(rec, str(tmp_path))
+        again = post_process_record(done.record, str(tmp_path))
+        assert render_body(again.record).count("Evidence verification removed") == 1
 
     def test_note_survives_without_a_summary_section(self, tmp_path):
         # The mechanical paths post-process the merged content, which has no
         # Summary — they build one from the processed text afterwards.
         review = tmp_path / "review.md"
-        review.write_text(
-            "## Must fix\n- **[M1]** **`deleted.py:10`** — the error is never checked\n"
+        rec = record(
+            finding("M1", "the error is never checked", path="deleted.py", line=10),
+            severity_sections=(SeveritySection("M"),),
         )
-        _post_process(str(review), str(tmp_path))
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert result.index("Evidence verification removed") < result.index("## Must fix")
@@ -309,26 +282,28 @@ class TestReconcileDroppedFindings:
         # missing file — the reason must name the offset, not "file not found".
         (tmp_path / "kept.py").write_text("x = 1\n")
         review = tmp_path / "review.md"
-        review.write_text(
-            "## Summary\nOne real problem.\n"
-            "## Must fix\n"
-            "- **[M1]** **`kept.py:1`** — quotes code that is not there\n"
-            "  > ```python\n"
-            "  > y = 2\n"
-            "  > ```\n"
-            "## Verdict\nRequest changes — worth fixing.\n"
+        rec = record(
+            finding(
+                "M1", "quotes code that is not there", path="kept.py",
+                evidence="y = 2",
+            ),
+            summary="One real problem.",
+            verdict="Request changes — worth fixing.",
         )
-        _post_process(str(review), str(tmp_path))
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert "> - Must fix — `kept.py`: evidence mismatch at char" in result
 
     def test_drop_note_pluralizes_the_header_for_multiple_findings(self, tmp_path):
-        review = self._review(
+        rec = self._sample(
             tmp_path,
-            extra="- **[M2]** **`also-deleted.py:1`** — another error never checked\n",
+            extra=(finding(
+                "M2", "another error never checked", path="also-deleted.py",
+            ),),
         )
-        _post_process(str(review), str(tmp_path))
+        review = tmp_path / "review.md"
+        _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()
 
         assert "Evidence verification removed 2 findings:" in result

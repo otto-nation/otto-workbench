@@ -15,43 +15,40 @@ from dataclasses import replace
 
 from review.document import SECTION_PRIOR_FINDINGS
 from review.grammar import FindingIdentity, sid_marker
-from review.ingest import ingest_review
-from review.record import RecordFinding
+from review.record import LedgerLine, RecordFinding, TriageEntry
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
-from review.types import ReplyState, ReviewMeta
+from review.types import PriorDisposition, ReplyState, ReviewMeta
 from review.prompt_prior import (
     _annotate_with_thread_state, _build_prior_section, _in_group, _prior_text, _scoped,
 )
+from review_record_support import finding, record
 
 
-def _stored(text: str) -> StoredReview:
-    return StoredReview(ingest_review(text, strict=False), ReviewMeta())
+def _stored(*findings, rec=None, **fields) -> StoredReview:
+    body = rec if rec is not None else record(*findings, **fields)
+    return StoredReview(body, ReviewMeta())
 
 
 # ── omitted bookkeeping sections ─────────────────────────────────────────────
 
-PRIOR_WITH_INTERNAL = (
-    "## File Triage\n"
-    "- `a.py` — **Tier 2** (application logic)\n"
-    "- `b.py` — **Tier 3** (generated)\n"
-    "\n"
-    "## Must fix\n"
-    "- **[M1]** **`a.py:10`** — missing error check\n"
-    "\n"
-    "## Static Analysis\n"
-    "\n"
-    "<details>\n"
-    "<summary>Static Analysis (1 violation)</summary>\n"
-    "\n"
-    "### Nesting depth\n"
-    "\n"
-    "- **`a.py:42`** — depth 3 exceeds limit 2 (in main())\n"
-    "\n"
-    "</details>\n"
-    "\n"
-    "## Verdict\n"
-    "Request changes.\n"
+PRIOR_WITH_INTERNAL = record(
+    finding("M1", "missing error check", path="a.py", line=10),
+    triage=(
+        TriageEntry("a.py", "**Tier 2** (application logic)"),
+        TriageEntry("b.py", "**Tier 3** (generated)"),
+    ),
+    static_analysis=(
+        "<details>\n"
+        "<summary>Static Analysis (1 violation)</summary>\n"
+        "\n"
+        "### Nesting depth\n"
+        "\n"
+        "- **`a.py:42`** — depth 3 exceeds limit 2 (in main())\n"
+        "\n"
+        "</details>"
+    ),
+    verdict="Request changes.",
 )
 
 
@@ -98,7 +95,7 @@ class TestThreadStateFollowsTheIdentityNotTheNumber:
         the same one — this is the test that they are.
         """
         line = "- **[M9]** **`a.py:10`** — Missing error check"
-        prior = _stored(f"## Must fix\n{line}\n")
+        prior = _stored(finding("M9", "Missing error check", path="a.py", line=10))
         identity = FindingIdentity.of(line)
         # Both sides carrying "" would match each other and prove nothing.
         assert identity.stable_id
@@ -151,7 +148,7 @@ class TestAnnotateWithThreadState:
 
 class TestBuildPriorSectionWithThreads:
     def test_without_threads_unchanged(self):
-        result = _build_prior_section(_stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"))
+        result = _build_prior_section(_stored(finding("M1", "Issue", path="a.py", line=10)))
         assert "[CONTESTED]" not in result
         assert "Prior review" in result
 
@@ -160,7 +157,7 @@ class TestBuildPriorSectionWithThreads:
             {"finding_id": "M1", "state": ReplyState.CONTESTED},
         ], summary={})
         result = _build_prior_section(
-            _stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"),
+            _stored(finding("M1", "Issue", path="a.py", line=10)),
             reply_threads=threads,
         )
         assert "[CONTESTED]" in result
@@ -172,14 +169,14 @@ class TestBuildPriorSectionWithThreads:
 class TestBuildPriorSectionLedger:
     def test_asks_for_the_ledger_alongside_the_context(self):
         result = _build_prior_section(
-            _stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"),
+            _stored(finding("M1", "Issue", path="a.py", line=10)),
             "This is a re-review.",
         )
         assert "This is a re-review." in result
         assert "`prior_findings`" in result
 
     def test_ledger_asked_for_without_a_context(self):
-        result = _build_prior_section(_stored("## Must fix\n- **[M1]** **`a.py:10`** — Issue"))
+        result = _build_prior_section(_stored(finding("M1", "Issue", path="a.py", line=10)))
         assert "`prior_findings`" in result
 
     def test_prior_ledger_not_shown_back_to_the_agent(self):
@@ -188,8 +185,8 @@ class TestBuildPriorSectionLedger:
         # the review before last, which is noise here.
         result = _build_prior_section(
             _stored(
-                "## Must fix\n- **[M1]** **`a.py:10`** — Issue\n"
-                f"## {SECTION_PRIOR_FINDINGS}\n- **[M9]** `gone.py` — Fixed\n"
+                finding("M1", "Issue", path="a.py", line=10),
+                ledger=(LedgerLine("M9", PriorDisposition.FIXED, "gone.py"),),
             )
         )
         assert "gone.py" not in result
@@ -197,7 +194,7 @@ class TestBuildPriorSectionLedger:
 
 class TestPriorTextOmitsBookkeeping:
     def test_drops_triage_and_static_analysis(self):
-        result = _prior_text(_stored(PRIOR_WITH_INTERNAL), None)
+        result = _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
         assert "File Triage" not in result
         assert "Tier 2" not in result
         assert "Static Analysis" not in result
@@ -205,46 +202,45 @@ class TestPriorTextOmitsBookkeeping:
         assert "<details>" not in result
 
     def test_keeps_findings_and_verdict(self):
-        result = _prior_text(_stored(PRIOR_WITH_INTERNAL), None)
+        result = _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
         assert "**[M1]**" in result
         assert "## Must fix" in result
         assert "Request changes." in result
 
     def test_section_after_excluded_one_resumes(self):
-        assert "Request changes." in _prior_text(_stored(PRIOR_WITH_INTERNAL), None)
+        assert "Request changes." in _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
 
     def test_findings_survive_render(self):
-        text = "## Must fix\n- **[M1]** **`a.py:1`** — bug"
-        assert "**[M1]**" in _prior_text(_stored(text), None)
+        assert "**[M1]**" in _prior_text(_stored(finding("M1", "bug")), None)
 
     def test_only_internal_sections_yields_empty(self):
-        assert _prior_text(_stored("## File Triage\n- `a.py` — **Tier 1**\n"), None) == ""
+        assert _prior_text(_stored(triage=(TriageEntry("a.py", "**Tier 1**"),)), None) == ""
 
     def test_build_prior_section_omits_internal_sections(self):
-        result = _build_prior_section(_stored(PRIOR_WITH_INTERNAL))
+        result = _build_prior_section(_stored(rec=PRIOR_WITH_INTERNAL))
         assert "Prior review" in result
         assert "**[M1]**" in result
         assert "File Triage" not in result
         assert "Nesting depth" not in result
 
     def test_build_prior_section_empty_when_only_internal(self):
-        assert _build_prior_section(_stored("## File Triage\n- `a.py` — **Tier 1**\n")) == ""
+        assert _build_prior_section(_stored(triage=(TriageEntry("a.py", "**Tier 1**"),))) == ""
 
     def test_a_record_rendered_prompt_has_no_banner(self):
         from review.render import BANNER
-        result = _build_prior_section(_stored("## Must fix\n- **[M1]** **`a.py:1`** — bug\n"))
+        result = _build_prior_section(_stored(finding("M1", "bug")))
         assert BANNER not in result
         assert "**[M1]**" in result
 
     def test_carried_findings_are_stamped_with_their_stable_id(self):
         line = "- **[M1]** **`handler.go:42`** — missing error check"
-        result = _prior_text(_stored(f"## Must fix\n{line}\n"), None)
+        result = _prior_text(_stored(finding("M1", "missing error check", path="handler.go", line=42)), None)
         assert "<!-- sid:" in result
         assert "**[M1]**" in result
         assert "handler.go:42" in result
         identity = FindingIdentity.of(line)
         assert identity.stable_id in result
-        assert _prior_text(_stored(f"## Must fix\n{line}\n"), None) == result
+        assert _prior_text(_stored(finding("M1", "missing error check", path="handler.go", line=42)), None) == result
 
 
 def test_scoping_reads_the_finding_s_own_path_and_line():

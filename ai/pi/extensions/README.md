@@ -63,7 +63,9 @@ that cannot outlive the process.
 superset pre-filter, then `ai/bin/owners-check --classify` for the verdict, so
 the Python classifier stays the only copy of the write shapes. Anything but exit 0
 with exactly `read` on stdout — missing, crashed (an uncaught exception exits
-1), timed out, unexpected output — counts as a write.
+1), timed out, unexpected output — counts as a write. The checker is the
+checkout's `ai/bin/owners-check`, or an `owners-check` on PATH when the
+extensions run from somewhere without one.
 
 ## Overriding one
 

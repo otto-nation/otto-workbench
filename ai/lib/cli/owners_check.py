@@ -14,11 +14,13 @@ are rejoined with their quoting.
 The second form exits 0 when ``github.owners`` names at least one owner and 1
 otherwise, with the reason on stderr. ``ai sync`` prints it as a notice.
 
-The third form exits 0 when COMMAND writes to GitHub and 1 when it does not.
-It never reads config or cwd: both harnesses' subagent-publishing guards use
-it as the one classifier so they do not keep a bash/TS copy of the write
-shapes. An unparseable command is treated as a write (exit 0), so the caller
-still runs the owner check, which refuses it.
+The third form prints exactly one line on stdout — ``write`` when COMMAND
+writes to GitHub, ``read`` when it does not — and exits 0 for both. It never
+reads config or cwd: both harnesses' subagent-publishing guards use it as the
+one classifier so they do not keep a bash/TS copy of the write shapes. The
+guards take a command as not publishing only on exit 0 with ``read``; any
+other exit or output counts as a write, so a crash (which also exits 1) can
+never read as an answer. An unparseable command is answered ``write``.
 
 ``WORKBENCH_ALLOW_UPSTREAM`` is not read here — see ``gh.owners``.
 """
@@ -49,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--configured", action="store_true",
                       help="exit 0 when github.owners names an owner, 1 otherwise")
     mode.add_argument("--classify", action="store_true",
-                      help="exit 0 when COMMAND writes to GitHub, 1 otherwise")
+                      help="print 'write' or 'read' for COMMAND; exit 0 either way")
     parser.add_argument("command", nargs="*", help="the command, after --")
     return parser
 
@@ -72,12 +74,17 @@ def _command_line(parser: argparse.ArgumentParser, command: list[str]) -> str:
     return command[0] if len(command) == 1 else shlex.join(command)
 
 
+WRITE = "write"
+READ = "read"
+
+
 def _classify(command: str) -> int:
     try:
         is_write = gh.write_shapes.command_is_write(command)
     except ValueError:
-        return 0
-    return 0 if is_write else 1
+        is_write = True
+    print(WRITE if is_write else READ)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

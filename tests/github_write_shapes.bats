@@ -140,10 +140,26 @@ _guard_copy() {
   [ "$(_claude_subagent "$guard" 'gh pr view 1')" = publish ]
 }
 
-@test "github write shapes: Claude takes owners-check's exit 1 as not publishing" {
+@test "github write shapes: Claude takes only exit 0 with stdout read as not publishing" {
   local guard
-  guard=$(_guard_copy 'exit 1')
+  guard=$(_guard_copy 'echo read; exit 0')
   [ "$(_claude_subagent "$guard" 'gh issue create --title x')" = allowed ]
+  guard=$(_guard_copy 'printf "  read\n"; exit 0')
+  [ "$(_claude_subagent "$guard" 'gh issue create --title x')" = allowed ]
+}
+
+@test "github write shapes: Claude counts owners-check exiting 1 with a traceback as publishing" {
+  local guard
+  guard=$(_guard_copy 'echo "Traceback (most recent call last):" >&2; exit 1')
+  [ "$(_claude_subagent "$guard" 'gh pr view 1')" = publish ]
+}
+
+@test "github write shapes: Claude counts any answer but a clean read as publishing" {
+  local guard body
+  for body in 'echo read; exit 1' 'echo write; exit 0' 'exit 0' 'echo reader; exit 0' 'printf "read\nread\n"; exit 0'; do
+    guard=$(_guard_copy "$body")
+    [ "$(_claude_subagent "$guard" 'gh pr view 1')" = publish ] || { echo "allowed with: $body"; return 1; }
+  done
 }
 
 @test "github write shapes: Claude never runs owners-check on a command the pre-filter rejects" {
@@ -167,6 +183,36 @@ _guard_copy() {
   _pi_publishes 'gh pr view 1' "$TMPDIR/crashing-checker"
   [ "$status" -eq 0 ]
   [ "$output" = true ]
+}
+
+# _pi_checker NAME BODY — an executable checker stub at $TMPDIR/NAME; prints its path.
+_pi_checker() {
+  printf '#!/usr/bin/env bash\n%s\n' "$2" > "$TMPDIR/$1"
+  chmod +x "$TMPDIR/$1"
+  printf '%s' "$TMPDIR/$1"
+}
+
+@test "github write shapes: Pi takes only exit 0 with stdout read as not publishing" {
+  _pi_publishes 'gh issue create --title x' "$(_pi_checker reading 'echo read; exit 0')"
+  [ "$status" -eq 0 ]
+  [ "$output" = false ]
+  _pi_publishes 'gh issue create --title x' "$(_pi_checker padded 'printf "  read\n"; exit 0')"
+  [ "$output" = false ]
+}
+
+@test "github write shapes: Pi counts owners-check exiting 1 with a traceback as publishing" {
+  _pi_publishes 'gh pr view 1' "$(_pi_checker tb 'echo "Traceback (most recent call last):" >&2; exit 1')"
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
+@test "github write shapes: Pi counts any answer but a clean read as publishing" {
+  local body n=0
+  for body in 'echo read; exit 1' 'echo write; exit 0' 'exit 0' 'echo reader; exit 0' 'printf "read\nread\n"; exit 0'; do
+    n=$((n + 1))
+    _pi_publishes 'gh pr view 1' "$(_pi_checker "odd$n" "$body")"
+    [ "$output" = true ] || { echo "allowed with: $body"; return 1; }
+  done
 }
 
 @test "github write shapes: Pi never runs owners-check on a command the pre-filter rejects" {

@@ -34,6 +34,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
 | `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
+| `owners-check` | Checks a GitHub write command against github.owners — called by both harnesses' upstream guards |
 | `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
 | `rules-canary` | Canary for the --add-dir coupling — fails when coding rules stop reaching an agent |
 | `otto-mcp-server` | MCP server — offers the tools the component registries declare, with schemas imported in-process |

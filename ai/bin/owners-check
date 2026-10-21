@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check a GitHub write command against github.owners — exit 0 allows, 2 refuses."""
+"""The GitHub owner boundary — see ai/lib/cli/owners_check.py.
+
+--cwd DIR -- COMMAND checks a write against github.owners: exit 0 allows, 2 refuses.
+--configured exits 0 when github.owners names an owner, 1 otherwise.
+--classify -- COMMAND prints `write` or `read` and exits 0; anything else is an error.
+"""
 
 import os
 import sys

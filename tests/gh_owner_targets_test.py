@@ -53,13 +53,22 @@ def test_an_explicit_target_wins(tmp_path, words, expected):
     assert resolution.target.owners == (_owner(expected),)
 
 
-def test_a_repo_flag_inside_a_body_is_not_a_target(tmp_path):
+def test_a_repo_flag_after_a_value_flag_unions_cwd_remotes(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:stranger/lib.git")
+    resolution = _resolve(
+        ["gh", "pr", "close", "3", "-c", "--repo=ours/svc"], repo)
+    assert resolution.ok
+    assert _owner("ours") in resolution.target.owners
+    assert _owner("stranger") in resolution.target.owners
+
+
+def test_a_repo_flag_inside_a_body_unions_cwd_remotes(tmp_path):
     repo = remote_repo(tmp_path / "r", "git@github.com:stranger/lib.git")
     resolution = _resolve(
         ["gh", "issue", "create", "-t", "x", "-b", "--repo=ours/svc"], repo)
     assert resolution.ok
-    assert resolution.target.source is gh.owner_targets.TargetSource.REMOTES
-    assert resolution.target.owners == (_owner("stranger"),)
+    assert _owner("ours") in resolution.target.owners
+    assert _owner("stranger") in resolution.target.owners
 
 
 def test_env_builtin_prefix_is_an_explicit_target(tmp_path):
@@ -202,3 +211,27 @@ def test_the_client_falls_back_to_the_cwd_repo_for_graphql(tmp_path):
     resolution = gh.owner_targets.resolve_gh_call(
         ("api", "graphql", "--input", "-"), cwd=str(repo), target_repo="", known_hosts=KNOWN)
     assert resolution.target.owners == (_owner("acme"),)
+
+
+def test_ambiguous_hostname_unions_the_default_host(tmp_path):
+    resolution = _resolve(
+        ["gh", "api", "-X", "POST", "-q", "--hostname=ghe.corp", "repos/acme/x/issues"],
+        tmp_path)
+    assert resolution.ok
+    assert _owner("ghe.corp/acme") in resolution.target.owners
+    assert _owner("acme") in resolution.target.owners
+
+
+def test_issue_transfer_destination_is_a_candidate(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:acme/widget.git")
+    resolution = _resolve(["gh", "issue", "transfer", "12", "stranger/lib"], repo)
+    assert resolution.ok
+    assert _owner("acme") in resolution.target.owners
+    assert _owner("stranger") in resolution.target.owners
+
+
+def test_an_opaque_wrapper_is_unresolvable(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:acme/widget.git")
+    resolution = _resolve(["sudo", "gh", "issue", "create", "--title", "x"], repo)
+    assert not resolution.ok
+    assert "wrapper" in resolution.reason

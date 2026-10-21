@@ -27,10 +27,14 @@ A write is:
 ``GH_HOST`` decide a target), and the program is matched on its basename, so
 ``/usr/local/bin/gh`` is gh.
 
-ceiling: ``sudo gh``, ``command gh``, ``env GH_REPO=x gh`` and a gh reached
-through an alias or a wrapper script are not matched. Upgrade trigger: the
-first such spelling seen in an agent transcript; the guards read it the same
-way, so all three change together through the corpus.
+``eval``, ``env`` with options, ``bash|sh|zsh -c``, ``command``, ``exec``,
+``xargs``, ``sudo`` and ``time`` that mention gh or a workbench posting command
+are writes whose target cannot be resolved — the policy refuses them.
+
+ceiling: a gh reached through a shell alias or a wrapper script whose name is
+not in that set is not matched. Upgrade trigger: the first such spelling seen
+in an agent transcript; the guards read it the same way, so all three change
+together through the corpus.
 """
 
 # doc-group: platform
@@ -43,7 +47,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 GH_WRITES: Mapping[str, frozenset[str]] = {
-    "issue": frozenset({"create", "comment", "edit", "reopen", "close", "delete"}),
+    "issue": frozenset({"create", "comment", "edit", "reopen", "close", "delete", "transfer"}),
     "pr": frozenset({"create", "comment", "review", "edit", "merge", "close", "reopen", "ready"}),
     "release": frozenset({"create", "edit", "delete", "upload"}),
     "label": frozenset({"create", "edit", "delete"}),
@@ -59,7 +63,12 @@ _WORKBENCH_PR_SUBCOMMANDS = frozenset({
 })
 _POSTING_SUBCOMMANDS = frozenset({"describe", "comments", "fix", "ci"})
 _REVIEW_READ_FLAGS = frozenset({"--self", "--no-post", "--summary", "--list"})
-_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+_OPAQUE_WRAPPERS = frozenset({"eval", "command", "exec", "xargs", "sudo", "time"})
+_SHELLS = frozenset({"bash", "sh", "zsh"})
+_GITHUB_COMMANDS = frozenset({
+    "gh", "pr", "review", "pr-describe", "review-post", "review-threads",
+})
 _OPERATOR_CHARS = ";&|()\n"
 _HEREDOC_OPEN = re.compile(r"<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
 
@@ -139,7 +148,7 @@ def invocation(statement: Sequence[str]) -> Invocation:
     start = 0
     while start < len(statement) and _ASSIGNMENT.match(statement[start]):
         name, _, value = statement[start].partition("=")
-        env[name] = value
+        env[name.removesuffix("+")] = value
         start += 1
     return Invocation(env=env, words=tuple(statement[start:]))
 
@@ -186,7 +195,7 @@ def with_env_builtin(inv: Invocation) -> Invocation:
     args = inv.args
     while i < len(args) and _ASSIGNMENT.match(args[i]):
         name, _, value = args[i].partition("=")
-        env[name] = value
+        env[name.removesuffix("+")] = value
         i += 1
     return Invocation(env=env, words=tuple(args[i:]))
 
@@ -252,9 +261,44 @@ def _workbench_pr_posts(args: Sequence[str]) -> bool:
     return False
 
 
+def _basename_tokens(words: Sequence[str]) -> list[str]:
+    tokens: list[str] = []
+    for word in words:
+        tokens.extend(word.split())
+    return [token.rsplit("/", 1)[-1] for token in tokens]
+
+
+def _tokens_mention_github(words: Sequence[str]) -> bool:
+    return bool(set(_basename_tokens(words)) & _GITHUB_COMMANDS)
+
+
+def _env_has_option(args: Sequence[str]) -> bool:
+    for word in args:
+        if word.rsplit("/", 1)[-1] in _GITHUB_COMMANDS:
+            return False
+        if word.startswith("-"):
+            return True
+    return False
+
+
+def opaque_github_write(statement: Sequence[str]) -> bool:
+    """Whether *statement* reaches gh through a wrapper whose target cannot be resolved."""
+    inv = invocation(statement)
+    rest = inv.args
+    if not _tokens_mention_github(rest):
+        return False
+    if inv.program in _OPAQUE_WRAPPERS:
+        return True
+    if inv.program in _SHELLS and "-c" in rest:
+        return True
+    return inv.program == "env" and _env_has_option(rest)
+
+
 def statement_is_write(statement: Sequence[str]) -> bool:
     """Whether one statement's words write to GitHub."""
-    inv = invocation(statement)
+    if opaque_github_write(statement):
+        return True
+    inv = with_env_builtin(invocation(statement))
     if inv.program == "gh":
         return gh_is_write(inv.args)
     if inv.program == "pr":

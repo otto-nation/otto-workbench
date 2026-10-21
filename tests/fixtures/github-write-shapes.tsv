@@ -9,6 +9,7 @@ write	gh issue edit 5 --body x
 write	gh issue close 5
 write	gh issue reopen 5
 write	gh issue delete 5 --yes
+write	gh issue transfer 12 o/r
 write	gh pr create --draft --title x
 write	gh pr comment 1 --body x
 write	gh pr review 1 --comment -b x
@@ -39,6 +40,19 @@ write	"gh" issue create --title x
 write	gh "issue" create --title x
 write	/usr/local/bin/gh pr comment 1 --body x
 write	GH_REPO=o/r gh issue create --title x
+write	env GH_REPO=o/r gh issue create --title x
+write	eval 'gh issue create --title x'
+write	env -i GH_REPO=o/r gh issue create --title x
+write	env -u X GH_REPO=o/r gh issue create --title x
+write	env -S GH_REPO=o/r gh issue create --title x
+write	bash -c 'gh issue create --title x'
+write	sh -c 'gh pr comment 1 --body x'
+write	zsh -c 'gh issue create --title x'
+write	command gh issue create --title x
+write	exec gh issue create --title x
+write	xargs gh issue create --title
+write	sudo gh issue create --title x
+write	time gh issue create --title x
 write	cd /tmp && gh issue create --title x
 write	gh issue list; gh issue create --title x
 write	pr create --draft

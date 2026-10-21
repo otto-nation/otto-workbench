@@ -170,15 +170,23 @@ _GH_TARGET_VARS = frozenset({"GH_REPO", "GH_HOST"})
 _ENV_BUILTINS = frozenset({"export", "declare", "typeset", "local", "env"})
 
 
-def _is_assign(word: str) -> bool:
+def _assign_name(word: str) -> str:
     name, sep, _ = word.partition("=")
-    return bool(sep) and name.isidentifier()
+    if not sep:
+        return ""
+    if name.endswith("+"):
+        name = name[:-1]
+    return name if name.isidentifier() else ""
+
+
+def _is_assign(word: str) -> bool:
+    return bool(_assign_name(word))
 
 
 def _assign_target_var(word: str) -> frozenset[str]:
-    if word.startswith("-") or not _is_assign(word):
+    if word.startswith("-"):
         return frozenset()
-    return frozenset({word.partition("=")[0]}) & _GH_TARGET_VARS
+    return frozenset({_assign_name(word)}) & _GH_TARGET_VARS
 
 
 def _builtin_assigns(words: Sequence[str]) -> frozenset[str]:
@@ -193,9 +201,16 @@ def _builtin_assigns(words: Sequence[str]) -> frozenset[str]:
     return frozenset(names)
 
 
+def _unset_names(words: Sequence[str]) -> frozenset[str]:
+    if not words or words[0] != "unset":
+        return frozenset()
+    return frozenset(word for word in words[1:] if not word.startswith("-")) & _GH_TARGET_VARS
+
+
 def _gh_env_names(statement: Sequence[str]) -> frozenset[str]:
     inv = gh.write_shapes.invocation(statement)
-    return frozenset(_GH_TARGET_VARS.intersection(inv.env)) | _builtin_assigns(inv.words)
+    return (frozenset(_GH_TARGET_VARS.intersection(inv.env))
+            | _builtin_assigns(inv.words) | _unset_names(inv.words))
 
 
 def _own_gh_env(statement: Sequence[str]) -> frozenset[str]:

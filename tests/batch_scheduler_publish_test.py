@@ -227,3 +227,11 @@ def test_a_remote_reset_behind_the_lease_is_not_adopted():
                 descends=lambda wt, old, new: False)
     h.sched.run_until_blocked()
     assert h.run.items[0].remote_sha == "h"
+
+
+def test_a_step_with_no_starting_head_records_its_tip_without_a_failure_event():
+    """No base to list from is not git refusing the listing."""
+    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")}, heads={"/wt/b1": ""})
+    h.sched.run_until_blocked()
+    assert h.run.items[0].step(Step.REVIEW).commits == ["review-1"]
+    assert "commits_unrecorded" not in h.kinds()

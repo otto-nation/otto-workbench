@@ -3629,11 +3629,13 @@ unverifiable: the gate fails closed. Confirmations accumulate on the item
 
 A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
 of the old lease that the local branch already contains (`remote_fast_forwarded`)
-— the push that follows is a fast-forward and loses nothing. A branch the operator rebased
-by hand with `--fork-point` reaches that refusal too: the commits the fork
-point skipped are the ones listed, and the rebase's start tip stays the one
-the batch saw before the hand rebase (`batch.resolve`, `force`), so
-`not_incorporated` does not fire for it. The lease advances as soon as
+— the push that follows is a fast-forward and loses nothing.
+
+A branch the operator rebased by hand with `--fork-point` reaches the
+`not_incorporated_remote` refusal too: the commits the fork point skipped are
+the ones listed, and the rebase's start tip stays the one the batch saw before
+the hand rebase (`batch.resolve`, `force`), so `not_incorporated` does not fire
+for it. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 
 ### batch/report.py

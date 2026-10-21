@@ -40,10 +40,11 @@ A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
 of the old lease that the local branch already contains (`remote_fast_forwarded`)
 — the push that follows is a fast-forward and loses nothing.
 
-A branch the operator rebased by hand with `--fork-point` reaches that refusal too: the commits the fork
-point skipped are the ones listed, and the rebase's start tip stays the one
-the batch saw before the hand rebase (`batch.resolve`, `force`), so
-`not_incorporated` does not fire for it. The lease advances as soon as
+A branch the operator rebased by hand with `--fork-point` reaches the
+`not_incorporated_remote` refusal too: the commits the fork point skipped are
+the ones listed, and the rebase's start tip stays the one the batch saw before
+the hand rebase (`batch.resolve`, `force`), so `not_incorporated` does not fire
+for it. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 """
 
@@ -177,6 +178,9 @@ def _carried(wt: str, branch: str, sha: str, finder: git.replay.ReplayFinder) ->
     return _Carried.YES
 
 
+# Appended to the label of a drafted commit whose replay git could not determine.
+_UNVERIFIABLE = " (unverifiable)"
+
 _DROPPED_CACHE: dict[tuple[str, str, str, tuple[str, ...]], tuple[str, ...]] = {}
 
 
@@ -184,7 +188,14 @@ def _dropped(item: Item, wt: str) -> tuple[str, ...]:
     """The drafted commits *item*'s branch no longer carries, labelled for the refusal.
 
     One publish reads the tree several times; the answer depends only on the
-    branch tip and the drafted list, so it is computed once per pair.
+    branch tip and the drafted list, so it is computed once per pair. An answer
+    holding an unverifiable commit is not kept: git declining once — a timeout,
+    a locked object — must not refuse that tip for the rest of the driver's life.
+
+    ceiling: the cache lives for the process and is never evicted. Entries are
+    a few labels per item per tip a publish read. Upgrade trigger: if a
+    long-lived driver ever reads enough distinct tips for this to show in its
+    RSS, key it by run and drop a run's entries when the run finishes.
     """
     drafted = tuple(drafted_commits(item))
     if not drafted:
@@ -194,7 +205,7 @@ def _dropped(item: Item, wt: str) -> tuple[str, ...]:
     if tip and key in _DROPPED_CACHE:
         return _DROPPED_CACHE[key]
     result = _compute_dropped(item, wt, drafted)
-    if tip:
+    if tip and not any(label.endswith(_UNVERIFIABLE) for label in result):
         _DROPPED_CACHE[key] = result
     return result
 
@@ -208,7 +219,7 @@ def _compute_dropped(item: Item, wt: str, drafted: Sequence[str]) -> tuple[str, 
             continue
         subject = git.client.out("log", "-1", "--format=%s", sha, cwd=wt)
         label = f"{git.client.abbrev(sha)} {subject}".rstrip()
-        dropped.append(label if carried is _Carried.NO else f"{label} (unverifiable)")
+        dropped.append(label if carried is _Carried.NO else f"{label}{_UNVERIFIABLE}")
     return tuple(dropped)
 
 

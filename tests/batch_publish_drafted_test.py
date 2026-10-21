@@ -123,6 +123,19 @@ def test_dropped_is_computed_once_per_branch_tip(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_an_unverifiable_answer_is_asked_again_rather_than_kept(tmp_path, monkeypatch):
+    pair = remote_and_clone(tmp_path)
+    item = _item(worktree=str(pair.work), remote=remote_tip(pair.origin, "feat"))
+    item.step(Step.REVIEW).commits = ["e" * 40]
+    calls = []
+    real = batch.publish._compute_dropped
+    monkeypatch.setattr(batch.publish, "_compute_dropped",
+                        lambda *a: calls.append(1) or real(*a))
+    batch.publish.read_tree(item)
+    batch.publish.read_tree(item)
+    assert len(calls) == 2
+
+
 def test_a_reset_and_new_commit_still_misses_the_drafted_one(tmp_path):
     pair = remote_and_clone(tmp_path)
     item, sha = _draft(pair)
@@ -294,3 +307,29 @@ def test_confirming_one_refusal_does_not_unconfirm_the_other(tmp_path, monkeypat
     assert rec.calls == [["pr", "rebase", "--push-only", "--expect", "s", *WT]]
     assert item.forced == []
     assert item.step(Step.CI).commits == []
+
+
+def test_a_forced_publish_with_nothing_to_push_spends_the_confirmation(tmp_path, monkeypatch):
+    """A hand push left local == origin, so the forced publish pushes nothing; the
+    confirmation must not carry over to a later publish of the same item."""
+    monkeypatch.setattr(batch.store, "attempt_log_path",
+                        lambda *a: tmp_path / "publish.log")
+    item = _item(remote="s")
+    run = batch.model.Run(id="r1", started_at="t", steps=list(batch.model.STEP_ORDER), pool=1,
+                          auto_publish=[], items=[item])
+    run.decisions = [batch.model.Decision(id="d1", item=item.key, step="publish",
+                                          kind=batch.model.DecisionKind.FAILED,
+                                          payload={"reason": Refusal.DRAFTED_DROPPED.value,
+                                                   "commits": ["c1 ours"]})]
+
+    def tree(it):
+        return TreeState(local=it.remote_sha, remote=it.remote_sha,
+                         divergence=RefDivergence(comparable=True), dropped=("c1 ours",))
+
+    rec = _Recorder()
+    batch.resolve.apply(run, batch.requests.Decide("d1", "force-publish"), pr_bin="pr",
+                        runner=rec, tree=tree,
+                        closeout=lambda d, b: batch.resolve.CloseoutDebt())
+    assert rec.calls == []
+    assert item.status is batch.model.ItemStatus.DONE
+    assert item.forced == []

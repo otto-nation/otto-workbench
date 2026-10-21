@@ -3,6 +3,7 @@
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -11,8 +12,9 @@ import review.phases  # noqa: E402
 import review.pipeline  # noqa: E402
 import review.steps  # noqa: E402
 from review.convergence import (  # noqa: E402
-    drop_out_of_delta_nits, held_nits, new_nit_ids, prior_ids,
+    drop_out_of_delta_nits, fix_work_set, held_nits, new_nit_ids, prior_ids,
 )
+from review.ingest import IngestOutcome  # noqa: E402
 from review.paths import read_review_meta  # noqa: E402
 from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
@@ -198,3 +200,54 @@ def test_a_held_nit_stays_out_of_fix_work_until_a_full_round(tmp_path, monkeypat
                       prior=read_review(Path(round_next.review_file)), incremental=False)
     assert read_review_meta(Path(full.artifact_dir)).held_nits == ()
     assert _work_set(full) == {"M1", "N1"}
+
+
+def test_a_must_or_should_finding_in_the_held_set_stays_in_fix_work():
+    """A colliding stable id must not withhold Must/Should — only Nit/Idiom."""
+    must = finding("M1", "bug", path="a.py", line=1, stable_id="held").view()
+    should = finding("S1", "should", path="a.py", line=2, stable_id="held").view()
+    nit = finding("N1", "nit", path="a.py", line=3, stable_id="held").view()
+    assert [f.id for f in fix_work_set([must, should, nit], ("held",))] == ["M1", "S1"]
+
+
+def test_synthesis_drops_out_of_delta_nits_on_an_incremental_round(tmp_path, monkeypatch):
+    """Synthesis may add cross-cutting nits; on an incremental round they are dropped too."""
+    job = _incremental(tmp_path)
+    seen = {}
+    monkeypatch.setattr(review.steps, "build_prompt", lambda *a, **k: "prompt")
+
+    def agent(inv, **kwargs):
+        Path(job.review_file).write_text("## Summary\n")
+        Path(inv.session_log).write_text("")
+        return 0
+    monkeypatch.setattr(review.phases, "run_agent", agent)
+    monkeypatch.setattr(review.steps, "ingest_with_repair",
+                        lambda *a, **k: IngestOutcome(ReviewRecord(findings=(NIT_OUT, NIT_IN))))
+    monkeypatch.setattr(review.steps, "_post_process_review",
+                        lambda j, record, **k: seen.update(record=record))
+    review.steps._phase_synthesis(job, "", 2, merged(ReviewRecord(findings=(NIT_IN,)), fresh=1))
+    assert [f.id for f in seen["record"].findings] == ["N2"]
+
+
+def test_single_agent_disprove_sees_the_filtered_record(tmp_path, monkeypatch):
+    job = _incremental(tmp_path)
+    seen = {}
+    monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+
+    def agent(inv, throttle=None):
+        Path(job.review_file).write_text("x")
+        Path(inv.session_log).write_text("")
+        return 0
+    monkeypatch.setattr(review.phases, "run_agent", agent)
+    single_agent_record(monkeypatch, ReviewRecord(findings=(NIT_OUT, NIT_IN)))
+    monkeypatch.setattr(review.pipeline, "_should_disprove", lambda *a: True)
+    monkeypatch.setattr(
+        review.pipeline, "_phase_disprove",
+        lambda j, record, content: seen.update(record=record, content=content)
+        or SimpleNamespace(record=record),
+    )
+    monkeypatch.setattr(review.pipeline, "_post_process_review", lambda *a, **k: None)
+    review.pipeline.run_single_agent(job)
+    assert [f.id for f in seen["record"].findings] == ["N2"]
+    assert "N2" in seen["content"]
+    assert "N1" not in seen["content"]

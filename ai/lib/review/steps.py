@@ -41,7 +41,7 @@ from review.merge import append_findings, merge_records
 from review.outcome import (
     _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
     _post_process_review, _publish, _reconcile_and_verify, _write_clean_review,
-    _write_mechanical_fallback,
+    _write_mechanical_fallback, _write_settled_review,
 )
 from review.paths import phase_log_path, phase_output_path
 from review.phases import (
@@ -275,6 +275,7 @@ def _run_synthesis_or_fallback(
     holistic_content: str, group_count: int,
     merged: Merged, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
+    *, settled: bool = False,
 ) -> PhaseResult:
     """The synthesis session log and what synthesis spent.
 
@@ -282,6 +283,7 @@ def _run_synthesis_or_fallback(
     review, a mechanical fallback, a skip — spends nothing and says so, so the
     caller's running total means the same thing at the disprove gate as it did
     here.
+    *settled* is `_nothing_new`'s answer, decided once by the caller.
     """
     all_groups_failed = len(failed_groups) == group_count
 
@@ -356,6 +358,14 @@ def _run_synthesis_or_fallback(
         _inject_failures_and_status(job.review_file, state)
         return PhaseResult()
 
+    if settled:
+        core.log.info("Synthesis skipped — no new findings, and every prior finding is settled")
+        _write_settled_review(job, group_count, merged.record, skipped_groups=n_skipped)
+        state.done.add(Phase.SYNTHESIS)
+        _write_pipeline_state(job, state)
+        _inject_failures_and_status(job.review_file, state)
+        return PhaseResult()
+
     result = _phase_synthesis(
         job, holistic_content, group_count, merged,
         skipped_groups=n_skipped,
@@ -372,6 +382,19 @@ def _unaccounted(job: ReviewJob, record: ReviewRecord) -> list[PriorFinding]:
     """The prior findings `record` leaves for synthesis: neither stated nor settled."""
     return passed_over(job.prior, record, job.wt_path, job.pr.head_sha,
                        changed=change_set(job))
+
+
+def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailure]) -> bool:
+    """Whether synthesis would only restate what the merge already settles.
+
+    An incremental round, every group reported, the groups that ran produced no
+    finding, and no prior finding is left for synthesis to account for. A count
+    nobody took (`fresh` None) is not a zero. The disprove gate reads the same
+    answer: with nothing new there is nothing it has not already challenged.
+    """
+    if not _is_incremental(job) or failed_groups or merged.fresh != 0:
+        return False
+    return not _unaccounted(job, merged.record)
 
 
 def _phase_synthesis(
@@ -469,6 +492,9 @@ def _phase_synthesis(
             extra=merged.record.extra,
         )
         record = _restore_held_findings(merged.record, record)
+        if _is_incremental(job):
+            record = drop_out_of_delta_nits(
+                record, job.preflight.delta_files, prior_ids(job)).record
         _post_process_review(
             job, record, skipped_groups=skipped_groups, total_groups=group_count,
         )
@@ -579,6 +605,7 @@ def _log_disprove_falsified(summary: dict) -> None:
 def _run_disprove_gate(
     job: ReviewJob, state: PipelineState,
     disprove: bool | None, cost_so_far: float, max_cost: float,
+    *, settled: bool = False,
 ) -> PhaseResult:
     """The disprove gate's session log and what the gate spent.
 
@@ -595,7 +622,10 @@ def _run_disprove_gate(
     result = PhaseResult()
     failure: Diagnosis | None = None
 
-    if not _should_disprove(job, disprove):
+    if settled:
+        core.log.info("Disprove gate skipped — nothing new to challenge; every carried "
+                      "finding faced the gate in the round that raised it")
+    elif not _should_disprove(job, disprove):
         core.log.info("Disprove gate off — keeping all findings")
     elif cost_so_far > max_cost:
         core.log.warn(

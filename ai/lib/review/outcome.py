@@ -37,7 +37,8 @@ from review.store import StoredReview, read_review, write_review
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
     CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
-    NO_RUN_VERDICT, PARTIAL_VERDICT, build_mechanical_record, states_verdict,
+    NO_RUN_VERDICT, PARTIAL_VERDICT, SETTLED_SUMMARY, build_mechanical_record,
+    states_verdict,
 )
 from review.verify import post_process_record
 
@@ -302,3 +303,21 @@ def write_unchanged_review(job: ReviewJob) -> None:
         include_verdict=states_verdict(job.mode), file_count=job.pr.changed_files,
     )
     _publish(job, record)
+
+
+def _write_settled_review(job: ReviewJob, group_count: int, merged: ReviewRecord,
+                          skipped_groups: int = 0) -> None:
+    """The review an incremental round ships when it found nothing new to say.
+
+    Synthesis writes up findings; with no new ones and every prior finding
+    settled by the ledger, a carry, a prior decline or the tree, it would only
+    restate the merge at the cost of an agent call. The verdict is stated from
+    the carried findings, as `write_unchanged_review` does: a round that adds
+    nothing does not withdraw what the last one asked for.
+    """
+    record = build_mechanical_record(
+        _reconcile_and_verify(job, merged), group_count=group_count,
+        summary_note=SETTLED_SUMMARY, include_verdict=states_verdict(job.mode),
+        file_count=job.pr.changed_files,
+    )
+    _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count)

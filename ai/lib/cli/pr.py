@@ -35,6 +35,7 @@ import os
 import sys
 from pathlib import Path
 
+import cli.boundary
 import cli.dispatch
 import cli.locks
 import cli.needs
@@ -545,6 +546,7 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
                      original_repo_dir=original_repo_dir)
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     """Run the invocation *argv* describes, and return its exit code.
 

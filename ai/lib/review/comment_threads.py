@@ -44,7 +44,8 @@ import review.closeout
 from review.deferred_issue import TRACK_ALL
 
 
-def resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord]) -> int:
+def resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord],
+                             repo: str = "") -> int:
     """Resolve all verified threads on GitHub. Returns count resolved."""
     resolved = 0
     for thread_data in threads_raw:
@@ -52,7 +53,7 @@ def resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord]
         record = threads.get(tid)
         if record is None or record.state != ThreadState.VERIFIED:
             continue
-        if not pr.comments.resolve_thread(tid):
+        if not pr.comments.resolve_thread(tid, repo=repo):
             continue
         threads[tid] = dataclasses.replace(record, state=ThreadState.RESOLVED)
         resolved += 1
@@ -193,7 +194,7 @@ def run_threads(trail, args, ctx) -> int:
     # this runs too — otherwise the "nothing was published" message it prints
     # is false: GitHub already got the resolutions this loop sent.
     if args.triage or (args.finish and fetched.complete):
-        resolved_count = resolve_verified_threads(threads_raw, threads)
+        resolved_count = resolve_verified_threads(threads_raw, threads, repo=repo)
         if resolved_count:
             core.log.info(f"Resolved {resolved_count} verified threads")
 

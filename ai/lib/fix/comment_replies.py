@@ -62,7 +62,7 @@ def settle_fixed(
         posted=pr.thread_replies.reply_to_fixed(
             fixed, threads_by_id, repo, pr_number, cp, wt_path, host,
         ),
-        resolved=tuple(pr.settlement.resolve_fixed_threads(fixed, threads_by_id)),
+        resolved=tuple(pr.settlement.resolve_fixed_threads(fixed, threads_by_id, repo=repo)),
     )
 
 
@@ -118,6 +118,6 @@ def post_triage_replies(
                 report.pr_number, wt_path, host=ctx.host,
             ),
             resolved=tuple(pr.settlement.resolve_fixed_threads(
-                round_.already_addressed, threads_by_id)),
+                round_.already_addressed, threads_by_id, repo=ctx.repo)),
         ))
     return replies

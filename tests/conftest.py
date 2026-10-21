@@ -523,7 +523,10 @@ def stub_gh(tmp_path, monkeypatch):
             f"{body}\n"
         )
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
-        monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+        # /usr/local/bin holds yq. The owner boundary reads github.owners via
+        # yq when PyYAML is not in this interpreter; without it every write
+        # fails as "config.yml is not readable YAML".
+        monkeypatch.setenv("PATH", f"{bin_dir}:/usr/local/bin:/usr/bin:/bin")
         return calls
 
     return _stub

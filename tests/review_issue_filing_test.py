@@ -1,6 +1,7 @@
 """Tests for review.issue filing — create_issue, labels, and update_issue."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -21,6 +22,21 @@ from review.issue import (
 )
 import config.workbench_config
 
+_REAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _allow_yq(fake=None, return_value=None):
+    """Spy on gh without intercepting the yq read of github.owners."""
+    def wrapped(*a, **kw):
+        cmd = a[0] if a else kw.get("args")
+        name = Path(str(cmd[0])).name if isinstance(cmd, (list, tuple)) and cmd else ""
+        if name == "yq":
+            return _REAL_SUBPROCESS_RUN(*a, **kw)
+        if fake is not None:
+            return fake(*a, **kw)
+        return return_value
+    return wrapped
+
 
 # ── create_issue ──────────────────────────────────────────────────────────
 
@@ -29,6 +45,11 @@ import config.workbench_config
 def _publishing_allowed(publishing_on):
     """These cover what a write does once it is allowed; the gate itself is
     covered in the pr_comments suites."""
+
+
+@pytest.fixture(autouse=True)
+def _own_the_issue_repos(github_owners):
+    github_owners({"test": ["owner", "ghe.example.com/owner"]})
 
 
 def test_create_issue_linear():
@@ -44,7 +65,7 @@ def test_create_issue_linear():
             r.stdout = '{"url": "https://linear.app/team/issue/ENG-456/slug"}'
         return r
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         result = create_issue("linear", "ENG", "title", "description", parent_id="ENG-123")
 
     assert result.filed is True
@@ -68,7 +89,7 @@ def test_create_issue_linear_no_parent():
             r.stdout = '{"url": "https://linear.app/team/issue/ENG-456/slug"}'
         return r
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         result = create_issue("linear", "ENG", "title", "description")
 
     assert result.filed is True
@@ -80,7 +101,7 @@ def test_create_issue_linear_failure():
     r.returncode = 1
     r.stdout = ""
 
-    with patch("subprocess.run", return_value=r):
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)):
         result = create_issue("linear", "ENG", "title", "description")
 
     assert result.delivery is IssueDelivery.UNDELIVERED
@@ -93,7 +114,7 @@ def test_create_issue_github():
     r.returncode = 0
     r.stdout = "https://github.com/owner/repo/issues/42\n"
 
-    with patch("subprocess.run", return_value=r):
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)):
         result = create_issue("github", "", "title", "description", repo="owner/repo")
 
     assert result.filed is True
@@ -109,7 +130,7 @@ def test_create_issue_github_files_on_the_enterprise_host():
     r.stdout = "https://ghe.example.com/owner/repo/issues/42\n"
     opts = {"base_url": "https://ghe.example.com"}
 
-    with patch("subprocess.run", return_value=r) as mock_run:
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)) as mock_run:
         create_issue(
             "github", "", "title", "description", repo="owner/repo", opts=opts,
         )
@@ -126,7 +147,7 @@ def test_create_issue_github_labels_are_resolved_on_the_same_host():
     r.stdout = '[{"name":"follow-up"}]'
     opts = {"base_url": "https://ghe.example.com", "labels": ["follow-up"]}
 
-    with patch("subprocess.run", return_value=r) as mock_run:
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)) as mock_run:
         create_issue(
             "github", "", "title", "description", repo="owner/repo", opts=opts,
         )
@@ -145,7 +166,7 @@ def test_update_issue_github_edits_on_the_enterprise_host():
     r.stdout = ""
     opts = {"base_url": "https://ghe.example.com"}
 
-    with patch("subprocess.run", return_value=r) as mock_run:
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)) as mock_run:
         update_issue("github", "#42", "new body", repo="owner/repo", opts=opts)
 
     argv = mock_run.call_args[0][0]
@@ -199,7 +220,7 @@ def test_create_issue_carries_the_configured_labels(tmp_path):
     """The labels a repo declares reach the tracker's create command."""
     calls, fake_run = _linear_calls([LABEL])
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         result = create_issue(
             "linear", "ENG", "title", "description",
             opts={"labels": [LABEL]},
@@ -215,7 +236,7 @@ def test_a_repo_that_declares_no_labels_files_an_unlabelled_issue():
     """`labels: []` is an opt-out, so nothing is applied and nothing is created."""
     calls, fake_run = _linear_calls([])
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         result = create_issue("linear", "ENG", "title", "description", opts={"labels": []})
 
     assert result.filed is True
@@ -227,7 +248,7 @@ def test_a_label_the_tracker_lacks_is_created_before_the_issue():
     """Both CLIs refuse to file against an unknown label, so the gap is filled first."""
     calls, fake_run = _linear_calls([])
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         create_issue(
             "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
@@ -242,7 +263,7 @@ def test_a_label_the_tracker_lacks_is_created_before_the_issue():
 def test_a_label_the_tracker_already_holds_is_not_created_again():
     calls, fake_run = _linear_calls([LABEL])
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         create_issue(
             "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
@@ -254,7 +275,7 @@ def test_a_label_matching_case_insensitively_is_not_created_again():
     """Both trackers resolve a label name case-insensitively, so `Follow-Up` is a hit."""
     calls, fake_run = _linear_calls([LABEL.title()])
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         create_issue(
             "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
@@ -266,7 +287,7 @@ def test_a_label_that_cannot_be_created_is_dropped_rather_than_failing_the_issue
     """An unlabelled tracking issue is worth more than no tracking issue."""
     calls, fake_run = _linear_calls([], create_label_ok=False)
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         result = create_issue(
             "linear", "ENG", "title", "description", opts={"labels": [LABEL]},
         )
@@ -297,7 +318,7 @@ def test_a_label_created_without_output_is_still_created():
             r.stdout = '{"url": "https://linear.app/team/issue/ENG-456/slug"}'
         return r
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         create_issue("linear", "ENG", "title", "description", opts={"labels": [LABEL]})
 
     assert LABEL in _issue_create_cmd(calls)
@@ -317,7 +338,7 @@ def test_github_labels_reach_the_create_command():
             r.stdout = "https://github.com/owner/repo/issues/42\n"
         return r
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         result = create_issue(
             "github", "", "title", "description", repo="owner/repo",
             opts={"labels": [LABEL]},
@@ -340,7 +361,7 @@ def test_a_github_issue_is_assigned_to_whoever_filed_it():
         r.stdout = "https://github.com/owner/repo/issues/42\n"
         return r
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         create_issue("github", "", "title", "description", repo="owner/repo")
 
     create_cmd = _issue_create_cmd(calls)
@@ -378,7 +399,7 @@ def test_a_repo_config_opting_out_files_an_unlabelled_issue(tmp_path):
         r.stdout = "https://github.com/owner/repo/issues/42\n"
         return r
 
-    with patch("subprocess.run", side_effect=fake_run):
+    with patch("subprocess.run", side_effect=_allow_yq(fake_run)):
         result = create_issue(
             info.name, "", "title", "description", repo="owner/repo",
             opts=info.options,
@@ -402,7 +423,7 @@ def test_update_issue_linear():
     r.returncode = 0
     r.stdout = ""
 
-    with patch("subprocess.run", return_value=r):
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)):
         ok = update_issue("linear", "ENG-456", "new description")
 
     assert ok is True
@@ -413,7 +434,7 @@ def test_update_issue_linear_failure():
     r.returncode = 1
     r.stdout = ""
 
-    with patch("subprocess.run", return_value=r):
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)):
         ok = update_issue("linear", "ENG-456", "new description")
 
     assert ok is False
@@ -424,7 +445,7 @@ def test_update_issue_github():
     r.returncode = 0
     r.stdout = ""
 
-    with patch("subprocess.run", return_value=r):
+    with patch("subprocess.run", side_effect=_allow_yq(return_value=r)):
         ok = update_issue("github", "#42", "new description", repo="owner/repo")
 
     assert ok is True

@@ -30,6 +30,7 @@ FIX_LOGS_DIRNAME = "fix-logs"
 PASSES_KEPT = 5
 
 _STAMP_UNSAFE = re.compile(r"[^0-9A-Za-z]")
+_STAMP_RE = re.compile(r"^\d{8}T\d+$")
 
 
 def _live_logs(review_dir: Path) -> list[Path]:
@@ -58,10 +59,11 @@ def keep(review_dir: Path, started_at: str) -> Path | None:
     target.mkdir(parents=True, exist_ok=True)
     for log in present:
         shutil.copy2(log, target / log.name)
-    # Newest by mtime, not name: `unstamped` or an odd-width stamp sorts wrong.
-    # The pass just written is never a candidate.
+    # Non-stamp names (empty started_at → "unstamped") sort oldest; stamp
+    # names then sort lexicographically, which is chronological for the form
+    # pass_dir writes. The pass just written is never a candidate.
     others = [p for p in (review_dir / FIX_LOGS_DIRNAME).iterdir() if p.is_dir() and p != target]
-    others.sort(key=lambda p: p.stat().st_mtime)
+    others.sort(key=lambda p: (bool(_STAMP_RE.fullmatch(p.name)), p.name))
     for stale in others[:max(0, len(others) - (PASSES_KEPT - 1))]:
         shutil.rmtree(stale, ignore_errors=True)
     return target

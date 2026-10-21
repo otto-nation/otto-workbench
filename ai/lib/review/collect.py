@@ -190,8 +190,11 @@ def worktree_diff(wt_path: str, since: str, *, counts_only: bool = False) -> str
     compare against, so they come through whole every time — on a delta review
     that means one lingering across runs is re-shown rather than dropped.
     """
-    # ceiling: untracked files ignore `since`; upgrade to diffing against the
-    # prior review's copy if repeated deltas start drowning in re-shown files.
+    # ceiling: untracked files ignore `since`; a non-ignored untracked file
+    # also makes every same-HEAD self-review incremental over it and lands in
+    # dirty_files each round (bounded to the surface). Upgrade to diffing
+    # against the prior review's copy if repeated deltas start drowning in
+    # re-shown files.
     flags = ["--numstat"] if counts_only else []
     return _join_nonempty(
         git.client.out("diff", *flags, since, cwd=wt_path),
@@ -747,6 +750,11 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
             core.log.warn(
                 f"No ref resolves {base} — the delta covers every commit "
                 "since the prior review, the base's included")
+        # ceiling: `_self_delta_files` is computed twice per same-HEAD run
+        # (`_prior_sha_for_delta` and here); two numstat calls. A tree change
+        # between them can yield an empty file list. Upgrade trigger: once
+        # collect.py is split below the cap, compute the list once in
+        # `_collect_delta`.
         files = (_self_delta_files(job, prior_sha) if job.mode == Mode.SELF
                  else [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)])
         return DeltaScope(

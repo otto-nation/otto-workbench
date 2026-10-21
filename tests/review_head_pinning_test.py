@@ -2,13 +2,21 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review.collect  # noqa: E402
 import review.invoke  # noqa: E402
+import review.issue  # noqa: E402
+import review.orchestrate  # noqa: E402
 import review.outcome  # noqa: E402
-from conftest import commit_all, git_out, init_repo  # noqa: E402
+import review.preflight  # noqa: E402
+import review.recover  # noqa: E402
+import review.run  # noqa: E402
+import review.worktree  # noqa: E402
+from conftest import commit_all, git_out, init_repo, make_ctx  # noqa: E402
 from core.phases import Mode  # noqa: E402
 from gh.types import PRContext, PRMetadata  # noqa: E402
 from review.paths import read_review_meta  # noqa: E402
@@ -166,3 +174,98 @@ def test_pr_mode_records_no_race_and_no_dirty_files(tmp_path):
     review.outcome._publish(job, ReviewRecord(summary="s"))
     meta = read_review_meta(Path(job.artifact_dir))
     assert (meta.head_moved_to, meta.dirty_files) == ("", ())
+
+
+def test_orchestrate_parser_sets_full_review_on_the_job(ro, monkeypatch, tmp_path):
+    """review-orchestrate --full-review is accepted and ReviewJob.full_review is True."""
+    import agent.backend
+    import pr.state
+    from review.reply_threads import ReplyThreads
+    from review.types import PreflightData
+
+    review_file = tmp_path / "review.md"
+    argv = [
+        "--mode", "self",
+        "--review-file", str(review_file),
+        "--repo-dir", str(tmp_path),
+        "--repo", "o/r",
+        "--full-review",
+    ]
+    parsed = {}
+    real_orchestrate = review.orchestrate.run_orchestrate
+
+    def capture(trail, args, repo, session_log):
+        parsed["args"] = args
+        return 0
+
+    monkeypatch.setattr(review.orchestrate, "run_orchestrate", capture)
+    assert ro.main(argv) == 0
+    assert parsed["args"].full_review is True
+
+    seen = {}
+    pr_meta = ro.PRMetadata(
+        title="t", body="", head="feat", base="main", head_sha="abc123",
+        additions=1, deletions=0, changed_files=1,
+        files=[{"path": "a.py", "additions": 1, "deletions": 0}],
+    )
+
+    def _pipeline(job, **_kwargs):
+        seen["full_review"] = job.full_review
+        Path(job.review_file).write_text("# Review\n")
+        Path(job.session_log).write_text("{}\n")
+
+    monkeypatch.setattr(review.orchestrate, "run_orchestrate", real_orchestrate)
+    monkeypatch.setattr(agent.backend, "preflight", lambda *a, **k: True)
+    monkeypatch.setattr(review.orchestrate, "_budgets_are_derivable", lambda *a, **k: True)
+    monkeypatch.setattr(
+        review.orchestrate, "fetch_metadata",
+        lambda *a, **k: ro.RunContext(pr_meta, ro.PRContext(), None),
+    )
+    monkeypatch.setattr(
+        review.orchestrate, "collect_preflight_data",
+        lambda job: PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            instructions_md="", architecture_md="",
+        ),
+    )
+    monkeypatch.setattr(review.orchestrate, "run_single_agent", _pipeline)
+    monkeypatch.setattr(review.orchestrate, "run_static_analysis", lambda *a, **k: [])
+    monkeypatch.setattr(
+        review.orchestrate, "fetch_reply_threads",
+        lambda *a, **k: ReplyThreads([], {}),
+    )
+    monkeypatch.setattr(pr.state, "load_state", lambda *a, **k: None)
+    session_log = str(tmp_path / "session.jsonl")
+    real_orchestrate(MagicMock(), parsed["args"], "o/r", session_log)
+    assert seen["full_review"] is True
+
+
+def test_force_builds_an_orchestrate_request_with_full_review(tmp_path, monkeypatch):
+    """run_self_review with flags.force=True builds OrchestrateRequest(full_review=True)."""
+    captured = {}
+
+    def _run(request):
+        captured["request"] = request
+        return 0
+
+    monkeypatch.setattr(review.invoke, "run", _run)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(tmp_path), None))
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.issue, "load_issue_provider",
+                        lambda *a, **kw: SimpleNamespace(name="none", options={}))
+    monkeypatch.setattr(review.issue, "extract_issue_id", lambda *a, **kw: "")
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
+                        lambda *a, **kw: SimpleNamespace(link="", context=""))
+    monkeypatch.setattr(review.run, "finish_review", lambda *a, **kw: MagicMock())
+    review_dir = tmp_path / "rev"
+    review_dir.mkdir()
+    flags = review.run.ReviewFlags(
+        bin_dir=Path("/bin"), generator_version="v", force=True,
+    )
+    review.run.run_self_review(
+        make_ctx(target_dir=tmp_path / "t"), flags, review_dir,
+        str(tmp_path), recover_head_sha="", trail=MagicMock(),
+    )
+    assert captured["request"].full_review is True

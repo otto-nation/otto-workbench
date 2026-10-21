@@ -127,8 +127,8 @@ def _head_moved_to(job: ReviewJob) -> str:
     if not live or covers(pinned, live):
         return ""
     core.log.warn(
-        f"HEAD moved to {git.client.abbrev(live)} while this review ran — it covers "
-        f"{git.client.abbrev(pinned)} only; the next run reviews the rest")
+        f"HEAD moved from {git.client.abbrev(pinned)} to {git.client.abbrev(live)} "
+        f"during the run; this review covers {git.client.abbrev(pinned)} only")
     return live
 
 

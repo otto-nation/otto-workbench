@@ -1,5 +1,6 @@
 """pr.comments: where a round's artifacts land, and delivering the PR body."""
 
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -107,13 +108,20 @@ class TestDeliverPrBody:
             pr.comments.deliver_pr_body(worktree, "owner/repo", 42)
         post.assert_called_once()
 
-    def test_post_sends_it_through_the_pulls_endpoint(self, worktree, publishing_on):
+    def test_post_sends_it_through_the_pulls_endpoint(self, worktree, publishing_on,
+                                                      github_owners):
+        github_owners({"test": ["owner"]})
         calls = []
         self._draft(worktree)
-        with patch(
-            "core.proc.subprocess.run",
-            lambda *a, **kw: calls.append(a[0]) or _make_completed(0),
-        ):
+        real = subprocess.run
+
+        def spy(cmd, *a, **kw):
+            if cmd and cmd[0] == "gh":
+                calls.append(cmd)
+                return _make_completed(0)
+            return real(cmd, *a, **kw)
+
+        with patch("core.proc.subprocess.run", spy):
             assert pr.comments.deliver_pr_body(worktree, "owner/repo", 42) is False
         assert calls == [[
             "gh", "api", "repos/owner/repo/pulls/42",

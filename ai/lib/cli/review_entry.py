@@ -30,6 +30,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 from agent.registry import add_phase_skip_flags, phase_skips
+import cli.boundary
 import cli.locks
 import core.log
 import core.proc
@@ -217,7 +218,7 @@ def _run_review(args, argv: list[str], ctx: pr.context.ResolvedContext,
         return review.run.run_pr_review(
             ctx, _flags(args, argv, generator_version), review_file, trail=trail)
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
+        cli.boundary.record_exception(trail, exc)
         raise
     finally:
         trail.finish()
@@ -360,7 +361,7 @@ def _run_self_review_body(
             recover_head_sha=recover_head_sha, trail=trail,
         )
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
+        cli.boundary.record_exception(trail, exc)
         raise
     finally:
         trail.finish()
@@ -368,6 +369,7 @@ def _run_self_review_body(
             review.worktree.cleanup_self_review_worktree(wt_cleanup, repo_dir)
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None, *,
          install_signal_handler: bool = True) -> int:
     """Parse *argv* and run the review it asks for.

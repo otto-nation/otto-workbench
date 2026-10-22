@@ -430,9 +430,18 @@ print(json.dumps({"tool_input": {"command": sys.argv[1]}, "agent_id": agent}))
   [[ "$output" == *"subagent"* ]]
 }
 
-@test "subagent publish hook: allows gh issue create in the main session" {
+@test "subagent publish hook: denies gh pr merge" {
+  _run_guard_agent 'gh pr merge 1 --squash' 'a7175461c26907157'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"subagent"* ]]
+}
+
+@test "subagent publish hook: leaves gh issue create in the main session to the other rules" {
+  # The main session is answered by the owner boundary, which this suite's
+  # sandbox — github.owners unset — refuses for every write.
   _run_guard_agent 'gh issue create --title x --body y' 'null'
-  [ "$status" -eq 0 ]
+  [[ "$output" != *"does not file issues"* ]]
+  [[ "$output" == *"owner boundary"* ]]
 }
 
 @test "subagent publish hook: allows gh pr view" {

@@ -157,6 +157,9 @@ WIKI_LINK_KEY = "wiki.link"
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
 GITHUB_SSH_443_KEY = "github.ssh_over_443"
+# Which GitHub owners are ours, grouped. Read by gh.owners from the global file
+# alone — see GitHubConfig.owners for why the merged config is never asked.
+GITHUB_OWNERS_KEY = "github.owners"
 
 # The label the workbench puts on an issue its automation files, and the
 # default contents of ISSUE_LABELS_KEY. A value rather than a key: both
@@ -336,6 +339,16 @@ class GitHubConfig:
     remote URL: the host is a *spelling*, and one repo is routinely spelled
     several ways — an ssh alias, a mirror, an ``insteadOf`` rewrite — every one
     of which must reach one key. See ``pr.target._key_host``.
+
+    ``owners`` names the GitHub owners that are ours, grouped — ``personal``,
+    ``work``, any name — each an ``OWNER`` on github.com or a ``HOST/OWNER`` on
+    an Enterprise instance. Every GitHub write an agent or the workbench makes
+    is checked against it (``gh.owners``), and an empty map refuses them all.
+    Global scope on write *and* on read: a repo's ``.workbench.yml`` is read by
+    everyone who clones it, so a cloned upstream repo could otherwise declare
+    itself ours. ``gh.owners.OwnerMap.load`` therefore reads the global file
+    directly; the value this field carries after ``load_config`` merges the
+    scopes is for display and is never consulted for the decision.
     """
 
     ssh_over_443: bool = field(
@@ -354,6 +367,16 @@ class GitHubConfig:
             "it describes which GitHub instance this repo is served by, which is"
             " a fact about the repo rather than the machine — a machine-wide"
             " value would key every other repo on this instance too",
+        )},
+    )
+
+    owners: dict[str, list[str]] = field(
+        default_factory=dict,
+        metadata={"scope": ScopeRule(
+            frozenset({GLOBAL_SCOPE}),
+            "it decides which repositories an agent may post to, and a repo's"
+            " .workbench.yml is read by everyone who clones it — an upstream"
+            " clone could otherwise declare itself ours",
         )},
     )
 

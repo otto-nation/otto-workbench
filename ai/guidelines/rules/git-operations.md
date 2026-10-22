@@ -48,7 +48,7 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 
 ## Subagent Publishing
 
-- A dispatched subagent never files issues, posts to a PR, or edits a PR description. Report the deferral and any proposed PR text to the parent; the parent owns those writes, and the guards enforce it
+- A dispatched subagent never files issues, posts to a PR, edits a PR description, or writes to GitHub any other way. Report the deferral and any proposed PR text to the parent; the parent owns those writes. Enforced by `claude-bash-guard` and `oneshot-publish-guard`: each refuses `linear issue create` by its own word match, and every GitHub write the classifier recognises via `owners-check --classify`
 
 ## PR Creation
 

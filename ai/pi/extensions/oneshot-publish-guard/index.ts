@@ -1,5 +1,6 @@
 /**
- * Refuses bash commands that file an issue or write to a PR in a one-shot
+ * Refuses bash commands that file an issue or write to GitHub — post to a PR,
+ * merge or close one, cut a release, a mutating `gh api` — in a one-shot
  * session (`ctx.mode` is `json` or `print`).
  *
  * A dispatched subagent runs as `pi --mode json -p`. Its work is reviewed by
@@ -45,7 +46,8 @@ export default function (pi: ExtensionAPI) {
     return {
       block: true,
       reason:
-        "A dispatched subagent does not file issues or post to a PR — report " +
+        "A dispatched subagent does not file issues, post to a PR, or write to " +
+        "GitHub any other way — report " +
         "the deferral (what, why, suggested title) and any proposed PR text to " +
         "the parent, which files or edits. See git-operations.md § Subagent Publishing.",
     };

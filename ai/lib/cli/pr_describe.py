@@ -56,6 +56,7 @@ Usage:
 import argparse
 import sys
 
+import cli.boundary
 import cli.locks
 import core.log
 import core.publishing
@@ -119,6 +120,7 @@ def _closes_refused(closes: tuple[str, ...], worktree) -> bool:
     return False
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)

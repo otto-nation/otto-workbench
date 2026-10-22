@@ -1,5 +1,6 @@
 """The publishing gate: nothing pr.comments writes reaches GitHub until --post says so."""
 
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -60,14 +61,21 @@ class TestPublishingGate:
         assert "the reply text" in captured.err
         assert captured.out == ""
 
-    def test_enable_opens_the_gate(self, monkeypatch):
+    def test_enable_opens_the_gate(self, monkeypatch, github_owners):
+        github_owners({"test": ["o"]})
         calls = []
-        monkeypatch.setattr(
-            "core.proc.subprocess.run",
-            lambda *a, **kw: calls.append(a) or SimpleNamespace(
-                returncode=0, stdout='{"html_url": "u"}', stderr="",
-            ),
-        )
+        real = subprocess.run
+
+        def spy(*a, **kw):
+            cmd = a[0] if a else kw.get("args")
+            if isinstance(cmd, (list, tuple)) and cmd and cmd[0] == "gh":
+                calls.append(a)
+                return SimpleNamespace(
+                    returncode=0, stdout='{"html_url": "u"}', stderr="",
+                )
+            return real(*a, **kw)
+
+        monkeypatch.setattr("core.proc.subprocess.run", spy)
         core.publishing.enable()
         assert pr.comments.post_thread_reply("o/r", 1, 99, "body") is True
         assert len(calls) == 1

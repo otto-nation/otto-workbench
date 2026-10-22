@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+import cli.boundary
 import cli.locks
 import cli.needs
 import core.log
@@ -154,6 +155,7 @@ def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:
     return review.comment_threads.run_threads(trail, args, ctx)
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -250,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return _run_locked(trail, args, ctx, route, body)
         except Exception as exc:
-            trail.error("unexpected_error", str(exc))
+            cli.boundary.record_exception(trail, exc)
             raise
         finally:
             trail.finish()

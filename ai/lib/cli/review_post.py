@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import cli.boundary
 from core.trail import Trail, add_trail_args
 import gh.client
 import review.dedup
@@ -83,6 +84,7 @@ core.module_proxy.install(__name__, _SUBMODULES)
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=SCRIPT,
                                      description="Post a review file to GitHub")
@@ -150,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
+        cli.boundary.record_exception(trail, exc)
         raise
     finally:
         trail.finish()

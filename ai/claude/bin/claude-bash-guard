@@ -43,6 +43,31 @@ block() {
 # hook does not run in, and tests/pi_extensions_tokenize.bats holds the two to one value.
 SLEEP_WAIT_THRESHOLD_SECONDS=10
 
+# Program names that can write to GitHub: gh and the workbench commands that
+# post. The pre-filter's word list — a deliberate superset of _GITHUB_COMMANDS
+# in ai/lib/gh/write_shapes.py, never a copy of it. An extra name costs one
+# classify call and cannot let a write through; a name missing here would hide
+# every write Python knows it for. review-orchestrate is the extra: it runs
+# review-post, so the pre-filter already asks about it should the classifier
+# learn it. Same list as GITHUB_WRITE_PROGRAMS in
+# ai/pi/extensions/_shared/github-writes.ts; tests/github_write_shapes.bats
+# fails when either loses a name Python has.
+GITHUB_WRITE_PROGRAMS='gh pr pr-describe review review-post review-threads review-orchestrate'
+
+# How long an owners-check call may run before the guard stops waiting and
+# treats it as a check that could not answer. The guard bounds itself: the hook
+# sets no timeout, and Claude Code lets the tool call through when a hook times
+# out, so a hung checker left to the harness would fail open. Kept in step with
+# CLASSIFY_TIMEOUT_MS in ai/pi/extensions/_shared/github-writes.ts —
+# tests/pi_extensions_tokenize.bats holds the two to one value.
+OWNERS_CHECK_TIMEOUT_SECONDS=15
+
+# The user's override for publishing upstream. Spelled once here for the rule
+# refusing any command that names it; ALLOW_UPSTREAM_ENV in ai/lib/gh/owners.py
+# is what gh.client reads, and ai/pi/extensions/upstream-guard/detect.ts spells
+# it for Pi. tests/pi_extensions_upstream.bats holds the three to one value.
+UPSTREAM_OVERRIDE_VAR=WORKBENCH_ALLOW_UPSTREAM
+
 # _branch_review_has_open_findings — true when a self-review for the current
 # branch is sitting on unticked findings.
 #
@@ -224,71 +249,219 @@ _statement_words() {
   done
 }
 
-# True when STATEMENT files an issue or writes to a PR. Own function so other
-# agent_id checks stay theirs — this one is only the publishing command set.
-# Word matches, not regexes over the raw statement, so quoting a command name
-# or subcommand is not a way around the rule.
-_statement_publishes() {
-  local statement="$1"
-  _statement_words "$statement"
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == issue && "${STATEMENT_WORDS[2]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == linear && "${STATEMENT_WORDS[1]}" == issue && "${STATEMENT_WORDS[2]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == edit ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == comment ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == review ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == pr && "${STATEMENT_WORDS[2]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == create ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == comments && " ${STATEMENT_WORDS[*]} " == *" --post "* ]] && return 0
-  [[ "${STATEMENT_WORDS[0]}" == pr && "${STATEMENT_WORDS[1]}" == describe && " ${STATEMENT_WORDS[*]} " == *" --post "* ]] && return 0
-  _gh_api_publishes "$statement" && return 0
-  return 1
-}
-
-# True when STATEMENT is `gh api` with a mutating method on an issues/pulls path.
-_gh_api_publishes() {
-  local word method=""
-  local -i i touches=0
+# _statement_files_linear STATEMENT — true when STATEMENT runs `linear issue
+# create`. Its own case because the GitHub classifier does not know Linear.
+# Word matches, so quoting the command name is not a way around it.
+#
+# ceiling: `linear` behind a wrapper (`env linear …`) or an alias is not
+# matched. Upgrade if one shows up in an agent transcript; Pi's
+# filesLinearIssue reads it the same way.
+_statement_files_linear() {
   _statement_words "$1"
-  (( ${#STATEMENT_WORDS[@]} >= 3 )) || return 1
-  [[ "${STATEMENT_WORDS[0]}" == gh && "${STATEMENT_WORDS[1]}" == api ]] || return 1
-  for ((i = 2; i < ${#STATEMENT_WORDS[@]}; i++)); do
-    word="${STATEMENT_WORDS[$i]}"
-    case "$word" in
-      -X|--method)
-        method="${STATEMENT_WORDS[i+1]:-}"
-        i=$((i + 1))
-        ;;
-      --method=*)
-        method="${word#--method=}"
-        ;;
-      -X?*)
-        method="${word#-X}"
-        ;;
-      *)
-        [[ "$word" =~ (^|/)(issues|pulls)(/|$) ]] || continue
-        touches=1
-        ;;
-    esac
-  done
-  [[ "$touches" -eq 1 ]] || return 1
-  method="${method#[\'\"]}"
-  method="${method%[\'\"]}"
-  case "${method^^}" in
-    POST|PATCH|PUT|DELETE) return 0 ;;
-  esac
-  return 1
+  [[ "${STATEMENT_WORDS[0]:-}" == linear && "${STATEMENT_WORDS[1]:-}" == issue &&
+     "${STATEMENT_WORDS[2]:-}" == create ]]
 }
 
-# True when any scanned statement publishes. Reads SCAN_STATEMENTS, the same
-# split every other rule in this file uses.
-_command_publishes() {
-  local statement
-  for statement in "${SCAN_STATEMENTS[@]}"; do
-    if _statement_publishes "$statement"; then
+# _statement_might_write_github STATEMENT — the cheap superset half of "does
+# this write to GitHub": true when STATEMENT mentions a GITHUB_WRITE_PROGRAMS
+# name anywhere, as a word, a path's last part, an `--opt=` value, inside
+# quotes, or ending an option cluster (`-Sgh`). False means not a write; true
+# only means ask owners-check --classify.
+#
+# Read twice — quotes and backslashes deleted (`"g"h`, `g\h` are `gh` to the
+# shell) and quotes as separators (`-S'gh …'`) — because the classifier reads
+# it both ways too, and a superset has to cover both. No fork.
+_statement_might_write_github() {
+  local text tok
+  local -a toks
+  text="${1//[\\\'\"]/} ${1//[\'\"]/ }"
+  text="${text//[^A-Za-z0-9_.-]/ }"
+  read -ra toks <<<"$text"
+  for tok in "${toks[@]}"; do
+    [[ " $GITHUB_WRITE_PROGRAMS " == *" $tok "* ]] && return 0
+    if [[ "$tok" == -[!-]* ]] && _cluster_ends_in_program "$tok"; then
       return 0
     fi
   done
   return 1
+}
+
+# _cluster_ends_in_program TOKEN — true when the short-option cluster TOKEN
+# ends in a GITHUB_WRITE_PROGRAMS name after its first option letter (`-Sgh`),
+# where an attached command string would start.
+_cluster_ends_in_program() {
+  local name
+  for name in $GITHUB_WRITE_PROGRAMS; do
+    if [[ "$1" == -?*"$name" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# True when any scanned statement might write to GitHub. Reads SCAN_STATEMENTS,
+# so a heredoc body — content, not commands — never matches.
+_command_might_write_github() {
+  local statement
+  for statement in "${SCAN_STATEMENTS[@]}"; do
+    if _statement_might_write_github "$statement"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# _locate_owners_check — set OWNERS_CHECK to ai/bin/owners-check, or to empty
+# when it cannot be found.
+#
+# The installed ~/.local/bin symlink is followed first, as claude-edit-guard
+# does, so a checkout install resolves into the repo: beside this script, then
+# ../../bin (ai/claude/bin → ai/bin). Last, an owners-check on PATH — the
+# layouts that ship the guard apart from ai/bin (a hand-placed guard beside the
+# claude-config tarball's settings.json, the otto-ai-tools tarball's bin/ on
+# PATH) keep their checker there.
+_locate_owners_check() {
+  local self dir candidate
+  OWNERS_CHECK=""
+  self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+  dir="${self%/*}"
+  [[ "$dir" == "$self" ]] && dir=.
+  for candidate in "$dir/owners-check" "$dir/../../bin/owners-check"; do
+    if [[ -x "$candidate" ]]; then
+      OWNERS_CHECK="$candidate"
+      return 0
+    fi
+  done
+  OWNERS_CHECK="$(command -v owners-check 2>/dev/null)" || OWNERS_CHECK=""
+  return 0
+}
+
+# _run_owners_check STREAM ARGS... — run "$OWNERS_CHECK" ARGS... for at most
+# OWNERS_CHECK_TIMEOUT_SECONDS. Sets OWNERS_CHECK_STATUS to its exit status, or
+# to empty when it did not finish in time (it is killed), and
+# OWNERS_CHECK_OUTPUT to the stream STREAM names — `stdout` (--classify's
+# answer) or `stderr` (--cwd's refusal reason). The other stream is discarded.
+#
+# Bash builtins only: coreutils `timeout` is not on stock macOS. The checker
+# runs in a process substitution that reports its pid and then its exit status
+# on a pipe, and `read -t` bounds the wait for each line. The checker never
+# writes to that pipe: both its streams are redirected away from it, the
+# chosen one into a scratch file read only after the status arrives. Its
+# refusal reasons echo command text, so output sharing the marker pipe could
+# print a forged `exit 0` and turn a refusal into an allow. A marker that is
+# not exactly the shape the runner prints is ignored, so nothing but a real
+# status ends the wait. No scratch file is a check that could not run.
+_run_owners_check() {
+  local stream="$1" fd line runner="" child="" left scratch
+  local -i deadline=$((SECONDS + OWNERS_CHECK_TIMEOUT_SECONDS))
+  shift
+  OWNERS_CHECK_STATUS="" OWNERS_CHECK_OUTPUT=""
+  if ! scratch=$(mktemp "${TMPDIR:-/tmp}/owners-check.XXXXXX" 2>/dev/null); then
+    OWNERS_CHECK_STATUS=126
+    OWNERS_CHECK_OUTPUT="no scratch file could be created for its output"
+    return 0
+  fi
+  OWNERS_CHECK_SCRATCH="$scratch"
+  trap 'rm -f "$OWNERS_CHECK_SCRATCH"' EXIT
+  exec {fd}< <(
+    status=0
+    if [[ "$stream" == stderr ]]; then
+      "$OWNERS_CHECK" "$@" 2>"$scratch" >/dev/null &
+    else
+      "$OWNERS_CHECK" "$@" >"$scratch" 2>/dev/null &
+    fi
+    printf 'pid %s %s\n' "$BASHPID" "$!"
+    wait "$!" || status=$?
+    printf 'exit %s\n' "$status"
+  )
+  while left=$((deadline - SECONDS)); (( left > 0 )) && IFS= read -r -t "$left" -u "$fd" line; do
+    if [[ "$line" =~ ^pid\ ([0-9]+)\ ([0-9]+)$ ]]; then
+      runner="${BASH_REMATCH[1]}" child="${BASH_REMATCH[2]}"
+    elif [[ "$line" =~ ^exit\ ([0-9]+)$ ]]; then
+      OWNERS_CHECK_STATUS="${BASH_REMATCH[1]}"
+      break
+    fi
+  done
+  if [[ -z "$OWNERS_CHECK_STATUS" && -n "$runner" ]]; then
+    kill "$child" "$runner" 2>/dev/null || true
+  fi
+  exec {fd}<&-
+  if [[ -n "$OWNERS_CHECK_STATUS" ]]; then
+    OWNERS_CHECK_OUTPUT="$(<"$scratch")"$'\n'
+  fi
+  rm -f "$scratch"
+  return 0
+}
+
+# True unless owners-check --classify answers that $cmd does not write: exit 0
+# with exactly `read` on stdout. Fails closed on everything else — not found,
+# no python3, a crash (an uncaught exception also exits 1), unexpected output,
+# no answer within OWNERS_CHECK_TIMEOUT_SECONDS — because the caller refuses a
+# write and a guard that allowed on its own inability to answer would be no
+# guard.
+_command_classifies_as_write() {
+  local answer
+  _locate_owners_check
+  [[ -n "$OWNERS_CHECK" ]] || return 0
+  _run_owners_check stdout --classify -- "$cmd"
+  answer="${OWNERS_CHECK_OUTPUT#"${OWNERS_CHECK_OUTPUT%%[![:space:]]*}"}"
+  answer="${answer%"${answer##*[![:space:]]}"}"
+  [[ "$OWNERS_CHECK_STATUS" != 0 || "$answer" != read ]]
+}
+
+# True when $cmd files a Linear issue or writes to GitHub — what a subagent may
+# not do. The GitHub half is the pre-filter, then owners-check --classify
+# (ai/lib/gh/write_shapes.py), the one write classifier: a bash copy of its
+# wrapper peeling would be a second implementation of a security boundary,
+# free to drift. The pre-filter keeps every command that names no GitHub
+# program off the Python path. Same set as isPublishing in
+# ai/pi/extensions/oneshot-publish-guard/detect.ts; tests/github_write_shapes.bats
+# drives tests/fixtures/github-write-shapes.tsv through both.
+_command_publishes() {
+  local statement
+  for statement in "${SCAN_STATEMENTS[@]}"; do
+    if _statement_files_linear "$statement"; then
+      return 0
+    fi
+  done
+  _command_might_write_github || return 1
+  _command_classifies_as_write
+}
+
+# _owner_boundary_refusal — set OWNER_BOUNDARY_REFUSAL to why $cmd may not run
+# at the owner boundary, or to empty when it may.
+#
+# owners-check --cwd answers from the session's cwd, the payload's $hook_cwd:
+# exit 0 allows — a read always is — and 2 refuses with the reason on stderr,
+# which carries its own advice. Everything else fails closed: no cwd in the
+# payload (the hook's own cwd is the project root, not where the session's
+# shell is), not found, a crash, no answer within OWNERS_CHECK_TIMEOUT_SECONDS.
+# A write that cannot be checked is a write that was not refused, and the
+# boundary exists to refuse it.
+_owner_boundary_refusal() {
+  local said why
+  OWNER_BOUNDARY_REFUSAL=""
+  _locate_owners_check
+  if [[ -z "$hook_cwd" ]]; then
+    why="the hook payload carried no cwd, so the repository this command targets cannot be resolved"
+  elif [[ -z "$OWNERS_CHECK" ]]; then
+    why="owners-check is not beside this hook, at ../../bin, or on PATH"
+  else
+    _run_owners_check stderr --cwd "$hook_cwd" -- "$cmd"
+    said="${OWNERS_CHECK_OUTPUT%$'\n'}"
+    said="${said//$'\n'/ }"
+    case "$OWNERS_CHECK_STATUS" in
+      0) return 0 ;;
+      2)
+        OWNER_BOUNDARY_REFUSAL="This GitHub write is refused at the owner boundary: $said. See general.md § Upstream Repositories."
+        return 0
+        ;;
+      "") why="owners-check gave no answer within ${OWNERS_CHECK_TIMEOUT_SECONDS}s" ;;
+      *) why="owners-check failed with exit $OWNERS_CHECK_STATUS${said:+: $said}" ;;
+    esac
+  fi
+  OWNER_BOUNDARY_REFUSAL="This command might be a GitHub write, and the owner-boundary check could not run ($why), so it is refused. See general.md § Upstream Repositories."
+  return 0
 }
 
 # The one fork left on the hot path, and it stays.
@@ -310,16 +483,28 @@ _command_publishes() {
 # Fail open: a malformed payload must not block every Bash call.
 #
 # The same single call reads every other field a rule needs, so this stays the
-# only fork: its first line is `run_in_background<TAB>agent_id`, the rest is the
-# command verbatim. agent_id is non-empty only when the call comes from a
+# only fork: its first line is `run_in_background<TAB>agent_id`, its second the
+# session's `cwd`, the rest the command verbatim. agent_id is non-empty only when the call comes from a
 # subagent — the main session sends null or nothing. It goes last because tab
 # is IFS whitespace: `read` strips an empty leading field, which would shift
 # run_in_background into agent_id.
 payload_fields=$(jq -r '"\(.tool_input.run_in_background == true)\t\(.agent_id // "" | tostring)",
-  (.tool_input.command // "")' 2>/dev/null) || exit 0
+  (.cwd // "" | tostring | gsub("\n"; " ")), (.tool_input.command // "")' 2>/dev/null) || exit 0
 IFS=$'\t' read -r run_in_background agent_id <<<"${payload_fields%%$'\n'*}"
+# The session's cwd is the payload's second line: the owner boundary resolves
+# the repository a write targets from it, and the hook's own cwd is the project
+# root, not wherever the session's shell has moved to. A newline in it would
+# shift the command, so jq flattens one; such a path then resolves nowhere,
+# which the boundary refuses rather than allows.
+hook_cwd=""
 cmd=""
-[[ "$payload_fields" == *$'\n'* ]] && cmd=${payload_fields#*$'\n'}
+if [[ "$payload_fields" == *$'\n'* ]]; then
+  payload_rest=${payload_fields#*$'\n'}
+  hook_cwd=${payload_rest%%$'\n'*}
+  if [[ "$payload_rest" == *$'\n'* ]]; then
+    cmd=${payload_rest#*$'\n'}
+  fi
+fi
 [[ -n "$cmd" ]] || exit 0
 
 # A subagent's end of turn returns to its parent, so a run_in_background Bash
@@ -641,10 +826,10 @@ _scan() {
 _scan "$cmd"
 
 # A dispatched subagent reports deferrals to its parent; it does not file or
-# edit. Same command set as ai/pi/extensions/oneshot-publish-guard. Empty
-# agent_id is the main session and is left to the rules below.
+# write to GitHub. Same command set as ai/pi/extensions/oneshot-publish-guard.
+# Empty agent_id is the main session and is left to the rules below.
 if [[ -n "$agent_id" ]] && _command_publishes; then
-  block 'A dispatched subagent does not file issues or post to a PR — report the deferral (what, why, suggested title) and any proposed PR text to the parent, which files or edits. See git-operations.md § Subagent Publishing.'
+  block 'A dispatched subagent does not file issues, post to a PR, or write to GitHub any other way — report the deferral (what, why, suggested title) and any proposed PR text to the parent, which files or edits. See git-operations.md § Subagent Publishing.'
 fi
 
 # ── Whole-command rules ──────────────────────────────────────────────────────
@@ -685,6 +870,28 @@ fi
 re_issue_create='(^|[;&|][[:space:]]*)gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
 if [[ "$stripped" =~ $re_issue_create ]] && _branch_review_has_open_findings; then
   block "This branch's self-review has open findings, and filing an issue for one is a deferral that needs my agreement first — read what the fix pass did before acting on any finding yourself. If this issue is unrelated to the review, say so and file it. See general.md § Code Quality."
+fi
+
+# ── The owner boundary ───────────────────────────────────────────────────────
+# Every session, not only subagents: nothing an agent runs posts to GitHub
+# outside the owners in github.owners. The pre-filter is in process and costs
+# no fork; the policy — whether the command writes, which owners are ours,
+# which repository it targets — is ai/lib/gh/owners.py behind
+# ai/bin/owners-check, paid for only when the pre-filter matches, so every
+# command naming no GitHub program keeps the no-Python path. Below pr-create
+# and issue-defer, whose narrower messages win.
+# ai/pi/extensions/upstream-guard is the same rule under Pi, and
+# tests/pi_extensions_upstream.bats holds the two to one set of answers.
+#
+# The override variable is the user's, set in their own shell for the
+# workbench's own publishing. owners-check never reads it, and a command that
+# names it is refused outright, so an agent cannot set its way past this.
+if [[ "$cmd" == *"$UPSTREAM_OVERRIDE_VAR"* ]]; then
+  block "$UPSTREAM_OVERRIDE_VAR is the user's override for publishing upstream, and an agent command may not name it. Draft the command and the text for the user to run themselves. See general.md § Upstream Repositories."
+fi
+if _command_might_write_github; then
+  _owner_boundary_refusal
+  [[ -z "$OWNER_BOUNDARY_REFUSAL" ]] || block "$OWNER_BOUNDARY_REFUSAL"
 fi
 
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then

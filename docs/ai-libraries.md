@@ -4510,6 +4510,27 @@ default. `--models` still wins when given.
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
 
+### config/github_owners.py
+
+Which GitHub owners are ours, as ``github.owners`` spells them.
+
+An owner is ``OWNER`` — on public GitHub — or ``HOST/OWNER`` on an Enterprise
+instance. Both parts compare case-insensitively, because GitHub treats logins
+and hosts that way, and the host is part of the identity: ``foo`` and
+``ghe.corp/foo`` are two owners. Whether an owner is a user or an organisation
+makes no difference.
+
+Here rather than beside the policy in ``gh.owners`` because two layers need it:
+``config set`` refuses an owner listed in two groups before it writes, and the
+config layer cannot import ``gh``. ``gh.owners`` builds its ``OwnerMap`` from
+``owner_index`` below, so the writer and the resolver cannot disagree about
+what a duplicate is.
+
+``owner_index`` is the one validator: a group name must be usable as a dotted
+key segment (``github.owners.<group>``), every owner must parse, and no owner
+may sit in two groups — the policy has to know *which* group a reference is
+in, and an owner in two cannot answer.
+
 ### config/reuse_levels.py
 
 The reuse-level vocabulary, its readers and writers, and the two hook bodies
@@ -5839,6 +5860,14 @@ The publishing gate is deliberately not here. `pr.comments` gates its writes on
 gate inside the transport would make a policy decision invisible to the code
 that owns it.
 
+The owner boundary *is* here, for the opposite reason: it is not a choice any
+call site gets to make. `run` refuses a GitHub write whose target is not one of
+our owners (`gh.owners`) before gh starts, by raising `gh.owners.OwnerBoundaryError`,
+so a write site added tomorrow cannot forget it. Reads are not checked and read
+no config. A GraphQL write names no repository, so `graphql` takes a
+`target_repo` hint and falls back to the cwd's remotes. The user's own
+`WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream write through, with a warning.
+
 Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
 silence reads as a hang, so the waiting is announced. Whether a *failed* call is
@@ -5902,6 +5931,231 @@ before the checkout or it never comes at all.
 `Landed` carries no branch name. Each detail line describes the comparison
 rather than who was compared, so a caller pairs it with whatever it calls the
 branch and renders the two together.
+
+### gh/owner_scopes.py
+
+Owners for the gh writes that do not land on a repository's issues and PRs.
+
+``gh.owner_targets`` resolves most writes to the repository ``--repo``,
+``GH_REPO``, a URL or the cwd remotes name. Some of gh's write commands aim
+somewhere else, and ``resolve`` answers for those first:
+
+* ``gh gist create|edit|delete|rename`` — a gist belongs to the authenticated
+  account, whose login the command does not carry: refused.
+* ``gh project …`` — the project's ``--owner``. ``@me``, or no ``--owner``,
+  is the authenticated account: refused.
+* ``gh secret|variable set|delete`` — ``--org/-o ORG`` is ORG; ``--user/-u``
+  is the authenticated account: refused. Otherwise the repository, as usual.
+* ``gh repo create OWNER/NAME`` is OWNER; a bare NAME is the authenticated
+  account: refused. ``gh repo fork`` lands in ``--org`` or the authenticated
+  account: refused without ``--org``.
+* ``gh repo edit|delete|archive|unarchive|sync [REPO]`` is REPO when it is
+  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Every positional that
+  reads as one counts, so a flag value that looks like a repository fails
+  toward refusal. Without one, the repository as usual.
+
+``None`` means the usual repository resolution applies.
+
+### gh/owner_targets.py
+
+Which repository a GitHub write is aimed at, read from its words and its cwd.
+
+In order:
+
+1. Explicit: a ``-R/--repo [HOST/]OWNER/REPO`` (before or after the
+   subcommand), a ``GH_REPO`` prefix or environment variable, or a PR, issue or
+   release URL among the arguments. Every explicit source present counts, so a
+   ``--repo`` cannot launder a URL pointing elsewhere.
+2. ``gh api``: the ``repos/OWNER/REPO/…`` path, on ``--hostname``'s host.
+   ``{owner}`` is gh's placeholder for the cwd repository and resolves as 3.
+3. Otherwise the repository at cwd — every remote, not just ``origin``. ``gh``
+   picks the base repository among the remotes (``gh-resolved``, or the parent
+   of a fork), so a fork with an ``upstream`` remote can post to the third
+   party with no ``--repo``. Each remote is a candidate owner; the policy then
+   requires them all in one group.
+4. Unresolvable, and so refused by the caller: a GraphQL write from a shell
+   (it names its target by node ID), a REST write outside ``repos/``, a cwd
+   that is no repository or has no GitHub remote, and a cwd-resolved write in a
+   command that changes directory — which directory it runs in is not knowable
+   from the text.
+
+A bare ``OWNER/REPO`` is on ``GH_HOST`` when set (prefix, then environment),
+else public GitHub — gh's own default host.
+
+``GH_REPO``/``GH_HOST`` from the process environment count only when they
+reach the program: ``env -i`` drops them, and ``sudo``/``doas`` — which may
+or may not, depending on sudoers and doas.conf — are resolved both ways and
+the owners unioned (``gh.shell_wrappers.Peeled.views``).
+
+Writes aimed at an account rather than a repository's issues and PRs — gists,
+projects, org secrets and variables, ``gh repo create|fork`` and a ``gh repo``
+verb naming its repository — are resolved by ``gh.owner_scopes`` first.
+
+ceiling: gh's default host can also come from ``gh auth``'s configuration (a
+machine logged in only to an Enterprise host), which this does not read. The
+error direction is a refusal — an Enterprise owner read as a github.com owner is
+not one of ours — except where the same login is ours on github.com. Upgrade
+trigger: a report of a refusal or an admission traced to it.
+
+A remote's host is its URL's when that host is public GitHub, ``GH_HOST``, or a
+host ``github.owners`` names. An unrecognised authority in an ssh spelling is
+an ``~/.ssh/config`` alias (``github.com-work``) and is read as the default
+host; an unrecognised ``https`` host is a forge gh does not treat as GitHub, and
+that remote is not a candidate.
+
+ceiling: an ssh alias for an Enterprise host (``ghebox:platform/svc``) reads as
+public GitHub, so an Enterprise owner reached through one is refused as not
+ours. Upgrade trigger: the first such refusal; resolve the alias with
+``ssh -G`` then, as ``git.remote_url``'s ceiling says.
+
+### gh/owners.py
+
+The owner boundary: which GitHub owners are ours, and whether a write may go there.
+
+``general.md`` § Upstream Repositories says nothing is posted to a repository
+we do not own without the user, and that the user does the posting. This
+module is that rule as code, written once and reached from three places:
+
+* ``ai/bin/owners-check`` (``cli.owners_check``) for both agent guards, through
+  ``check_command`` — only after a guard's cheap pre-filter matched, so every
+  other shell command stays on the guards' no-Python path.
+* ``gh.client.run`` for every write the workbench itself makes, through
+  ``check_gh_call``, which raises nothing itself: the client raises
+  ``OwnerBoundaryError`` so a refusal is never mistaken for gh's own failure.
+
+Which owners are ours is ``github.owners``, read from the **global** config
+file and nothing else (``OwnerMap.load``). ``load_config`` merges a repo's
+``.workbench.yml`` over it, and a cloned upstream repository's tracked file
+must not be able to declare itself ours. An empty or absent map refuses every
+write: a guard that switched itself off when unconfigured would protect
+nothing on exactly the machines that never configure it. The refusal says how
+to configure it.
+
+A target (``gh.owner_targets``) is one owner, or — resolved from a checkout's
+remotes — several candidates. It is allowed only when every candidate is ours
+and all are in one group; a fork whose ``upstream`` remote is a third party is
+refused, because gh may pick that remote as the base. The refusal says how to
+pick one (``Target.choose``): ``--repo`` for gh; for a workbench command, which
+has no ``--repo``, removing or renaming the remote — or, for the workbench's own
+publishing through ``gh.client``, the user's override.
+
+``WORKBENCH_ALLOW_UPSTREAM=1`` in the user's own environment lets the
+workbench's own publishing past an upstream refusal (``gh.client`` asks
+``upstream_allowed_by_user``). ``check_command`` never reads it: the guards are
+for agent commands, and an agent session inherits whatever its harness was
+launched with, so honouring it there would make the override reachable from
+inside the session. Both guards also refuse any command that names it.
+
+### gh/shell_wrappers.py
+
+Transparent command wrappers — ``env``, ``sudo``, ``time``, ``timeout`` and the rest — peeled off.
+
+``sudo env GH_REPO=x time gh issue comment …`` runs ``gh issue comment`` with
+``GH_REPO=x``. ``peel`` strips wrappers in a loop until the head word is not
+one (matched on its basename, so ``/usr/bin/time`` is ``time``), lifting each
+wrapper's ``NAME=value`` assignments and ``env -u`` removals on the way. The
+write-shape predicate and the target resolver both call it, so the two cannot
+disagree about which program a statement runs.
+
+Option parsing is confident or it is nothing. Each wrapper has an explicit
+table of its options: which take no value, which take one (``-u bob``,
+``-ubob``, ``--user bob``, ``--user=bob``), and which take one only when it is
+attached (``xargs -e[EOF]``). A short-option cluster is read character by
+character: a value-taking character takes the rest of the cluster as its value,
+or the next word when it is last (``sudo -iu bob``). Any option outside the
+table — an unknown flag, a GNU long-option abbreviation — makes the statement
+**opaque**: which word is the program cannot be known, and the caller falls
+back to searching the words. So does an option that changes directory or
+re-parses a string — ``env -C/--chdir``, ``env -S/--split-string``,
+``sudo -D/--chdir``, ``sudo -R/--chroot`` — since the target of a write it runs
+cannot be read from the text even when the program can. ``sudo -e`` (edit a
+file) and ``sudo -h`` (a host, or help) are opaque too: neither runs the words
+that follow as a command.
+
+The wrappers are ``env``, ``sudo``, ``doas``, ``time``, ``command``, ``exec``,
+``timeout``, ``nice``, ``nohup``, ``stdbuf``, ``ionice``, ``chrt`` and
+``taskset``. ``timeout DURATION``, ``chrt PRIORITY`` and ``taskset MASK`` take
+one positional before the program; ``nice -5`` is nice's legacy numeric
+option.
+
+``command -v``/``-V`` looks a name up and runs nothing; ``Peeled.lookup`` says
+so, as it does for the forms of ``ionice``, ``chrt``, ``taskset`` and ``doas``
+that act on a pid or a config file instead of running a command. ``doas -s``
+runs a shell and is opaque.
+
+Which inherited variables reach the program is tracked too, because the
+target resolver reads ``GH_REPO``/``GH_HOST`` from the process environment.
+``env -i``/``env -`` clears it for certain: the program sees only what is
+assigned after the clear. ``sudo`` (without ``-E``/``--preserve-env``) and
+``doas`` reset it by default, but sudoers ``env_keep`` or doas ``keepenv`` may
+pass a variable through, so whether they cleared it is not knowable from the
+text. ``Peeled.views`` then holds both cases, and the resolver unions them.
+
+``XARGS`` is the same kind of table for ``xargs``. It is not peeled: its
+arguments come from stdin, so a write under it has no target to resolve, but
+which program it runs is still worth knowing — ``xargs grep 'pr create'`` is a
+read.
+
+### gh/write_shapes.py
+
+Which shell statements, and which gh argvs, write to GitHub.
+
+The shape half of the owner boundary. Both agent guards run a cheap in-process
+superset pre-filter (``_command_might_write_github`` in
+``ai/claude/bin/claude-bash-guard``, ``mightWriteGithub`` in
+``ai/pi/extensions/_shared/github-writes.ts``) and ask this module through
+``owners-check --classify`` for the verdict, so the write shapes live in one
+language. A command the pre-filter does not mention never pays a Python
+start-up. ``tests/fixtures/github-write-shapes.tsv`` holds the pre-filter and
+this classifier to one answer: a write the pre-filter misses fails there as a
+write that was allowed.
+
+A write is:
+
+* ``gh GROUP VERB`` with a verb in ``GH_WRITES`` — issue, pr, release, label,
+  repo, workflow, run, secret, variable, cache, gist and project. ``-R/--repo``
+  is gh's own flag and is skipped before the group and between the group and
+  the verb.
+* ``gh api graphql`` unless its query is in hand and holds no ``mutation``.
+  The query is in hand when it is a literal ``query=`` field — not
+  ``-F query=@file``, not a ``$VAR``, ``$(…)`` or backtick — or a ``--input``
+  body the caller passed as text. A query from a file or the shell is a write:
+  writing a mutation to a file to dodge quoting is an ordinary habit.
+* ``gh api`` with ``-X/--method`` POST, PATCH, PUT or DELETE (``-X=POST`` too) — or, with no
+  method, with a field or body (``-f/-F/--field/--raw-field/--input``): gh
+  sends POST then, and that is the call that lands.
+* The workbench's own posting commands: ``pr create``; ``pr describe|comments|fix|ci``
+  with ``--post``; ``pr review`` and ``review`` unless ``--self``,
+  ``--no-post``, ``--summary`` or ``--list`` says it posts nothing. The
+  hyphenated shims of those commands — ``pr-describe --post``,
+  ``review-post``, ``review-threads --post`` — are the same writes.
+
+``NAME=value`` prefixes are carried on ``Invocation.env`` (``GH_REPO`` and
+``GH_HOST`` decide a target), and the program is matched on its basename, so
+``/usr/local/bin/gh`` is gh.
+
+``env``, ``sudo``, ``time``, ``timeout``, ``nice`` and the other wrappers
+``gh.shell_wrappers`` lists are stripped in a loop by ``gh.shell_wrappers.peel`` — the one peeling function the target resolver
+uses too — and the program they run is classified. A wrapper option that
+cannot be read with confidence, or that changes directory or re-parses a
+string (``env -C``, ``env -S``, ``sudo -D``), makes the statement opaque.
+
+``bash|sh|zsh -c STRING`` (any cluster holding ``c``: ``-lc``, ``-ec``),
+``eval WORDS`` and ``env -S STRING`` run text the shell parses again;
+``statements``/``expand_statement`` read that text as statements of its own,
+up to ``REPARSE_DEPTH`` levels deep, so ``bash -lc 'ls ai/lib/review'`` is a
+read and ``bash -c 'gh issue comment 1 --repo o/r -b x'`` is a write whose
+target resolves. Past that depth, or when the text cannot be read exactly (a
+``-c`` string after a non-option, an ``env -S`` string using env's own
+escapes), the statement stays opaque: it is a write when its words mention gh
+or a workbench posting command, and the policy refuses it because its target
+cannot be resolved. ``xargs`` wrapping a GitHub write is the same — the
+arguments come from stdin.
+
+ceiling: a gh reached through a shell alias or a wrapper script whose name is
+not in that set is not matched. Upgrade trigger: the first such spelling seen
+in an agent transcript; the guards read it the same way, so all three change
+together through the corpus.
 
 ### git/client.py
 
@@ -6190,6 +6444,41 @@ Higher layers (``rebase``) own the repo-specific half: which regeneration
 commands a repo declares, how generated files are queued for rebuild, and
 how stale files are reported.  That split is what lets ``git.land`` import
 this module without pulling in ``config`` or ``pr``.
+
+### git/remote_url.py
+
+A remote URL read the way git reads it, and the remotes a checkout has.
+
+``parse`` answers two questions from one string: which path names the repo, and
+which host serves it. They stay separate fields because they serve different
+callers — ``pr.target`` keys a run on the path and collapses every spelling of
+one repo, while a rendered link and ``gh.owners`` need the host.
+
+* **A remote is hosted per its scheme, never per its authority.** ``file`` is
+  never hosted: git discards a file URL's authority and clones the path.
+* **Credentials and port are dropped from the host.** A token in a remote URL
+  would otherwise be rendered into a review body; the port belongs to git's
+  transport, not to the forge.
+* **A dotless scp authority is an ssh alias**, not a host, and yields ``""``.
+  ``ssh`` says the URL is one of the two forms an ``~/.ssh/config`` alias can
+  appear in (scp-style, ``ssh://``), which is what lets ``gh.owners`` read an
+  unrecognised authority there as an alias for the default host rather than as
+  a forge it has never heard of.
+
+  # ceiling: a dotless scp authority is read as an ~/.ssh/config alias and
+  # yields no host, so a single-label intranet host (ghe:acme/widget) falls
+  # back to public GitHub rather than being honoured. An alias and a
+  # single-label host are the same string here, and only ssh config tells
+  # them apart. Upgrade trigger: anyone whose forge is reachable only by a
+  # single-label name, at which point resolve it with `ssh -G <alias>` and
+  # cache the answer per identity.
+
+Lifted out of ``pr.target`` so a layer below ``pr`` — ``gh.owners`` — reads the
+same answer rather than a second parser; ``pr.target`` delegates to it.
+
+``remotes`` lists ``git remote -v``'s fetch URLs: the same list ``gh`` reads
+when it picks a base repository, ``insteadOf`` rewriting applied, which is the
+reading the owner boundary has to share with the tool it guards.
 
 ### git/replay.py
 
@@ -6855,6 +7144,18 @@ so it reaches the ledger through this tool instead.
   unwrap   stdin --output-format json envelope -> reply text, raw teed to a file
   record   parse a teed file and append one ledger record
 
+### cli/boundary.py
+
+How an entry point reports a GitHub write refused at the owner boundary.
+
+`gh.client.run` raises `gh.owners.OwnerBoundaryError` before gh starts, from
+whatever depth the write was made at. An entry point that let it escape would
+print a traceback over the one sentence that says what to do; one that caught
+it as a generic failure would hide that the refusal was policy rather than a
+fault. `reports_owner_boundary` wraps a `main` so the sentence is printed and
+the exit is `OWNER_BOUNDARY_EXIT` — 1, because 2 is already `EXIT_USAGE`.
+The guard protocol (`owners-check`) keeps 2 for a refusal.
+
 ### cli/ci_check.py
 
 Fetch CI run data, classify failures, and output status.
@@ -7019,6 +7320,34 @@ the same reason, so `pr review` is one row rather than three.
 A window selects *commands*, not events: a command whose first event predates the
 window is listed whole when any part of it falls inside, because half a timeline
 answers no question anyone asks of it.
+
+### cli/owners_check.py
+
+``owners-check`` — the owner boundary, as both agent guards reach it.
+
+    owners-check --cwd DIR -- COMMAND
+    owners-check --configured
+    owners-check --classify -- COMMAND
+
+The first form is what ``claude-bash-guard`` and Pi's ``upstream-guard`` run
+once their pre-filter says a command might write to GitHub. Exit 0 allows;
+exit 2 refuses, with the reason on stderr; anything else — a crash, a missing
+``python3`` — is read by both guards as a check that could not run, and they
+refuse. COMMAND is the whole command line as one argument; several arguments
+are rejoined with their quoting.
+
+The second form exits 0 when ``github.owners`` names at least one owner and 1
+otherwise, with the reason on stderr. ``ai sync`` prints it as a notice.
+
+The third form prints exactly one line on stdout — ``write`` when COMMAND
+writes to GitHub, ``read`` when it does not — and exits 0 for both. It never
+reads config or cwd: both harnesses' subagent-publishing guards use it as the
+one classifier so they do not keep a bash/TS copy of the write shapes. The
+guards take a command as not publishing only on exit 0 with ``read``; any
+other exit or output counts as a write, so a crash (which also exits 1) can
+never read as an answer. An unparseable command is answered ``write``.
+
+``WORKBENCH_ALLOW_UPSTREAM`` is not read here — see ``gh.owners``.
 
 ### cli/pr.py
 

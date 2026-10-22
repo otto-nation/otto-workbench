@@ -28,6 +28,13 @@ import gh.pr_pages  # noqa: E402
 import core.proc  # noqa: E402
 import core.timeouts  # noqa: E402
 from core.proc import CmdResult  # noqa: E402
+from conftest import remote_repo  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _own_the_test_repos(github_owners):
+    """These tests write to `o/r` through a stub gh; the owner boundary needs it ours."""
+    github_owners({"test": ["o"]})
 
 
 @pytest.fixture
@@ -367,7 +374,7 @@ def test_json_out_falls_back_on_a_failed_call(stub_gh, no_sleep):
 
 def test_stdin_reaches_gh(stub_gh):
     stub_gh("cat")
-    r = gh.client.run("api", "graphql", input_text='{"query": "x"}')
+    r = gh.client.run("api", "graphql", "--input", "-", input_text='{"query": "x"}')
     assert r.stdout == '{"query": "x"}'
 
 
@@ -456,8 +463,9 @@ def test_api_without_a_body_asks_gh_to_read_nothing(stub_gh):
     assert "--input" not in calls.read_text()
 
 
-def test_graphql_sends_a_whole_document_on_stdin(stub_gh):
+def test_graphql_sends_a_whole_document_on_stdin(stub_gh, tmp_path, monkeypatch):
     """A mutation with a nested variable does not fit gh's -f/-F field list."""
+    monkeypatch.chdir(remote_repo(tmp_path / "cwd", "git@github.com:o/r.git"))
     calls = stub_gh("cat")
     document = '{"query": "mutation { x }", "variables": {"input": {"a": 1}}}'
     r = gh.client.graphql("", input_text=document)

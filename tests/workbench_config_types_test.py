@@ -79,7 +79,7 @@ def test_the_pyyaml_fallback_writes_the_same_types(roots, monkeypatch):
 
 
 def test_a_list_key_refuses_the_scalar_this_writer_can_offer(roots):
-    """`serde` reads a string where a list belongs as `[]`, so a write would vanish."""
+    """A list takes a flow sequence, not a bare scalar — serde would restore a string as []."""
     config_root, _ = roots
     with pytest.raises(config.workbench_config.ConfigValueError) as exc:
         config.workbench_config_write.set_value(config.workbench_config.ISSUE_LABELS_KEY, "follow-up")
@@ -88,7 +88,7 @@ def test_a_list_key_refuses_the_scalar_this_writer_can_offer(roots):
 
 
 def test_a_hand_written_list_still_loads(roots):
-    """The refusal is the writer's alone — the file itself holds a list fine."""
+    """A block list in the file still loads — the writer is not the only way a list arrives."""
     _, project = roots
     _write(
         project / config.workbench_config.PROJECT_CONFIG_NAME,
@@ -108,6 +108,37 @@ def test_an_empty_label_list_is_kept_as_the_opt_out_it_is(roots):
     _, project = roots
     _write(project / config.workbench_config.PROJECT_CONFIG_NAME, "issues:\n  labels: []\n")
     assert config.workbench_config.load_config(project).issues.labels == []
+
+
+def test_a_list_key_takes_a_flow_sequence(roots):
+    _, project = roots
+    config.workbench_config_write.set_project_value(
+        config.workbench_config.ISSUE_LABELS_KEY, "[follow-up, 'needs triage']", project)
+    assert config.workbench_config.load_config(project).issues.labels == ["follow-up", "needs triage"]
+
+
+def test_an_empty_flow_sequence_is_the_opt_out(roots):
+    _, project = roots
+    config.workbench_config_write.set_project_value(config.workbench_config.ISSUE_LABELS_KEY, "[]", project)
+    assert config.workbench_config.load_config(project).issues.labels == []
+
+
+@pytest.mark.parametrize("value", ["[a, [b]]", "[a,,b]", "[a", "a, b", "[{a: b}]"])
+def test_a_flow_sequence_this_writer_cannot_read_is_refused(roots, value):
+    config_root, _ = roots
+    with pytest.raises(config.workbench_config.ConfigValueError):
+        config.workbench_config_write.set_value(config.workbench_config.ISSUE_LABELS_KEY, value)
+    assert not (config_root / config.workbench_config.CONFIG_NAME).exists()
+
+
+@needs_yaml
+def test_the_pyyaml_writer_writes_a_list_too(roots, monkeypatch):
+    config_root, _ = roots
+    real_which = config.workbench_config_write.shutil.which
+    monkeypatch.setattr(config.workbench_config_write.shutil, "which",
+                        lambda name, *a, **kw: None if name == "yq" else real_which(name, *a, **kw))
+    config.workbench_config_write.set_value(config.workbench_config.ISSUE_LABELS_KEY, "[a, b]")
+    assert config.workbench_config.load_config().issues.labels == ["a", "b"]
 
 
 def test_a_numeric_field_is_parsed_into_the_number_it_names():

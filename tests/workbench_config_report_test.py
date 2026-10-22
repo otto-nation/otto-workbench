@@ -273,6 +273,12 @@ def test_a_list_key_names_what_it_holds():
     assert config.workbench_config_report._values_column(list[str]) == "list of string"
 
 
+def test_a_map_key_names_its_key_and_value_types():
+    """``github.owners`` is a map of group to owners — `any` told the reader nothing."""
+    assert (config.workbench_config_report._values_column(dict[str, list[str]])
+            == "map of string to list of string")
+
+
 # ── Schema ──────────────────────────────────────────────────────────────────
 
 

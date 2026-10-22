@@ -1,4 +1,4 @@
-"""Transparent command wrappers — ``env``, ``sudo``, ``time``, ``command``, ``exec`` — peeled off.
+"""Transparent command wrappers — ``env``, ``sudo``, ``time``, ``timeout`` and the rest — peeled off.
 
 ``sudo env GH_REPO=x time gh issue comment …`` runs ``gh issue comment`` with
 ``GH_REPO=x``. ``peel`` strips wrappers in a loop until the head word is not
@@ -22,8 +22,24 @@ cannot be read from the text even when the program can. ``sudo -e`` (edit a
 file) and ``sudo -h`` (a host, or help) are opaque too: neither runs the words
 that follow as a command.
 
+The wrappers are ``env``, ``sudo``, ``doas``, ``time``, ``command``, ``exec``,
+``timeout``, ``nice``, ``nohup``, ``stdbuf``, ``ionice``, ``chrt`` and
+``taskset``. ``timeout DURATION``, ``chrt PRIORITY`` and ``taskset MASK`` take
+one positional before the program; ``nice -5`` is nice's legacy numeric
+option.
+
 ``command -v``/``-V`` looks a name up and runs nothing; ``Peeled.lookup`` says
-so.
+so, as it does for the forms of ``ionice``, ``chrt``, ``taskset`` and ``doas``
+that act on a pid or a config file instead of running a command. ``doas -s``
+runs a shell and is opaque.
+
+Which inherited variables reach the program is tracked too, because the
+target resolver reads ``GH_REPO``/``GH_HOST`` from the process environment.
+``env -i``/``env -`` clears it for certain: the program sees only what is
+assigned after the clear. ``sudo`` (without ``-E``/``--preserve-env``) and
+``doas`` reset it by default, but sudoers ``env_keep`` or doas ``keepenv`` may
+pass a variable through, so whether they cleared it is not knowable from the
+text. ``Peeled.views`` then holds both cases, and the resolver unions them.
 
 ``XARGS`` is the same kind of table for ``xargs``. It is not peeled: its
 arguments come from stdin, so a write under it has no target to resolve, but
@@ -56,6 +72,11 @@ class OptionSpec:
     lookup: frozenset[str] = frozenset()
     unsets: frozenset[str] = frozenset()
     dash_is_flag: bool = False
+    positionals: int = 0
+    numeric: bool = False
+    clears: frozenset[str] = frozenset()
+    resets: bool = False
+    preserves: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -70,13 +91,30 @@ class Options:
 
 
 @dataclass(frozen=True)
+class EnvView:
+    """One case of the environment a program runs under.
+
+    *env* is what the statement assigned; *inherits* is which names of the
+    process environment still reach the program — None for all of them.
+    """
+
+    env: Mapping[str, str] = field(default_factory=dict)
+    inherits: frozenset[str] | None = None
+
+    def admits(self, name: str) -> bool:
+        return self.inherits is None or name in self.inherits
+
+
+@dataclass(frozen=True)
 class Peeled:
     """What a statement runs once its wrappers are stripped.
 
     *opaque* means a wrapper option could not be read with confidence, or
     changes directory or re-parses a string; *words* is then the wrapper
     onward and is not to be classified. *lookup* means the statement runs
-    nothing (``command -v``).
+    nothing (``command -v``). *env* and *inherits* are the environment when
+    no wrapper reset it; *alternatives* are the cases where a wrapper that
+    may reset it (``sudo``, ``doas``) did.
     """
 
     env: Mapping[str, str] = field(default_factory=dict)
@@ -84,6 +122,13 @@ class Peeled:
     unset: frozenset[str] = frozenset()
     opaque: bool = False
     lookup: bool = False
+    inherits: frozenset[str] | None = None
+    alternatives: tuple[EnvView, ...] = ()
+
+    @property
+    def views(self) -> tuple[EnvView, ...]:
+        """Every case of the environment the program may run under, the unreset one first."""
+        return (EnvView(self.env, self.inherits), *self.alternatives)
 
 
 ENV = OptionSpec(
@@ -95,6 +140,7 @@ ENV = OptionSpec(
     opaque=frozenset({"-C", "--chdir", "-S", "--split-string"}),
     unsets=frozenset({"-u", "--unset"}),
     dash_is_flag=True,
+    clears=frozenset({"-i", "--ignore-environment", "-"}),
 )
 SUDO = OptionSpec(
     flags="AbBEHiKklnNPSsVve", values="ugCpUrtTDRh",
@@ -107,7 +153,11 @@ SUDO = OptionSpec(
         "--other-user", "--role", "--type", "--command-timeout", "--host"}),
     long_attached=frozenset({"--preserve-env"}),
     opaque=frozenset({"-D", "--chdir", "-R", "--chroot", "-h", "--host", "-e", "--edit"}),
+    resets=True,
+    preserves=frozenset({"-E", "--preserve-env"}),
 )
+DOAS = OptionSpec(
+    flags="Lns", values="uC", opaque=frozenset({"-s"}), lookup=frozenset({"-L", "-C"}), resets=True)
 TIME = OptionSpec(
     flags="pvqaVlh", values="fo",
     long_flags=frozenset({"--portability", "--verbose", "--quiet", "--append", "--version", "--help"}),
@@ -115,6 +165,35 @@ TIME = OptionSpec(
 )
 COMMAND = OptionSpec(flags="pvV", lookup=frozenset({"-v", "-V"}))
 EXEC = OptionSpec(flags="cl", values="a")
+_HELP = frozenset({"--help", "--version"})
+TIMEOUT = OptionSpec(
+    flags="fpv", values="ks",
+    long_flags=_HELP | {"--foreground", "--preserve-status", "--verbose"},
+    long_values=frozenset({"--kill-after", "--signal"}),
+    positionals=1,
+)
+NICE = OptionSpec(values="n", long_flags=_HELP, long_values=frozenset({"--adjustment"}), numeric=True)
+NOHUP = OptionSpec(long_flags=_HELP)
+STDBUF = OptionSpec(values="ioe", long_flags=_HELP, long_values=frozenset({"--input", "--output", "--error"}))
+IONICE = OptionSpec(
+    flags="t", values="cnpPu",
+    long_flags=_HELP | {"--ignore"},
+    long_values=frozenset({"--class", "--classdata", "--pid", "--pgid", "--uid"}),
+    lookup=frozenset({"-p", "-P", "-u", "--pid", "--pgid", "--uid"}),
+)
+CHRT = OptionSpec(
+    flags="abdfiormRpv", values="TPD",
+    long_flags=_HELP | {
+        "--all-tasks", "--batch", "--deadline", "--fifo", "--idle", "--other", "--rr",
+        "--reset-on-fork", "--max", "--pid", "--verbose"},
+    long_values=frozenset({"--sched-runtime", "--sched-period", "--sched-deadline"}),
+    lookup=frozenset({"-m", "--max", "-p", "--pid"}),
+    positionals=1,
+)
+TASKSET = OptionSpec(
+    flags="acp", long_flags=_HELP | {"--all-tasks", "--cpu-list", "--pid"},
+    lookup=frozenset({"-p", "--pid"}), positionals=1,
+)
 XARGS = OptionSpec(
     flags="0ortpx", values="adEILnPs", attached="eil",
     long_flags=frozenset({
@@ -126,8 +205,11 @@ XARGS = OptionSpec(
     long_attached=frozenset({"--eof", "--replace", "--max-lines"}),
 )
 WRAPPERS: Mapping[str, OptionSpec] = {
-    "env": ENV, "sudo": SUDO, "time": TIME, "command": COMMAND, "exec": EXEC,
+    "env": ENV, "sudo": SUDO, "doas": DOAS, "time": TIME, "command": COMMAND, "exec": EXEC,
+    "timeout": TIMEOUT, "nice": NICE, "nohup": NOHUP, "stdbuf": STDBUF, "ionice": IONICE,
+    "chrt": CHRT, "taskset": TASKSET,
 }
+_NUMERIC_OPTION = re.compile(r"^--?\d+$")
 
 
 def basename(word: str) -> str:
@@ -185,6 +267,9 @@ def _cluster(spec: OptionSpec, args: Sequence[str], i: int, found: list) -> int 
 
 
 def _option(spec: OptionSpec, args: Sequence[str], i: int, found: list) -> int | None:
+    if spec.numeric and _NUMERIC_OPTION.match(args[i]):
+        found.append(("-n", args[i].lstrip("-")))
+        return i + 1
     if args[i] == "-":
         if not spec.dash_is_flag:
             return None
@@ -209,27 +294,77 @@ def parse_options(spec: OptionSpec, args: Sequence[str]) -> Options | None:
     return Options(tuple(found), tuple(args[i:]))
 
 
-def _apply_unsets(spec: OptionSpec, options: Options, env: dict[str, str], unset: set[str]) -> None:
-    for name, value in options.found:
-        if name in spec.unsets:
-            env.pop(value, None)
-            unset.add(value)
+@dataclass
+class _Case:
+    """One case of the environment while peeling: assignments and inherited names."""
+
+    env: dict[str, str]
+    inherits: frozenset[str] | None = None
+
+
+def _preserved(spec: OptionSpec, options: Options) -> frozenset[str] | None:
+    """The names a resetting wrapper keeps, or None when it keeps the whole environment."""
+    values = [value for name, value in options.found if name in spec.preserves]
+    if not all(values):
+        return None
+    return frozenset(part for value in values for part in value.split(",") if part)
+
+
+def _reset(case: _Case, kept: frozenset[str]) -> _Case:
+    inherits = kept if case.inherits is None else case.inherits & kept
+    return _Case({k: v for k, v in case.env.items() if k in kept}, inherits)
+
+
+def _environment(spec: OptionSpec, options: Options, cases: list[_Case]) -> list[_Case]:
+    """*cases* after one wrapper's clears and resets."""
+    if options.names() & spec.clears:
+        return [_Case({}, frozenset()) for _ in cases]
+    if not spec.resets:
+        return cases
+    kept = _preserved(spec, options)
+    if kept is None:
+        return cases
+    return cases + [_reset(case, kept) for case in cases]
+
+
+def _apply(spec: OptionSpec, options: Options, cases: list[_Case], unset: set[str]) -> int:
+    """Apply one wrapper's unsets and assignments to every case; the index after the assignments."""
+    rest = options.rest[spec.positionals:]
+    removed = [value for name, value in options.found if name in spec.unsets]
+    unset.update(removed)
+    for case in cases:
+        for name in removed:
+            case.env.pop(name, None)
+    start = 0
+    for case in cases:
+        start = lift_assignments(rest, case.env)
+    unset -= set(cases[0].env)
+    return spec.positionals + start
+
+
+def _peeled(cases: list[_Case], words: tuple[str, ...], unset: set[str], **flags) -> Peeled:
+    alternatives = tuple(dict.fromkeys(
+        (tuple(sorted(c.env.items())), c.inherits) for c in cases[1:]
+        if (c.env, c.inherits) != (cases[0].env, cases[0].inherits)))
+    views = tuple(EnvView(dict(env), inherits) for env, inherits in alternatives)
+    return Peeled(dict(cases[0].env), words, frozenset(unset), inherits=cases[0].inherits,
+                  alternatives=views, **flags)
 
 
 def peel(env: Mapping[str, str], words: Sequence[str]) -> Peeled:
     """*words* with every leading transparent wrapper stripped, and the env it runs under."""
-    current = dict(env)
+    cases = [_Case(dict(env))]
     unset: set[str] = set()
     words = tuple(words)
     while words and basename(words[0]) in WRAPPERS:
         spec = WRAPPERS[basename(words[0])]
         options = parse_options(spec, words[1:])
         if options is None or options.names() & spec.opaque:
-            return Peeled(current, words, frozenset(unset), opaque=True)
+            return _peeled(cases, words, unset, opaque=True)
         if options.names() & spec.lookup:
-            return Peeled(current, words, frozenset(unset), lookup=True)
-        _apply_unsets(spec, options, current, unset)
-        start = lift_assignments(options.rest, current)
-        unset -= set(current)
-        words = options.rest[start:]
-    return Peeled(current, words, frozenset(unset))
+            return _peeled(cases, words, unset, lookup=True)
+        if len(options.rest) < spec.positionals:
+            return _peeled(cases, words, unset, opaque=True)
+        cases = _environment(spec, options, cases)
+        words = options.rest[_apply(spec, options, cases, unset):]
+    return _peeled(cases, words, unset)

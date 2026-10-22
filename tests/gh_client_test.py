@@ -374,7 +374,7 @@ def test_json_out_falls_back_on_a_failed_call(stub_gh, no_sleep):
 
 def test_stdin_reaches_gh(stub_gh):
     stub_gh("cat")
-    r = gh.client.run("api", "graphql", input_text='{"query": "x"}')
+    r = gh.client.run("api", "graphql", "--input", "-", input_text='{"query": "x"}')
     assert r.stdout == '{"query": "x"}'
 
 

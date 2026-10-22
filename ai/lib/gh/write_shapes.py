@@ -12,11 +12,16 @@ write that was allowed.
 
 A write is:
 
-* ``gh issue|pr|release|label`` with a verb in ``GH_WRITES``. A leading
-  ``-R/--repo`` is gh's own flag and is skipped.
-* ``gh api graphql`` whose text holds ``mutation``, or whose body comes from
-  ``--input`` and is not in hand.
-* ``gh api`` with ``-X/--method`` POST, PATCH, PUT or DELETE — or, with no
+* ``gh GROUP VERB`` with a verb in ``GH_WRITES`` — issue, pr, release, label,
+  repo, workflow, run, secret, variable, cache, gist and project. ``-R/--repo``
+  is gh's own flag and is skipped before the group and between the group and
+  the verb.
+* ``gh api graphql`` unless its query is in hand and holds no ``mutation``.
+  The query is in hand when it is a literal ``query=`` field — not
+  ``-F query=@file``, not a ``$VAR``, ``$(…)`` or backtick — or a ``--input``
+  body the caller passed as text. A query from a file or the shell is a write:
+  writing a mutation to a file to dodge quoting is an ordinary habit.
+* ``gh api`` with ``-X/--method`` POST, PATCH, PUT or DELETE (``-X=POST`` too) — or, with no
   method, with a field or body (``-f/-F/--field/--raw-field/--input``): gh
   sends POST then, and that is the call that lands.
 * The workbench's own posting commands: ``pr create``; ``pr describe|comments|fix|ci``
@@ -29,17 +34,23 @@ A write is:
 ``GH_HOST`` decide a target), and the program is matched on its basename, so
 ``/usr/local/bin/gh`` is gh.
 
-``env``, ``sudo``, ``time``, ``command`` and ``exec`` are stripped in a loop
-by ``gh.shell_wrappers.peel`` — the one peeling function the target resolver
+``env``, ``sudo``, ``time``, ``timeout``, ``nice`` and the other wrappers
+``gh.shell_wrappers`` lists are stripped in a loop by ``gh.shell_wrappers.peel`` — the one peeling function the target resolver
 uses too — and the program they run is classified. A wrapper option that
 cannot be read with confidence, or that changes directory or re-parses a
 string (``env -C``, ``env -S``, ``sudo -D``), makes the statement opaque.
 
-Opaque statements, ``eval``, and ``bash|sh|zsh`` with a ``-c`` cluster
-(``-c``, ``-lc``, ``-ec``) are writes when their words mention gh or a
-workbench posting command, and the policy refuses them: their target cannot be
-resolved. ``xargs`` wrapping a GitHub write is the same — the arguments come
-from stdin.
+``bash|sh|zsh -c STRING`` (any cluster holding ``c``: ``-lc``, ``-ec``),
+``eval WORDS`` and ``env -S STRING`` run text the shell parses again;
+``statements``/``expand_statement`` read that text as statements of its own,
+up to ``REPARSE_DEPTH`` levels deep, so ``bash -lc 'ls ai/lib/review'`` is a
+read and ``bash -c 'gh issue comment 1 --repo o/r -b x'`` is a write whose
+target resolves. Past that depth, or when the text cannot be read exactly (a
+``-c`` string after a non-option, an ``env -S`` string using env's own
+escapes), the statement stays opaque: it is a write when its words mention gh
+or a workbench posting command, and the policy refuses it because its target
+cannot be resolved. ``xargs`` wrapping a GitHub write is the same — the
+arguments come from stdin.
 
 ceiling: a gh reached through a shell alias or a wrapper script whose name is
 not in that set is not matched. Upgrade trigger: the first such spelling seen
@@ -59,10 +70,26 @@ from dataclasses import dataclass, field
 import gh.shell_wrappers
 
 GH_WRITES: Mapping[str, frozenset[str]] = {
-    "issue": frozenset({"create", "comment", "edit", "reopen", "close", "delete", "transfer"}),
-    "pr": frozenset({"create", "comment", "review", "edit", "merge", "close", "reopen", "ready"}),
-    "release": frozenset({"create", "edit", "delete", "upload"}),
-    "label": frozenset({"create", "edit", "delete"}),
+    "issue": frozenset({
+        "create", "comment", "edit", "reopen", "close", "delete", "transfer",
+        "lock", "unlock", "pin", "unpin", "develop"}),
+    "pr": frozenset({
+        "create", "comment", "review", "edit", "merge", "close", "reopen", "ready",
+        "revert", "lock", "unlock", "update-branch"}),
+    "release": frozenset({"create", "edit", "delete", "upload", "delete-asset"}),
+    "label": frozenset({"create", "edit", "delete", "clone"}),
+    "repo": frozenset({
+        "create", "edit", "delete", "archive", "unarchive", "rename", "fork", "sync"}),
+    "workflow": frozenset({"run", "enable", "disable"}),
+    "run": frozenset({"rerun", "cancel", "delete"}),
+    "secret": frozenset({"set", "delete"}),
+    "variable": frozenset({"set", "delete"}),
+    "cache": frozenset({"delete"}),
+    "gist": frozenset({"create", "edit", "delete", "rename"}),
+    "project": frozenset({
+        "create", "edit", "delete", "close", "copy", "link", "unlink", "mark-template",
+        "field-create", "field-delete", "item-add", "item-archive", "item-create",
+        "item-delete", "item-edit"}),
 }
 MUTATING_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 DIRECTORY_CHANGERS = frozenset({"cd", "pushd", "popd"})
@@ -76,6 +103,9 @@ _WORKBENCH_PR_SUBCOMMANDS = frozenset({
 _POSTING_SUBCOMMANDS = frozenset({"describe", "comments", "fix", "ci"})
 _REVIEW_READ_FLAGS = frozenset({"--self", "--no-post", "--summary", "--list"})
 _SHELLS = frozenset({"bash", "sh", "zsh"})
+_SHELL_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O"})
+_SPLIT_STRING = frozenset({"-S", "--split-string"})
+REPARSE_DEPTH = 3
 _GITHUB_COMMANDS = frozenset({
     "gh", "pr", "review", "pr-describe", "review-post", "review-threads",
 })
@@ -199,47 +229,104 @@ def skip_repo_flags(args: Sequence[str]) -> int:
     return i
 
 
+_API_LONG = {
+    "--method": "-X", "--input": "--input", "--field": "-F", "--raw-field": "-f",
+    "--header": "", "--jq": "", "--template": "", "--hostname": "", "--cache": "", "--preview": "",
+}
+_API_SHORT = re.compile(r"^-i*([XfFHqtp])(=?)(.*)$")
+_UNREADABLE_QUERY = ("$(", "${", "`")
+
+
+def _api_option(args: Sequence[str], i: int) -> tuple[str | None, str, int]:
+    """``(flag, value, next)`` when *args[i]* is a value-taking gh api option, else ``(None, "", i + 1)``.
+
+    *flag* is canonical: ``-X``, ``-f``, ``-F``, ``--input``, or empty for one
+    whose value does not matter. Every pflag spelling is read: ``-X POST``,
+    ``-XPOST``, ``-X=POST``, ``-iXPOST``, ``--method POST``, ``--method=POST``.
+    """
+    word = args[i]
+    name, eq, attached = word.partition("=")
+    if name in _API_LONG and word.startswith("--"):
+        if eq:
+            return _API_LONG[name], attached, i + 1
+        return _API_LONG[name], args[i + 1] if i + 1 < len(args) else "", i + 2
+    short = _API_SHORT.match(word)
+    if short is None or word.startswith("--"):
+        return None, "", i + 1
+    flag = f"-{short.group(1)}" if short.group(1) in "XfF" else ""
+    if short.group(2) or short.group(3):
+        return flag, short.group(3), i + 1
+    return flag, args[i + 1] if i + 1 < len(args) else "", i + 2
+
+
+def _query_is_literal(flag: str, text: str) -> bool:
+    """Whether a ``query`` field's text is the query itself, not a file, variable or substitution."""
+    if flag == "-F" and text.startswith("@"):
+        return False
+    stripped = text.lstrip()
+    if not stripped or stripped[0] in "$@`":
+        return False
+    return not any(marker in text for marker in _UNREADABLE_QUERY)
+
+
 def _api_is_write(args: Sequence[str], input_text: str | None) -> bool:
     method = ""
+    field_values: list[tuple[str, str]] = []
     fields = has_input = graphql = mutation = False
     i = 0
     while i < len(args):
-        word = args[i]
-        if "mutation" in word:
+        flag, value, nxt = _api_option(args, i)
+        if "mutation" in args[i] or "mutation" in value:
             mutation = True
-        if word in ("-X", "--method"):
-            method = args[i + 1] if i + 1 < len(args) else ""
-            i += 2
-            continue
-        if word.startswith("--method="):
-            method = word[len("--method="):]
-        elif word.startswith("-X") and len(word) > 2:
-            method = word[2:]
-        elif word == "--input" or word.startswith("--input="):
+        if flag is None:
+            graphql = graphql or args[i] == "graphql"
+        elif flag == "-X":
+            method = value
+        elif flag == "--input":
             fields = has_input = True
-        elif word in _FIELD_FLAGS or word.startswith(_FIELD_PREFIXES) or (
-                word[:2] in ("-f", "-F") and len(word) > 2):
+        elif flag in ("-f", "-F"):
             fields = True
-        elif word == "graphql":
-            graphql = True
-        i += 1
+            field_values.append((flag, value))
+        i = nxt
     if input_text is not None and "mutation" in input_text:
         mutation = True
     if graphql:
-        return mutation or (has_input and input_text is None)
+        if mutation or has_input:
+            return mutation or input_text is None
+        queries = [(flag, value.partition("=")[2]) for flag, value in field_values
+                   if value.partition("=")[0] == "query"]
+        return not queries or not all(_query_is_literal(flag, text) for flag, text in queries)
     if method:
         return method.upper() in MUTATING_METHODS
     return fields
 
 
+def gh_subcommands(args: Sequence[str]) -> tuple[str, ...]:
+    """gh's command group and verb, with ``-R/--repo`` skipped wherever it sits before the verb.
+
+    gh's flag parser accepts a persistent flag between the group and the verb
+    (``gh pr -R o/r comment 1``), so a repo flag there is not the verb.
+    """
+    found: list[str] = []
+    i = 0
+    while i < len(args) and len(found) < 2:
+        _, nxt = take_repo_flag(args, i)
+        if nxt != i:
+            i = nxt
+            continue
+        found.append(args[i])
+        i += 1
+    return tuple(found)
+
+
 def gh_is_write(args: Sequence[str], input_text: str | None = None) -> bool:
     """Whether ``gh *args`` writes to GitHub. *input_text* is the body gh reads on stdin."""
     i = skip_repo_flags(args)
-    sub = args[i] if i < len(args) else ""
-    if sub == "api":
+    if i < len(args) and args[i] == "api":
         return _api_is_write(args[i + 1:], input_text)
-    verbs = GH_WRITES.get(sub)
-    return verbs is not None and i + 1 < len(args) and args[i + 1] in verbs
+    path = gh_subcommands(args)
+    verbs = GH_WRITES.get(path[0]) if path else None
+    return verbs is not None and len(path) == 2 and path[1] in verbs
 
 
 def _review_posts(args: Sequence[str]) -> bool:
@@ -309,6 +396,107 @@ def _reparsed_github_write(words: Sequence[str]) -> bool:
     return statement_is_write(options.rest)
 
 
+def _shell_command_string(args: Sequence[str]) -> str | None:
+    """The ``-c`` string of ``bash|sh|zsh ARGS`` when every word before it is an option, else None."""
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if word in _SHELL_VALUE_OPTIONS:
+            i += 2
+            continue
+        if not word.startswith(("-", "+")) or word in ("-", "--"):
+            return None
+        if word.startswith("-") and not word.startswith("--") and "c" in word:
+            following = args[i + 1] if i + 1 < len(args) else "-"
+            return None if following.startswith("-") else following
+        i += 1
+    return None
+
+
+def _env_option_words(found: Sequence[tuple[str, str]]) -> list[str]:
+    spec = gh.shell_wrappers.ENV
+    words: list[str] = []
+    for name, value in found:
+        if name in spec.long_values or (name in spec.long_attached and value):
+            words.append(f"{name}={value}")
+        elif len(name) == 2 and name[1] in spec.values:
+            words.extend([name, value])
+        else:
+            words.append(name)
+    return words
+
+
+def _split_string_statement(words: Sequence[str]) -> list[str] | None:
+    """``env … -S STRING …`` with STRING split into words in place, as env does; None when unsure.
+
+    A string using env's own escapes, ``${VAR}`` expansion or comments is not
+    split here — the statement stays opaque.
+    """
+    spec = gh.shell_wrappers.ENV
+    options = gh.shell_wrappers.parse_options(spec, words[1:])
+    if options is None:
+        return None
+    splits = [value for name, value in options.found if name in _SPLIT_STRING]
+    others = [(name, value) for name, value in options.found if name not in _SPLIT_STRING]
+    if len(splits) != 1 or any(name in spec.opaque for name, _ in others):
+        return None
+    if any(char in splits[0] for char in "\\$#"):
+        return None
+    try:
+        inner = shlex.split(splits[0])
+    except ValueError:
+        return None
+    return [words[0], *_env_option_words(others), *inner, *options.rest]
+
+
+def _reparsed_statements(peeled: gh.shell_wrappers.Peeled) -> list[list[str]] | None:
+    """The statements a re-parsing wrapper runs, or None when they cannot be read exactly."""
+    program = gh.shell_wrappers.basename(peeled.words[0])
+    if peeled.opaque:
+        statement = _split_string_statement(peeled.words) if program == "env" else None
+        return None if statement is None else [statement]
+    if program == "eval":
+        text: str | None = " ".join(peeled.words[1:])
+    elif program in _SHELLS:
+        text = _shell_command_string(peeled.words[1:])
+    else:
+        return None
+    if text is None:
+        return None
+    try:
+        return split_statements(text)
+    except ValueError:
+        return None
+
+
+def expand_statement(statement: Sequence[str], depth: int = REPARSE_DEPTH) -> list[list[str]]:
+    """*statement*, or the statements a re-parsing wrapper in it runs, read *depth* levels deep.
+
+    ``bash -c STRING``, ``eval WORDS`` and ``env -S STRING`` run text the
+    shell parses again. Each inner statement keeps the outer statement's
+    assignments and wrappers in front of it, so ``GH_REPO=x sudo bash -c 'gh …'``
+    is classified and resolved as ``GH_REPO=x sudo gh …``. Past *depth*, or
+    when the text cannot be read exactly, the statement is returned as it is
+    and the opaque word search answers for it.
+    """
+    if depth <= 0:
+        return [list(statement)]
+    peeled = peeled_statement(statement)
+    if peeled.lookup or not peeled.words:
+        return [list(statement)]
+    inner = _reparsed_statements(peeled)
+    if inner is None:
+        return [list(statement)]
+    prefix = list(statement[:len(statement) - len(peeled.words)])
+    return [expanded for one in inner for expanded in expand_statement(prefix + one, depth - 1)]
+
+
+def statements(command: str) -> list[list[str]]:
+    """*command*'s statements with every re-parsing wrapper expanded (ValueError if unparseable)."""
+    return [expanded for statement in split_statements(command)
+            for expanded in expand_statement(statement)]
+
+
 def opaque_github_write(statement: Sequence[str]) -> bool:
     """Whether *statement* reaches gh through a wrapper whose target cannot be resolved."""
     peeled = peeled_statement(statement)
@@ -344,4 +532,4 @@ def statement_is_write(statement: Sequence[str]) -> bool:
 
 def command_is_write(command: str) -> bool:
     """Whether any statement of *command* writes to GitHub (ValueError if unparseable)."""
-    return any(statement_is_write(statement) for statement in split_statements(command))
+    return any(statement_is_write(statement) for statement in statements(command))

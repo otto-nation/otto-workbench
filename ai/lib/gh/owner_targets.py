@@ -22,6 +22,15 @@ In order:
 A bare ``OWNER/REPO`` is on ``GH_HOST`` when set (prefix, then environment),
 else public GitHub — gh's own default host.
 
+``GH_REPO``/``GH_HOST`` from the process environment count only when they
+reach the program: ``env -i`` drops them, and ``sudo``/``doas`` — which may
+or may not, depending on sudoers and doas.conf — are resolved both ways and
+the owners unioned (``gh.shell_wrappers.Peeled.views``).
+
+Writes aimed at an account rather than a repository's issues and PRs — gists,
+projects, org secrets and variables, ``gh repo create|fork`` and a ``gh repo``
+verb naming its repository — are resolved by ``gh.owner_scopes`` first.
+
 ceiling: gh's default host can also come from ``gh auth``'s configuration (a
 machine logged in only to an Enterprise host), which this does not read. The
 error direction is a refusal — an Enterprise owner read as a github.com owner is
@@ -47,7 +56,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
@@ -55,6 +64,8 @@ from typing import NamedTuple
 import config.github_owners
 import git.client
 import git.remote_url
+import gh.owner_scopes
+import gh.shell_wrappers
 import gh.write_shapes
 from config.github_owners import Owner
 
@@ -112,13 +123,24 @@ class TargetSource(StrEnum):
     REMOTES = "remotes"
 
 
+CHOOSE_WITH_REPO = "pass --repo OWNER/REPO explicitly, or draft the command for the user to run"
+CHOOSE_WORKBENCH = (
+    "the workbench command has no --repo flag — remove or rename the remote it must not"
+    " use, so gh cannot pick it, or draft the command for the user to run")
+
+
 @dataclass(frozen=True)
 class Target:
-    """The owners a write may land on, how they were found, and how to say so."""
+    """The owners a write may land on, how they were found, and how to say so.
+
+    *choose* is how the reader picks one repository when several candidates
+    came from the remotes: gh takes ``--repo``, a workbench command does not.
+    """
 
     owners: tuple[Owner, ...]
     source: TargetSource
     detail: str
+    choose: str = CHOOSE_WITH_REPO
 
 
 @dataclass(frozen=True)
@@ -140,19 +162,21 @@ class _ArgFlags(NamedTuple):
     positionals: tuple[str, ...]
 
 
-def default_host(env: Mapping[str, str]) -> str:
-    """The host a bare ``OWNER/REPO`` is on: ``GH_HOST`` (prefix, then environment), else github.com."""
-    host = env.get("GH_HOST") or os.environ.get("GH_HOST") or config.github_owners.DEFAULT_HOST
+def default_host(env: Mapping[str, str], environ: Mapping[str, str] | None = None) -> str:
+    """The host a bare ``OWNER/REPO`` is on: ``GH_HOST`` (prefix, then *environ*), else github.com.
+
+    *environ* is the process environment the program inherits, ``os.environ``
+    when None.
+    """
+    inherited = os.environ if environ is None else environ
+    host = env.get("GH_HOST") or inherited.get("GH_HOST") or config.github_owners.DEFAULT_HOST
     return host.strip().lower()
 
 
-def _repo_owner(spec: str, host: str) -> Owner | None:
-    parts = spec.strip().split("/")
-    if len(parts) == 2 and all(parts):
-        return config.github_owners.owner(host, parts[0])
-    if len(parts) == 3 and all(parts):
-        return config.github_owners.owner(parts[0], parts[1])
-    return None
+def inherited_environ(view: gh.shell_wrappers.EnvView) -> dict[str, str]:
+    """The ``GH_REPO``/``GH_HOST`` values of ``os.environ`` that reach a program under *view*."""
+    return {name: os.environ[name] for name in ("GH_REPO", "GH_HOST")
+            if name in os.environ and view.admits(name)}
 
 
 def remote_owner(url: str, host: str, known_hosts: frozenset[str]) -> Owner | None:
@@ -180,18 +204,8 @@ def _content_span(word: str) -> int:
     return 0
 
 
-def _subcommand_pair(args: Sequence[str]) -> tuple[str, ...]:
-    i = gh.write_shapes.skip_repo_flags(args)
-    found: list[str] = []
-    while i < len(args) and len(found) < 2:
-        if not args[i].startswith("-"):
-            found.append(args[i])
-        i += 1
-    return tuple(found)
-
-
 def _booleans_for(args: Sequence[str]) -> frozenset[str]:
-    return _BOOLEAN_FLAGS | _BOOLEAN_SHORT.get(_subcommand_pair(args)[:2], frozenset())
+    return _BOOLEAN_FLAGS | _BOOLEAN_SHORT.get(gh.write_shapes.gh_subcommands(args), frozenset())
 
 
 def _could_be_value_taking_flag(word: str, booleans: frozenset[str]) -> bool:
@@ -242,7 +256,7 @@ def _union_owners(left: Resolution, right: Resolution) -> Resolution:
         return right
     owners = tuple(dict.fromkeys((*left.target.owners, *right.target.owners)))
     detail = f"{left.target.detail}, {right.target.detail}"
-    return Resolution(Target(owners, left.target.source, detail))
+    return Resolution(Target(owners, left.target.source, detail, left.target.choose))
 
 
 def _across_hosts(hosts: Sequence[str], resolve_one) -> Resolution:
@@ -299,7 +313,7 @@ def _host_is_shifted(env: Mapping[str, str], shifted_env: frozenset[str]) -> boo
     return "GH_HOST" in shifted_env and not (env.get("GH_HOST") or "").strip()
 
 
-def _explicit(args: Sequence[str], env: Mapping[str, str], host: str, *,
+def _explicit(args: Sequence[str], env: Mapping[str, str], host: str, environ: Mapping[str, str], *,
               read_gh_repo: bool = True,
               shifted_env: frozenset[str] = frozenset()) -> Resolution | None:
     owners: list[Owner] = []
@@ -309,7 +323,7 @@ def _explicit(args: Sequence[str], env: Mapping[str, str], host: str, *,
     specs = [(spec, f"--repo {spec}") for spec in repo_specs]
     repo_env = ""
     if read_gh_repo and "GH_REPO" not in shifted_env:
-        repo_env = env.get("GH_REPO") or os.environ.get("GH_REPO") or ""
+        repo_env = env.get("GH_REPO") or environ.get("GH_REPO") or ""
     if repo_env:
         specs.append((repo_env, f"GH_REPO={repo_env}"))
     host_shifted = _host_is_shifted(env, shifted_env)
@@ -317,7 +331,7 @@ def _explicit(args: Sequence[str], env: Mapping[str, str], host: str, *,
         parts = spec.strip().split("/")
         if len(parts) == 2 and host_shifted:
             return Resolution(reason=_SHIFTED_HOST_REASON)
-        parsed = _repo_owner(spec, host)
+        parsed = gh.owner_scopes.repo_owner(spec, host)
         if parsed is None:
             return Resolution(reason=f"cannot read an owner from {detail} — write OWNER/REPO")
         owners.append(parsed)
@@ -341,7 +355,7 @@ def _parse_gh_resolved(raw: str, host: str) -> tuple[Owner | None, bool]:
     if not raw or raw == "base":
         return None, True
     spec = raw[5:] if raw.lower().startswith("base:") else raw
-    parsed = _repo_owner(spec, host)
+    parsed = gh.owner_scopes.repo_owner(spec, host)
     return parsed, parsed is not None
 
 
@@ -385,7 +399,7 @@ def _remotes(cwd: str, after_cd: bool, host: str, known_hosts: frozenset[str],
 def _graphql(target_repo: str, host: str, cwd: str, after_cd: bool,
              known_hosts: frozenset[str], graphql_from_cwd: bool,
              shifted_env: frozenset[str]) -> Resolution:
-    parsed = _repo_owner(target_repo, host) if target_repo else None
+    parsed = gh.owner_scopes.repo_owner(target_repo, host) if target_repo else None
     if parsed is not None:
         return Resolution(Target((parsed,), TargetSource.EXPLICIT, target_repo))
     if graphql_from_cwd:
@@ -429,7 +443,7 @@ def _api_hosts(args: Sequence[str], env: Mapping[str, str], host: str,
 
 
 def _api_path(endpoint: str, hosts: Sequence[str], gh_args: Sequence[str],
-              env: Mapping[str, str], cwd: str, after_cd: bool,
+              env: Mapping[str, str], environ: Mapping[str, str], cwd: str, after_cd: bool,
               known_hosts: frozenset[str], shifted_env: frozenset[str]) -> Resolution:
     if _unsafe_api_path(endpoint):
         return Resolution(reason=(
@@ -441,14 +455,15 @@ def _api_path(endpoint: str, hosts: Sequence[str], gh_args: Sequence[str],
             f" target cannot be checked"))
     if match.group(1) == _OWNER_PLACEHOLDER:
         return _across_hosts(hosts, lambda host: _explicit(
-            gh_args, env, host, shifted_env=shifted_env) or _remotes(
+            gh_args, env, host, environ, shifted_env=shifted_env) or _remotes(
             cwd, after_cd, host, known_hosts, shifted_env))
     owners = tuple(dict.fromkeys(
         config.github_owners.owner(item, match.group(1)) for item in hosts))
     return Resolution(Target(owners, TargetSource.API_PATH, endpoint))
 
 
-def _api(args: Sequence[str], gh_args: Sequence[str], env: Mapping[str, str], host: str, cwd: str,
+def _api(args: Sequence[str], gh_args: Sequence[str], env: Mapping[str, str],
+         environ: Mapping[str, str], host: str, cwd: str,
          after_cd: bool, known_hosts: frozenset[str], target_repo: str,
          graphql_from_cwd: bool, shifted_env: frozenset[str]) -> Resolution:
     hosts = _api_hosts(args, env, host, shifted_env)
@@ -458,14 +473,14 @@ def _api(args: Sequence[str], gh_args: Sequence[str], env: Mapping[str, str], ho
     if endpoint == "graphql":
         return _across_hosts(hosts, lambda host: _graphql(
             target_repo, host, cwd, after_cd, known_hosts, graphql_from_cwd, shifted_env))
-    return _api_path(endpoint, hosts, gh_args, env, cwd, after_cd, known_hosts, shifted_env)
+    return _api_path(endpoint, hosts, gh_args, env, environ, cwd, after_cd, known_hosts, shifted_env)
 
 
-def _gh_repo_target(args: Sequence[str], env: Mapping[str, str], host: str, cwd: str,
-                    after_cd: bool, known_hosts: frozenset[str],
+def _gh_repo_target(args: Sequence[str], env: Mapping[str, str], environ: Mapping[str, str],
+                    host: str, cwd: str, after_cd: bool, known_hosts: frozenset[str],
                     shifted_env: frozenset[str]) -> Resolution:
     _, ambiguous = _collect_flag(args, gh.write_shapes.take_repo_flag, _booleans_for(args))
-    explicit = _explicit(args, env, host, shifted_env=shifted_env)
+    explicit = _explicit(args, env, host, environ, shifted_env=shifted_env)
     if explicit is not None and not explicit.ok:
         return explicit
     if explicit is not None and not ambiguous:
@@ -490,7 +505,7 @@ def _with_transfer(resolution: Resolution, args: Sequence[str], host: str) -> Re
     spec = _transfer_dest(_parse_args(args).positionals)
     if not spec:
         return resolution
-    parsed = _repo_owner(spec, host)
+    parsed = gh.owner_scopes.repo_owner(spec, host)
     if parsed is None:
         return Resolution(reason=(
             f"cannot read an owner from transfer destination {spec} — write OWNER/REPO"))
@@ -499,25 +514,35 @@ def _with_transfer(resolution: Resolution, args: Sequence[str], host: str) -> Re
     return Resolution(Target(owners, resolution.target.source, detail))
 
 
-def _gh(args: Sequence[str], env: Mapping[str, str], cwd: str, after_cd: bool,
-        known_hosts: frozenset[str], target_repo: str, graphql_from_cwd: bool,
+def _gh(args: Sequence[str], env: Mapping[str, str], environ: Mapping[str, str], cwd: str,
+        after_cd: bool, known_hosts: frozenset[str], target_repo: str, graphql_from_cwd: bool,
         shifted_env: frozenset[str]) -> Resolution:
-    host = default_host(env)
+    host = default_host(env, environ)
     sub_at = gh.write_shapes.skip_repo_flags(args)
     if sub_at < len(args) and args[sub_at] == "api":
         # gh api ignores --repo and GH_REPO except to fill {owner}: the path is
         # the target, so an explicit repo must not stand in for it.
-        return _api(args[sub_at + 1:], args[:sub_at], env, host, cwd, after_cd, known_hosts,
-                    target_repo, graphql_from_cwd, shifted_env)
+        return _api(args[sub_at + 1:], args[:sub_at], env, environ, host, cwd, after_cd,
+                    known_hosts, target_repo, graphql_from_cwd, shifted_env)
+    scoped = gh.owner_scopes.resolve(args, host)
+    if scoped is not None:
+        return _scoped(scoped)
     return _with_transfer(
-        _gh_repo_target(args, env, host, cwd, after_cd, known_hosts, shifted_env),
+        _gh_repo_target(args, env, environ, host, cwd, after_cd, known_hosts, shifted_env),
         args, host)
 
 
-def _workbench(args: Sequence[str], env: Mapping[str, str], cwd: str, after_cd: bool,
-               known_hosts: frozenset[str], shifted_env: frozenset[str]) -> Resolution:
-    host = default_host(env)
-    explicit = _explicit(args, {}, host, read_gh_repo=False, shifted_env=shifted_env)
+def _scoped(scoped: gh.owner_scopes.Scoped) -> Resolution:
+    if scoped.reason:
+        return Resolution(reason=scoped.reason)
+    return Resolution(Target(scoped.owners, TargetSource.EXPLICIT, scoped.detail))
+
+
+def _workbench(args: Sequence[str], env: Mapping[str, str], environ: Mapping[str, str],
+               cwd: str, after_cd: bool, known_hosts: frozenset[str],
+               shifted_env: frozenset[str]) -> Resolution:
+    host = default_host(env, environ)
+    explicit = _explicit(args, {}, host, environ, read_gh_repo=False, shifted_env=shifted_env)
     if explicit is not None:
         return explicit
     flags = _parse_args(args)
@@ -529,22 +554,45 @@ def _workbench(args: Sequence[str], env: Mapping[str, str], cwd: str, after_cd: 
     return _remotes(cwd, after_cd, host, known_hosts, shifted_env)
 
 
+def _with_choice(resolution: Resolution, choose: str) -> Resolution:
+    if not resolution.ok:
+        return resolution
+    return Resolution(replace(resolution.target, choose=choose))
+
+
+def _resolve_in(inv: gh.write_shapes.Invocation, environ: Mapping[str, str], cwd: str,
+                after_cd: bool, known_hosts: frozenset[str],
+                shifted_env: frozenset[str]) -> Resolution:
+    if inv.program == "gh":
+        return _gh(inv.args, inv.env, environ, cwd, after_cd, known_hosts, "", False, shifted_env)
+    return _with_choice(
+        _workbench(inv.args, inv.env, environ, cwd, after_cd, known_hosts, shifted_env),
+        CHOOSE_WORKBENCH)
+
+
 def resolve_statement(statement: Sequence[str], cwd: str, *, after_cd: bool,
                       known_hosts: frozenset[str],
                       shifted_env: frozenset[str] = frozenset()) -> Resolution:
-    """The target of one shell statement already judged a write."""
+    """The target of one shell statement already judged a write.
+
+    A wrapper that may have reset the environment (``sudo``, ``doas``) is
+    resolved both ways and the owners unioned; ``env -i`` is resolved with
+    no inherited ``GH_REPO``/``GH_HOST`` at all.
+    """
     if gh.write_shapes.opaque_github_write(statement):
         return Resolution(reason=_WRAPPER_REASON)
     peeled = gh.write_shapes.peeled_statement(statement)
     if peeled.opaque or peeled.lookup or not peeled.words:
         return Resolution(reason=_WRAPPER_REASON)
-    inv = gh.write_shapes.Invocation(env=peeled.env, words=peeled.words)
-    if inv.program == "gh":
-        return _gh(inv.args, inv.env, cwd, after_cd, known_hosts, "", False, shifted_env)
-    return _workbench(inv.args, inv.env, cwd, after_cd, known_hosts, shifted_env)
+    combined: Resolution | None = None
+    for view in peeled.views:
+        inv = gh.write_shapes.Invocation(env=view.env, words=peeled.words)
+        item = _resolve_in(inv, inherited_environ(view), cwd, after_cd, known_hosts, shifted_env)
+        combined = item if combined is None else _union_owners(combined, item)
+    return combined
 
 
 def resolve_gh_call(args: Sequence[str], *, cwd: str, target_repo: str,
                     known_hosts: frozenset[str]) -> Resolution:
     """The target of a ``gh.client`` call. A GraphQL write takes *target_repo*, else the cwd repo."""
-    return _gh(tuple(args), {}, cwd, False, known_hosts, target_repo, True, frozenset())
+    return _gh(tuple(args), {}, os.environ, cwd, False, known_hosts, target_repo, True, frozenset())

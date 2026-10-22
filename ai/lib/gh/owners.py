@@ -22,7 +22,10 @@ to configure it.
 A target (``gh.owner_targets``) is one owner, or — resolved from a checkout's
 remotes — several candidates. It is allowed only when every candidate is ours
 and all are in one group; a fork whose ``upstream`` remote is a third party is
-refused with "pass --repo", because gh may pick that remote as the base.
+refused, because gh may pick that remote as the base. The refusal says how to
+pick one (``Target.choose``): ``--repo`` for gh; for a workbench command, which
+has no ``--repo``, removing or renaming the remote — or, for the workbench's own
+publishing through ``gh.client``, the user's override.
 
 ``WORKBENCH_ALLOW_UPSTREAM=1`` in the user's own environment lets the
 workbench's own publishing past an upstream refusal (``gh.client`` asks
@@ -38,7 +41,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import config.github_owners
@@ -50,6 +53,9 @@ from config.github_owners import Owner
 ALLOW_UPSTREAM_ENV = "WORKBENCH_ALLOW_UPSTREAM"
 FIX_COMMAND = (
     f"otto-workbench config set {config.workbench_config.GITHUB_OWNERS_KEY}.<group> '[owner, …]'")
+CLIENT_CHOOSE = (
+    f"the workbench command has no --repo flag — remove or rename the remote it must not use,"
+    f" so gh cannot pick it, or set {ALLOW_UPSTREAM_ENV}=1 yourself to publish anyway")
 UNCONFIGURED = (
     f"{config.workbench_config.GITHUB_OWNERS_KEY} is not configured, so every GitHub write is"
     f" treated as upstream and refused. Record which owners are ours with: {FIX_COMMAND}")
@@ -168,8 +174,7 @@ def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdic
     if foreign and len(target.owners) > 1:
         return Verdict.refuse(
             f"{target.detail} include {', '.join(foreign)}, which is not one of our owners,"
-            f" and gh may pick it as the base repository — pass --repo OWNER/REPO explicitly,"
-            f" or draft the command for the user to run", target)
+            f" and gh may pick it as the base repository — {target.choose}", target)
     if foreign:
         return Verdict.refuse(
             f"{foreign[0]} is not one of our GitHub owners ({target.detail}) — draft the"
@@ -178,7 +183,7 @@ def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdic
     if len(names) > 1:
         return Verdict.refuse(
             f"{target.detail} span the {' and '.join(names)} groups, so gh may pick either —"
-            f" pass --repo OWNER/REPO explicitly", target)
+            f" {target.choose}", target)
     return Verdict.allow(names[0], target)
 
 
@@ -220,7 +225,17 @@ def _gh_env_names(statement: Sequence[str]) -> frozenset[str]:
     inv = gh.write_shapes.invocation(statement)
     peeled = gh.write_shapes.peeled_statement(statement)
     named = frozenset(inv.env) | frozenset(peeled.env) | peeled.unset
-    return (named & _GH_TARGET_VARS) | _builtin_assigns(inv.words) | _unset_names(inv.words)
+    builtins = frozenset().union(*(
+        _builtin_assigns(words) | _unset_names(words) for words in (inv.words, peeled.words)))
+    return (named & _GH_TARGET_VARS) | builtins
+
+
+def _changes_directory(statement: Sequence[str]) -> bool:
+    """A ``cd``, bare or behind the wrappers an expanded ``bash -c`` string keeps in front."""
+    peeled = gh.write_shapes.peeled_statement(statement)
+    programs = {gh.write_shapes.invocation(statement).program,
+                gh.write_shapes.Invocation(words=peeled.words).program}
+    return bool(programs & gh.write_shapes.DIRECTORY_CHANGERS)
 
 
 def _own_gh_env(statement: Sequence[str]) -> frozenset[str]:
@@ -238,7 +253,7 @@ def _load() -> OwnerMap | Verdict:
 def check_command(command: str, cwd: str) -> Verdict:
     """Whether a shell command's GitHub writes may proceed from *cwd*. Reads always may."""
     try:
-        statements = gh.write_shapes.split_statements(command)
+        statements = gh.write_shapes.statements(command)
     except ValueError as exc:
         return Verdict.refuse(
             f"the command could not be parsed ({exc}), so the GitHub write in it cannot be checked")
@@ -248,8 +263,7 @@ def check_command(command: str, cwd: str) -> Verdict:
     loaded = _load()
     if isinstance(loaded, Verdict):
         return loaded
-    after_cd = any(gh.write_shapes.invocation(s).program in gh.write_shapes.DIRECTORY_CHANGERS
-                   for s in statements)
+    after_cd = any(_changes_directory(s) for s in statements)
     assigned = frozenset().union(*(_gh_env_names(s) for s in statements)) if statements else frozenset()
     verdict = Verdict.allow()
     for statement in writes:
@@ -277,4 +291,4 @@ def check_gh_call(args: Sequence[str], *, cwd: str | Path | None = None,
         args, cwd=str(cwd or os.getcwd()), target_repo=target_repo, known_hosts=loaded.hosts())
     if not resolution.ok:
         return Verdict.refuse(resolution.reason)
-    return check_target(resolution.target, loaded)
+    return check_target(replace(resolution.target, choose=CLIENT_CHOOSE), loaded)

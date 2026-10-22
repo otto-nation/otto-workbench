@@ -344,36 +344,52 @@ _locate_owners_check() {
 #
 # Bash builtins only: coreutils `timeout` is not on stock macOS. The checker
 # runs in a process substitution that reports its pid and then its exit status
-# on the same pipe, and `read -t` bounds the wait for each line. The markers
-# start on a fresh line so output without a trailing newline cannot swallow
-# them.
+# on a pipe, and `read -t` bounds the wait for each line. The checker never
+# writes to that pipe: both its streams are redirected away from it, the
+# chosen one into a scratch file read only after the status arrives. Its
+# refusal reasons echo command text, so output sharing the marker pipe could
+# print a forged `exit 0` and turn a refusal into an allow. A marker that is
+# not exactly the shape the runner prints is ignored, so nothing but a real
+# status ends the wait. No scratch file is a check that could not run.
 _run_owners_check() {
-  local stream="$1" fd line runner="" child="" left
+  local stream="$1" fd line runner="" child="" left scratch
   local -i deadline=$((SECONDS + OWNERS_CHECK_TIMEOUT_SECONDS))
   shift
   OWNERS_CHECK_STATUS="" OWNERS_CHECK_OUTPUT=""
+  if ! scratch=$(mktemp "${TMPDIR:-/tmp}/owners-check.XXXXXX" 2>/dev/null); then
+    OWNERS_CHECK_STATUS=126
+    OWNERS_CHECK_OUTPUT="no scratch file could be created for its output"
+    return 0
+  fi
+  OWNERS_CHECK_SCRATCH="$scratch"
+  trap 'rm -f "$OWNERS_CHECK_SCRATCH"' EXIT
   exec {fd}< <(
     status=0
     if [[ "$stream" == stderr ]]; then
-      "$OWNERS_CHECK" "$@" 2>&1 >/dev/null &
+      "$OWNERS_CHECK" "$@" 2>"$scratch" >/dev/null &
     else
-      "$OWNERS_CHECK" "$@" 2>/dev/null &
+      "$OWNERS_CHECK" "$@" >"$scratch" 2>/dev/null &
     fi
-    printf '\npid %s %s\n' "$BASHPID" "$!"
+    printf 'pid %s %s\n' "$BASHPID" "$!"
     wait "$!" || status=$?
-    printf '\nexit %s\n' "$status"
+    printf 'exit %s\n' "$status"
   )
   while left=$((deadline - SECONDS)); (( left > 0 )) && IFS= read -r -t "$left" -u "$fd" line; do
-    case "$line" in
-      "pid "*) read -r runner child <<<"${line#pid }" ;;
-      "exit "*) OWNERS_CHECK_STATUS="${line#exit }"; break ;;
-      *) OWNERS_CHECK_OUTPUT+="$line"$'\n' ;;
-    esac
+    if [[ "$line" =~ ^pid\ ([0-9]+)\ ([0-9]+)$ ]]; then
+      runner="${BASH_REMATCH[1]}" child="${BASH_REMATCH[2]}"
+    elif [[ "$line" =~ ^exit\ ([0-9]+)$ ]]; then
+      OWNERS_CHECK_STATUS="${BASH_REMATCH[1]}"
+      break
+    fi
   done
   if [[ -z "$OWNERS_CHECK_STATUS" && -n "$runner" ]]; then
     kill "$child" "$runner" 2>/dev/null || true
   fi
   exec {fd}<&-
+  if [[ -n "$OWNERS_CHECK_STATUS" ]]; then
+    OWNERS_CHECK_OUTPUT="$(<"$scratch")"$'\n'
+  fi
+  rm -f "$scratch"
   return 0
 }
 
@@ -415,25 +431,29 @@ _command_publishes() {
 # _owner_boundary_refusal — set OWNER_BOUNDARY_REFUSAL to why $cmd may not run
 # at the owner boundary, or to empty when it may.
 #
-# owners-check --cwd answers from the session's cwd ($hook_cwd, else this
-# hook's own): exit 0 allows — a read always is — and 2 refuses with the reason
-# on stderr. Everything else fails closed: not found, a crash, no answer within
-# OWNERS_CHECK_TIMEOUT_SECONDS. A write that cannot be checked is a write that
-# was not refused, and the boundary exists to refuse it.
+# owners-check --cwd answers from the session's cwd, the payload's $hook_cwd:
+# exit 0 allows — a read always is — and 2 refuses with the reason on stderr,
+# which carries its own advice. Everything else fails closed: no cwd in the
+# payload (the hook's own cwd is the project root, not where the session's
+# shell is), not found, a crash, no answer within OWNERS_CHECK_TIMEOUT_SECONDS.
+# A write that cannot be checked is a write that was not refused, and the
+# boundary exists to refuse it.
 _owner_boundary_refusal() {
   local said why
   OWNER_BOUNDARY_REFUSAL=""
   _locate_owners_check
-  if [[ -z "$OWNERS_CHECK" ]]; then
+  if [[ -z "$hook_cwd" ]]; then
+    why="owners-check could not run: the hook payload carried no cwd, so the repository this command targets cannot be resolved"
+  elif [[ -z "$OWNERS_CHECK" ]]; then
     why="owners-check could not run: it is not beside this hook, at ../../bin, or on PATH"
   else
-    _run_owners_check stderr --cwd "${hook_cwd:-$PWD}" -- "$cmd"
+    _run_owners_check stderr --cwd "$hook_cwd" -- "$cmd"
     said="${OWNERS_CHECK_OUTPUT%$'\n'}"
     said="${said//$'\n'/ }"
     case "$OWNERS_CHECK_STATUS" in
       0) return 0 ;;
       2)
-        OWNER_BOUNDARY_REFUSAL="This GitHub write is refused at the owner boundary: $said. The user posts upstream themselves — draft the command and the text for them to run. See general.md § Upstream Repositories."
+        OWNER_BOUNDARY_REFUSAL="This GitHub write is refused at the owner boundary: $said. See general.md § Upstream Repositories."
         return 0
         ;;
       "") why="owners-check gave no answer within ${OWNERS_CHECK_TIMEOUT_SECONDS}s, so it could not run to completion" ;;

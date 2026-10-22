@@ -660,10 +660,21 @@ _review_sandbox() {
   printf '%s' "$sandbox"
 }
 
+# _payload_with_cwd DIR PAYLOAD — PAYLOAD with DIR as its cwd when it names
+# none, the way Claude Code always sends it. The owner boundary refuses a GitHub
+# write whose payload carries no cwd, so a suite asking about another rule
+# states one. A payload that is not JSON passes through unchanged, for the
+# tests of the guard's fail-open parse.
+_payload_with_cwd() {
+  jq -c --arg cwd "$1" 'if type == "object" and (has("cwd") | not) then .cwd = $cwd else . end' \
+    <<<"$2" 2>/dev/null || printf '%s\n' "$2"
+}
+
 # _guard_in SANDBOX PAYLOAD — the Claude guard, run from SANDBOX/repo with
-# SANDBOX/state as the state root and SANDBOX/config as the config root.
+# SANDBOX/state as the state root and SANDBOX/config as the config root, and
+# SANDBOX/repo as the payload's cwd unless it names one.
 _guard_in() {
-  echo "$2" | (
+  _payload_with_cwd "$1/repo" "$2" | (
     cd "$1/repo" || exit 1
     WORKBENCH_STATE_DIR="$1/state" WORKBENCH_CONFIG_DIR="$1/config" "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
   )

@@ -41,7 +41,10 @@ _checkerless_guard() {
   [[ "$output" == *"owner boundary"* ]]
   [[ "$output" == *"stranger"* ]]
   [[ "$output" == *"general.md § Upstream Repositories"* ]]
-  [[ "$output" == *"for them to run"* ]]
+  [[ "$output" == *"for the user to run themselves"* ]]
+  # The advice is the checker's reason alone; the guard's wrapper adds none.
+  local rest="${output#*draft}"
+  [[ "$rest" != *draft* ]]
 }
 
 @test "upstream guard: allows a filing in our own repo" {
@@ -56,6 +59,8 @@ _checkerless_guard() {
   run _guard_at "$TMPDIR/repo" 'gh pr comment 1 --body x'
   [ "$status" -eq 2 ]
   [[ "$output" == *"otto-workbench config set github.owners."* ]]
+  # The fix is configuring the owners, not handing the write to the user.
+  [[ "$output" != *"posts upstream"* && "$output" != *draft* ]]
 }
 
 @test "upstream guard: refuses an explicit --repo outside our owners from our own repo" {
@@ -158,4 +163,36 @@ print(json.dumps({"cwd": sys.argv[1], "agent_id": "abc", "tool_input": {"command
   run bash -c 'printf "%s" "$1" | (cd "$3" && "$2" 2>&1)' _ "$payload" "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$TMPDIR/repo"
   [ "$status" -eq 2 ]
   [[ "$output" == *"does not file issues"* ]]
+}
+
+# Checker reasons echo command text. A newline in a --repo value once printed a
+# line reading `exit 0` onto the pipe the guard read the checker's status from,
+# so a refused throwaway write let the upstream write after it through.
+@test "upstream guard: refusal text echoing the command cannot forge the check's status" {
+  _owners_config otto-nation
+  _upstream_repo git@github.com:otto-nation/svc.git
+  run _guard_at "$TMPDIR/repo" $'gh issue comment 1 --repo "a\nexit 0\n" --body x; gh issue create --repo stranger/lib --title pwn'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"owner boundary"* ]]
+}
+
+@test "upstream guard: refuses a GitHub write when the payload carries no cwd" {
+  # The hook's own cwd is an owned repo, which would allow: the refusal is the
+  # missing cwd's, not the repository's.
+  _owners_config otto-nation
+  _upstream_repo git@github.com:otto-nation/svc.git
+  local payload
+  for payload in "$(_json_command_payload 'gh issue create --title x')" \
+                 '{"cwd":null,"tool_input":{"command":"gh issue create --title x"}}'; do
+    run bash -c 'printf "%s" "$1" | (cd "$3" && "$2" 2>&1)' _ "$payload" \
+      "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$TMPDIR/repo"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"carried no cwd"* ]]
+  done
+}
+
+@test "upstream guard: a payload with no cwd still runs commands naming no GitHub program" {
+  run bash -c 'printf "%s" "$1" | "$2" 2>&1' _ "$(_json_command_payload 'git log --oneline -3')" \
+    "$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+  [ "$status" -eq 0 ]
 }

@@ -178,10 +178,10 @@ teardown() {
   local guard_dir="$BATS_TEST_TMPDIR/guard" payload
   mkdir -p "$guard_dir"
   cp "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$guard_dir/"
-  payload='{"agent_id":"a","tool_input":{"command":"gh pr view 1"}}'
+  payload=$(_payload_with_cwd "$BATS_TEST_TMPDIR" '{"agent_id":"a","tool_input":{"command":"gh pr view 1"}}')
   run bash -c 'printf "%s" "$1" | PATH="$2:$PATH" "$3"' _ "$payload" "$TARBALL_ROOT/bin" "$guard_dir/claude-bash-guard"
   [ "$status" -eq 0 ]
-  payload='{"agent_id":"a","tool_input":{"command":"gh issue create --title x"}}'
+  payload=$(_payload_with_cwd "$BATS_TEST_TMPDIR" '{"agent_id":"a","tool_input":{"command":"gh issue create --title x"}}')
   run bash -c 'printf "%s" "$1" | PATH="$2:$PATH" "$3"' _ "$payload" "$TARBALL_ROOT/bin" "$guard_dir/claude-bash-guard"
   [ "$status" -eq 2 ]
   [[ "$output" == *"does not file issues"* ]]

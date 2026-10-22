@@ -9,6 +9,22 @@ from pathlib import Path
 import pytest
 
 
+def _yq_install_dir(directory: str) -> str | None:
+    """The directory of a real `yq` in DIRECTORY, or None."""
+    if not directory:
+        return None
+    candidate = Path(directory) / "yq"
+    try:
+        if not candidate.is_file():
+            return None
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    if resolved.name != "yq":
+        return None
+    return str(resolved.parent)
+
+
 def _yq_bin_dir() -> str:
     """Directory of a real `yq` on PATH, skipping version-manager shims.
 
@@ -18,18 +34,9 @@ def _yq_bin_dir() -> str:
     Walk PATH and take the first entry whose resolved basename is still yq.
     """
     for directory in os.environ.get("PATH", "").split(os.pathsep):
-        if not directory:
-            continue
-        candidate = Path(directory) / "yq"
-        try:
-            if not candidate.is_file():
-                continue
-            resolved = candidate.resolve()
-        except OSError:
-            continue
-        if resolved.name != "yq":
-            continue
-        return str(resolved.parent)
+        found = _yq_install_dir(directory)
+        if found:
+            return found
     return ""
 
 

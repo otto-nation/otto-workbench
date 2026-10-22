@@ -5984,7 +5984,7 @@ we do not own without the user, and that the user does the posting. This
 module is that rule as code, written once and reached from three places:
 
 * ``ai/bin/owners-check`` (``cli.owners_check``) for both agent guards, through
-  ``check_command`` — only after a guard's own shape check matched, so every
+  ``check_command`` — only after a guard's cheap pre-filter matched, so every
   other shell command stays on the guards' no-Python path.
 * ``gh.client.run`` for every write the workbench itself makes, through
   ``check_gh_call``, which raises nothing itself: the client raises
@@ -6048,13 +6048,15 @@ read.
 
 Which shell statements, and which gh argvs, write to GitHub.
 
-The shape half of the owner boundary. Both agent guards carry their own copy of
-this predicate — ``_command_writes_github`` in ``ai/claude/bin/claude-bash-guard``
-and ``isGithubWrite`` in ``ai/pi/extensions/_shared/github-writes.ts`` — because
-they run on every shell call and cannot afford a Python start-up to find out a
-command is a read. Three copies of one predicate are held to one answer by
-``tests/fixtures/github-write-shapes.tsv``: a row any of them disagrees with
-fails that copy's suite.
+The shape half of the owner boundary. Both agent guards run a cheap in-process
+superset pre-filter (``_command_might_write_github`` in
+``ai/claude/bin/claude-bash-guard``, ``mightWriteGithub`` in
+``ai/pi/extensions/_shared/github-writes.ts``) and ask this module through
+``owners-check --classify`` for the verdict, so the write shapes live in one
+language. A command the pre-filter does not mention never pays a Python
+start-up. ``tests/fixtures/github-write-shapes.tsv`` holds the pre-filter and
+this classifier to one answer: a write the pre-filter misses fails there as a
+write that was allowed.
 
 A write is:
 
@@ -7265,7 +7267,7 @@ answers no question anyone asks of it.
     owners-check --classify -- COMMAND
 
 The first form is what ``claude-bash-guard`` and Pi's ``upstream-guard`` run
-once their own shape check says a command writes to GitHub. Exit 0 allows;
+once their pre-filter says a command might write to GitHub. Exit 0 allows;
 exit 2 refuses, with the reason on stderr; anything else — a crash, a missing
 ``python3`` — is read by both guards as a check that could not run, and they
 refuse. COMMAND is the whole command line as one argument; several arguments

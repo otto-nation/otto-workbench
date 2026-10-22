@@ -1,12 +1,14 @@
 """Which shell statements, and which gh argvs, write to GitHub.
 
-The shape half of the owner boundary. Both agent guards carry their own copy of
-this predicate — ``_command_writes_github`` in ``ai/claude/bin/claude-bash-guard``
-and ``isGithubWrite`` in ``ai/pi/extensions/_shared/github-writes.ts`` — because
-they run on every shell call and cannot afford a Python start-up to find out a
-command is a read. Three copies of one predicate are held to one answer by
-``tests/fixtures/github-write-shapes.tsv``: a row any of them disagrees with
-fails that copy's suite.
+The shape half of the owner boundary. Both agent guards run a cheap in-process
+superset pre-filter (``_command_might_write_github`` in
+``ai/claude/bin/claude-bash-guard``, ``mightWriteGithub`` in
+``ai/pi/extensions/_shared/github-writes.ts``) and ask this module through
+``owners-check --classify`` for the verdict, so the write shapes live in one
+language. A command the pre-filter does not mention never pays a Python
+start-up. ``tests/fixtures/github-write-shapes.tsv`` holds the pre-filter and
+this classifier to one answer: a write the pre-filter misses fails there as a
+write that was allowed.
 
 A write is:
 

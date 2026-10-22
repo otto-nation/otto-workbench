@@ -5,7 +5,7 @@ we do not own without the user, and that the user does the posting. This
 module is that rule as code, written once and reached from three places:
 
 * ``ai/bin/owners-check`` (``cli.owners_check``) for both agent guards, through
-  ``check_command`` — only after a guard's own shape check matched, so every
+  ``check_command`` — only after a guard's cheap pre-filter matched, so every
   other shell command stays on the guards' no-Python path.
 * ``gh.client.run`` for every write the workbench itself makes, through
   ``check_gh_call``, which raises nothing itself: the client raises

@@ -97,6 +97,64 @@ write	review 123
 write	pr-describe --post
 write	review-post
 write	review-threads --post
+write	gh pr -R stranger/tool comment 1 -b hi
+write	gh issue --repo o/r create -t x
+write	gh pr --repo=o/r comment 1 -b hi
+write	gh pr -Ro/r merge 1
+write	gh api graphql -F query=@m.graphql
+write	gh api graphql -f query=$Q
+write	gh api graphql -f query="$Q"
+write	gh api graphql --field=query=@m.graphql
+write	gh api graphql -F owner=o
+write	gh api -X=POST repos/o/r/issues -f title=x
+write	gh api -iXPOST repos/o/r/issues
+write	gh api --method=DELETE repos/o/r/issues/1/lock
+write	timeout 60 gh pr comment 1 -b hi
+write	timeout -k 5 -s KILL 1m gh pr comment 1 -b hi
+write	nice -n 5 gh pr create --draft
+write	nice -5 gh pr comment 1 -b hi
+write	nohup gh pr comment 1 -b hi
+write	stdbuf -oL gh pr comment 1 -b hi
+write	ionice -c2 -n7 gh pr comment 1 -b hi
+write	chrt -f 10 gh pr comment 1 -b hi
+write	taskset -c 0-3 gh pr comment 1 -b hi
+write	doas gh pr comment 1 -b hi
+write	doas -u bob gh pr comment 1 -b hi
+write	gh workflow run ci.yml
+write	gh workflow enable ci.yml
+write	gh workflow disable ci.yml
+write	gh run rerun 5
+write	gh run cancel 5
+write	gh run delete 5
+write	gh repo edit o/r --description x
+write	gh repo delete o/r --yes
+write	gh repo archive o/r
+write	gh repo rename newname
+write	gh repo fork stranger/lib
+write	gh repo create o/new --public
+write	gh repo sync o/r
+write	gh secret set TOKEN -b x
+write	gh secret delete TOKEN
+write	gh variable set NAME -b x
+write	gh variable delete NAME
+write	gh pr revert 1
+write	gh pr lock 1
+write	gh pr unlock 1
+write	gh pr update-branch 1
+write	gh issue lock 1
+write	gh issue unlock 1
+write	gh issue pin 1
+write	gh issue unpin 1
+write	gh issue develop 1
+write	gh gist create notes.md
+write	gh gist edit abc
+write	gh gist delete abc
+write	gh cache delete 123
+write	gh label clone stranger/lib
+write	gh project item-add 1 --owner o --url https://github.com/o/r/issues/1
+write	gh project create --owner o --title x
+write	bash -c 'gh issue comment 1 -b x --repo stranger/x'
+write	eval eval eval eval 'gh pr view 1'
 read	gh issue list
 read	gh issue view 1
 read	gh pr view 1
@@ -134,3 +192,26 @@ read	sudo env -u FOO gh pr list
 read	sudo -iu bob ls
 read	env -C /tmp ls
 read	/usr/bin/time -f %e make test
+read	gh api graphql -f query='query { repository(owner: "o", name: "r") { id } }'
+read	gh api -X=GET repos/o/r/issues -f state=open
+read	gh workflow list
+read	gh workflow view ci.yml
+read	gh run view 5
+read	gh run list
+read	gh repo view
+read	gh secret list
+read	gh variable list
+read	gh gist view abc
+read	gh cache list
+read	gh ruleset list
+read	gh ruleset view 1
+read	gh project list --owner o
+read	timeout 60 gh pr view 1
+read	nice -n 5 gh pr list
+read	nohup gh pr view 1
+read	bash -lc 'ls ai/lib/review'
+read	bash -c 'gh pr view 1'
+read	eval 'echo review'
+read	env -S "gh pr view 1"
+read	eval eval 'gh pr view 1'
+read	sh -c 'pr status'

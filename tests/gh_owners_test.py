@@ -13,6 +13,7 @@ import config.github_owners
 import config.workbench_config
 import gh.owner_targets
 import gh.owners
+import gh.write_shapes
 
 from conftest import git_in, remote_repo
 
@@ -264,11 +265,42 @@ def test_inherited_gh_repo_is_the_target_without_a_repo_flag(
     "bash -c 'gh issue create --title x'",
     "sh -c 'gh pr comment 1 --body x'",
     "zsh -c 'gh issue create --title x'",
-    "bash -lc 'gh issue comment 1 -b hi --repo stranger/lib'",
     "sh -ec 'gh issue comment 1 -b hi'",
     "zsh -xc 'gh issue create --title x'",
+    "env -S'gh issue comment 1 -b hi'",
+    "env --split-string='gh issue comment 1 -b hi'",
+    "bash -c 'cd . && gh pr view 1'",
+])
+def test_a_reparsed_string_is_resolved_like_the_statements_it_runs(github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    theirs = remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    assert gh.owners.check_command(command, str(ours)).ok
+    if gh.write_shapes.command_is_write(command):
+        assert "stranger" in gh.owners.check_command(command, str(theirs)).reason
+
+
+def test_a_reparsed_cd_still_makes_the_cwd_target_unknown(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    verdict = gh.owners.check_command("sudo bash -c 'cd ../s; gh pr comment 1 -b x'", str(ours))
+    assert not verdict.ok and "changes directory" in verdict.reason
+
+
+def test_a_reparsed_export_shifts_gh_repo(github_owners, tmp_path):
+    github_owners({"work": ["ours"]})
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    command = "bash -c 'export GH_REPO=stranger/lib; gh pr comment 1 -b x'"
+    assert not gh.owners.check_command(command, str(ours)).ok
+
+
+@pytest.mark.parametrize("command", [
+    "bash -lc 'gh issue comment 1 -b hi --repo stranger/lib'",
     "xargs gh issue create --title",
     "xargs -n 1 gh issue create --title",
+    "eval eval eval eval 'gh pr comment 1 -b x'",
+    "bash run.sh -c 'gh pr comment 1 -b x'",
+    "env -S '${X} gh pr comment 1 -b x'",
 ])
 def test_opaque_wrappers_are_refused_even_at_home(github_owners, tmp_path, command):
     github_owners({"work": ["ours"]})
@@ -379,8 +411,6 @@ def test_chained_and_clustered_wrappers_resolve_to_the_stranger(github_owners, t
     "sudo env -u GH_REPO gh issue comment 1 -b hi",
     "env -S 'gh issue comment 1 -b hi --repo stranger/lib'",
     "env -S 'GH_REPO=stranger/lib gh issue comment 1 -b hi'",
-    "env -S'gh issue comment 1 -b hi'",
-    "env --split-string='gh issue comment 1 -b hi'",
     "env -C ../s gh issue comment 1 -b hi",
     "env --chdir=../s gh issue comment 1 -b hi",
     "env --chd=../s gh issue comment 1 -b hi",
@@ -424,3 +454,50 @@ def test_chained_wrapper_writes_resolve_against_the_cwd(github_owners, tmp_path,
 def test_chained_wrapper_reads_are_allowed_unconfigured(github_owners, command):
     github_owners({"work": "not-a-list"})
     assert gh.owners.check_command(command, "/").ok
+
+
+def _fork(tmp_path):
+    fork = remote_repo(tmp_path / "f", "git@github.com:me/lib.git")
+    git_in(fork, "remote", "add", "upstream", "git@github.com:stranger/lib.git")
+    return fork
+
+
+def test_a_fork_refusal_for_gh_says_pass_repo(github_owners, tmp_path):
+    github_owners({"personal": ["me"]})
+    verdict = gh.owners.check_command("gh pr create --draft", str(_fork(tmp_path)))
+    assert not verdict.ok and "pass --repo" in verdict.reason
+
+
+def test_a_fork_refusal_for_a_workbench_command_does_not_offer_a_missing_flag(github_owners, tmp_path):
+    github_owners({"personal": ["me"]})
+    verdict = gh.owners.check_command("pr create --draft", str(_fork(tmp_path)))
+    assert not verdict.ok
+    assert "pass --repo" not in verdict.reason and "remove or rename the remote" in verdict.reason
+
+
+def test_a_fork_refusal_from_the_client_names_the_users_override(github_owners, tmp_path):
+    github_owners({"personal": ["me"]})
+    verdict = gh.owners.check_gh_call(("pr", "create", "--draft"), cwd=_fork(tmp_path))
+    assert not verdict.ok
+    assert "pass --repo" not in verdict.reason and gh.owners.ALLOW_UPSTREAM_ENV in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "timeout 60 gh pr comment 1 -b hi",
+    "nice -n 5 gh pr create --draft",
+    "nohup gh pr comment 1 -b hi",
+    "stdbuf -oL gh pr comment 1 -b hi",
+    "ionice -c2 gh pr comment 1 -b hi",
+    "chrt -f 10 gh pr comment 1 -b hi",
+    "taskset -c 0 gh pr comment 1 -b hi",
+    "doas gh pr comment 1 -b hi",
+    "gh pr -R stranger/lib comment 1 -b hi",
+    "gh api -X=POST repos/stranger/lib/issues -f title=x",
+])
+def test_an_upstream_write_behind_a_process_wrapper_or_odd_flag_spelling_is_refused(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["ours"]})
+    theirs = remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    verdict = gh.owners.check_command(command, str(theirs if "stranger" not in command else ours))
+    assert not verdict.ok and "stranger" in verdict.reason

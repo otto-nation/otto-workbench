@@ -6179,6 +6179,30 @@ before the checkout or it never comes at all.
 rather than who was compared, so a caller pairs it with whatever it calls the
 branch and renders the two together.
 
+### gh/owner_scopes.py
+
+Owners for the gh writes that do not land on a repository's issues and PRs.
+
+``gh.owner_targets`` resolves most writes to the repository ``--repo``,
+``GH_REPO``, a URL or the cwd remotes name. Some of gh's write commands aim
+somewhere else, and ``resolve`` answers for those first:
+
+* ``gh gist create|edit|delete|rename`` — a gist belongs to the authenticated
+  account, whose login the command does not carry: refused.
+* ``gh project …`` — the project's ``--owner``. ``@me``, or no ``--owner``,
+  is the authenticated account: refused.
+* ``gh secret|variable set|delete`` — ``--org/-o ORG`` is ORG; ``--user/-u``
+  is the authenticated account: refused. Otherwise the repository, as usual.
+* ``gh repo create OWNER/NAME`` is OWNER; a bare NAME is the authenticated
+  account: refused. ``gh repo fork`` lands in ``--org`` or the authenticated
+  account: refused without ``--org``.
+* ``gh repo edit|delete|archive|unarchive|sync [REPO]`` is REPO when it is
+  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Every positional that
+  reads as one counts, so a flag value that looks like a repository fails
+  toward refusal. Without one, the repository as usual.
+
+``None`` means the usual repository resolution applies.
+
 ### gh/owner_targets.py
 
 Which repository a GitHub write is aimed at, read from its words and its cwd.
@@ -6204,6 +6228,15 @@ In order:
 
 A bare ``OWNER/REPO`` is on ``GH_HOST`` when set (prefix, then environment),
 else public GitHub — gh's own default host.
+
+``GH_REPO``/``GH_HOST`` from the process environment count only when they
+reach the program: ``env -i`` drops them, and ``sudo``/``doas`` — which may
+or may not, depending on sudoers and doas.conf — are resolved both ways and
+the owners unioned (``gh.shell_wrappers.Peeled.views``).
+
+Writes aimed at an account rather than a repository's issues and PRs — gists,
+projects, org secrets and variables, ``gh repo create|fork`` and a ``gh repo``
+verb naming its repository — are resolved by ``gh.owner_scopes`` first.
 
 ceiling: gh's default host can also come from ``gh auth``'s configuration (a
 machine logged in only to an Enterprise host), which this does not read. The
@@ -6248,7 +6281,10 @@ to configure it.
 A target (``gh.owner_targets``) is one owner, or — resolved from a checkout's
 remotes — several candidates. It is allowed only when every candidate is ours
 and all are in one group; a fork whose ``upstream`` remote is a third party is
-refused with "pass --repo", because gh may pick that remote as the base.
+refused, because gh may pick that remote as the base. The refusal says how to
+pick one (``Target.choose``): ``--repo`` for gh; for a workbench command, which
+has no ``--repo``, removing or renaming the remote — or, for the workbench's own
+publishing through ``gh.client``, the user's override.
 
 ``WORKBENCH_ALLOW_UPSTREAM=1`` in the user's own environment lets the
 workbench's own publishing past an upstream refusal (``gh.client`` asks
@@ -6259,7 +6295,7 @@ inside the session. Both guards also refuse any command that names it.
 
 ### gh/shell_wrappers.py
 
-Transparent command wrappers — ``env``, ``sudo``, ``time``, ``command``, ``exec`` — peeled off.
+Transparent command wrappers — ``env``, ``sudo``, ``time``, ``timeout`` and the rest — peeled off.
 
 ``sudo env GH_REPO=x time gh issue comment …`` runs ``gh issue comment`` with
 ``GH_REPO=x``. ``peel`` strips wrappers in a loop until the head word is not
@@ -6283,8 +6319,24 @@ cannot be read from the text even when the program can. ``sudo -e`` (edit a
 file) and ``sudo -h`` (a host, or help) are opaque too: neither runs the words
 that follow as a command.
 
+The wrappers are ``env``, ``sudo``, ``doas``, ``time``, ``command``, ``exec``,
+``timeout``, ``nice``, ``nohup``, ``stdbuf``, ``ionice``, ``chrt`` and
+``taskset``. ``timeout DURATION``, ``chrt PRIORITY`` and ``taskset MASK`` take
+one positional before the program; ``nice -5`` is nice's legacy numeric
+option.
+
 ``command -v``/``-V`` looks a name up and runs nothing; ``Peeled.lookup`` says
-so.
+so, as it does for the forms of ``ionice``, ``chrt``, ``taskset`` and ``doas``
+that act on a pid or a config file instead of running a command. ``doas -s``
+runs a shell and is opaque.
+
+Which inherited variables reach the program is tracked too, because the
+target resolver reads ``GH_REPO``/``GH_HOST`` from the process environment.
+``env -i``/``env -`` clears it for certain: the program sees only what is
+assigned after the clear. ``sudo`` (without ``-E``/``--preserve-env``) and
+``doas`` reset it by default, but sudoers ``env_keep`` or doas ``keepenv`` may
+pass a variable through, so whether they cleared it is not knowable from the
+text. ``Peeled.views`` then holds both cases, and the resolver unions them.
 
 ``XARGS`` is the same kind of table for ``xargs``. It is not peeled: its
 arguments come from stdin, so a write under it has no target to resolve, but
@@ -6307,11 +6359,16 @@ write that was allowed.
 
 A write is:
 
-* ``gh issue|pr|release|label`` with a verb in ``GH_WRITES``. A leading
-  ``-R/--repo`` is gh's own flag and is skipped.
-* ``gh api graphql`` whose text holds ``mutation``, or whose body comes from
-  ``--input`` and is not in hand.
-* ``gh api`` with ``-X/--method`` POST, PATCH, PUT or DELETE — or, with no
+* ``gh GROUP VERB`` with a verb in ``GH_WRITES`` — issue, pr, release, label,
+  repo, workflow, run, secret, variable, cache, gist and project. ``-R/--repo``
+  is gh's own flag and is skipped before the group and between the group and
+  the verb.
+* ``gh api graphql`` unless its query is in hand and holds no ``mutation``.
+  The query is in hand when it is a literal ``query=`` field — not
+  ``-F query=@file``, not a ``$VAR``, ``$(…)`` or backtick — or a ``--input``
+  body the caller passed as text. A query from a file or the shell is a write:
+  writing a mutation to a file to dodge quoting is an ordinary habit.
+* ``gh api`` with ``-X/--method`` POST, PATCH, PUT or DELETE (``-X=POST`` too) — or, with no
   method, with a field or body (``-f/-F/--field/--raw-field/--input``): gh
   sends POST then, and that is the call that lands.
 * The workbench's own posting commands: ``pr create``; ``pr describe|comments|fix|ci``
@@ -6324,17 +6381,23 @@ A write is:
 ``GH_HOST`` decide a target), and the program is matched on its basename, so
 ``/usr/local/bin/gh`` is gh.
 
-``env``, ``sudo``, ``time``, ``command`` and ``exec`` are stripped in a loop
-by ``gh.shell_wrappers.peel`` — the one peeling function the target resolver
+``env``, ``sudo``, ``time``, ``timeout``, ``nice`` and the other wrappers
+``gh.shell_wrappers`` lists are stripped in a loop by ``gh.shell_wrappers.peel`` — the one peeling function the target resolver
 uses too — and the program they run is classified. A wrapper option that
 cannot be read with confidence, or that changes directory or re-parses a
 string (``env -C``, ``env -S``, ``sudo -D``), makes the statement opaque.
 
-Opaque statements, ``eval``, and ``bash|sh|zsh`` with a ``-c`` cluster
-(``-c``, ``-lc``, ``-ec``) are writes when their words mention gh or a
-workbench posting command, and the policy refuses them: their target cannot be
-resolved. ``xargs`` wrapping a GitHub write is the same — the arguments come
-from stdin.
+``bash|sh|zsh -c STRING`` (any cluster holding ``c``: ``-lc``, ``-ec``),
+``eval WORDS`` and ``env -S STRING`` run text the shell parses again;
+``statements``/``expand_statement`` read that text as statements of its own,
+up to ``REPARSE_DEPTH`` levels deep, so ``bash -lc 'ls ai/lib/review'`` is a
+read and ``bash -c 'gh issue comment 1 --repo o/r -b x'`` is a write whose
+target resolves. Past that depth, or when the text cannot be read exactly (a
+``-c`` string after a non-option, an ``env -S`` string using env's own
+escapes), the statement stays opaque: it is a write when its words mention gh
+or a workbench posting command, and the policy refuses it because its target
+cannot be resolved. ``xargs`` wrapping a GitHub write is the same — the
+arguments come from stdin.
 
 ceiling: a gh reached through a shell alias or a wrapper script whose name is
 not in that set is not matched. Upgrade trigger: the first such spelling seen

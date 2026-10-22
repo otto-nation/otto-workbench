@@ -294,3 +294,83 @@ def test_a_wrapper_that_moves_or_reparses_is_unresolvable(tmp_path, words):
     repo = remote_repo(tmp_path / "r", "git@github.com:ours/svc.git")
     resolution = _resolve(words, repo)
     assert not resolution.ok and "wrapper" in resolution.reason
+
+
+def test_a_repo_flag_between_the_group_and_the_verb_is_the_target(tmp_path):
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    resolution = _resolve(["gh", "pr", "-R", "stranger/tool", "comment", "1", "-b", "hi"], ours)
+    assert resolution.ok and _owner("stranger") in resolution.target.owners
+
+
+@pytest.mark.parametrize("command", [
+    "env -i gh pr comment 1 -b x",
+    "env - gh pr comment 1 -b x",
+    "sudo gh pr comment 1 -b x",
+    "doas gh pr comment 1 -b x",
+    "sudo --preserve-env=PATH gh pr comment 1 -b x",
+])
+def test_a_wrapper_that_clears_the_environment_does_not_read_the_hooks_gh_repo(
+        tmp_path, monkeypatch, command):
+    monkeypatch.setenv("GH_REPO", "ours/svc")
+    theirs = remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    resolution = _resolve(command.split(), theirs)
+    assert resolution.ok and _owner("stranger") in resolution.target.owners
+
+
+@pytest.mark.parametrize("command", [
+    "sudo -E gh pr comment 1 -b x",
+    "sudo --preserve-env gh pr comment 1 -b x",
+    "sudo --preserve-env=GH_REPO gh pr comment 1 -b x",
+    "env -i GH_REPO=ours/svc gh pr comment 1 -b x",
+    "sudo GH_REPO=ours/svc gh pr comment 1 -b x",
+])
+def test_a_preserved_or_reassigned_gh_repo_still_names_the_target(tmp_path, monkeypatch, command):
+    monkeypatch.setenv("GH_REPO", "ours/svc")
+    theirs = remote_repo(tmp_path / "s", "git@github.com:stranger/lib.git")
+    resolution = _resolve(command.split(), theirs)
+    assert resolution.ok and resolution.target.owners == (_owner("ours"),)
+
+
+def test_sudo_unions_an_inherited_gh_repo_it_may_keep(tmp_path, monkeypatch):
+    """sudoers env_keep may pass GH_REPO through, so the inherited value is a candidate too."""
+    monkeypatch.setenv("GH_REPO", "stranger/lib")
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    resolution = _resolve("sudo gh pr comment 1 -b x".split(), ours)
+    assert set(resolution.target.owners) == {_owner("ours"), _owner("stranger")}
+
+
+@pytest.mark.parametrize("words,reason", [
+    (["gh", "gist", "create", "notes.md"], "authenticated GitHub account"),
+    (["gh", "project", "create", "--title", "x"], "--owner"),
+    (["gh", "project", "item-add", "1", "--owner", "@me"], "--owner"),
+    (["gh", "secret", "set", "T", "--user"], "authenticated GitHub account"),
+    (["gh", "repo", "create", "newname"], "OWNER/NAME"),
+    (["gh", "repo", "fork", "ours/svc"], "--org"),
+])
+def test_a_write_owned_by_the_authenticated_account_is_unresolvable(tmp_path, words, reason):
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    resolution = _resolve(words, ours)
+    assert not resolution.ok and reason in resolution.reason
+
+
+@pytest.mark.parametrize("words,expected", [
+    (["gh", "project", "item-add", "1", "--owner", "acme"], "acme"),
+    (["gh", "project", "create", "--owner=acme", "--title", "x"], "acme"),
+    (["gh", "secret", "set", "T", "--org", "acme"], "acme"),
+    (["gh", "variable", "set", "T", "-oacme"], "acme"),
+    (["gh", "repo", "create", "acme/new", "--public"], "acme"),
+    (["gh", "repo", "fork", "ours/svc", "--org", "acme"], "acme"),
+    (["gh", "repo", "delete", "acme/widget", "--yes"], "acme"),
+    (["gh", "repo", "edit", "https://github.com/acme/widget", "-d", "x"], "acme"),
+    (["gh", "repo", "sync", "ghe.corp/acme/widget"], "ghe.corp/acme"),
+])
+def test_a_scoped_write_names_its_own_owner_over_the_cwd(tmp_path, words, expected):
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    resolution = _resolve(words, ours)
+    assert resolution.ok and resolution.target.owners == (_owner(expected),)
+
+
+def test_a_repo_verb_without_a_repository_falls_back_to_the_cwd(tmp_path):
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    resolution = _resolve(["gh", "repo", "rename", "newname"], ours)
+    assert resolution.ok and resolution.target.owners == (_owner("ours"),)

@@ -101,3 +101,47 @@ def test_skip_repo_flags_covers_every_pflag_form(args, index):
 ])
 def test_an_attached_short_repo_flag_is_a_write(command):
     assert gh.write_shapes.command_is_write(command)
+
+
+@pytest.mark.parametrize("args,path", [
+    (("pr", "comment", "1"), ("pr", "comment")),
+    (("pr", "-R", "o/r", "comment", "1"), ("pr", "comment")),
+    (("-R", "o/r", "pr", "--repo=o/r", "comment"), ("pr", "comment")),
+    (("issue", "-Ro/r", "create"), ("issue", "create")),
+    (("pr",), ("pr",)),
+])
+def test_gh_subcommands_skips_repo_flags_before_the_verb(args, path):
+    assert gh.write_shapes.gh_subcommands(args) == path
+
+
+@pytest.mark.parametrize("query,write", [
+    ("\n  query { viewer { login } }", False),
+    ("query($owner: String!) { repositoryOwner(login: $owner) { id } }", False),
+    ("mutation { x }", True),
+    ("$Q", True),
+    ("@m.graphql", True),
+    ("query { x } $(cat extra)", True),
+    ("", True),
+])
+def test_a_graphql_query_counts_as_a_read_only_when_it_is_literal(query, write):
+    assert gh.write_shapes.gh_is_write(("api", "graphql", "-f", f"query={query}")) is write
+
+
+def test_a_graphql_query_read_from_a_file_is_a_write():
+    assert gh.write_shapes.gh_is_write(("api", "graphql", "-F", "query=@m.graphql"))
+    assert not gh.write_shapes.gh_is_write(("api", "graphql", "-F", "query=query { x }"))
+
+
+@pytest.mark.parametrize("command,expanded", [
+    ("bash -lc 'ls ai/lib/review'", [["ls", "ai/lib/review"]]),
+    ("GH_REPO=o/r sudo bash -c 'a; gh pr view'", [["GH_REPO=o/r", "sudo", "a"], ["GH_REPO=o/r", "sudo", "gh", "pr", "view"]]),
+    ("eval eval 'gh pr view'", [["gh", "pr", "view"]]),
+    ("eval eval eval eval 'gh pr view'", [["eval", "gh", "pr", "view"]]),
+    ("env -i -S 'GH_REPO=o/r gh pr view' 1", [["env", "-i", "GH_REPO=o/r", "gh", "pr", "view", "1"]]),
+    ("env -S '${X} gh pr view'", [["env", "-S", "${X} gh pr view"]]),
+    ("bash -o pipefail -c 'gh pr view'", [["gh", "pr", "view"]]),
+    ("bash run.sh -c 'gh pr view'", [["bash", "run.sh", "-c", "gh pr view"]]),
+    ("bash -c \"echo 'unbalanced\"", [["bash", "-c", "echo 'unbalanced"]]),
+])
+def test_a_reparsed_string_is_expanded_into_its_statements(command, expanded):
+    assert gh.write_shapes.statements(command) == expanded

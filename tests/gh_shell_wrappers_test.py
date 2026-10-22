@@ -67,3 +67,58 @@ def test_an_attached_only_value_does_not_take_the_next_word():
     assert options.rest == ("gh", "pr")
     options = gh.shell_wrappers.parse_options(gh.shell_wrappers.XARGS, ["-0I", "{}", "gh"])
     assert options.found == (("-0", ""), ("-I", "{}")) and options.rest == ("gh",)
+
+
+@pytest.mark.parametrize("command", [
+    "timeout 60 gh pr view",
+    "timeout -k 5 -s KILL --foreground 1m gh pr view",
+    "timeout --signal=TERM 10 gh pr view",
+    "nice -n 5 gh pr view",
+    "nice -5 gh pr view",
+    "nice --adjustment=5 gh pr view",
+    "nohup gh pr view",
+    "stdbuf -oL -e0 gh pr view",
+    "stdbuf --output=L gh pr view",
+    "ionice -c2 -n7 gh pr view",
+    "chrt -f 10 gh pr view",
+    "taskset -c 0-3 gh pr view",
+    "doas -u bob gh pr view",
+    "nohup timeout 5 nice stdbuf -oL gh pr view",
+])
+def test_process_wrappers_are_peeled(command):
+    peeled = _peel(command)
+    assert not peeled.opaque and not peeled.lookup and peeled.words == ("gh", "pr", "view")
+
+
+@pytest.mark.parametrize("command", ["timeout", "doas -s", "nice -x gh pr view", "chrt -f"])
+def test_a_process_wrapper_that_cannot_be_read_is_opaque(command):
+    assert _peel(command).opaque
+
+
+@pytest.mark.parametrize("command", ["ionice -p 12", "chrt -p 5 12", "taskset -p 3 12", "doas -C /etc/doas.conf gh"])
+def test_a_process_wrapper_acting_on_a_pid_runs_nothing(command):
+    assert _peel(command).lookup
+
+
+def test_env_i_clears_the_environment_for_certain():
+    peeled = gh.shell_wrappers.peel({"GH_REPO": "a/b"}, "env -i GH_HOST=h gh pr view".split())
+    assert peeled.views == (gh.shell_wrappers.EnvView({"GH_HOST": "h"}, frozenset()),)
+
+
+def test_sudo_may_reset_the_environment_so_both_cases_are_kept():
+    peeled = gh.shell_wrappers.peel({"GH_REPO": "a/b"}, "sudo GH_HOST=h gh pr view".split())
+    assert peeled.views == (
+        gh.shell_wrappers.EnvView({"GH_REPO": "a/b", "GH_HOST": "h"}, None),
+        gh.shell_wrappers.EnvView({"GH_HOST": "h"}, frozenset()),
+    )
+
+
+@pytest.mark.parametrize("command,kept", [
+    ("sudo -E gh pr view", None),
+    ("sudo --preserve-env gh pr view", None),
+    ("sudo --preserve-env=GH_REPO,PATH gh pr view", frozenset({"GH_REPO", "PATH"})),
+])
+def test_sudo_preserve_env_keeps_what_it_names(command, kept):
+    views = _peel(command).views
+    assert views[0].inherits is None
+    assert [v.inherits for v in views[1:]] == ([] if kept is None else [kept])

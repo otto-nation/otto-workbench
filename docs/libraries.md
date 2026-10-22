@@ -194,7 +194,7 @@ Every key any of them accepts:
 | `issues.labels` | list of string | `[follow-up]` |
 | `github.ssh_over_443` | boolean | `false` |
 | `github.host` | string | — |
-| `github.owners` | any | `{}` |
+| `github.owners` | map of string to list of string | `{}` |
 | `rebase.regenerate` | list of string | `[]` |
 | `fix.verify_command` | string | — |
 | `fix.verify_timeout` | integer | `900` |

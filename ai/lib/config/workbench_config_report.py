@@ -96,6 +96,8 @@ def _values_column(hint) -> str:
         return {bool: "boolean", int: "integer", float: "number"}.get(hint, "string")
     if kind is core.serde.HintKind.LIST:
         return f"list of {_values_column(args[0])}"
+    if kind is core.serde.HintKind.DICT:
+        return f"map of {_values_column(args[0])} to {_values_column(args[1])}"
     return "any"
 
 

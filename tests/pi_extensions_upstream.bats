@@ -78,7 +78,7 @@ _refusal() {
   _owners_config otto-nation
   _upstream_repo git@github.com:otto-nation/svc.git
   _refusal "$TMPDIR/repo" 'gh issue create --title x' "$TMPDIR/no-such-checker"
-  [[ "$output" == *"owner-boundary check failed"* ]]
+  [[ "$output" == *"might be a GitHub write, and the owner-boundary check could not run ("* ]]
   [[ "$output" == *"could not run"* ]]
 }
 
@@ -88,7 +88,7 @@ _refusal() {
   _owners_config otto-nation
   _upstream_repo git@github.com:otto-nation/svc.git
   _refusal "$TMPDIR/repo" 'gh issue create --title x' "$TMPDIR/crashing-checker"
-  [[ "$output" == *"owner-boundary check failed"*"exited 1"* ]]
+  [[ "$output" == *"might be a GitHub write"*"exited 1"* ]]
 }
 
 @test "upstream-guard: a timeout reports the bound actually used" {

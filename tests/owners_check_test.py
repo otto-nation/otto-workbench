@@ -37,6 +37,9 @@ def test_split_words_are_rejoined_with_their_quoting(github_owners, tmp_path):
     repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
     assert cli.owners_check.main(
         ["--cwd", str(repo), "--", "gh", "issue", "create", "--title", "a; cd /"]) == 0
+    assert cli.owners_check.main(
+        ["--cwd", str(repo), "--", "gh", "issue", "comment", "1", "--repo", "stranger/lib"]
+    ) == cli.owners_check.REFUSED
 
 
 def test_the_override_does_not_reach_the_guards_check(github_owners, tmp_path, monkeypatch):

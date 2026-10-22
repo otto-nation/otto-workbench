@@ -149,7 +149,7 @@ _SLASHES_RE = re.compile(r"/+")
 
 # The remote-URL grammar is git.remote_url's; pr.target reads through it so the
 # key, the rendered host and gh.owners cannot disagree about one URL. The name
-# stays because `_web_base` below asks it whether a declared host has a scheme.
+# stays because `forge_base_url` below asks it whether a declared host has a scheme.
 _SCHEME_RE = git.remote_url.SCHEME_RE
 # The forge every URL builder falls back to. A remote that names no host has
 # always rendered public GitHub, and an unthreaded call site still does.

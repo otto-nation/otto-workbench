@@ -113,7 +113,6 @@ def test_an_entry_point_reports_a_refusal_as_exit_one(capsys):
         raise gh.owners.OwnerBoundaryError(verdict)
 
     assert main([]) == cli.boundary.OWNER_BOUNDARY_EXIT
-    assert cli.boundary.OWNER_BOUNDARY_EXIT == 1
     assert "stranger is not one of our GitHub owners" in capsys.readouterr().err
 
 

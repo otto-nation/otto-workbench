@@ -443,9 +443,9 @@ _owner_boundary_refusal() {
   OWNER_BOUNDARY_REFUSAL=""
   _locate_owners_check
   if [[ -z "$hook_cwd" ]]; then
-    why="owners-check could not run: the hook payload carried no cwd, so the repository this command targets cannot be resolved"
+    why="the hook payload carried no cwd, so the repository this command targets cannot be resolved"
   elif [[ -z "$OWNERS_CHECK" ]]; then
-    why="owners-check could not run: it is not beside this hook, at ../../bin, or on PATH"
+    why="owners-check is not beside this hook, at ../../bin, or on PATH"
   else
     _run_owners_check stderr --cwd "$hook_cwd" -- "$cmd"
     said="${OWNERS_CHECK_OUTPUT%$'\n'}"
@@ -456,11 +456,11 @@ _owner_boundary_refusal() {
         OWNER_BOUNDARY_REFUSAL="This GitHub write is refused at the owner boundary: $said. See general.md § Upstream Repositories."
         return 0
         ;;
-      "") why="owners-check gave no answer within ${OWNERS_CHECK_TIMEOUT_SECONDS}s, so it could not run to completion" ;;
-      *) why="owners-check could not run cleanly (exit $OWNERS_CHECK_STATUS${said:+: $said})" ;;
+      "") why="owners-check gave no answer within ${OWNERS_CHECK_TIMEOUT_SECONDS}s" ;;
+      *) why="owners-check failed with exit $OWNERS_CHECK_STATUS${said:+: $said}" ;;
     esac
   fi
-  OWNER_BOUNDARY_REFUSAL="The owner-boundary check failed — $why — and a GitHub write that cannot be checked is refused. See general.md § Upstream Repositories."
+  OWNER_BOUNDARY_REFUSAL="This command might be a GitHub write, and the owner-boundary check could not run ($why), so it is refused. See general.md § Upstream Repositories."
   return 0
 }
 

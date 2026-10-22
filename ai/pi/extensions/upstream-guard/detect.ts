@@ -50,11 +50,11 @@ export function namesOverride(command: string): boolean {
 function howItFailed(run: ReturnType<typeof runOwnersCheck>, said: string, timeoutMs: number): string {
   const code = (run.error as NodeJS.ErrnoException | undefined)?.code;
   if (code === "ETIMEDOUT") return `owners-check gave no answer within ${timeoutMs / 1000}s`;
-  if (run.error) return `owners-check could not run (${code ?? String(run.error)})`;
+  if (run.error) return `owners-check could not be started: ${code ?? String(run.error)}`;
   if (typeof run.status === "number") {
-    return `owners-check could not run cleanly (exited ${run.status}${said ? `: ${said}` : ""})`;
+    return `owners-check failed, exited ${run.status}${said ? `: ${said}` : ""}`;
   }
-  return `owners-check could not run to completion (killed by ${run.signal ?? "a signal"})`;
+  return `owners-check was killed by ${run.signal ?? "a signal"}`;
 }
 
 /** The refusal for COMMAND run from CWD, or null when it may run. */
@@ -80,7 +80,7 @@ export function upstreamRefusal(
     );
   }
   return (
-    `The owner-boundary check failed — ${howItFailed(run, said, timeoutMs)} — and a GitHub write ` +
-    `that cannot be checked is refused. ${CITATION}`
+    `This command might be a GitHub write, and the owner-boundary check could not run ` +
+    `(${howItFailed(run, said, timeoutMs)}), so it is refused. ${CITATION}`
   );
 }

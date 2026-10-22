@@ -126,7 +126,7 @@ _checkerless_guard() {
   _upstream_repo git@github.com:otto-nation/svc.git
   PATH="$(_path_without_owners_check)" run _guard_at "$TMPDIR/repo" 'gh issue create --title x' "$guard"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"owner-boundary check failed"* ]]
+  [[ "$output" == *"might be a GitHub write, and the owner-boundary check could not run ("* ]]
   [[ "$output" == *"could not run"* ]]
 }
 
@@ -139,7 +139,7 @@ _checkerless_guard() {
   _upstream_repo git@github.com:otto-nation/svc.git
   run _guard_at "$TMPDIR/repo" 'gh issue create --title x' "$TMPDIR/tree/ai/claude/bin/claude-bash-guard"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"owner-boundary check failed"*"exit 1"* ]]
+  [[ "$output" == *"might be a GitHub write"*"exit 1"* ]]
 }
 
 @test "upstream guard: the payload's cwd decides the repository, not the hook's" {

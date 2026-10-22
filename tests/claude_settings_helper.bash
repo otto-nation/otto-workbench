@@ -57,7 +57,8 @@ _sync_settings_into() {
 
 # Runs the Bash PreToolUse guard against a mock payload. Every Bash rule lives
 # in that one script, so these tests exercise the source rather than a
-# JSON-escaped copy of it.
+# JSON-escaped copy of it. The payload's cwd is the test's own unless it names
+# one, as Claude Code always sends it.
 _run_guard() {
-  echo "$1" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
+  _payload_with_cwd "$PWD" "$1" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
 }

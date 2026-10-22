@@ -18,7 +18,8 @@ import {
  * and `owners-check --cwd` (ai/lib/gh/owners.py) decides the answer — whether
  * the command writes at all, which owners are ours, which repository it
  * targets. Exit 0 allows (a read always is), 2 refuses with the reason on
- * stderr, anything else refuses as a failed check. Claude Code runs the same
+ * stderr — the reason carries its own advice, so the wrapper adds none —
+ * anything else refuses as a failed check. Claude Code runs the same
  * check from ai/claude/bin/claude-bash-guard.
  */
 
@@ -46,9 +47,9 @@ export function namesOverride(command: string): boolean {
 }
 
 /** How a check that gave no verdict ended, for the refusal text. */
-function howItFailed(run: ReturnType<typeof runOwnersCheck>, said: string): string {
+function howItFailed(run: ReturnType<typeof runOwnersCheck>, said: string, timeoutMs: number): string {
   const code = (run.error as NodeJS.ErrnoException | undefined)?.code;
-  if (code === "ETIMEDOUT") return `owners-check gave no answer within ${CHECK_TIMEOUT_MS / 1000}s`;
+  if (code === "ETIMEDOUT") return `owners-check gave no answer within ${timeoutMs / 1000}s`;
   if (run.error) return `owners-check could not run (${code ?? String(run.error)})`;
   if (typeof run.status === "number") {
     return `owners-check could not run cleanly (exited ${run.status}${said ? `: ${said}` : ""})`;
@@ -75,12 +76,11 @@ export function upstreamRefusal(
   const said = String(run.stderr ?? "").trim().replace(/\s*\n\s*/g, " ");
   if (!run.error && run.status === REFUSED_STATUS) {
     return (
-      `This GitHub write is refused at the owner boundary: ${said}. The user posts upstream ` +
-      `themselves — draft the command and the text for them to run. ${CITATION}`
+      `This GitHub write is refused at the owner boundary: ${said}. ${CITATION}`
     );
   }
   return (
-    `The owner-boundary check failed — ${howItFailed(run, said)} — and a GitHub write ` +
+    `The owner-boundary check failed — ${howItFailed(run, said, timeoutMs)} — and a GitHub write ` +
     `that cannot be checked is refused. ${CITATION}`
   );
 }

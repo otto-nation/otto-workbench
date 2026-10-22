@@ -17,6 +17,7 @@ A repository, framework, or library we do not own is never where a bug is assume
 - State, for every way we could be misusing it, what rules that out. "Looks like an upstream bug" with no reproduction and no ruled-out alternatives is a hypothesis about our code, not a finding about theirs
 - When the due diligence finds our misuse — the expected outcome — fix our code and say what the misreading was. Do not file upstream to ask for a clearer error or a doc change unless the user asks for it
 - A workaround for a genuine upstream bug goes in our code with a `ceiling:` comment naming the upstream issue as its trigger, so it is removed when the fix lands
+- Enforced by `claude-bash-guard` under Claude Code and the `upstream-guard` extension under Pi (cheap pre-filter, then `owners-check`), by `gh.client` for the workbench's own publishing, and by `owners-check` itself. Unconfigured `github.owners` refuses every GitHub write. `WORKBENCH_ALLOW_UPSTREAM=1` is honoured by `gh.client` only, never by the guards; an agent command that names it is refused
 
 ## Choosing What to Recommend
 

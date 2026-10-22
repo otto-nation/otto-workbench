@@ -5,7 +5,7 @@
     owners-check --classify -- COMMAND
 
 The first form is what ``claude-bash-guard`` and Pi's ``upstream-guard`` run
-once their own shape check says a command writes to GitHub. Exit 0 allows;
+once their pre-filter says a command might write to GitHub. Exit 0 allows;
 exit 2 refuses, with the reason on stderr; anything else — a crash, a missing
 ``python3`` — is read by both guards as a check that could not run, and they
 refuse. COMMAND is the whole command line as one argument; several arguments

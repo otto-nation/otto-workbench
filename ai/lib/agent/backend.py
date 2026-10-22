@@ -164,9 +164,15 @@ def _record(
     *, entry_point: str, usage: agent.usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
     phase: str | None = None, max_turns: int | None = None,
+    branch: str | None = None,
 ) -> None:
     """Append one ledger record. A missing usage source records nothing —
-    an absent measurement is more honest than a zeroed one."""
+    an absent measurement is more honest than a zeroed one.
+
+    The invocation is read here rather than passed: every process a command
+    spawns inherits the trail root, so the row names the command without any
+    of the dozen call sites having to thread it.
+    """
     if usage is None:
         return
     try:
@@ -178,6 +184,7 @@ def _record(
             backend=(sel.value if (sel := selected_backend()) else "unknown"),
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr, phase=phase, max_turns=max_turns,
+            branch=branch, invocation=core.trail.inherited_root(),
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         pass
@@ -278,7 +285,7 @@ class AgentInvocation:
     keeping ``--no-context-files``. All three stay on the object so callers
     do not branch on the backend.
 
-    ``task``, ``repo``, and ``pr`` are not passed to the backend at all: they
+    ``task``, ``repo``, ``pr`` and ``branch`` are not passed to the backend at all: they
     only label the usage ledger record for this call.
 
     ``cwd`` is the directory the backend CLI runs in. It carries a default only
@@ -321,6 +328,7 @@ class AgentInvocation:
     task: str | None = None
     repo: str | None = None
     pr: str | None = None
+    branch: str | None = None
     # The phase that sized this call, for the usage ledger. Separate from
     # `task`, which a caller may override to bill a sub-step (lockfile regen)
     # without losing which phase ran.
@@ -374,6 +382,7 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
         task=inv.task, repo=inv.repo, pr=inv.pr,
         phase=inv.phase,
         max_turns=inv.max_turns,
+        branch=inv.branch,
     )
 
 

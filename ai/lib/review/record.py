@@ -137,6 +137,7 @@ class RecordFinding:
             body="\n".join([head, *cont]).strip(), stable_id=self.stable_id,
             checked=self.disposition is Disposition.FIXED,
             declined=self.disposition is Disposition.DECLINED,
+            skipped=self.disposition is Disposition.SKIPPED,
             decline_reason=self.reason if self.disposition is Disposition.DECLINED else "",
         )
 

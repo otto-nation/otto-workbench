@@ -50,9 +50,10 @@ def test_the_prompt_quotes_the_prior_record_without_bookkeeping():
     assert BANNER not in section
 
 
-def test_scoping_keeps_only_located_findings_in_the_group():
+def test_scoping_keeps_line_less_findings_by_path():
+    """`[I1]` names `voice.ts` with no line; the group holding the file carries it."""
     scoped = _scoped(_prior().record, ["apps/web/src/stores/voice.ts"])
-    assert [f.id for f in scoped.findings] == ["S2"]
+    assert [f.id for f in scoped.findings] == ["S2", "I1"]
 
 
 def test_a_stale_prior_means_no_prior_section():
@@ -130,8 +131,8 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     real_write = review.pipeline._write_pipeline_state
     monkeypatch.setattr(review.pipeline, "_write_pipeline_state",
                         lambda job, state: written.append(state) or real_write(job, state))
-    real_merge = review.pipeline._phase_merge
-    monkeypatch.setattr(review.pipeline, "_phase_merge",
+    real_merge = review.pipeline._merge_round
+    monkeypatch.setattr(review.pipeline, "_merge_round",
                         lambda *a, **k: captured.update(declinable=k["declinable"]) or real_merge(*a, **k))
     review.pipeline.run_multi_phase(job, disprove=False)
     merged = captured["merged"]

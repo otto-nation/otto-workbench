@@ -26,6 +26,8 @@ from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Mode, Phase
 from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
+from review.convergence import change_set, drop_out_of_delta_nits, prior_ids
+from review.prompt_sections import _is_incremental
 from review.document import ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
@@ -39,7 +41,7 @@ from review.merge import append_findings, merge_records
 from review.outcome import (
     _build_mechanical_fallback, _fallback_status, _no_synthesis_record,
     _post_process_review, _publish, _reconcile_and_verify, _write_clean_review,
-    _write_mechanical_fallback,
+    _write_mechanical_fallback, _write_settled_review,
 )
 from review.paths import phase_log_path, phase_output_path
 from review.phases import (
@@ -62,7 +64,7 @@ from review.state import (
 )
 from review.store import StoredReview, read_review, write_review
 from review.types import (
-    SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
+    SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, PriorFinding, ReviewJob,
 )
 from review.verdict import BUDGET_SUMMARY, SKIPPED_SUMMARY, open_counts
 from review.verify import apply_disprove
@@ -103,6 +105,10 @@ class Merged:
     """
 
     record: ReviewRecord
+    # How many visible findings the groups that ran produced this round, before
+    # anything was carried in. None where nobody counted. Synthesis is skipped
+    # when it is 0 and every prior finding is settled — see `_nothing_new`.
+    fresh: int | None = None
 
     @property
     def text(self) -> str:
@@ -112,10 +118,13 @@ class Merged:
 
     def carry(self, record: ReviewRecord) -> "Merged":
         notes = self.record.severity_sections + record.severity_sections
-        return Merged(replace(
-            append_findings(self.record, record.findings),
-            severity_sections=notes,
-        ))
+        return Merged(
+            replace(
+                append_findings(self.record, record.findings),
+                severity_sections=notes,
+            ),
+            fresh=self.fresh,
+        )
 
     def _for_synthesis(self) -> ReviewRecord:
         # as_group_artifact renders anything other than OPEN/DECLINED as a
@@ -266,6 +275,7 @@ def _run_synthesis_or_fallback(
     holistic_content: str, group_count: int,
     merged: Merged, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
+    *, settled: bool = False,
 ) -> PhaseResult:
     """The synthesis session log and what synthesis spent.
 
@@ -273,6 +283,7 @@ def _run_synthesis_or_fallback(
     review, a mechanical fallback, a skip — spends nothing and says so, so the
     caller's running total means the same thing at the disprove gate as it did
     here.
+    *settled* is `_nothing_new`'s answer, decided once by the caller.
     """
     all_groups_failed = len(failed_groups) == group_count
 
@@ -326,6 +337,14 @@ def _run_synthesis_or_fallback(
         _inject_failures_and_status(job.review_file, state)
         return PhaseResult()
 
+    if settled:
+        core.log.info("Synthesis skipped — no new findings, and every prior finding is settled")
+        _write_settled_review(job, group_count, merged.record, skipped_groups=n_skipped)
+        state.done.add(Phase.SYNTHESIS)
+        _write_pipeline_state(job, state)
+        _inject_failures_and_status(job.review_file, state)
+        return PhaseResult()
+
     if cost_so_far > max_cost:
         core.log.warn("Using merged group output as final review (synthesis skipped due to budget)")
         # Post-processed like every other path that ships group output: the
@@ -359,6 +378,25 @@ def _run_synthesis_or_fallback(
     return result
 
 
+def _unaccounted(job: ReviewJob, record: ReviewRecord) -> list[PriorFinding]:
+    """The prior findings `record` leaves for synthesis: neither stated nor settled."""
+    return passed_over(job.prior, record, job.wt_path, job.pr.head_sha,
+                       changed=change_set(job))
+
+
+def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailure]) -> bool:
+    """Whether synthesis would only restate what the merge already settles.
+
+    An incremental round, every group reported, the groups that ran produced no
+    finding, and no prior finding is left for synthesis to account for. A count
+    nobody took (`fresh` None) is not a zero. The disprove gate reads the same
+    answer: with nothing new there is nothing it has not already challenged.
+    """
+    if not _is_incremental(job) or failed_groups or merged.fresh != 0:
+        return False
+    return not _unaccounted(job, merged.record)
+
+
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged: Merged,
@@ -375,7 +413,7 @@ def _phase_synthesis(
     # The same reconciliation the run ends with, asked one phase early, while
     # there is still an agent that can act on the answer. Afterwards the only
     # thing left to do about a prior finding nobody accounted for is report it.
-    unaccounted = passed_over(job.prior, merged.record, job.wt_path, job.pr.head_sha)
+    unaccounted = _unaccounted(job, merged.record)
     if unaccounted:
         core.log.dim(
             f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "
@@ -454,6 +492,11 @@ def _phase_synthesis(
             extra=merged.record.extra,
         )
         record = _restore_held_findings(merged.record, record)
+        if _is_incremental(job):
+            # Synthesis may add cross-cutting nits of its own. A carried one it
+            # rewords keeps the prior's `sid`, which `is_new_nit` matches.
+            record = drop_out_of_delta_nits(
+                record, job.preflight.delta_files, prior_ids(job)).record
         _post_process_review(
             job, record, skipped_groups=skipped_groups, total_groups=group_count,
         )
@@ -564,6 +607,7 @@ def _log_disprove_falsified(summary: dict) -> None:
 def _run_disprove_gate(
     job: ReviewJob, state: PipelineState,
     disprove: bool | None, cost_so_far: float, max_cost: float,
+    *, settled: bool = False,
 ) -> PhaseResult:
     """The disprove gate's session log and what the gate spent.
 
@@ -580,7 +624,9 @@ def _run_disprove_gate(
     result = PhaseResult()
     failure: Diagnosis | None = None
 
-    if not _should_disprove(job, disprove):
+    if settled:
+        core.log.info("nothing new to challenge; disprove skipped")
+    elif not _should_disprove(job, disprove):
         core.log.info("Disprove gate off — keeping all findings")
     elif cost_so_far > max_cost:
         core.log.warn(
@@ -625,7 +671,33 @@ def _phase_merge(
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
             f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
         record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
-    return Merged(record)
+    # A rejection ingest added, that the caller did not already count as a
+    # failed group, is not a counted zero — `_nothing_new` must not settle.
+    ingest_gaps = {g.group for g in ingested.gaps} - {f.group for f in failed_groups}
+    return Merged(record, fresh=None if ingest_gaps else len(record.visible))
+
+
+def _without_out_of_delta_nits(merged: Merged, job: ReviewJob) -> Merged:
+    """*merged* minus its new nits outside the delta, recounted."""
+    filtered = drop_out_of_delta_nits(merged.record, job.preflight.delta_files, prior_ids(job))
+    if not filtered.dropped:
+        return merged
+    return Merged(filtered.record, fresh=len(filtered.record.visible))
+
+
+def _merge_round(
+    job: ReviewJob, group_outputs: list[str], failed_groups: list[GroupFailure],
+    group_names: tuple[str, ...], **merge_kwargs,
+) -> Merged:
+    """This round's group findings as one merge, without new nits outside the delta.
+
+    *merge_kwargs* go to `_phase_merge` untouched, so a merge that grows a
+    keyword does not have to grow this signature as well.
+    """
+    merged = _phase_merge(group_outputs, failed_groups, group_names, **merge_kwargs)
+    if not _is_incremental(job):
+        return merged
+    return _without_out_of_delta_nits(merged, job)
 
 
 @dataclass(frozen=True)

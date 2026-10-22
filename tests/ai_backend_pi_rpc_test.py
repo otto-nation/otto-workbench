@@ -349,7 +349,7 @@ class TestRefusalReachesTheCaller:
         proc = _RefusingProc(
             [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
         )
-        # Non-zero, so _log_stderr_on_failure would reach the read if called.
+        # Non-zero, so _log_stderr would reach the read if called.
         proc.returncode = -9
         proc.stderr = _BlockingStderr()
         monkeypatch.setattr("core.proc.os.killpg", lambda pid, sig: None)

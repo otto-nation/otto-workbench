@@ -68,10 +68,11 @@ from review.prompt import PromptTooLarge
 from review.prompt_sections import _is_incremental
 from review.registry import build_prompt
 from review.phases import PhaseResult, PhaseRunner, _should_disprove
+from review.convergence import drop_out_of_delta_nits, prior_ids
 from review.steps import (
     _build_group_skips, _carry_forward_prior_findings, _identify_incremental_skips,
-    _phase_disprove, _phase_merge, _run_disprove_gate, _run_group_phase,
-    _run_holistic_phase, _run_synthesis_or_fallback,
+    _merge_round, _nothing_new, _phase_disprove, _run_disprove_gate,
+    _run_group_phase, _run_holistic_phase, _run_synthesis_or_fallback,
 )
 from review.retry import GroupFailure, _has_output, _render_reason, _retry_missing_output
 from review.state import PIPELINE_SCHEMA_VERSION, PipelineState, _resolve_recovery, _write_pipeline_state
@@ -217,6 +218,8 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
     )
+    if _is_incremental(job):
+        record = drop_out_of_delta_nits(record, job.preflight.delta_files, prior_ids(job)).record
     if _should_disprove(job, disprove):
         record = _phase_disprove(job, record).record
     _post_process_review(job, record)
@@ -391,14 +394,16 @@ def run_multi_phase(
             cost_so_far += group_phase.cost
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
-    merged = _phase_merge(
-        group_outputs[:], failed_groups,
-        group_names=tuple(g.name for g in groups),
-        declinable=declinable_sids(job.prior),
-    )
+    merged = _merge_round(job, group_outputs[:], failed_groups,
+                          tuple(g.name for g in groups),
+                          declinable=declinable_sids(job.prior))
 
     if carried:
         merged = merged.carry(carried.record)
+
+    # Decided once, for the two phases that would otherwise re-read the round:
+    # synthesis has nothing to add, and the gate nothing new to challenge.
+    settled = _nothing_new(job, merged, failed_groups)
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
@@ -412,11 +417,13 @@ def run_multi_phase(
         synthesis = _run_synthesis_or_fallback(
             job, state, holistic.content, group_count,
             merged, failed_groups, n_skipped, cost_so_far, max_cost,
+            settled=settled,
         )
     cost_so_far += synthesis.cost
 
     # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────
-    disprove_result = _run_disprove_gate(job, state, disprove, cost_so_far, max_cost)
+    disprove_result = _run_disprove_gate(
+        job, state, disprove, cost_so_far, max_cost, settled=settled)
 
     # ── Consolidate logs ─────────────────────────────────────────────────────
     # Removing what this run leaves behind is the orchestrator's, not the

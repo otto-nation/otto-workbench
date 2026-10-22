@@ -27,7 +27,7 @@ import core.log
 import core.timeouts
 import agent.vertex_quota
 from agent.backend import AgentInvocation, agent_env
-from agent.backend_events import _log_stderr_on_failure, claude_display_text, parse_claude_event
+from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
 
@@ -358,7 +358,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         # stream and then refused to exit, which is not a failure this
         # pipeline sees.
         proc.wait(timeout=core.timeouts.UNBOUNDED)
-    _log_stderr_on_failure(proc, inv.session_log)
+    _log_stderr(proc, inv.session_log)
     return proc.returncode
 
 

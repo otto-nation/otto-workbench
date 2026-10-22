@@ -54,6 +54,8 @@ class MetaKey(StrEnum):
     MODE = "mode"
     PR = "pr"
     HEAD_SHA = "head_sha"
+    COVERED_SHA = "covered_sha"
+    HEAD_MOVED_TO = "head_moved_to"
     HEAD_REF = "head_ref"
     BASE_REF = "base_ref"
     REVIEW_TYPE = "review_type"
@@ -92,6 +94,8 @@ class ReviewHeader:
     mode: Mode | None = None
     pr_number: int | None = None
     head_sha: str = ""
+    covered_sha: str = ""
+    head_moved_to: str = ""
     head_ref: str = ""
     base_ref: str = ""
     review_type: ReviewType = ReviewType.FULL
@@ -116,6 +120,8 @@ class ReviewHeader:
             (MetaKey.MODE, self.mode.value if self.mode else None),
             (MetaKey.PR, self.pr_number),
             (MetaKey.HEAD_SHA, self.head_sha or None),
+            (MetaKey.COVERED_SHA, self.covered_sha or None),
+            (MetaKey.HEAD_MOVED_TO, self.head_moved_to or None),
             (MetaKey.HEAD_REF, self.head_ref or None),
             (MetaKey.BASE_REF, self.base_ref or None),
             (MetaKey.REVIEW_TYPE, self.review_type),
@@ -156,6 +162,10 @@ class ReviewHeader:
             mode=meta.mode,
             pr_number=meta.pr_number,
             head_sha=meta.head_sha,
+            # Only when it says more than `head_sha` does — a header repeating
+            # the head as "covered" would be a second statement of one fact.
+            covered_sha=meta.covered_sha if meta.covered_sha != meta.head_sha else "",
+            head_moved_to=meta.head_moved_to,
             head_ref=meta.head_ref,
             base_ref=meta.base_ref,
             review_type=meta.review_type or ReviewType.FULL,
@@ -309,9 +319,9 @@ class ReviewDocument:
 
         A finding is open until the fix pass ticks its box. That is wider than
         the work a fix pass has left: a declined finding is open — the review
-        recorded a judgement about it rather than a fix — and `run_fix_pass`
-        states that narrower predicate where it drives the pass, so neither
-        reading has to answer for the other.
+        recorded a judgement about it rather than a fix — and `fix_candidates`
+        states that narrower predicate, so neither reading has to answer for
+        the other.
         """
         return [f for f in self.findings if not f.checked]
 

@@ -322,3 +322,12 @@ def test_synthesis_cross_cutting_step_matches_its_template(name, step):
         f"{name} does not number 'Add any cross-cutting findings' as step "
         f"{step}, but _SYNTHESIS_CROSS_CUTTING_STEP tells the guard it does."
     )
+
+
+@pytest.mark.parametrize("name", ["synthesis.md", "self-review-synthesis.md"])
+def test_synthesis_keeps_a_carried_finding_sid(name):
+    """A restated finding without its sid is dropped as a new nit."""
+    body = (TEMPLATE_DIR / name).read_text()
+    assert "Keep each finding's `sid`" in body, (
+        f"{name} does not tell the agent to keep a carried finding's sid"
+    )

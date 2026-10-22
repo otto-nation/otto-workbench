@@ -16,6 +16,7 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
 import agent.usage  # noqa: E402
 import cli.ai_usage_log  # noqa: E402
+import core.trail  # noqa: E402
 
 RESULT_RECORD = {
     "type": "result",
@@ -134,3 +135,11 @@ class TestRecord:
         self._record(monkeypatch, raw, extra=["--repo", "o/r", "--pr", "42"])
         rec = self._only(ledger)
         assert (rec["repo"], rec["pr"]) == ("o/r", "42")
+
+    def test_carries_the_trail_root(self, monkeypatch, tmp_path, ledger):
+        monkeypatch.setenv(core.trail.TRAIL_ROOT_ENV, "0123456789ab")
+        raw = tmp_path / "raw.jsonl"
+        raw.write_text(json.dumps(RESULT_RECORD) + "\n")
+        self._record(monkeypatch, raw)
+        rec = self._only(ledger)
+        assert rec["invocation"] == "0123456789ab"

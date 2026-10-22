@@ -170,6 +170,10 @@ class PhaseRunner:
             provider=self.provider,
             label=label,
             phase=str(self.phase),
+            # Labels only: the backend never reads them, the usage ledger does.
+            repo=self.job.repo or None,
+            pr=str(self.job.pr_number) or None,
+            branch=self.job.pr.head or None,
         )
 
     def invoke(

@@ -61,6 +61,7 @@ a second definition of green living in a YAML string.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -71,6 +72,7 @@ from pathlib import Path
 
 import core.children
 import core.log
+import core.trail
 from core.trail import Trail, tinfo, twarn
 import fix.blame
 from pr.fix import CHECKS_TRAILER, ItemOutcome
@@ -103,6 +105,48 @@ NOT_DECLARED_NOTE = (
 # the pass's own edits reach instead of everything the branch reaches.
 FIX_BASE_ENV = "WORKBENCH_FIX_BASE"
 
+# Where a fix pass lists the paths it is checking, one per line, for a verify
+# command that selects by path. Exported to both the pass run and its baseline
+# re-run, so the two select the same tests over two trees.
+FIX_PATHS_ENV = "WORKBENCH_FIX_PATHS_FILE"
+
+# Set only on the baseline re-run (`fix.baseline`). A selecting command that
+# reads it must not widen to its whole suite when it cannot select, and exits
+# `NO_SELECTION_EXIT` instead; this repo's `bin/local/run-tests` does both.
+FIX_BASELINE_ENV = "WORKBENCH_FIX_BASELINE"
+
+# The exit a baseline re-run uses to say "I could not select", read as ERROR —
+# no verdict about the code — so the baseline counts as missing rather than as
+# a red run with no failures. 75 is EX_TEMPFAIL, clear of pytest's 0-5 and
+# bats' 1. `tests/fix_baseline_test.py` fails if `bin/local/run-tests` drifts.
+NO_SELECTION_EXIT = 75
+
+# Said wherever a comparison of failures is reported: it is only about the
+# suites that ran, and a runner may stop at its first red one.
+_FIRST_SUITE_CAVEAT = (
+    " (only the suites that ran are compared — a runner that stops at its first "
+    "failing suite may not have reached the rest)"
+)
+
+# What a run of the repo's checks must not inherit from the pass that started
+# it. The tests are not part of the pass: a test that opens a trail under this
+# root files its records into the review's own command, and one reading the
+# debug switch echoes into a run nobody is watching.
+TRAIL_ENV = (core.trail.TRAIL_ROOT_ENV, "WORKBENCH_DEBUG")
+
+# The lines a runner names a failing test on: pytest's short summary
+# (`FAILED <nodeid>`, `ERROR <nodeid>`) and TAP's `not ok <n> <name>`, the
+# number dropped because a narrower selection renumbers the same test.
+# Pytest's nodeid is `.+?` up to ` - ` because a parametrized id can contain
+# spaces (`test_p[a b]`); `\S+` would cut it at the first one. A bats
+# `--timing` suffix (`in 18ms`) and a TAP directive (`# skip`) are stripped
+# so two runs of the same test compare equal.
+_FAILURE_LINE = re.compile(
+    r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$"
+    r"|^not ok \d+ (.+?)(?: in \d+(?:\.\d+)?m?s(?:ec)?)?(?: # .*)?$",
+    re.M,
+)
+
 
 class SuiteStatus(StrEnum):
     """How the declared command ended, in the terms a summary reports.
@@ -130,6 +174,12 @@ class SuiteStatus(StrEnum):
     PARTIAL = "partial"
     # Ran, non-zero exit.
     RED = "red"
+    # Ran, non-zero exit, and every failing test it named fails at the tree the
+    # pass started from too. Reported, never demoting: the pass did not make the
+    # tree red, and withdrawing its fixes over an inherited failure is the
+    # misattribution this exists to stop. Still unverified — nothing green
+    # stands behind the fixes either.
+    PREEXISTING = "preexisting"
     # Killed at `fix.verify_timeout`.
     TIMED_OUT = "timed_out"
     # Could not be started, or the declaration could not be parsed.
@@ -155,11 +205,17 @@ class SuiteResult:
     # Paths in the tree the checks ran over that the commit leaves out. Set on
     # PARTIAL, where they are the reason the green run does not count.
     left_out: tuple[str, ...] = ()
+    # The failing tests a red run named, parsed from its whole output before
+    # the tail was clipped. Empty when none could be read — and then nothing
+    # can be called inherited.
+    failures: tuple[str, ...] = ()
+    # The subset of `failures` that also fails at the pre-pass tree.
+    inherited: tuple[str, ...] = ()
 
     @property
     def ran(self) -> bool:
         """Whether the command started and reached a verdict about the code."""
-        return self.status in (SuiteStatus.GREEN, SuiteStatus.RED)
+        return self.status in (SuiteStatus.GREEN, SuiteStatus.RED, SuiteStatus.PREEXISTING)
 
     @property
     def demotes(self) -> bool:
@@ -188,7 +244,16 @@ class SuiteResult:
         if self.status is SuiteStatus.GREEN:
             return f"Checks green: {self.command} ({self.duration_s:.0f}s)"
         if self.status is SuiteStatus.RED:
-            return f"Checks RED: {self.command} ({self.duration_s:.0f}s)"
+            tail = (f"; {len(self.inherited)} of its failures also fail before this pass: "
+                    f"{', '.join(self.inherited[:LEFT_OUT_SHOWN])}{_FIRST_SUITE_CAVEAT}"
+                    ) if self.inherited else ""
+            return f"Checks RED: {self.command} ({self.duration_s:.0f}s){tail}"
+        if self.status is SuiteStatus.PREEXISTING:
+            return (
+                f"Checks red before this pass too: {self.command} — "
+                f"{', '.join(self.inherited[:LEFT_OUT_SHOWN])} also fail at the pass's "
+                f"base; not attributed to this pass{_FIRST_SUITE_CAVEAT}"
+            )
         if self.status is SuiteStatus.PARTIAL:
             shown = ", ".join(self.left_out[:LEFT_OUT_SHOWN])
             more = len(self.left_out) - LEFT_OUT_SHOWN
@@ -226,6 +291,29 @@ def _clip_tail(text: str, limit: int = OUTPUT_TAIL_CHARS) -> str:
     return marker + stripped[-(limit - len(marker)):]
 
 
+def failing_tests(output: str) -> tuple[str, ...]:
+    """The tests a runner's *output* names as failing, sorted and de-duplicated."""
+    return tuple(sorted({a or b for a, b in _FAILURE_LINE.findall(output)}))
+
+
+def _suite_env(base: str, paths_file: str, baseline: bool) -> dict[str, str]:
+    """The environment the repo's checks run in: this process's, minus `TRAIL_ENV`.
+
+    `FIX_PATHS_ENV` and `FIX_BASELINE_ENV` are this run's to set, never to
+    inherit: an exported value would select a stale path list, or make an
+    ordinary run refuse to widen as if it were a baseline re-run.
+    """
+    dropped = (*TRAIL_ENV, FIX_PATHS_ENV, FIX_BASELINE_ENV)
+    env = {k: v for k, v in os.environ.items() if k not in dropped}
+    if base:
+        env[FIX_BASE_ENV] = base
+    if paths_file:
+        env[FIX_PATHS_ENV] = paths_file
+    if baseline:
+        env[FIX_BASELINE_ENV] = "1"
+    return env
+
+
 def run(
     workdir: Path,
     command: str,
@@ -233,6 +321,8 @@ def run(
     trail: Trail | None = None,
     *,
     base: str = "",
+    paths_file: str = "",
+    baseline: bool = False,
 ) -> SuiteResult:
     """Run the repo's declared checks in `workdir` and report what they said.
 
@@ -242,6 +332,10 @@ def run(
     the one this module prevents.
 
     *base*, when given, is exported to the command as `FIX_BASE_ENV`.
+    *paths_file*, when given, is exported as `FIX_PATHS_ENV`. *baseline* True
+    marks the re-run at the pass's base: `FIX_BASELINE_ENV` is exported, an
+    exit of `NO_SELECTION_EXIT` reads as ERROR, and the verdict is left off the
+    terminal and the trail, because `fix.baseline` reports it in its own words.
     """
     if not command.strip():
         result = SuiteResult(status=SuiteStatus.NOT_DECLARED)
@@ -278,7 +372,10 @@ def run(
     core.log.info(f"Verifying the pass against the repo's checks: {command}")
     started = time.monotonic()
     try:
-        result = _invoke(argv, workdir, command, timeout_s, started, base=base)
+        result = _invoke(
+            argv, workdir, command, timeout_s, started,
+            base=base, paths_file=paths_file, baseline=baseline,
+        )
     except OSError as exc:
         # The command could not be started at all — missing, not executable, a
         # bad interpreter line. A broken declaration, not a red branch.
@@ -287,7 +384,8 @@ def run(
             duration_s=time.monotonic() - started, output_tail=str(exc),
         )
 
-    _report(result, trail)
+    if not baseline:
+        _report(result, trail)
     return result
 
 
@@ -300,7 +398,7 @@ _TERM_GRACE_S = 5
 def _invoke(
     argv: list[str], workdir: Path, command: str,
     timeout_s: int, started: float, *,
-    base: str = "",
+    base: str = "", paths_file: str = "", baseline: bool = False,
 ) -> SuiteResult:
     """Run `argv` to completion or to the timeout, and read its exit status.
 
@@ -322,7 +420,7 @@ def _invoke(
     output is captured rather than piped to a filter, so the status read below
     is the runner's own and not some `tail`'s.
     """
-    env = {**os.environ, FIX_BASE_ENV: base} if base else None
+    env = _suite_env(base, paths_file, baseline)
     proc = core.children.spawn(
         argv, cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, start_new_session=True, env=env,
@@ -345,12 +443,22 @@ def _invoke(
     finally:
         core.children.forget(proc)
 
+    if baseline and proc.returncode == NO_SELECTION_EXIT:
+        # The command could not select narrowly and refused to widen: no
+        # verdict about the code, so no baseline to compare against.
+        return SuiteResult(
+            status=SuiteStatus.ERROR, command=command,
+            duration_s=time.monotonic() - started,
+            output_tail=_clip_tail(_combine_streams(stdout, stderr)),
+        )
     green = proc.returncode == 0
+    combined = "" if green else _combine_streams(stdout, stderr)
     return SuiteResult(
         status=SuiteStatus.GREEN if green else SuiteStatus.RED,
         command=command,
         duration_s=time.monotonic() - started,
-        output_tail="" if green else _clip_tail(_combine_streams(stdout, stderr)),
+        output_tail=_clip_tail(combined) if combined else "",
+        failures=failing_tests(combined),
     )
 
 
@@ -483,6 +591,8 @@ def qualify_tally(tally: str, result: SuiteResult) -> str:
             f"{tally} (unverified: the checks ran with {len(result.left_out)} "
             "file(s) this commit leaves out)"
         )
+    if result.status is SuiteStatus.PREEXISTING:
+        return f"{tally} (unverified: the repo's checks were already red before this pass)"
     return tally
 
 
@@ -563,6 +673,10 @@ def should_run(outcomes: list[ItemOutcome], changed: set[str] | None) -> bool:
 
 __all__ = [
     "FIX_BASE_ENV",
+    "FIX_PATHS_ENV",
+    "FIX_BASELINE_ENV",
+    "NO_SELECTION_EXIT",
+    "TRAIL_ENV",
     "NOT_DECLARED_NOTE",
     "RED_DETAIL",
     "SuiteResult",
@@ -570,6 +684,7 @@ __all__ = [
     "apply_to",
     "checks_trailer",
     "detail_lines",
+    "failing_tests",
     "qualify_tally",
     "run",
     "scoped_to",

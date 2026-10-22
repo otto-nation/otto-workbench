@@ -247,6 +247,7 @@ def run_fix(
     hint_select: Callable[[Diagnosis], str] = agent.retry.hint_for,
     repo: str | None = None,
     pr: str | None = None,
+    branch: str | None = None,
     config: WorkbenchConfig | None = None,
     effort: Effort | None = None,
     model: str | None = None,
@@ -295,6 +296,7 @@ def run_fix(
             task=task or str(phase),
             repo=repo,
             pr=pr,
+            branch=branch,
             phase=str(phase),
         ))
         return exit_code

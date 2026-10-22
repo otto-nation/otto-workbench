@@ -68,7 +68,9 @@ import git.land
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
+from review.convergence import FixCoverage, blob_of, fix_candidates, fix_coverage, mark_skips
 from review.document import ReviewDocument
+import review.fix_logs
 from review.grammar import UNVERIFIED_TAIL_RE
 from review.record import (
     Disposition, RecordFinding, ReviewRecord, defuse_first_line,
@@ -76,9 +78,9 @@ from review.record import (
 from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
 )
-from review.store import update_review
+from review.store import read_review, update_review
 from review.retry import _has_output
-from review.types import Finding, ReviewJob, severity_by_key
+from review.types import Finding, FixInterruption, ReviewJob, severity_by_key
 from core.trail import Trail
 
 # The two outcomes that leave a finding open. A deferral is a finding the agent
@@ -831,6 +833,7 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             # claim a SHA and still stand.
             outcomes = [o for o in outcomes if not o.outcome.counts_as_fixed]
         self._persist_static_declines(outcomes)
+        self._persist_sticky_skips(outcomes)
         # A stale directory has no review.json, so update_review writes nothing
         # while the commit still landed. Say so — a silent drop of dispositions
         # is how the next round retries work already done.
@@ -874,6 +877,30 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             meta, static_declined={**meta.static_declined, **settled},
         ))
 
+    def _persist_sticky_skips(self, outcomes: list[ItemOutcome]) -> None:
+        """Keep this pass's "needs a person" answers, by anchor, for later rounds.
+
+        Accumulated rather than replaced, as static declines are: a round that
+        skips nothing does not retract an earlier round's call. `changed` is
+        the commit scope `landing` stored; a skip in a file it holds is left
+        unmarked (`mark_skips`). Marks follow `apply_outcomes`: a NEEDS_HUMAN
+        that left the finding OPEN is not a skip.
+        """
+        stored = read_review(Path(self.job.review_file))
+        findings = self.findings
+        if stored is not None:
+            findings = {
+                f.id: f.view()
+                for f in apply_outcomes(stored.record, outcomes).visible
+            }
+        marks = mark_skips(findings, outcomes, self.workdir, self.changed or set())
+        if not marks:
+            return
+        review_dir = Path(self.job.artifact_dir)
+        meta = read_review_meta(review_dir)
+        write_review_meta(review_dir, replace(
+            meta, sticky_skips={**meta.sticky_skips, **marks}))
+
     def _descriptions(self) -> dict[str, str]:
         """The one line each item is reported under, by id.
 
@@ -888,6 +915,17 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             (v.id, v.describe()) for v in self.violations.values()
         )
         return described
+
+    def interrupted(self, leftovers: frozenset[str], head_before: str) -> None:
+        """Record what this stopped pass left, so the next run can set it aside and resume."""
+        review_dir = Path(self.job.artifact_dir)
+        stopped = FixInterruption(
+            head_before, {p: blob_of(self.workdir, p) for p in sorted(leftovers)})
+        write_review_meta(review_dir, replace(read_review_meta(review_dir),
+                                              fix_interrupted=stopped))
+        core.log.warn(
+            f"Fix pass interrupted — {len(leftovers)} edited file(s) left uncommitted. "
+            "Re-running the self-review with --fix on this HEAD resumes the pass.")
 
 
 def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
@@ -909,10 +947,10 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
         core.log.warn("No review file to fix — skipping fix pass")
         return 0
 
-    # A declined finding is not work: it was considered and rejected, so it is
-    # out of the work set and out of the turn budget it would otherwise buy.
-    findings = [f for f in doc.open_findings if not f.declined]
     review_dir = Path(job.artifact_dir)
+    findings = fix_candidates(
+        doc.open_findings, read_review_meta(review_dir).held_nits, quiet=False,
+    )
     violations = _static_items(
         job.static_results, read_review_meta(review_dir).static_declined,
     )
@@ -921,11 +959,18 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> int:
         _report_unpushed(job)
         return 0
 
-    run = fix.engine.run(
-        ReviewFixAdapter(job, findings, violations),
-        trail=trail, verify=fix.verify.run,
-    )
-    _record_commit(job, run)
+    review.fix_logs.clear(review_dir)
+    adapter = ReviewFixAdapter(job, findings, violations)
+    # In a `finally` so an interrupted pass keeps its logs too: they are the
+    # record of what it was doing when it stopped.
+    try:
+        run = fix.engine.run(adapter, trail=trail, verify=fix.verify.run)
+    finally:
+        try:
+            review.fix_logs.keep(review_dir, job.started_at)
+        except Exception as exc:  # noqa: BLE001 - keep must not replace the pass
+            core.log.warn(f"could not keep the fix-pass logs: {exc}")
+    _record_commit(job, run, adapter)
     if (run.landed is not None
             and run.landed.status is git.land.CommitStatus.COMMIT_FAILED):
         return 1
@@ -1039,7 +1084,9 @@ def _report_unpushed(job: ReviewJob) -> None:
         )
 
 
-def _record_commit(job: ReviewJob, run: fix.engine.FixRun) -> None:
+def _record_commit(
+    job: ReviewJob, run: fix.engine.FixRun, adapter: ReviewFixAdapter | None = None,
+) -> None:
     """Record the fix pass's commit in the review's sidecar, and say what is owed.
 
     The push is gated and the commit is not, so the ordinary end of
@@ -1061,6 +1108,11 @@ def _record_commit(job: ReviewJob, run: fix.engine.FixRun) -> None:
     reports that as `NO_CHANGES` or `COMMIT_FAILED`, never as `None`, and both
     carry an empty `sha` — the tell that nothing here should overwrite an
     earlier round's real commit.
+
+    It also records whether the commit counts as reviewed (`covered_sha`), from
+    *adapter*'s commit scope and items and the commit's own parent — see
+    `review.convergence.fix_coverage`. Without an adapter the scope is unknown,
+    so the commit is recorded and never covered.
     """
     if run.landed is None or not run.landed.sha:
         return
@@ -1073,10 +1125,21 @@ def _record_commit(job: ReviewJob, run: fix.engine.FixRun) -> None:
         core.log.warn(f"Fix pass reported an unrecordable commit ({status!r}) — not stamped")
         return
     review_dir = Path(job.artifact_dir)
-    write_review_meta(review_dir, replace(
-        read_review_meta(review_dir),
-        fix_commit_sha=sha,
-        fix_commit_status=str(status),
-    ))
+    # No adapter, no commit scope to judge the commit by: recorded, never covered.
+    coverage = (
+        fix_coverage(run, adapter.changed, {i.id: i.file for i in adapter.items()},
+                     read_review_meta(review_dir).reviewed_through, job.wt_path)
+        if adapter is not None else FixCoverage(why="no commit scope was handed to the recorder")
+    )
+    changes = dict(fix_commit_sha=sha, fix_commit_status=str(status), covered_sha=coverage.sha)
+    # Through `update_review` so review.md's header states the coverage too; a
+    # stale directory has no record to re-render, and keeps the sidecar line.
+    if update_review(Path(job.review_file), **changes) is None:
+        write_review_meta(review_dir, replace(read_review_meta(review_dir), **changes))
+    if coverage.covered:
+        core.log.info(f"Fix commit {git.client.abbrev(sha)} counts as reviewed — "
+                      "no re-review is needed for it")
+    else:
+        core.log.dim(f"Fix commit {git.client.abbrev(sha)} needs a re-review: {coverage.why}")
     if run.landed.resume:
         core.log.info(f"Fix commit held locally — {run.landed.resume}")

@@ -14,9 +14,10 @@ routing — rather than commands in their own right, which is why the registry
 points `review` and `comments` at the delegates themselves.
 
 `pr fix` decides whether to run each pass by reading the same cached state
-`pr status` prints (`_worth_running`). A cached "nothing to do" is honoured only
-when the domain can say it was measured against the current HEAD —
-`ReviewSummary.head_sha` for the review, the latest stored run's `headSha` for
+`pr status` prints (`_worth_running`). The review pass is skipped when only
+declined, skipped or held findings remain. A cached "nothing to do" is honoured
+only when the domain can say it was measured against the current HEAD —
+`ReviewSummary.reviewed_through` for the review, the latest stored run's `headSha` for
 CI. A verdict about another commit, or one that names no commit, re-runs the
 pass and says why. Skipping a necessary pass is silent and permanent, so the
 gate errs toward running whenever it cannot place the verdict. Each pass is
@@ -160,6 +161,19 @@ def _worktree_head(wt: Path, fallback: str) -> str:
         return fallback
 
 
+def _review_work(review: pr.domains.ReviewSummary) -> int:
+    """How many findings `pr fix` would still hand a fix pass.
+
+    Counts review findings, not the static-analysis violations `run_fix_pass`
+    also acts on. `ReviewSummary.workable` when the cache recorded it; the old
+    `finding_counts` sum when the field is absent, so a state file written
+    before the field still re-runs rather than looking empty.
+    """
+    if review.workable is None:
+        return sum(review.finding_counts.values())
+    return review.workable
+
+
 def _worth_running(domain: pr.domains.Domain, head_sha: str, *,
                    has_work: bool, name: str) -> bool:
     """Whether to run a pass, given what the cache last said about `domain`.
@@ -221,7 +235,7 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     # to look at, which is the silent miss this gate exists to prevent.
     review_sha = _worktree_head(wt, ctx.head_sha)
 
-    review_findings = sum(state.review.finding_counts.values())
+    review_findings = _review_work(state.review)
     if _worth_running(state.review, review_sha,
                       has_work=review_findings > 0, name="Review"):
         core.log.info(f"Fixing {review_findings} review finding(s)..." if review_findings

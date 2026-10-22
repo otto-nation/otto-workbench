@@ -202,6 +202,17 @@ def commit_allowed(
     return sources | _colocated_tests(sources)
 
 
+def anchor_or_test(path: str, anchors: set[str] | frozenset[str]) -> bool:
+    """Whether *path* is one of *anchors*, or a test or support module for one.
+
+    The narrower question `commit_allowed` and `drop_outside` answer together
+    for a whole branch, asked of the files a pass fixed: a colocated test, or a
+    test under a `tests/`-style root named for the anchor.
+    """
+    sources = {a for a in anchors if a}
+    return path in sources or path in _colocated_tests(sources) or _is_test_for(path, sources)
+
+
 def drop_outside(
     paths: set[str], allowed: set[str], wt_path: str | Path,
     sources: set[str] | frozenset[str] = frozenset(),

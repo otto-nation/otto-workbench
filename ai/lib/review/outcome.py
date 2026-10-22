@@ -19,17 +19,26 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
+import core.log
+import git.client
+from core.phases import Mode
 from pr.domains import ReviewStatus
+from review.convergence import (
+    apply_sticky_skips, change_set, held_nits, new_nit_ids, prior_ids,
+)
+from review.document import covers
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
 from review.record import ReviewRecord
 from review.state import PipelineState, apply_failures, pipeline_status
+from review.worktree_delta import uncommitted_files
 from review.store import StoredReview, read_review, write_review
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
     CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
-    NO_RUN_VERDICT, PARTIAL_VERDICT, build_mechanical_record, states_verdict,
+    NO_RUN_VERDICT, PARTIAL_VERDICT, SETTLED_SUMMARY, build_mechanical_record,
+    states_verdict,
 )
 from review.verify import post_process_record
 
@@ -75,13 +84,17 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
                  status: ReviewStatus | None = None) -> ReviewMeta:
     """This run's sidecar, header facts included — the one thing review.md's header renders from.
 
-    Built from the job, except `static_declined`: it accumulates across rounds
-    (see `ReviewMeta.static_declined`), so it is carried from the sidecar
-    already on disk. Rebuilding it from the job alone erased every earlier
-    decline before `_inject_static_analysis_section` could read it.
+    Built from the job, except `static_declined` and `sticky_skips`. Those
+    accumulate across rounds — they carry every earlier decline and skip
+    mark — so they are read from the sidecar already on disk. Rebuilding
+    them from the job alone erased every earlier decline before
+    `_inject_static_analysis_section` could read it. `covered_sha` is not
+    carried: a new review does not inherit a prior pass's coverage.
     """
-    carried = read_review_meta(Path(job.artifact_dir)).static_declined
-    meta = replace(_job_meta(job), static_declined=dict(carried))
+    carried = read_review_meta(Path(job.artifact_dir))
+    meta = replace(_job_meta(job), static_declined=dict(carried.static_declined),
+                   sticky_skips=dict(carried.sticky_skips),
+                   covered_sha="")
     if meta.review_type != ReviewType.INCREMENTAL:
         return replace(meta, date=date.today().isoformat(), status=status)
     return replace(
@@ -94,9 +107,51 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
 def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
              total_groups: int = 0, status: ReviewStatus | None = None) -> None:
     """Write `record` and this run's sidecar, and render review.md from both."""
-    write_review(Path(job.review_file), record, _review_meta(
-        job, skipped_groups=skipped_groups, total_groups=total_groups, status=status,
-    ))
+    meta = _review_meta(job, skipped_groups=skipped_groups, total_groups=total_groups,
+                        status=status)
+    sticky = apply_sticky_skips(record, meta.sticky_skips, job.wt_path)
+    write_review(Path(job.review_file), sticky.record, replace(
+        meta, sticky_skips=sticky.marks,
+        held_nits=held_nits(job, incremental=_is_incremental(job)),
+        head_moved_to=_head_moved_to(job),
+        dirty_files=_dirty_files(job)))
+
+
+def _pinned_here(job: ReviewJob) -> str:
+    """The pinned head, when this is a self-review whose worktree holds it, else "".
+
+    Self mode only: there the pinned head was read from this same worktree, so
+    the worktree can be asked what changed since. In PR mode the pin is
+    GitHub's head and the local checkout is not the review's subject. A pinned
+    SHA the worktree does not hold says nothing either way.
+    """
+    pinned = job.pr.head_sha
+    if job.mode != Mode.SELF or not pinned or not Path(job.wt_path).is_dir():
+        return ""
+    held = git.client.out("cat-file", "-t", pinned, cwd=job.wt_path) == "commit"
+    return pinned if held else ""
+
+
+def _head_moved_to(job: ReviewJob) -> str:
+    """The live HEAD when a commit landed after this self-review pinned its head, else ""."""
+    pinned = _pinned_here(job)
+    live = git.client.head_sha(cwd=job.wt_path) if pinned else ""
+    if not live or covers(pinned, live):
+        return ""
+    core.log.warn(
+        f"HEAD moved from {git.client.abbrev(pinned)} to {git.client.abbrev(live)} "
+        f"during the run; this review covers {git.client.abbrev(pinned)} only")
+    return live
+
+
+def _dirty_files(job: ReviewJob) -> tuple[str, ...]:
+    """The files the tree differs from the pinned head in, for the next round to re-read.
+
+    What this self-review read uncommitted, and on a raced run also the raced
+    commit's files and any mid-run edit (see `ReviewMeta.dirty_files`).
+    """
+    pinned = _pinned_here(job)
+    return tuple(uncommitted_files(job.wt_path, pinned)) if pinned else ()
 
 
 def is_complete_review(review_file: str) -> bool:
@@ -164,8 +219,12 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
 
 
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    # Before post-processing clears the sids: a carried finding is known by
+    # its sid, and only this record still has them (D13).
+    job.new_nits = new_nit_ids(record, prior_ids(job)) if _is_incremental(job) else frozenset()
     # Reconciliation reads the ledger, which post-processing then clears.
-    record_prior_findings(job.review_file, job.prior, record, job.wt_path)
+    record_prior_findings(job.review_file, job.prior, record, job.wt_path,
+                          head_sha=job.pr.head_sha, changed=change_set(job))
     done = post_process_record(record, job.wt_path, [f["path"] for f in job.pr.files])
     job.verification = done.verification
     return done.record
@@ -246,3 +305,21 @@ def write_unchanged_review(job: ReviewJob) -> None:
         include_verdict=states_verdict(job.mode), file_count=job.pr.changed_files,
     )
     _publish(job, record)
+
+
+def _write_settled_review(job: ReviewJob, group_count: int, merged: ReviewRecord,
+                          skipped_groups: int = 0) -> None:
+    """The review an incremental round ships when it found nothing new to say.
+
+    Synthesis writes up findings; with no new ones and every prior finding
+    settled by the ledger, a carry, a prior decline or the tree, it would only
+    restate the merge at the cost of an agent call. The verdict is stated from
+    the carried findings, as `write_unchanged_review` does: a round that adds
+    nothing does not withdraw what the last one asked for.
+    """
+    record = build_mechanical_record(
+        _reconcile_and_verify(job, merged), group_count=group_count,
+        summary_note=SETTLED_SUMMARY, include_verdict=states_verdict(job.mode),
+        file_count=job.pr.changed_files,
+    )
+    _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count)

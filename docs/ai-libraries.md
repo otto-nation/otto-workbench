@@ -717,6 +717,19 @@ module decides how a review is *reached* — which worktree, which checks, which
 prompts — and the flows differ throughout. This one decides what a finished
 review *means*, and nothing here differs at all.
 
+### review/convergence.py
+
+What keeps successive self-review rounds converging instead of circling.
+
+A round reviews what changed, settles what it can without an agent, and leaves
+the next round less to do. Each rule here closes one way the loop used to fail
+to terminate: a decline re-stated every round, a design call handed back to
+the fix agent every round, new nits on files nobody touched, a killed pass
+whose leftovers looked like author edits, and a fix commit that always moved
+HEAD past the review that produced it.
+
+`change_set` is what "did not change" means for all of them.
+
 ### review/document.py
 
 The header vocabulary of a review, and the read view of a stored one.
@@ -727,6 +740,21 @@ and `ReviewHeader.from_meta` write the header from the sidecar; `covers` is
 whether a header SHA covers a commit; `review_title` is the `# ...` line
 derived from the same sidecar. `ReviewDocument` answers sections, findings,
 open counts and the verdict off the record, never by parsing `review.md`.
+
+### review/fix_logs.py
+
+Each fix pass's session logs, kept per pass in its review directory.
+
+A fix pass writes `fix.jsonl` and one `fix_verify-<n>.jsonl` per gate chunk.
+Those names are fixed, so the next pass overwrote them, and the success sweep
+removed them — which is how a gate's "pytest unavailable" could not be traced
+to the guard that refused it. A pass now clears the live names before it runs
+(the pass before kept its copy) and copies them aside when it ends, however it
+ends, into `fix-logs/<started_at>/`. Only the newest `PASSES_KEPT` are kept.
+
+The run's summary reads the copy back, which is how `Usage:` comes to count
+the fix pass and its gate: by the time the summary prints, the sweep has
+removed the live logs it used to read.
 
 ### review/gc.py
 
@@ -1029,9 +1057,11 @@ stripped of the sections that were bookkeeping rather than findings, annotated
 with what the author said in reply to each finding, and followed by the
 instruction that asks for a disposition for every finding it carries.
 
-Scoping the prior review to a group's files keeps findings that name a line of
-one of those files. A finding without a line is file-level and is not in any
-group's slice.
+Scoping the prior review to a group's files keeps every finding that names one
+of those files, at a line or not. A finding without a line is about its file as
+a whole, and the group holding that file is the one that can carry it forward
+or settle it. Left in no group's slice it was unaccounted on every incremental
+run, and synthesis was asked to settle it each time.
 
 `_LEDGER_FIELDS_INSTRUCTION` is the one place the ledger's shape is written
 down for an agent; both sections here interpolate it rather than restating it,
@@ -1256,6 +1286,16 @@ a `--repo-dir`.
 That is a different question from `git.topology`, which starts from a git cwd
 and asks which of *its* worktrees holds a branch. Topology has no GitHub-slug
 lookup, no `~/git` walk, and no `gh`. The slug-to-clone path is `find_repo_root`.
+
+### review/worktree_delta.py
+
+Worktree and range file lists a review's delta is built from.
+
+A self-review's incremental file list is the working tree against the prior
+head, plus files that round already read dirty; a PR-mode fallback's is
+``prior_sha..head`` — both from numstat, which no prompt budget clips.
+`worktree_diff` is the matching patch (and its counts-only form) so the
+files a review reports and the diff it sends come off one range.
 
 ## Findings
 
@@ -4135,10 +4175,11 @@ Lives below the review layer so agent.backend can depend on it without inverting
 the dependency.
 
 Every AI call made through the workbench appends one record to a monthly JSONL
-file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
-the task that made the call. Python entry points record automatically through
-`agent.backend`; the shell caller that cannot use it — `run-auto-task`, which
-needs slash commands — goes through `ai-usage-log`.
+file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, the
+task that made the call, the trail invocation of the command it ran under, and
+the repo, PR and branch where the caller knows them. Python entry points record
+automatically through `agent.backend`; the shell caller that cannot use it —
+`run-auto-task`, which needs slash commands — goes through `ai-usage-log`.
 
 A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
@@ -5703,6 +5744,29 @@ re-point a root before invoking a subprocess — and an import-time constant
 would capture whichever value happened to be live when the first importer
 loaded this module.
 
+### fix/baseline.py
+
+Telling a red verify run the pass caused from one it inherited.
+
+`fix.suite` runs the repo's checks over the tree a fix pass is about to commit,
+and a red result withdraws every fix the pass claimed. That is right when the
+pass broke something, and wrong when the tree was red before the pass began —
+a hand commit's failure then demotes an unrelated import hoist, and the commit
+body tells the reader the pass is to blame.
+
+So a red run is asked once more, of the tree the pass started from. The engine
+snapshots that tree before the agent runs (`snapshot`), and on red this module
+checks it out into a throwaway worktree and runs the same command with the same
+selection — `fix.suite.FIX_PATHS_ENV` names the pass's paths, so a selector
+that reads it picks the same tests over the older code. A failure both runs
+share is inherited. Only when every failure the pass run names is inherited
+does the verdict become `PREEXISTING`; a new failure beside an old one stays
+`RED`, with the old ones named in the note.
+
+Re-running the same selection, not just the failing tests, keeps the repo the
+owner of its runner: the engine cannot know how to run one test in an arbitrary
+repo, and `fix.suite` explains why it does not invent one.
+
 ### fix/suite.py
 
 Running the repo's own checks against what a fix pass just edited.
@@ -7085,9 +7149,10 @@ routing — rather than commands in their own right, which is why the registry
 points `review` and `comments` at the delegates themselves.
 
 `pr fix` decides whether to run each pass by reading the same cached state
-`pr status` prints (`_worth_running`). A cached "nothing to do" is honoured only
-when the domain can say it was measured against the current HEAD —
-`ReviewSummary.head_sha` for the review, the latest stored run's `headSha` for
+`pr status` prints (`_worth_running`). The review pass is skipped when only
+declined, skipped or held findings remain. A cached "nothing to do" is honoured
+only when the domain can say it was measured against the current HEAD —
+`ReviewSummary.reviewed_through` for the review, the latest stored run's `headSha` for
 CI. A verdict about another commit, or one that names no commit, re-runs the
 pass and says why. Skipping a necessary pass is silent and permanent, so the
 gate errs toward running whenever it cannot place the verdict. Each pass is

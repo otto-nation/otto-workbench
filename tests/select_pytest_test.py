@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "select-pytest"
 
@@ -376,3 +378,52 @@ def test_an_unresolvable_base_reports_nothing_so_everything_runs(tmp_path):
     repo, _ = _repo_at_base(tmp_path)
     (repo / "new_test.py").write_text("")
     assert sp._changed_files("refs/heads/nope", repo) == []
+
+
+def test_direct_mode_keeps_a_tests_own_imports():
+    assert "ai/lib/fix/engine.py" in sp.dependency_map(direct_only=True)["tests/fix_engine_test.py"]
+
+
+def test_direct_mode_does_not_close_over_imports_of_imports():
+    """`fix.engine` reaches `core.proc` through its own imports; the test names neither."""
+    transitive = sp.dependency_map()["tests/fix_engine_test.py"]
+    direct = sp.dependency_map(direct_only=True)["tests/fix_engine_test.py"]
+    assert "ai/lib/core/proc.py" in transitive
+    assert "ai/lib/core/proc.py" not in direct
+
+
+def test_direct_mode_follows_one_hop_through_a_support_module():
+    """`fix_engine_support` is part of the suite: `git.land` is imported only there."""
+    assert "ai/lib/git/land.py" in sp.dependency_map(direct_only=True)["tests/fix_engine_test.py"]
+
+
+def test_the_direct_flag_narrows_the_printed_selection(monkeypatch, capsys):
+    monkeypatch.setattr(sp, "_changed_files", lambda base: ["ai/lib/core/proc.py"])
+    assert sp.main(["--base", "x"]) == 0
+    wide = set(capsys.readouterr().out.split())
+    assert sp.main(["--base", "x", "--direct"]) == 0
+    narrow = set(capsys.readouterr().out.split())
+    assert narrow < wide
+    assert str(REPO_ROOT / "tests" / "fix_engine_test.py") in wide - narrow
+
+
+def test_a_paths_file_replaces_the_diff(tmp_path, monkeypatch, capsys):
+    listed = tmp_path / "paths"
+    listed.write_text("ai/lib/wiki/create.py\n\n")
+    monkeypatch.setattr(sp, "_changed_files",
+                        lambda base: pytest.fail("diffed despite a paths file"))
+    assert sp.main(["--paths-file", str(listed)]) == 0
+    assert str(REPO_ROOT / "tests" / "wiki_test.py") in capsys.readouterr().out.split()
+
+
+def test_an_unreadable_paths_file_is_an_error(tmp_path, capsys):
+    missing = tmp_path / "nope"
+    assert sp.main(["--paths-file", str(missing)]) == 2
+    assert capsys.readouterr().err == f"--paths-file: cannot read {missing}\n"
+
+
+def test_a_binary_paths_file_is_an_error(tmp_path, capsys):
+    binary = tmp_path / "paths"
+    binary.write_bytes(b"\xff\xfe\x00not-utf8")
+    assert sp.main(["--paths-file", str(binary)]) == 2
+    assert capsys.readouterr().err == f"--paths-file: cannot read {binary}\n"

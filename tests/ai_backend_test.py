@@ -237,6 +237,7 @@ class TestAgentInvocation:
         assert inv.task is None
         assert inv.repo is None
         assert inv.pr is None
+        assert inv.branch is None
         assert inv.env is None
         assert inv.rules_home == ""
 

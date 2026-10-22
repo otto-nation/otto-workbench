@@ -10,7 +10,7 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  unset TEST_JOBS CI WORKBENCH_TEST_SLOTS_GRANTED WORKBENCH_TEST_SLOTS WORKBENCH_FIX_BASE
+  unset TEST_JOBS CI WORKBENCH_TEST_SLOTS_GRANTED WORKBENCH_TEST_SLOTS WORKBENCH_FIX_BASE DIRECT WORKBENCH_FIX_PATHS_FILE WORKBENCH_FIX_BASELINE
   # shellcheck source=../bin/local/run-tests
   source "$REPO_ROOT/bin/local/run-tests"
 }
@@ -105,4 +105,59 @@ _stub_select_tests() {
   # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"no test file is affected by this diff"* ]]
   [[ "$output" != *RAN-BATS* ]]
+}
+
+@test "--direct reaches select-pytest only" {
+  _stub_selectors
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  CHANGED_BASE=""
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  DIRECT=true
+  select_changed all
+  [ "$BATS_FILES" = "select-tests --base origin/main" ]
+  [ "$PYTEST_FILES" = "select-pytest --base origin/main --direct" ]
+}
+
+@test "a fix pass's paths file replaces the base for both selectors" {
+  _stub_selectors
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  WORKBENCH_FIX_PATHS_FILE="$BATS_TEST_TMPDIR/paths"
+  select_changed all
+  [ "$BATS_FILES" = "select-tests --paths-file $BATS_TEST_TMPDIR/paths" ]
+  [ "$PYTEST_FILES" = "select-pytest --paths-file $BATS_TEST_TMPDIR/paths" ]
+}
+
+@test "--direct without --changed is refused" {
+  run main --direct
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--direct only applies with --changed"* ]]
+}
+
+@test "a baseline re-run exits rather than widening a failed selection" {
+  _stub_select_tests 'exit 1'
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  WORKBENCH_FIX_BASELINE=1
+  run select_changed all
+  [ "$status" -eq 75 ]
+  [[ "$output" == *"not widening to the whole suite"* ]]
+}
+
+@test "a baseline re-run exits when a selector is missing" {
+  mkdir -p "$BATS_TEST_TMPDIR/empty/bin/local"
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  WORKBENCH_DIR="$BATS_TEST_TMPDIR/empty"
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  WORKBENCH_FIX_BASELINE=1
+  run select_changed pytest
+  [ "$status" -eq 75 ]
+}
+
+@test "--shard, --files and --pytest-files with no value are usage errors" {
+  run main --bats --shard
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--shard requires an argument"* ]]
+  run main --bats --files
+  [ "$status" -eq 2 ]
+  run main --pytest --pytest-files
+  [ "$status" -eq 2 ]
 }

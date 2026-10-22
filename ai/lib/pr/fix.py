@@ -52,10 +52,11 @@ from git.land import CommitStatus
 CHECKS_TRAILER = "Fix-Checks"
 
 # The trailer values that leave a pass's claims unverified: a red run, a
-# timeout, a command that could not start, or a green run over a tree holding
-# files the commit leaves out. `tests/fix_checks_trailer_test.py`
+# timeout, a command that could not start, a green run over a tree holding
+# files the commit leaves out, or a red run whose every failure was red before
+# the pass. `tests/fix_checks_trailer_test.py`
 # fails if this drifts from `fix.suite.SuiteStatus`.
-UNVERIFIED_CHECKS = frozenset({"red", "timed_out", "error", "partial"})
+UNVERIFIED_CHECKS = frozenset({"red", "timed_out", "error", "partial", "preexisting"})
 
 # The hedge an unverified fix carries, wherever one is reported. A fix pass
 # edits code and then says so; whether the edit works is a separate claim, and

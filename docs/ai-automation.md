@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 624 -->
+<!-- doc-budget: 650 -->
 
 # AI Automation
 
@@ -412,6 +412,38 @@ next write overwrites the edit; nothing reads it back.
 - **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
 - **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
 - `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
+
+### How self-review rounds converge
+
+A `pr review --self --fix` round ends with a fix commit that moves HEAD. What
+keeps the next round from starting over:
+
+- **A qualifying fix commit counts as reviewed.** The header carries
+  `covered_sha` when that commit landed on the reviewed commit, checks were
+  green, every fix was verified, it touches only the fixed findings' files
+  and their tests, and no file of a finding the pass left unfixed. That SHA
+  counts as reviewed; a later review still measures its delta from `head_sha`.
+- **Re-reviews do only new work.** Same-HEAD dirty files (including ones the
+  last round read that have since been reverted) are incremental; `--force`
+  keeps the run full. New nits outside the delta are dropped; new nits inside
+  it stay as `held_nits` until a full review. A prior decline on an unchanged
+  file is restated without an agent. A sticky skip keeps a finding away from
+  the fix agent while its anchor is unchanged — it does not settle it.
+- **Verify names inherited failures.** A red check re-run at the pass's base
+  that was already red becomes `Fix-Checks: preexisting` only when every
+  failure is inherited; one new failure keeps it red. The fixes stay and
+  publishing is still held.
+- **`pr fix` skips the review** when only declined, skipped or held findings
+  remain.
+- **An interrupted pass resumes.** The next run on the same HEAD stashes the
+  leftovers and, with `--fix`, resumes the fix step; `--force` or a failed
+  set-aside does not resume.
+- **A raced commit is recorded** as `head_moved_to`; the review covers the
+  pinned head only.
+
+Module detail: [`review/convergence.py`](ai-libraries.md#reviewconvergencepy),
+[`fix/baseline.py`](ai-libraries.md#fixbaselinepy),
+[`review/fix_logs.py`](ai-libraries.md#reviewfix_logspy).
 
 ### How a review's verdict is decided
 

@@ -45,6 +45,7 @@ import git.client
 import pr.context
 import pr.state
 import pr.target
+import review.convergence
 import review.invoke
 import review.issue
 import review.preflight
@@ -280,6 +281,33 @@ def run_pr_review(
         review.worktree.cleanup_worktree(wt_result, repo_root)
 
 
+def _interrupted_pass(review_dir: Path, wt_path: str, flags: ReviewFlags,
+                      trail: Trail | None) -> bool:
+    """Set aside a stopped fix pass's leftovers on this HEAD; True when this run resumes it.
+
+    Whatever this run is, the leftovers would read as the author's edits and
+    the next pass could never commit them, so they are stashed first. With
+    `--fix` the run then picks up at the fix step rather than reviewing an
+    unchanged commit again. Never under `--recover`, which finishes a review
+    rather than starting a pass. A failed set-aside while leftovers remain
+    falls through to a normal run. `--force` stashes but does not resume.
+    """
+    stopped = None if flags.recover else review.convergence.interrupted_fix(review_dir, wt_path)
+    if stopped is None:
+        return False
+    set_aside = review.convergence.set_aside_leftovers(review_dir, wt_path, stopped, trail)
+    if review.convergence.interrupted_fix(review_dir, wt_path) is not None:
+        core.log.warn(
+            "Could not set the interrupted pass's leftovers aside — "
+            "not resuming; a normal review will run instead")
+        return False
+    # `--force` still stashes (the leftovers would otherwise look like author
+    # edits) but runs a forced review rather than resuming the stopped pass.
+    if flags.force:
+        return False
+    return bool(flags.fix and (set_aside or not stopped.leftovers))
+
+
 def run_self_review(
     ctx: pr.context.ResolvedContext,
     flags: ReviewFlags,
@@ -323,12 +351,16 @@ def run_self_review(
         trail=trail,
     )
 
+    resume_fix = _interrupted_pass(review_dir, wt_path, flags, trail)
+
     if flags.recover:
         recover_sha = review.recover.resolve_recover_sha(review_dir, recover_head_sha)
         has_pipeline_state = True
     else:
         recover_sha = ""
-        has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
+        # A resumed pass finishes the review already on disk, so it is not
+        # archived as a prior (`resolve_prior_review`'s `resume`).
+        has_pipeline_state = resume_fix or (review_dir / FILENAME_PIPELINE_STATE).is_file()
     prior_review_path = resolve_prior_review(review_file, session_log, has_pipeline_state)
 
     issue_link = flags.issue_link
@@ -367,6 +399,8 @@ def run_self_review(
         disprove=flags.disprove, generated=flags.generated,
         recover_sha=recover_sha, fix_pass=flags.fix,
         may_publish=flags.may_publish,
+        full_review=flags.force,
+        resume_fix=resume_fix,
     )
 
     # The pin is released as soon as the pipeline is done with it, and before

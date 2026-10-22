@@ -487,6 +487,8 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
 
     That commit is the local worktree's HEAD when there is one — it carries any
     unpushed fix commits — and GitHub's head otherwise, where nothing local exists.
+    A fix commit the review counts as reviewed (`ReviewMeta.covered_sha`) covers
+    the subject too.
     """
     stored = review.store.read_review(review_file)
     if stored is None:
@@ -495,7 +497,7 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
             "self-review predates review.json" if review_file.is_file() else "no self-review yet",
         )
     subject = local_head or head_sha
-    reviewed = stored.meta.head_sha
+    reviewed = stored.meta.reviewed_through
     if review.document.covers(reviewed, subject):
         return StepNeed(False, "self-review is current")
     of = f"self-review is of {git.client.abbrev(reviewed) or 'an unknown head'}"

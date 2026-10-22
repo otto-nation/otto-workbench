@@ -169,7 +169,9 @@ PY
 
 @test "--resume flag removed from CLI (auto-resume is default)" {
   run "$ORCHESTRATE" --help
-  [[ "$output" != *"--resume"* ]]
+  [ "$status" -eq 0 ]
+  # The flag as a whole word: --resume-fix (internal) is a different flag.
+  [[ ! "$output" =~ (^|[^-[:alnum:]])--resume([^-[:alnum:]]|$) ]]
 }
 
 @test "_consolidate_logs: merges log files without deleting intermediates" {

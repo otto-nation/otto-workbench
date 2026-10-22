@@ -244,7 +244,8 @@ class TestPriorTextOmitsBookkeeping:
 def test_scoping_reads_the_finding_s_own_path_and_line():
     f = RecordFinding(id="M1", severity="M", path="src/a.go", line=10, body="x")
     assert _in_group(f, {"src/a.go"})
-    assert not _in_group(replace(f, line=None), {"src/a.go"})
+    # A line-less finding still names its file, so the group holding it owns it.
+    assert _in_group(replace(f, line=None), {"src/a.go"})
     assert not _in_group(f, {"src/b.go"})
 
 

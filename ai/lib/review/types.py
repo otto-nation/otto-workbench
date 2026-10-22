@@ -202,6 +202,39 @@ class GroupSkip(StrEnum):
     CARRIED = "carried"
 
 
+# ── Sticky skips ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class StickySkip:
+    """A finding the fix pass handed to a person, held until its file changes.
+
+    Keyed in `ReviewMeta.sticky_skips` by `path:line`. `blob` is the anchor
+    file's object id when the skip was made: while the file still hashes to it,
+    its lines are the lines that were judged, so a later round's finding at the
+    same anchor and `severity` is the same call and goes back to the person
+    rather than to the agent.
+    """
+
+    blob: str = ""
+    severity: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class FixInterruption:
+    """A fix pass stopped before it landed, and the edits it left behind.
+
+    `leftovers` maps each path the agent had changed to its object id when the
+    pass stopped ("" for a deletion). The next run on the same HEAD compares the
+    file against it: still equal is the agent's edit, untouched, and is set
+    aside; anything else is someone's since, and is left where it is.
+    """
+
+    head_before: str = ""
+    leftovers: dict[str, str] = field(default_factory=dict)
+
+
 # ── Review metadata ──────────────────────────────────────────────────────────
 
 
@@ -226,6 +259,11 @@ class ReviewMeta:
     host: str = ""
     pr_number: int | None = None
     head_sha: str = ""
+    # HEAD when the review was published, recorded only when a commit landed
+    # after the run pinned `head_sha` and before it wrote the review. The review
+    # covers `head_sha` and nothing later; this says so rather than re-pinning
+    # to a commit the review never read. Empty is the ordinary case.
+    head_moved_to: str = ""
     head_ref: str = ""
     base_ref: str = ""
     title: str = ""
@@ -242,6 +280,21 @@ class ReviewMeta:
     # rather than a list so the frozen dataclass is frozen all the way down.
     prior_sha: str = ""
     delta_files: tuple[str, ...] = ()
+    # The files the working tree differed from `head_sha` in when this
+    # self-review was published: what it read uncommitted, plus anything that
+    # moved while it ran — an edit made mid-run and, when a commit raced in
+    # (`head_moved_to` set), that commit's files, which the review never read.
+    # The next self-mode incremental round adds them to its change set, so a
+    # file whose edit was reverted in between — back to matching HEAD,
+    # invisible to any diff — is read again; over-listing costs a re-read,
+    # never a skipped file. Empty on a PR review and on a clean tree.
+    dirty_files: tuple[str, ...] = ()
+    # The stable ids of the nits and idioms withheld from fix work (D13): on an
+    # incremental round, the prior round's held nits plus this round's new
+    # ones; empty after a full round, which hands every severity to the fix
+    # pass. Read by `run_fix_pass`, so a resumed or later pass on this review
+    # withholds what the publishing round withheld.
+    held_nits: tuple[str, ...] = ()
     # Two timestamps because a review run has two moments worth recording and
     # they are not the same one. `started_at` is taken when the run begins;
     # `reviewed_at` is stamped only where a run reached its end with a review in
@@ -259,6 +312,20 @@ class ReviewMeta:
     # schema depend on a module it otherwise knows nothing about.
     fix_commit_sha: str = ""
     fix_commit_status: str = ""
+    # The fix commit this review counts as reviewed, set only when the fix pass
+    # that made it qualified: its one parent is a commit this review covers, the
+    # repo's checks were green, the gate verified every fix, and it committed
+    # nothing but fixed files and their tests (`review.convergence.fix_coverage`).
+    # Empty otherwise, and for a sidecar written before the field — both read as
+    # "nothing beyond head_sha". Never the base of a later delta: that is always
+    # `head_sha`.
+    covered_sha: str = ""
+    # A fix pass that was stopped before it landed. Its own field rather than a
+    # `fix_commit_status` value: that one is `CommitStatus`'s vocabulary, and an
+    # interruption is not something `land` reports. Cleared once the leftovers
+    # are set aside (`review.convergence.set_aside_leftovers`), and by any
+    # publish, which builds a fresh sidecar.
+    fix_interrupted: FixInterruption | None = None
     # Static violations a pass adjudicated rather than fixed, keyed by
     # `StaticViolation.site` and valued with the reason. The `## Static
     # Analysis` section is regenerated from a fresh scan every review, so an
@@ -271,6 +338,11 @@ class ReviewMeta:
     # Keyed on the site hash rather than the `SA<n>` id, which is a position in
     # one rendering and names a different violation in the next.
     static_declined: dict[str, str] = field(default_factory=dict)
+    # Findings the fix pass handed to a person, by `path:line`. Accumulated like
+    # `static_declined` and for its reason — the document is rewritten every
+    # round — and pruned at publish once the anchor file no longer hashes to the
+    # recorded blob. See `review.convergence.apply_sticky_skips`.
+    sticky_skips: dict[str, StickySkip] = field(default_factory=dict)
     # What the rendered header states about the run beyond attribution. They
     # live here because the record holds what the review says and the sidecar
     # holds what the run was; `review.md`'s header is rendered from these.
@@ -299,6 +371,11 @@ class ReviewMeta:
         if not self.fix_commit_status:
             return ""
         return self.fix_commit_sha if commit_unpushed(self.fix_commit_status) else ""
+
+    @property
+    def reviewed_through(self) -> str:
+        """The latest commit this review answers "is a re-run needed" for."""
+        return self.covered_sha or self.head_sha
 
 
 def meta_enum(enum_cls, value):
@@ -368,6 +445,10 @@ class Finding:
     # review saying "not at all", and the fix pass must not revisit it.
     declined: bool = False
     decline_reason: str = ""
+    # Handed to a person by a fix pass (`Disposition.SKIPPED`). Not work: the
+    # next pass does not take it, and a later round re-raising it at the same
+    # anchor is marked skipped until the file changes.
+    skipped: bool = False
 
 
 # ── Prior-finding vocabulary ─────────────────────────────────────────────────
@@ -408,6 +489,9 @@ class PriorFinding:
     ref: FindingRef
     stable_id: str
     text: str = ""
+    # Whether the prior round declined it, read from the record's disposition
+    # rather than re-parsed from the rendered annotation.
+    declined: bool = False
 
 
 # ── What is under review ─────────────────────────────────────────────────────
@@ -511,6 +595,14 @@ class ReviewJob:
     # cannot do once the two sources read the same.
     skip_phases: frozenset[Phase] = frozenset()
     include_generated: bool = False
+    # Keep a same-HEAD self-review full even when the working tree gives it a
+    # delta — what `pr review --self --force` asks for.
+    full_review: bool = False
+    # The stable ids of this round's new nits, read by
+    # `review.outcome._reconcile_and_verify` while the record still carries the
+    # sids that tell a carry from a new finding; `_publish` adds them to
+    # `ReviewMeta.held_nits`. Empty on every path that adds no finding.
+    new_nits: frozenset[str] = frozenset()
     reply_threads: ReplyThreads | None = None
     verification: dict | None = None
     pr_state_data: "PRState | None" = None

@@ -1,22 +1,17 @@
 #!/usr/bin/env bats
-# Tests the naming rule for zsh functions the workbench defines: a function
-# still defined once the snippets have loaded must not begin with a single
-# underscore.
+# Tests that every zsh function this repo writes still works from a Claude Code
+# shell snapshot.
 #
 # Claude Code runs its Bash tool from a snapshot of the login shell's
-# functions, and the snapshot leaves out every single-underscore name — zsh's
-# completion-function convention. A wrapper the snapshot does capture fails
-# there with "command not found" when it calls one. A single-underscore name is
-# therefore only for a load-time helper that its own file removes with
-# `unfunction` once it has run.
+# functions that leaves out every single-underscore name (claude_snapshot and
+# CLAUDE_SNAPSHOT_DROPPED_RE in test_helper.bash). A function the snapshot
+# keeps that calls one it drops fails there with "command not found". A
+# single-underscore helper is fine as long as nothing kept calls it — a
+# load-time helper, or a hook only zsh itself invokes.
 #
-# A name the workbench does not own — a hook a third-party tool registers and
-# the file overrides — takes a marker on the line immediately above it, in the
-# grammar `ceiling:` uses:
-#
-#   # snapshot-exempt: mise activate registers this name as its precmd hook
-#
-# A marker with nothing after the colon exempts nothing.
+# Scope: the functions written in this repo's zsh files. Functions a snippet
+# creates by evaluating a third-party tool's output (`eval "$(mise activate
+# zsh)"`) are that tool's code and are not read here.
 
 bats_require_minimum_version 1.5.0
 
@@ -29,74 +24,133 @@ teardown() {
   common_teardown
 }
 
-# _single_underscore_functions FILE — the single-underscore function names FILE
-# defines, in either `name()` or `function name` form, leaving out any carrying
-# a `# snapshot-exempt: <reason>` marker on the line above.
-_single_underscore_functions() {
+# _zsh_sources — every zsh file the workbench ships, sorted.
+_zsh_sources() {
+  find "$REPO_ROOT" \( -name .git -o -name node_modules -o -name tests \) -prune \
+    -o -type f \( -name '*.zsh' -o -name '.zshrc' \) -print | sort
+}
+
+# _function_calls FILE — one tab-separated line per function FILE defines,
+# `def FILE NAME`, and per word in each function's body, `call FILE NAME WORD`.
+# Bodies are tracked by brace depth, so one-line and multi-line definitions in
+# either `name()` or `function name` form are read alike. Comments are dropped
+# first, so a helper named in a comment is not a call.
+_function_calls() {
   awk '
-    /^[[:space:]]*# snapshot-exempt:[[:space:]]*[^[:space:]]/ { exempt = 1; next }
-    match($0, /^[[:space:]]*(function[[:space:]]+_[A-Za-z][A-Za-z0-9_]*|_[A-Za-z][A-Za-z0-9_]*[[:space:]]*\(\))/) {
-      name = substr($0, RSTART, RLENGTH)
-      sub(/^[[:space:]]*(function[[:space:]]+)?/, "", name)
-      sub(/[[:space:]]*\(\)$/, "", name)
-      if (!exempt) print name
+    function count(s, ch,   n, i) {
+      n = 0
+      for (i = 1; i <= length(s); i++) if (substr(s, i, 1) == ch) n++
+      return n
     }
-    { exempt = 0 }
+    {
+      line = $0
+      sub(/(^|[[:space:]])#.*/, "", line)
+      if (depth == 0 && match(line, /^[[:space:]]*(function[[:space:]]+[^[:space:](){}]+([[:space:]]*\(\))?|[^[:space:](){}#=]+[[:space:]]*\(\))[[:space:]]*\{/)) {
+        name = substr(line, RSTART, RLENGTH)
+        sub(/^[[:space:]]*(function[[:space:]]+)?/, "", name)
+        sub(/[[:space:]]*(\(\))?[[:space:]]*\{$/, "", name)
+        print "def\t" FILENAME "\t" name
+        current = name
+        line = substr(line, RSTART + RLENGTH)
+        depth = 1
+      }
+      if (depth > 0) {
+        n = split(line, words, /[^A-Za-z0-9_:.-]+/)
+        for (i = 1; i <= n; i++) if (words[i] != "") print "call\t" FILENAME "\t" current "\t" words[i]
+        depth += count(line, "{") - count(line, "}")
+        if (depth <= 0) depth = 0
+      }
+    }
   ' "$1"
 }
 
-# _unfunctions FILE NAME — whether FILE removes NAME with `unfunction`.
-_unfunctions() {
-  grep -Eq "^[[:space:]]*unfunction([[:space:]]+[^[:space:]#]+)*[[:space:]]+$2([[:space:]]|\$)" "$1"
+# _snapshot_breaks SCAN — "FILE: KEPT calls DROPPED" for every function the
+# snapshot keeps whose body calls a function this scan saw defined under a
+# name the snapshot drops.
+_snapshot_breaks() {
+  local scan="$1" kind file name word
+  local -A dropped=()
+  while IFS=$'\t' read -r kind file name word; do
+    if [[ "$kind" == def && "$name" =~ $CLAUDE_SNAPSHOT_DROPPED_RE ]]; then
+      dropped[$name]=1
+    fi
+  done <<< "$scan"
+
+  while IFS=$'\t' read -r kind file name word; do
+    [[ "$kind" == call ]] || continue
+    [[ "$name" =~ $CLAUDE_SNAPSHOT_DROPPED_RE ]] && continue
+    if [[ -n "${dropped[$word]:-}" ]]; then
+      printf '%s: %s calls %s\n' "${file#"$REPO_ROOT"/}" "$name" "$word"
+    fi
+  done <<< "$scan"
 }
 
-@test "every single-underscore zsh function is removed by the file that defines it" {
+@test "no function a Claude Code shell snapshot keeps calls one it drops" {
   local listing
-  listing="$(find "$REPO_ROOT/zsh" -type f \( -name '*.zsh' -o -name '.zshrc' \) | sort)"
+  listing="$(_zsh_sources)"
   [ -n "$listing" ]
 
-  local -a offenders=()
-  local file name
+  # Captured per file with its status checked, so a parser failure is a red
+  # test rather than an empty scan that finds nothing to object to.
+  local scan="" out file
   while IFS= read -r file; do
-    while IFS= read -r name; do
-      [[ -n "$name" ]] || continue
-      _unfunctions "$file" "$name" || offenders+=("${file#"$REPO_ROOT"/}: $name")
-    done <<< "$(_single_underscore_functions "$file")"
+    out="$(_function_calls "$file")" || { echo "scan failed: $file"; return 1; }
+    scan+="$out"$'\n'
   done <<< "$listing"
+  [[ "$scan" == *$'def\t'* ]]
 
-  if (( ${#offenders[@]} > 0 )); then
-    printf 'outlives loading under a single-underscore name: %s\n' "${offenders[@]}"
-    return 1
-  fi
+  run _snapshot_breaks "$scan"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
-@test "the scan sees both definition forms, both unfunction placements, and the marker" {
-  # The rule above is only as good as its matchers. Feed them a file holding
-  # each shape so a pattern that stops matching one cannot pass silently.
+@test "the scan reads every definition form and flags only a kept caller" {
+  # The rule above is only as good as its parser. Feed it each shape so a
+  # pattern that stops matching one cannot pass silently.
   cat > "$TMPDIR/sample.zsh" <<'ZSH'
-_paren_form() { :; }
-function _keyword_form { :; }
-__double_is_kept() { :; }
-_removed_first() { :; }
-_removed_last() { :; }
-# snapshot-exempt: a third-party tool registers this name
-function _exempt_hook() { :; }
-# snapshot-exempt:
-_bare_marker_exempts_nothing() { :; }
-# snapshot-exempt: only the line directly above counts
-
-_marker_too_far() { :; }
-unfunction _removed_first other
-unfunction other _removed_last 2>/dev/null
+_helper() { :; }
+_wb-dash:helper() { :; }
+kept_one_line() { _helper "$@"; }
+function kept_keyword {
+  if true; then
+    _wb-dash:helper
+  fi
+}
+kept_comment_only() {
+  # _helper is only mentioned here
+  :
+}
+_hook() { _helper; }
+_helper
 ZSH
 
-  run _single_underscore_functions "$TMPDIR/sample.zsh"
+  run _function_calls "$TMPDIR/sample.zsh"
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf '%s\n' _paren_form _keyword_form _removed_first _removed_last \
-    _bare_marker_exempts_nothing _marker_too_far)" ]
+  local defs
+  defs="$(printf '%s\n' "$output" | awk -F'\t' '$1 == "def" { print $3 }')"
+  [ "$defs" = "$(printf '%s\n' _helper _wb-dash:helper kept_one_line kept_keyword kept_comment_only _hook)" ]
 
-  _unfunctions "$TMPDIR/sample.zsh" _removed_first
-  _unfunctions "$TMPDIR/sample.zsh" _removed_last
-  run ! _unfunctions "$TMPDIR/sample.zsh" _paren_form
-  run ! _unfunctions "$TMPDIR/sample.zsh" _removed
+  run _snapshot_breaks "$output"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '%s\n' \
+    "$TMPDIR/sample.zsh: kept_one_line calls _helper" \
+    "$TMPDIR/sample.zsh: kept_keyword calls _wb-dash:helper")" ]
+}
+
+@test "the nvm shims still load node from a shell snapshot" {
+  # The shims are kept by the snapshot; their loader must be too, or the first
+  # `node` in the Bash tool fails with "command not found".
+  export HOME="$TMPDIR/home"
+  mkdir -p "$HOME/.nvm"
+  cat > "$HOME/.nvm/nvm.sh" <<'SH'
+node() { print -r -- "NODE_RAN $*"; }
+SH
+
+  run claude_snapshot "$REPO_ROOT/zsh/config.d/tools/nvm.zsh"
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" > "$TMPDIR/snapshot.zsh"
+
+  run zsh -fc "export NVM_DIR='$HOME/.nvm'; source '$TMPDIR/snapshot.zsh'; node hello"
+  [ "$status" -eq 0 ]
+  [ "$output" = "NODE_RAN hello" ]
 }

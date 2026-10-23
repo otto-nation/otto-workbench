@@ -231,22 +231,15 @@ _launch() {
 }
 
 @test "each wrapper still launches from a shell snapshot that drops _-prefixed functions" {
-  # Claude Code runs its Bash tool from a snapshot of the login shell's
-  # functions, and the snapshot leaves out every name with a single leading
-  # underscore — zsh's completion-function convention. A wrapper whose helper
-  # is named that way is captured without it and fails with "command not
-  # found". This rebuilds the snapshot the same way and launches from it.
+  # The snapshot leaves out every single-underscore name (claude_snapshot in
+  # test_helper.bash), so a wrapper whose helper is named that way is captured
+  # without it and fails with "command not found".
   _make_seed
   _fake_all
 
   local cmd
   for cmd in "${WRAPPERS[@]}"; do
-    run zsh -fc "
-      source '$SNIPPET_DIR/$cmd.zsh'
-      for f in \${(k)functions}; do
-        [[ \$f == _[^_]* ]] || functions \$f
-      done
-    "
+    run claude_snapshot "$SNIPPET_DIR/$cmd.zsh"
     [ "$status" -eq 0 ]
     printf '%s\n' "$output" > "$TMPDIR/snapshot-$cmd.zsh"
 

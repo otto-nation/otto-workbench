@@ -262,13 +262,15 @@ class TestStatsCommand:
         self._write(ledger, _usage(script="pr"))
         self._run(monkeypatch, as_json=True)
         row = json.loads(capsys.readouterr().out.splitlines()[0])
-        # The turn fields are appended, which is the one change this schema
-        # tolerates: a consumer reading by key is unaffected, and the eight
-        # before them are still in their original positions.
+        # The turn fields, then the failure count and peak context, are
+        # appended, which is the one change this schema tolerates: a consumer
+        # reading by key is unaffected, and every earlier key is still in its
+        # original position.
         assert list(row) == [
             "group", "calls", "cost", "billed_input", "output_tokens",
             "cache_read_tokens", "cache_read_ratio", "median_duration_ms",
             "p50_turns", "p95_turns", "at_cap_ratio",
+            "failed", "peak_context_tokens",
         ]
 
     def test_empty_ledger_says_so(self, ledger, monkeypatch, capsys):

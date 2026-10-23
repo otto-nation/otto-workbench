@@ -28,6 +28,7 @@ import sys
 
 import cli.locks
 import cli.needs
+import core.errors
 import core.log
 import core.proc
 import core.publishing
@@ -130,7 +131,6 @@ def main(argv: list[str] | None = None, *,
             core.log.error(str(exc))
             return 1
         except Exception as exc:
-            trail.error("unexpected_error", str(exc))
-            raise
+            return core.errors.boundary(trail, exc)
         finally:
             trail.finish()

@@ -22,8 +22,7 @@ Usage:
 
 from __future__ import annotations
 
-import traceback
-
+import core.errors
 import core.publishing
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
@@ -74,8 +73,6 @@ def main(argv: list[str] | None = None) -> int:
             return rebase.commands.cmd_push_head(cwd, ctx, expect=args.expect,
                                                  verify=not args.no_verify, trail=trail)
     except Exception as exc:
-        trail.error("unexpected_error", str(exc),
-                    data={"traceback": traceback.format_exc()})
-        raise
+        return core.errors.boundary(trail, exc)
     finally:
         trail.finish()

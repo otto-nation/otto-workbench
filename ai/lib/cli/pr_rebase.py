@@ -39,10 +39,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-import traceback
 
 import cli.locks
 import cli.needs
+import core.errors
 import core.trail
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
@@ -150,8 +150,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return rebase.commands._run(args, ctx, cwd, trail)
     except Exception as exc:
-        trail.error("unexpected_error", str(exc),
-                    data={"traceback": traceback.format_exc()})
-        raise
+        return core.errors.boundary(trail, exc)
     finally:
         trail.finish()

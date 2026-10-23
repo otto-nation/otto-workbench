@@ -4813,6 +4813,20 @@ reaches the same rules, and the copy of the type list is exactly what the module
 exists to prevent. A module recreated later is a module recreated as that copy.
 It goes if a second release ships with no Python reader.
 
+### core/errors.py
+
+How an entry point ends on an error: one line for the operator, a traceback for a bug.
+
+Every `ai/` entry point wraps its work in the same boundary: record the error
+on the trail, then re-raise. That is right for a bug, because the traceback is
+the evidence. It is wrong for a failure the operator fixes by configuring
+something — no AI backend selected, a provider with no model — where the
+traceback buries the one line that says what to set, and the run reads as a
+crash. `OperatorError` marks that kind; `boundary` is the one place that tells
+the two apart, so no entry point decides it for itself.
+
+Not: what the operator should set (each error's own message says that).
+
 ### core/job_slots.py
 
 A machine-wide pool of parallelism slots, shared by suites and agents.

@@ -34,6 +34,7 @@ import review.sections
 # editor calls unused is therefore load-bearing — deleting it silently turns the
 # patch it serves into a no-op.
 import git.client
+import core.errors
 import core.log
 import core.module_proxy
 import core.proc
@@ -150,7 +151,6 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
+        return core.errors.boundary(trail, exc)
     finally:
         trail.finish()

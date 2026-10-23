@@ -18,6 +18,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import core.errors
 import core.log
 import core.memory
 import core.sessions
@@ -285,7 +286,6 @@ def run_scan(home: Path, days: int, *, debug: bool = False) -> int:
         print(report)
         return 0
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
+        return core.errors.boundary(trail, exc)
     finally:
         trail.finish()

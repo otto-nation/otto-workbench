@@ -18,6 +18,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+import core.errors
 import core.log
 import core.trail
 import core.trail_query
@@ -451,7 +452,6 @@ def run_scan(
             since_override=since, consume=consume,
         )
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
+        return core.errors.boundary(trail, exc)
     finally:
         trail.finish()

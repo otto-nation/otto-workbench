@@ -279,21 +279,33 @@ EOF2
   [[ "$output" != *"rtk installed"* ]]
 }
 
-@test "a pipx spec handed to mise gets uv first when neither uv nor pipx runs" {
-  # mise's pipx backend installs with uv, or pipx without it, and with neither
-  # it fails.
+@test "a pipx spec handed to mise gets uv first when uv is absent" {
   run _run_install "$(_path_with mise)" pytool
   [ "$status" -eq 0 ]
   [ "$(cat "$MISE_LOG")" = "$(printf '%s\n' 'use -g uv' 'use -g pipx:pytool[uvx_args=--with pytool-extra]')" ]
   [[ "$output" == *"pytool installed"* ]]
 }
 
-@test "a pipx spec does not install uv when pipx already runs" {
+@test "a pipx spec gets uv even where pipx runs, since only uv reads uvx_args" {
+  # mise's pipx backend falls back to pipx without uv, and pipx installs the
+  # package without the `--with` extras the spec asks for: pytest without
+  # pytest-xdist, which runs the suite serially.
   printf '#!/bin/sh\nexit 0\n' > "$STUBS/pipx"
   chmod +x "$STUBS/pipx"
   run _run_install "$(_path_with mise pipx)" pytool
   [ "$status" -eq 0 ]
-  [ "$(cat "$MISE_LOG")" = "use -g pipx:pytool[uvx_args=--with pytool-extra]" ]
+  [ "$(cat "$MISE_LOG")" = "$(printf '%s\n' 'use -g uv' 'use -g pipx:pytool[uvx_args=--with pytool-extra]')" ]
+}
+
+@test "a pipx spec whose uv cannot be installed stops before mise and names uv" {
+  # The mise failure that would follow names neither uv nor the backend, so
+  # its hint would send the operator after the wrong problem.
+  printf 'brew "pytool"  # mise: pipx:pytool[uvx_args=--with pytool-extra]\n' > "$PACKAGES_DIR/Brewfile"
+  run _run_install "$(_path_with mise)" pytool
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"mise's pipx backend needs uv, which could not be installed"* ]]
+  [ ! -e "$MISE_LOG" ]
+  [[ "$output" != *"pytool installed"* ]]
 }
 
 @test "a failed brew install of a pipx entry falls back with uv installed first" {

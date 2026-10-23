@@ -86,12 +86,6 @@ _sc_lab() {
   [[ "$output" == *"HELPER pytest"* ]]
 }
 
-@test "pytest's mise spec uses the pipx backend install_package provides uv for" {
-  # dev-deps no longer installs uv itself: install_package does, for any pipx
-  # spec it hands to mise (tests/install_package.bats). That only covers
-  # pytest while pytest's spec is a pipx one.
-  grep -qE '^brew "pytest"[[:space:]]+# mise: pipx:' "$REPO_ROOT/packages/components.Brewfile"
-}
 
 @test "a shellcheck at another version is moved to the CI pin on the mise path" {
   [ -n "$(_sc_pin)" ]

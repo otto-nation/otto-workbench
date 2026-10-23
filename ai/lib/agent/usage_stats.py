@@ -45,7 +45,7 @@ _MS_PER_MINUTE = 60 * core.trail_view.MS_PER_SECOND
 
 # ── Usage stats ───────────────────────────────────────────────────────────
 
-STATS_GROUPINGS = ("script", "task", "model", "day", "phase")
+STATS_GROUPINGS = ("script", "task", "model", "provider", "day", "phase")
 
 # The grouping that earns the turn columns. Turn budgets are set per phase, so
 # a turn distribution is only readable against one: rolled up by script or by
@@ -105,6 +105,12 @@ class UsageRow:
     p50_turns: int | None = None
     p95_turns: int | None = None
     at_cap_ratio: float | None = None
+    # Calls that exited non-zero. A failed call usually reports no usage, so
+    # without this a group of crashes reads as a group of free calls.
+    failed: int = 0
+    # The most context any one request in the group carried. None until
+    # records carrying a peak accumulate; older ones never measured it.
+    peak_context_tokens: int | None = None
 
 
 def _cost_shares(rec: dict, by: str) -> list[CostShare]:
@@ -123,13 +129,18 @@ def _new_group() -> dict:
     return {
         "calls": 0, "cost": 0.0, "billed_input": 0,
         "output_tokens": 0, "cache_read_tokens": 0, "durations": [],
-        "turns": [], "at_cap": [],
+        "turns": [], "at_cap": [], "failed": 0, "peaks": [],
     }
 
 
 def _accumulate(group: dict, rec: dict, cost: float, attribute_tokens: bool) -> None:
     group["calls"] += 1
     group["cost"] += cost or 0.0
+    if rec.get("exit_code") not in (0, None):
+        group["failed"] += 1
+    peak = rec.get("peak_context_tokens")
+    if peak is not None:
+        group["peaks"].append(peak)
     duration = rec.get("duration_ms") or 0
     if duration:
         group["durations"].append(duration)
@@ -190,6 +201,8 @@ def _finalize_group(name: str, group: dict, attribute_tokens: bool) -> UsageRow:
         p50_turns=_percentile(group["turns"], 0.50),
         p95_turns=_percentile(group["turns"], 0.95),
         at_cap_ratio=(sum(at_cap) / len(at_cap)) if at_cap else None,
+        failed=group["failed"],
+        peak_context_tokens=max(group["peaks"]) if group["peaks"] else None,
     )
 
 
@@ -251,10 +264,12 @@ class Column:
 _STATS_COLUMNS = (
     Column("GROUP", lambda r: r.group, Align.LEFT),
     Column("CALLS", lambda r: str(r.calls)),
+    Column("FAILED", lambda r: str(r.failed)),
     Column("COST", lambda r: f"${r.cost:.4f}"),
     Column("BILLED IN", lambda r: _fmt_tokens(r.billed_input)),
     Column("OUTPUT", lambda r: _fmt_tokens(r.output_tokens)),
     Column("CACHE", lambda r: _fmt_ratio(r.cache_read_ratio)),
+    Column("PEAK CTX", lambda r: _fmt_tokens(r.peak_context_tokens)),
     Column("MED TIME", lambda r: _fmt_duration(r.median_duration_ms)),
 )
 
@@ -295,6 +310,9 @@ def _totals_row(rows: list[UsageRow]) -> UsageRow:
         # holds for the turn percentiles, and for a cap ratio whose groups
         # were each measured against a different cap.
         median_duration_ms=None,
+        failed=sum(r.failed for r in rows),
+        peak_context_tokens=max((r.peak_context_tokens for r in rows
+                                 if r.peak_context_tokens is not None), default=None),
     )
 
 

@@ -26,7 +26,7 @@ import core.children
 import core.log
 import core.timeouts
 import agent.vertex_quota
-from agent.backend import AgentInvocation, agent_env
+from agent.backend import AgentInvocation, Attribution, agent_env
 from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -241,6 +241,17 @@ def _send_stdin(proc: subprocess.Popen, text: str) -> None:
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
+
+
+def attribution(*, provider: str | None, thinking: str | None) -> Attribution:
+    """Nothing: this backend passes the CLI no provider and no thinking level.
+
+    Both arguments are accepted and dropped, as `prompt` and the agent modes
+    drop them, so the ledger records neither rather than a level that never
+    reached the model.
+    """
+    del provider, thinking
+    return Attribution()
 
 
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:

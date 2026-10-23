@@ -161,11 +161,36 @@ def _require_backend() -> Backend:
     return selected
 
 
+@dataclass(frozen=True)
+class Attribution:
+    """What a backend actually sent for one call: the provider and the thinking level.
+
+    None for either it did not send. The ledger records what reached the model,
+    not what the caller asked for: a backend that drops the thinking level would
+    otherwise be recorded as running at one.
+    """
+
+    provider: str | None = None
+    thinking: str | None = None
+
+
+def _attribution(provider: str | None, thinking: str | None) -> Attribution:
+    """The selected backend's account of what it sent, or nothing when it cannot say.
+
+    Empty rather than raising: this feeds telemetry, and a ledger row without a
+    provider is better than the measured call failing over it.
+    """
+    try:
+        return _get_module().attribution(provider=provider, thinking=thinking)
+    except Exception:  # noqa: BLE001 - telemetry must never break the measured call
+        return Attribution()
+
+
 def _record(
     *, entry_point: str, usage: agent.usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
     phase: str | None = None, max_turns: int | None = None,
-    branch: str | None = None,
+    branch: str | None = None, attribution: Attribution = Attribution(),
 ) -> None:
     """Append one ledger record. A missing usage source records nothing —
     an absent measurement is more honest than a zeroed one.
@@ -186,6 +211,7 @@ def _record(
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr, phase=phase, max_turns=max_turns,
             branch=branch, invocation=core.trail.inherited_root(),
+            provider=attribution.provider, thinking=attribution.thinking,
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         pass
@@ -271,6 +297,7 @@ def prompt(
     _record(
         entry_point="prompt", usage=usage, exit_code=code,
         model=model, task=task, repo=repo, pr=pr,
+        attribution=_attribution(provider, thinking),
     )
     return reply, code
 
@@ -384,6 +411,7 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
         phase=inv.phase,
         max_turns=inv.max_turns,
         branch=inv.branch,
+        attribution=_attribution(inv.provider, inv.thinking),
     )
 
 

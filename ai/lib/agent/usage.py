@@ -83,6 +83,10 @@ class SessionUsage:
     # Turns the session actually spent, from the result record. None when the
     # log did not say — an absent measurement, not a zero-turn run.
     num_turns: int | None = None
+    # The largest billed input any one request of the session sent: the most
+    # context the session ever carried. None when the log holds no per-request
+    # usage — the `--output-format json` envelope carries only the result.
+    peak_context_tokens: int | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -101,40 +105,54 @@ class SessionUsage:
 
 @dataclass(frozen=True)
 class FirstTurnUsage:
-    """The first request of a session: the model that served it, and its input.
+    """One served request of a session: the model that served it, and its input.
 
     `input_tokens` is billed input — raw input plus cache read and cache write
     — because that is what occupies the context window. `served_model` is the
     id the backend reported, which can differ from the alias the phase asked
-    for.
+    for. Named for its first use, the session's opening request; `served_turns`
+    yields one per request.
     """
 
     served_model: str
     input_tokens: int
 
 
-def first_turn_usage(records: list[dict]) -> FirstTurnUsage | None:
-    """First-request input and served model from a session JSONL, or None.
+def served_turns(records: list[dict]) -> list[FirstTurnUsage]:
+    """Every request a session JSONL shows a model serving, in order.
 
     Claude stream-json: the first `{type:system, subtype:init}` line names the
-    model, and the first assistant message's `usage` is billed as
+    model, and each assistant message's `usage` is billed as
     `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`.
 
-    Pi `--mode json`: the first `message_end` whose message role is assistant
+    Pi `--mode json`: each `message_end` whose message role is assistant
     carries `message.model` and `usage` as `input + cacheRead + cacheWrite`.
+
+    A record with zero billed input is not a served request — a synthetic
+    API-error message, an errored or aborted turn — and is left out.
     """
-    claude = _first_turn_claude(records)
-    if claude is not None:
-        return claude
-    return _first_turn_pi(records)
+    return _served_turns_claude(records) or _served_turns_pi(records)
 
 
-def _first_turn_claude(records: list[dict]) -> FirstTurnUsage | None:
+def first_turn_usage(records: list[dict]) -> FirstTurnUsage | None:
+    """First-request input and served model from a session JSONL, or None."""
+    turns = served_turns(records)
+    return turns[0] if turns else None
+
+
+def peak_context_tokens(records: list[dict]) -> int | None:
+    """The largest billed input of any served request, or None when none was served."""
+    turns = served_turns(records)
+    return max(turn.input_tokens for turn in turns) if turns else None
+
+
+def _served_turns_claude(records: list[dict]) -> list[FirstTurnUsage]:
     model = ""
     for rec in records:
         if rec.get("type") == "system" and rec.get("subtype") == "init":
             model = str(rec.get("model") or "")
             break
+    turns = []
     for rec in records:
         if rec.get("type") != "assistant":
             continue
@@ -145,16 +163,14 @@ def _first_turn_claude(records: list[dict]) -> FirstTurnUsage | None:
             + int(usage.get("cache_read_input_tokens") or 0)
             + int(usage.get("cache_creation_input_tokens") or 0)
         )
-        if billed == 0:
-            # No usage block, or the zeros block of a synthetic API-error
-            # message: neither is a served request. Keep scanning.
-            continue
-        served = str(message.get("model") or model)
-        return FirstTurnUsage(served_model=served, input_tokens=billed)
-    return None
+        if billed:
+            served = str(message.get("model") or model)
+            turns.append(FirstTurnUsage(served_model=served, input_tokens=billed))
+    return turns
 
 
-def _first_turn_pi(records: list[dict]) -> FirstTurnUsage | None:
+def _served_turns_pi(records: list[dict]) -> list[FirstTurnUsage]:
+    turns = []
     for rec in records:
         if rec.get("type") != "message_end":
             continue
@@ -167,12 +183,10 @@ def _first_turn_pi(records: list[dict]) -> FirstTurnUsage | None:
             + int(usage.get("cacheRead") or 0)
             + int(usage.get("cacheWrite") or 0)
         )
-        if billed == 0:
-            # An errored or aborted turn carries no usage; keep scanning.
-            continue
-        served = str(message.get("model") or "")
-        return FirstTurnUsage(served_model=served, input_tokens=billed)
-    return None
+        if billed:
+            served = str(message.get("model") or "")
+            turns.append(FirstTurnUsage(served_model=served, input_tokens=billed))
+    return turns
 
 
 # The CLI emits two spellings for the same fields: modelUsage entries are camelCase,
@@ -218,10 +232,11 @@ def _fold_record(rec: dict, totals: dict[str, int], cost_by_model: dict[str, flo
 
 
 def usage_from_records(records: list[dict]) -> SessionUsage:
-    """Aggregate usage across `result` records.
+    """Aggregate usage across `result` records, and the peak per-request input.
 
     Shared by the streamed session log and the single-envelope `--output-format json`
-    response, which carry the same record shape.
+    response, which carry the same record shape. Only the streamed log carries
+    per-request usage, so the envelope's peak is None.
     """
     cost = 0.0
     duration_ms = 0
@@ -243,19 +258,27 @@ def usage_from_records(records: list[dict]) -> SessionUsage:
         duration_ms=duration_ms,
         cost_by_model=cost_by_model,
         num_turns=num_turns if saw_turns else None,
+        peak_context_tokens=peak_context_tokens(records),
         **totals,
     )
 
 
 def parse_session_log(path: str) -> SessionUsage:
-    """Parse a session JSONL log file and return aggregated usage."""
+    """Parse a session JSONL log file and return aggregated usage.
+
+    Only the lines that can carry usage are decoded: the `result` records and
+    the per-request messages, which name `usage`. A session log is mostly tool
+    traffic, and decoding all of it to read a few dozen records is the cost
+    this filter exists to avoid.
+    """
     try:
         lines = Path(path).read_text().splitlines()
     except OSError:
         return SessionUsage()
     records = []
     for line in lines:
-        if '"type":"result"' not in line and '"type": "result"' not in line:
+        is_result = '"type":"result"' in line or '"type": "result"' in line
+        if not is_result and '"usage"' not in line:
             continue
         try:
             records.append(json.loads(line))
@@ -289,8 +312,14 @@ def record(
     max_turns: int | None = None,
     branch: str | None = None,
     invocation: str | None = None,
+    provider: str | None = None,
+    thinking: str | None = None,
 ) -> None:
     """Append one usage record to the global ledger. Never raises.
+
+    `provider` and `thinking` are what the backend actually sent — absent, not
+    guessed, when it sent neither — and `peak_context_tokens` is the most
+    context any one request carried, from *usage*.
 
     `num_turns` and `max_turns` are separate keys because they are separate
     quantities: what the run spent, and what it was allowed. They shared one
@@ -328,6 +357,8 @@ def record(
         ("task", task), ("repo", repo), ("pr", pr), ("branch", branch),
         ("invocation", invocation),
         ("phase", phase), ("num_turns", usage.num_turns), ("max_turns", max_turns),
+        ("provider", provider), ("thinking", thinking),
+        ("peak_context_tokens", usage.peak_context_tokens),
     ):
         if value is not None and value != "":
             rec[key] = value

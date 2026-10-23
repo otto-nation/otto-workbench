@@ -38,6 +38,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+import core.errors
 import core.log
 import core.proc
 import core.timeouts
@@ -75,7 +76,7 @@ _SHELL_NOISE = frozenset({"_"})
 _UNTRUSTED_SUFFIX = ": untrusted"
 
 
-class MachineEnvUnavailable(RuntimeError):
+class MachineEnvUnavailable(core.errors.OperatorError):
     """mise applied a repo's environment to this process and could not undo it."""
 
 

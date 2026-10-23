@@ -452,6 +452,6 @@ def run_scan(
             since_override=since, consume=consume,
         )
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

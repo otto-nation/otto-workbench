@@ -286,6 +286,6 @@ def run_scan(home: Path, days: int, *, debug: bool = False) -> int:
         print(report)
         return 0
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

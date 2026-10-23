@@ -150,6 +150,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return rebase.commands._run(args, ctx, cwd, trail)
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

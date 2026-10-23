@@ -218,7 +218,7 @@ def _run_review(args, argv: list[str], ctx: pr.context.ResolvedContext,
         return review.run.run_pr_review(
             ctx, _flags(args, argv, generator_version), review_file, trail=trail)
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()
 
@@ -360,7 +360,7 @@ def _run_self_review_body(
             recover_head_sha=recover_head_sha, trail=trail,
         )
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()
         if wt_cleanup:

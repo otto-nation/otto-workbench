@@ -140,6 +140,6 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

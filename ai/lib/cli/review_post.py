@@ -151,6 +151,6 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

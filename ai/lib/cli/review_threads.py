@@ -251,6 +251,6 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return _run_locked(trail, args, ctx, route, body)
         except Exception as exc:
-            return core.errors.boundary(trail, exc)
+            core.errors.reraise(trail, exc)
         finally:
             trail.finish()

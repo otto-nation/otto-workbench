@@ -4815,15 +4815,24 @@ It goes if a second release ships with no Python reader.
 
 ### core/errors.py
 
-How an entry point ends on an error: one line for the operator, a traceback for a bug.
+How a run ends on an error: one line for the operator, a traceback for a bug.
 
-Every `ai/` entry point wraps its work in the same boundary: record the error
-on the trail, then re-raise. That is right for a bug, because the traceback is
-the evidence. It is wrong for a failure the operator fixes by configuring
-something — no AI backend selected, a provider with no model — where the
-traceback buries the one line that says what to set, and the run reads as a
-crash. `OperatorError` marks that kind; `boundary` is the one place that tells
-the two apart, so no entry point decides it for itself.
+A failure the operator fixes by configuring something — no AI backend selected,
+a provider with no model, no pi installed — is not a bug, and a traceback
+buries the one line that says what to set. `OperatorError` marks that kind.
+
+Two pieces, split by where they act:
+
+- `reraise` is every entry point's `except` clause. It records the error on the
+  trail once and re-raises it, so a caller running the entry point in-process
+  stops as it would have on a spawn. `pr fix` must not go on to its CI pass
+  after its review pass found no backend; returning an exit code here would
+  make "this machine cannot run AI" read like "this pass found problems".
+- The process hook, installed when this module is imported, is the one place
+  that decides how an uncaught error is shown. An `OperatorError` is printed as
+  its message alone; anything else gets Python's usual traceback. The
+  interpreter exits 1 either way. Every class that subclasses `OperatorError`
+  imports this module, so the hook is in place wherever one can be raised.
 
 Not: what the operator should set (each error's own message says that).
 

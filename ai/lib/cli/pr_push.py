@@ -73,6 +73,6 @@ def main(argv: list[str] | None = None) -> int:
             return rebase.commands.cmd_push_head(cwd, ctx, expect=args.expect,
                                                  verify=not args.no_verify, trail=trail)
     except Exception as exc:
-        return core.errors.boundary(trail, exc)
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

@@ -17,6 +17,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
+import core.errors
 import core.log
 import core.proc
 from core.trail import Trail
@@ -139,7 +140,6 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

@@ -4813,6 +4813,29 @@ reaches the same rules, and the copy of the type list is exactly what the module
 exists to prevent. A module recreated later is a module recreated as that copy.
 It goes if a second release ships with no Python reader.
 
+### core/errors.py
+
+How a run ends on an error: one line for the operator, a traceback for a bug.
+
+A failure the operator fixes by configuring something — no AI backend selected,
+a provider with no model, no pi installed — is not a bug, and a traceback
+buries the one line that says what to set. `OperatorError` marks that kind.
+
+Two pieces, split by where they act:
+
+- `reraise` is every entry point's `except` clause. It records the error on the
+  trail once and re-raises it, so a caller running the entry point in-process
+  stops as it would have on a spawn. `pr fix` must not go on to its CI pass
+  after its review pass found no backend; returning an exit code here would
+  make "this machine cannot run AI" read like "this pass found problems".
+- The process hook, installed when this module is imported, is the one place
+  that decides how an uncaught error is shown. An `OperatorError` is printed as
+  its message alone; anything else gets Python's usual traceback. The
+  interpreter exits 1 either way. Every class that subclasses `OperatorError`
+  imports this module, so the hook is in place wherever one can be raised.
+
+Not: what the operator should set (each error's own message says that).
+
 ### core/job_slots.py
 
 A machine-wide pool of parallelism slots, shared by suites and agents.

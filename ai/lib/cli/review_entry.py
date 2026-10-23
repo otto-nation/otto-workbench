@@ -31,6 +31,7 @@ from dataclasses import replace
 from pathlib import Path
 from agent.registry import add_phase_skip_flags, phase_skips
 import cli.locks
+import core.errors
 import core.log
 import core.proc
 import core.run_lock
@@ -217,8 +218,7 @@ def _run_review(args, argv: list[str], ctx: pr.context.ResolvedContext,
         return review.run.run_pr_review(
             ctx, _flags(args, argv, generator_version), review_file, trail=trail)
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()
 
@@ -360,8 +360,7 @@ def _run_self_review_body(
             recover_head_sha=recover_head_sha, trail=trail,
         )
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()
         if wt_cleanup:

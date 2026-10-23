@@ -27,6 +27,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import agent.pi_binary
+import core.errors
 import core.proc
 import core.timeouts
 
@@ -49,7 +50,7 @@ def _pi_settings_path() -> Path:
     return Path.home() / ".pi" / "agent" / "settings.json"
 
 
-class ModelNotServed(RuntimeError):
+class ModelNotServed(core.errors.OperatorError):
     """The configured model id is not in pi's provider catalogue."""
 
     def __init__(self, model: str, message: str):
@@ -198,7 +199,7 @@ def listed_models(provider: str | None, *, pi: tuple[str, ...]) -> frozenset[str
     return parse_listed_ids(catalogue_text(pi), effective_provider(provider))
 
 
-class ModelNotConfigured(RuntimeError):
+class ModelNotConfigured(core.errors.OperatorError):
     """A provider is set and no layer names a model for it.
 
     Pi refuses ``--provider`` without ``--model`` and has no per-provider

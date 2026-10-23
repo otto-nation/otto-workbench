@@ -18,6 +18,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import core.errors
 import core.log
 import core.memory
 import core.trail
@@ -291,7 +292,6 @@ def run_scan(home: str, workbench: str, *, debug: bool = False) -> int:
         print(report)
         return 0
     except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
+        core.errors.reraise(trail, exc)
     finally:
         trail.finish()

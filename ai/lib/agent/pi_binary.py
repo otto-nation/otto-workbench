@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+import core.errors
 import core.log
 import core.proc
 import core.timeouts
@@ -79,7 +80,7 @@ class Source(str, Enum):
     PATH = "path"
 
 
-class PiUnresolvable(RuntimeError):
+class PiUnresolvable(core.errors.OperatorError):
     """No pi binary can be chosen: a version is unreadable or nothing is installed."""
 
 

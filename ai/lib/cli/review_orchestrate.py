@@ -50,6 +50,7 @@ import review.retry
 import review.state
 import review.types
 
+import core.errors
 import core.log
 import core.module_proxy
 import pr.state
@@ -191,7 +192,6 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return core.proc.INTERRUPT_RETURNCODE
         except Exception as exc:
-            trail.error("unexpected_error", str(exc))
-            raise
+            core.errors.reraise(trail, exc)
         finally:
             trail.finish()

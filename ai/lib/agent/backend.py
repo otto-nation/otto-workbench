@@ -41,6 +41,7 @@ from pathlib import Path
 import agent.machine_env
 import agent.pi_binary
 import agent.usage
+import core.errors
 import core.log
 import core.trail
 import git.client
@@ -53,7 +54,7 @@ ENV_AI_BACKEND = "AI_BACKEND"
 CONFIG_KEY_BACKEND = "agent.backend"
 
 
-class BackendNotSelected(RuntimeError):
+class BackendNotSelected(core.errors.OperatorError):
     """Raised when nothing says which CLI to run."""
 
 

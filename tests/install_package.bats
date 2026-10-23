@@ -240,6 +240,48 @@ EOF2
   [[ "$output" == *"brew install rtk"* ]]
 }
 
+@test "a failed brew install falls back to mise when mise is present" {
+  # A formula Homebrew cannot install on this machine — a dependency it would
+  # build from source with a compiler too old for it — still has a mise spec.
+  export BREW_INSTALL_FAILS=1
+  run _run_install "$(_path_with brew mise)"
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$BREW_LOG")" == "install rtk" ]]
+  [[ "$(cat "$MISE_LOG")" == "use -g rtk" ]]
+  [[ "$output" == *"Homebrew could not install rtk — falling back to mise"* ]]
+  [[ "$output" == *"RESOLVED=$MISE_DATA_DIR/shims/rtk"* ]]
+  [[ "$output" == *"rtk installed"* ]]
+}
+
+# passes-at-base: asserts the fallback never bootstraps mise, which base never did either
+@test "a failed brew install does not bootstrap mise for the fallback" {
+  export BREW_INSTALL_FAILS=1
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/should-not-run"
+  run _run_install "$(_path_with brew)"
+  [ "$status" -eq 1 ]
+  [ ! -e "$INSTALLER_LOG" ]
+  [ ! -e "$MISE_LOG" ]
+}
+
+@test "a failed brew install whose mise fallback also fails is not an install" {
+  export BREW_INSTALL_FAILS=1 MISE_INSTALL_FAILS=1
+  run _run_install "$(_path_with brew mise)"
+  [ "$status" -eq 1 ]
+  [[ "$(cat "$MISE_LOG")" == "use -g rtk" ]]
+  [[ "$output" == *"mise could not install rtk"* ]]
+  [[ "$output" != *"rtk installed"* ]]
+}
+
+# passes-at-base: asserts an entry with no mise spec is never handed to mise, as before
+@test "a failed brew install of an entry with no mise spec does not call mise" {
+  export BREW_INSTALL_FAILS=1
+  run _run_install "$(_path_with brew mise)" otto-test-syspkg
+  [ "$status" -eq 1 ]
+  [ ! -e "$MISE_LOG" ]
+  [[ "$output" == *"Homebrew could not install otto-test-syspkg — install it manually"* ]]
+}
+
 @test "a failed mise install is not reported as an install" {
   export MISE_INSTALL_FAILS=1
   run _run_install "$(_path_with mise)"

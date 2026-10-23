@@ -161,46 +161,43 @@ def _require_backend() -> Backend:
     return selected
 
 
-@dataclass(frozen=True)
-class Attribution:
-    """What a backend actually sent for one call: the provider and the thinking level.
+def _ledger_provider(usage: agent.usage.SessionUsage) -> str | None:
+    """The provider to record when the log did not name one: the backend's answer.
 
-    None for either it did not send. The ledger records what reached the model,
-    not what the caller asked for: a backend that drops the thinking level would
-    otherwise be recorded as running at one.
+    Asked only when needed, so a log that names its provider costs no lookup.
+    None rather than raising: this feeds telemetry, and a row without a provider
+    is better than the measured call failing over it.
     """
-
-    provider: str | None = None
-    thinking: str | None = None
-
-
-def _attribution(provider: str | None, thinking: str | None) -> Attribution:
-    """The selected backend's account of what it sent, or nothing when it cannot say.
-
-    Empty rather than raising: this feeds telemetry, and a ledger row without a
-    provider is better than the measured call failing over it.
-    """
+    if usage.served_provider:
+        return None
     try:
-        return _get_module().attribution(provider=provider, thinking=thinking)
+        return _get_module().ledger_provider()
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
-        return Attribution()
+        return None
 
 
 def _record(
     *, entry_point: str, usage: agent.usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
     phase: str | None = None, max_turns: int | None = None,
-    branch: str | None = None, attribution: Attribution = Attribution(),
+    branch: str | None = None,
 ) -> None:
-    """Append one ledger record. A missing usage source records nothing —
-    an absent measurement is more honest than a zeroed one.
+    """Append one ledger record.
+
+    A missing usage source on a call that succeeded records nothing — an
+    absent measurement is more honest than a zeroed one. The same on a call
+    that failed is recorded as an unmeasured failure: without the row, a
+    crash before the first result record would vanish from the ledger and
+    `otto-log stats` could not count it.
 
     The invocation is read here rather than passed: every process a command
     spawns inherits the trail root, so the row names the command without any
     of the dozen call sites having to thread it.
     """
-    if usage is None:
+    if usage is None and exit_code == 0:
         return
+    measured = usage is not None
+    usage = usage or agent.usage.SessionUsage()
     try:
         agent.usage.record(
             script=core.trail.script_name(), entry_point=entry_point,
@@ -211,7 +208,7 @@ def _record(
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr, phase=phase, max_turns=max_turns,
             branch=branch, invocation=core.trail.inherited_root(),
-            provider=attribution.provider, thinking=attribution.thinking,
+            provider=_ledger_provider(usage), measured=measured,
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         pass
@@ -297,7 +294,6 @@ def prompt(
     _record(
         entry_point="prompt", usage=usage, exit_code=code,
         model=model, task=task, repo=repo, pr=pr,
-        attribution=_attribution(provider, thinking),
     )
     return reply, code
 
@@ -411,7 +407,6 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
         phase=inv.phase,
         max_turns=inv.max_turns,
         branch=inv.branch,
-        attribution=_attribution(inv.provider, inv.thinking),
     )
 
 

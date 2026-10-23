@@ -15,6 +15,7 @@ reason attached.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -26,7 +27,7 @@ import core.children
 import core.log
 import core.timeouts
 import agent.vertex_quota
-from agent.backend import AgentInvocation, Attribution, agent_env
+from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -243,15 +244,26 @@ def _send_stdin(proc: subprocess.Popen, text: str) -> None:
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
-def attribution(*, provider: str | None, thinking: str | None) -> Attribution:
-    """Nothing: this backend passes the CLI no provider and no thinking level.
+# Where the Claude CLI sends requests, keyed by the variable that points it
+# there. Named with Pi's provider ids so `otto-log stats --by provider` groups
+# a Claude-on-Vertex call with a Pi one served by the same deployment.
+_CLI_PROVIDERS = (
+    ("CLAUDE_CODE_USE_VERTEX", "google-vertex-claude"),
+    ("CLAUDE_CODE_USE_BEDROCK", "amazon-bedrock"),
+)
+_DEFAULT_PROVIDER = "anthropic"
 
-    Both arguments are accepted and dropped, as `prompt` and the agent modes
-    drop them, so the ledger records neither rather than a level that never
-    reached the model.
+
+def ledger_provider() -> str:
+    """The provider the Claude CLI serves requests from, for the usage ledger.
+
+    The CLI's stream does not name one, so it is read from the variables the
+    CLI itself reads; none set is the first-party API.
     """
-    del provider, thinking
-    return Attribution()
+    for var, provider in _CLI_PROVIDERS:
+        if os.environ.get(var) == "1":
+            return provider
+    return _DEFAULT_PROVIDER
 
 
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:

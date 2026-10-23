@@ -178,36 +178,38 @@ class TestStatsAggregation:
         assert rows[0].median_duration_ms is None
 
 
+def _table(records, by="script"):
+    return agent.usage_stats.format_stats_table(
+        agent.usage_stats.aggregate_usage(records, by),
+        agent.usage_stats.aggregate_total(records), by,
+    )
+
+
 class TestStatsTable:
-    def _rows(self):
-        return agent.usage_stats.aggregate_usage(
-            [_usage(script="pr", cost=1.5), _usage(script="a-much-longer-name", cost=0.5)],
-            by="script",
-        )
+    def _records(self):
+        return [_usage(script="pr", cost=1.5), _usage(script="a-much-longer-name", cost=0.5)]
+
+    def _phase_records(self):
+        return [_usage(phase="fix", num_turns=20, max_turns=20)]
 
     def test_the_total_row_sums_the_groups(self):
-        assert "$2.0000" in agent.usage_stats.format_stats_table(self._rows()).splitlines()[-1]
+        assert "$2.0000" in _table(self._records()).splitlines()[-1]
 
     def test_columns_line_up_across_rows(self):
         """Every cell is padded to its column's width, so the body lines match.
 
         The header is excluded because its bold escape adds invisible bytes.
         """
-        body = agent.usage_stats.format_stats_table(self._rows()).splitlines()[1:]
+        body = _table(self._records()).splitlines()[1:]
         assert len({len(line) for line in body}) == 1
 
-    def _phase_rows(self):
-        return agent.usage_stats.aggregate_usage(
-            [_usage(phase="fix", num_turns=20, max_turns=20)], by="phase",
-        )
-
     def test_the_turn_columns_appear_under_by_phase(self):
-        header = agent.usage_stats.format_stats_table(self._phase_rows(), "phase")
+        header = _table(self._phase_records(), "phase")
         assert "P95 TURNS" in header
         assert "AT CAP" in header
 
     def test_the_turn_columns_stay_out_of_the_other_groupings(self):
-        table = agent.usage_stats.format_stats_table(self._rows(), "script")
+        table = _table(self._records(), "script")
         assert "P95 TURNS" not in table
         assert "AT CAP" not in table
 
@@ -216,7 +218,7 @@ class TestStatsTable:
         # silence: pairing the wider rows against the narrower column tuple
         # dropped the three new columns from the output while every other
         # test passed.
-        body = agent.usage_stats.format_stats_table(self._phase_rows(), "phase").splitlines()
+        body = _table(self._phase_records(), "phase").splitlines()
         assert len({len(line) for line in body[1:]}) == 1
         assert body[0].count("TURNS") == 2
 

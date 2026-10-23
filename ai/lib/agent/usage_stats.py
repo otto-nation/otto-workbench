@@ -28,6 +28,7 @@ Not: reading or writing the ledger (`agent.usage`), parsing the window
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import statistics
@@ -295,24 +296,22 @@ def _fmt_count(n: int | None) -> str:
     return _NO_GROUP if n is None else str(n)
 
 
-def _totals_row(rows: list[UsageRow]) -> UsageRow:
-    billed = sum(r.billed_input or 0 for r in rows)
-    cache_read = sum(r.cache_read_tokens or 0 for r in rows)
-    return UsageRow(
-        group="TOTAL",
-        calls=sum(r.calls for r in rows),
-        cost=sum(r.cost for r in rows),
-        billed_input=billed or None,
-        output_tokens=sum(r.output_tokens or 0 for r in rows) or None,
-        cache_read_tokens=cache_read or None,
-        cache_read_ratio=(cache_read / billed) if billed else None,
-        # A median of per-group medians is not a median of anything. The same
-        # holds for the turn percentiles, and for a cap ratio whose groups
-        # were each measured against a different cap.
-        median_duration_ms=None,
-        failed=sum(r.failed for r in rows),
-        peak_context_tokens=max((r.peak_context_tokens for r in rows
-                                 if r.peak_context_tokens is not None), default=None),
+def aggregate_total(records: list[dict]) -> UsageRow:
+    """One row over every record, each counted once — the table's TOTAL line.
+
+    Computed from the records rather than summed from the group rows: under
+    `--by model` one session lands in a group per model it used, so summing
+    the groups counted its call, and its failure, once per model.
+
+    The turn columns stay blank: a percentile across phases, or a cap ratio
+    across phases with different caps, describes nothing.
+    """
+    group = _new_group()
+    for rec in records:
+        _accumulate(group, rec, rec.get("cost") or 0.0, attribute_tokens=True)
+    return dataclasses.replace(
+        _finalize_group("TOTAL", group, attribute_tokens=True),
+        p50_turns=None, p95_turns=None, at_cap_ratio=None,
     )
 
 
@@ -320,11 +319,11 @@ def _pad(cell: str, width: int, align: Align) -> str:
     return cell.ljust(width) if align is Align.LEFT else cell.rjust(width)
 
 
-def format_stats_table(rows: list[UsageRow], by: str = "script") -> str:
+def format_stats_table(rows: list[UsageRow], total: UsageRow, by: str = "script") -> str:
+    """The table for *rows*, ending with *total* (`aggregate_total` over the same records)."""
     columns = stats_columns(by)
     header = tuple(col.label for col in columns)
-    body = [tuple(col.render(row) for col in columns)
-            for row in (*rows, _totals_row(rows))]
+    body = [tuple(col.render(row) for col in columns) for row in (*rows, total)]
     cells = [header, *body]
     widths = [max(len(c) for c in column) for column in zip(*cells)]
     lines = [
@@ -347,4 +346,4 @@ def stats(since: str, by: str, *, as_json: bool = False) -> None:
             print(json.dumps(asdict(row), separators=(",", ":")))
         return
     print(f"AI usage — last {since}, by {by}")
-    print(format_stats_table(rows, by))
+    print(format_stats_table(rows, aggregate_total(records), by))

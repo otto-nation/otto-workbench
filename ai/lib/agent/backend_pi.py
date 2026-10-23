@@ -65,9 +65,9 @@ import agent.pi_binary
 import agent.usage
 import core.log
 import core.timeouts
-from agent.backend import AgentInvocation, Attribution, agent_env
+from agent.backend import AgentInvocation, agent_env
 from agent.pi_binary import PiSpawn, PiUnresolvable
-from agent.pi_models import ModelNotConfigured, ModelNotServed, effective_provider, not_served_message
+from agent.pi_models import ModelNotConfigured, ModelNotServed, not_served_message
 from agent.pi_models import require_listed_model, require_model_with_provider
 from agent.rule_prefix import (
     TEMP_PREFIX,
@@ -1013,13 +1013,14 @@ def _checked_spawn(
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
-def attribution(*, provider: str | None, thinking: str | None) -> Attribution:
-    """The provider the spawn queried and the thinking level it passed.
+def ledger_provider() -> None:
+    """Nothing: Pi's log names the provider on every assistant message.
 
-    The provider is the effective one — the flag, else Pi's default — because
-    that is where the request went whether or not the caller named it.
+    A reading from settings would be where this process thinks the request
+    went, which a spawn under another settings home can contradict; an absent
+    provider is more honest than an inferred one.
     """
-    return Attribution(provider=effective_provider(provider), thinking=thinking or None)
+    return None
 
 
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:

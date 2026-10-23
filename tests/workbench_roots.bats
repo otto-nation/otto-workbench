@@ -544,5 +544,7 @@ EOF
   ' _ "$TMPDIR/wb.git" "$REPO_ROOT"
 
   [ "$status" -eq 0 ]
-  [ "$output" = "$TMPDIR/wb-main" ]
+  # git reports the worktree by its canonical path, which on macOS is the
+  # /private/var form of a /var temp dir, so compare against that spelling.
+  [ "$output" = "$(cd "$TMPDIR/wb-main" && pwd -P)" ]
 }

@@ -243,24 +243,40 @@ _warn_no_brew_install() {
   warn "$label has no install without Homebrew (${disposition:-no install annotation in its manifest})"
 }
 
-# _install_mise_backend_prereq MISE_SPEC — installs what MISE_SPEC's mise backend
-# needs to run, through install_package. mise's pipx backend installs with uv,
-# or pipx when uv is absent, and with neither it fails; so a `pipx:` spec gets
-# uv first unless one of the two already runs. Other backends need nothing here.
+# The manifest package each mise backend needs before it can install anything,
+# keyed by the backend prefix of a mise spec (`pipx:pytest` → pipx). A backend
+# with no entry needs nothing beyond mise. Adding one is an entry here.
+#
+# pipx needs uv rather than pipx itself: mise's pipx backend falls back to pipx
+# without uv, but options such as `uvx_args=--with pytest-xdist` are uv's, and
+# pipx installs the package without them.
+declare -gA MISE_BACKEND_PREREQS=(
+  [pipx]=uv
+)
+
+# _install_mise_backend_prereq MISE_SPEC — installs the package MISE_SPEC's mise
+# backend needs (MISE_BACKEND_PREREQS) through install_package, unless it
+# already runs. Returns 1, having said which package and why, when it cannot.
 _install_mise_backend_prereq() {
-  local mise_tool="$1"
-  [[ "$mise_tool" == pipx:* ]] || return 0
-  _cmd_runnable uv && return 0
-  _cmd_runnable pipx && return 0
-  install_package uv
+  local mise_tool="$1" backend prereq
+  [[ "$mise_tool" == *:* ]] || return 0
+  backend="${mise_tool%%:*}"
+  prereq="${MISE_BACKEND_PREREQS[$backend]:-}"
+  [[ -n "$prereq" ]] || return 0
+  _cmd_runnable "$prereq" && return 0
+  install_package "$prereq" && return 0
+  warn "mise's $backend backend needs $prereq, which could not be installed — install $prereq, then re-run"
+  return 1
 }
 
 # _install_via_mise LABEL MISE_SPEC HINT — `mise use -g MISE_SPEC`, after its
 # backend's prerequisite, then the shims dir prepended to PATH for the rest of
-# this run. Returns 1, with HINT, when mise fails.
+# this run. Returns 1, with HINT, when mise fails, and without trying mise when
+# the prerequisite could not be installed, since mise would fail for a reason
+# HINT does not name.
 _install_via_mise() {
   local label="$1" mise_tool="$2" hint="$3"
-  _install_mise_backend_prereq "$mise_tool" || true
+  _install_mise_backend_prereq "$mise_tool" || return 1
   info "Installing $label via mise..."
   if ! mise use -g "$mise_tool"; then
     warn "mise could not install $label — $hint"

@@ -27,5 +27,5 @@
 source "${${(%):-%x}:h}/_worktree_launch.zsh"
 
 pi() {
-  _wb_launch_in_worktree pi "$@"
+  wb_launch_in_worktree pi "$@"
 }

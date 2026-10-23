@@ -19,5 +19,5 @@
 source "${${(%):-%x}:h}/_worktree_launch.zsh"
 
 claude() {
-  _wb_launch_in_worktree claude "$@"
+  wb_launch_in_worktree claude "$@"
 }

@@ -23,10 +23,12 @@ _mise_bin="$(command -v mise 2>/dev/null)"
 eval "$("$_mise_bin" activate zsh)" 2>/dev/null
 
 # Override the precmd/chpwd hooks to guard all future invocations
+# snapshot-exempt: mise activate registers this name as its precmd hook
 function _mise_hook_precmd() {
   [[ -d . ]] || return 0
   eval "$("$_mise_bin" hook-env -s zsh --reason precmd)"
 }
+# snapshot-exempt: mise activate registers this name as its chpwd hook
 function _mise_hook_chpwd() {
   [[ -d . ]] || return 0
   eval "$("$_mise_bin" hook-env -s zsh --reason chpwd)"

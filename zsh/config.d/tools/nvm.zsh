@@ -17,15 +17,19 @@ export NVM_DIR="$HOME/.nvm"
 [[ -s "$NVM_DIR/nvm.sh" ]] || return 0
 
 # Lazy loader — defers sourcing nvm.sh until first use.
-# Each shim calls _nvm_load once, then calls through to the real binary.
-_nvm_load() {
+# Each shim calls wb_nvm_load once, then calls through to the real binary.
+#
+# No leading underscore: Claude Code's shell snapshot leaves out
+# single-underscore functions, so shims captured without their loader would
+# fail with "command not found" (tests/zsh_function_names.bats).
+wb_nvm_load() {
   unfunction nvm node npm npx yarn 2>/dev/null
   source "$NVM_DIR/nvm.sh"
   [[ -s "$NVM_DIR/bash_completion" ]] && source "$NVM_DIR/bash_completion"
 }
 
-nvm()  { _nvm_load; nvm  "$@"; }
-node() { _nvm_load; node "$@"; }
-npm()  { _nvm_load; npm  "$@"; }
-npx()  { _nvm_load; npx  "$@"; }
-yarn() { _nvm_load; yarn "$@"; }
+nvm()  { wb_nvm_load; nvm  "$@"; }
+node() { wb_nvm_load; node "$@"; }
+npm()  { wb_nvm_load; npm  "$@"; }
+npx()  { wb_nvm_load; npx  "$@"; }
+yarn() { wb_nvm_load; yarn "$@"; }

@@ -43,6 +43,23 @@ require_zsh() {
   return 1
 }
 
+# Claude Code runs its Bash tool from a snapshot of the login shell's
+# functions, taken with `typeset +f | grep -vE '^_[^_]'` (read from the
+# installed binary): every name with a single leading underscore is left out.
+# This is the one copy of that filter the suites share.
+CLAUDE_SNAPSHOT_DROPPED_RE='^_[^_]'
+
+# claude_snapshot FILE — what a Claude Code shell snapshot keeps of the
+# functions FILE defines once sourced under `zsh -f`: one definition per kept
+# function, ready to source into a fresh shell. The caller supplies whatever
+# environment FILE needs to load.
+claude_snapshot() {
+  zsh -fc "
+    source '$1'
+    typeset +f | grep -vE '$CLAUDE_SNAPSHOT_DROPPED_RE' | while IFS= read -r f; do functions \"\$f\"; done
+  "
+}
+
 common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
   # causes git commands in tests to target the real repo instead of temp repos)

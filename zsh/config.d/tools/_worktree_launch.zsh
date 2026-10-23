@@ -23,13 +23,17 @@
 # No requires-cmd: the wrappers that call this (claude.zsh, pi.zsh) carry their
 # own, and each sources this file by path so it works however it was loaded.
 #
+# No leading underscore: Claude Code's shell snapshot leaves out
+# single-underscore functions, and a `claude` captured without its helper fails
+# with "command not found" (tests/zsh_function_names.bats).
+#
 # Docs:            docs/architecture.md § Shell (ZSH)
-# duplicate-check: ^(_wb_launch_in_worktree *\(\)|function _wb_launch_in_worktree)
+# duplicate-check: ^(wb_launch_in_worktree *\(\)|function wb_launch_in_worktree)
 
-# _wb_launch_in_worktree CMD [ARGS...] — run CMD with ARGS in the worktree a
+# wb_launch_in_worktree CMD [ARGS...] — run CMD with ARGS in the worktree a
 # bare-repo container stands in for, or in place anywhere else. Returns CMD's
 # exit status.
-_wb_launch_in_worktree() {
+wb_launch_in_worktree() {
   local cmd="$1"
   shift
 

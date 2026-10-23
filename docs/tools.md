@@ -623,12 +623,13 @@ otto-log show <invocation> [--only]
 otto-log list [--script NAME] [--since WINDOW] [--repo org/repo]
 otto-log record --script NAME --action KEY [--detail TEXT] [--level info|warn|error]
 otto-log prune [--keep N]
-otto-log stats [--since 7d] [--by script|task|model|day|phase]
+otto-log stats [--since 7d] [--by script|task|model|provider|day|phase]
 ```
 
 `--json` on `recent`, `query`, `show`, and `list` emits JSONL. On `stats` it
 emits one JSON object per group (`group`, `calls`, `cost`, token fields,
-`median_duration_ms`; plus turn percentiles when `--by phase`).
+`median_duration_ms`, `failed`, `peak_context_tokens`; plus turn percentiles
+when `--by phase`).
 
 `record` writes one event for callers that cannot open a `Trail` themselves
 (shell close-out scripts, agents between a scan and its close). It inherits
@@ -703,7 +704,7 @@ in docs/ai-libraries.md.
 | Flag | Description |
 |------|-------------|
 | `--since` `<since>` | Time window (e.g. 24h, 7d). Default: `7d`. |
-| `--by` `<script\|task\|model\|day\|phase>` | Group rows by. Default: `script`. |
+| `--by` `<script\|task\|model\|provider\|day\|phase>` | Group rows by. Default: `script`. |
 | `--json` | Output one JSON object per group. |
 
 ### `otto-mcp-server`

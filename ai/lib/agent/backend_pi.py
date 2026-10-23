@@ -1013,6 +1013,16 @@ def _checked_spawn(
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
+def ledger_provider() -> None:
+    """Nothing: Pi's log names the provider on every assistant message.
+
+    A reading from settings would be where this process thinks the request
+    went, which a spawn under another settings home can contradict; an absent
+    provider is more honest than an inferred one.
+    """
+    return None
+
+
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """No pre-run checks — Pi resolves models and provider routing itself.
 

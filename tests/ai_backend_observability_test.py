@@ -255,10 +255,14 @@ class TestPromptRecordsToLedger:
         assert agent.backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
         assert list(ledger.glob("*.jsonl")) == []
 
-    def test_agent_session_log_without_result_records_nothing(
+    def test_agent_session_log_without_result_records_an_unmeasured_failure(
         self, ledger, monkeypatch, tmp_path,
     ):
-        """An agent that died before its result record is unmeasured, not free."""
+        """An agent that died before its result record is unmeasured, not free.
+
+        The row exists so the failure counts, and carries no cost or token keys
+        so nothing reads it as a $0 call.
+        """
         session_log = tmp_path / "session.jsonl"
         session_log.write_text('{"type":"assistant"}\n')
         mod = types.SimpleNamespace(invoke_agent=lambda inv: 1)
@@ -266,7 +270,10 @@ class TestPromptRecordsToLedger:
         agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(session_log),
         ))
-        assert list(ledger.glob("*.jsonl")) == []
+        [rec] = [json.loads(line) for f in ledger.glob("*.jsonl")
+                 for line in f.read_text().splitlines()]
+        assert (rec["exit_code"], rec["measured"]) == (1, False)
+        assert {"cost", "input_tokens", "output_tokens"}.isdisjoint(rec)
 
     def test_backend_returning_pair_still_works(self, ledger, monkeypatch, tmp_path):
         """A backend that has not adopted the usage triple must not crash dispatch."""

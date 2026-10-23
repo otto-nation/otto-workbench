@@ -160,8 +160,9 @@ packages_use_bundle() {
 # Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`),
 # bootstrapping mise first when neither is present. A Homebrew install that
 # fails falls back to mise when the entry has a mise spec and mise is already
-# installed. Skipped when the entry's binary already runs; a mise shim with no
-# active version does not count.
+# installed. A `pipx:` spec handed to mise gets uv installed first unless uv or
+# pipx already runs. Skipped when the entry's binary already runs; a mise shim
+# with no active version does not count.
 # Returns 1 when NAME is in no manifest, has no mise spec on a machine without
 # Homebrew, or the install fails; 2 on a usage error, including --version on a
 # spec that already contains '@'.

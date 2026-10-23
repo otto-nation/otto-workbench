@@ -86,17 +86,11 @@ _sc_lab() {
   [[ "$output" == *"HELPER pytest"* ]]
 }
 
-@test "without Homebrew, uv is installed before pytest" {
-  run _run _install_pytest
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER uv"*"HELPER pytest"* ]]
-}
-
-@test "with Homebrew, uv is left alone" {
-  printf '#!/bin/sh\nexit 0\n' > "$STUBS/brew"
-  run _run _install_pytest "$STUBS:/usr/bin:/bin"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"HELPER uv"* ]]
+@test "pytest's mise spec uses the pipx backend install_package provides uv for" {
+  # dev-deps no longer installs uv itself: install_package does, for any pipx
+  # spec it hands to mise (tests/install_package.bats). That only covers
+  # pytest while pytest's spec is a pipx one.
+  grep -qE '^brew "pytest"[[:space:]]+# mise: pipx:' "$REPO_ROOT/packages/components.Brewfile"
 }
 
 @test "a shellcheck at another version is moved to the CI pin on the mise path" {

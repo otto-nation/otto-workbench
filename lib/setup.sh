@@ -243,14 +243,27 @@ _warn_no_brew_install() {
   warn "$label has no install without Homebrew (${disposition:-no install annotation in its manifest})"
 }
 
-# _install_via_mise LABEL MISE_SPEC MANUAL — `mise use -g MISE_SPEC`, then the
-# shims dir prepended to PATH for the rest of this run. Returns 1, naming
-# MANUAL, when mise fails.
+# _install_mise_backend_prereq MISE_SPEC — installs what MISE_SPEC's mise backend
+# needs to run, through install_package. mise's pipx backend installs with uv,
+# or pipx when uv is absent, and with neither it fails; so a `pipx:` spec gets
+# uv first unless one of the two already runs. Other backends need nothing here.
+_install_mise_backend_prereq() {
+  local mise_tool="$1"
+  [[ "$mise_tool" == pipx:* ]] || return 0
+  _cmd_runnable uv && return 0
+  _cmd_runnable pipx && return 0
+  install_package uv
+}
+
+# _install_via_mise LABEL MISE_SPEC HINT — `mise use -g MISE_SPEC`, after its
+# backend's prerequisite, then the shims dir prepended to PATH for the rest of
+# this run. Returns 1, with HINT, when mise fails.
 _install_via_mise() {
-  local label="$1" mise_tool="$2" manual="$3"
+  local label="$1" mise_tool="$2" hint="$3"
+  _install_mise_backend_prereq "$mise_tool" || true
   info "Installing $label via mise..."
   if ! mise use -g "$mise_tool"; then
-    warn "mise could not install $label — install it manually: $manual"
+    warn "mise could not install $label — $hint"
     return 1
   fi
   case ":$PATH:" in
@@ -268,12 +281,11 @@ _install_via_mise() {
 # login, so the shims dir is prepended for the rest of this run: the steps that
 # follow look the tool up with command -v.
 #
-# A Homebrew install that fails falls back to mise when the entry has a mise
-# spec and mise is already present. Homebrew can fail on a machine it still
-# runs on: a dependency with no bottle for this macOS is built from source, and
-# an older compiler cannot build it. mise is never bootstrapped for the
-# fallback — on a Homebrew machine that would install a second installer the
-# operator did not choose.
+# Why the Homebrew failure falls back: Homebrew can fail on a machine it still
+# runs on — a dependency with no bottle for this macOS is built from source, and
+# an older compiler cannot build it. Why mise is never bootstrapped for it: on a
+# Homebrew machine that would install a second installer the operator did not
+# choose.
 _install_brew_or_mise() {
   local cmd="$1" formula="$2" mise_tool="$3" label="$4" disposition="${5:-}"
   local manual="brew install $formula"
@@ -304,7 +316,8 @@ _install_brew_or_mise() {
       doctor="brew doctor"
     elif [[ -n "$mise_tool" ]] && command -v mise >/dev/null 2>&1; then
       warn "Homebrew could not install $label — falling back to mise"
-      _install_via_mise "$label" "$mise_tool" "$manual" || return 1
+      _install_via_mise "$label" "$mise_tool" \
+        "Homebrew failed too; see the output above, then check: brew doctor, mise doctor" || return 1
       looked="$MISE_SHIMS_DIR"
       doctor="mise doctor"
     else
@@ -312,7 +325,7 @@ _install_brew_or_mise() {
       return 1
     fi
   elif command -v mise >/dev/null 2>&1; then
-    _install_via_mise "$label" "$mise_tool" "$manual" || return 1
+    _install_via_mise "$label" "$mise_tool" "install it manually: $manual" || return 1
     looked="$MISE_SHIMS_DIR"
     doctor="mise doctor"
   else

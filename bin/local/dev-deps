@@ -98,16 +98,6 @@ _install_pinned_shellcheck() {
   fi
 }
 
-# _install_pytest — pytest with pytest-xdist, so bin/local/run-tests can
-# parallelise. Through mise's pipx backend, which installs with uv, so uv is
-# installed first — only on the mise path, and only while pytest is missing.
-_install_pytest() {
-  if ! _cmd_runnable pytest && ! command -v brew >/dev/null 2>&1; then
-    install_package uv || true
-  fi
-  install_package pytest
-}
-
 # _has_locale NAME — whether NAME is generated. `locale -a` spells UTF-8 as
 # `utf8` on glibc, so both spellings count.
 _has_locale() {
@@ -129,7 +119,9 @@ dev_deps_install() {
     install_package "$entry" || true
   done
   _install_pinned_shellcheck || true
-  _install_pytest || true
+  # pytest with pytest-xdist, so bin/local/run-tests can parallelise. Its mise
+  # spec uses the pipx backend; the helper installs that backend's uv itself.
+  install_package pytest || true
 }
 
 # dev_deps_check — reports every missing dependency with the command that fixes

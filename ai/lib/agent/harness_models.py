@@ -34,6 +34,7 @@ the grammar a reference is written in (``agent.models``).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import agent.backend_claude
@@ -53,6 +54,12 @@ CLAUDE_TIER_ENV = {
 CLAUDE_MANAGED_ENV = (*CLAUDE_TIER_ENV.values(), "ANTHROPIC_MODEL")
 # The model aliases the Claude CLI resolves itself.
 CLAUDE_ALIASES = frozenset({"opus", "sonnet", "haiku", "opusplan", "default"})
+# A Claude id as each platform spells it: `claude-…` (Anthropic, Vertex), a
+# `<region>.anthropic.claude-…` Bedrock id, or a Bedrock ARN. Anchored so an id
+# merely containing the word — a fine-tune named for it — is not taken for one.
+_CLAUDE_ID = re.compile(r"^(claude-|([a-z]+\.)?anthropic\.claude-|arn:)")
+# The context-window suffix an alias or id may carry, as in `sonnet[1m]`.
+_WINDOW_SUFFIX = re.compile(r"\[[^\]]*\]$")
 # The levels `claude --effort` takes.
 CLAUDE_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
@@ -96,7 +103,8 @@ def _claude_servable(ref: ModelRef) -> bool:
     """
     if ref.provider is not None:
         return ref.provider in agent.backend_claude.SERVED_PROVIDERS
-    return "claude" in ref.id.lower() or ref.id.startswith("arn:") or ref.id in CLAUDE_ALIASES
+    bare = _WINDOW_SUFFIX.sub("", ref.id.lower())
+    return bool(_CLAUDE_ID.match(bare)) or bare in CLAUDE_ALIASES
 
 
 def _qualified(ref: ModelRef) -> str:

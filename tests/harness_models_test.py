@@ -47,7 +47,7 @@ def test_a_tier_on_a_provider_the_claude_cli_cannot_run_is_skipped_and_said():
     ]
 
 
-@pytest.mark.parametrize("bare", ["gemini-2.5-flash", "gpt-6-luna"])
+@pytest.mark.parametrize("bare", ["gemini-2.5-flash", "gpt-6-luna", "not-claude-distill-7b"])
 def test_a_bare_id_that_is_not_a_claude_model_is_skipped(bare):
     # Valid for Pi under its defaultProvider; Claude Code would fail every request.
     claude = harness_models(ModelsConfig(light=bare)).claude
@@ -58,7 +58,9 @@ def test_a_bare_id_that_is_not_a_claude_model_is_skipped(bare):
 
 
 @pytest.mark.parametrize("bare", [
-    "us.anthropic.claude-opus-5-5-v1:0", "arn:aws:bedrock:us-east-1:1:application-inference-profile/x", "opusplan",
+    "us.anthropic.claude-opus-5-5-v1:0", "anthropic.claude-haiku-5-5-v1:0",
+    "arn:aws:bedrock:us-east-1:1:application-inference-profile/x", "opusplan", "sonnet[1m]",
+    "claude-opus-5-5[1m]", "claude-opus-4-6@20250514",
 ])
 def test_a_bare_claude_id_arn_or_alias_is_a_claude_model(bare):
     claude = harness_models(ModelsConfig(deep=bare)).claude

@@ -20,10 +20,10 @@
 # rather than every tier collapsing onto agent.model. A machine that already
 # ran that migration has every tier set, and case 3 reports what differs.
 #
-# A value takes agent.provider when the config still has one, the provider the
-# workbench's phases ran on, as that migration does; the Claude view drops a
-# provider the Claude CLI serves, so its aliases read the same bare id. With no
-# agent.provider the value is carried bare, as both harnesses took it.
+# Values are carried bare, as both harnesses took them. agent.provider is not
+# put in front: it names where the workbench's phases ran, which need not be
+# where Claude Code was pointed, and a Claude id under the wrong provider is one
+# neither harness can run.
 #
 # Only active `export` lines are read and deleted, the lines read_env_local_var
 # reads — a commented one was never in effect.
@@ -51,7 +51,7 @@ _models_ref_id() {
 migration_20261023_models_from_env_local() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return "$MIGRATION_DEFERRED"
 
-  local pair var key value current provider ref changed=""
+  local pair var key value current changed=""
   for pair in $LEGACY_MODEL_ENV_VARS; do
     var="${pair%%:*}"
     key="${pair#*:}"
@@ -61,13 +61,14 @@ migration_20261023_models_from_env_local() {
     wb_config_ensure_file || return 1
     current="$(K="$key" yq '.models[strenv(K)] // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
     if [[ -z "$current" ]]; then
-      provider="$(yq '.agent.provider // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
-      ref="$value"
-      [[ -z "$provider" ]] || ref="$provider/$value"
-      K="$key" V="$ref" yq -i '.models[strenv(K)] = strenv(V)' "$WORKBENCH_CONFIG_FILE" || return 1
-      current="$ref"
+      K="$key" V="$value" yq -i '.models[strenv(K)] = strenv(V)' "$WORKBENCH_CONFIG_FILE" || return 1
+      current="$value"
+      changed=1
     fi
-    [[ "$(_models_ref_id "$current")" == "$value" ]] || continue
+    # Exact, or the same model id under a provider or level the export never had.
+    if [[ "$current" != "$value" && "$(_models_ref_id "$current")" != "$value" ]]; then
+      continue
+    fi
 
     sed_i "/^export ${var}=/d" "$ENV_LOCAL_FILE"
     changed=1

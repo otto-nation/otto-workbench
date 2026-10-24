@@ -90,15 +90,22 @@ _run_migration() {
   [ "$(cat "$ENV_FILE")" = "export AI_OPUS_MODEL=claude-opus-5-5" ]
 }
 
-@test "agent.provider, still in the config, is carried onto each value" {
+@test "agent.provider is not put in front of a Claude Code id" {
+  # The provider the phases ran on need not be the one Claude Code used.
   mkdir -p "${CONFIG%/*}"
-  printf 'agent:\n  provider: google-vertex-claude\n  model: claude-opus-5-5\n' > "$CONFIG"
+  printf 'agent:\n  provider: openai\n  model: gpt-6\n' > "$CONFIG"
   printf 'export AI_HAIKU_MODEL=claude-haiku-5-5\n' > "$ENV_FILE"
   run _run_migration
   [ "$status" -eq 0 ]
-  [ "$(yq '.models.light' "$CONFIG")" = "google-vertex-claude/claude-haiku-5-5" ]
-  # agent.* is the next migration's to retire.
-  [ "$(yq '.agent.model' "$CONFIG")" = "claude-opus-5-5" ]
+  [ "$(yq '.models.light' "$CONFIG")" = "claude-haiku-5-5" ]
+  [ ! -s "$ENV_FILE" ]
+}
+
+@test "a slashed export is carried as written, retired, and reported as a change" {
+  printf 'export AI_MODEL=openrouter/anthropic-claude-x\n' > "$ENV_FILE"
+  run _run_migration
+  [ "$status" -eq 0 ]
+  [ "$(yq '.models.session' "$CONFIG")" = "openrouter/anthropic-claude-x" ]
   [ ! -s "$ENV_FILE" ]
 }
 

@@ -312,7 +312,9 @@ _claude_mirror_env() {
 # - `model` is written only while models.session is set, and `effortLevel`
 #   only while it names a level `claude --effort` takes. Otherwise each stays
 #   whatever /model, /effort or a hand edit left, since those are the keys
-#   Claude Code itself also writes here.
+#   Claude Code itself also writes here. The cost: a level this sync wrote is
+#   not withdrawn when the config stops naming one — sync cannot tell its own
+#   write from an /effort choice, and losing the operator's is the worse error.
 #
 # A config that cannot be read leaves the document unchanged and warns: a sync
 # that withdrew every alias over a typo would be worse than one a line late.

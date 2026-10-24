@@ -137,15 +137,25 @@ EOF
 # already agreed with, so a line left is one it disagrees with, and which value
 # is right is the operator's call. The warning says what config.yml holds rather
 # than recommending the export, which may be the stale one of the two.
+#
+# The machine-wide config.yml is read, not the scopes of whichever repo sync was
+# run from: it is what the migration compared against, and the harness settings
+# these exports compete with are the machine's.
 ai_warn_model_exports() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0
-  local pair var key value current
+  local pair var key value current models=""
+  if [[ -f "$WORKBENCH_CONFIG_FILE" ]]; then
+    models=$(yq -o=json -I=0 '.models // {}' "$WORKBENCH_CONFIG_FILE" 2> /dev/null) || models=""
+  fi
   for pair in $LEGACY_MODEL_ENV_VARS; do
     var="${pair%%:*}"
     key="models.${pair#*:}"
     value=$(read_env_local_var "$var")
     [[ -n "$value" ]] || continue
-    current=$(wb_config_get "$key") || current=""
+    current=""
+    if [[ -n "$models" ]]; then
+      current=$(jq -r --arg k "${pair#*:}" '.[$k] // ""' <<< "$models") || current=""
+    fi
     if [[ -n "$current" ]]; then
       warn "$ENV_LOCAL_FILE exports $var=$value, which the workbench no longer reads — $key is $current; delete the line, or run otto-workbench config set $key $value if that is the model you want"
       continue

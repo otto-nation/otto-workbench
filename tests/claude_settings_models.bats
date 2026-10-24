@@ -54,6 +54,14 @@ _seed_settings() {
   [ "$output" = "claude-sonnet-5-5 high" ]
 }
 
+@test "a session level below Claude's lowest effort writes low, as the pipeline runs it" {
+  _seed_settings '{"effortLevel":"high"}'
+  _seed_config 'models:' '  session: claude-sonnet-5-5:minimal'
+  _sync_run "$HOME_DIR" "$STATE_DIR"
+  run jq -r '.model + " " + .effortLevel' "$SETTINGS_OUT"
+  [ "$output" = "claude-sonnet-5-5 low" ]
+}
+
 @test "with no session, model and effortLevel stay what /model left" {
   _seed_settings '{"model":"claude-opus-5-5","effortLevel":"low"}'
   _seed_config 'models:' '  light: claude-haiku-5-5'

@@ -352,10 +352,12 @@ def record(
 ) -> None:
     """Append one usage record to the global ledger. Never raises.
 
-    `provider` and `thinking` are what served the call — *usage*'s own reading
-    of the log, else the backend's (the argument names it for a log that
-    cannot). `peak_context_tokens` comes from *usage* alone, and a key nothing
-    supplied is left out rather than guessed.
+    `provider` and `thinking` come from *usage*'s own reading of the log, which
+    names what served the call; else from the argument, the backend's answer
+    for a log that cannot. For `thinking` that answer is the level the call
+    asked for, which a model lacking it runs below. `peak_context_tokens` comes
+    from *usage* alone, and a key nothing supplied is left out rather than
+    guessed.
 
     `measured=False` is a call that failed before reporting any usage. It is
     recorded so the failure counts, with `measured: false` and no cost or token

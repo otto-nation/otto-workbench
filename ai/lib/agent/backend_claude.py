@@ -89,28 +89,45 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
 
 # ── Effort ───────────────────────────────────────────────────────────────────
 
-# The levels `claude --effort` takes: Thinking's vocabulary from `low` up.
-EFFORT_LEVELS = frozenset({
-    Thinking.LOW, Thinking.MEDIUM, Thinking.HIGH, Thinking.XHIGH, Thinking.MAX,
-})
+# Thinking's levels below anything `claude --effort` takes; each runs at `low`.
+_BELOW_EFFORT = frozenset({Thinking.OFF, Thinking.MINIMAL})
+# The levels `claude --effort` takes: the rest of Thinking's vocabulary. A model
+# lacking one falls back to the highest it has at or below it (Claude Code's
+# model-config docs: `xhigh` runs as `high` on Opus 4.6).
+EFFORT_LEVELS = frozenset(Thinking) - _BELOW_EFFORT
+# What turns thinking off where a model allows it. Claude Code documents it as a
+# no-op on the models that cannot think less than `low` — Opus, Sonnet and Haiku
+# 5.5 and the Fable models — so `off` there runs at `low` and no lower.
+_THINKING_OFF_ENV = ("MAX_THINKING_TOKENS", "0")
+
+
+def _normalized(thinking: str | None) -> str:
+    # Operator input reaches here as written (agent.phases.resolve_thinking).
+    return (thinking or "").strip().lower()
 
 
 def effort(thinking: str | None) -> str | None:
     """The ``--effort`` level a thinking level runs at, or None to pass no flag.
 
-    ``off`` and ``minimal`` have no Claude spelling and run at ``low``, the least
-    effort the CLI can be asked for — not at its default, which would be more
-    thinking, not less. Anything else unknown is None: the CLI ignores a level it
-    does not take with a warning and runs at its default, so passing one would add
-    the warning and change nothing.
+    ``off`` and ``minimal`` have no effort spelling and run at ``low``, the least
+    the CLI can be asked for — not at its default, which would be more thinking,
+    not less; ``off`` also sets ``MAX_THINKING_TOKENS=0`` (`thinking_env`). An
+    unknown level is None: the CLI ignores one with a warning and runs at its
+    default, so passing it would add the warning and change nothing.
     """
-    if not thinking:
-        return None
-    if thinking in EFFORT_LEVELS:
-        return str(thinking)
-    if thinking in (Thinking.OFF, Thinking.MINIMAL):
+    level = _normalized(thinking)
+    if level in EFFORT_LEVELS:
+        return level
+    if level in _BELOW_EFFORT:
         return str(Thinking.LOW)
     return None
+
+
+def thinking_env(thinking: str | None) -> dict[str, str]:
+    """The environment a thinking level adds: thinking off for ``off``, else nothing."""
+    if _normalized(thinking) == Thinking.OFF:
+        return dict([_THINKING_OFF_ENV])
+    return {}
 
 
 def _effort_args(thinking: str | None) -> list[str]:
@@ -302,11 +319,12 @@ def ledger_provider() -> str:
 
 
 def ledger_thinking(thinking: str | None) -> str | None:
-    """The level a call ran at, for the usage ledger: the ``--effort`` it was given.
+    """The level a call asked for, for the usage ledger: the ``--effort`` it was given.
 
-    The CLI's stream names no level, so the ledger records what the flag asked
-    for — after the same mapping, so a phase written ``minimal`` is recorded as
-    the ``low`` it ran at rather than the level it could not have.
+    The CLI's stream names no level, so this is the request, not what served
+    it — a model lacking the level runs at a lower one, and nothing reports
+    which. It is after the same mapping, so a phase written ``minimal`` is
+    recorded as the ``low`` it asked for rather than a level it could not.
     """
     return effort(thinking)
 
@@ -349,7 +367,7 @@ def prompt(
     by its environment, not by a flag.
     """
     # Raises MachineEnvUnavailable; backend.prompt turns it into exit 1.
-    env = agent.machine_env.base_env(cwd)
+    env = {**agent.machine_env.base_env(cwd), **thinking_env(thinking)}
     cmd = _build_prompt_cmd(model=model, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED, env=env)
@@ -381,6 +399,9 @@ def _unwrap_prompt_output(stdout: str) -> tuple[str, agent.usage.SessionUsage | 
 def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
     """The subprocess environment, with this run's operator rule prefix applied.
 
+    A thinking level of ``off`` adds the variable that turns thinking off (see
+    `thinking_env`); ``--effort`` alone cannot ask for less than ``low``.
+
     ``rules_home`` is backend-neutral; this backend maps it to
     ``CLAUDE_CONFIG_DIR``. Empty means inherit whatever the operator already
     has — no key is written. The path must be absolute: the CLI rejects a
@@ -389,7 +410,7 @@ def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
     Not applied inside ``agent_env``: that helper is backend-blind and shared.
     A Claude key there would be the same layering mistake one level up.
     """
-    env = agent_env(inv)
+    env = {**agent_env(inv), **thinking_env(inv.thinking)}
     if not inv.rules_home:
         return env
     home = Path(inv.rules_home).expanduser()

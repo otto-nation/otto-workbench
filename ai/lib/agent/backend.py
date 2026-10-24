@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 import shutil
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -161,30 +161,18 @@ def _require_backend() -> Backend:
     return selected
 
 
-def _ledger_provider(usage: agent.usage.SessionUsage) -> str | None:
-    """The provider to record when the log did not name one: the backend's answer.
+def _ledger_fallback(served: str | None, ask: Callable[[types.ModuleType], str | None]) -> str | None:
+    """What to record when the log did not name a value: the backend's answer.
 
-    Asked only when needed, so a log that names its provider costs no lookup.
-    None rather than raising: this feeds telemetry, and a row without a provider
-    is better than the measured call failing over it.
+    *served* is the log's own reading; *ask* puts the question to the backend
+    module. Asked only when needed, so a log that names its value costs no
+    lookup. None rather than raising: this feeds telemetry, and a row without
+    the value is better than the measured call failing over it.
     """
-    if usage.served_provider:
+    if served:
         return None
     try:
-        return _get_module().ledger_provider()
-    except Exception:  # noqa: BLE001 - telemetry must never break the measured call
-        return None
-
-
-def _ledger_thinking(usage: agent.usage.SessionUsage, thinking: str | None) -> str | None:
-    """The level to record when the log did not name one: the backend's answer for *thinking*.
-
-    The same shape as `_ledger_provider`, for the same reasons.
-    """
-    if usage.served_thinking:
-        return None
-    try:
-        return _get_module().ledger_thinking(thinking)
+        return ask(_get_module())
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         return None
 
@@ -221,7 +209,8 @@ def _record(
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr, phase=phase, max_turns=max_turns,
             branch=branch, invocation=core.trail.inherited_root(),
-            provider=_ledger_provider(usage), thinking=_ledger_thinking(usage, thinking),
+            provider=_ledger_fallback(usage.served_provider, lambda m: m.ledger_provider()),
+            thinking=_ledger_fallback(usage.served_thinking, lambda m: m.ledger_thinking(thinking)),
             measured=measured,
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call

@@ -42,6 +42,7 @@ from core.phases import (
     PhaseDomain,
     PhaseShape,
     Thinking,
+    Tier,
 )
 
 # Turns a second attempt may not exceed when a phase names no ceiling of its
@@ -241,8 +242,10 @@ class PhaseSpec:
     label: str
     template: str | Mapping[Mode, str] = ""
     optional: bool = False
-    # No built-in model: the backend's own default serves a phase nothing configures.
-    model: str | None = None
+    # How much model the phase needs. Never a model: which one serves each tier
+    # is `models.<tier>` in the config, and an unset tier runs on the backend's
+    # own default. Every registry entry names one (agent_registry_tiers_test).
+    tier: Tier | None = None
     thinking: Thinking | None = None
     max_turns: int = 15
     max_budget: float | None = None

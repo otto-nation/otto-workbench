@@ -112,8 +112,8 @@ def unserved_message(
     if close:
         parts.append("Closest listed ids: " + ", ".join(close))
     parts.append(
-        "Set --model, agent.model, WORKBENCH_AI_MODEL or WORKBENCH_AI_<PHASE>_MODEL "
-        "to an id listed by `pi --list-models`"
+        "Set --model, the phase's models.<tier>, WORKBENCH_AI_MODEL or "
+        "WORKBENCH_AI_<PHASE>_MODEL to an id listed by `pi --list-models`"
     )
     return ". ".join(parts) + "."
 
@@ -211,8 +211,8 @@ class ModelNotConfigured(core.errors.OperatorError):
         self.provider = provider
         super().__init__(
             f"Pi needs a model when a provider is set (provider {provider!r}). "
-            "Set agent.model, WORKBENCH_AI_MODEL or WORKBENCH_AI_<PHASE>_MODEL, "
-            "or pass --model."
+            "Set the phase's models.<tier>, WORKBENCH_AI_MODEL or "
+            "WORKBENCH_AI_<PHASE>_MODEL, or pass --model."
         )
 
 

@@ -72,7 +72,7 @@ class TestRequireListedModel:
         assert PROVIDER in msg
         assert LISTED in msg
         assert "--model" in msg
-        assert "agent.model" in msg
+        assert "models.<tier>" in msg
 
     def test_a_listed_id_passes_untouched(self, monkeypatch):
         monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
@@ -99,7 +99,7 @@ class TestNotServedMessage:
         assert "AI_SONNET_MODEL" not in msg
         assert LISTED in msg
         assert "--model" in msg
-        assert "agent.model" in msg
+        assert "models.<tier>" in msg
 
     def test_other_stderr_is_not_this_failure(self):
         assert agent.pi_models.not_served_message(
@@ -372,7 +372,7 @@ class TestUndeliveredNamesTheModel:
         assert UNLISTED in text
         assert "Model \"claude-sonnet-5-5\" not found" in text
         assert "--model" in text
-        assert "agent.model" in text
+        assert "models.<tier>" in text
         assert "WORKBENCH_AI_MODEL" in text
         assert "AI_SONNET_MODEL" not in text
         assert "stdin was already closed" not in text
@@ -389,7 +389,7 @@ class TestModelWithProvider:
             agent.pi_models.require_model_with_provider("xai", None)
         msg = str(caught.value)
         assert "xai" in msg
-        assert "agent.model" in msg
+        assert "models.<tier>" in msg
         assert "WORKBENCH_AI_MODEL" in msg
         assert "--model" in msg
 
@@ -418,7 +418,7 @@ class TestModelWithProvider:
         )
         assert exit_code != 0
         logged = Path(session_log).read_text()
-        assert "agent.model" in logged
+        assert "models.<tier>" in logged
         assert '"is_error": true' in logged
 
     def test_prompt_refuses_before_spawning(self, monkeypatch, tmp_path):
@@ -437,4 +437,4 @@ class TestModelWithProvider:
     def test_the_refusal_line_does_not_blame_pi(self):
         line = agent.backend_pi._refusal_line(agent.pi_models.ModelNotConfigured("xai"))
         assert "pi refused" not in line
-        assert "agent.model" in line
+        assert "models.<tier>" in line

@@ -60,6 +60,26 @@ ledger label spelled a third way. Reaching ``ai_backend`` directly is what let
 those differ; going through here is what stops them, and
 ``TestOneOwnerForBackendCalls`` is what keeps it that way.
 
+### agent/models.py
+
+What a model setting names: a provider, a model id, and a thinking level.
+
+Every layer that names a model — ``--model``, ``WORKBENCH_AI_*_MODEL``,
+``agent.phases.<p>.model`` and ``models.<tier>`` — is written in one grammar,
+``[provider/]id[:level]`` or a tier name, and read here. A value is parsed once
+and everything downstream takes the parts it needs: the review budget wants the
+id, Pi wants the provider as ``--provider``, the thinking resolver wants the
+level.
+
+Two separators, each read so that a real id cannot be misread:
+
+- ``provider/`` is split at the *first* slash. OpenRouter ids carry slashes of
+  their own (``openrouter/anthropic/claude-x``), so a later slash is the id's.
+- ``:level`` is a suffix only when it is one of ``Thinking``'s values. Bedrock
+  ids end ``:0`` and some local ones ``:latest``; those stay part of the id.
+
+Not: which layer wins (``agent.phases``), what a backend does with the parts.
+
 ### agent/phases.py
 
 What a phase resolves to here: the spec, the config file, the environment.
@@ -74,18 +94,25 @@ One precedence chain, most specific first, for every knob a phase has:
     explicit argument  >  WORKBENCH_AI_<PHASE>_*  >  WORKBENCH_AI_*
                        >  agent.phases.<phase>.*  >  agent.*  >  built-in
 
+A model is chosen by the same chain, with the phase's tier as its last layer:
+``agent.phases.<phase>.model`` beats ``models.<spec.tier>``. Every layer is
+written in `agent.models`' grammar, so a value names a provider and a thinking
+level as well as an id, and a tier name borrows that tier's model. The
+provider an invocation runs against is the chosen model's, unless
+WORKBENCH_AI_PROVIDER overrides it; the level is one layer of the thinking
+chain, below any thinking level configured outright.
+
 The effort preset sits between the config and the built-in for thinking level,
 the one knob a review's depth setting flattens. It also scales the turn budget,
 but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**No built-in model.** A phase names no default model, so when no layer sets
-one the model is ``None`` and the backend gets no ``--model``: the Claude CLI
-and Pi then use their own defaults. Pi refuses a provider without a model, which
+**No built-in model.** A phase names a tier, not a model, so when no layer
+sets one — the tier unset in ``models`` too — the model is ``None`` and the
+backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
+Pi refuses a provider without a model, which
 ``agent.pi_models.require_model_with_provider`` reports before anything runs.
-Whatever a layer names is passed through as a model id — there is no tier-alias
-rewriting, so the provider's catalogue decides what an id means.
 
 ### agent/registry.py
 
@@ -137,9 +164,10 @@ it; ``--no-disprove`` is read off ``skip_phases`` and beats ``--disprove`` —
 ``review.phases._should_disprove``.
 
 Each phase's model is resolved elsewhere: ``agent.phases`` layers
-``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` and the
-config file over the default on the spec here, which is no model at all — an
-unconfigured phase runs on the backend's own default.
+``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` and
+``agent.phases.<phase>.model`` over ``models.<tier>`` for the tier the spec here
+names. A spec names a tier, never a model, and a tier left unset runs its
+phases on the backend's own default.
 
 ### agent/retry.py
 

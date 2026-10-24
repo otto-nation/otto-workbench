@@ -47,11 +47,12 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
-@test "model defaults: no phase names a default model" {
+@test "model defaults: every phase names a tier and no model" {
   result=$(_py "
-print(sorted({repr(s.model) for s in mod.PHASES.values()}))
+specs = mod.PHASES.values()
+print(all(s.tier is not None for s in specs), any(hasattr(s, 'model') for s in specs))
 ")
-  [ "$result" = "['None']" ]
+  [ "$result" = "True False" ]
 }
 
 @test "model defaults: registry covers every phase" {
@@ -61,56 +62,58 @@ print(sorted(mod.PHASES) == sorted(mod.Phase))
   [ "$result" = "True" ]
 }
 
-@test "resolve_model: explicit override wins" {
+# The env layers, through the public resolver. The tier beneath them is pinned
+# in tests/agent_models_test.py; the config file is sandboxed here and names
+# no tier, so a phase with no env layer resolves to nothing.
+
+@test "phase_model: explicit override wins over the env" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-print(mod.resolve_model('claude-haiku-4-5', 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'))
+os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-sonnet-5'
+print(mod.phase_model('group', 'claude-haiku-4-5'))
 ")
   [ "$result" = "claude-haiku-4-5" ]
 }
 
-@test "resolve_model: env var beats default" {
+@test "phase_model: the phase env var answers" {
   result=$(_py "
 import os
 os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-haiku-4-5'
 os.environ.pop('WORKBENCH_AI_MODEL', None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'))
-del os.environ['WORKBENCH_AI_GROUP_MODEL']
+print(mod.phase_model('group', None))
 ")
   [ "$result" = "claude-haiku-4-5" ]
 }
 
-@test "resolve_model: global env var beats default" {
+@test "phase_model: the global env var answers" {
   result=$(_py "
 import os
 os.environ['WORKBENCH_AI_MODEL'] = 'claude-haiku-4-5'
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'))
-del os.environ['WORKBENCH_AI_MODEL']
+print(mod.phase_model('group', None))
 ")
   [ "$result" = "claude-haiku-4-5" ]
 }
 
-@test "resolve_model: default when no override, None when there is none" {
+@test "phase_model: None when no layer names a model" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'claude-sonnet-5'), mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', None))
+print(mod.phase_model('group', None))
 ")
-  [ "$result" = "claude-sonnet-5 None" ]
+  [ "$result" = "None" ]
 }
 
-@test "resolve_model: tier env vars do not rewrite a tier word" {
+@test "phase_model: tier env vars do not rewrite a Claude tier word" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
 os.environ['AI_SONNET_MODEL'] = 'claude-sonnet-5'
 os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-4-5'
-print(mod.resolve_model('sonnet', 'WORKBENCH_AI_GROUP_MODEL', None), mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', None))
+print(mod.phase_model('group', 'sonnet'), mod.phase_model('group', None))
 ")
   [ "$result" = "sonnet None" ]
 }

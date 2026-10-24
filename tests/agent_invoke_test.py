@@ -129,9 +129,19 @@ class TestRunPromptResolution:
 
     def test_passes_the_resolved_model_and_thinking_level(self, backend, tmp_path):
         kwargs = self._kwargs(backend, tmp_path)
-        assert kwargs["model"] == agent.phases.phase_model(Phase.DESCRIBE, None)
-        assert kwargs["thinking"] == agent.phases.phase_thinking(Phase.DESCRIBE)
-        assert kwargs["provider"] == agent.phases.phase_provider()
+        settings = agent.phases.phase_settings(Phase.DESCRIBE, None)
+        assert (kwargs["model"], kwargs["thinking"], kwargs["provider"]) == (
+            settings.model, settings.thinking, settings.provider)
+
+    def test_the_provider_and_level_come_from_the_phases_model(self, backend, tmp_path, monkeypatch):
+        """One reference names all three, so the backend gets all three from it."""
+        monkeypatch.delenv("WORKBENCH_AI_PROVIDER", raising=False)
+        monkeypatch.delenv(Phase.DESCRIBE.thinking_env_key, raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        monkeypatch.setenv(Phase.DESCRIBE.model_env_key, "openai/gpt-6-luna:low")
+        kwargs = self._kwargs(backend, tmp_path)
+        assert (kwargs["model"], kwargs["provider"], kwargs["thinking"]) == (
+            "gpt-6-luna", "openai", "low")
 
     def test_an_env_override_reaches_the_backend(self, backend, tmp_path, monkeypatch):
         """Being a phase is what earns these calls an operator-movable model."""

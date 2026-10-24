@@ -201,8 +201,8 @@ def test_an_empty_value_still_leaves_three_fields(capsys, repo):
 
 
 def test_a_value_spanning_lines_is_collapsed_onto_one(capsys, repo):
-    (repo / config.workbench_config.PROJECT_CONFIG_NAME).write_text('agent:\n  model: "a\\nb"\n')
-    code, records = _run(capsys, "agent.model", str(repo))
+    (repo / config.workbench_config.PROJECT_CONFIG_NAME).write_text('models:\n  deep: "a\\nb"\n')
+    code, records = _run(capsys, "models.deep", str(repo))
     assert code == 0
     assert records == [(config.workbench_config.PROJECT_SCOPE, "a b", str(repo))]
 

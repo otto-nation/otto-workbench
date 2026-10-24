@@ -660,7 +660,7 @@ class TestProviderNeedsAModel:
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
             assert not ro._models_cover_provider("", str(tmp_path), trail)
-        assert "agent.model" in err.getvalue()
+        assert "models.<tier>" in err.getvalue()
         assert trail.decision.called
 
     def test_a_global_model_covers_every_phase(self, ro, monkeypatch, tmp_path):
@@ -674,8 +674,6 @@ class TestProviderNeedsAModel:
 
     def test_no_provider_is_fine(self, ro, monkeypatch, tmp_path):
         self._setup(monkeypatch, "PI", None)
-        import agent.phases
-        monkeypatch.setattr(agent.phases, "phase_provider", lambda cfg=None: None)
         assert ro._models_cover_provider("", str(tmp_path), MagicMock())
 
     def test_the_claude_backend_ignores_providers(self, ro, monkeypatch, tmp_path):

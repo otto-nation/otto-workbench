@@ -74,10 +74,9 @@ def _resolved(
     A caller outside a review has neither and passes neither, which is the same
     resolution this made before they existed.
     """
+    settings = agent.phases.phase_settings(phase, model, config, effort)
     return _Knobs(
-        model=agent.phases.phase_model(phase, model, config),
-        thinking=agent.phases.phase_thinking(phase, effort, config),
-        provider=agent.phases.phase_provider(config),
+        model=settings.model, thinking=settings.thinking, provider=settings.provider,
     )
 
 

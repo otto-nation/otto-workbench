@@ -41,7 +41,7 @@ def test_missing_files_give_built_in_defaults(roots):
     cfg = config.workbench_config.load_config(project)
     assert cfg.reuse.default is config.workbench_config.ReuseLevel.FULL
     assert cfg.reuse.level is None
-    assert cfg.agent.model is None
+    assert cfg.models == config.workbench_config.ModelsConfig()
     assert cfg.agent.phases == {}
     assert cfg.issues.provider is None
 
@@ -80,16 +80,15 @@ def test_self_effort_loads_as_effort(roots):
 
 def test_project_config_wins_over_global(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
-    _write(project / ".workbench.yml", "agent:\n  model: opus\n")
-    assert config.workbench_config.load_config(project).agent.model == "opus"
+    _write(config_root / "config.yml", "models:\n  deep: sonnet\n")
+    _write(project / ".workbench.yml", "models:\n  deep: opus\n")
+    assert config.workbench_config.load_config(project).models.deep == "opus"
 
 
 def test_project_config_does_not_discard_global_siblings(roots):
     config_root, project = roots
     _write(config_root / "config.yml", """
 agent:
-  model: sonnet
   thinking: medium
 issues:
   provider: github
@@ -97,7 +96,6 @@ issues:
 """)
     _write(project / ".workbench.yml", "agent:\n  phases:\n    fix:\n      model: opus\n")
     cfg = config.workbench_config.load_config(project)
-    assert cfg.agent.model == "sonnet"
     assert cfg.agent.thinking is Thinking.MEDIUM
     assert cfg.issues.provider is config.workbench_config.IssueProvider.GITHUB
     assert cfg.issues.team == "ENG"
@@ -115,9 +113,9 @@ def test_the_yq_fallback_reads_the_same_config(roots, monkeypatch):
     """PyYAML is optional, so the yq path has to produce the same answer."""
     monkeypatch.setattr(config.workbench_config, "yaml", None)
     config_root, project = roots
-    _write(config_root / "config.yml", "agent:\n  model: sonnet\nreview:\n  effort: high\n")
+    _write(config_root / "config.yml", "models:\n  deep: sonnet\nreview:\n  effort: high\n")
     cfg = config.workbench_config.load_config(project)
-    assert cfg.agent.model == "sonnet"
+    assert cfg.models.deep == "sonnet"
     assert cfg.review.effort is Effort.HIGH
 
 
@@ -125,7 +123,7 @@ def test_the_yq_fallback_reads_the_same_config(roots, monkeypatch):
 def test_the_yq_fallback_rejects_malformed_yaml(roots, monkeypatch):
     monkeypatch.setattr(config.workbench_config, "yaml", None)
     config_root, project = roots
-    _write(config_root / "config.yml", "agent:\n  model: [unclosed\n")
+    _write(config_root / "config.yml", "models:\n  deep: [unclosed\n")
     with pytest.raises(config.workbench_config.ConfigError):
         config.workbench_config.load_config(project)
 
@@ -157,7 +155,7 @@ def test_load_config_or_default_survives_a_bad_file(roots):
 
 def test_malformed_yaml_is_rejected(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "agent:\n  model: [unclosed\n")
+    _write(config_root / "config.yml", "models:\n  deep: [unclosed\n")
     with pytest.raises(config.workbench_config.ConfigError):
         config.workbench_config.load_config(project)
 
@@ -212,24 +210,24 @@ def test_a_plain_clone_keeps_the_two_scopes_it_always_had(roots, tmp_path):
 
 def test_the_container_file_beats_the_global_one(roots, container):
     config_root, _ = roots
-    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
-    _write(container / config.workbench_config.PROJECT_CONFIG_NAME, "agent:\n  model: opus\n")
-    assert config.workbench_config.load_config(container / "main").agent.model == "opus"
+    _write(config_root / "config.yml", "models:\n  deep: sonnet\n")
+    _write(container / config.workbench_config.PROJECT_CONFIG_NAME, "models:\n  deep: opus\n")
+    assert config.workbench_config.load_config(container / "main").models.deep == "opus"
 
 
 def test_the_worktree_file_beats_the_container_one(roots, container):
-    _write(container / config.workbench_config.PROJECT_CONFIG_NAME, "agent:\n  model: opus\n")
-    _write(container / "main" / config.workbench_config.PROJECT_CONFIG_NAME, "agent:\n  model: haiku\n")
-    assert config.workbench_config.load_config(container / "main").agent.model == "haiku"
+    _write(container / config.workbench_config.PROJECT_CONFIG_NAME, "models:\n  deep: opus\n")
+    _write(container / "main" / config.workbench_config.PROJECT_CONFIG_NAME, "models:\n  deep: haiku\n")
+    assert config.workbench_config.load_config(container / "main").models.deep == "haiku"
 
 
 def test_the_container_does_not_discard_global_siblings(roots, container):
     config_root, _ = roots
-    _write(config_root / "config.yml", "agent:\n  model: sonnet\n  thinking: medium\n")
-    _write(container / config.workbench_config.PROJECT_CONFIG_NAME, "agent:\n  model: opus\n")
+    _write(config_root / "config.yml", "models:\n  deep: sonnet\n  light: haiku\n")
+    _write(container / config.workbench_config.PROJECT_CONFIG_NAME, "models:\n  deep: opus\n")
     cfg = config.workbench_config.load_config(container / "main")
-    assert cfg.agent.model == "opus"
-    assert cfg.agent.thinking is Thinking.MEDIUM
+    assert cfg.models.deep == "opus"
+    assert cfg.models.light == "haiku"
 
 
 def test_a_container_value_names_the_container_in_the_report(roots, container):
@@ -293,10 +291,10 @@ def test_set_value_creates_and_updates_the_global_file(roots):
 
 def test_set_value_preserves_unrelated_keys(roots):
     config_root, _ = roots
-    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
+    _write(config_root / "config.yml", "models:\n  deep: sonnet\n")
     config.workbench_config_write.set_value("reuse.level", "ultra")
     cfg = config.workbench_config.load_config()
-    assert cfg.agent.model == "sonnet"
+    assert cfg.models.deep == "sonnet"
     assert cfg.reuse.level is config.workbench_config.ReuseLevel.ULTRA
 
 
@@ -325,13 +323,13 @@ def test_the_modeline_survives_later_writes(roots):
     """yq is the writer precisely because it carries comments through."""
     config_root, _ = roots
     config.workbench_config_write.set_value("reuse.level", "ultra")
-    config.workbench_config_write.set_value("agent.model", "sonnet")
+    config.workbench_config_write.set_value("models.deep", "sonnet")
     text = (config_root / "config.yml").read_text()
     assert text.startswith(config.workbench_config.CONFIG_HEADER)
     assert text.count(config.workbench_config.CONFIG_HEADER) == 1
     cfg = config.workbench_config.load_config()
     assert cfg.reuse.level is config.workbench_config.ReuseLevel.ULTRA
-    assert cfg.agent.model == "sonnet"
+    assert cfg.models.deep == "sonnet"
 
 
 def test_a_modeline_only_file_reads_as_an_empty_config(roots):
@@ -353,11 +351,11 @@ def test_the_pyyaml_fallback_puts_the_modeline_back(roots, monkeypatch):
     config_root, _ = roots
     monkeypatch.setattr(config.workbench_config_write.shutil, "which", lambda _: None)
     config.workbench_config_write.set_value("reuse.level", "ultra")
-    config.workbench_config_write.set_value("agent.model", "sonnet")
+    config.workbench_config_write.set_value("models.deep", "sonnet")
     text = (config_root / "config.yml").read_text()
     assert text.startswith(config.workbench_config.CONFIG_HEADER)
     assert text.count(config.workbench_config.CONFIG_HEADER) == 1
-    assert config.workbench_config.load_config().agent.model == "sonnet"
+    assert config.workbench_config.load_config().models.deep == "sonnet"
 
 
 @needs_yaml
@@ -365,7 +363,7 @@ def test_the_pyyaml_fallback_adds_no_modeline_to_a_file_without_one(
     roots, monkeypatch,
 ):
     config_root, _ = roots
-    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
+    _write(config_root / "config.yml", "models:\n  deep: sonnet\n")
     monkeypatch.setattr(config.workbench_config_write.shutil, "which", lambda _: None)
     config.workbench_config_write.set_value("reuse.level", "ultra")
     assert config.workbench_config.CONFIG_HEADER not in (config_root / "config.yml").read_text()

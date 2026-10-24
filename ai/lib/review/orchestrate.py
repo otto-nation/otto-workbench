@@ -40,7 +40,6 @@ import review.retry
 import review.state
 import review.types
 
-import config.workbench_config
 import core.log
 import core.module_proxy
 import pr.state
@@ -107,8 +106,9 @@ def _models_cover_provider(explicit: str | None, cwd: str, trail) -> bool:
     """
     if agent.backend.selected_backend() is not Backend.PI:
         return True
-    cfg = config.workbench_config.load_config_or_default(cwd)
-    provider = agent.phases.phase_provider(cfg)
+    # A phase with no model has no reference to carry a provider, so only the
+    # environment's provider can reach Pi without a model.
+    provider = agent.phases.resolve_provider()
     unset = unset_review_phases(explicit, cwd)
     if not provider or not unset:
         return True

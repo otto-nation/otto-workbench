@@ -42,6 +42,9 @@ _LIB_GIT_LAYOUT_SH=1
 _git_layout_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=gitenv.sh
 . "$_git_layout_lib_dir/gitenv.sh"
+# The container resolver git_bare_container asks, beside this lib in the same
+# checkout so the two always agree on what a container is.
+_GIT_LAYOUT_RESOLVE_WORKTREE="$_git_layout_lib_dir/../bin/resolve-worktree"
 unset _git_layout_lib_dir
 
 # git_shared_dir DIR — the shared git directory DIR's repository uses, resolved
@@ -66,4 +69,27 @@ git_shared_dir() {
     cd "$common" 2>/dev/null || exit 1
     pwd -P
   )
+}
+
+# git_bare_container DIR — the bare-repo container DIR's repository sits in,
+# printed; non-zero and silent when DIR is not in that layout.
+#
+# The container is the shared git dir's parent, but only a bare-repo layout has
+# one: an ordinary clone's parent is a directory that belongs to somebody else,
+# and writing a config file there rewrites whatever lives beside the clone.
+# `bin/resolve-worktree` owns "is this a container" in bash — 0 for one with a
+# worktree on its default branch, 1 for one without, both of which can hold a
+# config file; 2 for an ordinary repo or worktree and 64 for a path that is
+# gone, neither of which is ever answered with a container.
+#
+# The git environment is cleared for resolve-worktree too: it discovers from
+# the directory it is handed, and GIT_DIR exported by a git hook would make it
+# answer for the hook's repository.
+git_bare_container() {
+  local dir="$1" common container rc=0
+  common="$(git_shared_dir "$dir")" || return 1
+  container="$(dirname "$common")"
+  ( git_env_clear; "$_GIT_LAYOUT_RESOLVE_WORKTREE" "$container" >/dev/null 2>&1 ) || rc=$?
+  (( rc == 0 || rc == 1 )) || return 1
+  printf '%s' "$container"
 }

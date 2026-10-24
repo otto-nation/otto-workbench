@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 
-# ── 19. resolve_model ──────────────────────────────────────────────────────
+# ── 19. the env model layers ──────────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -33,35 +33,24 @@ TIER_ENV = (
 
 
 class TestResolveModel:
-    def test_explicit(self, ro, no_model_env):
-        assert ro.resolve_model("claude-opus-5", "SOME_KEY", "claude-sonnet-5") == "claude-opus-5"
+    """The env layers above the config, through the one public resolver.
 
-    def test_env_key(self, ro, no_model_env, monkeypatch):
-        monkeypatch.setenv("MY_MODEL_KEY", "claude-haiku-4-5")
-        assert ro.resolve_model("", "MY_MODEL_KEY", "claude-sonnet-5") == "claude-haiku-4-5"
-
-    def test_global_env(self, ro, no_model_env, monkeypatch):
-        monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-opus-5")
-        assert ro.resolve_model("", "UNUSED_KEY", "claude-sonnet-5") == "claude-opus-5"
-
-    def test_default_fallback(self, ro, no_model_env):
-        assert ro.resolve_model("", "UNUSED_KEY", "claude-sonnet-5") == "claude-sonnet-5"
-
-    def test_nothing_configured_is_none(self, ro, no_model_env):
-        """No layer names a model: the backend's own default serves the phase."""
-        assert ro.resolve_model("", "UNUSED_KEY", None) is None
+    Their order against each other and against the config is pinned layer by
+    layer in workbench_config_phases_test; these are the two properties that
+    are not.
+    """
 
     def test_tier_env_vars_are_not_read(self, ro, no_model_env, monkeypatch):
         """The Claude tier variables feed the Claude Code harness, not dispatch.
 
-        A tier word anywhere in the chain is now an ordinary model id, so a
+        A Claude tier word anywhere in the chain is an ordinary model id, so a
         machine still exporting AI_SONNET_MODEL does not see it rewritten.
         """
         for key in TIER_ENV:
             monkeypatch.setenv(key, "claude-sonnet-5-5")
-        assert ro.resolve_model("", "UNUSED_KEY", None) is None
+        assert ro.phase_model("scout", "") is None
         monkeypatch.setenv("WORKBENCH_AI_MODEL", "sonnet")
-        assert ro.resolve_model("", "UNUSED_KEY", None) == "sonnet"
+        assert ro.phase_model("scout", "") == "sonnet"
 
     def test_the_alias_layer_is_gone(self, ro):
         assert not hasattr(ro, "ModelAlias")
@@ -109,15 +98,16 @@ class TestPhaseModel:
         """Preflight must resolve the models the review will actually run.
 
         `ReviewJob.config` is project- and container-scoped, so a repo setting
-        `agent.model` in its own `.workbench.yml` runs a model the global scope
-        never names. Checking without the worktree cleared a model the review
+        a tier in its own `.workbench.yml` runs a model the global scope never
+        names. Checking without the worktree cleared a model the review
         never uses and missed the one it does — the unknown-window failure then
         landed inside `build_prompt`, after metadata and collection were paid
         for, which is the cost the preflight check exists to avoid.
         """
         self._clean_env(ro, monkeypatch)
         (tmp_path / ".workbench.yml").write_text(
-            "agent:\n  model: claude-haiku-4-5\n",
+            "models:\n  deep: claude-haiku-4-5\n  standard: claude-haiku-4-5\n"
+            "  light: claude-haiku-4-5\n",
         )
         models = ro.collect_phase_models("", tmp_path)
         assert set(models) == {"claude-haiku-4-5"}

@@ -303,21 +303,40 @@ class EvalModelUnset(ValueError):
     """No `--models` and no configured model for the task's phase."""
 
 
-def resolved_model(task: EvalTask, explicit: str) -> str:
-    """The model *task* runs: *explicit* when given, else its production phase's.
+def _unset(task: EvalTask) -> EvalModelUnset:
+    return EvalModelUnset(
+        f"no model for the {task.phase} phase: pass --models, or set the "
+        "phase's models.<tier> or WORKBENCH_AI_MODEL so the results can be "
+        "labelled with the model that served them"
+    )
 
-    The one rule for an omitted `--models`, read both where the run labels its
-    results and where the task invokes the agent, so the label and the model
-    that served it cannot disagree. Resolving through `agent.phases.phase_model`
+
+def resolved_model(task: EvalTask, explicit: str) -> str:
+    """The model *task* runs, as the label its results are filed under.
+
+    *explicit* when given, else its production phase's. The one rule for an
+    omitted `--models`, read both where the run labels its results and, through
+    `resolved_settings`, where the task invokes the agent, so the label and the
+    model that served it cannot disagree. Resolving through `agent.phases`
     pins what production uses rather than falling through to the backend's
     interactive default — and when production configures nothing, there is no
     model to label the results with, so this raises `EvalModelUnset`.
+
+    The label is the id, with the level when the reference writes one: one
+    model at two levels is two results. The provider is left out, so a model
+    the tiers now name with its provider still files under the baseline its
+    bare id was recorded as.
     """
-    model = explicit or agent.phases.phase_model(task.phase, None)
-    if not model:
-        raise EvalModelUnset(
-            f"no model for the {task.phase} phase: pass --models, or set agent.model "
-            "or WORKBENCH_AI_MODEL so the results can be labelled with the model "
-            "that served them"
-        )
-    return model
+    resolved = agent.phases.resolve_phase_model(task.phase, explicit or None)
+    if resolved is None:
+        raise _unset(task)
+    ref = resolved.ref
+    return f"{ref.id}:{ref.level}" if ref.level else ref.id
+
+
+def resolved_settings(task: EvalTask, explicit: str) -> agent.phases.PhaseSettings:
+    """Model, provider and thinking level for invoking *task* (see `resolved_model`)."""
+    settings = agent.phases.phase_settings(task.phase, explicit or None)
+    if settings.model is None:
+        raise _unset(task)
+    return settings

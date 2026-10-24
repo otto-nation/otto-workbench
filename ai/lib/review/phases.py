@@ -143,9 +143,10 @@ class PhaseRunner:
         # A fix-shaped phase edits a tracking file instead and keeps the prior
         # any-write behaviour, because its deliverable is not one document.
         self.output_path = _phase_deliverable(job, phase, index, spec)
-        self.model = agent.phases.phase_model(phase, job.model, cfg)
-        self.thinking = agent.phases.phase_thinking(phase, job.effort, cfg)
-        self.provider = agent.phases.phase_provider(cfg)
+        settings = agent.phases.phase_settings(phase, job.model, cfg, job.effort)
+        self.model = settings.model
+        self.thinking = settings.thinking
+        self.provider = settings.provider
         self.budget = agent.phases.phase_budget(phase, job.effort)
         self.agent = None if spec.shape is PhaseShape.FIX else (
             spec.agent if spec.agent is not None else preset.agent

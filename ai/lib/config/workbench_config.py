@@ -222,10 +222,35 @@ class IssueProvider(StrEnum):
 
 @dataclass(frozen=True)
 class PhaseOverride:
-    """Per-phase settings, matching the two knobs the phase env keys expose."""
+    """Per-phase settings, matching the two knobs the phase env keys expose.
+
+    ``model`` takes what a ``models.*`` value takes, or a tier name to borrow
+    another tier's model (``synthesis: {model: deep}``).
+    """
 
     model: str | None = None
     thinking: Thinking | None = None
+
+
+@dataclass(frozen=True)
+class ModelsConfig:
+    """Which model each tier runs on: ``provider/model[:level]``, any provider.
+
+    The one place a model is named. A phase declares a tier on its spec and
+    reads its model from here, so moving every light phase to a cheaper model
+    is one key. ``provider/`` names where the model is served — the part Pi
+    reads as ``--provider`` and the Claude CLI does not take — and is left off
+    for the backend's default provider. ``:level`` is a thinking level the
+    tier runs at, one of ``Thinking``'s values; a suffix that is not one is part
+    of the id (Bedrock ids end ``:0``).
+
+    Unset, a tier names no model and its phases run on the backend's own
+    default: there is no built-in model.
+    """
+
+    deep: str | None = None
+    standard: str | None = None
+    light: str | None = None
 
 
 @dataclass(frozen=True)
@@ -273,10 +298,11 @@ class IssuesConfig:
 class AgentConfig:
     """How this machine sizes an agent invocation.
 
-    ``model``, ``thinking`` and ``provider`` are the file forms of
-    WORKBENCH_AI_MODEL, _THINKING and _PROVIDER; ``phases`` is the file form
-    of the per-phase keys ``Phase.model_env_key`` derives. A phase entry beats
-    the section-level value, matching how a phase env key beats the global one.
+    ``thinking`` is the file form of WORKBENCH_AI_THINKING; ``phases`` is the
+    file form of the per-phase keys ``Phase.model_env_key`` derives. A phase
+    entry beats the section-level value, matching how a phase env key beats the
+    global one. Which model a phase runs is ``models.*``, by the phase's tier;
+    the provider is part of that model's reference.
 
     Top-level rather than under ``review``: a phase is any agent invocation the
     workbench sizes, and the review pipeline is one domain of them. Which model
@@ -292,9 +318,7 @@ class AgentConfig:
     """
 
     backend: Backend | None = None
-    model: str | None = None
     thinking: Thinking | None = None
-    provider: str | None = None
     phases: dict[Phase, PhaseOverride] = field(default_factory=dict)
 
 
@@ -498,6 +522,7 @@ class BatchConfig:
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    models: ModelsConfig = field(default_factory=ModelsConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     issues: IssuesConfig = field(default_factory=IssuesConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)

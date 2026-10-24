@@ -82,11 +82,12 @@
 # | 6 | Global config | `config.yml` |
 #
 # Within one file an `agent.phases.<phase>` entry outranks the `agent.*` section
-# it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
-# phase keeps every sibling the layers below it set.
+# it sits under, and a phase's model entry outranks `models.<tier>` for its tier.
+# Layers 4 through 6 deep-merge, so a project file that sets one phase keeps
+# every sibling the layers below it set.
 #
 # A model no layer names is left to the backend's own default; Pi refuses a
-# provider without a model, so a run with agent.provider set needs one too.
+# provider without a model, so WORKBENCH_AI_PROVIDER needs one too.
 #
 # Layer 5 exists only in the bare-repo worktree layout, where every checkout is
 # a peer of the bare `.git` inside a container directory — the same directory

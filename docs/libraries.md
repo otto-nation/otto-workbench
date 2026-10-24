@@ -181,11 +181,12 @@ Every key any of them accepts:
 | `reuse.level` | `lite`, `full`, `ultra` | — |
 | `reuse.default` | `lite`, `full`, `ultra` | `full` |
 | `agent.backend` | `claude`, `pi` | — |
-| `agent.model` | string | — |
-| `agent.thinking` | `low`, `medium`, `high` | — |
-| `agent.provider` | string | — |
+| `agent.thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | — |
 | `agent.phases.<phase>.model` | string | — |
-| `agent.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
+| `agent.phases.<phase>.thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | — |
+| `models.deep` | string | — |
+| `models.standard` | string | — |
+| `models.light` | string | — |
 | `review.effort` | `low`, `medium`, `high` | — |
 | `review.self_effort` | `low`, `medium`, `high` | — |
 | `issues.provider` | `linear`, `github`, `jira` | — |
@@ -266,11 +267,12 @@ Six layers decide an agent value, highest first:
 | 6 | Global config | `config.yml` |
 
 Within one file an `agent.phases.<phase>` entry outranks the `agent.*` section
-it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
-phase keeps every sibling the layers below it set.
+it sits under, and a phase's model entry outranks `models.<tier>` for its tier.
+Layers 4 through 6 deep-merge, so a project file that sets one phase keeps
+every sibling the layers below it set.
 
 A model no layer names is left to the backend's own default; Pi refuses a
-provider without a model, so a run with agent.provider set needs one too.
+provider without a model, so WORKBENCH_AI_PROVIDER needs one too.
 
 Layer 5 exists only in the bare-repo worktree layout, where every checkout is
 a peer of the bare `.git` inside a container directory — the same directory
@@ -441,6 +443,7 @@ the one caller that must leave the environment alone, so it asks
 | Function | Purpose |
 |----------|---------|
 | `git_shared_dir DIR` | the shared git directory DIR's repository uses, resolved to a physical path. Non-zero and silent when git cannot answer for DIR. |
+| `git_bare_container DIR` | the bare-repo container DIR's repository sits in, printed; non-zero and silent when DIR is not in that layout. |
 
 ### git_remote.sh
 

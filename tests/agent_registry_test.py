@@ -21,9 +21,10 @@ class TestPhasesRegistry:
     def test_covers_every_phase(self):
         assert set(PHASES) == set(Phase)
 
-    def test_no_phase_names_a_default_model(self):
-        """An unconfigured phase runs on the backend's own default, never a tier word."""
-        assert {s.model for s in PHASES.values()} == {None}
+    def test_no_phase_names_a_model_only_a_tier(self):
+        """Which model serves a tier is the config's answer; a spec names how much model."""
+        assert all(not hasattr(s, "model") for s in PHASES.values())
+        assert all(s.tier is not None for s in PHASES.values())
 
     def test_every_phase_carries_a_label(self):
         assert all(s.label for s in PHASES.values())

@@ -540,6 +540,7 @@ class SkillTask:
                 p for p in (str(bin_dir), env.get("PATH", "")) if p
             )
 
+            settings = eval.task.resolved_settings(self, opts.model)
             rc = agent.backend.invoke_fix(agent.backend.AgentInvocation(
                 prompt=_PROMPT.format(repo_dir=repo_dir, skill=skill, request=prompt),
                 cwd=repo_dir,
@@ -547,9 +548,9 @@ class SkillTask:
                 add_dirs=[repo_dir],
                 max_turns=SKILL_MAX_TURNS,
                 max_budget=SKILL_MAX_BUDGET,
-                model=eval.task.resolved_model(self, opts.model),
-                thinking=agent.phases.phase_thinking(self.phase),
-                provider=agent.phases.phase_provider(),
+                model=settings.model,
+                thinking=settings.thinking,
+                provider=settings.provider,
                 env=env,
                 task="eval-skill",
                 repo="eval/corpus",

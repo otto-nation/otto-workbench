@@ -54,19 +54,10 @@ def _require_shape(phase: Phase, shape: PhaseShape, runner: str):
     return spec
 
 
-@dataclass(frozen=True)
-class _Knobs:
-    """The three settings every shape resolves the same way, whatever runs it."""
-
-    model: str | None
-    thinking: str | None
-    provider: str | None
-
-
 def _resolved(
     phase: Phase, config: WorkbenchConfig | None, *,
     effort: Effort | None = None, model: str | None = None,
-) -> _Knobs:
+) -> agent.phases.PhaseSettings:
     """The three settings, with whatever the caller resolved above them.
 
     ``effort`` and ``model`` are the two layers a phase cannot supply itself:
@@ -74,11 +65,7 @@ def _resolved(
     A caller outside a review has neither and passes neither, which is the same
     resolution this made before they existed.
     """
-    return _Knobs(
-        model=agent.phases.phase_model(phase, model, config),
-        thinking=agent.phases.phase_thinking(phase, effort, config),
-        provider=agent.phases.phase_provider(config),
-    )
+    return agent.phases.phase_settings(phase, model, config, effort)
 
 
 # ── Prompt shape ─────────────────────────────────────────────────────────────

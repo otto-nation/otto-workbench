@@ -46,9 +46,10 @@ it; ``--no-disprove`` is read off ``skip_phases`` and beats ``--disprove`` —
 ``review.phases._should_disprove``.
 
 Each phase's model is resolved elsewhere: ``agent.phases`` layers
-``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` and the
-config file over the default on the spec here, which is no model at all — an
-unconfigured phase runs on the backend's own default.
+``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` and
+``agent.phases.<phase>.model`` over ``models.<tier>`` for the tier the spec here
+names. A spec names a tier, never a model, and a tier left unset runs its
+phases on the backend's own default.
 """
 
 # doc-group: pipeline
@@ -58,7 +59,7 @@ from __future__ import annotations
 import argparse
 
 from agent.types import ItemScaling, PhaseSpec, RetryBudget
-from core.phases import AgentKind, Mode, Phase, PhaseDomain, PhaseShape, Thinking
+from core.phases import AgentKind, Mode, Phase, PhaseDomain, PhaseShape, Thinking, Tier
 
 _SPECS: tuple[PhaseSpec, ...] = (
     # `single` and `synthesis` are the two phases a self-review prompts
@@ -66,6 +67,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # so each names a template per mode rather than one for both.
     PhaseSpec(
         Phase.SINGLE, PhaseDomain.REVIEW, "Review",
+        tier=Tier.STANDARD,
         template={Mode.PR: "single-agent.md", Mode.SELF: "self-review.md"},
         thinking=Thinking.MEDIUM, max_turns=15,
     ),
@@ -75,17 +77,20 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # phase is not a shallower review, it is no review.
     PhaseSpec(
         Phase.HOLISTIC, PhaseDomain.REVIEW, "Holistic scan",
+        tier=Tier.STANDARD,
         template="holistic.md", optional=True,
         thinking=Thinking.MEDIUM, max_turns=15,
     ),
     PhaseSpec(
         Phase.SCOUT, PhaseDomain.REVIEW, "Scout",
+        tier=Tier.LIGHT,
         template="scout.md", optional=True,
         thinking=Thinking.LOW, max_turns=10,
         agent=AgentKind.REVIEWER_LITE,
     ),
     PhaseSpec(
         Phase.GROUP, PhaseDomain.REVIEW, "Group review",
+        tier=Tier.LIGHT,
         template="group.md", optional=True,
         thinking=Thinking.LOW, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
@@ -95,6 +100,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # their checklist instead, through `scaling`.
     PhaseSpec(
         Phase.SYNTHESIS, PhaseDomain.REVIEW, "Synthesis",
+        tier=Tier.DEEP,
         template={Mode.PR: "synthesis.md",
                   Mode.SELF: "self-review-synthesis.md"},
         optional=True,
@@ -103,6 +109,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     ),
     PhaseSpec(
         Phase.DISPROVE, PhaseDomain.REVIEW, "Disprove gate",
+        tier=Tier.DEEP,
         template="disprove.md", optional=True,
         thinking=Thinking.MEDIUM, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
@@ -110,6 +117,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     ),
     PhaseSpec(
         Phase.FIX, PhaseDomain.REVIEW, "Fix pass",
+        tier=Tier.STANDARD,
         template="fix-findings.md",
         thinking=Thinking.LOW, max_turns=20,
         shape=PhaseShape.FIX,
@@ -143,6 +151,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # without the gate spending more than one pass of this budget at a time.
     PhaseSpec(
         Phase.FIX_VERIFY, PhaseDomain.REVIEW, "Verify gate",
+        tier=Tier.LIGHT,
         template="verify-fixes.md",
         thinking=Thinking.LOW, max_turns=15,
         shape=PhaseShape.FIX,
@@ -154,6 +163,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # that covers a single item and a cap one agent can finish inside.
     PhaseSpec(
         Phase.COMMENTS_FIX, PhaseDomain.COMMENTS, "Fix pass",
+        tier=Tier.STANDARD,
         template="fix-comments.md",
         max_turns=20, max_budget=2.0,
         shape=PhaseShape.FIX,
@@ -173,6 +183,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # the phase at all.
     PhaseSpec(
         Phase.COMMENTS_VERIFY, PhaseDomain.COMMENTS, "Verify gate",
+        tier=Tier.LIGHT,
         template="verify-fixes.md",
         thinking=Thinking.LOW, max_turns=15, max_budget=1.5,
         shape=PhaseShape.FIX,
@@ -193,6 +204,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # passes of that budget rather than one prompt holding all forty.
     PhaseSpec(
         Phase.CI_FIX, PhaseDomain.CI, "CI fix pass",
+        tier=Tier.STANDARD,
         template="fix-ci.md",
         max_turns=20, max_budget=3.0,
         shape=PhaseShape.FIX,
@@ -211,6 +223,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # `verify=`, which is why this is not `optional`.
     PhaseSpec(
         Phase.CI_VERIFY, PhaseDomain.CI, "Verify gate",
+        tier=Tier.LIGHT,
         template="verify-fixes.md",
         thinking=Thinking.LOW, max_turns=15, max_budget=1.5,
         shape=PhaseShape.FIX,
@@ -224,6 +237,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # level an operator can move, which is the whole reason they are phases.
     PhaseSpec(
         Phase.COMMENTS_TRIAGE, PhaseDomain.COMMENTS, "Triage",
+        tier=Tier.LIGHT,
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
@@ -235,6 +249,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # stateless call, and sizing it as one is what left it unbatched.
     PhaseSpec(
         Phase.REBASE, PhaseDomain.REBASE, "Rebase assist",
+        tier=Tier.LIGHT,
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
@@ -245,6 +260,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # gets four passes of that budget rather than one prompt holding all forty.
     PhaseSpec(
         Phase.PREPUSH_FIX, PhaseDomain.REBASE, "Pre-push fix pass",
+        tier=Tier.STANDARD,
         template="fix-prepush.md",
         max_turns=20, max_budget=3.0,
         shape=PhaseShape.FIX,
@@ -257,11 +273,13 @@ _SPECS: tuple[PhaseSpec, ...] = (
     ),
     PhaseSpec(
         Phase.DESCRIBE, PhaseDomain.DESCRIBE, "Describe",
+        tier=Tier.LIGHT,
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
     PhaseSpec(
         Phase.CREATE, PhaseDomain.DESCRIBE, "Create",
+        tier=Tier.LIGHT,
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),

@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
-# Tests for bin/migrations/20261024-models-from-env-local.sh — carries the model
+# Tests for bin/migrations/20261023-models-from-env-local.sh — carries the model
 # ids ~/.env.local exported into config.yml's models.*.
 bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
   common_setup
-  MIGRATION="$REPO_ROOT/bin/migrations/20261024-models-from-env-local.sh"
+  MIGRATION="$REPO_ROOT/bin/migrations/20261023-models-from-env-local.sh"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
   CONFIG="$TMPDIR/config/config.yml"
@@ -31,7 +31,7 @@ _run_migration() {
     . "$2/lib/ui.sh"
     . "$2/lib/migrations.sh"
     . "$1"
-    migration_20261024_models_from_env_local
+    migration_20261023_models_from_env_local
   ' _ "$MIGRATION" "$REPO_ROOT" "$TMPDIR"
 }
 
@@ -78,8 +78,8 @@ _run_migration() {
 }
 
 @test "a key already set keeps its value, and a disagreeing export stays" {
-  # 20261024-models-from-agent-model runs first and fills every tier from
-  # agent.model; a different alias value is the operator's to reconcile.
+  # A machine that ran 20261024-models-from-agent-model before this existed has
+  # every tier filled; a different alias value is the operator's to reconcile.
   mkdir -p "${CONFIG%/*}"
   printf 'models:\n  deep: claude-sonnet-5-5\n  light: claude-haiku-5-5\n' > "$CONFIG"
   printf '%s\n' 'export AI_OPUS_MODEL=claude-opus-5-5' 'export AI_HAIKU_MODEL=claude-haiku-5-5' > "$ENV_FILE"
@@ -88,6 +88,40 @@ _run_migration() {
   [ "$(yq '.models.deep' "$CONFIG")" = "claude-sonnet-5-5" ]
   # The agreeing line is deleted; the disagreeing one is not.
   [ "$(cat "$ENV_FILE")" = "export AI_OPUS_MODEL=claude-opus-5-5" ]
+}
+
+@test "agent.provider, still in the config, is carried onto each value" {
+  mkdir -p "${CONFIG%/*}"
+  printf 'agent:\n  provider: google-vertex-claude\n  model: claude-opus-5-5\n' > "$CONFIG"
+  printf 'export AI_HAIKU_MODEL=claude-haiku-5-5\n' > "$ENV_FILE"
+  run _run_migration
+  [ "$status" -eq 0 ]
+  [ "$(yq '.models.light' "$CONFIG")" = "google-vertex-claude/claude-haiku-5-5" ]
+  # agent.* is the next migration's to retire.
+  [ "$(yq '.agent.model' "$CONFIG")" = "claude-opus-5-5" ]
+  [ ! -s "$ENV_FILE" ]
+}
+
+@test "the agent.model migration after it leaves the lifted tiers alone" {
+  # The order this file's date buys: env tiers first, agent.model only fills
+  # what they left unset.
+  mkdir -p "${CONFIG%/*}"
+  printf 'agent:\n  model: claude-opus-5-5\n' > "$CONFIG"
+  printf 'export AI_HAIKU_MODEL=claude-haiku-5-5\n' > "$ENV_FILE"
+  run _run_migration
+  [ "$status" -eq 0 ]
+  run bash -c '
+    HOME="$3/home"
+    export WORKBENCH_CONFIG_DIR="$3/config" WORKBENCH_STATE_DIR="$3/state" WORKBENCH_CACHE_DIR="$3/cache" NO_COLOR=1
+    WORKBENCH_DIR="$2"
+    . "$2/lib/ui.sh"
+    . "$2/lib/migrations.sh"
+    . "$1"
+    migration_20261024_models_from_agent_model
+  ' _ "$REPO_ROOT/bin/migrations/20261024-models-from-agent-model.sh" "$REPO_ROOT" "$TMPDIR"
+  [ "$status" -eq 0 ]
+  [ "$(yq -o=json -I=0 '.models' "$CONFIG")" = '{"light":"claude-haiku-5-5","deep":"claude-opus-5-5","standard":"claude-opus-5-5"}' ]
+  [ "$(ls "$REPO_ROOT/bin/migrations" | grep -n 'models-from-' | cut -d: -f2 | head -1)" = "20261023-models-from-env-local.sh" ]
 }
 
 @test "a tier naming the same model on a provider, with a level, still agrees" {

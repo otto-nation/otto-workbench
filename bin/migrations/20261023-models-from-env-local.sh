@@ -13,12 +13,17 @@
 #    `google-vertex-claude/claude-opus-5-5:high` names `claude-opus-5-5`.
 # 3. The key holds another value → both are left as they are, and every sync
 #    names the export (ai_warn_model_exports) until the operator picks one.
-#    20261024-models-from-agent-model sorts ahead of this one and fills every
-#    tier from agent.model, so a machine that set both keeps the model its
-#    phases ran on and is told about the alias that no longer follows the line.
 #
-# Values are carried bare, as both harnesses took them: Claude Code read them
-# as-is, and Pi's sync still qualifies a bare id with its defaultProvider.
+# Sorted ahead of 20261024-models-from-agent-model, which fills only the tiers
+# this leaves unset: a machine that set a tier here keeps that tier's model —
+# the Claude alias it ran on, and usually the cheaper one for light phases —
+# rather than every tier collapsing onto agent.model. A machine that already
+# ran that migration has every tier set, and case 3 reports what differs.
+#
+# A value takes agent.provider when the config still has one, the provider the
+# workbench's phases ran on, as that migration does; the Claude view drops a
+# provider the Claude CLI serves, so its aliases read the same bare id. With no
+# agent.provider the value is carried bare, as both harnesses took it.
 #
 # Only active `export` lines are read and deleted, the lines read_env_local_var
 # reads — a commented one was never in effect.
@@ -43,10 +48,10 @@ _models_ref_id() {
   printf '%s' "$ref"
 }
 
-migration_20261024_models_from_env_local() {
+migration_20261023_models_from_env_local() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return "$MIGRATION_DEFERRED"
 
-  local pair var key value current changed=""
+  local pair var key value current provider ref changed=""
   for pair in $LEGACY_MODEL_ENV_VARS; do
     var="${pair%%:*}"
     key="${pair#*:}"
@@ -56,8 +61,11 @@ migration_20261024_models_from_env_local() {
     wb_config_ensure_file || return 1
     current="$(K="$key" yq '.models[strenv(K)] // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
     if [[ -z "$current" ]]; then
-      K="$key" V="$value" yq -i '.models[strenv(K)] = strenv(V)' "$WORKBENCH_CONFIG_FILE" || return 1
-      current="$value"
+      provider="$(yq '.agent.provider // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
+      ref="$value"
+      [[ -z "$provider" ]] || ref="$provider/$value"
+      K="$key" V="$ref" yq -i '.models[strenv(K)] = strenv(V)' "$WORKBENCH_CONFIG_FILE" || return 1
+      current="$ref"
     fi
     [[ "$(_models_ref_id "$current")" == "$value" ]] || continue
 

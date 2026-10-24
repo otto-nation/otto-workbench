@@ -393,7 +393,7 @@ SUBLIME_SETTINGS_FILE="$HOME/Library/Application Support/Sublime Text/Packages/U
 # each as VAR:KEY with the models.* key its value moved to. The AI_* names come
 # first, and a key takes the first one set: the ANTHROPIC_* names are what those
 # were renamed from, so where both are set the AI_* one is what was being read.
-# Read by bin/migrations/20261024-models-from-env-local.sh, which carries the
+# Read by bin/migrations/20261023-models-from-env-local.sh, which carries the
 # values over, and ai_warn_model_exports, which names any left behind.
 # shellcheck disable=SC2034
 LEGACY_MODEL_ENV_VARS="AI_MODEL:session AI_OPUS_MODEL:deep AI_SONNET_MODEL:standard AI_HAIKU_MODEL:light ANTHROPIC_MODEL:session ANTHROPIC_DEFAULT_OPUS_MODEL:deep ANTHROPIC_DEFAULT_SONNET_MODEL:standard ANTHROPIC_DEFAULT_HAIKU_MODEL:light"

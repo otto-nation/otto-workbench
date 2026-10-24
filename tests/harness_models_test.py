@@ -73,8 +73,15 @@ def test_the_session_tier_gives_the_model_and_its_level_the_effort():
 
 
 @pytest.mark.parametrize("level", ["off", "minimal"])
-def test_a_level_claude_effort_has_no_value_for_is_not_an_effort(level):
+def test_a_level_below_claudes_lowest_effort_runs_at_low(level):
+    # The same mapping the pipeline's --effort uses, so a session and a phase on
+    # one tier run at one effort.
     claude = harness_models(ModelsConfig(session=f"claude-opus-5-5:{level}")).claude
+    assert (claude.model, claude.effort) == ("claude-opus-5-5", "low")
+
+
+def test_a_session_with_no_level_names_no_effort():
+    claude = harness_models(ModelsConfig(session="claude-opus-5-5")).claude
     assert (claude.model, claude.effort) == ("claude-opus-5-5", None)
 
 

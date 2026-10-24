@@ -60,8 +60,6 @@ CLAUDE_ALIASES = frozenset({"opus", "sonnet", "haiku", "opusplan", "default"})
 _CLAUDE_ID = re.compile(r"^(claude-|([a-z]+\.)?anthropic\.claude-|arn:)")
 # The context-window suffix an alias or id may carry, as in `sonnet[1m]`.
 _WINDOW_SUFFIX = re.compile(r"\[[^\]]*\]$")
-# The levels `claude --effort` takes.
-CLAUDE_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 @dataclass(frozen=True)
@@ -125,7 +123,7 @@ def _claude(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> ClaudeMode
     model = effort = None
     if session is not None and _claude_servable(session):
         model = session.id
-        effort = session.level if session.level in CLAUDE_EFFORT_LEVELS else None
+        effort = agent.backend_claude.effort(session.level)
     elif session is not None:
         skipped.append(f"models.session: {session.spec()} is not a Claude model, so Claude Code keeps its own")
     return ClaudeModels(env=env, model=model, effort=effort, skipped=skipped)

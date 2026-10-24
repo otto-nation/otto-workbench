@@ -1023,6 +1023,11 @@ def ledger_provider() -> None:
     return None
 
 
+def ledger_thinking(thinking: str | None) -> None:
+    """Nothing: Pi's log names the level each message ran at, after its own clamping."""
+    return None
+
+
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """No pre-run checks — Pi resolves models and provider routing itself.
 

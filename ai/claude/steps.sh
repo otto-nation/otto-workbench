@@ -310,7 +310,8 @@ _claude_mirror_env() {
 #   ANTHROPIC_MODEL is deleted too — `model` carries the session now, and the two
 #   would otherwise disagree.
 # - `model` is written only while models.session is set, and `effortLevel`
-#   only while it names a level `claude --effort` takes. Otherwise each stays
+#   only while it names a level, mapped as the pipeline maps it
+#   (agent.backend_claude.effort: off and minimal run at low). Otherwise each stays
 #   whatever /model, /effort or a hand edit left, since those are the keys
 #   Claude Code itself also writes here. The cost: a level this sync wrote is
 #   not withdrawn when the config stops naming one — sync cannot tell its own

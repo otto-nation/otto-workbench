@@ -48,7 +48,7 @@ _seed_settings() {
 
 @test "a session with no Claude effort keeps the effortLevel /effort set" {
   _seed_settings '{"model":"old","effortLevel":"high"}'
-  _seed_config 'models:' '  session: claude-sonnet-5-5:minimal'
+  _seed_config 'models:' '  session: claude-sonnet-5-5'
   _sync_run "$HOME_DIR" "$STATE_DIR"
   run jq -r '.model + " " + .effortLevel' "$SETTINGS_OUT"
   [ "$output" = "claude-sonnet-5-5 high" ]

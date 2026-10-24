@@ -30,6 +30,7 @@ import agent.vertex_quota
 from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
+from core.phases import Thinking
 
 
 # ── Agent resolution ─────────────────────────────────────────────────────────
@@ -86,6 +87,37 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
             prev_tool = _display_event(raw_line, prev_tool, prefix)
 
 
+# ── Effort ───────────────────────────────────────────────────────────────────
+
+# The levels `claude --effort` takes: Thinking's vocabulary from `low` up.
+EFFORT_LEVELS = frozenset({
+    Thinking.LOW, Thinking.MEDIUM, Thinking.HIGH, Thinking.XHIGH, Thinking.MAX,
+})
+
+
+def effort(thinking: str | None) -> str | None:
+    """The ``--effort`` level a thinking level runs at, or None to pass no flag.
+
+    ``off`` and ``minimal`` have no Claude spelling and run at ``low``, the least
+    effort the CLI can be asked for — not at its default, which would be more
+    thinking, not less. Anything else unknown is None: the CLI ignores a level it
+    does not take with a warning and runs at its default, so passing one would add
+    the warning and change nothing.
+    """
+    if not thinking:
+        return None
+    if thinking in EFFORT_LEVELS:
+        return str(thinking)
+    if thinking in (Thinking.OFF, Thinking.MINIMAL):
+        return str(Thinking.LOW)
+    return None
+
+
+def _effort_args(thinking: str | None) -> list[str]:
+    level = effort(thinking)
+    return ["--effort", level] if level else []
+
+
 # ── Command builders ──────────────────────────────────────────────────────────
 
 
@@ -127,7 +159,7 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
         cmd += ["--max-budget-usd", str(inv.max_budget)]
     if inv.model:
         cmd += ["--model", inv.model]
-    return cmd
+    return cmd + _effort_args(inv.thinking)
 
 
 # A fix agent edits the worktree; it has no GitHub business. Every outward write
@@ -192,7 +224,7 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
         cmd += ["--max-budget-usd", str(inv.max_budget)]
     if inv.model:
         cmd += ["--model", inv.model]
-    return cmd
+    return cmd + _effort_args(inv.thinking)
 
 
 # What a stateless prompt is not allowed to do. Read stays: it cannot block and
@@ -214,7 +246,7 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
 PROMPT_DENIED_TOOLS = ("Bash", "Edit", "Write")
 
 
-def _build_prompt_cmd(model: str | None = None) -> list[str]:
+def _build_prompt_cmd(model: str | None = None, thinking: str | None = None) -> list[str]:
     # --output-format needs --print, which -p already supplies. Without it the reply
     # carries no usage and every prompt() call goes unmeasured.
     cmd = [
@@ -223,7 +255,7 @@ def _build_prompt_cmd(model: str | None = None) -> list[str]:
     ]
     if model:
         cmd += ["--model", model]
-    return cmd
+    return cmd + _effort_args(thinking)
 
 
 # ── Subprocess helpers ───────────────────────────────────────────────────────
@@ -269,6 +301,16 @@ def ledger_provider() -> str:
     return _DEFAULT_PROVIDER
 
 
+def ledger_thinking(thinking: str | None) -> str | None:
+    """The level a call ran at, for the usage ledger: the ``--effort`` it was given.
+
+    The CLI's stream names no level, so the ledger records what the flag asked
+    for — after the same mapping, so a phase written ``minimal`` is recorded as
+    the ``low`` it ran at rather than the level it could not have.
+    """
+    return effort(thinking)
+
+
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """Check Vertex AI quota when the CLI is pointed at Vertex.
 
@@ -302,18 +344,13 @@ def prompt(
 
     usage is None when the reply carried no envelope to measure.
 
-    ``thinking`` and ``provider`` are accepted and dropped, as they are on this
-    backend's agent modes: the Claude CLI has a flag for neither.
-
-    Dropping ``thinking`` is why the phase specs' levels were inert for as long
-    as this was the only backend, and why switching the default to Pi — which
-    honours the flag — turned extended thinking on for every phase at once.
-    That is the levels taking effect as written, not a regression, but it is a
-    real part of why a Pi review costs more per turn than a Claude one did.
+    ``thinking`` becomes ``--effort`` (see `effort`), as on this backend's agent
+    modes. ``provider`` is accepted and dropped: the CLI is pointed at a provider
+    by its environment, not by a flag.
     """
     # Raises MachineEnvUnavailable; backend.prompt turns it into exit 1.
     env = agent.machine_env.base_env(cwd)
-    cmd = _build_prompt_cmd(model=model)
+    cmd = _build_prompt_cmd(model=model, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED, env=env)
     if result.returncode != 0:

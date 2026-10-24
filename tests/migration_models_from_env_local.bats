@@ -128,7 +128,9 @@ _run_migration() {
   ' _ "$REPO_ROOT/bin/migrations/20261024-models-from-agent-model.sh" "$REPO_ROOT" "$TMPDIR"
   [ "$status" -eq 0 ]
   [ "$(yq -o=json -I=0 '.models' "$CONFIG")" = '{"light":"claude-haiku-5-5","deep":"claude-opus-5-5","standard":"claude-opus-5-5"}' ]
-  [ "$(ls "$REPO_ROOT/bin/migrations" | grep -n 'models-from-' | cut -d: -f2 | head -1)" = "20261023-models-from-env-local.sh" ]
+  # run_component_migrations walks "$dir"/*.sh, so glob order is run order.
+  local in_order=("$REPO_ROOT"/bin/migrations/*-models-from-*.sh)
+  [ "${in_order[0]##*/}" = "20261023-models-from-env-local.sh" ]
 }
 
 @test "a tier naming the same model on a provider, with a level, still agrees" {

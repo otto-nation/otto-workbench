@@ -185,21 +185,6 @@ _run_sync() {
 # envelope, and publishes each half — a swapped selector or a wrong path would
 # pass every test above.
 
-# _sync_run FAKE_HOME STATE_DIR — one step_claude_settings against a sandbox.
-# In its own process because constants.sh freezes every path from HOME and the
-# state root at source time: a second run needs a fresh process, not a second
-# call. _fresh_bash, not a subshell, for speed — see claude_settings_helper.bash.
-_sync_run() {
-  env HOME="$1" WORKBENCH_CONFIG_DIR="$1/.config/workbench" WORKBENCH_STATE_DIR="$2" \
-    WORKBENCH_CACHE_DIR="$1/.cache/workbench" WORKBENCH_DIR="$REPO_ROOT" \
-    WORKBENCH_STABLE_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -e -c '
-      mkdir -p "$HOME"
-      . "$WORKBENCH_DIR/lib/ui.sh"
-      . "$WORKBENCH_DIR/ai/claude/steps.sh"
-      step_claude_settings >/dev/null' _
-}
-
 @test "shell: the file-level sync keeps its manifest inside the sandbox" {
   # A sandbox is only as good as the roots it names. setup_file swaps HOME, but
   # roots.sh keeps a root something already set — and the registries.sh it loads
@@ -308,8 +293,7 @@ _seed_env_local() {
   local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
   _seed_env_local "$home" \
     'export CLAUDE_CODE_USE_VERTEX=1' \
-    "export GOOGLE_CLOUD_PROJECT='proj-x'" \
-    'export AI_MODEL="claude-opus-5"'
+    "export GOOGLE_CLOUD_PROJECT='proj-x'"
   _sync_run "$home" "$state"
 
   # Quoting is the shell file's business; the settings file carries the value.
@@ -318,9 +302,6 @@ _seed_env_local() {
   # GOOGLE_CLOUD_PROJECT in ~/.env.local is mapped to the name Claude Code reads.
   run jq -r '.env.ANTHROPIC_VERTEX_PROJECT_ID' "$home/.claude/settings.json"
   [ "$output" = "proj-x" ]
-  # AI_MODEL in ~/.env.local is mapped to ANTHROPIC_MODEL in the env block.
-  run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
-  [ "$output" = "claude-opus-5" ]
 }
 
 @test "env mirror: a var absent from ~/.env.local is left out" {
@@ -380,10 +361,10 @@ _seed_env_local() {
   # hand-written one on the first sync after the file was renamed or moved.
   local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
   mkdir -p "$home/.claude"
-  printf '%s\n' '{"env":{"ANTHROPIC_MODEL":"claude-opus-5"}}' > "$home/.claude/settings.json"
+  printf '%s\n' '{"env":{"CLOUD_ML_REGION":"us-east5"}}' > "$home/.claude/settings.json"
   _sync_run "$home" "$state"
-  run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
-  [ "$output" = "claude-opus-5" ]
+  run jq -r '.env.CLOUD_ML_REGION' "$home/.claude/settings.json"
+  [ "$output" = "us-east5" ]
 }
 
 @test "env mirror: a ~/.env.local setting none of them keeps a hand-written block" {
@@ -404,10 +385,10 @@ _seed_env_local() {
 
 @test "env mirror: a value carrying an = sign survives intact" {
   local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
-  _seed_env_local "$home" 'export AI_MODEL=claude-opus-5=beta'
+  _seed_env_local "$home" 'export GOOGLE_CLOUD_PROJECT=proj=x'
   _sync_run "$home" "$state"
-  run jq -r '.env.ANTHROPIC_MODEL' "$home/.claude/settings.json"
-  [ "$output" = "claude-opus-5=beta" ]
+  run jq -r '.env.ANTHROPIC_VERTEX_PROJECT_ID' "$home/.claude/settings.json"
+  [ "$output" = "proj=x" ]
 }
 
 @test "env mirror: nothing to mirror leaves no empty env block behind" {

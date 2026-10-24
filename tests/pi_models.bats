@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Tests for step_pi_models in ai/pi/steps.sh — checking the model ids
-# ~/.env.local names against the catalog the user's own pi serves.
+# Tests for step_pi_models in ai/pi/steps.sh — checking the models Pi's settings
+# name against the catalog the user's own pi serves.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -37,83 +37,110 @@ SCRIPT
   PATH="$BIN:$PATH"
 }
 
-@test "an unknown model warns with the variable name" {
-  _seed_env_local 'export AI_MODEL=not-a-real-model'
-  _stub_gh 'echo "{}"'
+# _vertex_default ID — live settings defaulting to ID on google-vertex-claude.
+_vertex_default() {
+  _write_live "$(jq -nc --arg m "$1" '{defaultProvider: "google-vertex-claude", defaultModel: $m}')"
+}
+
+@test "an unknown defaultModel warns, naming the provider and models.*" {
+  _vertex_default not-a-real-model
   _stub_pi_list_models
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AI_MODEL=not-a-real-model"* ]]
-  [[ "$output" == *"google-vertex-claude"* ]]
-  [[ "$output" == *"~/.env.local"* ]]
-  _teardown_env_local
+  [[ "$output" == *"not-a-real-model is not listed under google-vertex-claude"* ]]
+  [[ "$output" == *"models.* in config.yml"* ]]
+}
+
+@test "a stale defaultModel Pi kept on its own is still reported" {
+  # With models.session unset the sync leaves Pi's own defaultModel in place,
+  # and a retired id there fails every prompt the same way a wrong config would.
+  _vertex_default claude-opus-4-8
+  _stub_pi_list_models
+
+  run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude-opus-4-8 is not listed under google-vertex-claude"* ]]
 }
 
 @test "every listed model is silent" {
-  _seed_env_local 'export AI_MODEL=claude-sonnet-5'
-  _stub_gh 'echo "{}"'
+  _write_live '{"defaultProvider": "google-vertex-claude", "defaultModel": "claude-sonnet-5", "enabledModels": ["google-vertex/gemini-2.5-flash", "claude-opus-5-5"]}'
   _stub_pi_list_models
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
-  [[ "$output" != *"is not listed under"* ]]
-  _teardown_env_local
+  [[ "$output" != *"WARN"* ]]
 }
 
 @test "pi absent is silent and the step still succeeds" {
-  _seed_env_local 'export AI_MODEL=not-a-real-model'
-  _stub_gh 'echo "{}"'
+  _vertex_default not-a-real-model
   _hide_pi
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
-  _teardown_env_local
 }
 
 @test "pi --list-models failing is silent and the step still succeeds" {
-  _seed_env_local 'export AI_MODEL=not-a-real-model'
-  _stub_gh 'echo "{}"'
+  _vertex_default not-a-real-model
   # setup already shadows pi with a failing binary.
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
-  _teardown_env_local
+}
+
+@test "no settings file is silent" {
+  _stub_pi_list_models
+
+  run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"WARN"* ]]
 }
 
 @test "a model listed only under a different provider still warns" {
-  _seed_env_local 'export AI_MODEL=gemini-2.5-flash'
-  _stub_gh 'echo "{}"'
+  _vertex_default gemini-2.5-flash
   _stub_pi_list_models
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AI_MODEL=gemini-2.5-flash"* ]]
-  [[ "$output" == *"google-vertex-claude"* ]]
-  _teardown_env_local
+  [[ "$output" == *"gemini-2.5-flash is not listed under google-vertex-claude"* ]]
+}
+
+@test "a provider/id entry is checked under its own provider" {
+  _write_live '{"defaultProvider": "google-vertex-claude", "defaultModel": "claude-opus-5-5", "enabledModels": ["google-vertex/claude-opus-5-5"]}'
+  _stub_pi_list_models
+
+  run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude-opus-5-5 is not listed under google-vertex —"* ]]
+  [ "$(grep -c '^WARN' <<< "$output")" -eq 1 ]
+}
+
+@test "with no defaultProvider a bare id is checked across every provider" {
+  _write_live '{"defaultModel": "gemini-2.5-flash", "enabledModels": ["not-a-real-model"]}'
+  _stub_pi_list_models
+
+  run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Pi lists no model not-a-real-model under any provider"* ]]
+  [[ "$output" != *"gemini-2.5-flash"* ]]
 }
 
 @test "a substring of a listed id is not treated as listed" {
-  _seed_env_local 'export AI_MODEL=claude-opus-5'
-  _stub_gh 'echo "{}"'
+  _vertex_default claude-opus-5
   _stub_pi_list_models
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AI_MODEL=claude-opus-5"* ]]
-  [[ "$output" == *"is not listed under google-vertex-claude"* ]]
-  _teardown_env_local
+  [[ "$output" == *"claude-opus-5 is not listed under google-vertex-claude"* ]]
 }
 
-@test "a provider with no rows warns once that it did not load, not per variable" {
+@test "a provider with no rows warns once that it did not load, not per model" {
   # The Vertex extension registers nothing when the shell lacks a project or
   # ADC. Every correct id then reads as unknown; one line naming the provider
-  # is the truth, a line per variable blames ~/.env.local for it.
-  _seed_env_local 'export AI_MODEL=claude-opus-5-5
-export AI_SONNET_MODEL=claude-sonnet-5'
-  _stub_gh 'echo "{}"'
+  # is the truth, a line per model blames the config for it.
+  _write_live '{"defaultProvider": "google-vertex-claude", "defaultModel": "claude-opus-5-5", "enabledModels": ["google-vertex-claude/claude-sonnet-5"]}'
   cat > "$BIN/pi" << 'SCRIPT'
 #!/usr/bin/env bash
 [[ "$1" == "--list-models" ]] || exit 1
@@ -128,14 +155,10 @@ SCRIPT
   [[ "$output" == *"GOOGLE_CLOUD_PROJECT"* ]]
   [[ "$output" != *"is not listed under"* ]]
   [ "$(grep -c '^WARN' <<< "$output")" -eq 1 ]
-  _teardown_env_local
 }
 
 @test "a non-Vertex provider with no rows does not get Vertex advice" {
-  _write_template '[]'
-  jq '.defaultProvider = "anthropic"' "$TEMPLATE" > "$TEMPLATE.new" && mv "$TEMPLATE.new" "$TEMPLATE"
-  _seed_env_local 'export AI_MODEL=claude-opus-5-5'
-  _stub_gh 'echo "{}"'
+  _write_live '{"defaultProvider": "anthropic", "defaultModel": "claude-opus-5-5"}'
   _stub_pi_list_models
 
   run _run_step step_pi_models
@@ -143,24 +166,20 @@ SCRIPT
   [[ "$output" == *"Pi lists no models under anthropic"* ]]
   [[ "$output" != *"GOOGLE_CLOUD_PROJECT"* ]]
   [[ "$output" != *"ADC"* ]]
-  _teardown_env_local
 }
 
-@test "a provider listed only in part warns per variable, not that it did not load" {
+@test "a provider listed only in part warns per model, not that it did not load" {
   # Rows exist for the provider, so it loaded: the unlisted id is the user's
   # to fix and the listed one stays quiet.
-  _seed_env_local 'export AI_MODEL=claude-opus-5
-export AI_SONNET_MODEL=claude-sonnet-5'
-  _stub_gh 'echo "{}"'
+  _write_live '{"defaultProvider": "google-vertex-claude", "defaultModel": "claude-opus-5", "enabledModels": ["google-vertex-claude/claude-sonnet-5"]}'
   _stub_pi_list_models
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" != *"did not load"* ]]
-  [[ "$output" == *"AI_MODEL=claude-opus-5 is not listed under google-vertex-claude"* ]]
-  [[ "$output" != *"AI_SONNET_MODEL"* ]]
+  [[ "$output" == *"claude-opus-5 is not listed under google-vertex-claude"* ]]
+  [[ "$output" != *"claude-sonnet-5"* ]]
   [ "$(grep -c '^WARN' <<< "$output")" -eq 1 ]
-  _teardown_env_local
 }
 
 @test "the catalog comes from the user pi asked from HOME, not from the cwd" {
@@ -168,8 +187,7 @@ export AI_SONNET_MODEL=claude-sonnet-5'
   # different catalog. The stub stands in for that: from anywhere but HOME it
   # omits the model the user's pi does list.
   mkdir -p "$TMPDIR/home" "$TMPDIR/project"
-  _seed_env_local 'export AI_MODEL=claude-opus-5-5'
-  _stub_gh 'echo "{}"'
+  _vertex_default claude-opus-5-5
   cat > "$BIN/pi" << SCRIPT
 #!/usr/bin/env bash
 [[ "\$1" == "--list-models" ]] || exit 1
@@ -184,14 +202,13 @@ SCRIPT
   HOME="$TMPDIR/home" run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
-  _teardown_env_local
 }
 
-@test "step_pi_settings no longer asks pi for its catalog" {
+@test "step_pi_settings does not ask pi for its catalog" {
   # The catalog comes from extension clones that step_pi_packages refreshes
   # later in the same sync; asked here, a clone about to be repaired reads as
   # every model unknown.
-  _seed_env_local 'export AI_MODEL=not-a-real-model'
+  _seed_config 'models:' '  session: google-vertex-claude/not-a-real-model'
   _stub_gh 'echo "{}"'
   _stub_pi_list_models
   # Record every invocation so the claim is pinned directly: a stub that is
@@ -208,5 +225,4 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
   [ ! -e "$TMPDIR/pi-argv" ]
-  _teardown_env_local
 }

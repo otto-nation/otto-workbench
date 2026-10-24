@@ -86,6 +86,7 @@
     "config:models",
     "config:models.deep",
     "config:models.light",
+    "config:models.session",
     "config:models.standard",
     "config:rebase",
     "config:rebase.regenerate",

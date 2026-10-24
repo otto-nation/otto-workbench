@@ -113,9 +113,23 @@ class TestNotServedMessage:
 
 
 class TestDefaultProvider:
-    def test_falls_back_when_the_settings_file_is_unreadable(self, monkeypatch):
+    def test_is_none_when_the_settings_file_is_unreadable(self, monkeypatch):
         monkeypatch.setenv("WORKBENCH_PI_SETTINGS", "/nonexistent/settings.json")
-        assert agent.pi_models.default_provider() == agent.pi_models.DEFAULT_PROVIDER
+        assert agent.pi_models.default_provider() is None
+
+    def test_is_none_when_the_settings_name_no_provider(self, monkeypatch, tmp_path):
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"defaultModel": "claude-opus-5-5"}))
+        monkeypatch.setenv("WORKBENCH_PI_SETTINGS", str(settings))
+        assert agent.pi_models.default_provider() is None
+
+    def test_an_unset_provider_checks_every_provider(self, monkeypatch):
+        monkeypatch.setenv("WORKBENCH_PI_SETTINGS", "/nonexistent/settings.json")
+        listing = "provider model\nanthropic claude-opus-5-5\nopenai gpt-6\n"
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda pi: listing)
+        assert agent.pi_models.listed_models(None, pi=PI) == {"claude-opus-5-5", "gpt-6"}
+        msg = agent.pi_models.unserved_message("gpt-7", frozenset({"gpt-6"}))
+        assert msg.startswith("no pi provider serves model 'gpt-7'")
 
     def test_reads_the_overridden_settings_file(self, monkeypatch, tmp_path):
         settings = tmp_path / "settings.json"

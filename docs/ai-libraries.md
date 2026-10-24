@@ -39,6 +39,38 @@ Nothing here is review-specific, which is why it is not in the review layer: a
 diagnosis is a property of the invocation, and the pipeline that happens to be
 running is not part of the reason it failed.
 
+### agent/harness_models.py
+
+The model tiers as each harness's own settings read them.
+
+``models.*`` in the config is the one place a model is named. Claude Code and
+Pi each keep model settings of their own, which the workbench's sync writes
+from that one place; this module is what both syncs ask, so neither re-parses
+a reference in bash and the two cannot read one differently.
+
+Claude Code:
+
+- ``ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`` take the deep, standard and
+  light tiers, so the CLI's own ``opus``/``sonnet``/``haiku`` aliases — and the
+  subagents and ``opusplan`` that use them — follow the tiers.
+- ``model`` and ``effortLevel`` take ``models.session``.
+- A tier naming a provider the Claude CLI cannot be pointed at has no Claude
+  model, and is reported rather than written: the CLI runs Claude models only.
+
+Pi:
+
+- ``defaultModel``, ``defaultProvider`` and ``defaultThinkingLevel`` take
+  ``models.session``; each is left out when the session does not name it, so
+  Pi keeps the value it has.
+- ``enabledModels`` lists every tier's model and the session's, as ``/model``
+  offers them; ``modelThinkingLevels`` carries each one's level. Both are keyed
+  ``provider/id`` where the reference names a provider and by the bare id where
+  it does not: Pi's sync qualifies a bare id with the ``defaultProvider`` the
+  settings end up with, which only the live file knows.
+
+Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
+the grammar a reference is written in (``agent.models``).
+
 ### agent/invoke.py
 
 The one owner of an agent invocation: resolve the phase, run it, guard it.

@@ -344,10 +344,9 @@ RETRO_REPORT_FILE="$AI_MEMORY_BACKUP_DIR/RETRO.md"
 RETRO_ARCHIVE_DIR="$AI_MEMORY_BACKUP_DIR/retro"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
-# PI_SETTINGS_SRC carries only non-model scalars (provider, thinking level,
-# packages). Model config is derived at sync time from the env vars
-# ai/models.env.yml declares with a model role, read out of ~/.env.local — the
-# same SSOT Claude Code reads.
+# PI_SETTINGS_SRC carries only non-model scalars (thinking level, packages).
+# Model settings are written at sync time from config.yml's models.* — the same
+# place Claude Code's sync reads them.
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
 PI_CONTEXT_HEAD_SRC="$PI_SRC_DIR/AGENTS.head.md"
@@ -398,6 +397,15 @@ SUBLIME_SETTINGS_FILE="$HOME/Library/Application Support/Sublime Text/Packages/U
 WORKBENCH_SURFACE_RELPATH="public-surface.json"
 AI_TOOLS_SURFACE_RELPATH="ai/claude/public-surface.json"
 # Every snapshot, in the order the gate reports them.
+# The ~/.env.local variables that named models before config.yml's models.* did,
+# each as VAR:KEY with the models.* key its value moved to. The AI_* names come
+# first, and a key takes the first one set: the ANTHROPIC_* names are what those
+# were renamed from, so where both are set the AI_* one is what was being read.
+# Read by bin/migrations/20261024-models-from-env-local.sh, which carries the
+# values over, and ai_warn_model_exports, which names any left behind.
+# shellcheck disable=SC2034
+LEGACY_MODEL_ENV_VARS="AI_MODEL:session AI_OPUS_MODEL:deep AI_SONNET_MODEL:standard AI_HAIKU_MODEL:light ANTHROPIC_MODEL:session ANTHROPIC_DEFAULT_OPUS_MODEL:deep ANTHROPIC_DEFAULT_SONNET_MODEL:standard ANTHROPIC_DEFAULT_HAIKU_MODEL:light"
+
 PUBLIC_SURFACE_RELPATHS=("$WORKBENCH_SURFACE_RELPATH" "$AI_TOOLS_SURFACE_RELPATH")
 
 # ─── Generated rule files ─────────────────────────────────────────────────────

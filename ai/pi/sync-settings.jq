@@ -5,15 +5,30 @@
 #   $e       — existing (~/.pi/agent/settings.json)
 #   $allowed — template packages this machine was confirmed to reach
 #   $blocked — template packages this machine was confirmed not to reach
-#   $models  — model config derived from ~/.env.local ({} when unset)
+#   $models  — the Pi half of `config models` (lib/config_cli.py): the model
+#              keys config.yml's models.* name, each absent when none does
 #
 # Scalar keys from the template and model config override the live file on every
 # sync, so the workbench stays authoritative over extensions and `pi config`.
-# This is deliberate: every template scalar (defaultProvider, defaultThinkingLevel,
+# This is deliberate: every template scalar (defaultThinkingLevel,
 # enableInstallTelemetry) is workbench-managed and must not drift because an
 # extension or a one-off `pi config` edit set it first.
-# Model keys come from ~/.env.local — the same SSOT Claude Code reads — and are
-# applied after template scalars so they always win.
+# Model keys come from config.yml — the same place Claude Code's sync reads — and
+# are applied after template scalars so they always win. defaultProvider is not
+# a template scalar: it is the session's provider when models.session names one,
+# and otherwise whatever Pi or the operator set.
+#
+# A model reference written without a provider reaches here as a bare id. Its
+# enabledModels entry and modelThinkingLevels key are qualified with the
+# defaultProvider the merged file ends up with, because Pi adds a bare pattern
+# once per provider serving it, with a warning every start, and keys
+# modelThinkingLevels by exact provider/id. With no defaultProvider, entries
+# stay bare and bare level keys are dropped, since nothing could match them.
+#
+# modelThinkingLevels is merged into the live object rather than replacing it:
+# Ctrl+S in /thinking saves a level there for whatever model is current, and
+# that choice is the operator's. A level the config stops naming therefore stays
+# until it is cleared by hand.
 #
 # `packages` is reconciled rather than overridden, because it is a list: adding
 # an entry displaces nothing, and override semantics would strip packages an
@@ -39,6 +54,8 @@
 
 def source_of: if type == "object" then .source else . end;
 def ident: source_of | sub("@[^@/:]+$"; "");
+def qualified($provider): if test("/") or $provider == null then . else "\($provider)/\(.)" end;
+def first_seen: reduce .[] as $m ([]; if index($m) then . else . + [$m] end);
 
 ($t | del(.packages)) as $scalars |
 ($e.packages // []) as $existing |
@@ -51,6 +68,15 @@ def ident: source_of | sub("@[^@/:]+$"; "");
 $e
 | . + $scalars
 | . + $models
+| .defaultProvider as $provider
+| if $models | has("enabledModels")
+  then .enabledModels |= (map(qualified($provider)) | first_seen)
+  else . end
+| if $models | has("modelThinkingLevels")
+  then .modelThinkingLevels = (($e.modelThinkingLevels // {})
+    + ($models.modelThinkingLevels | with_entries(.key |= qualified($provider) | select(.key | test("/")))))
+    | if .modelThinkingLevels == {} then del(.modelThinkingLevels) else . end
+  else . end
 | if $packages == [] and (($e | has("packages")) | not) then .
   else .packages = $packages
   end

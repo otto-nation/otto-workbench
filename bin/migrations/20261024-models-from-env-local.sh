@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Migration: carry the model ids ~/.env.local exports into config.yml's models.*.
+#
+# Claude Code's and Pi's syncs take their models from models.* now, and nothing
+# reads the AI_*_MODEL exports (or the ANTHROPIC_* names those were renamed
+# from) any more. Each value moves to the key LEGACY_MODEL_ENV_VARS pairs it
+# with — AI_MODEL to models.session, AI_OPUS_MODEL to models.deep,
+# AI_SONNET_MODEL to models.standard, AI_HAIKU_MODEL to models.light:
+#
+# 1. The key unset → it takes the value, and the export is deleted.
+# 2. The key already holds that value → the export is deleted.
+# 3. The key holds another value → both are left as they are, and every sync
+#    names the export (ai_warn_model_exports) until the operator picks one.
+#    20261024-models-from-agent-model sorts ahead of this one and fills every
+#    tier from agent.model, so a machine that set both keeps the model its
+#    phases ran on and is told about the alias that no longer follows the line.
+#
+# Values are carried bare, as both harnesses took them: Claude Code read them
+# as-is, and Pi's sync still qualifies a bare id with its defaultProvider.
+#
+# Only active `export` lines are read and deleted, the lines read_env_local_var
+# reads — a commented one was never in effect.
+#
+# adoption-sensitive: config.yml is a _LEGACY_CONFIG_ENTRIES name, so adoption
+# can write a pre-migration copy — no models.* — back into the config root
+# after this has run, and that copy needs the same carry-over.
+
+migration_20261024_models_from_env_local() {
+  [[ -f "$ENV_LOCAL_FILE" ]] || return "$MIGRATION_DEFERRED"
+
+  local pair var key value current changed=""
+  for pair in $LEGACY_MODEL_ENV_VARS; do
+    var="${pair%%:*}"
+    key="${pair#*:}"
+    value="$(read_env_local_var "$var")"
+    [[ -n "$value" ]] || continue
+
+    wb_config_ensure_file || return 1
+    current="$(K="$key" yq '.models[strenv(K)] // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
+    if [[ -z "$current" ]]; then
+      K="$key" V="$value" yq -i '.models[strenv(K)] = strenv(V)' "$WORKBENCH_CONFIG_FILE" || return 1
+      current="$value"
+    fi
+    [[ "$current" == "$value" ]] || continue
+
+    sed_i "/^export ${var}=/d" "$ENV_LOCAL_FILE"
+    changed=1
+  done
+
+  [[ -n "$changed" ]] || return "$MIGRATION_NOOP"
+  success "config.yml now names the models ~/.env.local exported (models.*)"
+}

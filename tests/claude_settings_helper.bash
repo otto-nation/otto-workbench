@@ -55,6 +55,22 @@ _sync_settings_into() {
   ' "$repo_root"
 }
 
+# _sync_run FAKE_HOME STATE_DIR — one step_claude_settings against a sandbox.
+# In its own process because constants.sh freezes every path from HOME and the
+# state root at source time: a second run needs a fresh process, not a second
+# call. _fresh_bash, not a subshell, for speed — see _fresh_bash above. The
+# step's warnings are what it prints, so they reach a caller using `run`.
+_sync_run() {
+  env HOME="$1" WORKBENCH_CONFIG_DIR="$1/.config/workbench" WORKBENCH_STATE_DIR="$2" \
+    WORKBENCH_CACHE_DIR="$1/.cache/workbench" WORKBENCH_DIR="$REPO_ROOT" \
+    WORKBENCH_STABLE_DIR="$REPO_ROOT" NO_COLOR=1 \
+    bash -e -c '
+      mkdir -p "$HOME"
+      . "$WORKBENCH_DIR/lib/ui.sh"
+      . "$WORKBENCH_DIR/ai/claude/steps.sh"
+      step_claude_settings' _
+}
+
 # Runs the Bash PreToolUse guard against a mock payload. Every Bash rule lives
 # in that one script, so these tests exercise the source rather than a
 # JSON-escaped copy of it.

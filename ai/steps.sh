@@ -126,58 +126,21 @@ _ai_gh_org_section() {
 EOF
 }
 
-# ai_adopt_legacy_model_vars — renames a model exported in ~/.env.local under
-# the name Claude Code reads (ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_*_MODEL) to the
-# AI_* name the workbench reads, when the AI_* name is not set.
-#
-# The one-shot rename migration moved those lines once and retired. A value
-# exported under the old name afterwards -- copied from another machine, or
-# from Claude Code's own docs -- still reaches the Claude Code CLI through the
-# shell, so Claude looks configured while Pi gets no defaultModel and falls
-# back to whatever its first provider offers. Running on every sync makes the
-# rename a property of the file rather than of the day the migration ran.
-#
-# Harness-neutral and run before any harness syncs, so Claude Code's env block
-# and Pi's defaultModel are both built from the renamed lines in the same run.
-# Idempotent: a line is renamed only while its AI_* name has no value, so a
-# second run, or a machine already on the new names, changes nothing. When
-# both names are set the AI_* one is what the workbench reads, and the old
-# line is left for the operator.
-#
-# The old names are the registry's `target` fields -- the names Claude Code's
-# sync publishes each AI_* var under -- so the pairing is not restated here.
-ai_adopt_legacy_model_vars() {
+# ai_warn_model_exports — warns once per line ~/.env.local still exports a model
+# variable from LEGACY_MODEL_ENV_VARS. Nothing reads them any more — both harness
+# syncs and every workbench agent take their models from config.yml's models.* —
+# but an exported one still reaches any Claude Code CLI started from a shell,
+# where ANTHROPIC_* beats what settings.json says. Read-only: the migration that
+# carried them over removed every line it could, so a line left is one whose
+# value disagrees with config.yml, and which one is right is the operator's call.
+ai_warn_model_exports() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0
-
-  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
-    # shellcheck source=../lib/registries.sh
-    . "$LIB_SRC_DIR/registries.sh"
-  fi
-
-  # model_roles is collect_model_env_vars' second output; every model var is
-  # renamed alike, so only the names are read here.
-  # shellcheck disable=SC2034
-  local -a model_vars=() model_roles=() sources=() targets=()
-  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR" || return 0
-  collect_claude_env_vars sources targets "$WORKBENCH_STABLE_DIR" || return 0
-
-  local -A legacy_of=()
-  local i
-  for (( i=0; i<${#sources[@]}; i++ )); do
-    legacy_of["${sources[i]}"]="${targets[i]}"
-  done
-
-  local var legacy
-  for var in ${model_vars[@]+"${model_vars[@]}"}; do
-    [[ -z "$(read_env_local_var "$var")" ]] || continue
-    legacy="${legacy_of[$var]:-}"
-    [[ -n "$legacy" && "$legacy" != "$var" ]] || continue
-    [[ -n "$(read_env_local_var "$legacy")" ]] || continue
-    # Only the active export moves. The commented catalogue line for $var in
-    # the generated block stays where it is, so the renamed value is the one
-    # export of $var in the file.
-    sed_i -E "s/^export ${legacy}=/export ${var}=/" "$ENV_LOCAL_FILE"
-    success "Renamed $legacy to $var in ~/.env.local — the workbench reads $var"
+  local pair var value
+  for pair in $LEGACY_MODEL_ENV_VARS; do
+    var="${pair%%:*}"
+    value=$(read_env_local_var "$var")
+    [[ -n "$value" ]] || continue
+    warn "$ENV_LOCAL_FILE exports $var=$value, which nothing reads — set models.${pair#*:} in config.yml instead (otto-workbench config set models.${pair#*:} $value), then delete the line"
   done
   return 0
 }
@@ -222,8 +185,8 @@ sync_ai() {
   # inputs to every harness, not outputs of one.
   ai_generate_rules
 
-  # Before any harness reads model config out of ~/.env.local.
-  ai_adopt_legacy_model_vars
+  # Harness-neutral: the variables it names would reach either harness's CLI.
+  ai_warn_model_exports
 
   # Harness-neutral, so ahead of the per-tool syncs and whatever they select.
   step_instructions_report

@@ -299,6 +299,48 @@ _claude_mirror_env() {
   ' <<< "$result"
 }
 
+# _claude_apply_models RESULT_VAR — rewrites the merged settings document held in
+# RESULT_VAR with its model settings taken from the machine-wide `models.*`
+# (wb_config_harness_models). A nameref rather than stdout, because the warnings
+# below are printed to stdout and a `$(...)` would splice them into the JSON.
+#
+# - The tier aliases (ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL) are owned
+#   outright: a tier the config leaves unset, or names a non-Claude model for,
+#   is deleted from the env block, so an alias never outlives the tier behind it.
+#   ANTHROPIC_MODEL is deleted too — `model` carries the session now, and the two
+#   would otherwise disagree.
+# - `model` and `effortLevel` are written only while models.session is set.
+#   Unset, they stay whatever /model or a hand edit left, since a session model
+#   is the one thing Claude Code itself also writes here.
+#
+# A config that cannot be read leaves the document unchanged and warns: a sync
+# that withdrew every alias over a typo would be worse than one a line late.
+_claude_apply_models() {
+  local -n __cam_result=$1
+  local view
+  if ! view=$(wb_config_harness_models); then
+    warn "Claude Code's model settings left as they were — fix the models section of config.yml"
+    return 0
+  fi
+
+  local skipped
+  while IFS= read -r skipped; do
+    [[ -n "$skipped" ]] && warn "$skipped"
+  done < <(jq -r '.claude.skipped[]' <<< "$view")
+
+  __cam_result=$(jq --argjson view "$view" '
+    ($view.claude) as $c
+    | .settings.env = (((.settings.env // {})
+        | with_entries(select(.key | IN($c.managed_env[]) | not))) + $c.env)
+    | if (.settings.env | length) == 0 then del(.settings.env) else . end
+    | if $c.model == null then .
+      else .settings.model = $c.model
+        | if $c.effortLevel == null then del(.settings.effortLevel)
+          else .settings.effortLevel = $c.effortLevel end
+      end
+  ' <<< "$__cam_result")
+}
+
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
 # Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
@@ -382,6 +424,8 @@ _step_claude_settings() {
   # be written once and never corrected again.
   result=$(_claude_mirror_env "$result") \
     || { err "Failed to mirror $ENV_LOCAL_FILE into settings.json"; return 1; }
+  _claude_apply_models result \
+    || { err "Failed to write the model tiers into settings.json"; return 1; }
 
   # Both halves are staged before either is published. The two files describe
   # each other: a manifest that ran ahead of the settings file — or trailed it —

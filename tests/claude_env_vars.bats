@@ -280,32 +280,6 @@ tools: []'
   [ "$status" -ne 0 ]
 }
 
-@test "the model routing vars use generic AI_* names" {
-  local -a sources=() targets=()
-  _load_real_allowlist sources targets
-  # Source names (what ~/.env.local carries)
-  printf '%s\n' "${sources[@]}" | grep -qx AI_MODEL
-  printf '%s\n' "${sources[@]}" | grep -qx AI_OPUS_MODEL
-  printf '%s\n' "${sources[@]}" | grep -qx AI_SONNET_MODEL
-  printf '%s\n' "${sources[@]}" | grep -qx AI_HAIKU_MODEL
-}
-
-@test "model vars map to Claude Code's ANTHROPIC_* target names" {
-  local -a sources=() targets=()
-  _load_real_allowlist sources targets
-  # Assert each source is paired with the correct target at the same index,
-  # not just that both names appear somewhere in their arrays.
-  local i
-  for (( i=0; i<${#sources[@]}; i++ )); do
-    case "${sources[i]}" in
-      AI_MODEL)        [[ "${targets[i]}" == "ANTHROPIC_MODEL" ]] ;;
-      AI_OPUS_MODEL)   [[ "${targets[i]}" == "ANTHROPIC_DEFAULT_OPUS_MODEL" ]] ;;
-      AI_SONNET_MODEL) [[ "${targets[i]}" == "ANTHROPIC_DEFAULT_SONNET_MODEL" ]] ;;
-      AI_HAIKU_MODEL)  [[ "${targets[i]}" == "ANTHROPIC_DEFAULT_HAIKU_MODEL" ]] ;;
-    esac
-  done
-}
-
 @test "no credential the registries declare reaches the allowlist" {
   # Every var an unflagged registry declares, checked against the allowlist as a
   # set — a registry that gains the flag by mistake fails here rather than in a

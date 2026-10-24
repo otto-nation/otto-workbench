@@ -813,9 +813,9 @@ Pi reads *and writes* `~/.pi/agent/settings.json` — `pi install`, `pi config` 
 Ctrl+S in `/model` all land there — so `step_pi_settings` ([`ai/pi/steps.sh`](../ai/pi/steps.sh))
 merges the workbench's template into that file rather than copying over it. Scalar
 keys are seeds: one the live file already carries stays as whatever set it first,
-so a changed template default never reaches a machine that has the key; delete
-it there to be re-seeded. A model id `pi --list-models` does not list for the
-default provider is a sync warning, not a failure. That check (`step_pi_models`)
+so a changed template default never reaches a machine that has the key; delete it there to be re-seeded. Model keys come from `models.*` instead (`otto-workbench config models`). A
+`defaultModel` or `enabledModels` entry `pi --list-models` does not list is a
+sync warning, not a failure, whoever wrote it. That check (`step_pi_models`)
 runs after the package refresh and asks the user's own pi from `$HOME`, so neither
 a stale extension clone nor a repo's pinned pi reads as a wrong id. AI runs pick
 their pi per repo: the managed install, or the repo's mise pin when it is newer

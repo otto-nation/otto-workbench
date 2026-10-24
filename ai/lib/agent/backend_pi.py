@@ -34,7 +34,7 @@ Pi CLI reference:
   --no-session     Ephemeral mode (don't persist session)
   --tools <list>   Allowlist specific tools
   --model <id>     Model selection
-  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh
+  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh, max
   --append-system-prompt <text>  Inject additional system prompt
   --verbose        Verbose output
 

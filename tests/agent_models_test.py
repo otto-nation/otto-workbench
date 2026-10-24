@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.phases
 import config.workbench_config
-from agent.models import ModelRef, parse_ref, resolve
+from agent.models import ModelRef, UnsetTier, parse_ref, resolve
 from agent.registry import PHASES
 from config.workbench_config import ModelsConfig
 from core.phases import Effort, Phase, Thinking, Tier
@@ -62,9 +62,14 @@ def test_every_thinking_level_is_a_level_suffix():
 def test_a_tier_name_reads_through_the_tiers_and_is_never_an_id():
     models = ModelsConfig(deep="anthropic/claude-opus-5-5:high")
     assert resolve("deep", models) == ModelRef("claude-opus-5-5", "anthropic", "high")
-    assert resolve("light", models) is None
     assert resolve("", models) is None
     assert resolve(None, models) is None
+
+
+def test_naming_an_unset_tier_is_refused_not_skipped():
+    """Asking for a tier is asking for its model; running another layer's is a different choice."""
+    with pytest.raises(UnsetTier, match=r"--model names the light tier, but models\.light is not set"):
+        resolve("light", ModelsConfig(), where="--model")
 
 
 # ── The tier a phase reads ────────────────────────────────────────────────────
@@ -126,7 +131,7 @@ agent:
     assert agent.phases.phase_ref(Phase.SCOUT, None, cfg) == ModelRef("claude-opus-5-5", "anthropic")
 
 
-def test_an_override_naming_an_unset_tier_falls_through_to_the_phases_own(roots):
+def test_an_override_naming_an_unset_tier_is_refused(roots):
     cfg = _cfg(roots, """
 models:
   light: anthropic/claude-haiku-5-5
@@ -135,7 +140,14 @@ agent:
     scout:
       model: deep
 """)
-    assert agent.phases.phase_model(Phase.SCOUT, None, cfg) == "claude-haiku-5-5"
+    with pytest.raises(UnsetTier, match=r"agent\.phases\.scout\.model names the deep tier"):
+        agent.phases.phase_model(Phase.SCOUT, None, cfg)
+
+
+def test_an_explicit_tier_name_that_is_unset_is_refused(roots):
+    cfg = _cfg(roots, "models:\n  light: anthropic/claude-haiku-5-5\n")
+    with pytest.raises(UnsetTier, match="--model names the deep tier"):
+        agent.phases.phase_settings(Phase.SCOUT, "deep", cfg)
 
 
 # ── What follows from the reference ───────────────────────────────────────────
@@ -147,10 +159,19 @@ def test_the_provider_is_the_phases_models(roots, monkeypatch):
     assert agent.phases.phase_settings(Phase.SYNTHESIS, None, cfg).provider == "anthropic"
 
 
-def test_the_provider_env_key_still_overrides_the_reference(roots, monkeypatch):
+def test_a_provider_written_on_the_reference_beats_the_env_key(roots, monkeypatch):
+    """An id is a name in one provider's catalogue; sending it elsewhere is a different model."""
     cfg = _cfg(roots, "models:\n  light: openai/gpt-6-luna\n")
     monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "openrouter")
-    assert agent.phases.phase_settings(Phase.SCOUT, None, cfg).provider == "openrouter"
+    assert agent.phases.phase_settings(Phase.SCOUT, None, cfg).provider == "openai"
+    explicit = agent.phases.phase_settings(Phase.SCOUT, "xai/grok-4.7", cfg)
+    assert explicit.provider == "xai"
+
+
+def test_the_env_key_supplies_a_provider_to_a_bare_reference(roots, monkeypatch):
+    cfg = _cfg(roots, "models:\n  light: claude-haiku-5-5\n")
+    monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "google-vertex-claude")
+    assert agent.phases.phase_settings(Phase.SCOUT, None, cfg).provider == "google-vertex-claude"
 
 
 def test_a_bare_id_names_no_provider(roots):
@@ -163,7 +184,7 @@ def test_the_references_level_beats_the_effort_preset_and_the_spec(roots):
     assert agent.phases.phase_settings(Phase.SYNTHESIS, None, cfg, Effort.LOW).thinking == "xhigh"
 
 
-def test_a_configured_thinking_level_beats_the_references(roots):
+def test_a_phases_own_thinking_level_beats_its_tiers(roots):
     cfg = _cfg(roots, """
 models:
   deep: anthropic/claude-opus-5-5:xhigh
@@ -175,13 +196,34 @@ agent:
     assert agent.phases.phase_settings(Phase.SYNTHESIS, None, cfg).thinking == "low"
 
 
+def test_a_tiers_level_beats_the_section_wide_thinking_level(roots):
+    """One tier is more specific than every phase."""
+    cfg = _cfg(roots, "models:\n  deep: anthropic/claude-opus-5-5:xhigh\nagent:\n  thinking: low\n")
+    assert agent.phases.phase_settings(Phase.SYNTHESIS, None, cfg).thinking == "xhigh"
+    assert agent.phases.phase_settings(Phase.FIX, None, cfg).thinking == "low"
+
+
+def test_a_level_on_the_explicit_model_beats_every_configured_level(roots, monkeypatch):
+    cfg = _cfg(roots, "agent:\n  thinking: low\n  phases:\n    fix:\n      thinking: low\n")
+    monkeypatch.setenv("WORKBENCH_AI_THINKING", "medium")
+    assert agent.phases.phase_settings(Phase.FIX, "anthropic/claude-x:high", cfg).thinking == "high"
+
+
+def test_a_level_on_an_env_model_beats_the_config_but_not_the_thinking_env(roots, monkeypatch):
+    cfg = _cfg(roots, "agent:\n  thinking: low\n")
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "anthropic/claude-x:high")
+    assert agent.phases.phase_settings(Phase.FIX, None, cfg).thinking == "high"
+    monkeypatch.setenv("WORKBENCH_AI_FIX_THINKING", "minimal")
+    assert agent.phases.phase_settings(Phase.FIX, None, cfg).thinking == "minimal"
+
+
 def test_an_explicit_model_carries_its_own_provider_and_level(roots):
     cfg = _cfg(roots, "models:\n  standard: anthropic/claude-sonnet-5-5\n")
     settings = agent.phases.phase_settings(Phase.FIX, "xai/grok-4.7:high", cfg)
     assert (settings.model, settings.provider, settings.thinking) == ("grok-4.7", "xai", "high")
 
 
-def test_the_eval_label_keeps_the_provider_and_level(roots):
+def test_the_eval_label_keeps_the_level(roots):
     """Two runs of one model at two levels are two results, and must read so."""
     import eval.task
 
@@ -189,6 +231,28 @@ def test_the_eval_label_keeps_the_provider_and_level(roots):
         phase = Phase.FIX
 
     _cfg(roots, "models:\n  standard: anthropic/claude-opus-5-5:low\n")
-    assert eval.task.resolved_model(_Task(), "") == "anthropic/claude-opus-5-5:low"
+    assert eval.task.resolved_model(_Task(), "") == "claude-opus-5-5:low"
     settings = eval.task.resolved_settings(_Task(), "")
     assert (settings.model, settings.provider, settings.thinking) == ("claude-opus-5-5", "anthropic", "low")
+
+
+def test_the_eval_label_of_a_bare_model_is_its_id(roots):
+    """A tier rewritten with its provider still files under the baseline its id was recorded as."""
+    import eval.task
+
+    class _Task:
+        phase = Phase.FIX
+
+    _cfg(roots, "models:\n  standard: openrouter/claude-opus-5-5\n")
+    assert eval.task.resolved_model(_Task(), "") == "claude-opus-5-5"
+
+
+def test_eval_refuses_a_phase_no_layer_names_a_model_for(roots):
+    import eval.task
+
+    class _Task:
+        phase = Phase.FIX
+
+    _cfg(roots, "models:\n  deep: x\n")
+    with pytest.raises(eval.task.EvalModelUnset):
+        eval.task.resolved_settings(_Task(), "")

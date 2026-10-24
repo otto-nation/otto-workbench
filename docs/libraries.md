@@ -443,6 +443,7 @@ the one caller that must leave the environment alone, so it asks
 | Function | Purpose |
 |----------|---------|
 | `git_shared_dir DIR` | the shared git directory DIR's repository uses, resolved to a physical path. Non-zero and silent when git cannot answer for DIR. |
+| `git_bare_container DIR` | the bare-repo container DIR's repository sits in, printed; non-zero and silent when DIR is not in that layout. |
 
 ### git_remote.sh
 

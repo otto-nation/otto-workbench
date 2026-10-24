@@ -343,9 +343,9 @@ class AgentInvocation:
     max_budget: float | None = None
     # None or empty: no --model, so the backend's own default serves the call.
     model: str | None = None
-    # Not the closed `Thinking` enum: this is read from the environment via
-    # _resolve_thinking_level() and can carry values outside that set (e.g.
-    # "xhigh").
+    # A plain string rather than `Thinking`: env layers pass operator input
+    # through as written (agent.phases.resolve_thinking), and the backend, not
+    # this record, decides what a level it does not know means.
     thinking: str | None = None
     provider: str | None = None
     label: str = ""

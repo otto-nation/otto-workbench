@@ -13,10 +13,13 @@ One precedence chain, most specific first, for every knob a phase has:
 A model is chosen by the same chain, with the phase's tier as its last layer:
 ``agent.phases.<phase>.model`` beats ``models.<spec.tier>``. Every layer is
 written in `agent.models`' grammar, so a value names a provider and a thinking
-level as well as an id, and a tier name borrows that tier's model. The
-provider an invocation runs against is the chosen model's, unless
-WORKBENCH_AI_PROVIDER overrides it; the level is one layer of the thinking
-chain, below any thinking level configured outright.
+level as well as an id, and a tier name borrows that tier's model.
+
+Each part of the chosen reference ranks where the layer that wrote it ranks.
+Its provider belongs to its id — an id is a name in one provider's catalogue —
+so a provider written on the reference is the one it runs on, and
+WORKBENCH_AI_PROVIDER only supplies one to a reference that names none. Its
+level joins the thinking chain at its layer's height (`phase_settings`).
 
 The effort preset sits between the config and the built-in for thinking level,
 the one knob a review's depth setting flattens. It also scales the turn budget,
@@ -40,7 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import config.workbench_config
-from agent.models import ModelRef, resolve
+from agent.models import ModelLayer, ModelRef, ResolvedModel, resolve, tier_ref
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import ENV_PREFIX, Effort, Phase, Thinking
@@ -59,17 +62,11 @@ OMITTED_FILE_TURNS = 2
 # ── Environment layers ───────────────────────────────────────────────────────
 
 
-def _env_model_layers(explicit: str | None, env_key: str) -> tuple[str | None, ...]:
-    """The model layers above the config file, highest first."""
-    return (explicit, os.environ.get(env_key), os.environ.get(GLOBAL_MODEL_ENV))
-
-
 def resolve_thinking(explicit: str | None, env_key: str, default: str | None) -> str | None:
     """The thinking level: explicit, the phase's own key, the global key, default.
 
     Returns a plain string rather than a ``Thinking``: the env layers are
-    operator input and can name a level the enum does not carry (``xhigh``),
-    which the backend passes through.
+    operator input, passed through to the backend as written.
     """
     if explicit:
         return explicit
@@ -99,30 +96,43 @@ def _config(cfg: WorkbenchConfig | None) -> WorkbenchConfig:
     return cfg if cfg is not None else config.workbench_config.load_config_or_default()
 
 
-def phase_ref(
+def resolve_phase_model(
     phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
-) -> ModelRef | None:
-    """The model a phase runs on, parsed; None when no layer names one.
+) -> ResolvedModel | None:
+    """The model a phase runs on and the layer that named it; None when none does.
 
     Precedence, highest first: the explicit argument, the phase env key, the
     global env key, ``agent.phases.<phase>.model``, then ``models.<tier>`` for
-    the phase's tier. A layer holding a tier name whose tier is unset names
-    nothing, and the next layer answers.
+    the phase's tier. Any layer but the last may name a tier instead of a model,
+    and one naming an unset tier raises `agent.models.UnsetTier` rather than
+    letting a lower layer answer. The phase's own tier unset is not an error:
+    it runs on the backend's default.
     """
     phase = Phase(phase)
     cfg = _config(cfg)
     override = cfg.agent.phases.get(phase)
-    tier = PHASES[phase].tier
     layers = (
-        *_env_model_layers(explicit, phase.model_env_key),
-        override.model if override is not None else None,
-        tier.value if tier is not None else None,
+        (ModelLayer.EXPLICIT, explicit, "--model"),
+        (ModelLayer.PHASE_ENV, os.environ.get(phase.model_env_key), phase.model_env_key),
+        (ModelLayer.GLOBAL_ENV, os.environ.get(GLOBAL_MODEL_ENV), GLOBAL_MODEL_ENV),
+        (ModelLayer.PHASE_CONFIG, override.model if override is not None else None,
+         f"agent.phases.{phase.value}.model"),
     )
-    for value in layers:
-        ref = resolve(value, cfg.models)
+    for layer, value, where in layers:
+        ref = resolve(value, cfg.models, where=where)
         if ref is not None:
-            return ref
-    return None
+            return ResolvedModel(ref, layer)
+    tier = PHASES[phase].tier
+    ref = tier_ref(tier, cfg.models) if tier is not None else None
+    return ResolvedModel(ref, ModelLayer.TIER) if ref is not None else None
+
+
+def phase_ref(
+    phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
+) -> ModelRef | None:
+    """The model a phase runs on, parsed; None when no layer names one (see `resolve_phase_model`)."""
+    resolved = resolve_phase_model(phase, explicit, cfg)
+    return resolved.ref if resolved is not None else None
 
 
 def phase_model(
@@ -148,20 +158,33 @@ def phase_settings(
 ) -> PhaseSettings:
     """Model, provider and thinking level for one invocation of *phase*.
 
-    The three are read from one `phase_ref`, so a reference's provider and
-    level cannot come from a different layer than its id. The provider is
-    WORKBENCH_AI_PROVIDER, else the reference's; None leaves the backend's own
-    default provider in charge.
+    The three are read from one `resolve_phase_model`, so a reference's
+    provider and level cannot come from a different layer than its id.
+
+    The provider is the reference's, else WORKBENCH_AI_PROVIDER; None leaves
+    the backend's own default provider in charge.
+
+    The thinking level, highest first: a level on an explicit ``--model``; the
+    thinking env keys; a level on an env-supplied model; then the config
+    layers (`phase_thinking_default`), where the reference's level ranks with
+    the layer that wrote it.
     """
     cfg = _config(cfg)
-    ref = phase_ref(phase, explicit, cfg)
+    resolved = resolve_phase_model(phase, explicit, cfg)
+    ref = resolved.ref if resolved is not None else None
+    layer = resolved.layer if resolved is not None else None
+    level = ref.level if ref is not None else None
+    below_env = phase_thinking_default(phase, effort, cfg, resolved)
+    if level and layer in (ModelLayer.PHASE_ENV, ModelLayer.GLOBAL_ENV):
+        below_env = level
+    thinking = resolve_thinking(
+        level if layer is ModelLayer.EXPLICIT else None,
+        Phase(phase).thinking_env_key, below_env,
+    )
     return PhaseSettings(
         model=ref.id if ref is not None else None,
-        provider=resolve_provider() or (ref.provider if ref is not None else None),
-        thinking=resolve_thinking(
-            None, Phase(phase).thinking_env_key,
-            phase_thinking_default(phase, effort, cfg, ref.level if ref else None),
-        ),
+        provider=(ref.provider if ref is not None else None) or resolve_provider(),
+        thinking=thinking,
     )
 
 
@@ -205,34 +228,31 @@ def unset_review_phases(
 
 def phase_thinking_default(
     phase: Phase, effort: Effort | None = None,
-    cfg: WorkbenchConfig | None = None, model_level: str | None = None,
+    cfg: WorkbenchConfig | None = None, resolved: ResolvedModel | None = None,
 ) -> str | None:
-    """The thinking level below the env layers: config, model level, effort preset, spec.
+    """The thinking level below the env layers, most specific first.
 
-    A phase entry beats the section, and both beat the level on the phase's
-    model reference (``models.deep: x/y:high``), which beats the effort preset
-    — a level written for one phase, or for one tier's model, is more specific
-    than one the preset flattens everything to. ``effort=None`` is a phase
-    running outside a review, where there is no preset to flatten anything.
+    ``agent.phases.<phase>.thinking``; a level on the phase's own model
+    override; a level on its tier's model (``models.deep: x/y:high``); the
+    section-wide ``agent.thinking``; the effort preset; the spec. A setting for
+    one phase beats one for its tier, which beats one for every phase.
+    ``resolved`` is the phase's model, when the caller has one; a level it
+    carries from an env or explicit layer ranks above this function, in
+    `phase_settings`. ``effort=None`` is a phase running outside a review,
+    where there is no preset to flatten anything.
     """
     cfg = _config(cfg)
+    level = resolved.ref.level if resolved is not None else None
+    layer = resolved.layer if resolved is not None else None
     override = cfg.agent.phases.get(phase)
     if override is not None and override.thinking is not None:
         return override.thinking
+    if level and layer in (ModelLayer.PHASE_CONFIG, ModelLayer.TIER):
+        return level
     if cfg.agent.thinking is not None:
         return cfg.agent.thinking
-    if model_level is not None:
-        return model_level
     preset = EFFORT_PRESETS[effort].thinking if effort is not None else None
     return preset if preset is not None else PHASES[phase].thinking
-
-
-def phase_thinking(
-    phase: Phase, effort: Effort | None = None,
-    cfg: WorkbenchConfig | None = None, explicit_model: str | None = None,
-) -> str | None:
-    """The thinking level a phase runs at, env layers included (see `phase_settings`)."""
-    return phase_settings(phase, explicit_model, cfg, effort).thinking
 
 
 def resolve_effort(

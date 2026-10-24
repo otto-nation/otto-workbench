@@ -13,31 +13,24 @@
 # A repo's own .workbench.yml is left alone; it is tracked, and
 # 20261024-warn-agent-model-project.sh reports it instead.
 
-# _models_container DIR — the bare-repo container DIR sits in, or a non-zero
-# status when DIR is not in that layout. resolve-worktree answers 0 or 1 for a
-# container (with or without a worktree on its default branch) and 2 or 64 for
-# anything else, which is never rewritten.
-_models_container() {
-  local dir="$1" common container rc=0
-  git_env_clear
-  common="$(git_shared_dir "$dir")" || return 1
-  container="$(dirname "$common")"
-  "$BIN_SRC_DIR/resolve-worktree" "$container" >/dev/null 2>&1 || rc=$?
-  (( rc == 0 || rc == 1 )) || return 1
-  printf '%s' "$container"
-}
-
 migration_20261024_models_from_agent_model_container() {
   local project_dir="$1" container file
   if ! declare -F models_from_agent_model >/dev/null; then
     # shellcheck source=20261024-models-from-agent-model.sh
     . "$(dirname "${BASH_SOURCE[0]}")/20261024-models-from-agent-model.sh" || return 1
   fi
-  container="$(_models_container "$project_dir")" || return "$MIGRATION_NOOP"
+  container="$(git_bare_container "$project_dir")" || return "$MIGRATION_NOOP"
   file="$container/$WORKBENCH_PROJECT_CONFIG_NAME"
   # NOOP rather than deferred: a container that has no file never grows one on
   # its own, and one written later is written against today's schema.
   [[ -f "$file" ]] || return "$MIGRATION_NOOP"
-  models_from_agent_model "$file" || return
+  # The machine-wide agent.provider, while it is still there to read: the
+  # merged config ran this container's model on it. Once the machine-wide half
+  # has run, that provider is gone, and its warning named it for the operator.
+  local inherited=""
+  if [[ -f "$WORKBENCH_CONFIG_FILE" ]]; then
+    inherited="$(yq '.agent.provider // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
+  fi
+  models_from_agent_model "$file" "$inherited" || return
   success "$file now names each tier's model (models.*)"
 }

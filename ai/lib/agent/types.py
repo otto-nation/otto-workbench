@@ -244,7 +244,8 @@ class PhaseSpec:
     optional: bool = False
     # How much model the phase needs. Never a model: which one serves each tier
     # is `models.<tier>` in the config, and an unset tier runs on the backend's
-    # own default. Every registry entry names one (agent_registry_tiers_test).
+    # own default. Every registry entry names one
+    # (tests/agent_models_test.py::test_every_phase_declares_a_tier).
     tier: Tier | None = None
     thinking: Thinking | None = None
     max_turns: int = 15

@@ -66,15 +66,17 @@ What a model setting names: a provider, a model id, and a thinking level.
 
 Every layer that names a model — ``--model``, ``WORKBENCH_AI_*_MODEL``,
 ``agent.phases.<p>.model`` and ``models.<tier>`` — is written in one grammar,
-``[provider/]id[:level]`` or a tier name, and read here. A value is parsed once
-and everything downstream takes the parts it needs: the review budget wants the
-id, Pi wants the provider as ``--provider``, the thinking resolver wants the
-level.
+``[provider/]id[:level]`` or a tier name, and read here. It is Pi's own
+``--model`` grammar. A value is parsed once and everything downstream takes the
+parts it needs: the review budget wants the id, Pi wants the provider as
+``--provider``, the thinking resolver wants the level.
 
 Two separators, each read so that a real id cannot be misread:
 
 - ``provider/`` is split at the *first* slash. OpenRouter ids carry slashes of
   their own (``openrouter/anthropic/claude-x``), so a later slash is the id's.
+  The cost: an id containing a slash always names its provider, even the
+  default one — ``anthropic/claude-x`` is provider ``anthropic``.
 - ``:level`` is a suffix only when it is one of ``Thinking``'s values. Bedrock
   ids end ``:0`` and some local ones ``:latest``; those stay part of the id.
 
@@ -97,10 +99,13 @@ One precedence chain, most specific first, for every knob a phase has:
 A model is chosen by the same chain, with the phase's tier as its last layer:
 ``agent.phases.<phase>.model`` beats ``models.<spec.tier>``. Every layer is
 written in `agent.models`' grammar, so a value names a provider and a thinking
-level as well as an id, and a tier name borrows that tier's model. The
-provider an invocation runs against is the chosen model's, unless
-WORKBENCH_AI_PROVIDER overrides it; the level is one layer of the thinking
-chain, below any thinking level configured outright.
+level as well as an id, and a tier name borrows that tier's model.
+
+Each part of the chosen reference ranks where the layer that wrote it ranks.
+Its provider belongs to its id — an id is a name in one provider's catalogue —
+so a provider written on the reference is the one it runs on, and
+WORKBENCH_AI_PROVIDER only supplies one to a reference that names none. Its
+level joins the thinking chain at its layer's height (`phase_settings`).
 
 The effort preset sits between the config and the built-in for thinking level,
 the one knob a review's depth setting flattens. It also scales the turn budget,
@@ -4030,7 +4035,7 @@ Pi CLI reference:
   --no-session     Ephemeral mode (don't persist session)
   --tools <list>   Allowlist specific tools
   --model <id>     Model selection
-  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh
+  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh, max
   --append-system-prompt <text>  Inject additional system prompt
   --verbose        Verbose output
 

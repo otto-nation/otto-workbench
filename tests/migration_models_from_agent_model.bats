@@ -69,6 +69,14 @@ _tier() { yq -r ".models.$2 // \"unset\"" "$1"; }
   [ "$(_tier "$CONFIG" light)" = "sonnet" ]
 }
 
+@test "a slashed model with no provider is carried, with a warning" {
+  printf 'agent:\n  model: anthropic/claude-x\n' > "$CONFIG"
+  run _run 20261024-models-from-agent-model
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN"*"contains a slash, which models.* reads as provider/model"* ]]
+  [ "$(_tier "$CONFIG" deep)" = "anthropic/claude-x" ]
+}
+
 @test "a tier already set keeps its value" {
   printf 'agent:\n  model: claude-opus-5-5\nmodels:\n  light: anthropic/claude-haiku-5-5\n' > "$CONFIG"
   run _run 20261024-models-from-agent-model
@@ -111,6 +119,16 @@ _seed() {
   [ "$status" -eq 0 ]
   [ "$(_tier "$TMPDIR/c/.workbench.yml" standard)" = "claude-sonnet-5-5" ]
   [ "$(yq -r '.agent.model // "absent"' "$TMPDIR/c/.workbench.yml")" = "absent" ]
+}
+
+@test "a container model takes the machine-wide provider when it names none" {
+  # The merged config ran the container's model on the global provider.
+  _seed
+  printf 'agent:\n  provider: openrouter\n' > "$CONFIG"
+  printf 'agent:\n  model: anthropic/claude-x\n' > "$TMPDIR/c/.workbench.yml"
+  run _run 20261024-models-from-agent-model-container "$TMPDIR/c/main"
+  [ "$status" -eq 0 ]
+  [ "$(_tier "$TMPDIR/c/.workbench.yml" deep)" = "openrouter/anthropic/claude-x" ]
 }
 
 @test "the container half leaves a worktree's tracked config alone" {

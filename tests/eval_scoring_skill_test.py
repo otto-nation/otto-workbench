@@ -24,7 +24,7 @@ from eval.scoring import RunOutcome
 from eval.task import RunArtifacts, RunOptions
 import agent.backend
 import agent.phases
-from agent.models import ModelRef
+from agent.models import ModelLayer, ModelRef, ResolvedModel
 
 from eval_scoring_skill_support import _run, _artifacts, _skill_case
 
@@ -426,7 +426,7 @@ class TestRunWiring:
             for path in artifacts.temp_dirs:
                 shutil.rmtree(path, ignore_errors=True)
 
-    def test_empty_model_resolves_through_phase_ref_before_invoke_fix(
+    def test_empty_model_resolves_through_the_phase_before_invoke_fix(
             self, monkeypatch, tmp_path):
         case_dir = _skill_case(
             tmp_path, skill="pr-rebase", prompt="go",
@@ -446,8 +446,9 @@ class TestRunWiring:
             monkeypatch.delenv(key, raising=False)
         monkeypatch.delenv(Phase.COMMENTS_FIX.thinking_env_key, raising=False)
         monkeypatch.setattr(
-            agent.phases, "phase_ref",
-            lambda phase, explicit, cfg=None: ModelRef("resolved-skill", provider="anthropic", level="low"),
+            agent.phases, "resolve_phase_model",
+            lambda phase, explicit, cfg=None: ResolvedModel(
+                ModelRef("resolved-skill", provider="anthropic", level="low"), ModelLayer.TIER),
         )
 
         artifacts = eval.scoring_skill.SkillTask().run(case_dir, RunOptions())

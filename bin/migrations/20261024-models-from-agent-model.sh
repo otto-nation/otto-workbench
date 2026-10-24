@@ -20,18 +20,26 @@
 # can write a pre-migration copy — still carrying agent.model — back into the
 # config root after this has run, and that copy needs the same carry-over.
 
-# models_from_agent_model FILE — rewrite FILE as the header describes. Returns 0
-# when it changed FILE and MIGRATION_NOOP when FILE names neither key. Shared by
-# the container migration, which sources this file for it.
+# models_from_agent_model FILE [INHERITED_PROVIDER] — rewrite FILE as the header
+# describes. INHERITED_PROVIDER is the agent.provider a wider scope set, joined
+# onto FILE's model when FILE names none of its own: the merged config ran the
+# model on it. Returns 0 when it changed FILE and MIGRATION_NOOP when FILE names
+# neither key. Shared by the container migration, which sources this file.
 models_from_agent_model() {
-  local file="$1" model provider ref
+  local file="$1" inherited="${2:-}" model provider ref
   model="$(yq '.agent.model // ""' "$file")" || return 1
   provider="$(yq '.agent.provider // ""' "$file")" || return 1
   [[ -n "$model" || -n "$provider" ]] || return "$MIGRATION_NOOP"
+  [[ -n "$provider" ]] || provider="$inherited"
 
   if [[ -n "$model" ]]; then
     ref="$model"
     [[ -z "$provider" ]] || ref="$provider/$model"
+    # A reference reads the part before its first slash as the provider, so a
+    # bare id that contains one would now name a different provider.
+    if [[ -z "$provider" && "$model" == */* ]]; then
+      warn "$file: agent.model '$model' contains a slash, which models.* reads as provider/model — prefix the provider it runs on if '${model%%/*}' is not one"
+    fi
     R="$ref" yq -i '
       .models.deep = (.models.deep // strenv(R)) |
       .models.standard = (.models.standard // strenv(R)) |

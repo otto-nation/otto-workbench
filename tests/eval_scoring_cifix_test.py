@@ -27,7 +27,7 @@ from eval.scoring import RunOutcome, ScoringResult, aggregate_runs
 from eval.task import RunArtifacts, RunOptions, get_task, outcome_for
 import agent.backend
 import agent.phases
-from agent.models import ModelRef
+from agent.models import ModelLayer, ModelRef, ResolvedModel
 
 CORPUS = REPO_ROOT / "eval" / "corpus"
 
@@ -226,7 +226,7 @@ class TestCiFixTaskRun:
         assert seen["task"] == "eval-ci-fix"
         _rm(artifacts)
 
-    def test_empty_model_resolves_through_phase_ref_before_invoke_fix(
+    def test_empty_model_resolves_through_the_phase_before_invoke_fix(
             self, tmp_path, monkeypatch):
         seen = {}
 
@@ -242,8 +242,9 @@ class TestCiFixTaskRun:
             monkeypatch.delenv(key, raising=False)
         monkeypatch.delenv(Phase.CI_FIX.thinking_env_key, raising=False)
         monkeypatch.setattr(
-            agent.phases, "phase_ref",
-            lambda phase, explicit, cfg=None: ModelRef("resolved-ci-fix", provider="anthropic", level="low"),
+            agent.phases, "resolve_phase_model",
+            lambda phase, explicit, cfg=None: ResolvedModel(
+                ModelRef("resolved-ci-fix", provider="anthropic", level="low"), ModelLayer.TIER),
         )
         case_dir = _case(tmp_path, "exit 1\n")
 

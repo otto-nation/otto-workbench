@@ -183,3 +183,14 @@ wb_config_get() {
   if [[ -n "$fallback" ]]; then echo "$fallback"; fi
   return 0
 }
+
+# wb_config_harness_models — prints, as one JSON object, what the machine-wide
+# `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`,
+# in the shape `config models` documents in `lib/config_cli.py`. Returns 1,
+# printing why, when the config names a tier it leaves unset or cannot be read.
+#
+# Both harness syncs read their models through this, so neither parses a model
+# reference in bash and the two cannot read one differently.
+wb_config_harness_models() {
+  python3 "$WORKBENCH_DIR/lib/config_cli.py" models
+}

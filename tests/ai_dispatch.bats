@@ -213,103 +213,89 @@ _run_dispatch_logged() {
   [[ "$output" != *"Tool context"* ]]
 }
 
-# ── Legacy model names ───────────────────────────────────────────────────────
-# A model exported under Claude Code's name (ANTHROPIC_MODEL…) reaches the
-# Claude CLI through the shell but not the workbench, which reads AI_*: Pi got
-# no defaultModel and fell back to a model its location did not serve. The
-# one-shot migration had already retired, so sync renames on every run.
+# ── Leftover model exports ───────────────────────────────────────────────────
+# Nothing reads a model from ~/.env.local any more, but an ANTHROPIC_* export
+# still reaches a Claude Code CLI started from a shell, over settings.json. The
+# migration deleted every line it carried over, so a line left disagrees with
+# config.yml, and sync names it on every run until the operator decides.
 
 # _env_local LINE... — writes the fake HOME's ~/.env.local.
 _env_local() {
   printf '%s\n' "$@" > "$FAKE_HOME/.env.local"
 }
 
-# _run_adopt — runs ai_adopt_legacy_model_vars against the fake HOME.
-_run_adopt() {
+# _run_warn — runs ai_warn_model_exports against the fake HOME.
+_run_warn() {
   run bash -c '
     HOME="$2"
     . "$1/lib/ui.sh"
     . "$1/ai/steps.sh"
-    ai_adopt_legacy_model_vars
+    ai_warn_model_exports
   ' _ "$REPO_ROOT" "$FAKE_HOME"
 }
 
-@test "a model exported only under Claude Code's name is renamed to its AI_ name" {
-  _env_local '# --- ENV-START ---' '# export AI_MODEL=' '# --- ENV-END ---' \
-    'export ANTHROPIC_MODEL=claude-opus-5-5'
-  _run_adopt
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Renamed ANTHROPIC_MODEL to AI_MODEL"* ]]
-  grep -qx 'export AI_MODEL=claude-opus-5-5' "$FAKE_HOME/.env.local"
-  # The commented catalogue line is not an export and stays as it was.
-  grep -qx '# export AI_MODEL=' "$FAKE_HOME/.env.local"
-  run ! grep -q '^export ANTHROPIC_MODEL=' "$FAKE_HOME/.env.local"
-}
-
-@test "every tier is renamed, paired through the registry's target names" {
-  _env_local 'export ANTHROPIC_MODEL=m-default' \
-    'export ANTHROPIC_DEFAULT_OPUS_MODEL=m-opus' \
-    'export ANTHROPIC_DEFAULT_SONNET_MODEL=m-sonnet' \
-    'export ANTHROPIC_DEFAULT_HAIKU_MODEL=m-haiku'
-  _run_adopt
-  [ "$status" -eq 0 ]
-  run cat "$FAKE_HOME/.env.local"
-  [ "${lines[0]}" = "export AI_MODEL=m-default" ]
-  [ "${lines[1]}" = "export AI_OPUS_MODEL=m-opus" ]
-  [ "${lines[2]}" = "export AI_SONNET_MODEL=m-sonnet" ]
-  [ "${lines[3]}" = "export AI_HAIKU_MODEL=m-haiku" ]
-}
-
-@test "an old name beside a set AI_ name is left for the operator" {
-  # The workbench already reads AI_MODEL; renaming would leave two exports of
-  # it, and choosing between them is the operator's call.
-  _env_local 'export AI_MODEL=chosen' 'export ANTHROPIC_MODEL=other'
+@test "a leftover model export is named with the key that replaced it" {
+  _env_local 'export AI_OPUS_MODEL=claude-opus-5-5' 'export ANTHROPIC_MODEL="claude-sonnet-5-5"'
   cp "$FAKE_HOME/.env.local" "$TMPDIR/before"
-  _run_adopt
+  _run_warn
   [ "$status" -eq 0 ]
+  [[ "$output" == *"exports AI_OPUS_MODEL=claude-opus-5-5, which the workbench no longer reads — run otto-workbench config set models.deep claude-opus-5-5"* ]]
+  [[ "$output" == *"exports ANTHROPIC_MODEL=claude-sonnet-5-5, which the workbench no longer reads — run otto-workbench config set models.session"* ]]
+  # Read-only: which value is right is the operator's call.
   cmp "$TMPDIR/before" "$FAKE_HOME/.env.local"
-  [[ "$output" != *"Renamed"* ]]
 }
 
-@test "a second run changes nothing" {
-  _env_local 'export ANTHROPIC_MODEL=claude-opus-5-5'
-  _run_adopt
-  cp "$FAKE_HOME/.env.local" "$TMPDIR/after-first"
-  _run_adopt
+@test "a leftover beside a configured key names what config.yml holds, not the export" {
+  # AI_MODEL was carried into models.session and the ANTHROPIC_MODEL beside it
+  # was the stale one; advising it would replace the right model with it.
+  mkdir -p "$FAKE_HOME/.config/workbench"
+  printf 'models:\n  session: claude-opus-5-5\n' > "$FAKE_HOME/.config/workbench/config.yml"
+  _env_local 'export ANTHROPIC_MODEL=claude-opus-4-8'
+  run bash -c '
+    HOME="$2"
+    export WORKBENCH_CONFIG_DIR="$2/.config/workbench"
+    . "$1/lib/ui.sh"
+    . "$1/ai/steps.sh"
+    ai_warn_model_exports
+  ' _ "$REPO_ROOT" "$FAKE_HOME"
   [ "$status" -eq 0 ]
-  cmp "$TMPDIR/after-first" "$FAKE_HOME/.env.local"
-  [[ "$output" != *"Renamed"* ]]
+  [[ "$output" == *"ANTHROPIC_MODEL=claude-opus-4-8, which the workbench no longer reads — models.session is claude-opus-5-5; delete the line"* ]]
+}
+
+@test "a commented model line is not a leftover" {
+  _env_local '# export AI_MODEL=claude-opus-5-5'
+  _run_warn
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "no ~/.env.local is a no-op" {
-  _run_adopt
+  _run_warn
   [ "$status" -eq 0 ]
+  [ -z "$output" ]
   [ ! -e "$FAKE_HOME/.env.local" ]
 }
 
-@test "sync_ai renames before any tool syncs" {
-  # Claude Code's env block and Pi's defaultModel are both built from AI_*
-  # in their own syncs, so the rename has to land first, in the same run.
+@test "sync_ai names a leftover export" {
   _selection pi
-  _env_local 'export ANTHROPIC_MODEL=claude-opus-5-5'
+  _env_local 'export AI_HAIKU_MODEL=claude-haiku-5-5'
   _install_gen_stubs "$FAKE_WB"
   run bash -c '
     HOME="$2"
-    ran="$3"
     . "$1/lib/ui.sh"
     . "$1/ai/steps.sh"
     BIN_SRC_DIR="$4/bin"
     WORKBENCH_DIR="$4"
-    sync_pi() { grep -h "^export AI_MODEL=" "$HOME/.env.local" >> "$ran"; }
+    sync_pi() { :; }
     sync_ai
   ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$FAKE_WB"
   [ "$status" -eq 0 ]
-  [ "$(cat "$RAN")" = "export AI_MODEL=claude-opus-5-5" ]
+  [[ "$output" == *"AI_HAIKU_MODEL=claude-haiku-5-5, which the workbench no longer reads"* ]]
 }
 
-@test "setup renames after generating rules and before registering tool steps" {
+@test "setup names leftover exports after generating rules" {
   # ai/setup.sh runs its flow at source time, so the order is read off the source.
-  run awk '/^ai_generate_rules$/{ g=NR } /^ai_adopt_legacy_model_vars$/{ a=NR }
+  run awk '/^ai_generate_rules$/{ g=NR } /^ai_warn_model_exports$/{ a=NR }
            /register_\$\{_tool\}_steps"$/{ print (g && a > g) ? "ok" : "bad"; exit }' \
     "$REPO_ROOT/ai/setup.sh"
   [ "$status" -eq 0 ]

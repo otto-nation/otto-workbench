@@ -252,6 +252,9 @@ _CLI_PROVIDERS = (
     ("CLAUDE_CODE_USE_BEDROCK", "amazon-bedrock"),
 )
 _DEFAULT_PROVIDER = "anthropic"
+# Every provider the Claude CLI can be pointed at: the only ones whose models a
+# Claude Code session, or this backend, can run.
+SERVED_PROVIDERS = frozenset(provider for _, provider in _CLI_PROVIDERS) | {_DEFAULT_PROVIDER}
 
 
 def ledger_provider() -> str:

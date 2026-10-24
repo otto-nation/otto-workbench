@@ -13,6 +13,9 @@ pi_settings_setup() {
   TEMPLATE="$TMPDIR/template.json"
   BIN="$TMPDIR/bin"
   mkdir -p "$BIN"
+  # The step reads its models from the machine-wide config.yml. Sandboxed so a
+  # case never reads the developer's own, and empty until _seed_config writes it.
+  export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
   # Shadow the host `pi` so this suite never calls `pi --list-models` against
   # the developer's install. Tests that cover the check overwrite $BIN/pi;
   # tests that need it absent delete it and narrow PATH.
@@ -37,6 +40,18 @@ _write_template() {
   "packages": $1
 }
 JSON
+}
+
+# _seed_config LINE... — writes the sandbox's machine-wide config.yml.
+_seed_config() {
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf '%s\n' "$@" > "$WORKBENCH_CONFIG_DIR/config.yml"
+}
+
+# _write_live JSON — the settings file Pi and the operator already wrote.
+_write_live() {
+  mkdir -p "$AGENT_DIR"
+  printf '%s\n' "$1" > "$LIVE"
 }
 
 # _stub_gh BODY — a gh on PATH whose whole behaviour is BODY.
@@ -67,24 +82,15 @@ _run_step() {
     PI_SETTINGS_FILE="$2/settings.json"
     PI_SETTINGS_SRC="$3"
     PI_SYNC_SETTINGS_JQ="$1/ai/pi/sync-settings.jq"
-    ENV_LOCAL_FILE="${ENV_LOCAL_FILE:-/dev/null}"
     LIB_SRC_DIR="$1/lib"
-    # The registry root _pi_build_models collects models from. Overridable so a
-    # test can point it at a fixture tree instead of the repo.
-    WORKBENCH_STABLE_DIR="${WORKBENCH_STABLE_DIR:-$1}"
-    . "$1/lib/env.sh"
+    # lib/config.sh is what the step asks for its models; it checks only that
+    # the config constants are loaded, and reads nothing from this one.
+    WORKBENCH_DIR="$1"
+    WORKBENCH_CONFIG_HEADER="# test"
+    . "$1/lib/config.sh"
     . "$5"
     "$4"
   ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "${1:-step_pi_settings}" "$PI_STEPS"
-}
-
-_seed_env_local() {
-  printf '%s\n' "$@" > "$TMPDIR/.env.local"
-  export ENV_LOCAL_FILE="$TMPDIR/.env.local"
-}
-
-_teardown_env_local() {
-  unset ENV_LOCAL_FILE
 }
 
 # _hide_pi — take pi off PATH and leave every other tool where it was.

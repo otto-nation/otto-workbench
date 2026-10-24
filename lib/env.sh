@@ -13,7 +13,7 @@
 # caller that has not loaded the facade can source it on its own:
 #
 # ```bash
-# read_env_local_var AI_MODEL
+# read_env_local_var GOOGLE_CLOUD_PROJECT
 # ```
 
 [[ -n "${_LIB_ENV_SH:-}" ]] && return

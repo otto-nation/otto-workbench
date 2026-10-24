@@ -187,6 +187,7 @@ Every key any of them accepts:
 | `models.deep` | string | — |
 | `models.standard` | string | — |
 | `models.light` | string | — |
+| `models.session` | string | — |
 | `review.effort` | `low`, `medium`, `high` | — |
 | `review.self_effort` | `low`, `medium`, `high` | — |
 | `issues.provider` | `linear`, `github`, `jira` | — |
@@ -298,6 +299,7 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 | `wb_config_ensure_file [FILE]` | create FILE holding just the modeline, when it does not already exist. |
 | `wb_config_split_record RECORD SCOPE_OUT VALUE_OUT DIR_OUT` | the three fields of one `otto-workbench config get` record, assigned to the named variables. |
 | `wb_config_get KEY [DEFAULT]` | a dotted config key resolved for the repo the caller is standing in, or DEFAULT when no scope sets it. Returns 1, printing why, when KEY is not one the config surface defines. |
+| `wb_config_harness_models` | prints, as one JSON object, what the machine-wide `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`, in the shape `config models` documents in `lib/config_cli.py`. Returns 1, printing why, when the config names a tier it leaves unset or cannot be read. |
 
 Loaded via `ui.sh`.
 
@@ -364,7 +366,7 @@ It has no dependencies beyond ENV_LOCAL_FILE (from lib/constants.sh), so a
 caller that has not loaded the facade can source it on its own:
 
 ```bash
-read_env_local_var AI_MODEL
+read_env_local_var GOOGLE_CLOUD_PROJECT
 ```
 
 | Function | Purpose |
@@ -1033,8 +1035,7 @@ The schema these functions read — the meta block, the tool entry fields, the
 `*.env.yml` shape, and the cross-validation modes — is documented once, in
 [Registries](registries.md#schema). `KNOWN_TOOL_FIELDS`,
 `KNOWN_COMMAND_FIELDS` and `KNOWN_ENV_FIELDS` below are what
-`validate-registries` rejects unknown keys against, and `MODEL_ROLES` is the
-vocabulary it checks a `role` value against.
+`validate-registries` rejects unknown keys against.
 
 Sourced directly by its consumers — `bin/local/generate-tool-context`,
 `bin/local/validate-registries`, `packages/summary.sh`, `summary.sh`, and
@@ -1062,8 +1063,7 @@ the caller has not already sourced `constants.sh`, since an
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
 | `reg_scan_hold CMD [ARG...]` | run CMD with one registry scan shared by every collector it calls. |
 | `collect_registry_permissions ARRAY_REF SCAN_DIR [PACKAGES_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
-| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
-| `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |
+| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. GOOGLE_CLOUD_PROJECT) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_VERTEX_PROJECT_ID) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
 
 ### summary.sh
 

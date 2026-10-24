@@ -160,6 +160,16 @@
               "type": "null"
             }
           ]
+        },
+        "session": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

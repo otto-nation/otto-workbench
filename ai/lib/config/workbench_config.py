@@ -246,11 +246,16 @@ class ModelsConfig:
 
     Unset, a tier names no model and its phases run on the backend's own
     default: there is no built-in model.
+
+    ``session`` is what an interactive Claude Code or Pi session starts on — a
+    tier name, or a model in the same grammar. The workbench writes it into each
+    harness's settings at sync. Unset, each harness keeps its own default.
     """
 
     deep: str | None = None
     standard: str | None = None
     light: str | None = None
+    session: str | None = None
 
 
 @dataclass(frozen=True)

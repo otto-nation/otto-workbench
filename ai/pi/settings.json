@@ -1,6 +1,5 @@
 {
   "enableInstallTelemetry": false,
-  "defaultProvider": "google-vertex-claude",
   "defaultThinkingLevel": "medium",
   "packages": [
     {

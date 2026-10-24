@@ -31,9 +31,6 @@ import core.errors
 import core.proc
 import core.timeouts
 
-# Matches ai/pi/settings.json and `_pi_default_provider` in ai/pi/steps.sh.
-DEFAULT_PROVIDER = "google-vertex-claude"
-
 def _pi_settings_path() -> Path:
     """``~/.pi/agent/settings.json``, or ``WORKBENCH_PI_SETTINGS`` when set.
 
@@ -107,7 +104,10 @@ def unserved_message(
     """The error for an id this provider does not serve."""
     named = model or "the requested model"
     provider_name = effective_provider(provider)
-    parts = [f"pi's {provider_name} provider does not serve model {named!r}"]
+    if provider_name:
+        parts = [f"pi's {provider_name} provider does not serve model {named!r}"]
+    else:
+        parts = [f"no pi provider serves model {named!r}"]
     close = closest_listed(named, listed)
     if close:
         parts.append("Closest listed ids: " + ", ".join(close))
@@ -134,18 +134,22 @@ def not_served_message(
     return unserved_message(model, listed_models(provider, pi=pi), provider)
 
 
-def default_provider() -> str:
-    """Pi's defaultProvider, or the workbench template's fallback."""
+def default_provider() -> str | None:
+    """Pi's defaultProvider, or None when its settings name none or cannot be read.
+
+    None is not a guess at a provider: with none set, pi resolves a model id
+    across every provider it loaded, and a catalogue check does the same.
+    """
     try:
         data = json.loads(_pi_settings_path().read_text())
     except (OSError, json.JSONDecodeError):
-        return DEFAULT_PROVIDER
+        return None
     value = data.get("defaultProvider")
-    return value if isinstance(value, str) and value else DEFAULT_PROVIDER
+    return value if isinstance(value, str) and value else None
 
 
-def effective_provider(explicit: str | None) -> str:
-    """The provider a spawn will query: the flag, else Pi's default."""
+def effective_provider(explicit: str | None) -> str | None:
+    """The provider a spawn will query: the flag, else Pi's default, else None (any)."""
     return explicit or default_provider()
 
 

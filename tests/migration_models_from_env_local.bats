@@ -90,6 +90,18 @@ _run_migration() {
   [ "$(cat "$ENV_FILE")" = "export AI_OPUS_MODEL=claude-opus-5-5" ]
 }
 
+@test "a tier naming the same model on a provider, with a level, still agrees" {
+  # 20261024-models-from-agent-model writes the provider the phases ran on; the
+  # export never carried one, so it is the id that has to match.
+  mkdir -p "${CONFIG%/*}"
+  printf 'models:\n  deep: google-vertex-claude/claude-opus-5-5:high\n' > "$CONFIG"
+  printf 'export AI_OPUS_MODEL=claude-opus-5-5\n' > "$ENV_FILE"
+  run _run_migration
+  [ "$status" -eq 0 ]
+  [ "$(yq '.models.deep' "$CONFIG")" = "google-vertex-claude/claude-opus-5-5:high" ]
+  [ ! -s "$ENV_FILE" ]
+}
+
 @test "a commented model line is neither carried nor deleted" {
   printf '# export AI_MODEL=claude-opus-5-5\n' > "$ENV_FILE"
   run _run_migration

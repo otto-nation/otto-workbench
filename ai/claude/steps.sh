@@ -309,9 +309,10 @@ _claude_mirror_env() {
 #   is deleted from the env block, so an alias never outlives the tier behind it.
 #   ANTHROPIC_MODEL is deleted too — `model` carries the session now, and the two
 #   would otherwise disagree.
-# - `model` and `effortLevel` are written only while models.session is set.
-#   Unset, they stay whatever /model or a hand edit left, since a session model
-#   is the one thing Claude Code itself also writes here.
+# - `model` is written only while models.session is set, and `effortLevel`
+#   only while it names a level `claude --effort` takes. Otherwise each stays
+#   whatever /model, /effort or a hand edit left, since those are the keys
+#   Claude Code itself also writes here.
 #
 # A config that cannot be read leaves the document unchanged and warns: a sync
 # that withdrew every alias over a typo would be worse than one a line late.
@@ -323,21 +324,22 @@ _claude_apply_models() {
     return 0
   fi
 
-  local skipped
+  local skipped_text skipped
+  if ! skipped_text=$(jq -r '.claude.skipped[]' <<< "$view"); then
+    warn "Claude Code's model settings left as they were — config models printed no skipped list"
+    return 0
+  fi
   while IFS= read -r skipped; do
     [[ -n "$skipped" ]] && warn "$skipped"
-  done < <(jq -r '.claude.skipped[]' <<< "$view")
+  done <<< "$skipped_text"
 
   __cam_result=$(jq --argjson view "$view" '
     ($view.claude) as $c
     | .settings.env = (((.settings.env // {})
         | with_entries(select(.key | IN($c.managed_env[]) | not))) + $c.env)
     | if (.settings.env | length) == 0 then del(.settings.env) else . end
-    | if $c.model == null then .
-      else .settings.model = $c.model
-        | if $c.effortLevel == null then del(.settings.effortLevel)
-          else .settings.effortLevel = $c.effortLevel end
-      end
+    | if $c.model == null then . else .settings.model = $c.model end
+    | if $c.effortLevel == null then . else .settings.effortLevel = $c.effortLevel end
   ' <<< "$__cam_result")
 }
 

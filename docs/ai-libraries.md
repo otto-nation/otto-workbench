@@ -54,8 +54,9 @@ Claude Code:
   light tiers, so the CLI's own ``opus``/``sonnet``/``haiku`` aliases — and the
   subagents and ``opusplan`` that use them — follow the tiers.
 - ``model`` and ``effortLevel`` take ``models.session``.
-- A tier naming a provider the Claude CLI cannot be pointed at has no Claude
-  model, and is reported rather than written: the CLI runs Claude models only.
+- A tier naming a provider the Claude CLI cannot be pointed at, or a bare id
+  that is not a Claude model, has no Claude model, and is reported rather than
+  written: the CLI runs Claude models only.
 
 Pi:
 

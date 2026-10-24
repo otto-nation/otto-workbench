@@ -239,10 +239,27 @@ _run_warn() {
   cp "$FAKE_HOME/.env.local" "$TMPDIR/before"
   _run_warn
   [ "$status" -eq 0 ]
-  [[ "$output" == *"exports AI_OPUS_MODEL=claude-opus-5-5, which nothing reads — set models.deep"* ]]
-  [[ "$output" == *"exports ANTHROPIC_MODEL=claude-sonnet-5-5, which nothing reads — set models.session"* ]]
+  [[ "$output" == *"exports AI_OPUS_MODEL=claude-opus-5-5, which the workbench no longer reads — run otto-workbench config set models.deep claude-opus-5-5"* ]]
+  [[ "$output" == *"exports ANTHROPIC_MODEL=claude-sonnet-5-5, which the workbench no longer reads — run otto-workbench config set models.session"* ]]
   # Read-only: which value is right is the operator's call.
   cmp "$TMPDIR/before" "$FAKE_HOME/.env.local"
+}
+
+@test "a leftover beside a configured key names what config.yml holds, not the export" {
+  # AI_MODEL was carried into models.session and the ANTHROPIC_MODEL beside it
+  # was the stale one; advising it would replace the right model with it.
+  mkdir -p "$FAKE_HOME/.config/workbench"
+  printf 'models:\n  session: claude-opus-5-5\n' > "$FAKE_HOME/.config/workbench/config.yml"
+  _env_local 'export ANTHROPIC_MODEL=claude-opus-4-8'
+  run bash -c '
+    HOME="$2"
+    export WORKBENCH_CONFIG_DIR="$2/.config/workbench"
+    . "$1/lib/ui.sh"
+    . "$1/ai/steps.sh"
+    ai_warn_model_exports
+  ' _ "$REPO_ROOT" "$FAKE_HOME"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ANTHROPIC_MODEL=claude-opus-4-8, which the workbench no longer reads — models.session is claude-opus-5-5; delete the line"* ]]
 }
 
 @test "a commented model line is not a leftover" {
@@ -273,7 +290,7 @@ _run_warn() {
     sync_ai
   ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$FAKE_WB"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AI_HAIKU_MODEL=claude-haiku-5-5, which nothing reads — set models.light"* ]]
+  [[ "$output" == *"AI_HAIKU_MODEL=claude-haiku-5-5, which the workbench no longer reads"* ]]
 }
 
 @test "setup names leftover exports after generating rules" {

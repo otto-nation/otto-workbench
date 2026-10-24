@@ -389,14 +389,6 @@ ZED_SETTINGS_FILE="$HOME/.config/zed/settings.json"
 SUBLIME_PREFS_DIR="$HOME/Library/Application Support/Sublime Text/Packages/User"
 SUBLIME_SETTINGS_FILE="$HOME/Library/Application Support/Sublime Text/Packages/User/Preferences.sublime-settings"
 
-# ─── Public surface snapshots ─────────────────────────────────────────────────
-# One snapshot per released package, written by bin/local/generate-public-surface
-# and diffed against a base ref by bin/local/check-surface-compat. Placement is
-# load-bearing: the root release-please config sets exclude-paths: ["ai/claude"],
-# so each snapshot's diff is attributed to the package that owns it.
-WORKBENCH_SURFACE_RELPATH="public-surface.json"
-AI_TOOLS_SURFACE_RELPATH="ai/claude/public-surface.json"
-# Every snapshot, in the order the gate reports them.
 # The ~/.env.local variables that named models before config.yml's models.* did,
 # each as VAR:KEY with the models.* key its value moved to. The AI_* names come
 # first, and a key takes the first one set: the ANTHROPIC_* names are what those
@@ -406,6 +398,14 @@ AI_TOOLS_SURFACE_RELPATH="ai/claude/public-surface.json"
 # shellcheck disable=SC2034
 LEGACY_MODEL_ENV_VARS="AI_MODEL:session AI_OPUS_MODEL:deep AI_SONNET_MODEL:standard AI_HAIKU_MODEL:light ANTHROPIC_MODEL:session ANTHROPIC_DEFAULT_OPUS_MODEL:deep ANTHROPIC_DEFAULT_SONNET_MODEL:standard ANTHROPIC_DEFAULT_HAIKU_MODEL:light"
 
+# ─── Public surface snapshots ─────────────────────────────────────────────────
+# One snapshot per released package, written by bin/local/generate-public-surface
+# and diffed against a base ref by bin/local/check-surface-compat. Placement is
+# load-bearing: the root release-please config sets exclude-paths: ["ai/claude"],
+# so each snapshot's diff is attributed to the package that owns it.
+WORKBENCH_SURFACE_RELPATH="public-surface.json"
+AI_TOOLS_SURFACE_RELPATH="ai/claude/public-surface.json"
+# Every snapshot, in the order the gate reports them.
 PUBLIC_SURFACE_RELPATHS=("$WORKBENCH_SURFACE_RELPATH" "$AI_TOOLS_SURFACE_RELPATH")
 
 # ─── Generated rule files ─────────────────────────────────────────────────────

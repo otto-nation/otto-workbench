@@ -47,6 +47,24 @@ def test_a_tier_on_a_provider_the_claude_cli_cannot_run_is_skipped_and_said():
     ]
 
 
+@pytest.mark.parametrize("bare", ["gemini-2.5-flash", "gpt-6-luna"])
+def test_a_bare_id_that_is_not_a_claude_model_is_skipped(bare):
+    # Valid for Pi under its defaultProvider; Claude Code would fail every request.
+    claude = harness_models(ModelsConfig(light=bare)).claude
+    assert claude.env == {}
+    assert claude.skipped == [
+        f"models.light: {bare} is not a Claude model, so ANTHROPIC_DEFAULT_HAIKU_MODEL is left unset",
+    ]
+
+
+@pytest.mark.parametrize("bare", [
+    "us.anthropic.claude-opus-5-5-v1:0", "arn:aws:bedrock:us-east-1:1:application-inference-profile/x", "opusplan",
+])
+def test_a_bare_claude_id_arn_or_alias_is_a_claude_model(bare):
+    claude = harness_models(ModelsConfig(deep=bare)).claude
+    assert claude.env == {"ANTHROPIC_DEFAULT_OPUS_MODEL": bare}
+
+
 def test_the_session_tier_gives_the_model_and_its_level_the_effort():
     claude = harness_models(ModelsConfig(deep="claude-opus-5-5", session="deep:xhigh")).claude
     assert (claude.model, claude.effort) == ("claude-opus-5-5", "xhigh")

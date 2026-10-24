@@ -8,7 +8,9 @@
 # AI_SONNET_MODEL to models.standard, AI_HAIKU_MODEL to models.light:
 #
 # 1. The key unset → it takes the value, and the export is deleted.
-# 2. The key already holds that value → the export is deleted.
+# 2. The key already names that model → the export is deleted. Compared by
+#    id: the provider and level a tier carries were never in the export, so
+#    `google-vertex-claude/claude-opus-5-5:high` names `claude-opus-5-5`.
 # 3. The key holds another value → both are left as they are, and every sync
 #    names the export (ai_warn_model_exports) until the operator picks one.
 #    20261024-models-from-agent-model sorts ahead of this one and fills every
@@ -24,6 +26,22 @@
 # adoption-sensitive: config.yml is a _LEGACY_CONFIG_ENTRIES name, so adoption
 # can write a pre-migration copy — no models.* — back into the config root
 # after this has run, and that copy needs the same carry-over.
+
+# _models_ref_id REF — the model id in REF, read as `agent.models.parse_ref`
+# reads it: the provider is the text before the first slash only when shaped
+# like a provider id, and a trailing `:level` only when it is a Thinking value.
+_models_ref_id() {
+  local ref="$1" head="${1%%/*}"
+  if [[ "$ref" == */* && "$head" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    ref="${ref#*/}"
+  fi
+  if [[ "$ref" == *:* ]]; then
+    case "${ref##*:}" in
+      off|minimal|low|medium|high|xhigh|max) ref="${ref%:*}" ;;
+    esac
+  fi
+  printf '%s' "$ref"
+}
 
 migration_20261024_models_from_env_local() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return "$MIGRATION_DEFERRED"
@@ -41,7 +59,7 @@ migration_20261024_models_from_env_local() {
       K="$key" V="$value" yq -i '.models[strenv(K)] = strenv(V)' "$WORKBENCH_CONFIG_FILE" || return 1
       current="$value"
     fi
-    [[ "$current" == "$value" ]] || continue
+    [[ "$(_models_ref_id "$current")" == "$value" ]] || continue
 
     sed_i "/^export ${var}=/d" "$ENV_LOCAL_FILE"
     changed=1

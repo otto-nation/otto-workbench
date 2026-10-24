@@ -11,8 +11,9 @@ Claude Code:
   light tiers, so the CLI's own ``opus``/``sonnet``/``haiku`` aliases — and the
   subagents and ``opusplan`` that use them — follow the tiers.
 - ``model`` and ``effortLevel`` take ``models.session``.
-- A tier naming a provider the Claude CLI cannot be pointed at has no Claude
-  model, and is reported rather than written: the CLI runs Claude models only.
+- A tier naming a provider the Claude CLI cannot be pointed at, or a bare id
+  that is not a Claude model, has no Claude model, and is reported rather than
+  written: the CLI runs Claude models only.
 
 Pi:
 
@@ -50,6 +51,8 @@ CLAUDE_TIER_ENV = {
 # writes: `ANTHROPIC_MODEL` was the session model's name in the env block
 # before `model` carried it, and a sync clears it so the two cannot disagree.
 CLAUDE_MANAGED_ENV = (*CLAUDE_TIER_ENV.values(), "ANTHROPIC_MODEL")
+# The model aliases the Claude CLI resolves itself.
+CLAUDE_ALIASES = frozenset({"opus", "sonnet", "haiku", "opusplan", "default"})
 # The levels `claude --effort` takes.
 CLAUDE_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
@@ -84,7 +87,16 @@ class HarnessModels:
 
 
 def _claude_servable(ref: ModelRef) -> bool:
-    return ref.provider is None or ref.provider in agent.backend_claude.SERVED_PROVIDERS
+    """Whether the Claude CLI can run *ref*.
+
+    A named provider answers it. A bare id has none to ask, so it has to look
+    like a Claude model — a ``claude`` id on any platform, a Bedrock ARN, or one
+    of the CLI's aliases — rather than be given to Claude Code because nothing
+    said otherwise: a bare ``gemini-2.5-flash`` is a valid Pi tier.
+    """
+    if ref.provider is not None:
+        return ref.provider in agent.backend_claude.SERVED_PROVIDERS
+    return "claude" in ref.id.lower() or ref.id.startswith("arn:") or ref.id in CLAUDE_ALIASES
 
 
 def _qualified(ref: ModelRef) -> str:

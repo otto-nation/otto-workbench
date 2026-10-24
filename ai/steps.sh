@@ -127,20 +127,30 @@ EOF
 }
 
 # ai_warn_model_exports — warns once per line ~/.env.local still exports a model
-# variable from LEGACY_MODEL_ENV_VARS. Nothing reads them any more — both harness
-# syncs and every workbench agent take their models from config.yml's models.* —
-# but an exported one still reaches any Claude Code CLI started from a shell,
-# where ANTHROPIC_* beats what settings.json says. Read-only: the migration that
-# carried them over removed every line it could, so a line left is one whose
-# value disagrees with config.yml, and which one is right is the operator's call.
+# variable from LEGACY_MODEL_ENV_VARS. The workbench reads none of them any more —
+# both harness syncs and every workbench agent take their models from
+# config.yml's models.* — and the AI_* names were never Claude Code's. The
+# ANTHROPIC_* ones still are: exported, they reach any Claude Code CLI started
+# from a shell, and ANTHROPIC_MODEL outranks settings.json's `model`.
+#
+# Read-only: the migration that carried them over deleted every line config.yml
+# already agreed with, so a line left is one it disagrees with, and which value
+# is right is the operator's call. The warning says what config.yml holds rather
+# than recommending the export, which may be the stale one of the two.
 ai_warn_model_exports() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0
-  local pair var value
+  local pair var key value current
   for pair in $LEGACY_MODEL_ENV_VARS; do
     var="${pair%%:*}"
+    key="models.${pair#*:}"
     value=$(read_env_local_var "$var")
     [[ -n "$value" ]] || continue
-    warn "$ENV_LOCAL_FILE exports $var=$value, which nothing reads — set models.${pair#*:} in config.yml instead (otto-workbench config set models.${pair#*:} $value), then delete the line"
+    current=$(wb_config_get "$key") || current=""
+    if [[ -n "$current" ]]; then
+      warn "$ENV_LOCAL_FILE exports $var=$value, which the workbench no longer reads — $key is $current; delete the line, or run otto-workbench config set $key $value if that is the model you want"
+      continue
+    fi
+    warn "$ENV_LOCAL_FILE exports $var=$value, which the workbench no longer reads — run otto-workbench config set $key $value, then delete the line"
   done
   return 0
 }

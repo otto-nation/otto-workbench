@@ -46,14 +46,12 @@ _seed_settings() {
   [ "$output" = "claude-opus-5-5 xhigh" ]
 }
 
-@test "a session with no level clears an effortLevel left from before" {
+@test "a session with no Claude effort keeps the effortLevel /effort set" {
   _seed_settings '{"model":"old","effortLevel":"high"}'
-  _seed_config 'models:' '  session: claude-sonnet-5-5'
+  _seed_config 'models:' '  session: claude-sonnet-5-5:minimal'
   _sync_run "$HOME_DIR" "$STATE_DIR"
-  run jq -r '.model' "$SETTINGS_OUT"
-  [ "$output" = "claude-sonnet-5-5" ]
-  run jq -e 'has("effortLevel")' "$SETTINGS_OUT"
-  [ "$status" -ne 0 ]
+  run jq -r '.model + " " + .effortLevel' "$SETTINGS_OUT"
+  [ "$output" = "claude-sonnet-5-5 high" ]
 }
 
 @test "with no session, model and effortLevel stay what /model left" {

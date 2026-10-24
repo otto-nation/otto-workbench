@@ -21,6 +21,7 @@ import core.timeouts
 import eval.baselines
 import eval.run
 import eval.task
+from agent.models import ModelLayer, ModelRef, ResolvedModel
 from agent.usage import SessionUsage
 import eval.scoring
 from eval.scoring import ScoringResult
@@ -663,8 +664,9 @@ def test_an_omitted_model_is_resolved_for_the_label_but_not_handed_to_the_task(
 
     _seed_claude_and_stub_task(tmp_path, monkeypatch, _get_task)
     monkeypatch.setattr(
-        eval.task.agent.phases, "phase_model",
-        lambda phase, explicit, cfg=None: "resolved-label-model",
+        eval.task.agent.phases, "resolve_phase_model",
+        lambda phase, explicit, cfg=None: ResolvedModel(
+            ModelRef("resolved-label-model"), ModelLayer.TIER),
     )
     output, _ = eval.run.run_eval(_args(tmp_path, runs=1), tmp_path)
 

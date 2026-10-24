@@ -66,8 +66,10 @@ def _described_at_head(worktree):
 
 
 def _provider(monkeypatch, provider):
-    cfg = mock.MagicMock()
-    cfg.issues.provider = provider
+    # A real config that sets only the tracker: a mock answers every other key
+    # with another mock, and the model resolver reads one as a model setting.
+    cfg = config.workbench_config.WorkbenchConfig(
+        issues=config.workbench_config.IssuesConfig(provider=provider))
     monkeypatch.setattr(config.workbench_config, "load_config", lambda wt: cfg)
 
 

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import core.phases  # noqa: E402
 from core.phases import (  # noqa: E402
-    AgentKind, Effort, Mode, Phase, PhaseDomain, PhaseShape, Thinking,
+    AgentKind, Effort, Mode, Phase, PhaseDomain, PhaseShape, Thinking, Tier,
 )
 
 
@@ -77,7 +77,10 @@ class TestVocabularyIsClosed:
 
     def test_every_member_set_is_pinned(self):
         assert {e.value for e in Effort} == {"low", "medium", "high"}
-        assert {t.value for t in Thinking} == {"low", "medium", "high"}
+        assert {t.value for t in Thinking} == {
+            "off", "minimal", "low", "medium", "high", "xhigh", "max",
+        }
+        assert {t.value for t in Tier} == {"deep", "standard", "light"}
         assert {a.value for a in AgentKind} == {"reviewer", "reviewer-lite"}
         assert {m.value for m in Mode} == {"pr", "self"}
         assert {d.value for d in PhaseDomain} == {

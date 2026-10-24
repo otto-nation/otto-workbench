@@ -327,9 +327,10 @@ def resolved_model(task: EvalTask, explicit: str) -> str:
     the tiers now name with its provider still files under the baseline its
     bare id was recorded as.
     """
-    ref = agent.phases.phase_ref(task.phase, explicit or None)
-    if ref is None:
+    resolved = agent.phases.resolve_phase_model(task.phase, explicit or None)
+    if resolved is None:
         raise _unset(task)
+    ref = resolved.ref
     return f"{ref.id}:{ref.level}" if ref.level else ref.id
 
 

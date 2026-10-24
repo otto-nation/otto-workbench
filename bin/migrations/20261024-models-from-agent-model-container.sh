@@ -24,13 +24,9 @@ migration_20261024_models_from_agent_model_container() {
   # NOOP rather than deferred: a container that has no file never grows one on
   # its own, and one written later is written against today's schema.
   [[ -f "$file" ]] || return "$MIGRATION_NOOP"
-  # The machine-wide agent.provider, while it is still there to read: the
-  # merged config ran this container's model on it. Once the machine-wide half
-  # has run, that provider is gone, and its warning named it for the operator.
-  local inherited=""
-  if [[ -f "$WORKBENCH_CONFIG_FILE" ]]; then
-    inherited="$(yq '.agent.provider // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
-  fi
-  models_from_agent_model "$file" "$inherited" || return
+  # The machine-wide config is the wider scope: the merged config ran this
+  # container's model on its provider, whether the machine-wide half of this
+  # migration has run yet or not.
+  models_from_agent_model "$file" "$WORKBENCH_CONFIG_FILE" || return
   success "$file now names each tier's model (models.*)"
 }

@@ -73,7 +73,7 @@ _tier() { yq -r ".models.$2 // \"unset\"" "$1"; }
   printf 'agent:\n  model: anthropic/claude-x\n' > "$CONFIG"
   run _run 20261024-models-from-agent-model
   [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN"*"contains a slash, which models.* reads as provider/model"* ]]
+  [[ "$output" == *"WARN"*"contains a slash, which models.* may read as provider/model"* ]]
   [ "$(_tier "$CONFIG" deep)" = "anthropic/claude-x" ]
 }
 
@@ -129,6 +129,20 @@ _seed() {
   run _run 20261024-models-from-agent-model-container "$TMPDIR/c/main"
   [ "$status" -eq 0 ]
   [ "$(_tier "$TMPDIR/c/.workbench.yml" deep)" = "openrouter/anthropic/claude-x" ]
+}
+
+@test "a container migrated after the machine-wide half takes each tier's provider" {
+  # The repo was registered later: config.yml has no agent.provider left, but its
+  # tiers now carry the provider the merged config ran every model on.
+  _seed
+  printf 'models:\n  deep: google-vertex-claude/claude-opus-5\n  standard: google-vertex-claude/claude-sonnet-5\n  light: arn:aws:x/abc\n' > "$CONFIG"
+  printf 'agent:\n  model: claude-sonnet-5\n' > "$TMPDIR/c/.workbench.yml"
+  run _run 20261024-models-from-agent-model-container "$TMPDIR/c/main"
+  [ "$status" -eq 0 ]
+  [ "$(_tier "$TMPDIR/c/.workbench.yml" deep)" = "google-vertex-claude/claude-sonnet-5" ]
+  [ "$(_tier "$TMPDIR/c/.workbench.yml" standard)" = "google-vertex-claude/claude-sonnet-5" ]
+  # A first segment that is not provider-shaped names no provider, as parse_ref reads it.
+  [ "$(_tier "$TMPDIR/c/.workbench.yml" light)" = "claude-sonnet-5" ]
 }
 
 @test "the container half leaves a worktree's tracked config alone" {

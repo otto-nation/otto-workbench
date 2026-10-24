@@ -73,12 +73,18 @@ parts it needs: the review budget wants the id, Pi wants the provider as
 
 Two separators, each read so that a real id cannot be misread:
 
-- ``provider/`` is split at the *first* slash. OpenRouter ids carry slashes of
-  their own (``openrouter/anthropic/claude-x``), so a later slash is the id's.
-  The cost: an id containing a slash always names its provider, even the
-  default one — ``anthropic/claude-x`` is provider ``anthropic``.
+- ``provider/`` is split at the *first* slash, and only when what precedes it
+  is shaped like a provider id — letters, digits, ``.``, ``_`` and ``-``. A
+  later slash is the id's: OpenRouter ids carry their own
+  (``openrouter/anthropic/claude-x``). A first segment holding a ``:`` is no
+  provider, so a Bedrock ARN (``arn:aws:bedrock:…:inference-profile/abc``) is a
+  bare id. The cost: an id whose first segment *is* provider-shaped always
+  names its provider, even the default one — ``anthropic/claude-x`` is
+  provider ``anthropic``.
 - ``:level`` is a suffix only when it is one of ``Thinking``'s values. Bedrock
   ids end ``:0`` and some local ones ``:latest``; those stay part of the id.
+
+A tier name takes a level too: ``deep:high`` is the deep tier's model at high.
 
 Not: which layer wins (``agent.phases``), what a backend does with the parts.
 

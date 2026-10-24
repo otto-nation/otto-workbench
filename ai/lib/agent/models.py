@@ -9,12 +9,18 @@ parts it needs: the review budget wants the id, Pi wants the provider as
 
 Two separators, each read so that a real id cannot be misread:
 
-- ``provider/`` is split at the *first* slash. OpenRouter ids carry slashes of
-  their own (``openrouter/anthropic/claude-x``), so a later slash is the id's.
-  The cost: an id containing a slash always names its provider, even the
-  default one — ``anthropic/claude-x`` is provider ``anthropic``.
+- ``provider/`` is split at the *first* slash, and only when what precedes it
+  is shaped like a provider id — letters, digits, ``.``, ``_`` and ``-``. A
+  later slash is the id's: OpenRouter ids carry their own
+  (``openrouter/anthropic/claude-x``). A first segment holding a ``:`` is no
+  provider, so a Bedrock ARN (``arn:aws:bedrock:…:inference-profile/abc``) is a
+  bare id. The cost: an id whose first segment *is* provider-shaped always
+  names its provider, even the default one — ``anthropic/claude-x`` is
+  provider ``anthropic``.
 - ``:level`` is a suffix only when it is one of ``Thinking``'s values. Bedrock
   ids end ``:0`` and some local ones ``:latest``; those stay part of the id.
+
+A tier name takes a level too: ``deep:high`` is the deep tier's model at high.
 
 Not: which layer wins (``agent.phases``), what a backend does with the parts.
 """
@@ -23,7 +29,8 @@ Not: which layer wins (``agent.phases``), what a backend does with the parts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 
 from config.workbench_config import ModelsConfig
@@ -32,6 +39,9 @@ from core.phases import Thinking, Tier
 
 _LEVELS = frozenset(level.value for level in Thinking)
 _TIERS = frozenset(tier.value for tier in Tier)
+# What a provider id looks like, so a first segment that is not one — an ARN's,
+# which carries colons — stays part of the id.
+_PROVIDER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 @dataclass(frozen=True)
@@ -53,9 +63,8 @@ class ModelLayer(Enum):
     """Which layer of the model chain supplied a phase's model, highest first.
 
     A reference carries a provider and a level as well as an id, and each part
-    ranks where the layer that wrote it ranks: a level typed on ``--model``
-    beats a thinking level in the config file, where one on ``models.<tier>``
-    does not.
+    ranks where the layer that wrote it ranks; `agent.phases.phase_settings`
+    states the thinking chain those levels join.
     """
 
     EXPLICIT = auto()
@@ -83,16 +92,19 @@ class UnsetTier(OperatorError):
         )
 
 
+def _split_level(value: str) -> ModelRef:
+    """*value* with a trailing ``:level`` split off: the rest as ``id``, unparsed."""
+    head, sep, tail = value.rpartition(":")
+    return ModelRef(id=head, level=tail) if sep and tail in _LEVELS else ModelRef(id=value)
+
+
 def parse_ref(value: str) -> ModelRef:
     """``[provider/]id[:level]`` as a `ModelRef`. A tier name is not a ref; see `resolve`."""
-    rest, level = value, None
-    head, sep, tail = value.rpartition(":")
-    if sep and tail in _LEVELS:
-        rest, level = head, tail
-    provider, sep, model_id = rest.partition("/")
-    if not sep:
-        return ModelRef(id=rest, level=level)
-    return ModelRef(id=model_id, provider=provider or None, level=level)
+    split = _split_level(value)
+    provider, sep, model_id = split.id.partition("/")
+    if sep and _PROVIDER_ID.fullmatch(provider):
+        return ModelRef(id=model_id, provider=provider, level=split.level)
+    return split
 
 
 def tier_ref(tier: Tier, models: ModelsConfig) -> ModelRef | None:
@@ -107,15 +119,16 @@ def resolve(value: str | None, models: ModelsConfig, *, where: str = "a model se
     None for an empty value — that layer names nothing, and the next one
     answers. A tier name is never read as a model id: ``deep`` is reserved, which
     is what lets a setting borrow another tier's model without spelling it out.
-    One naming a tier that is unset raises `UnsetTier`, naming *where* it was
-    written: asking for a tier is asking for that model, and silently running
+    A level on a tier name replaces the one its model carries. One naming a
+    tier that is unset raises `UnsetTier`, naming *where* it was written: asking for a tier is asking for that model, and silently running
     the next layer's instead is a different choice than the one made.
     """
     if not value:
         return None
-    if value not in _TIERS:
+    split = _split_level(value)
+    if split.id not in _TIERS:
         return parse_ref(value)
-    ref = tier_ref(Tier(value), models)
+    ref = tier_ref(Tier(split.id), models)
     if ref is None:
-        raise UnsetTier(value, where)
-    return ref
+        raise UnsetTier(split.id, where)
+    return replace(ref, level=split.level) if split.level else ref

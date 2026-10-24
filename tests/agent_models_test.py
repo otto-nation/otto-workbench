@@ -48,6 +48,11 @@ def _no_env_layers(monkeypatch):
     ("amazon-bedrock/anthropic.claude-v2:0", ModelRef("anthropic.claude-v2:0", "amazon-bedrock")),
     ("ollama/qwen3:latest", ModelRef("qwen3:latest", provider="ollama")),
     ("ollama/qwen3:latest:xhigh", ModelRef("qwen3:latest", "ollama", "xhigh")),
+    # A first segment that is not provider-shaped is the id's: a Bedrock ARN.
+    ("arn:aws:bedrock:us-east-1:123:application-inference-profile/abc12",
+     ModelRef("arn:aws:bedrock:us-east-1:123:application-inference-profile/abc12")),
+    ("arn:aws:bedrock:us-east-1:123:application-inference-profile/abc12:high",
+     ModelRef("arn:aws:bedrock:us-east-1:123:application-inference-profile/abc12", level="high")),
 ])
 def test_a_reference_parses_into_its_parts(value, ref):
     assert parse_ref(value) == ref
@@ -66,6 +71,11 @@ def test_a_tier_name_reads_through_the_tiers_and_is_never_an_id():
     assert resolve(None, models) is None
 
 
+def test_a_tier_name_takes_a_level_that_replaces_its_models():
+    models = ModelsConfig(deep="anthropic/claude-opus-5-5:low")
+    assert resolve("deep:high", models) == ModelRef("claude-opus-5-5", "anthropic", "high")
+
+
 def test_naming_an_unset_tier_is_refused_not_skipped():
     """Asking for a tier is asking for its model; running another layer's is a different choice."""
     with pytest.raises(UnsetTier, match=r"--model names the light tier, but models\.light is not set"):
@@ -79,6 +89,11 @@ def test_every_phase_declares_a_tier():
     """A phase with no tier would run on the backend's default whatever the tiers say."""
     untiered = [phase for phase, spec in PHASES.items() if spec.tier is None]
     assert untiered == []
+
+
+def _ref(phase, explicit, cfg):
+    resolved = agent.phases.resolve_phase_model(phase, explicit, cfg)
+    return resolved.ref if resolved is not None else None
 
 
 def _cfg(roots, text):
@@ -114,7 +129,7 @@ def test_the_scan_phases_and_the_synthesis_are_split_across_tiers():
 
 def test_an_unset_tier_leaves_its_phases_to_the_backend_default(roots):
     cfg = _cfg(roots, "models:\n  deep: claude-opus-5-5\n")
-    assert agent.phases.phase_ref(Phase.SCOUT, None, cfg) is None
+    assert _ref(Phase.SCOUT, None, cfg) is None
     assert agent.phases.phase_model(Phase.SYNTHESIS, None, cfg) == "claude-opus-5-5"
 
 
@@ -128,7 +143,7 @@ agent:
     scout:
       model: deep
 """)
-    assert agent.phases.phase_ref(Phase.SCOUT, None, cfg) == ModelRef("claude-opus-5-5", "anthropic")
+    assert _ref(Phase.SCOUT, None, cfg) == ModelRef("claude-opus-5-5", "anthropic")
 
 
 def test_an_override_naming_an_unset_tier_is_refused(roots):

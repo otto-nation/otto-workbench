@@ -31,7 +31,7 @@ this one.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from core.phases import (
@@ -244,9 +244,10 @@ class PhaseSpec:
     optional: bool = False
     # How much model the phase needs. Never a model: which one serves each tier
     # is `models.<tier>` in the config, and an unset tier runs on the backend's
-    # own default. Every registry entry names one
-    # (tests/agent_models_test.py::test_every_phase_declares_a_tier).
-    tier: Tier | None = None
+    # own default. Required, and keyword-only so it can follow the defaulted
+    # fields: a spec that names no tier would otherwise run on the backend's
+    # default whatever the tiers say.
+    tier: Tier = field(kw_only=True)
     thinking: Thinking | None = None
     max_turns: int = 15
     max_budget: float | None = None

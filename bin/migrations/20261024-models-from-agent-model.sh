@@ -20,33 +20,56 @@
 # can write a pre-migration copy — still carrying agent.model — back into the
 # config root after this has run, and that copy needs the same carry-over.
 
-# models_from_agent_model FILE [INHERITED_PROVIDER] — rewrite FILE as the header
-# describes. INHERITED_PROVIDER is the agent.provider a wider scope set, joined
-# onto FILE's model when FILE names none of its own: the merged config ran the
-# model on it. Returns 0 when it changed FILE and MIGRATION_NOOP when FILE names
-# neither key. Shared by the container migration, which sources this file.
+# _models_inherited_provider WIDER TIER — the provider WIDER, the config a wider
+# scope holds, ran TIER's phases on: its agent.provider while it still has one,
+# else the provider its models.TIER now names — where the machine-wide half of
+# this migration moved that agent.provider. Empty when it names neither. The
+# provider part is read as `agent.models.parse_ref` reads it: the text before
+# the first slash, and only when it is shaped like a provider id.
+_models_inherited_provider() {
+  local wider="$1" tier="$2" provider value head
+  [[ -n "$wider" && -f "$wider" ]] || return 0
+  provider="$(yq '.agent.provider // ""' "$wider")" || return 1
+  if [[ -n "$provider" ]]; then
+    printf '%s' "$provider"
+    return 0
+  fi
+  value="$(T="$tier" yq '.models[strenv(T)] // ""' "$wider")" || return 1
+  [[ "$value" == */* ]] || return 0
+  head="${value%%/*}"
+  [[ "$head" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 0
+  printf '%s' "$head"
+}
+
+# models_from_agent_model FILE [WIDER] — rewrite FILE as the header describes.
+# WIDER is the config file a wider scope holds; when FILE names a model and no
+# provider, each tier takes the provider WIDER ran it on, because the merged
+# config ran FILE's model there. Returns 0 when it changed FILE and
+# MIGRATION_NOOP when FILE names neither key. Shared by the container
+# migration, which sources this file.
 models_from_agent_model() {
-  local file="$1" inherited="${2:-}" model provider ref
+  local file="$1" wider="${2:-}" model provider tier tier_provider ref
   model="$(yq '.agent.model // ""' "$file")" || return 1
   provider="$(yq '.agent.provider // ""' "$file")" || return 1
   [[ -n "$model" || -n "$provider" ]] || return "$MIGRATION_NOOP"
-  [[ -n "$provider" ]] || provider="$inherited"
 
-  if [[ -n "$model" ]]; then
-    ref="$model"
-    [[ -z "$provider" ]] || ref="$provider/$model"
-    # A reference reads the part before its first slash as the provider, so a
-    # bare id that contains one would now name a different provider.
-    if [[ -z "$provider" && "$model" == */* ]]; then
-      warn "$file: agent.model '$model' contains a slash, which models.* reads as provider/model — prefix the provider it runs on if '${model%%/*}' is not one"
-    fi
-    R="$ref" yq -i '
-      .models.deep = (.models.deep // strenv(R)) |
-      .models.standard = (.models.standard // strenv(R)) |
-      .models.light = (.models.light // strenv(R))
-    ' "$file" || return 1
-  else
+  if [[ -z "$model" ]]; then
     warn "$file: agent.provider '$provider' has no agent.model to carry it — set models.<tier> to $provider/<model>"
+  fi
+  for tier in deep standard light; do
+    [[ -n "$model" ]] || break
+    tier_provider="$provider"
+    if [[ -z "$tier_provider" ]]; then
+      tier_provider="$(_models_inherited_provider "$wider" "$tier")" || return 1
+    fi
+    ref="$model"
+    [[ -z "$tier_provider" ]] || ref="$tier_provider/$model"
+    T="$tier" R="$ref" yq -i '.models[strenv(T)] = (.models[strenv(T)] // strenv(R))' "$file" || return 1
+  done
+  # A reference reads the part before its first slash as the provider, so a
+  # bare id that contains one would now name a different provider.
+  if [[ -n "$model" && -z "$provider" && "$model" == */* ]]; then
+    warn "$file: agent.model '$model' contains a slash, which models.* may read as provider/model — prefix the provider it runs on if '${model%%/*}' is not one"
   fi
   yq -i 'del(.agent.model) | del(.agent.provider)' "$file" || return 1
 }

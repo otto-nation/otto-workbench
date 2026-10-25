@@ -181,7 +181,8 @@ def test_pi_leaves_the_provider_to_its_log():
 
 def _backend(monkeypatch, *, exit_code=0, ledger_provider=lambda: "from-backend"):
     backend = types.SimpleNamespace(invoke_agent=lambda inv: exit_code,
-                                    ledger_provider=ledger_provider)
+                                    ledger_provider=ledger_provider,
+                                    ledger_thinking=lambda thinking: thinking)
     monkeypatch.setattr(agent.backend, "_get_module", lambda: backend)
     return backend
 

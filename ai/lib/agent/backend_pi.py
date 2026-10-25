@@ -1023,6 +1023,17 @@ def ledger_provider() -> None:
     return None
 
 
+def ledger_thinking(thinking: str | None) -> str | None:
+    """The level the call asked for, asked only when the log named none.
+
+    Pi's log names the level each message ran at, after its own clamping, and
+    that wins whenever there is one. A call that dies before its first message
+    has none, and without this its ledger row would carry no level where the
+    same failure on Claude Code carries one.
+    """
+    return thinking or None
+
+
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """No pre-run checks — Pi resolves models and provider routing itself.
 

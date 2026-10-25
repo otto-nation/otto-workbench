@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 import shutil
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -161,17 +161,18 @@ def _require_backend() -> Backend:
     return selected
 
 
-def _ledger_provider(usage: agent.usage.SessionUsage) -> str | None:
-    """The provider to record when the log did not name one: the backend's answer.
+def _ledger_fallback(served: str | None, ask: Callable[[types.ModuleType], str | None]) -> str | None:
+    """What to record when the log did not name a value: the backend's answer.
 
-    Asked only when needed, so a log that names its provider costs no lookup.
-    None rather than raising: this feeds telemetry, and a row without a provider
-    is better than the measured call failing over it.
+    *served* is the log's own reading; *ask* puts the question to the backend
+    module. Asked only when needed, so a log that names its value costs no
+    lookup. None rather than raising: this feeds telemetry, and a row without
+    the value is better than the measured call failing over it.
     """
-    if usage.served_provider:
+    if served:
         return None
     try:
-        return _get_module().ledger_provider()
+        return ask(_get_module())
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         return None
 
@@ -180,7 +181,7 @@ def _record(
     *, entry_point: str, usage: agent.usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
     phase: str | None = None, max_turns: int | None = None,
-    branch: str | None = None,
+    branch: str | None = None, thinking: str | None = None,
 ) -> None:
     """Append one ledger record.
 
@@ -208,7 +209,9 @@ def _record(
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr, phase=phase, max_turns=max_turns,
             branch=branch, invocation=core.trail.inherited_root(),
-            provider=_ledger_provider(usage), measured=measured,
+            provider=_ledger_fallback(usage.served_provider, lambda m: m.ledger_provider()),
+            thinking=_ledger_fallback(usage.served_thinking, lambda m: m.ledger_thinking(thinking)),
+            measured=measured,
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         pass
@@ -270,8 +273,7 @@ def prompt(
 
     `cwd` is required — see _require_cwd for why it has no safe default.
 
-    `thinking` and `provider` follow the same rule as on `AgentInvocation`: Pi
-    honours both, Claude Code has a flag for neither and drops them.
+    `thinking` and `provider` follow the same rule as on `AgentInvocation`.
 
     The CLI runs under the machine's environment, as an agent does (see
     `agent.machine_env`); when that cannot be built the call returns exit 1
@@ -293,7 +295,7 @@ def prompt(
         (reply, code), usage = result, None
     _record(
         entry_point="prompt", usage=usage, exit_code=code,
-        model=model, task=task, repo=repo, pr=pr,
+        model=model, task=task, repo=repo, pr=pr, thinking=thinking,
     )
     return reply, code
 
@@ -303,7 +305,8 @@ class AgentInvocation:
     """Everything a backend needs to run one agent.
 
     ``provider`` is honoured by the Pi backend and ignored by Claude Code,
-    which has no --provider flag; ``thinking`` is likewise ignored there.
+    which has no --provider flag. ``thinking`` reaches both: Pi as
+    ``--thinking``, Claude Code as ``--effort`` (``agent.backend_claude.effort``).
     ``rules_home`` is the inverse: Claude Code maps it to
     ``CLAUDE_CONFIG_DIR`` and Pi injects it with ``--append-system-prompt``,
     keeping ``--no-context-files``. All three stay on the object so callers
@@ -407,6 +410,7 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
         phase=inv.phase,
         max_turns=inv.max_turns,
         branch=inv.branch,
+        thinking=inv.thinking,
     )
 
 

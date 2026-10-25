@@ -48,10 +48,18 @@ _seed_settings() {
 
 @test "a session with no Claude effort keeps the effortLevel /effort set" {
   _seed_settings '{"model":"old","effortLevel":"high"}'
-  _seed_config 'models:' '  session: claude-sonnet-5-5:minimal'
+  _seed_config 'models:' '  session: claude-sonnet-5-5'
   _sync_run "$HOME_DIR" "$STATE_DIR"
   run jq -r '.model + " " + .effortLevel' "$SETTINGS_OUT"
   [ "$output" = "claude-sonnet-5-5 high" ]
+}
+
+@test "a session level below Claude's lowest effort writes low, as the pipeline runs it" {
+  _seed_settings '{"effortLevel":"high"}'
+  _seed_config 'models:' '  session: claude-sonnet-5-5:minimal'
+  _sync_run "$HOME_DIR" "$STATE_DIR"
+  run jq -r '.model + " " + .effortLevel' "$SETTINGS_OUT"
+  [ "$output" = "claude-sonnet-5-5 low" ]
 }
 
 @test "with no session, model and effortLevel stay what /model left" {

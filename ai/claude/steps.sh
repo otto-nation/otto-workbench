@@ -7,6 +7,10 @@
 # rather than $CLAUDE_SRC_DIR, so a copied tree loads its own copy.
 # shellcheck source=scaffold.sh
 . "$(dirname "${BASH_SOURCE[0]}")/scaffold.sh"
+# Agent installation, with each agent's tier rendered into its model, lives in
+# agents.sh for the same reason.
+# shellcheck source=agents.sh
+. "$(dirname "${BASH_SOURCE[0]}")/agents.sh"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -519,38 +523,6 @@ step_claude_container_settings() {
   python3 "$LIB_SRC_DIR/permission_mirror.py"
 }
 
-# step_claude_agents — copies each agent markdown file into ~/.claude/agents/.
-# Supports user overrides: user/ai/claude/agents/<name>.md replaces the default,
-# user/ai/claude/agents/<name>.disabled suppresses it entirely.
-step_claude_agents() {
-  [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
-  mkdir -p "$CLAUDE_AGENTS_DIR"
-  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/" || true
-
-  local -A layers
-  resolve_layers "$CLAUDE_AGENTS_SRC_DIR" "$USER_AGENTS_DIR" "*.md" layers
-
-  # Prune agents in target that are no longer in either layer
-  local item
-  for item in "$CLAUDE_AGENTS_DIR"/*.md; do
-    [[ -e "$item" || -L "$item" ]] || continue
-    local name
-    name=$(basename "$item")
-    if [[ -z "${layers[$name]+set}" ]]; then
-      rm "$item"
-      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}" || true
-    fi
-  done
-
-  # Install from merged layers
-  local name source label
-  for name in "${!layers[@]}"; do
-    source="${layers[$name]}"
-    label="${name%.md}"
-    install_file "$source" "$CLAUDE_AGENTS_DIR/$name" "$label"
-  done
-}
-
 # step_claude_machine_profile — generates ~/.claude/machine/machine.md unconditionally.
 # The generator has its own 24h staleness check; --force bypasses it for sync runs.
 step_claude_machine_profile() {
@@ -710,10 +682,17 @@ _export_claude_config() {
     cp "$rule" "$dest/rules/"
   done
 
-  # Agents: copy all .md files
-  local agent
+  # Agents: copy all .md files. A tiered agent goes as `model: inherit`: the
+  # tiers are this machine's models.*, and the host it is exported to has its own.
+  local agent rendered rc
   for agent in "$CLAUDE_AGENTS_SRC_DIR"/*.md; do
     [[ -f "$agent" ]] || continue
+    rc=0
+    rendered=$(_claude_render_agent "$agent" "") || rc=$?
+    if [[ "$rc" -eq 11 ]]; then
+      printf '%s\n' "$rendered" > "$dest/agents/$(basename "$agent")"
+      continue
+    fi
     cp "$agent" "$dest/agents/"
   done
 

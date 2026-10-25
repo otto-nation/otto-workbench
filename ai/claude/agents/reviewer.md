@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything.
-model: inherit
+tier: deep
 source: otto-workbench/ai/claude/agents/reviewer.md
 ---
 

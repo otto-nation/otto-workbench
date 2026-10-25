@@ -236,7 +236,11 @@ def _models(_args: argparse.Namespace) -> int:
     Machine-wide only: a harness's settings are the machine's, so no repo the
     sync happens to run from may move them. A key nothing names is absent from
     `pi`, because Pi's sync overlays that object on the live file and an absent
-    key is one it leaves as it is.
+    key is one it leaves as it is. `claude.tiers` holds each tier that names a
+    Claude model, as the `model` and `effort` an agent declaring that tier is
+    installed with; a tier absent there installs its agents as `inherit`.
+    `claude.tier_names` is every tier an agent may declare, so sync can tell a
+    tier that names no model from one that does not exist.
     """
     cfg = config.workbench_config.load_config(None)
     view = agent.harness_models.harness_models(cfg.models)
@@ -255,6 +259,11 @@ def _models(_args: argparse.Namespace) -> int:
             "model": claude.model,
             "effortLevel": claude.effort,
             "skipped": claude.skipped,
+            "tiers": {
+                tier.value: {"model": entry.model, "effort": entry.effort}
+                for tier, entry in claude.tiers.items()
+            },
+            "tier_names": [tier.value for tier in agent.harness_models.Tier],
         },
         "pi": {key: value for key, value in pi_keys.items() if value is not None},
     }, separators=(",", ":")))

@@ -1,7 +1,7 @@
 ---
 name: reviewer-lite
 description: Lightweight code reviewer for group and angles phases. Receives pre-collected data — no context gathering needed. Produces categorized findings (must-fix, should-fix, nit). Never modifies anything.
-model: inherit
+tier: standard
 source: otto-workbench/ai/claude/agents/reviewer-lite.md
 ---
 

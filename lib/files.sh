@@ -88,6 +88,28 @@ install_file() {
   echo -e "  ${GREEN}✓${NC} $label"
 }
 
+# install_text TEXT TARGET [LABEL] — install_file for content held in a
+# variable: writes TEXT to TARGET when it differs, replacing a symlink, and
+# prints the same status line. TEXT is written with one trailing newline, the
+# form a `$(...)` capture of a file compares equal to.
+install_text() {
+  local text=$1 target=$2
+  shift 2
+  local label="${1:-$(basename "$target")}"
+
+  if [[ -L "$target" ]]; then
+    rm "$target"
+  fi
+
+  if [[ -f "$target" && "$(cat "$target")" == "$text" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ $label${NC}" || true
+    return
+  fi
+
+  printf '%s\n' "$text" > "$target"
+  echo -e "  ${GREEN}✓${NC} $label"
+}
+
 # copy_dir SRC DST [GLOB] [--strip-ext] [--prune]
 # Copies all files matching GLOB in SRC into DST, preserving filenames.
 # GLOB defaults to '*'. --strip-ext removes the file extension from the display label.

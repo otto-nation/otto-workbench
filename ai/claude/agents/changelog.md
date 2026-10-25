@@ -1,7 +1,7 @@
 ---
 name: changelog
 description: Generate categorized release notes and changelogs from git history. Used by task automation.
-model: inherit
+tier: light
 source: otto-workbench/ai/claude/agents/changelog.md
 ---
 

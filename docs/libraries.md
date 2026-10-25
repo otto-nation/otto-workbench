@@ -394,6 +394,7 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 |----------|---------|
 | `install_symlink SOURCE TARGET [LABEL] [--no-prompt]` | Creates or updates a symlink at TARGET pointing to SOURCE. LABEL defaults to the basename of SOURCE. |
 | `install_file SOURCE TARGET [LABEL]` | Copies SOURCE to TARGET if content differs. Removes stale symlinks at TARGET. Idempotent — no-op if file is already up to date. |
+| `install_text TEXT TARGET [LABEL]` | install_file for content held in a variable: writes TEXT to TARGET when it differs, replacing a symlink, and prints the same status line. TEXT is written with one trailing newline, the form a `$(...)` capture of a file compares equal to. |
 | `copy_dir SRC DST [GLOB] [--strip-ext] [--prune]` | Copies all files matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. --strip-ext removes the file extension from the display label. --prune removes stale files (or symlinks) in DST whose source counterpart is gone. |
 | `symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]` | Symlinks all items matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. |
 | `normalize_path PATH` | collapses "." and ".." segments out of an absolute path string, purely lexically (the input need not exist). |

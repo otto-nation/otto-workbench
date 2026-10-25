@@ -11,6 +11,12 @@ Claude Code:
   light tiers, so the CLI's own ``opus``/``sonnet``/``haiku`` aliases — and the
   subagents and ``opusplan`` that use them — follow the tiers.
 - ``model`` and ``effortLevel`` take ``models.session``.
+- An agent declaring ``tier:`` in its source frontmatter is installed with
+  that tier's model and level as its ``model:`` and ``effort:``, and with
+  ``model: inherit`` when the tier names no Claude model (``tiers``). A tier
+  at ``off`` installs ``effort: low`` and still thinks: agent frontmatter has
+  no counterpart to the ``MAX_THINKING_TOKENS=0`` a pipeline phase at ``off``
+  is spawned with.
 - A tier naming a provider the Claude CLI cannot be pointed at, or a bare id
   that is not a Claude model, has no Claude model, and is reported rather than
   written: the CLI runs Claude models only.
@@ -63,13 +69,22 @@ _WINDOW_SUFFIX = re.compile(r"\[[^\]]*\]$")
 
 
 @dataclass(frozen=True)
+class ClaudeTier:
+    """What an agent on one tier runs: the model id, and the ``--effort`` level or None."""
+
+    model: str
+    effort: str | None = None
+
+
+@dataclass(frozen=True)
 class ClaudeModels:
-    """Claude Code's model settings: the env block's tier aliases, and the session."""
+    """Claude Code's model settings: the env block's tier aliases, the session, and each tier."""
 
     env: dict[str, str] = field(default_factory=dict)
     model: str | None = None
     effort: str | None = None
     skipped: list[str] = field(default_factory=list)
+    tiers: dict[Tier, ClaudeTier] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -112,12 +127,14 @@ def _qualified(ref: ModelRef) -> str:
 def _claude(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> ClaudeModels:
     env: dict[str, str] = {}
     skipped: list[str] = []
+    claude_tiers: dict[Tier, ClaudeTier] = {}
     for tier, key in CLAUDE_TIER_ENV.items():
         ref = tiers.get(tier)
         if ref is None:
             continue
         if _claude_servable(ref):
             env[key] = ref.id
+            claude_tiers[tier] = ClaudeTier(model=ref.id, effort=agent.backend_claude.effort(ref.level))
         else:
             skipped.append(f"models.{tier.value}: {ref.spec()} is not a Claude model, so {key} is left unset")
     model = effort = None
@@ -126,7 +143,7 @@ def _claude(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> ClaudeMode
         effort = agent.backend_claude.effort(session.level)
     elif session is not None:
         skipped.append(f"models.session: {session.spec()} is not a Claude model, so Claude Code keeps its own")
-    return ClaudeModels(env=env, model=model, effort=effort, skipped=skipped)
+    return ClaudeModels(env=env, model=model, effort=effort, skipped=skipped, tiers=claude_tiers)
 
 
 def _pi(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> PiModels:

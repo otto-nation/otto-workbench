@@ -141,6 +141,14 @@ _build_tarball() {
   [ "$src_count" -eq "$dest_count" ]
 }
 
+@test "_export_claude_config: a tiered agent ships as inherit, not as this machine's tier" {
+  # The tiers are this machine's models.*; the host it is exported to has its own.
+  run grep -x 'model: inherit' "$EXPORT_DIR/agents/reviewer.md"
+  [ "$status" -eq 0 ]
+  run grep -c '^tier:' "$EXPORT_DIR/agents/reviewer.md"
+  [ "$output" = "0" ]
+}
+
 @test "_export_claude_config: excludes dream, promote, machine skills" {
   [ ! -d "$EXPORT_DIR/skills/dream" ]
   [ ! -d "$EXPORT_DIR/skills/promote" ]

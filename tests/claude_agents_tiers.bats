@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for step_claude_agents rendering an agent's `tier:` into the model and effort Claude Code reads.
-# select-on: ai/lib/agent/harness_models.py lib/config_cli.py ai/claude/agents/*.md
+# select-on: ai/claude/agents.sh ai/lib/agent/harness_models.py lib/config_cli.py ai/claude/agents/*.md
 
 setup() {
   load 'test_helper'
@@ -96,6 +96,62 @@ _frontmatter() {
   run _agents_run
   [ "$status" -eq 0 ]
   cmp "$HOME_DIR/.config/workbench/overrides/ai/claude/agents/plain.md" "$AGENTS_OUT/plain.md"
+}
+
+@test "a tier that stops naming a Claude model takes its agents back to inherit" {
+  _seed_config 'models:' '  deep: claude-opus-5-5'
+  _agents_run
+  _seed_config 'models:' '  deep: openai/gpt-6'
+  run _agents_run
+  [ "$status" -eq 0 ]
+  _frontmatter "$AGENTS_OUT/reviewer.md" > "$BATS_TEST_TMPDIR/fm"
+  grep -qx 'model: inherit' "$BATS_TEST_TMPDIR/fm"
+}
+
+@test "a tier that does not exist installs as inherit, and says so" {
+  _seed_config 'models:' '  deep: claude-opus-5-5'
+  _override typo $'---\nname: typo\ndescription: d\ntier: depp\n---\n\nbody'
+  run _agents_run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Agent typo declares a tier models.* does not have — one of: deep, standard, light"* ]]
+  grep -qx 'model: inherit' "$AGENTS_OUT/typo.md"
+}
+
+@test "an empty tier is not copied through as a key Claude Code does not read" {
+  _override empty $'---\nname: empty\ndescription: d\ntier:\n---\n\nbody'
+  run _agents_run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Agent empty declares a tier"* ]]
+  run cat "$AGENTS_OUT/empty.md"
+  [ "$output" = $'---\nname: empty\ndescription: d\nmodel: inherit\n---\n\nbody' ]
+}
+
+@test "an override saved with CRLF line endings is still rendered" {
+  _seed_config 'models:' '  light: claude-haiku-5-5'
+  _override crlf $'---\r\nname: crlf\r\ndescription: d\r\ntier: light\r\n---\r\n\r\nbody\r'
+  run _agents_run
+  [ "$status" -eq 0 ]
+  grep -qx 'model: claude-haiku-5-5' "$AGENTS_OUT/crlf.md"
+}
+
+@test "a config that cannot be read leaves installed agents on their models" {
+  _seed_config 'models:' '  deep: claude-opus-5-5'
+  _agents_run
+  cp "$AGENTS_OUT/reviewer.md" "$BATS_TEST_TMPDIR/before.md"
+  _seed_config 'models:' '  session: standard'
+  run _agents_run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Tiered Claude Code agents left as they were installed"* ]]
+  cmp "$BATS_TEST_TMPDIR/before.md" "$AGENTS_OUT/reviewer.md"
+}
+
+@test "an agent the renderer cannot read fails the step rather than being copied as untiered" {
+  _override locked $'---\nname: locked\ndescription: d\ntier: deep\n---\n\nbody'
+  chmod 000 "$HOME_DIR/.config/workbench/overrides/ai/claude/agents/locked.md"
+  run _agents_run
+  chmod 644 "$HOME_DIR/.config/workbench/overrides/ai/claude/agents/locked.md"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Failed to render agent locked"* ]]
 }
 
 @test "changing a tier's model reaches the installed agent on the next sync" {

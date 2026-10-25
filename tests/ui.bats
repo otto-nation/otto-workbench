@@ -290,6 +290,38 @@ _select_subdirs() {
   [ "$(cat "$TMPDIR/dst")" = "src" ]
 }
 
+# ── install_text ──────────────────────────────────────────────────────────────
+
+@test "install_text: writes the text with one trailing newline" {
+  install_text $'a\nb' "$TMPDIR/dst"
+  cmp "$TMPDIR/dst" <(printf 'a\nb\n')
+}
+
+@test "install_text: is idempotent — no-op when content is identical" {
+  install_text "content" "$TMPDIR/dst"
+  touch -t 200001010000 "$TMPDIR/dst"
+  local mtime1 mtime2
+  mtime1=$(file_mtime "$TMPDIR/dst")
+  install_text "content" "$TMPDIR/dst"
+  mtime2=$(file_mtime "$TMPDIR/dst")
+  [ "$mtime1" = "$mtime2" ]
+}
+
+@test "install_text: updates target when content differs" {
+  install_text "old" "$TMPDIR/dst"
+  install_text "new" "$TMPDIR/dst"
+  [ "$(cat "$TMPDIR/dst")" = "new" ]
+}
+
+@test "install_text: replaces a stale symlink at target" {
+  echo "other" > "$TMPDIR/other"
+  ln -s "$TMPDIR/other" "$TMPDIR/dst"
+  install_text "text" "$TMPDIR/dst"
+  [ ! -L "$TMPDIR/dst" ]
+  [ "$(cat "$TMPDIR/other")" = "other" ]
+  [ "$(cat "$TMPDIR/dst")" = "text" ]
+}
+
 # ── copy_dir ──────────────────────────────────────────────────────────────────
 
 @test "copy_dir: copies matching files into dst" {

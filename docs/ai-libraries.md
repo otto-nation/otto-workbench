@@ -84,7 +84,10 @@ Claude Code:
 - ``model`` and ``effortLevel`` take ``models.session``.
 - An agent declaring ``tier:`` in its source frontmatter is installed with
   that tier's model and level as its ``model:`` and ``effort:``, and with
-  ``model: inherit`` when the tier names no Claude model (``tiers``).
+  ``model: inherit`` when the tier names no Claude model (``tiers``). A tier
+  at ``off`` installs ``effort: low`` and still thinks: agent frontmatter has
+  no counterpart to the ``MAX_THINKING_TOKENS=0`` a pipeline phase at ``off``
+  is spawned with.
 - A tier naming a provider the Claude CLI cannot be pointed at, or a bare id
   that is not a Claude model, has no Claude model, and is reported rather than
   written: the CLI runs Claude models only.

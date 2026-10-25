@@ -8,7 +8,8 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model. It subtracts
+the fallback when the catalogue cannot be read or lacks the model, and capped at
+``context.compact_at`` when that is set. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
@@ -35,8 +36,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import agent.pi_models
+from agent.context_ceiling import capped_window
 from agent.phases import collect_phase_models, unset_review_phases
-from agent.pi_models import listing_rows
+from agent.pi_models import listed_windows
+from config.workbench_config import load_config_or_default
 from core.phases import Backend
 from review.grouping import classify_tier, format_profiles_section
 
@@ -190,35 +193,6 @@ MAX_DELTA_LIST_ENTRIES = 200
 MIN_DELTA_DIFF_BYTES = 2_048
 
 
-def _parse_context_tokens(raw: str) -> int | None:
-    """A `pi --list-models` context cell as an integer token count, or None.
-
-    Suffixes: K=1_000, M=1_000_000. Decimals are allowed. The result is
-    floored — overestimating a window is the expensive direction.
-    """
-    text = raw.strip()
-    if not text:
-        return None
-    multiplier = 1
-    suffix = text[-1]
-    if suffix in ("K", "k"):
-        multiplier = 1_000
-        text = text[:-1]
-    elif suffix in ("M", "m"):
-        multiplier = 1_000_000
-        text = text[:-1]
-    try:
-        amount = float(text)
-    except ValueError:
-        return None
-    if amount < 0:
-        return None
-    tokens = int(amount * multiplier)
-    if tokens <= 0:
-        return None
-    return tokens
-
-
 def _parse_pi_list_models(text: str) -> dict[str, int]:
     """Model id -> context window, taking the minimum across providers.
 
@@ -231,12 +205,7 @@ def _parse_pi_list_models(text: str) -> dict[str, int]:
     changes.
     """
     windows: dict[str, int] = {}
-    for _provider, model, rest in listing_rows(text):
-        if not rest:
-            continue
-        tokens = _parse_context_tokens(rest[0])
-        if tokens is None:
-            continue
+    for (_provider, model), tokens in listed_windows(text).items():
         previous = windows.get(model)
         if previous is None or tokens < previous:
             windows[model] = tokens
@@ -295,19 +264,19 @@ class UnknownModelWindow(RuntimeError):
     ) -> "UnknownModelWindow":
         """A window the reserves alone exhaust, so no prompt could ever fit.
 
-        Unreachable while every recorded window is 200,000 against 96,000 of
-        reserves on Claude (64,000 on pi). It is raised rather than clamped
-        because the alternative is a negative budget that `_fit_budget`'s
-        `max(0, ...)` guards absorb without complaint — every phase would then
-        refuse every prompt, and the reason would be a table entry nobody
-        would think to look at.
+        Every recorded window is at least 200,000 against 96,000 of reserves on
+        Claude (64,000 on pi), so in practice this is a ``context.compact_at``
+        set below them. It is raised rather than clamped because the
+        alternative is a negative budget that `_fit_budget`'s `max(0, ...)`
+        guards absorb without complaint — every phase would then refuse every
+        prompt, and the reason would be a setting nobody would think to look at.
         """
         reserved = COMPLETION_RESERVE_TOKENS + overhead_reserve_tokens(backend)
         return cls(model, (
-            f"{model!r} has a {window:,}-token window, which its reserves "
-            f"({reserved:,}) exhaust — no prompt could fit. Lower "
-            f"COMPLETION_RESERVE_TOKENS or the backend overhead reserve, or do "
-            f"not review with this model."
+            f"{model!r} is budgeted against a {window:,}-token window, which its "
+            f"reserves ({reserved:,}) exhaust — no prompt could fit. Raise "
+            f"context.compact_at above {reserved:,} if it is set, or do not "
+            f"review with this model."
         ))
 
 
@@ -317,18 +286,20 @@ def model_window_tokens(model: str | None, *, cwd: Path | str) -> int:
     No model (the backend's default serves the phase) budgets at
     `UNSET_MODEL_FLOOR_TOKENS`. Otherwise: the provider catalogue of the pi that
     would run in *cwd*, then `MODEL_CONTEXT_TOKENS`. Anything else raises
-    `UnknownModelWindow`.
+    `UnknownModelWindow`, whatever the ceiling below.
+
+    Capped at ``context.compact_at`` for *cwd*: the conversation is compacted
+    there, so a prompt planned past it would be summarised before the agent had
+    worked on it — and it is what the operator chose to pay per request.
     """
+    compact_at = load_config_or_default(cwd).context.compact_at
     if not model:
-        return UNSET_MODEL_FLOOR_TOKENS
+        return capped_window(UNSET_MODEL_FLOOR_TOKENS, compact_at)
     catalogue = _pi_catalogue_windows(cwd)
-    window = catalogue.get(model)
-    if window is not None:
-        return window
-    window = MODEL_CONTEXT_TOKENS.get(model)
-    if window is not None:
-        return window
-    raise UnknownModelWindow(model, catalogue=catalogue)
+    window = catalogue.get(model, MODEL_CONTEXT_TOKENS.get(model))
+    if window is None:
+        raise UnknownModelWindow(model, catalogue=catalogue)
+    return capped_window(window, compact_at)
 
 
 def overhead_reserve_tokens(backend: Backend | None = None) -> int:

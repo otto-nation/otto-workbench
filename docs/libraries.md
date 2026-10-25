@@ -188,6 +188,7 @@ Every key any of them accepts:
 | `models.standard` | string | — |
 | `models.light` | string | — |
 | `models.session` | string | — |
+| `context.compact_at` | integer | — |
 | `review.effort` | `low`, `medium`, `high` | — |
 | `review.self_effort` | `low`, `medium`, `high` | — |
 | `issues.provider` | `linear`, `github`, `jira` | — |
@@ -300,6 +301,7 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 | `wb_config_split_record RECORD SCOPE_OUT VALUE_OUT DIR_OUT` | the three fields of one `otto-workbench config get` record, assigned to the named variables. |
 | `wb_config_get KEY [DEFAULT]` | a dotted config key resolved for the repo the caller is standing in, or DEFAULT when no scope sets it. Returns 1, printing why, when KEY is not one the config surface defines. |
 | `wb_config_harness_models` | prints, as one JSON object, what the machine-wide `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`, in the shape `config models` documents in `lib/config_cli.py`. Returns 1, printing why, when the config names a tier it leaves unset or cannot be read. |
+| `wb_config_harness_context [LISTING]` | prints, as one JSON object, what the machine-wide `context.compact_at` says Claude Code's and Pi's compaction settings should hold, in the shape `config context` documents in `lib/config_cli.py`. LISTING is a `pi --list-models` listing; without one the Pi half is empty. Returns 1, printing why, when the config cannot be read. |
 
 Loaded via `ui.sh`.
 

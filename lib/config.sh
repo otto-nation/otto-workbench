@@ -194,3 +194,16 @@ wb_config_get() {
 wb_config_harness_models() {
   python3 "$WORKBENCH_DIR/lib/config_cli.py" models
 }
+
+# wb_config_harness_context [LISTING] — prints, as one JSON object, what the
+# machine-wide `context.compact_at` says Claude Code's and Pi's compaction
+# settings should hold, in the shape `config context` documents in
+# `lib/config_cli.py`. LISTING is a `pi --list-models` listing; without one the
+# Pi half is empty. Returns 1, printing why, when the config cannot be read.
+wb_config_harness_context() {
+  if [[ $# -eq 0 ]]; then
+    python3 "$WORKBENCH_DIR/lib/config_cli.py" context
+    return
+  fi
+  python3 "$WORKBENCH_DIR/lib/config_cli.py" context --pi-listing - <<< "$1"
+}

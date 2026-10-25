@@ -672,6 +672,64 @@ step_pi_models() {
   _pi_warn_unknown_models "$settings"
 }
 
+# step_pi_compaction — sizes Pi's per-model compaction reserves from the
+# machine-wide `context.compact_at`, so every model whose window is wider than
+# the ceiling compacts at it. Pi compacts when
+# `contextTokens > contextWindow - reserveTokens`; the reserve that turns that
+# into the ceiling depends on each model's window, which only the catalogue
+# knows — hence a step after step_pi_packages, for the reason step_pi_models
+# gives, rather than a key in step_pi_settings' overlay.
+#
+# Writes `compaction.modelOverrides["provider/id"].reserveTokens` for each listed
+# model wider than the ceiling, and removes it from each listed model at or under
+# it, so lowering or raising the ceiling never leaves a stale reserve behind.
+# Other fields of an entry (keepRecentTokens), and entries for models the
+# catalogue does not list, are left as they are. The config owns the reserve of
+# every listed model: a hand-set one is replaced.
+#
+# Unset, the file is left alone, as Pi's other settings are when the config
+# names nothing — including the reserves an earlier sync wrote.
+step_pi_compaction() {
+  command -v pi > /dev/null 2>&1 || return 0
+
+  local listing view
+  listing=$(_pi_user_scope pi --list-models 2> /dev/null) || listing=""
+  if ! view=$(wb_config_harness_context "$listing"); then
+    warn "Pi's compaction settings left as they were — fix the context section of config.yml"
+    return 0
+  fi
+  jq -e '.compact_at != null' <<< "$view" > /dev/null || return 0
+  if jq -e '.pi.reserveTokens == {}' <<< "$view" > /dev/null; then
+    warn "Pi lists no models, so context.compact_at was not applied to Pi — run otto-workbench sync again once pi --list-models works"
+    return 0
+  fi
+
+  local existing="{}" content
+  content=$(cat "$PI_SETTINGS_FILE" 2> /dev/null) || true
+  [[ -n "$content" ]] && existing="$content"
+
+  local result
+  result=$(jq --argjson reserves "$(jq -c '.pi.reserveTokens' <<< "$view")" '
+    reduce ($reserves | to_entries[]) as $r (.;
+      if $r.value != null then
+        .compaction.modelOverrides[$r.key].reserveTokens = $r.value
+      elif .compaction.modelOverrides[$r.key] == null then .
+      else
+        del(.compaction.modelOverrides[$r.key].reserveTokens)
+        | if .compaction.modelOverrides[$r.key] == {} then del(.compaction.modelOverrides[$r.key]) else . end
+      end)
+    | if .compaction.modelOverrides == {} then del(.compaction.modelOverrides) else . end
+    | if .compaction == {} then del(.compaction) else . end
+  ' <<< "$existing") || { err "Failed to write Pi's compaction settings"; return 1; }
+
+  [[ "$result" == "$(jq . <<< "$existing")" ]] && return 0
+  local tmp
+  tmp=$(mktemp "$PI_SETTINGS_FILE.XXXXXX")
+  printf '%s\n' "$result" > "$tmp" && mv "$tmp" "$PI_SETTINGS_FILE" \
+    || { rm -f "$tmp"; err "Failed to write $PI_SETTINGS_FILE"; return 1; }
+  return 0
+}
+
 # _export_pi_config DIR — copies Pi config into DIR for tarball export.
 _export_pi_config() {
   local dest="$1"
@@ -710,6 +768,9 @@ sync_pi() {
 
   sync_header "pi models"
   step_pi_models
+
+  sync_header "pi compaction"
+  step_pi_compaction
 }
 
 register_pi_steps() {
@@ -721,6 +782,7 @@ register_pi_steps() {
   register_step "Pi packages"    step_pi_packages
   register_step "Pi skew"        step_pi_verify
   register_step "Pi models"      step_pi_models
+  register_step "Pi compaction"  step_pi_compaction
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

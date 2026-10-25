@@ -254,7 +254,7 @@ class TestTheWindowPrefersPisCatalogue:
 
     def test_the_parser_reads_k_and_m_and_rounds_down(self):
         """Overestimating a window is the expensive direction, so floor."""
-        from review.budget import _parse_context_tokens
+        from agent.pi_models import parse_context_tokens as _parse_context_tokens
 
         assert _parse_context_tokens("200K") == 200_000
         assert _parse_context_tokens("1M") == 1_000_000

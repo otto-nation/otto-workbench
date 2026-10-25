@@ -312,6 +312,11 @@ class AgentInvocation:
     keeping ``--no-context-files``. All three stay on the object so callers
     do not branch on the backend.
 
+    ``compact_at`` is the context ceiling (``context.compact_at``) the caller
+    resolved with the model. Claude Code takes it as ``--autocompact``, since
+    ``--bare`` reads no user settings; Pi reads its per-model reserves from the
+    settings file sync wrote, which is the machine-wide ceiling.
+
     ``task``, ``repo``, ``pr`` and ``branch`` are not passed to the backend at all: they
     only label the usage ledger record for this call.
 
@@ -351,6 +356,7 @@ class AgentInvocation:
     # this record, decides what a level it does not know means.
     thinking: str | None = None
     provider: str | None = None
+    compact_at: int | None = None
     label: str = ""
     task: str | None = None
     repo: str | None = None

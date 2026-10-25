@@ -119,11 +119,16 @@ def phase_model(
 
 @dataclass(frozen=True)
 class PhaseSettings:
-    """What one invocation of a phase runs with, resolved from one reading of its model."""
+    """What one invocation of a phase runs with, resolved from one reading of its model.
+
+    ``compact_at`` is the config's ``context.compact_at``, read from the same
+    config the model was, so a repo's own ceiling travels with its own tiers.
+    """
 
     model: str | None
     provider: str | None
     thinking: str | None
+    compact_at: int | None = None
 
 
 def _level_from(resolved: ResolvedModel | None, *layers: ModelLayer) -> str | None:
@@ -170,6 +175,7 @@ def phase_settings(
         model=ref.id if ref is not None else None,
         provider=(ref.provider if ref is not None else None) or resolve_provider(),
         thinking=thinking or phase_thinking_default(phase, effort, cfg, resolved),
+        compact_at=cfg.context.compact_at,
     )
 
 

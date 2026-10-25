@@ -29,6 +29,7 @@ import core.timeouts
 import agent.vertex_quota
 from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
+from agent.context_ceiling import claude_window
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 from core.phases import Thinking
 
@@ -135,6 +136,21 @@ def _effort_args(thinking: str | None) -> list[str]:
     return ["--effort", level] if level else []
 
 
+# ── Compaction ───────────────────────────────────────────────────────────────
+
+
+def _autocompact_args(compact_at: int | None) -> list[str]:
+    """``--autocompact`` at the ceiling *compact_at*, or nothing when there is none.
+
+    A flag rather than the ``autoCompactWindow`` sync writes, because ``--bare``
+    reads no user settings: without it a pipeline agent compacts at the model's
+    full window whatever the operator chose. The prompt mode takes none — it is
+    one turn, so nothing grows to compact.
+    """
+    window = claude_window(compact_at).window
+    return ["--autocompact", str(window)] if window else []
+
+
 # ── Command builders ──────────────────────────────────────────────────────────
 
 
@@ -176,7 +192,7 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
         cmd += ["--max-budget-usd", str(inv.max_budget)]
     if inv.model:
         cmd += ["--model", inv.model]
-    return cmd + _effort_args(inv.thinking)
+    return cmd + _effort_args(inv.thinking) + _autocompact_args(inv.compact_at)
 
 
 # A fix agent edits the worktree; it has no GitHub business. Every outward write
@@ -241,7 +257,7 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
         cmd += ["--max-budget-usd", str(inv.max_budget)]
     if inv.model:
         cmd += ["--model", inv.model]
-    return cmd + _effort_args(inv.thinking)
+    return cmd + _effort_args(inv.thinking) + _autocompact_args(inv.compact_at)
 
 
 # What a stateless prompt is not allowed to do. Read stays: it cannot block and

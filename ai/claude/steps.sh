@@ -346,6 +346,35 @@ _claude_apply_models() {
   ' <<< "$__cam_result")
 }
 
+# _claude_apply_context RESULT_VAR — sets `autoCompactWindow` in the merged
+# settings document held in RESULT_VAR from the machine-wide `context.compact_at`
+# (wb_config_harness_context), so an interactive session compacts at the same
+# ceiling the pipeline's `--autocompact` does. A nameref for the reason
+# _claude_apply_models gives.
+#
+# Written only while the ceiling is set. Unset, the key stays whatever a hand
+# edit or a Claude Code older than 2.1.288 left — `/autocompact` wrote it here
+# before it moved to per-model `modelSettings` — for the reason effortLevel is
+# never withdrawn. A window saved with `/autocompact` for one model outranks
+# this key for that model, which is Claude Code's precedence, not ours.
+_claude_apply_context() {
+  local -n __cac_result=$1
+  local view
+  if ! view=$(wb_config_harness_context); then
+    warn "Claude Code's auto-compact window left as it was — fix the context section of config.yml"
+    return 0
+  fi
+
+  local skipped
+  skipped=$(jq -r '.claude.skipped[]' <<< "$view") || return 1
+  [[ -z "$skipped" ]] || warn "$skipped"
+
+  __cac_result=$(jq --argjson view "$view" '
+    ($view.claude.autoCompactWindow) as $w
+    | if $w == null then . else .settings.autoCompactWindow = $w end
+  ' <<< "$__cac_result")
+}
+
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
 # Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
@@ -431,6 +460,8 @@ _step_claude_settings() {
     || { err "Failed to mirror $ENV_LOCAL_FILE into settings.json"; return 1; }
   _claude_apply_models result \
     || { err "Failed to write the model tiers into settings.json"; return 1; }
+  _claude_apply_context result \
+    || { err "Failed to write the auto-compact window into settings.json"; return 1; }
 
   # Both halves are staged before either is published. The two files describe
   # each other: a manifest that ran ahead of the settings file — or trailed it —

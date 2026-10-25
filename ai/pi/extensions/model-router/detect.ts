@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gitRootFor, nearestExistingDir, workspaceFor } from "../_shared/workspace.ts";
+import { nearestExistingDir, workspaceFor } from "../_shared/workspace.ts";
 import type { Tier } from "./route.ts";
 
 export * from "./route.ts";
@@ -48,10 +48,14 @@ export function parseTiers(text: string): Tiers {
   return tiers as Tiers;
 }
 
-let cached: Tiers | undefined;
+let cached: Tiers | Error | undefined;
 
 /**
  * The machine-wide tiers, asked of `config models` once per process.
+ *
+ * A failure is cached as well as a success, so a broken config costs one
+ * Python start rather than one per request, and is thrown as the line
+ * `config models` printed rather than as node's wrapper around it.
  *
  * ceiling: read once, so a tier changed in config.yml reaches a running session
  * only after /reload or a new session. Upgrade to re-reading on the config
@@ -59,41 +63,66 @@ let cached: Tiers | undefined;
  */
 export function loadTiers(): Tiers {
   if (cached === undefined) {
-    cached = parseTiers(
-      execFileSync("python3", [CONFIG_CLI, "models"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
-    );
+    try {
+      cached = parseTiers(
+        execFileSync("python3", [CONFIG_CLI, "models"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          env: { ...process.env, NO_COLOR: "1" },
+        }),
+      );
+    } catch (error) {
+      cached = new Error(`workbench/auto could not read the tiers: ${failureLine(error)}`);
+    }
   }
+  if (cached instanceof Error) throw cached;
   return cached;
 }
 
+/** What a failed `config models` said, without colour or node's command echo. */
+function failureLine(error: unknown): string {
+  const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+  const said = stderr.replace(/\x1b\[[0-9;]*m/g, "").split("\n").map((line) => line.trim()).filter(Boolean);
+  return said.at(-1)?.replace(/^✗\s*/, "") ?? (error instanceof Error ? error.message : String(error));
+}
+
 /**
- * A predicate telling a plan or spec under CWD's workspace from any other file.
+ * A predicate telling a plan or spec from any other file, for tool paths
+ * relative to CWD.
  *
- * The workspace is resolved once, when the predicate is built: it is a property
- * of the repository, not of the file. With no workspace (an ordinary clone, or
- * no repository at all) nothing is a plan, so the first edit moves the session
- * to building — the conservative answer, since building is the cheaper tier.
+ * Each path is asked about its own workspace, the way workspace-guard asks: a
+ * session started from a bare-repo container has no work tree to resolve from,
+ * and one planning for another repository writes into that repository's
+ * workspace. `resolve-workspace` answers for any path under a container, its
+ * workspace included. A path with no workspace (an ordinary clone, or no
+ * repository) is not a plan. Verdicts are memoised per path, since the router
+ * asks on every request and each answer spawns `resolve-workspace`.
  */
 export function planFileTest(cwd: string): (path: string) => boolean {
-  // gitRootFor asks about the directory holding its argument, so name a file in
-  // CWD rather than CWD itself, whose parent may be a bare container.
-  const workspace = workspaceFor(gitRootFor(resolve(cwd, ".model-router-probe")));
-  if (!workspace) return () => false;
-  // Both spellings of each root: macOS reports /var as /private/var to anything
+  const verdicts = new Map<string, boolean>();
+  return (path: string) => {
+    const full = isAbsolute(path) ? path : resolve(cwd, path);
+    let verdict = verdicts.get(full);
+    if (verdict === undefined) {
+      verdict = isPlanFile(full);
+      verdicts.set(full, verdict);
+    }
+    return verdict;
+  };
+}
+
+function isPlanFile(full: string): boolean {
+  const workspace = workspaceFor(nearestExistingDir(full));
+  if (!workspace) return false;
+  // Both spellings of each side: macOS reports /var as /private/var to anything
   // that canonicalises, and a tool path may arrive either way.
   const roots = ["plans", "specs"].flatMap((dir) => {
     const root = resolve(workspace, dir);
     return [root, canonical(root)];
   });
-  return (path: string) => {
-    const full = isAbsolute(path) ? path : resolve(cwd, path);
-    return [full, canonical(full)].some((candidate) =>
-      roots.some((root) => candidate === root || candidate.startsWith(root + "/")),
-    );
-  };
+  return [full, canonical(full)].some((candidate) =>
+    roots.some((root) => candidate === root || candidate.startsWith(root + "/")),
+  );
 }
 
 /** PATH with symlinks resolved through its nearest existing ancestor. */

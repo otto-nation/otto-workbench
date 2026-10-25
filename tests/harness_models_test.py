@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ from conftest import _load_lib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent.harness_models import CLAUDE_MANAGED_ENV, AutoNeedsTiers, harness_models
+from agent.harness_models import CLAUDE_MANAGED_ENV, AutoNeedsTiers, AutoTakesNoLevel, harness_models
 from agent.models import UnsetTier
 from config.workbench_config import ModelsConfig
 
@@ -236,3 +237,18 @@ def test_config_models_refuses_an_incomplete_auto_in_one_line(capsys, roots):
     err = capsys.readouterr().err
     assert "models.standard, models.light" in err
     assert "Traceback" not in err
+
+
+def test_auto_leaves_claude_code_its_own_model_when_a_planning_tier_is_not_claude():
+    # opusplan would plan on Claude Code's built-in Opus, not on the deep tier.
+    claude = harness_models(ModelsConfig(
+        deep="openai/gpt-6", standard="anthropic/claude-sonnet-5-5",
+        light="anthropic/claude-haiku-5-5", session="auto",
+    )).claude
+    assert claude.model is None
+    assert any("Claude Code keeps its own model" in note for note in claude.skipped)
+
+
+def test_auto_with_a_level_is_refused_rather_than_read_as_a_model_named_auto():
+    with pytest.raises(AutoTakesNoLevel, match="auto takes no level"):
+        harness_models(replace(_ROUTED, session="auto:high"))

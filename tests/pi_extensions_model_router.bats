@@ -78,14 +78,20 @@ WRITE_PLAN_OK='{"role":"toolResult","toolCallId":"w1","isError":false,"content":
   [ "$output" = '{"tier":"deep","keep":"previous"}' ]
 }
 
-@test "building is for good: a planning skill afterwards does not go back to deep" {
+@test "a planning skill loaded after the build brings deep back" {
+  # A second feature in one session, after a small fix, plans on deep again.
   run _decide "{\"reason\":\"user\",\"state\":{\"phase\":\"building\"},\"messages\":[$EDIT_CODE,$EDIT_CODE_OK,$SKILL_COMMAND]}"
+  [ "$output" = '{"tier":"deep","state":{"phase":"planning"}}' ]
+}
+
+@test "an edit after the planning skill leaves the old load behind" {
+  run _decide "{\"reason\":\"user\",\"state\":{\"phase\":\"building\"},\"messages\":[$SKILL_COMMAND,$EDIT_CODE,$EDIT_CODE_OK]}"
   [ "$output" = '{"tier":"standard"}' ]
 }
 
-@test "an edit before any planning makes building sticky too" {
-  run _decide "{\"reason\":\"user\",\"messages\":[$EDIT_CODE,$EDIT_CODE_OK,$SKILL_COMMAND]}"
-  [ "$output" = '{"tier":"standard","state":{"phase":"building"}}' ]
+@test "with both events compacted out of view the stored phase stands" {
+  run _decide '{"reason":"user","state":{"phase":"planning"},"messages":[{"role":"user","content":"continue"}]}'
+  [ "$output" = '{"tier":"deep"}' ]
 }
 
 @test "a tool follow-up stays on the model that answered" {
@@ -173,6 +179,21 @@ _plan_test() {
   [ "$output" = $'yes\nyes\nno\nno\nno' ]
 }
 
+@test "a session started from the container itself still tells a plan from code" {
+  local root container
+  root="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
+  container="$root/container"
+  git init -q --initial-branch=main "$root/seed"
+  git -C "$root/seed" -c user.email=t@e -c user.name=T commit -q --allow-empty -m init
+  mkdir -p "$container"
+  git clone -q --bare "$root/seed" "$container/.git"
+  git -C "$container" worktree add -q "$container/feature" -b feature
+
+  run _plan_test "$container" "workspace/specs/s.md" "feature/src/app.py"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'yes\nno' ]
+}
+
 @test "outside a repository with a workspace nothing is a plan" {
   run _plan_test "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR/plans/p.md"
   [ "$status" -eq 0 ]
@@ -192,7 +213,7 @@ _route() {
     register({ registerVirtualModel: (d) => { definition = d; } });
     const ctx = {
       cwd: process.argv[2],
-      modelRegistry: { find: (provider, id) => provider === 'nowhere' ? undefined : { provider, id } },
+      modelRegistry: { find: (provider, id) => provider === 'nowhere' ? undefined : { provider, id, contextWindow: id.endsWith('luna') ? 200000 : 1000000 } },
     };
     const request = JSON.parse(process.argv[1]);
     try {
@@ -226,6 +247,38 @@ _seed_tiers() {
   _seed_tiers anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 openai/gpt-6-luna
   run _route '{"reason":"continuation","previous":{"model":{"provider":"p","id":"answered"},"thinkingLevel":"high"}}'
   [ "$output" = "workbench/auto p/answered high" ]
+}
+
+@test "a summary goes to light only when light can hold the conversation" {
+  _seed_tiers anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 openai/gpt-6-luna
+  run _route '{"reason":"direct","previous":{"model":{"provider":"anthropic","id":"claude-opus-5-5","contextWindow":1000000},"thinkingLevel":"high"}}'
+  [ "$output" = "workbench/auto anthropic/claude-opus-5-5 high" ]
+  run _route '{"reason":"direct","previous":{"model":{"provider":"anthropic","id":"claude-opus-5-5","contextWindow":100000}}}'
+  [ "$output" = "workbench/auto openai/gpt-6-luna medium" ]
+}
+
+@test "the virtual model offers every level a tier may carry" {
+  run node --input-type=module -e "
+    const { default: register } = await import('$ROUTER/index.ts');
+    let definition;
+    register({ registerVirtualModel: (d) => { definition = d; } });
+    console.log(definition.thinkingLevels.join(','));
+  "
+  [ "$output" = "off,minimal,low,medium,high,xhigh,max" ]
+  run python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT/ai/lib')
+from core.phases import Thinking
+print(','.join(Thinking))
+"
+  [ "$output" = "off,minimal,low,medium,high,xhigh,max" ]
+}
+
+@test "a config that cannot be read ends the request with what config models said" {
+  _seed_tiers anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 openai/gpt-6-luna
+  printf '%s\n' 'models:' '  session: auto' > "$WORKBENCH_CONFIG_DIR/config.yml"
+  run _route '{"reason":"user"}'
+  [ "$status" -eq 3 ]
+  [[ "$output" == "ERROR workbench/auto could not read the tiers: models.session: auto routes between all three tiers"* ]]
 }
 
 @test "a tier pi does not list ends the request with the key to fix" {

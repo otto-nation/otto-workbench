@@ -35,7 +35,8 @@ export default function (pi: ExtensionAPI) {
     id: ROUTER_ID,
     name: "Auto (workbench tiers)",
     // The selected level applies to a tier whose model names none of its own.
-    thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh"],
+    // The same vocabulary as a tier's `:level` (core.phases.Thinking).
+    thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
     route(request, ctx): ModelRoute<RouterState> {
       const decision = decide({
         reason: request.reason,
@@ -57,7 +58,20 @@ export default function (pi: ExtensionAPI) {
             `set it to a model \`pi --list-models\` shows`,
         );
       }
+      // A compaction summary is sent the whole conversation. Light takes it only
+      // when its window is no smaller than the model holding the conversation;
+      // otherwise that model, which fits it by construction, does the summary.
+      const holder = request.previous;
+      if (request.reason === "direct" && holder && narrower(model.contextWindow, holder.model.contextWindow)) {
+        return { model: holder.model, thinkingLevel: holder.thinkingLevel ?? request.thinkingLevel };
+      }
+      // The level is one of Thinking's values: sync refuses any other.
       return { model, thinkingLevel: (ref.level ?? request.thinkingLevel) as ModelRoute["thinkingLevel"], state: decision.state };
     },
   });
+}
+
+/** Whether a window of CANDIDATE tokens is known to be smaller than one of HOLDER. */
+function narrower(candidate: number | undefined, holder: number | undefined): boolean {
+  return Boolean(candidate && holder && candidate < holder);
 }

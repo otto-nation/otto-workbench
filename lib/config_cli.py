@@ -405,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     except (config.workbench_config.ConfigError, agent.models.UnsetTier,
-            agent.harness_models.AutoNeedsTiers) as exc:
+            agent.harness_models.AutoNeedsTiers, agent.harness_models.AutoTakesNoLevel) as exc:
         print(f"{RED}✗{NC} {exc}", file=sys.stderr)
         return 1
     except OSError as exc:

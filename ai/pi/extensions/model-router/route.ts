@@ -5,26 +5,36 @@
  * only inside a Pi session, and a routing rule that quietly stopped matching
  * would read exactly like one with nothing to do.
  *
- * A session moves through three phases, each on one tier:
+ * A session is in one of three phases, each on one tier:
  *
  *   standard  — where it starts: ordinary questions and small changes
- *   planning  — deep, from the request after a planning skill loads
- *   building  — standard again, from the request after the first edit outside
- *               the workspace's plans and specs, and for the rest of the session
+ *   planning  — deep, while the latest of the two events below is a planning
+ *               skill loading
+ *   building  — standard, while the latest is a successful edit outside the
+ *               workspace's plans and specs
  *
- * The phase only moves forward, and is router state, so it follows the session
- * tree and survives compaction. Within a phase a tool follow-up stays on the
- * model that answered and a retry on the model that failed, which keeps the
- * prompt cache and thinking signatures valid; a phase change accepts one cache
- * miss. Requests outside the agent loop — compaction summaries, an extension's
- * own model call — go to light and carry no state.
+ * So writing the plan keeps a session planning, the first code edit after it
+ * moves it to building, and loading a planning skill again — a second feature
+ * in one session — brings deep back. The phase is router state: it follows the
+ * session tree, and when compaction has removed both events from view the
+ * stored phase stands. Within a phase a tool follow-up stays on the model that
+ * answered and a retry on the model that failed, which keeps the prompt cache
+ * and thinking signatures valid; a phase change accepts one cache miss.
+ * Requests outside the agent loop — compaction summaries, an extension's own
+ * model call — go to light and carry no state, unless light cannot hold the
+ * conversation (index.ts).
+ *
+ * ceiling: an edit is an `edit` or `write` tool call, so a build done entirely
+ * through `bash` (sed -i, git apply, a generator) stays on deep. Upgrade to
+ * counting bash writes — `_shared/statements.ts` already tokenizes commands —
+ * if sessions are seen implementing that way while still planning.
  */
 
 /** Where the virtual model is listed. agent/harness_models.py spells the same two. */
 export const ROUTER_PROVIDER = "workbench";
 export const ROUTER_ID = "auto";
 
-/** Skills whose load means the session is designing, not yet building. */
+/** Skills whose load means the session is designing, not building. */
 export const PLANNING_SKILLS: readonly string[] = ["brainstorming", "writing-plans"];
 
 /** Tools whose successful result means a file was changed. */
@@ -75,32 +85,35 @@ function isPlanningSkillFile(path: string): boolean {
   return parts.at(-1) === "SKILL.md" && PLANNING_SKILLS.includes(parts.at(-2) ?? "");
 }
 
-/**
- * Whether a planning skill has been loaded: expanded from `/skill:name`, which
- * Pi sends as a user message opening `<skill name="…"`, or read by the model,
- * which is a `read` of its SKILL.md.
- */
-export function loadsPlanningSkill(messages: readonly RouteMessage[]): boolean {
-  return messages.some((message) =>
-    blocks(message).some((block) => {
-      if (message.role === "user" && block.type === "text") {
-        const name = /<skill name="([^"]+)"/.exec(block.text ?? "")?.[1];
-        return name !== undefined && PLANNING_SKILLS.includes(name);
-      }
-      return block.type === "toolCall" && block.name === "read" && isPlanningSkillFile(pathArgument(block));
-    }),
-  );
+function loadsPlanningSkill(message: RouteMessage): boolean {
+  return blocks(message).some((block) => {
+    if (message.role === "user" && block.type === "text") {
+      const name = /<skill name="([^"]+)"/.exec(block.text ?? "")?.[1];
+      return name !== undefined && PLANNING_SKILLS.includes(name);
+    }
+    return block.type === "toolCall" && block.name === "read" && isPlanningSkillFile(pathArgument(block));
+  });
 }
 
 /**
- * Whether an edit or write succeeded on a file that is not a plan or a spec.
- * The path is on the tool call and the outcome on its result, so the two are
- * joined by call id; a call with no successful result changed nothing.
+ * Where a planning skill last loaded, -1 for nowhere: expanded from
+ * `/skill:name`, which Pi sends as a user message opening `<skill name="…"`, or
+ * read by the model, which is a `read` of its SKILL.md.
  */
-export function editsOutsidePlans(
+export function lastPlanningSkillAt(messages: readonly RouteMessage[]): number {
+  return messages.findLastIndex(loadsPlanningSkill);
+}
+
+/**
+ * Where an edit or write last succeeded on a file that is not a plan or a
+ * spec, -1 for nowhere. The path is on the tool call and the outcome on its
+ * result, so the two are joined by call id; a call with no successful result
+ * changed nothing.
+ */
+export function lastEditOutsidePlansAt(
   messages: readonly RouteMessage[],
   isPlanFile: (path: string) => boolean,
-): boolean {
+): number {
   const edits = new Map<string, string>();
   for (const message of messages) {
     for (const block of blocks(message)) {
@@ -109,24 +122,31 @@ export function editsOutsidePlans(
       }
     }
   }
-  return messages.some((message) => {
+  return messages.findLastIndex((message) => {
     if (message.role !== "toolResult" || message.isError || !message.toolCallId) return false;
     const path = edits.get(message.toolCallId);
     return path !== undefined && !isPlanFile(path);
   });
 }
 
-/** The phase after reading MESSAGES. Never moves backward. */
+/**
+ * The phase MESSAGES put the session in: whichever of a planning skill and a
+ * code edit came last, else PHASE when neither is in view.
+ *
+ * ceiling: scans every message on every request. It is an in-memory pass over
+ * objects Pi already holds, and plan verdicts are memoised per path
+ * (detect.ts). Upgrade to scanning from an offset kept in RouterState if a
+ * routed request is ever measured spending noticeable time here.
+ */
 export function nextPhase(
   phase: Phase,
   messages: readonly RouteMessage[],
   isPlanFile: (path: string) => boolean,
 ): Phase {
-  // Only a shortcut: building has no way back below, since planning is entered
-  // from standard alone. It spares a building session the scan on every request.
-  if (phase === "building") return phase;
-  if (editsOutsidePlans(messages, isPlanFile)) return "building";
-  if (phase === "standard" && loadsPlanningSkill(messages)) return "planning";
+  const skill = lastPlanningSkillAt(messages);
+  const edit = lastEditOutsidePlansAt(messages, isPlanFile);
+  if (skill > edit) return "planning";
+  if (edit > skill) return "building";
   return phase;
 }
 

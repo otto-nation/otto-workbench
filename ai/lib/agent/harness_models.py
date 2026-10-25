@@ -136,6 +136,16 @@ class AutoNeedsTiers(OperatorError):
         )
 
 
+class AutoTakesNoLevel(OperatorError):
+    """``models.session: auto:<level>`` — the router takes each tier's own level."""
+
+    def __init__(self, value: str):
+        super().__init__(
+            f"models.session: {value} — auto takes no level; each tier carries its own "
+            "(models.deep: anthropic/claude-opus-5-5:high), so write models.session: auto"
+        )
+
+
 def _claude_servable(ref: ModelRef) -> bool:
     """Whether the Claude CLI can run *ref*.
 
@@ -194,9 +204,20 @@ def _auto(tiers: dict[Tier, ModelRef]) -> HarnessModels:
     if missing:
         raise AutoNeedsTiers(missing)
     claude = _claude(tiers, None)
+    # opusplan plans on the `opus` alias and builds on `sonnet`, which name the
+    # deep and standard tiers only while both are Claude models. With either on
+    # another provider it would plan or build on Claude Code's own default.
+    planning_tiers = (CLAUDE_TIER_ENV[Tier.DEEP], CLAUDE_TIER_ENV[Tier.STANDARD])
+    if all(key in claude.env for key in planning_tiers):
+        claude = replace(claude, model=CLAUDE_AUTO_MODEL)
+    else:
+        claude = replace(claude, skipped=[*claude.skipped, (
+            "models.session: auto needs Claude models on the deep and standard tiers for "
+            f"Claude Code's {CLAUDE_AUTO_MODEL}, so Claude Code keeps its own model"
+        )])
     pi = _pi(tiers, None)
     return HarnessModels(
-        claude=replace(claude, model=CLAUDE_AUTO_MODEL),
+        claude=claude,
         pi=replace(pi, default_model=ROUTER_ID, default_provider=ROUTER_PROVIDER,
                    enabled=[*pi.enabled, f"{ROUTER_PROVIDER}/{ROUTER_ID}"]),
         tiers=tiers,
@@ -207,12 +228,15 @@ def harness_models(models: ModelsConfig) -> HarnessModels:
     """Each harness's model settings, from *models*.
 
     Raises `agent.models.UnsetTier` when ``models.session`` names a tier that is
-    unset, as any other layer naming one does, and `AutoNeedsTiers` when it is
-    ``auto`` without all three tiers naming a provider.
+    unset, as any other layer naming one does, `AutoNeedsTiers` when it is
+    ``auto`` without all three tiers naming a provider, and `AutoTakesNoLevel`
+    for ``auto`` with a level.
     """
     tiers = {tier: ref for tier in Tier if (ref := resolve(getattr(models, tier.value), models,
                                                            where=f"models.{tier.value}"))}
     if models.session == AUTO_SESSION:
         return _auto(tiers)
+    if (models.session or "").partition(":")[0] == AUTO_SESSION:
+        raise AutoTakesNoLevel(models.session)
     session = resolve(models.session, models, where="models.session")
     return HarnessModels(claude=_claude(tiers, session), pi=_pi(tiers, session), tiers=tiers)

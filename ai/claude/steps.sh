@@ -352,11 +352,16 @@ _claude_apply_models() {
 # ceiling the pipeline's `--autocompact` does. A nameref for the reason
 # _claude_apply_models gives.
 #
-# Written only while the ceiling is set. Unset, the key stays whatever a hand
-# edit or a Claude Code older than 2.1.288 left — `/autocompact` wrote it here
-# before it moved to per-model `modelSettings` — for the reason effortLevel is
-# never withdrawn. A window saved with `/autocompact` for one model outranks
-# this key for that model, which is Claude Code's precedence, not ours.
+# Unset, the window an earlier sync wrote is withdrawn only while it still holds
+# the value $COMPACTION_RECORD_FILE says it wrote: a window set since by hand,
+# or by a Claude Code older than 2.1.288 — whose `/autocompact` wrote this key
+# before it moved to per-model `modelSettings` — is the operator's and stays. A
+# window saved with `/autocompact` for one model outranks this key for that
+# model, which is Claude Code's precedence, not ours.
+#
+# The record is written before the settings file it describes. Safe in that
+# order because withdrawal compares values: a record ahead of a write that
+# failed names a value the file does not hold, and withdraws nothing.
 _claude_apply_context() {
   local -n __cac_result=$1
   local view
@@ -366,13 +371,28 @@ _claude_apply_context() {
   fi
 
   local skipped
-  skipped=$(jq -r '.claude.skipped[]' <<< "$view") || return 1
+  if ! skipped=$(jq -r '.claude.skipped[]' <<< "$view"); then
+    warn "Claude Code's auto-compact window left as it was — config context printed no skipped list"
+    return 0
+  fi
   [[ -z "$skipped" ]] || warn "$skipped"
 
-  __cac_result=$(jq --argjson view "$view" '
-    ($view.claude.autoCompactWindow) as $w
-    | if $w == null then . else .settings.autoCompactWindow = $w end
+  local recorded window
+  recorded=$(wb_compaction_record claude)
+  window=$(jq -c '.claude.autoCompactWindow' <<< "$view")
+  __cac_result=$(jq --argjson w "$window" --argjson rec "$recorded" '
+    if $w != null then .settings.autoCompactWindow = $w
+    elif $rec.autoCompactWindow != null
+      and .settings.autoCompactWindow == $rec.autoCompactWindow
+    then del(.settings.autoCompactWindow)
+    else . end
   ' <<< "$__cac_result")
+
+  local record='{}'
+  [[ "$window" == null ]] || record=$(jq -nc --argjson w "$window" '{autoCompactWindow: $w}')
+  wb_compaction_record_set claude "$record" \
+    || warn "Could not record the auto-compact window in $COMPACTION_RECORD_FILE — unsetting context.compact_at will not withdraw it"
+  return 0
 }
 
 # step_claude_settings — merges workbench settings.json template into the live

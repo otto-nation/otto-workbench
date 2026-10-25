@@ -42,6 +42,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+import agent.context_ceiling
 import config.workbench_config
 from agent.models import ModelLayer, ResolvedModel, resolve, tier_ref
 from agent.registry import PHASES, REVIEW_PHASES
@@ -121,8 +122,9 @@ def phase_model(
 class PhaseSettings:
     """What one invocation of a phase runs with, resolved from one reading of its model.
 
-    ``compact_at`` is the config's ``context.compact_at``, read from the same
-    config the model was, so a repo's own ceiling travels with its own tiers.
+    ``compact_at`` is ``context.compact_at``, which is machine-wide
+    (`agent.context_ceiling.machine_ceiling`), the same value the review budget
+    plans against.
     """
 
     model: str | None
@@ -175,7 +177,7 @@ def phase_settings(
         model=ref.id if ref is not None else None,
         provider=(ref.provider if ref is not None else None) or resolve_provider(),
         thinking=thinking or phase_thinking_default(phase, effort, cfg, resolved),
-        compact_at=cfg.context.compact_at,
+        compact_at=agent.context_ceiling.machine_ceiling(),
     )
 
 

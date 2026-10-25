@@ -39,8 +39,17 @@ syncs and the pipeline cannot read the ceiling two ways.
   takes from 100k to 1M tokens and caps at the model's window itself.
 - Pi compacts when ``contextTokens > contextWindow - reserveTokens``, set per
   model under ``compaction.modelOverrides["provider/id"]``. A reserve of
-  ``window - compact_at`` makes that ``contextTokens > compact_at``.
-- The review budget plans a prompt against the smaller of the two windows.
+  ``window - compact_at`` makes that ``contextTokens > compact_at``. The reserve
+  decides only when compaction starts: Pi sizes the summary request from the
+  model's output limit, not from it, so a reserve of 800k on a 1M model asks
+  for no 800k-token reply.
+- The review budget plans a prompt against the ceiling the selected backend
+  actually compacts at, when that is under the model's window.
+
+The ceiling is machine-wide, and ``machine_ceiling`` is the one place it is
+read. Both harnesses keep it in machine-wide settings, and Pi takes no
+per-run override, so a repo-level value would be one the review budget
+planned against and Pi never applied.
 
 Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
 reading the catalogue (``agent.pi_models``).

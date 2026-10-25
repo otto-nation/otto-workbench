@@ -26,7 +26,11 @@ from core.phases import Phase
 from review_phases_support import _job
 from agent.backend import AgentInvocation
 from agent.context_ceiling import capped_window, claude_window, pi_reserve_tokens
-from config.workbench_config import ConfigError, load_config
+from config.workbench_config import (
+    ConfigError, ConfigScopeError, ConfigValueError, load_config,
+)
+from config.workbench_config_write import set_project_value, set_value
+from core.phases import Backend
 from review.budget import (
     MODEL_CONTEXT_TOKENS, UNSET_MODEL_FLOOR_TOKENS, UnknownModelWindow, model_window_tokens,
     prompt_budget_bytes,
@@ -149,12 +153,29 @@ def test_a_one_turn_prompt_takes_no_flag():
     assert "--autocompact" not in agent.backend_claude._build_prompt_cmd()
 
 
-def test_a_phase_resolves_its_ceiling_from_the_repo_s_config(tmp_path):
+def test_a_phase_takes_the_machine_wide_ceiling_whatever_the_repo_says(tmp_path):
+    # Pi takes no per-run override, so a repo's value is one Pi would never apply.
     _write_config("context:\n  compact_at: 400000\n")
     (tmp_path / ".workbench.yml").write_text("context:\n  compact_at: 300000\n")
     cfg = load_config(tmp_path)
-    assert agent.phases.phase_settings(Phase.HOLISTIC, None, cfg).compact_at == 300_000
-    assert agent.phases.phase_settings(Phase.HOLISTIC, None, load_config(None)).compact_at == 400_000
+    assert agent.phases.phase_settings(Phase.HOLISTIC, None, cfg).compact_at == 400_000
+
+
+def test_a_repo_cannot_be_given_a_ceiling(tmp_path):
+    with pytest.raises(ConfigScopeError, match="never reach Pi"):
+        set_project_value("context.compact_at", "300000", tmp_path)
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_a_ceiling_the_config_would_refuse_to_read_is_refused_at_write(value):
+    with pytest.raises(ConfigValueError, match="positive token count"):
+        set_value("context.compact_at", value)
+    assert load_config(None).context.compact_at is None
+
+
+def test_a_valid_ceiling_is_written():
+    set_value("context.compact_at", "200000")
+    assert load_config(None).context.compact_at == 200_000
 
 
 def test_a_review_phase_hands_its_ceiling_to_the_backend(tmp_path):
@@ -182,6 +203,23 @@ def test_the_budget_plans_against_the_ceiling_not_the_window(tmp_path):
     assert prompt_budget_bytes("claude-sonnet-5", cwd=tmp_path) < wide
 
 
+@pytest.mark.parametrize(("backend", "window"), [(Backend.CLAUDE, 100_000), (Backend.PI, 90_000)])
+def test_the_budget_plans_at_the_point_the_backend_compacts(tmp_path, backend, window):
+    # Claude Code takes nothing under 100k, so that is where its agents compact.
+    _write_config("context:\n  compact_at: 90000\n")
+    assert model_window_tokens("claude-sonnet-5", cwd=tmp_path, backend=backend) == window
+
+
+def test_a_claude_review_under_a_ceiling_below_its_reserves_still_runs(tmp_path):
+    _write_config("context:\n  compact_at: 90000\n")
+    assert prompt_budget_bytes("claude-sonnet-5", Backend.CLAUDE, cwd=tmp_path) > 0
+
+
+def test_a_repo_s_ceiling_does_not_reach_the_budget(tmp_path):
+    (tmp_path / ".workbench.yml").write_text("context:\n  compact_at: 300000\n")
+    assert model_window_tokens("claude-sonnet-5", cwd=tmp_path) == MODEL_CONTEXT_TOKENS["claude-sonnet-5"]
+
+
 def test_a_model_narrower_than_the_ceiling_keeps_its_window(tmp_path, monkeypatch):
     monkeypatch.setitem(MODEL_CONTEXT_TOKENS, "narrow", 150_000)
     _write_config("context:\n  compact_at: 200000\n")
@@ -200,9 +238,9 @@ def test_a_ceiling_does_not_hide_an_unknown_model(tmp_path):
 
 
 def test_a_ceiling_the_reserves_exhaust_names_the_key(tmp_path):
-    _write_config("context:\n  compact_at: 80000\n")
+    _write_config("context:\n  compact_at: 60000\n")
     with pytest.raises(UnknownModelWindow, match="context.compact_at"):
-        prompt_budget_bytes("claude-sonnet-5", cwd=tmp_path)
+        prompt_budget_bytes("claude-sonnet-5", Backend.PI, cwd=tmp_path)
 
 
 def test_the_catalogue_window_is_capped_as_the_table_s_is(tmp_path, monkeypatch):

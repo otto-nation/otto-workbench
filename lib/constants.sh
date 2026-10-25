@@ -207,6 +207,12 @@ CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 # entry appears under any key other than `hooks` — which is what a manifest
 # recording managed hooks inline looked like.
 CLAUDE_SETTINGS_MANIFEST="$WORKBENCH_STATE_DIR/claude-settings.manifest.json"
+# What the last sync wrote for context.compact_at, per harness: `claude` holds the
+# autoCompactWindow, `pi` each `provider/id` reserve. Unsetting the ceiling
+# withdraws only a value still equal to the one recorded, so a window chosen with
+# /autocompact or a reserve edited by hand since is never taken back. Outside the
+# settings files for the reason the manifest above is.
+COMPACTION_RECORD_FILE="$WORKBENCH_STATE_DIR/compaction.written.json"
 CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"

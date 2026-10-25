@@ -85,7 +85,7 @@ SCRIPT
   [ "$output" = "5" ]
 }
 
-@test "with no ceiling the settings file is left exactly as it was" {
+@test "with no ceiling and nothing recorded the settings file is left exactly as it was" {
   _write_live '{"compaction":{"modelOverrides":{"anthropic/claude-opus-5-5":{"reserveTokens":800000}}}}'
   cp "$LIVE" "$TMPDIR/before.json"
   _stub_pi_list_models
@@ -94,6 +94,53 @@ SCRIPT
   [ "$status" -eq 0 ]
   [ -z "$output" ]
   cmp "$TMPDIR/before.json" "$LIVE"
+}
+
+@test "with no ceiling the catalogue is not listed" {
+  cat > "$BIN/pi" << SCRIPT
+#!/usr/bin/env bash
+touch "$TMPDIR/listed"
+exit 1
+SCRIPT
+  chmod +x "$BIN/pi"
+  _write_live '{}'
+
+  run _run_step step_pi_compaction
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMPDIR/listed" ]
+}
+
+@test "unsetting the ceiling withdraws the reserves a sync wrote, and only those" {
+  _seed_config 'context:' '  compact_at: 200000'
+  _write_live '{"compaction":{"modelOverrides":{"openai/gpt-6":{"reserveTokens":5}}}}'
+  _stub_pi_list_models
+  run _run_step step_pi_compaction
+  [ "$status" -eq 0 ]
+  # The operator retunes one model by hand after the sync.
+  jq '.compaction.modelOverrides["google-vertex-claude/claude-opus-5-5"].reserveTokens = 123' "$LIVE" > "$TMPDIR/edited.json"
+  mv "$TMPDIR/edited.json" "$LIVE"
+
+  _seed_config 'models: {}'
+  run _run_step step_pi_compaction
+  [ "$status" -eq 0 ]
+  run jq -c '.compaction.modelOverrides' "$LIVE"
+  [ "$output" = '{"openai/gpt-6":{"reserveTokens":5},"google-vertex-claude/claude-opus-5-5":{"reserveTokens":123}}' ]
+  run jq -c '.pi' "$COMPACTION_RECORD_FILE"
+  [ "$output" = '{}' ]
+}
+
+@test "the settings file stays readable by everyone, as Pi wrote it" {
+  _seed_config 'context:' '  compact_at: 200000'
+  _write_live '{}'
+  chmod 644 "$LIVE"
+  _stub_pi_list_models
+
+  run _run_step step_pi_compaction
+  [ "$status" -eq 0 ]
+  run ls -l "$LIVE"
+  [[ "$output" == "-rw-r--r--"* ]]
+  run ls "$AGENT_DIR"
+  [ "$output" = "settings.json" ]
 }
 
 @test "a catalogue pi cannot list is reported rather than read as no models to cap" {

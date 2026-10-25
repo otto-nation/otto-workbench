@@ -23,6 +23,7 @@ from core.phases import Phase
 from eval.scoring import RunOutcome
 from eval.task import RunArtifacts, RunOptions
 import agent.backend
+import agent.context_ceiling
 import agent.phases
 from agent.models import ModelLayer, ModelRef, ResolvedModel
 
@@ -438,6 +439,7 @@ class TestRunWiring:
             captured["model"] = inv.model
             captured["thinking"] = inv.thinking
             captured["provider"] = inv.provider
+            captured["compact_at"] = inv.compact_at
             return 0
 
         monkeypatch.setattr(agent.backend, "invoke_fix", stub_invoke_fix)
@@ -450,12 +452,15 @@ class TestRunWiring:
             lambda phase, explicit, cfg=None: ResolvedModel(
                 ModelRef("resolved-skill", provider="anthropic", level="low"), ModelLayer.TIER),
         )
+        # The ceiling production fix passes run under, so eval numbers describe them.
+        monkeypatch.setattr(agent.context_ceiling, "machine_ceiling", lambda: 250_000)
 
         artifacts = eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
         try:
             assert captured["model"] == "resolved-skill"
             assert captured["thinking"] == "low"
             assert captured["provider"] == "anthropic"
+            assert captured["compact_at"] == 250_000
             assert eval.scoring_skill.SkillTask.phase is Phase.COMMENTS_FIX
         finally:
             for path in artifacts.temp_dirs:

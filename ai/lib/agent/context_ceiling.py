@@ -9,8 +9,17 @@ syncs and the pipeline cannot read the ceiling two ways.
   takes from 100k to 1M tokens and caps at the model's window itself.
 - Pi compacts when ``contextTokens > contextWindow - reserveTokens``, set per
   model under ``compaction.modelOverrides["provider/id"]``. A reserve of
-  ``window - compact_at`` makes that ``contextTokens > compact_at``.
-- The review budget plans a prompt against the smaller of the two windows.
+  ``window - compact_at`` makes that ``contextTokens > compact_at``. The reserve
+  decides only when compaction starts: Pi sizes the summary request from the
+  model's output limit, not from it, so a reserve of 800k on a 1M model asks
+  for no 800k-token reply.
+- The review budget plans a prompt against the ceiling the selected backend
+  actually compacts at, when that is under the model's window.
+
+The ceiling is machine-wide, and ``machine_ceiling`` is the one place it is
+read. Both harnesses keep it in machine-wide settings, and Pi takes no
+per-run override, so a repo-level value would be one the review budget
+planned against and Pi never applied.
 
 Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
 reading the catalogue (``agent.pi_models``).
@@ -23,6 +32,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.pi_models import listed_windows
+from config.workbench_config import load_config_or_default
+from core.phases import Backend
 
 # The auto-compact windows `claude --autocompact` and `autoCompactWindow` take.
 CLAUDE_WINDOW_MIN = 100_000
@@ -65,6 +76,23 @@ def pi_reserve_tokens(compact_at: int, listing: str) -> dict[str, int | None]:
         f"{provider}/{model}": window - compact_at if window > compact_at else None
         for (provider, model), window in listed_windows(listing).items()
     }
+
+
+def machine_ceiling() -> int | None:
+    """``context.compact_at`` from the machine-wide config, None when unset.
+
+    Through ``load_config_or_default``, the way a phase's model is read: an
+    unreadable file is reported by the commands that act on the config, and
+    every reader of the ceiling then agrees on there being none.
+    """
+    return load_config_or_default(None).context.compact_at
+
+
+def backend_ceiling(compact_at: int | None, backend: Backend | None) -> int | None:
+    """The point *backend* compacts at under *compact_at*: Claude Code's clamped window, else the ceiling."""
+    if backend is Backend.PI:
+        return compact_at
+    return claude_window(compact_at).window
 
 
 def capped_window(window: int, compact_at: int | None) -> int:

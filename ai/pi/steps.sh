@@ -684,24 +684,37 @@ step_pi_models() {
 # model wider than the ceiling, and removes it from each listed model at or under
 # it, so lowering or raising the ceiling never leaves a stale reserve behind.
 # Other fields of an entry (keepRecentTokens), and entries for models the
-# catalogue does not list, are left as they are. The config owns the reserve of
-# every listed model: a hand-set one is replaced.
+# catalogue does not list, are left as they are. While the ceiling is set it owns
+# the reserve of every listed model: a hand-set one is replaced.
 #
-# Unset, the file is left alone, as Pi's other settings are when the config
-# names nothing — including the reserves an earlier sync wrote.
+# Unset, each reserve $COMPACTION_RECORD_FILE says an earlier sync wrote is
+# withdrawn while it still holds that value, and nothing else is touched. The
+# catalogue is listed only when there is a ceiling to size against.
 step_pi_compaction() {
   command -v pi > /dev/null 2>&1 || return 0
 
-  local listing view
-  listing=$(_pi_user_scope pi --list-models 2> /dev/null) || listing=""
-  if ! view=$(wb_config_harness_context "$listing"); then
+  local view
+  if ! view=$(wb_config_harness_context); then
     warn "Pi's compaction settings left as they were — fix the context section of config.yml"
     return 0
   fi
-  jq -e '.compact_at != null' <<< "$view" > /dev/null || return 0
-  if jq -e '.pi.reserveTokens == {}' <<< "$view" > /dev/null; then
-    warn "Pi lists no models, so context.compact_at was not applied to Pi — run otto-workbench sync again once pi --list-models works"
-    return 0
+
+  local reserves='{}' withdraw='{}'
+  if jq -e '.compact_at == null' <<< "$view" > /dev/null; then
+    withdraw=$(wb_compaction_record pi)
+    [[ "$withdraw" != '{}' ]] || return 0
+  else
+    local listing
+    listing=$(_pi_user_scope pi --list-models 2> /dev/null) || listing=""
+    if ! view=$(wb_config_harness_context "$listing"); then
+      warn "Pi's compaction settings left as they were — fix the context section of config.yml"
+      return 0
+    fi
+    reserves=$(jq -c '.pi.reserveTokens' <<< "$view")
+    if [[ "$reserves" == '{}' ]]; then
+      warn "Pi lists no models, so context.compact_at was not applied to Pi — run otto-workbench sync again once pi --list-models works"
+      return 0
+    fi
   fi
 
   local existing="{}" content
@@ -709,24 +722,26 @@ step_pi_compaction() {
   [[ -n "$content" ]] && existing="$content"
 
   local result
-  result=$(jq --argjson reserves "$(jq -c '.pi.reserveTokens' <<< "$view")" '
+  result=$(jq --argjson reserves "$reserves" --argjson withdraw "$withdraw" '
+    def drop($k):
+      del(.compaction.modelOverrides[$k].reserveTokens)
+      | if .compaction.modelOverrides[$k] == {} then del(.compaction.modelOverrides[$k]) else . end;
     reduce ($reserves | to_entries[]) as $r (.;
-      if $r.value != null then
-        .compaction.modelOverrides[$r.key].reserveTokens = $r.value
+      if $r.value != null then .compaction.modelOverrides[$r.key].reserveTokens = $r.value
       elif .compaction.modelOverrides[$r.key] == null then .
-      else
-        del(.compaction.modelOverrides[$r.key].reserveTokens)
-        | if .compaction.modelOverrides[$r.key] == {} then del(.compaction.modelOverrides[$r.key]) else . end
-      end)
+      else drop($r.key) end)
+    | reduce ($withdraw | to_entries[]) as $r (.;
+      if .compaction.modelOverrides[$r.key].reserveTokens == $r.value then drop($r.key) else . end)
     | if .compaction.modelOverrides == {} then del(.compaction.modelOverrides) else . end
     | if .compaction == {} then del(.compaction) else . end
   ' <<< "$existing") || { err "Failed to write Pi's compaction settings"; return 1; }
 
-  [[ "$result" == "$(jq . <<< "$existing")" ]] && return 0
-  local tmp
-  tmp=$(mktemp "$PI_SETTINGS_FILE.XXXXXX")
-  printf '%s\n' "$result" > "$tmp" && mv "$tmp" "$PI_SETTINGS_FILE" \
-    || { rm -f "$tmp"; err "Failed to write $PI_SETTINGS_FILE"; return 1; }
+  if [[ "$result" != "$(jq . <<< "$existing")" ]]; then
+    wb_write_json_file "$PI_SETTINGS_FILE" "$result" \
+      || { err "Failed to write $PI_SETTINGS_FILE"; return 1; }
+  fi
+  wb_compaction_record_set pi "$(jq -c 'with_entries(select(.value != null))' <<< "$reserves")" \
+    || warn "Could not record Pi's compaction reserves in $COMPACTION_RECORD_FILE — unsetting context.compact_at will not withdraw them"
   return 0
 }
 

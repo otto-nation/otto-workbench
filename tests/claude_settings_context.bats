@@ -45,6 +45,28 @@ _seed_settings() {
   [ "$output" = "100000" ]
 }
 
+@test "unsetting the ceiling withdraws the window a sync wrote" {
+  _seed_config 'context:' '  compact_at: 200000'
+  _sync_run "$HOME_DIR" "$STATE_DIR"
+  _seed_config 'models: {}'
+  run _sync_run "$HOME_DIR" "$STATE_DIR"
+  [ "$status" -eq 0 ]
+  run jq -c 'has("autoCompactWindow")' "$SETTINGS_OUT"
+  [ "$output" = "false" ]
+}
+
+@test "unsetting the ceiling keeps a window changed since the sync wrote it" {
+  _seed_config 'context:' '  compact_at: 200000'
+  _sync_run "$HOME_DIR" "$STATE_DIR"
+  jq '.autoCompactWindow = 600000' "$SETTINGS_OUT" > "$BATS_TEST_TMPDIR/edited.json"
+  mv "$BATS_TEST_TMPDIR/edited.json" "$SETTINGS_OUT"
+  _seed_config 'models: {}'
+  run _sync_run "$HOME_DIR" "$STATE_DIR"
+  [ "$status" -eq 0 ]
+  run jq -r '.autoCompactWindow' "$SETTINGS_OUT"
+  [ "$output" = "600000" ]
+}
+
 @test "with no ceiling the window an older /autocompact saved is kept" {
   _seed_settings '{"autoCompactWindow":500000}'
   run _sync_run "$HOME_DIR" "$STATE_DIR"

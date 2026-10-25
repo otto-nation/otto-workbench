@@ -279,13 +279,23 @@ class ContextConfig:
     - The review prompt budget, which plans against the smaller of this and the
       model's window.
 
-    Unset, each harness compacts at its own default. Unsetting it after a sync
-    leaves the values that sync wrote; ``/autocompact auto`` and removing
-    ``compaction.modelOverrides`` from ``~/.pi/agent/settings.json`` restore the
-    defaults.
+    Unset, each harness compacts at its own default. Unsetting it withdraws what
+    an earlier sync wrote, where the value is still the one it wrote — a window
+    chosen with ``/autocompact`` since then, or a reserve edited by hand, stays.
+
+    Machine-wide only: both harnesses keep it in machine-wide settings, and Pi
+    takes no per-run override, so a repo's value would be one the review budget
+    planned against while Pi compacted somewhere else.
     """
 
-    compact_at: int | None = None
+    compact_at: int | None = field(
+        default=None,
+        metadata={"scope": ScopeRule(
+            frozenset({GLOBAL_SCOPE}),
+            "both harnesses keep it in machine-wide settings, and Pi takes no"
+            " per-run override, so a repo's value would never reach Pi",
+        )},
+    )
 
     def __post_init__(self):
         # Checked here, where the file is read, rather than by each harness:

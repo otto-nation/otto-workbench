@@ -36,10 +36,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import agent.pi_models
-from agent.context_ceiling import capped_window
+from agent.context_ceiling import backend_ceiling, capped_window, machine_ceiling
 from agent.phases import collect_phase_models, unset_review_phases
 from agent.pi_models import listed_windows
-from config.workbench_config import load_config_or_default
 from core.phases import Backend
 from review.grouping import classify_tier, format_profiles_section
 
@@ -280,7 +279,9 @@ class UnknownModelWindow(RuntimeError):
         ))
 
 
-def model_window_tokens(model: str | None, *, cwd: Path | str) -> int:
+def model_window_tokens(
+    model: str | None, *, cwd: Path | str, backend: Backend | None = None,
+) -> int:
     """The context window ``model`` is budgeted against, reviewing in *cwd*.
 
     No model (the backend's default serves the phase) budgets at
@@ -288,11 +289,17 @@ def model_window_tokens(model: str | None, *, cwd: Path | str) -> int:
     would run in *cwd*, then `MODEL_CONTEXT_TOKENS`. Anything else raises
     `UnknownModelWindow`, whatever the ceiling below.
 
-    Capped at ``context.compact_at`` for *cwd*: the conversation is compacted
-    there, so a prompt planned past it would be summarised before the agent had
-    worked on it — and it is what the operator chose to pay per request.
+    Capped where *backend* compacts under ``context.compact_at`` — on Claude
+    Code the window the CLI clamps it to, on Pi the ceiling itself — since a
+    prompt planned past it would be summarised before the agent had worked on
+    it, and it is what the operator chose to pay per request. ``None`` asks the
+    selected backend.
     """
-    compact_at = load_config_or_default(cwd).context.compact_at
+    if backend is None:
+        from agent.backend import selected_backend
+
+        backend = selected_backend()
+    compact_at = backend_ceiling(machine_ceiling(), backend)
     if not model:
         return capped_window(UNSET_MODEL_FLOOR_TOKENS, compact_at)
     catalogue = _pi_catalogue_windows(cwd)
@@ -325,7 +332,7 @@ def prompt_budget_tokens(
     The window less what the reply needs and less the system prompt and tool
     schemas the CLI adds out of sight, priced for ``backend``.
     """
-    window = model_window_tokens(model, cwd=cwd)
+    window = model_window_tokens(model, cwd=cwd, backend=backend)
     budget = window - COMPLETION_RESERVE_TOKENS - overhead_reserve_tokens(backend)
     if budget <= 0:
         raise UnknownModelWindow.too_narrow(model, window, backend)

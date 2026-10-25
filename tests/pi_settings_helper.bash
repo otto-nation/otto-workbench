@@ -16,6 +16,8 @@ pi_settings_setup() {
   # The step reads its models from the machine-wide config.yml. Sandboxed so a
   # case never reads the developer's own, and empty until _seed_config writes it.
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
+  # What step_pi_compaction records writing; read by the suites that load this.
+  export COMPACTION_RECORD_FILE="$TMPDIR/state/compaction.written.json"
   # Shadow the host `pi` so this suite never calls `pi --list-models` against
   # the developer's install. Tests that cover the check overwrite $BIN/pi;
   # tests that need it absent delete it and narrow PATH.

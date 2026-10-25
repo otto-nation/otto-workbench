@@ -26,6 +26,7 @@ from eval.scoring_cifix import CiFixTask, run_verify, verify_command
 from eval.scoring import RunOutcome, ScoringResult, aggregate_runs
 from eval.task import RunArtifacts, RunOptions, get_task, outcome_for
 import agent.backend
+import agent.context_ceiling
 import agent.phases
 from agent.models import ModelLayer, ModelRef, ResolvedModel
 
@@ -234,6 +235,7 @@ class TestCiFixTaskRun:
             seen["model"] = inv.model
             seen["thinking"] = inv.thinking
             seen["provider"] = inv.provider
+            seen["compact_at"] = inv.compact_at
             return 0
 
         monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
@@ -246,6 +248,8 @@ class TestCiFixTaskRun:
             lambda phase, explicit, cfg=None: ResolvedModel(
                 ModelRef("resolved-ci-fix", provider="anthropic", level="low"), ModelLayer.TIER),
         )
+        # The ceiling production fix passes run under, so eval numbers describe them.
+        monkeypatch.setattr(agent.context_ceiling, "machine_ceiling", lambda: 250_000)
         case_dir = _case(tmp_path, "exit 1\n")
 
         artifacts = CiFixTask().run(
@@ -254,6 +258,7 @@ class TestCiFixTaskRun:
         assert seen["model"] == "resolved-ci-fix"
         assert seen["thinking"] == "low"
         assert seen["provider"] == "anthropic"
+        assert seen["compact_at"] == 250_000
         assert CiFixTask.phase is Phase.CI_FIX
         _rm(artifacts)
 

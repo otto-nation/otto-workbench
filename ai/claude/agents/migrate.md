@@ -1,7 +1,7 @@
 ---
 name: migrate
 description: Analyze codebases for migration tasks and produce phased upgrade plans. Read-only — plans changes but does not apply them.
-model: inherit
+tier: deep
 source: otto-workbench/ai/claude/agents/migrate.md
 ---
 

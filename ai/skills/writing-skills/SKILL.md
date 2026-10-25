@@ -97,6 +97,14 @@ stub, or its protocol reaches Claude Code and not Pi. `validate-skills` fails on
 an agent file with neither a stub nor an entry in its `PROGRAMMATIC_AGENTS`
 list.
 
+An agent file itself declares `tier: deep|standard|light`, never a `model:`.
+`step_claude_agents` installs it with that tier's model and level from
+`models.*` as `model:` and `effort:`, or `model: inherit` while the tier names
+no Claude model. Pick the cheapest tier that does the job: `light` for
+text-in/text-out work, `standard` for reading pre-collected data, `deep` for an
+investigation that has to find its own way. `agent_tiers_test.py` fails on an
+agent with no tier, or with a `model:` the tier would replace.
+
 ## Step 4: Code Blocks Avoid Bash Parameter Expansion
 
 Never use `${var//pattern/replacement}` or `${var#pattern}` in a SKILL.md code

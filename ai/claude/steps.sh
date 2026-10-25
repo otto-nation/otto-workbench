@@ -519,9 +519,53 @@ step_claude_container_settings() {
   python3 "$LIB_SRC_DIR/permission_mirror.py"
 }
 
+# _claude_agent_tiers OUT — sets OUT to `config models`' claude.tiers: each tier
+# naming a Claude model, as {model, effort}. `{}` when the config cannot be read,
+# which installs every tiered agent as `inherit` — the settings step warns about
+# the config itself, so this stays quiet rather than saying it twice.
+_claude_agent_tiers() {
+  local -n __cat_out=$1
+  __cat_out='{}'
+  local view
+  view=$(wb_config_harness_models 2> /dev/null) || return 0
+  __cat_out=$(jq -c '.claude.tiers // {}' <<< "$view") || __cat_out='{}'
+}
+
+# _claude_render_agent SOURCE TIERS_JSON OUT — writes SOURCE to OUT with its
+# frontmatter `tier:` line replaced by the `model:` and `effort:` Claude Code
+# reads: the tier's model and level from TIERS_JSON, or `model: inherit` for a
+# tier that names no Claude model. A `model:` or `effort:` line beside the tier
+# is dropped, so the tier is the one answer. Only the frontmatter is rewritten.
+#
+# A tier the config does not know (a typo in an override) reads as unset and
+# installs as `inherit`; tests/agent_tiers_test.py holds the workbench's own
+# agents to the tier names.
+_claude_render_agent() {
+  local source="$1" tiers="$2" out="$3" tier model effort
+  tier=$(frontmatter_field "$source" tier)
+  model=$(jq -r --arg t "$tier" '.[$t].model // "inherit"' <<< "$tiers")
+  effort=$(jq -r --arg t "$tier" '.[$t].effort // ""' <<< "$tiers")
+  awk -v model="$model" -v effort="$effort" '
+    NR == 1 && /^---$/ { in_fm = 1; print; next }
+    in_fm && /^---$/ { in_fm = 0; print; next }
+    in_fm && /^(model|effort):/ { next }
+    in_fm && /^tier:/ {
+      print "model: " model
+      if (effort != "") print "effort: " effort
+      next
+    }
+    { print }' "$source" > "$out"
+}
+
 # step_claude_agents — copies each agent markdown file into ~/.claude/agents/.
 # Supports user overrides: user/ai/claude/agents/<name>.md replaces the default,
 # user/ai/claude/agents/<name>.disabled suppresses it entirely.
+#
+# An agent whose frontmatter declares `tier: deep|standard|light` is installed
+# with that tier's model from the machine-wide `models.*` (see
+# _claude_render_agent), so a subagent dispatched without a model of its own
+# runs on its tier rather than on whatever the session is. One without a tier is
+# copied as written.
 step_claude_agents() {
   [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_AGENTS_DIR"
@@ -542,13 +586,23 @@ step_claude_agents() {
     fi
   done
 
+  local tiers
+  _claude_agent_tiers tiers
+
   # Install from merged layers
-  local name source label
+  local name source label rendered
+  rendered=$(mktemp -d)
   for name in "${!layers[@]}"; do
     source="${layers[$name]}"
     label="${name%.md}"
+    if [[ -n "$(frontmatter_field "$source" tier)" ]]; then
+      _claude_render_agent "$source" "$tiers" "$rendered/$name" \
+        || { rm -rf "$rendered"; err "Failed to render agent $label"; return 1; }
+      source="$rendered/$name"
+    fi
     install_file "$source" "$CLAUDE_AGENTS_DIR/$name" "$label"
   done
+  rm -rf "$rendered"
 }
 
 # step_claude_machine_profile — generates ~/.claude/machine/machine.md unconditionally.

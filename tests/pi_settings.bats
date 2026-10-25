@@ -325,6 +325,21 @@ _live() {
   [ "$(_live '.modelThinkingLevels | tojson')" = '{"anthropic/claude-opus-5-5":"high"}' ]
 }
 
+@test "a routed session starts Pi on workbench/auto beside the tiers" {
+  _write_live '{"defaultProvider": "google-vertex-claude", "defaultModel": "claude-opus-4-8"}'
+  _seed_config 'models:' \
+    '  deep: anthropic/claude-opus-5-5:high' \
+    '  standard: anthropic/claude-sonnet-5-5' \
+    '  light: anthropic/claude-haiku-5-5' \
+    '  session: auto'
+  _stub_gh 'echo "{}"'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.defaultProvider + "/" + .defaultModel')" = "workbench/auto" ]
+  [ "$(_live '.enabledModels | join(",")')" = "anthropic/claude-opus-5-5,anthropic/claude-sonnet-5-5,anthropic/claude-haiku-5-5,workbench/auto" ]
+}
+
 @test "a bare id is qualified with the provider the settings end up with" {
   # Pi adds a bare pattern once per provider serving it, warning every start,
   # and keys modelThinkingLevels by exact provider/id.

@@ -240,7 +240,8 @@ def _models(_args: argparse.Namespace) -> int:
     Claude model, as the `model` and `effort` an agent declaring that tier is
     installed with; a tier absent there installs its agents as `inherit`.
     `claude.tier_names` is every tier an agent may declare, so sync can tell a
-    tier that names no model from one that does not exist.
+    tier that names no model from one that does not exist. `tiers` is each set
+    tier's reference, for the Pi model router; neither sync reads it.
     """
     cfg = config.workbench_config.load_config(None)
     view = agent.harness_models.harness_models(cfg.models)
@@ -266,6 +267,10 @@ def _models(_args: argparse.Namespace) -> int:
             "tier_names": [tier.value for tier in agent.harness_models.Tier],
         },
         "pi": {key: value for key, value in pi_keys.items() if value is not None},
+        "tiers": {
+            tier.value: {"provider": ref.provider, "id": ref.id, "level": ref.level}
+            for tier, ref in view.tiers.items()
+        },
     }, separators=(",", ":")))
     return 0
 
@@ -399,7 +404,8 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    except (config.workbench_config.ConfigError, agent.models.UnsetTier) as exc:
+    except (config.workbench_config.ConfigError, agent.models.UnsetTier,
+            agent.harness_models.AutoNeedsTiers, agent.harness_models.AutoTakesNoLevel) as exc:
         print(f"{RED}✗{NC} {exc}", file=sys.stderr)
         return 1
     except OSError as exc:

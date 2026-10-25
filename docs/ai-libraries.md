@@ -103,8 +103,18 @@ Pi:
   it does not: Pi's sync qualifies a bare id with the ``defaultProvider`` the
   settings end up with, which only the live file knows.
 
+``models.session: auto`` routes instead of naming one model. Claude Code takes
+it as ``opusplan`` — the deep tier (its ``opus`` alias) while planning, the
+standard tier (``sonnet``) otherwise. Pi takes it as the ``workbench/auto``
+virtual model the ``model-router`` extension registers, which routes each
+request to a tier and reads the tiers from ``config models``' ``tiers``. It
+needs all three tiers set and each to name its provider: the router looks a
+model up by provider and id, and a bare id would be qualified with
+``workbench``, the virtual model's provider, on its way into ``enabledModels``.
+
 Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
-the grammar a reference is written in (``agent.models``).
+the grammar a reference is written in (``agent.models``), routing a request
+(``ai/pi/extensions/model-router``).
 
 ### agent/invoke.py
 

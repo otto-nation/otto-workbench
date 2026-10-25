@@ -32,8 +32,18 @@ Pi:
   it does not: Pi's sync qualifies a bare id with the ``defaultProvider`` the
   settings end up with, which only the live file knows.
 
+``models.session: auto`` routes instead of naming one model. Claude Code takes
+it as ``opusplan`` — the deep tier (its ``opus`` alias) while planning, the
+standard tier (``sonnet``) otherwise. Pi takes it as the ``workbench/auto``
+virtual model the ``model-router`` extension registers, which routes each
+request to a tier and reads the tiers from ``config models``' ``tiers``. It
+needs all three tiers set and each to name its provider: the router looks a
+model up by provider and id, and a bare id would be qualified with
+``workbench``, the virtual model's provider, on its way into ``enabledModels``.
+
 Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
-the grammar a reference is written in (``agent.models``).
+the grammar a reference is written in (``agent.models``), routing a request
+(``ai/pi/extensions/model-router``).
 """
 
 # doc-group: pipeline
@@ -41,10 +51,11 @@ the grammar a reference is written in (``agent.models``).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import agent.backend_claude
 from agent.models import ModelRef, resolve
+from core.errors import OperatorError
 from config.workbench_config import ModelsConfig
 from core.phases import Tier
 
@@ -64,6 +75,14 @@ CLAUDE_ALIASES = frozenset({"opus", "sonnet", "haiku", "opusplan", "default"})
 # `<region>.anthropic.claude-…` Bedrock id, or a Bedrock ARN. Anchored so an id
 # merely containing the word — a fine-tune named for it — is not taken for one.
 _CLAUDE_ID = re.compile(r"^(claude-|([a-z]+\.)?anthropic\.claude-|arn:)")
+# The session that routes per request rather than naming one model, and what
+# each harness calls it: Claude Code's plan-then-build alias, and the virtual
+# model ai/pi/extensions/model-router registers. ROUTER_PROVIDER and ROUTER_ID
+# are spelled once more in that extension's route.ts, which tests hold equal.
+AUTO_SESSION = "auto"
+CLAUDE_AUTO_MODEL = "opusplan"
+ROUTER_PROVIDER = "workbench"
+ROUTER_ID = "auto"
 # The context-window suffix an alias or id may carry, as in `sonnet[1m]`.
 _WINDOW_SUFFIX = re.compile(r"\[[^\]]*\]$")
 
@@ -100,10 +119,31 @@ class PiModels:
 
 @dataclass(frozen=True)
 class HarnessModels:
-    """What the model tiers say each harness's settings should hold."""
+    """What the model tiers say each harness's settings should hold, and each tier's reference."""
 
     claude: ClaudeModels
     pi: PiModels
+    tiers: dict[Tier, ModelRef] = field(default_factory=dict)
+
+
+class AutoNeedsTiers(OperatorError):
+    """``models.session: auto`` with a tier unset, or one naming no provider."""
+
+    def __init__(self, missing: list[str]):
+        super().__init__(
+            "models.session: auto routes between all three tiers, and each must name its "
+            f"provider — fix {', '.join(missing)} (e.g. models.deep: anthropic/claude-opus-5-5)"
+        )
+
+
+class AutoTakesNoLevel(OperatorError):
+    """``models.session: auto:<level>`` — the router takes each tier's own level."""
+
+    def __init__(self, value: str):
+        super().__init__(
+            f"models.session: {value} — auto takes no level; each tier carries its own "
+            "(models.deep: anthropic/claude-opus-5-5:high), so write models.session: auto"
+        )
 
 
 def _claude_servable(ref: ModelRef) -> bool:
@@ -158,13 +198,45 @@ def _pi(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> PiModels:
     )
 
 
+def _auto(tiers: dict[Tier, ModelRef]) -> HarnessModels:
+    """The routed session: ``opusplan`` on Claude Code, ``workbench/auto`` on Pi."""
+    missing = [f"models.{tier.value}" for tier in Tier if tier not in tiers or not tiers[tier].provider]
+    if missing:
+        raise AutoNeedsTiers(missing)
+    claude = _claude(tiers, None)
+    # opusplan plans on the `opus` alias and builds on `sonnet`, which name the
+    # deep and standard tiers only while both are Claude models. With either on
+    # another provider it would plan or build on Claude Code's own default.
+    planning_tiers = (CLAUDE_TIER_ENV[Tier.DEEP], CLAUDE_TIER_ENV[Tier.STANDARD])
+    if all(key in claude.env for key in planning_tiers):
+        claude = replace(claude, model=CLAUDE_AUTO_MODEL)
+    else:
+        claude = replace(claude, skipped=[*claude.skipped, (
+            "models.session: auto needs Claude models on the deep and standard tiers for "
+            f"Claude Code's {CLAUDE_AUTO_MODEL}, so Claude Code keeps its own model"
+        )])
+    pi = _pi(tiers, None)
+    return HarnessModels(
+        claude=claude,
+        pi=replace(pi, default_model=ROUTER_ID, default_provider=ROUTER_PROVIDER,
+                   enabled=[*pi.enabled, f"{ROUTER_PROVIDER}/{ROUTER_ID}"]),
+        tiers=tiers,
+    )
+
+
 def harness_models(models: ModelsConfig) -> HarnessModels:
     """Each harness's model settings, from *models*.
 
     Raises `agent.models.UnsetTier` when ``models.session`` names a tier that is
-    unset, as any other layer naming one does.
+    unset, as any other layer naming one does, `AutoNeedsTiers` when it is
+    ``auto`` without all three tiers naming a provider, and `AutoTakesNoLevel`
+    for ``auto`` with a level.
     """
     tiers = {tier: ref for tier in Tier if (ref := resolve(getattr(models, tier.value), models,
                                                            where=f"models.{tier.value}"))}
+    if models.session == AUTO_SESSION:
+        return _auto(tiers)
+    if (models.session or "").partition(":")[0] == AUTO_SESSION:
+        raise AutoTakesNoLevel(models.session)
     session = resolve(models.session, models, where="models.session")
-    return HarnessModels(claude=_claude(tiers, session), pi=_pi(tiers, session))
+    return HarnessModels(claude=_claude(tiers, session), pi=_pi(tiers, session), tiers=tiers)

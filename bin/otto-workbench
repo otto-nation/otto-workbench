@@ -124,6 +124,7 @@ COMMANDS_CONFIG=(
   "status"                                 "Show every scope, every value, and the file it came from"
   "get KEY [DIR ...]"                      "Resolve KEY for this repo, or for each named one, with the scope that answered"
   "models"                                 "Show, as JSON, the model settings sync writes for Claude Code and Pi"
+  "context [--pi-listing FILE]"            "Show, as JSON, the compaction settings sync writes for Claude Code and Pi"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref

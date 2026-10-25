@@ -69,6 +69,8 @@
     "config:batch.mem_reserve",
     "config:batch.pool_default",
     "config:batch.pool_max",
+    "config:context",
+    "config:context.compact_at",
     "config:fix",
     "config:fix.verify_command",
     "config:fix.verify_timeout",

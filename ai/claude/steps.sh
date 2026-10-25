@@ -346,6 +346,55 @@ _claude_apply_models() {
   ' <<< "$__cam_result")
 }
 
+# _claude_apply_context RESULT_VAR — sets `autoCompactWindow` in the merged
+# settings document held in RESULT_VAR from the machine-wide `context.compact_at`
+# (wb_config_harness_context), so an interactive session compacts at the same
+# ceiling the pipeline's `--autocompact` does. A nameref for the reason
+# _claude_apply_models gives.
+#
+# Unset, the window an earlier sync wrote is withdrawn only while it still holds
+# the value $COMPACTION_RECORD_FILE says it wrote: a window set since by hand,
+# or by a Claude Code older than 2.1.288 — whose `/autocompact` wrote this key
+# before it moved to per-model `modelSettings` — is the operator's and stays. A
+# window saved with `/autocompact` for one model outranks this key for that
+# model, which is Claude Code's precedence, not ours.
+#
+# The record is written before the settings file it describes. Safe in that
+# order because withdrawal compares values: a record ahead of a write that
+# failed names a value the file does not hold, and withdraws nothing.
+_claude_apply_context() {
+  local -n __cac_result=$1
+  local view
+  if ! view=$(wb_config_harness_context); then
+    warn "Claude Code's auto-compact window left as it was — fix the context section of config.yml"
+    return 0
+  fi
+
+  local skipped
+  if ! skipped=$(jq -r '.claude.skipped[]' <<< "$view"); then
+    warn "Claude Code's auto-compact window left as it was — config context printed no skipped list"
+    return 0
+  fi
+  [[ -z "$skipped" ]] || warn "$skipped"
+
+  local recorded window
+  recorded=$(wb_compaction_record claude)
+  window=$(jq -c '.claude.autoCompactWindow' <<< "$view")
+  __cac_result=$(jq --argjson w "$window" --argjson rec "$recorded" '
+    if $w != null then .settings.autoCompactWindow = $w
+    elif $rec.autoCompactWindow != null
+      and .settings.autoCompactWindow == $rec.autoCompactWindow
+    then del(.settings.autoCompactWindow)
+    else . end
+  ' <<< "$__cac_result")
+
+  local record='{}'
+  [[ "$window" == null ]] || record=$(jq -nc --argjson w "$window" '{autoCompactWindow: $w}')
+  wb_compaction_record_set claude "$record" \
+    || warn "Could not record the auto-compact window in $COMPACTION_RECORD_FILE — unsetting context.compact_at will not withdraw it"
+  return 0
+}
+
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
 # Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
@@ -431,6 +480,8 @@ _step_claude_settings() {
     || { err "Failed to mirror $ENV_LOCAL_FILE into settings.json"; return 1; }
   _claude_apply_models result \
     || { err "Failed to write the model tiers into settings.json"; return 1; }
+  _claude_apply_context result \
+    || { err "Failed to write the auto-compact window into settings.json"; return 1; }
 
   # Both halves are staged before either is published. The two files describe
   # each other: a manifest that ran ahead of the settings file — or trailed it —

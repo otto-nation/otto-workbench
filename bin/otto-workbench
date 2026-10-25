@@ -124,6 +124,7 @@ COMMANDS_CONFIG=(
   "status"                                 "Show every scope, every value, and the file it came from"
   "get KEY [DIR ...]"                      "Resolve KEY for this repo, or for each named one, with the scope that answered"
   "models"                                 "Show, as JSON, the model settings sync writes for Claude Code and Pi"
+  "context [--pi-listing FILE]"            "Show, as JSON, the compaction settings sync writes for Claude Code and Pi"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -572,6 +573,9 @@ same owner instead of parsing a subset of the same files.
 models prints what the machine-wide models.* become in each harness's settings —
 the keys the next sync writes, and any tier Claude Code cannot be given.
 
+context prints the same for context.compact_at: Claude Code's auto-compact
+window, and with --pi-listing, Pi's per-model compaction reserves.
+
 Commands:
 $(commands_usage COMMANDS_CONFIG)
 EOF
@@ -593,6 +597,10 @@ cmd_config_models() {
   python3 "$WORKBENCH_DIR/lib/config_cli.py" models "$@"
 }
 
+cmd_config_context() {
+  python3 "$WORKBENCH_DIR/lib/config_cli.py" context "$@"
+}
+
 cmd_config() {
   local subcmd="${1:-}"
   shift 2>/dev/null || true
@@ -601,6 +609,7 @@ cmd_config() {
     status)    cmd_config_status "$@" ;;
     get)       cmd_config_get "$@" ;;
     models)    cmd_config_models "$@" ;;
+    context)   cmd_config_context "$@" ;;
     -h|--help) _config_usage; return 0 ;;
     *)         _config_usage >&2; return 1 ;;
   esac

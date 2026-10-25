@@ -173,6 +173,21 @@
         }
       }
     },
+    "context": {
+      "type": "object",
+      "properties": {
+        "compact_at": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "review": {
       "type": "object",
       "properties": {

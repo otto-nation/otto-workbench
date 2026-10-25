@@ -279,6 +279,7 @@ def run_fix(
             model=knobs.model,
             thinking=knobs.thinking,
             provider=knobs.provider,
+            compact_at=knobs.compact_at,
             label=name,
             task=task or str(phase),
             repo=repo,

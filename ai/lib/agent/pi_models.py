@@ -73,6 +73,50 @@ def listing_rows(text: str) -> list[tuple[str, str, list[str]]]:
     return rows
 
 
+def parse_context_tokens(raw: str) -> int | None:
+    """A `pi --list-models` context cell as an integer token count, or None.
+
+    Suffixes: K=1_000, M=1_000_000. Decimals are allowed. The result is
+    floored — overestimating a window is the expensive direction.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    multiplier = 1
+    suffix = text[-1]
+    if suffix in ("K", "k"):
+        multiplier = 1_000
+        text = text[:-1]
+    elif suffix in ("M", "m"):
+        multiplier = 1_000_000
+        text = text[:-1]
+    try:
+        amount = float(text)
+    except ValueError:
+        return None
+    if amount < 0:
+        return None
+    tokens = int(amount * multiplier)
+    if tokens <= 0:
+        return None
+    return tokens
+
+
+def listed_windows(text: str) -> dict[tuple[str, str], int]:
+    """``(provider, model)`` -> context window, for each row of a listing that has one.
+
+    Keyed by both columns because one id served by two providers can have two
+    windows. A row whose context cell does not parse is left out rather than
+    guessed at.
+    """
+    windows: dict[tuple[str, str], int] = {}
+    for provider, model, rest in listing_rows(text):
+        tokens = parse_context_tokens(rest[0]) if rest else None
+        if tokens is not None:
+            windows[(provider, model)] = tokens
+    return windows
+
+
 def parse_listed_ids(text: str, provider: str | None = None) -> frozenset[str]:
     """Model ids from a `pi --list-models` listing, optionally one provider.
 

@@ -259,6 +259,53 @@ class ModelsConfig:
 
 
 @dataclass(frozen=True)
+class ContextConfig:
+    """How large a conversation may grow before it is compacted.
+
+    ``compact_at`` is a token count, and a ceiling rather than a target: a model
+    whose window is at or below it compacts where it always did, near the
+    window. Above it, every turn resends the whole history, so a 1M-token
+    window left to fill costs several times per request what the same work
+    costs compacted at 200k — and several providers charge more again for the
+    tokens past a breakpoint.
+
+    The workbench applies it everywhere a conversation can grow:
+
+    - Claude Code's ``autoCompactWindow``, written at sync, and ``--autocompact``
+      on the pipeline's agent runs, which do not read user settings. The CLI
+      takes 100k to 1M, so a value outside that runs at the nearer end.
+    - Pi's ``compaction.modelOverrides``, written at sync for every model the
+      catalogue lists with a wider window. Pi's pipeline runs read the same file.
+    - The review prompt budget, which plans against the smaller of this and the
+      model's window.
+
+    Unset, each harness compacts at its own default. Unsetting it withdraws what
+    an earlier sync wrote, where the value is still the one it wrote — a window
+    chosen with ``/autocompact`` since then, or a reserve edited by hand, stays.
+
+    Machine-wide only: both harnesses keep it in machine-wide settings, and Pi
+    takes no per-run override, so a repo's value would be one the review budget
+    planned against while Pi compacted somewhere else.
+    """
+
+    compact_at: int | None = field(
+        default=None,
+        metadata={"scope": ScopeRule(
+            frozenset({GLOBAL_SCOPE}),
+            "both harnesses keep it in machine-wide settings, and Pi takes no"
+            " per-run override, so a repo's value would never reach Pi",
+        )},
+    )
+
+    def __post_init__(self):
+        # Checked here, where the file is read, rather than by each harness:
+        # Pi refuses a reserve larger than the window, and a ceiling of zero
+        # would compact after every turn.
+        if self.compact_at is not None and self.compact_at <= 0:
+            raise ValueError(f"context.compact_at must be a positive token count, not {self.compact_at}")
+
+
+@dataclass(frozen=True)
 class IssuesConfig:
     """Where a repo files its issues, and what it labels them with.
 
@@ -528,6 +575,7 @@ class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     models: ModelsConfig = field(default_factory=ModelsConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     issues: IssuesConfig = field(default_factory=IssuesConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)

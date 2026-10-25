@@ -147,6 +147,7 @@ class PhaseRunner:
         self.model = settings.model
         self.thinking = settings.thinking
         self.provider = settings.provider
+        self.compact_at = settings.compact_at
         self.budget = agent.phases.phase_budget(phase, job.effort)
         self.agent = None if spec.shape is PhaseShape.FIX else (
             spec.agent if spec.agent is not None else preset.agent
@@ -169,6 +170,7 @@ class PhaseRunner:
             model=self.model,
             thinking=self.thinking,
             provider=self.provider,
+            compact_at=self.compact_at,
             label=label,
             phase=str(self.phase),
             # Labels only: the backend never reads them, the usage ledger does.

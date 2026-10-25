@@ -5,6 +5,7 @@ Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
        otto-workbench config status
        otto-workbench config get KEY [DIR ...]
        otto-workbench config models
+       otto-workbench config context [--pi-listing FILE]
 
 `get` is the read side for a caller that is not Python.  `ai/lib/
 workbench_config.py` owns which files a key is resolved from; bash has no
@@ -105,6 +106,7 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+import agent.context_ceiling  # noqa: E402
 import agent.harness_models  # noqa: E402
 import agent.models  # noqa: E402
 import config.workbench_config  # noqa: E402
@@ -164,6 +166,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "models", help="print the model tiers as Claude Code and Pi settings, as JSON",
     )
     harness.set_defaults(run=_models)
+    context = sub.add_parser(
+        "context", help="print context.compact_at as Claude Code and Pi settings, as JSON",
+    )
+    context.add_argument(
+        "--pi-listing", metavar="FILE",
+        help="a `pi --list-models` listing (- for stdin) to size Pi's per-model reserves from",
+    )
+    context.set_defaults(run=_context)
     return parser.parse_args(argv)
 
 
@@ -247,6 +257,35 @@ def _models(_args: argparse.Namespace) -> int:
             "skipped": claude.skipped,
         },
         "pi": {key: value for key, value in pi_keys.items() if value is not None},
+    }, separators=(",", ":")))
+    return 0
+
+
+def _context(args: argparse.Namespace) -> int:
+    """Print the machine-wide ``context.compact_at`` as each harness's settings.
+
+    `compact_at` is the ceiling as written, null when unset.
+    `claude.autoCompactWindow` is null when the ceiling is unset, which the sync
+    reads as "leave Claude Code's own"; `claude.skipped` explains a ceiling the
+    CLI cannot take as written. `pi.reserveTokens` maps each listed
+    `provider/id` to the reserve that compacts it at the ceiling, or to null
+    where its window is already at or below it. It is empty when the ceiling is
+    unset or no listing was given, and the sync then leaves Pi's file alone.
+    Machine-wide only, for the reason `config models` gives.
+    """
+    compact_at = config.workbench_config.load_config(None).context.compact_at
+    claude = agent.context_ceiling.claude_window(compact_at)
+    reserves: dict[str, int | None] = {}
+    if compact_at is not None and args.pi_listing:
+        listing = sys.stdin.read() if args.pi_listing == "-" else Path(args.pi_listing).read_text()
+        reserves = agent.context_ceiling.pi_reserve_tokens(compact_at, listing)
+    print(json.dumps({
+        "compact_at": compact_at,
+        "claude": {
+            "autoCompactWindow": claude.window,
+            "skipped": [claude.note] if claude.note else [],
+        },
+        "pi": {"reserveTokens": reserves},
     }, separators=(",", ":")))
     return 0
 

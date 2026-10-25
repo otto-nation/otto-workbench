@@ -188,6 +188,7 @@ Every key any of them accepts:
 | `models.standard` | string | — |
 | `models.light` | string | — |
 | `models.session` | string | — |
+| `context.compact_at` | integer | — |
 | `review.effort` | `low`, `medium`, `high` | — |
 | `review.self_effort` | `low`, `medium`, `high` | — |
 | `issues.provider` | `linear`, `github`, `jira` | — |
@@ -209,6 +210,8 @@ Every key any of them accepts:
 | `batch.mem_pressure_max` | number | `5.0` |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `ci_verify`, `rebase`, `prepush_fix`, `describe`, `create`
+
+`context.compact_at` may only be written at global scope: both harnesses keep it in machine-wide settings, and Pi takes no per-run override, so a repo's value would never reach Pi.
 
 `fix.verify_command` may only be written at container, project scope: it names a command inside one repo's checkout, which a machine-wide value would point every other repo at.
 
@@ -300,6 +303,10 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 | `wb_config_split_record RECORD SCOPE_OUT VALUE_OUT DIR_OUT` | the three fields of one `otto-workbench config get` record, assigned to the named variables. |
 | `wb_config_get KEY [DEFAULT]` | a dotted config key resolved for the repo the caller is standing in, or DEFAULT when no scope sets it. Returns 1, printing why, when KEY is not one the config surface defines. |
 | `wb_config_harness_models` | prints, as one JSON object, what the machine-wide `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`, in the shape `config models` documents in `lib/config_cli.py`. Returns 1, printing why, when the config names a tier it leaves unset or cannot be read. |
+| `wb_config_harness_context [LISTING]` | prints, as one JSON object, what the machine-wide `context.compact_at` says Claude Code's and Pi's compaction settings should hold, in the shape `config context` documents in `lib/config_cli.py`. LISTING is a `pi --list-models` listing; without one the Pi half is empty. Returns 1, printing why, when the config cannot be read. |
+| `wb_compaction_record HALF` | prints the object HALF (`claude` or `pi`) of $COMPACTION_RECORD_FILE: what the last sync wrote for context.compact_at into that harness's settings. `{}` when nothing was recorded or the file is unreadable, which withdraws nothing. |
+| `wb_compaction_record_set HALF JSON` | replaces HALF of $COMPACTION_RECORD_FILE with JSON, leaving the other harness's half as it was. Returns 1 when the file cannot be written. |
+| `wb_write_json_file PATH JSON` | replaces PATH with JSON through a sibling temp file, so a sync that dies mid-write leaves the old file whole. 0644, as the settings files it replaces are; mktemp answers 0600. Returns 1, leaving no temp file behind, when the write fails. |
 
 Loaded via `ui.sh`.
 

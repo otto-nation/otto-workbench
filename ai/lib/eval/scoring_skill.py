@@ -551,6 +551,7 @@ class SkillTask:
                 model=settings.model,
                 thinking=settings.thinking,
                 provider=settings.provider,
+                compact_at=settings.compact_at,
                 env=env,
                 task="eval-skill",
                 repo="eval/corpus",

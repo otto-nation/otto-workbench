@@ -121,6 +121,7 @@ class CiFixTask:
             model=settings.model,
             thinking=settings.thinking,
             provider=settings.provider,
+            compact_at=settings.compact_at,
             task="eval-ci-fix",
             repo="eval/corpus",
             rules_home=opts.rules_home,

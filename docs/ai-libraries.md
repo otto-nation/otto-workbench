@@ -26,6 +26,34 @@ The permitted set is narrower than the layer number alone: `gh` and `agent` both
 
 The orchestration of a review run: what it checks before spending anything, how the work is split into phases, what each agent is asked, and where the run's artifacts live.
 
+### agent/context_ceiling.py
+
+``context.compact_at`` as each harness's own compaction settings read it.
+
+The config names one ceiling in tokens; each harness spells the point it
+compacts at differently, and this module is the one translation, so the two
+syncs and the pipeline cannot read the ceiling two ways.
+
+- Claude Code compacts when the context reaches its auto-compact window
+  (``autoCompactWindow`` in settings, ``--autocompact`` on the CLI), which it
+  takes from 100k to 1M tokens and caps at the model's window itself.
+- Pi compacts when ``contextTokens > contextWindow - reserveTokens``, set per
+  model under ``compaction.modelOverrides["provider/id"]``. A reserve of
+  ``window - compact_at`` makes that ``contextTokens > compact_at``. The reserve
+  decides only when compaction starts: Pi sizes the summary request from the
+  model's output limit, not from it, so a reserve of 800k on a 1M model asks
+  for no 800k-token reply.
+- The review budget plans a prompt against the ceiling the selected backend
+  actually compacts at, when that is under the model's window.
+
+The ceiling is machine-wide, and ``machine_ceiling`` is the one place it is
+read. Both harnesses keep it in machine-wide settings, and Pi takes no
+per-run override, so a repo-level value would be one the review budget
+planned against and Pi never applied.
+
+Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
+reading the catalogue (``agent.pi_models``).
+
 ### agent/diagnosis.py
 
 Why an agent run produced no output, classified once and rendered on demand.
@@ -719,7 +747,8 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model. It subtracts
+the fallback when the catalogue cannot be read or lacks the model, and capped at
+``context.compact_at`` when that is set. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of

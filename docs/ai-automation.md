@@ -813,7 +813,7 @@ Pi reads *and writes* `~/.pi/agent/settings.json` — `pi install`, `pi config` 
 Ctrl+S in `/model` all land there — so `step_pi_settings` ([`ai/pi/steps.sh`](../ai/pi/steps.sh))
 merges the workbench's template into that file rather than copying over it. Scalar
 keys are seeds: one the live file already carries stays as whatever set it first,
-so a changed template default never reaches a machine that has the key; delete it there to be re-seeded. Model keys come from `models.*` instead (`otto-workbench config models`), and per-model compaction reserves from `context.compact_at` (`otto-workbench config context`, written by `step_pi_compaction` after the package refresh). A
+so a changed template default never reaches a machine that has the key; delete it there to be re-seeded. Model keys come from `models.*` instead (`otto-workbench config models`), and per-model compaction reserves from `context.compact_at` (`otto-workbench config context`, written by `step_pi_compaction` after the package refresh). `models.session: auto` starts Pi on `workbench/auto`, the virtual model the `model-router` extension registers to route each request to a tier, and Claude Code on `opusplan`. A
 `defaultModel` or `enabledModels` entry `pi --list-models` does not list is a
 sync warning, not a failure, whoever wrote it. That check (`step_pi_models`)
 runs after the package refresh and asks the user's own pi from `$HOME`, so neither

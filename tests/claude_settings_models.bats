@@ -98,6 +98,18 @@ _seed_settings() {
   [ "$output" = '{"model":"claude-opus-5-5","env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"claude-opus-5-5"}}' ]
 }
 
+@test "a routed session runs opusplan, planning on deep and building on standard" {
+  _seed_settings '{"model":"claude-opus-5-5","effortLevel":"high"}'
+  _seed_config 'models:' \
+    '  deep: anthropic/claude-opus-5-5' \
+    '  standard: anthropic/claude-sonnet-5-5' \
+    '  light: anthropic/claude-haiku-5-5' \
+    '  session: auto'
+  _sync_run "$HOME_DIR" "$STATE_DIR"
+  run jq -c '{model, effortLevel, opus: .env.ANTHROPIC_DEFAULT_OPUS_MODEL, sonnet: .env.ANTHROPIC_DEFAULT_SONNET_MODEL}' "$SETTINGS_OUT"
+  [ "$output" = '{"model":"opusplan","effortLevel":"high","opus":"claude-opus-5-5","sonnet":"claude-sonnet-5-5"}' ]
+}
+
 @test "a second sync reproduces the model settings byte for byte" {
   _seed_config 'models:' '  deep: claude-opus-5-5:high' '  session: deep'
   _sync_run "$HOME_DIR" "$STATE_DIR"

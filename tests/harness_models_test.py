@@ -15,7 +15,7 @@ from conftest import _load_lib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent.harness_models import CLAUDE_MANAGED_ENV, harness_models
+from agent.harness_models import CLAUDE_MANAGED_ENV, AutoNeedsTiers, harness_models
 from agent.models import UnsetTier
 from config.workbench_config import ModelsConfig
 
@@ -171,4 +171,68 @@ def test_config_models_refuses_an_unset_tier_in_one_line(capsys, roots):
     assert config_cli.main(["models"]) == 1
     err = capsys.readouterr().err
     assert "standard" in err
+    assert "Traceback" not in err
+
+
+# ─── models.session: auto ───────────────────────────────────────────────────
+
+_ROUTED = ModelsConfig(
+    deep="anthropic/claude-opus-5-5:high", standard="anthropic/claude-sonnet-5-5",
+    light="openai/gpt-6-luna", session="auto",
+)
+
+
+def test_auto_runs_opusplan_on_claude_code_behind_the_tier_aliases():
+    claude = harness_models(_ROUTED).claude
+    assert (claude.model, claude.effort) == ("opusplan", None)
+    # opusplan resolves through these, so it plans on deep and builds on standard.
+    assert claude.env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5-5"
+    assert claude.env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-sonnet-5-5"
+
+
+def test_auto_starts_pi_on_the_router_and_enables_every_tier_beside_it():
+    pi = harness_models(_ROUTED).pi
+    assert (pi.default_model, pi.default_provider, pi.default_thinking) == ("auto", "workbench", None)
+    assert pi.enabled == [
+        "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "openai/gpt-6-luna", "workbench/auto",
+    ]
+
+
+@pytest.mark.parametrize("models, missing", [
+    (ModelsConfig(deep="anthropic/claude-opus-5-5", standard="anthropic/claude-sonnet-5-5", session="auto"),
+     "models.light"),
+    # A bare id would be qualified with `workbench` on its way into enabledModels.
+    (ModelsConfig(deep="claude-opus-5-5", standard="anthropic/claude-sonnet-5-5",
+                  light="anthropic/claude-haiku-5-5", session="auto"), "models.deep"),
+])
+def test_auto_needs_every_tier_to_name_its_provider(models, missing):
+    with pytest.raises(AutoNeedsTiers, match=f"fix {missing}"):
+        harness_models(models)
+
+
+def test_config_models_prints_each_tier_for_the_router(capsys, roots):
+    config_root, _ = roots
+    _write(config_root / "config.yml", """
+models:
+  deep: anthropic/claude-opus-5-5:high
+  standard: anthropic/claude-sonnet-5-5
+  light: openai/gpt-6-luna
+  session: auto
+""")
+    assert config_cli.main(["models"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["tiers"] == {
+        "deep": {"provider": "anthropic", "id": "claude-opus-5-5", "level": "high"},
+        "standard": {"provider": "anthropic", "id": "claude-sonnet-5-5", "level": None},
+        "light": {"provider": "openai", "id": "gpt-6-luna", "level": None},
+    }
+    assert out["claude"]["model"] == "opusplan"
+
+
+def test_config_models_refuses_an_incomplete_auto_in_one_line(capsys, roots):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "models:\n  deep: anthropic/claude-opus-5-5\n  session: auto\n")
+    assert config_cli.main(["models"]) == 1
+    err = capsys.readouterr().err
+    assert "models.standard, models.light" in err
     assert "Traceback" not in err

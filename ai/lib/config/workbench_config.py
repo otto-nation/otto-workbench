@@ -250,6 +250,12 @@ class ModelsConfig:
     ``session`` is what an interactive Claude Code or Pi session starts on — a
     tier name, or a model in the same grammar. The workbench writes it into each
     harness's settings at sync. Unset, each harness keeps its own default.
+    ``auto`` routes instead: Claude Code runs ``opusplan`` (deep while planning,
+    standard otherwise), and Pi runs ``workbench/auto``, which starts on
+    standard, moves to deep when a planning skill loads, back to standard for
+    good at the first edit outside the workspace's plans and specs, and sends
+    requests outside the agent loop (compaction summaries) to light. It needs
+    all three tiers set, each naming its provider.
     """
 
     deep: str | None = None

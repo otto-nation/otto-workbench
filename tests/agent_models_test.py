@@ -192,6 +192,13 @@ def test_the_removed_provider_env_key_is_refused_not_ignored(roots, monkeypatch,
     assert "provider/id" in str(caught.value)
 
 
+def test_phase_model_refuses_the_removed_provider_env_key(roots, monkeypatch):
+    cfg = _cfg(roots, "models:\n  light: claude-haiku-5-5\n")
+    monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "xai")
+    with pytest.raises(agent.phases.RemovedSetting):
+        agent.phases.phase_model(Phase.SCOUT, None, cfg)
+
+
 def test_the_removed_provider_env_key_is_an_operator_error(monkeypatch):
     """So an entry point ends on its one line, not a traceback."""
     import core.errors

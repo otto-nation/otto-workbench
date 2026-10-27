@@ -444,8 +444,7 @@ class TestRunWiring:
 
         monkeypatch.setattr(agent.backend, "invoke_fix", stub_invoke_fix)
         # One reference carries all three; the scorer must pass each part on.
-        for key in ("WORKBENCH_AI_THINKING",):
-            monkeypatch.delenv(key, raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         monkeypatch.delenv(Phase.COMMENTS_FIX.thinking_env_key, raising=False)
         monkeypatch.setattr(
             agent.phases, "resolve_phase_model",

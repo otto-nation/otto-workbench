@@ -83,7 +83,8 @@ def reject_removed_provider_env() -> None:
 
     Ignoring it would send a run to Pi's default provider with no sign that the
     operator asked for another. Refused where a phase's settings are resolved,
-    so every entry point — a review, a fix pass, a describe — stops on it.
+    so every path that names a model — `phase_model`, `collect_phase_models`,
+    `phase_settings` — stops on it.
     """
     if REMOVED_PROVIDER_ENV in os.environ:
         raise RemovedSetting(
@@ -118,6 +119,7 @@ def resolve_phase_model(
     letting a lower layer answer. The phase's own tier unset is not an error:
     it runs on the backend's default.
     """
+    reject_removed_provider_env()
     phase = Phase(phase)
     cfg = _config(cfg)
     override = cfg.agent.phases.get(phase)

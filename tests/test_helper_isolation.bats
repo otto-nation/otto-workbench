@@ -232,10 +232,11 @@ _shim_fixture() {
   local real="$BATS_TEST_TMPDIR/real-home"
   mkdir -p "$real/.config/workbench"
   printf 'models:\n  light: claude-haiku-4-5\n' > "$real/.config/workbench/config.yml"
-  run env -u WORKBENCH_CONFIG_DIR HOME="$real" XDG_CONFIG_HOME="$real/.config" \
+  run env -u WORKBENCH_CONFIG_DIR -u WORKBENCH_DATA_DIR -u WORKBENCH_STATE_DIR HOME="$real" XDG_CONFIG_HOME="$real/.config" \
     PYTHONPATH="$REPO_ROOT/ai/lib" PYTHONDONTWRITEBYTECODE=1 \
     python3 -c 'import config.workbench_config as c; print(c.load_config_or_default(None).models.light)'
   # Control: with the pin removed the machine's config is what answers.
+  [ "$status" -eq 0 ]
   [ "$output" = "claude-haiku-4-5" ]
   run env HOME="$real" XDG_CONFIG_HOME="$real/.config" \
     PYTHONPATH="$REPO_ROOT/ai/lib" PYTHONDONTWRITEBYTECODE=1 \

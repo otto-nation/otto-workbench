@@ -212,3 +212,34 @@ _shim_fixture() {
   [[ "$stderr" == *"no runnable $tool on PATH"* ]]
   [ ! -e "$BATS_TEST_TMPDIR/narrow-bin/$tool" ]
 }
+
+# ── the config root ──────────────────────────────────────────────────────────
+
+@test "common_setup gives each case a config root of its own" {
+  [[ "$WORKBENCH_CONFIG_DIR" == "$BATS_TEST_TMPDIR"/* ]]
+  [ ! -e "$WORKBENCH_CONFIG_DIR/config.yml" ]
+}
+
+@test "the python config reader resolves to that root, not the machine's" {
+  run env PYTHONPATH="$REPO_ROOT/ai/lib" PYTHONDONTWRITEBYTECODE=1 \
+    python3 -c 'import core.workbench_paths as p; print(p.config_dir())'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$WORKBENCH_CONFIG_DIR" ]
+}
+
+@test "a config the machine holds does not reach a case that never asked for it" {
+  # The developer's real config names a model; the case must still see none.
+  local real="$BATS_TEST_TMPDIR/real-home"
+  mkdir -p "$real/.config/workbench"
+  printf 'models:\n  light: claude-haiku-4-5\n' > "$real/.config/workbench/config.yml"
+  run env -u WORKBENCH_CONFIG_DIR HOME="$real" XDG_CONFIG_HOME="$real/.config" \
+    PYTHONPATH="$REPO_ROOT/ai/lib" PYTHONDONTWRITEBYTECODE=1 \
+    python3 -c 'import config.workbench_config as c; print(c.load_config_or_default(None).models.light)'
+  # Control: with the pin removed the machine's config is what answers.
+  [ "$output" = "claude-haiku-4-5" ]
+  run env HOME="$real" XDG_CONFIG_HOME="$real/.config" \
+    PYTHONPATH="$REPO_ROOT/ai/lib" PYTHONDONTWRITEBYTECODE=1 \
+    python3 -c 'import config.workbench_config as c; print(c.load_config_or_default(None).models.light)'
+  [ "$status" -eq 0 ]
+  [ "$output" = "None" ]
+}

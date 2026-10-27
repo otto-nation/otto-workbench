@@ -240,7 +240,7 @@ class TestCiFixTaskRun:
 
         monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
         # One reference carries all three; the scorer must pass each part on.
-        for key in ("WORKBENCH_AI_PROVIDER", "WORKBENCH_AI_THINKING"):
+        for key in ("WORKBENCH_AI_THINKING",):
             monkeypatch.delenv(key, raising=False)
         monkeypatch.delenv(Phase.CI_FIX.thinking_env_key, raising=False)
         monkeypatch.setattr(

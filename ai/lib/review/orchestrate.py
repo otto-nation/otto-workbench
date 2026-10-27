@@ -47,7 +47,7 @@ import core.proc
 
 import pr.target
 from agent.registry import phase_skips
-from core.phases import Backend, Effort, Mode
+from core.phases import Effort, Mode
 from review.paths import (
     read_review_meta, stamp_reviewed, write_review_meta,
 )
@@ -66,8 +66,7 @@ from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
-from agent.phases import collect_phase_models, resolve_effort, unset_review_phases
-from agent.pi_models import ModelNotConfigured
+from agent.phases import collect_phase_models, resolve_effort
 from review.pipeline import (
     EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
@@ -95,27 +94,6 @@ def _log_ai_backend(trail) -> None:
         else:
             data[key] = val or ""
     trail.info("ai_backend", "resolved AI backend configuration", data=data)
-
-
-def _models_cover_provider(explicit: str | None, cwd: str, trail) -> bool:
-    """Whether every review phase has a model, when Pi runs with a provider.
-
-    Pi exits 1 on ``--provider`` without ``--model``, so a phase that names no
-    model would refuse at spawn — after the review has paid for metadata and
-    collection. Checked here instead, beside the other preflights.
-    """
-    if agent.backend.selected_backend() is not Backend.PI:
-        return True
-    # A phase with no model has no reference to carry a provider, so only the
-    # environment's provider can reach Pi without a model.
-    provider = agent.phases.resolve_provider()
-    unset = unset_review_phases(explicit, cwd)
-    if not provider or not unset:
-        return True
-    err = ModelNotConfigured(provider)
-    core.log.error(f"Cannot start the review: {err} Phases without one: {', '.join(unset)}.")
-    trail.decision("model_preflight", "aborting review", reason=str(err))
-    return False
 
 
 def _budgets_are_derivable(phase_models, trail, cwd: str) -> bool:
@@ -454,8 +432,8 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     # Against the worktree's own config, not just the global scope: this is the
     # same resolution `ReviewJob.config` makes, and checking a different one
     # would clear a model the review never runs while missing the one it does.
-    if not _models_cover_provider(args.model, args.repo_dir, trail):
-        return 1
+    # Before metadata and collection are paid for, not at the first phase.
+    agent.phases.reject_removed_provider_env()
     phase_models = collect_phase_models(args.model, args.repo_dir)
     if not agent.backend.preflight(phase_models, trail):
         return 1

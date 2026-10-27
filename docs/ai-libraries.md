@@ -186,9 +186,11 @@ level as well as an id, and a tier name borrows that tier's model.
 
 Each part of the chosen reference ranks where the layer that wrote it ranks.
 Its provider belongs to its id — an id is a name in one provider's catalogue —
-so a provider written on the reference is the one it runs on, and
-WORKBENCH_AI_PROVIDER only supplies one to a reference that names none. Its
-level joins the thinking chain at its layer's height (`phase_settings`).
+so a provider is written on the reference (``xai/grok-4.6``) and nowhere else;
+a reference that names none leaves the backend's own default provider in
+charge. There is no setting that supplies one to every phase, because that would
+send an id to a catalogue it is not a name in. Its level joins the thinking
+chain at its layer's height (`phase_settings`).
 
 The effort preset sits between the config and the built-in for thinking level,
 the one knob a review's depth setting flattens. It also scales the turn budget,
@@ -199,8 +201,9 @@ would discard a per-phase override.
 **No built-in model.** A phase names a tier, not a model, so when no layer
 sets one — the tier unset in ``models`` too — the model is ``None`` and the
 backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
-Pi refuses a provider without a model, which
-``agent.pi_models.require_model_with_provider`` reports before anything runs.
+Pi refuses a provider without a model; a reference always carries its id, so
+no phase reaches that, and ``agent.pi_models.require_model_with_provider`` stays
+as the spawn's own guard for a caller that hands a provider in directly.
 
 ### agent/registry.py
 

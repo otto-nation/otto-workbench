@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
 
 import agent.pi_binary
 import agent.pi_models
+from agent.models import ModelRef
 from review.budget import prompt_budget_bytes
 from core.phases import Phase
 
@@ -414,7 +415,7 @@ class TestCollectionBudgetsForEveryPhase:
         # and asserting nothing.
         monkeypatch.setattr(
             review.budget, "collect_phase_models",
-            lambda *_: {"claude-sonnet-5": [], "claude-sonnet-4-6": []},
+            lambda *_: {ModelRef("claude-sonnet-5"): [], ModelRef("claude-sonnet-4-6"): []},
         )
         # The ladder's target, since collection is sizing what the ladder will
         # later be handed rather than the ceiling it is refused at.
@@ -435,7 +436,7 @@ class TestCollectionBudgetsForEveryPhase:
 
         def _record(explicit, project_root=None):
             seen["explicit"], seen["root"] = explicit, project_root
-            return {"claude-sonnet-5": []}
+            return {ModelRef("claude-sonnet-5"): []}
 
         monkeypatch.setattr(review.budget, "collect_phase_models", _record)
         review.budget.collection_budget_bytes("m", project_root="/wt")

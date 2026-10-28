@@ -104,10 +104,10 @@ def _budgets_are_derivable(phase_models, trail, cwd: str) -> bool:
     metadata and preflight collection. Phases with no configured model are
     absent from `phase_models` and budget against the unset-model floor.
     """
-    for model, phases in sorted(phase_models.items()):
+    for ref, phases in sorted(phase_models.items(), key=lambda item: item[0].spec()):
         named = ", ".join(str(p) for p in phases)
         try:
-            budget = prompt_budget_bytes(model, cwd=cwd)
+            budget = prompt_budget_bytes(ref.id, cwd=cwd)
         except UnknownModelWindow as exc:
             core.log.error(f"Cannot budget prompts for {named}: {exc}")
             trail.decision(
@@ -435,7 +435,7 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     # Before metadata and collection are paid for, not at the first phase.
     agent.phases.reject_removed_provider_env()
     phase_models = collect_phase_models(args.model, args.repo_dir)
-    if not agent.backend.preflight(phase_models, trail):
+    if not agent.backend.preflight(phase_models, trail, args.repo_dir):
         return 1
     if not _budgets_are_derivable(phase_models, trail, args.repo_dir):
         return 1

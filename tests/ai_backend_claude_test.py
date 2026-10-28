@@ -4,12 +4,14 @@ import subprocess
 import sys
 import types
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_claude
+from agent.models import ModelRef
 from core.phases import Phase
 from ai_backend_test import _recording_popen
 import agent.vertex_quota
@@ -180,7 +182,8 @@ class TestPromptStderr:
 
 
 class TestPreflight:
-    def test_delegates_to_vertex_quota(self, monkeypatch):
+    def test_delegates_to_vertex_quota_with_bare_ids(self, monkeypatch):
+        """The quota check reads ids; a re-keyed map must not hand it a reference."""
         seen = {}
 
         def fake_run(models, trail):
@@ -188,9 +191,44 @@ class TestPreflight:
             return False
 
         monkeypatch.setattr(agent.vertex_quota, "run_preflight", fake_run)
-        models = {"claude-sonnet-5": ["group"]}
-        assert agent.backend_claude.preflight(models, object()) is False
-        assert seen["models"] == models
+        models = {ModelRef("claude-sonnet-5"): ["group"]}
+        assert agent.backend_claude.preflight(models, object(), ".") is False
+        assert seen["models"] == {"claude-sonnet-5": ["group"]}
+
+    def test_one_id_under_two_references_is_checked_once(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            agent.vertex_quota, "run_preflight",
+            lambda models, trail: seen.setdefault("models", models) is not None,
+        )
+        monkeypatch.setattr(agent.backend_claude, "ledger_provider", lambda: "anthropic")
+        models = {
+            ModelRef("claude-sonnet-5"): ["group"],
+            ModelRef("claude-sonnet-5", "anthropic"): ["scout"],
+        }
+        assert agent.backend_claude.preflight(models, object(), ".") is True
+        assert seen["models"] == {"claude-sonnet-5": ["group", "scout"]}
+
+    def test_a_reference_naming_another_provider_stops_the_run(self, monkeypatch):
+        """The CLI takes --model with no provider, so xai/grok-4.6 would run on the wrong catalogue."""
+        monkeypatch.setattr(agent.backend_claude, "ledger_provider", lambda: "anthropic")
+        monkeypatch.setattr(
+            agent.vertex_quota, "run_preflight",
+            lambda *_: pytest.fail("quota checked a run already refused"),
+        )
+        trail = MagicMock()
+        models = {ModelRef("grok-4.6", "xai"): ["scout"], ModelRef("claude-sonnet-5"): ["single"]}
+        assert agent.backend_claude.preflight(models, trail, ".") is False
+        reason = trail.decision.call_args.kwargs["reason"]
+        assert "xai/grok-4.6" in reason
+        assert "scout" in reason
+        assert "agent.backend" in reason
+
+    def test_a_reference_naming_the_served_provider_passes(self, monkeypatch):
+        monkeypatch.setattr(agent.backend_claude, "ledger_provider", lambda: "google-vertex-claude")
+        monkeypatch.setattr(agent.vertex_quota, "run_preflight", lambda *_: True)
+        models = {ModelRef("claude-sonnet-5", "google-vertex-claude"): ["single"]}
+        assert agent.backend_claude.preflight(models, object(), ".") is True
 
 
 class TestEveryCommandCarriesAnAddDir:

@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
 
+from agent.models import ModelRef
 from core.phases import Phase
 import agent.backend
 import pr.target
@@ -39,7 +40,7 @@ class TestPromptBudgetsArePreflighted:
         """`sonnet` is no longer rewritten through AI_SONNET_MODEL, so it is an
         id with no recorded window, like any other unmeasured model."""
         with contextlib.redirect_stderr(io.StringIO()):
-            ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, MagicMock(), ".")
+            ok = ro._budgets_are_derivable({ModelRef("sonnet"): [ro.Phase.SCOUT]}, MagicMock(), ".")
         assert not ok
 
     def test_no_configured_models_passes(self, ro):
@@ -52,25 +53,25 @@ class TestPromptBudgetsArePreflighted:
     def test_a_resolved_model_warns_about_nothing(self, ro):
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"claude-sonnet-5": [ro.Phase.SCOUT]}, trail, ".")
+            ro._budgets_are_derivable({ModelRef("claude-sonnet-5"): [ro.Phase.SCOUT]}, trail, ".")
         assert err.getvalue() == ""
         assert not trail.decision.called
 
     def test_an_unknown_concrete_model_still_aborts(self, ro):
         """A model nobody has measured is not a model to guess a window for."""
         with contextlib.redirect_stderr(io.StringIO()):
-            ok = ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT]}, MagicMock(), ".")
+            ok = ro._budgets_are_derivable({ModelRef("gpt-5"): [ro.Phase.SCOUT]}, MagicMock(), ".")
         assert not ok
 
     def test_a_known_model_passes(self, ro):
         assert ro._budgets_are_derivable(
-            {"claude-sonnet-5": [ro.Phase.SCOUT]}, MagicMock(), ".",
+            {ModelRef("claude-sonnet-5"): [ro.Phase.SCOUT]}, MagicMock(), ".",
         )
 
     def test_the_failure_names_the_phases_it_blocks(self, ro):
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT, ro.Phase.GROUP]}, trail, ".")
+            ro._budgets_are_derivable({ModelRef("gpt-5"): [ro.Phase.SCOUT, ro.Phase.GROUP]}, trail, ".")
         assert "scout" in err.getvalue() and "group" in err.getvalue()
         assert trail.decision.called
 
@@ -651,3 +652,27 @@ class TestRemovedProviderEnvStopsTheRun:
         args = MagicMock(model="", repo_dir=".")
         with pytest.raises(agent.phases.RemovedSetting):
             ro.run_orchestrate(MagicMock(), args, "o/r", "log")
+
+
+class TestBackendPreflightGuardsTheRun:
+    """A model the backend cannot serve stops the review before it collects anything."""
+
+    def test_a_refusal_ends_the_run_and_is_handed_the_worktree(self, ro, monkeypatch):
+        seen = {}
+
+        def refuse(models, trail, cwd):
+            seen["cwd"] = cwd
+            seen["models"] = models
+            return False
+
+        monkeypatch.setattr(ro, "_log_ai_backend", lambda trail: None)
+        monkeypatch.setattr(ro.agent.backend, "preflight", refuse)
+        monkeypatch.setattr(
+            ro, "fetch_metadata",
+            lambda *a, **k: pytest.fail("metadata was collected after a refusal"),
+        )
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "xai/grok-4.6")
+        args = MagicMock(model="", repo_dir="/the/worktree")
+        assert ro.run_orchestrate(MagicMock(), args, "o/r", "log") == 1
+        assert seen["cwd"] == "/the/worktree"
+        assert ModelRef("grok-4.6", "xai") in seen["models"]

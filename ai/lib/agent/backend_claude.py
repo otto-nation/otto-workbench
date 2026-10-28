@@ -18,7 +18,6 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import agent.machine_env
@@ -27,11 +26,12 @@ import core.children
 import core.log
 import core.timeouts
 import agent.vertex_quota
-from agent.backend import AgentInvocation, agent_env
+from agent.backend import AgentInvocation, abort_preflight, agent_env
 from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
 from agent.context_ceiling import claude_window
+from agent.models import PhaseModels
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
-from core.phases import Thinking
+from core.phases import Phase, Thinking
 
 
 # ── Agent resolution ─────────────────────────────────────────────────────────
@@ -345,13 +345,35 @@ def ledger_thinking(thinking: str | None) -> str | None:
     return effort(thinking)
 
 
-def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
-    """Check Vertex AI quota when the CLI is pointed at Vertex.
+def preflight(models: PhaseModels, trail, cwd: str) -> bool:
+    """Refuse a model another provider serves, then check Vertex AI quota.
 
-    No-ops on the first-party API, where model availability is not a
-    per-project allocation the client can inspect ahead of time.
+    The CLI is pointed at one provider by its environment and takes ``--model``
+    with no provider, so a reference naming any other would run its id on the
+    wrong catalogue — a different model, or none. Refused here, before the run
+    pays for anything, rather than handed to the CLI with the provider dropped.
+
+    The quota check no-ops on the first-party API, where model availability is
+    not a per-project allocation the client can inspect ahead of time. ``cwd``
+    is unused: the CLI has no catalogue to ask.
     """
-    return agent.vertex_quota.run_preflight(models, trail)
+    served = ledger_provider()
+    foreign = {ref: phases for ref, phases in models.items()
+               if ref.provider not in (None, served)}
+    for ref, phases in sorted(foreign.items(), key=lambda item: item[0].spec()):
+        named = ", ".join(str(phase) for phase in phases)
+        reason = (
+            f"{ref.spec()} names provider {ref.provider!r}, but the Claude backend "
+            f"serves only {served!r} (phases: {named}). Write the bare id, or set "
+            "agent.backend to pi."
+        )
+        abort_preflight(trail, reason)
+    if foreign:
+        return False
+    ids: dict[str, list[Phase]] = {}
+    for ref, phases in models.items():
+        ids.setdefault(ref.id, []).extend(phases)
+    return agent.vertex_quota.run_preflight(ids, trail)
 
 
 _FAILURE_DETAIL_MAX_CHARS = 2000

@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 import shutil
 import types
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +45,7 @@ import core.errors
 import core.log
 import core.trail
 import git.client
+from agent.models import PhaseModels
 # Backend is defined in core.phases so the config layer can type agent.backend
 # without importing this module, and re-exported here because this is where
 # callers have always read it from.
@@ -238,13 +239,21 @@ def _get_module() -> types.ModuleType:
     return agent.backend_claude
 
 
-def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
+def preflight(models: PhaseModels, trail, cwd: str) -> bool:
     """Verify the backend can serve the requested models before any run.
 
-    ``models`` maps each resolved model id to the phases requesting it.
-    Returns False to abort — backends fail open when they cannot tell.
+    ``models`` maps each model reference (provider and id) to the phases
+    requesting it; ``cwd`` is the worktree whose tools the run would use, for a
+    backend that has to ask them what they serve. Returns False to abort —
+    backends fail open when they cannot tell.
     """
-    return _get_module().preflight(models, trail)
+    return _get_module().preflight(models, trail, cwd)
+
+
+def abort_preflight(trail, reason: str) -> None:
+    """Log and record one model-preflight failure, so every backend words it alike."""
+    core.log.error(f"Cannot start the run: {reason}")
+    trail.decision("model_preflight", "aborting run", reason=reason)
 
 
 def _require_cwd(cwd: str, entry_point: str) -> None:

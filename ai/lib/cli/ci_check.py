@@ -29,7 +29,6 @@ import sys
 import cli.boundary
 import cli.locks
 import cli.needs
-import core.errors
 import core.log
 import core.proc
 import core.publishing

@@ -42,7 +42,6 @@ import sys
 import cli.boundary
 import cli.locks
 import cli.needs
-import core.errors
 import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args

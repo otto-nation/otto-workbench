@@ -11,7 +11,7 @@ SCRIPT = REPO_ROOT / "bin" / "local" / "validate-entry-points"
 
 # The entry points the repo ships. Asserted exactly, so adding or retiring one
 # is a deliberate edit here and discovery silently losing some cannot pass.
-SHIM_COUNT = 23
+SHIM_COUNT = 24
 
 vep = load_script("validate_entry_points", SCRIPT)
 

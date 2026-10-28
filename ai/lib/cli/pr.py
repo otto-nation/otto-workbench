@@ -63,7 +63,6 @@ import pr.context
 import pr.sync
 import pr.push_intent
 import core.cli_reference
-import core.errors
 import core.log
 import core.tool_parser
 import core.proc

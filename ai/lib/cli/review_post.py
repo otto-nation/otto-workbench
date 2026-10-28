@@ -35,7 +35,6 @@ import review.sections
 # editor calls unused is therefore load-bearing — deleting it silently turns the
 # patch it serves into a no-op.
 import git.client
-import core.errors
 import core.log
 import core.module_proxy
 import core.proc

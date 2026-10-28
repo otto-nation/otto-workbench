@@ -51,7 +51,6 @@ import review.retry
 import review.state
 import review.types
 
-import core.errors
 import core.log
 import core.module_proxy
 import pr.state

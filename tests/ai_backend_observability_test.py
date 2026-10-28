@@ -640,6 +640,7 @@ _SPAWNING = frozenset({"prompt", "invoke_agent", "invoke_fix"})
 _MAY_REACH_THE_BACKEND = {
     "invoke.py",
     "scoring_cifix.py",
+    "scoring_disprove.py",
     "scoring_skill.py",
 }
 

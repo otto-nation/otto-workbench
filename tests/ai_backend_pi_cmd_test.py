@@ -231,7 +231,7 @@ class TestPromptCmdHasNoTools:
     """A stateless prompt cannot hold a tool, and the flag is the only thing saying so.
 
     ``-p`` is non-interactive, not tool-less: Pi's built-ins stay registered and
-    ``--approve`` runs them without asking. So the shape documented as
+    run without asking. So the shape documented as
     "stateless text-in/text-out" arrived holding a shell, and a rebase conflict
     resolver used it — ``git rebase --edit-todo`` from a tool call, ``vi`` on a
     pipe with no terminal, and ``prompt()`` runs UNBOUNDED, so the run sat there
@@ -624,15 +624,15 @@ class TestRulesHomePrefix:
         assert fix == empty_fix
         assert agent_cmd == empty_agent
         assert fix == [
-            "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
+            "pi", "--mode", "rpc", "--no-session", "--verbose",
             "--tools", agent.backend_pi.PI_FIX_TOOLS,
-            "--no-context-files", "--no-skills",
+            "--no-context-files", "--no-skills", "--no-approve",
         ]
         assert "--append-system-prompt" not in agent_cmd
         assert agent_cmd == [
-            "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
+            "pi", "--mode", "rpc", "--no-session", "--verbose",
             "--tools", agent.backend_pi.PI_AGENT_TOOLS,
-            "--no-context-files", "--no-skills",
+            "--no-context-files", "--no-skills", "--no-approve",
         ]
 
     def test_rules_home_is_appended_as_a_file_and_keeps_bare_flags(self, tmp_path):
@@ -732,3 +732,27 @@ class TestRulesHomePrefix:
             ))
         assert captured["path"]
         assert not Path(captured["path"]).exists()
+
+
+class TestProjectTrustIsRefused:
+    """No dispatched agent loads the target repo's `.pi/`.
+
+    A repo's own extensions do not know the workbench's bounds. One that
+    confines writes to the worktree blocked the review directory, so a verify
+    gate could not answer its checklist and wrote it into the worktree."""
+
+    def _cmds(self):
+        inv = agent.backend_pi.AgentInvocation(prompt="")
+        return {
+            "prompt": agent.backend_pi._build_prompt_cmd(PI),
+            "agent": agent.backend_pi._build_agent_cmd(PI, inv),
+            "fix": agent.backend_pi._build_fix_cmd(PI, inv),
+        }
+
+    def test_every_shape_refuses_project_trust(self):
+        for name, cmd in self._cmds().items():
+            assert "--no-approve" in cmd, name
+
+    def test_no_shape_grants_it(self):
+        for name, cmd in self._cmds().items():
+            assert "--approve" not in cmd, name

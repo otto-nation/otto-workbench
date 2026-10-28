@@ -443,7 +443,7 @@ _scratch() {
   # every gh_*/web_* tool from the agent's list.
   run grep -q 'no-extensions' "$REPO_ROOT/ai/lib/agent/backend_pi.py"
   [ "$status" -eq 0 ]
-  run grep -qE 'BARE_FLAGS = \("--no-context-files", "--no-skills"\)' \
+  run grep -qE 'BARE_FLAGS = \("--no-context-files", "--no-skills", "--no-approve"\)' \
     "$REPO_ROOT/ai/lib/agent/backend_pi.py"
   [ "$status" -eq 0 ]
 }

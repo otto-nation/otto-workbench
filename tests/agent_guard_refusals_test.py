@@ -188,3 +188,46 @@ def test_an_unverified_verdict_names_the_refusals(tmp_path):
         verdicts = fix.verify.run(Phase.FIX_VERIFY, "", adapter=adapter,
                                   items=[FixItem(id="N1", file="a.py", line=1, label="x")])
     assert "refused 1× (first: unscoped `pytest`)" in verdicts["N1"].detail
+
+
+def test_an_item_kept_off_its_checklist_is_unverified_and_says_why():
+    items = [FixItem(id="N1", file="a.py", line=1, label="x")]
+    refusal = 'Blocked: "/reviews/r/verify-tracking-1.md" is outside this worktree'
+    out = fix.verify._with_unrecorded({}, items, (refusal,), "/reviews/r/verify-tracking-1.md")
+    assert out["N1"].ok is None
+    assert out["N1"].detail.startswith("the gate could not record its answer: 1 write(s)")
+
+
+def test_an_answer_the_gate_did_record_is_kept():
+    items = [FixItem(id="N1", file="a.py", line=1, label="x"),
+             FixItem(id="N2", file="a.py", line=2, label="y")]
+    answered = {"N1": Verdict(ok=True, detail="ran it")}
+    refusal = 'Blocked: "/reviews/r/verify-tracking-1.md"'
+    out = fix.verify._with_unrecorded(answered, items, (refusal,), "/reviews/r/verify-tracking-1.md")
+    assert out["N1"] == answered["N1"]
+    assert out["N2"].ok is None
+
+
+def test_a_refusal_elsewhere_leaves_silence_silent():
+    items = [FixItem(id="N1", file="a.py", line=1, label="x")]
+    out = fix.verify._with_unrecorded(
+        {}, items, ("unscoped `pytest`",), "/reviews/r/verify-tracking-1.md")
+    assert out == {}
+
+
+def test_a_gate_blocked_from_its_checklist_reports_it(tmp_path):
+    """End to end: every write to the checklist refused, nothing answered."""
+    adapter = _Adapter(tmp_path)
+    tracking = adapter.verify_tracking_path(1)
+
+    def run_fix(_phase, _prompt, **kwargs):
+        allowed = _tool_end("read ok", duration=3, is_error=False)
+        blocked = _tool_end(f'Blocked: "{tracking}" is outside this worktree')
+        Path(kwargs["session_log"]).write_text(f"{allowed}\n{blocked}\n{blocked}\n")
+        return agent.invoke.FixResult(0, None)
+
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        verdicts = fix.verify.run(Phase.FIX_VERIFY, "", adapter=adapter,
+                                  items=[FixItem(id="N1", file="a.py", line=1, label="x")])
+    assert verdicts["N1"].ok is None
+    assert "could not record its answer: 2 write(s)" in verdicts["N1"].detail

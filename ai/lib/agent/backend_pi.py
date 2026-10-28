@@ -30,7 +30,7 @@ Tool allowlists:
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
   --mode rpc       Bidirectional JSONL over stdin/stdout
-  --approve        Auto-accept project trust (like claude --permission-mode acceptEdits)
+  --no-approve     Ignore trust-gated project-local files (.pi/ extensions, settings, packages)
   --no-session     Ephemeral mode (don't persist session)
   --tools <list>   Allowlist specific tools
   --model <id>     Model selection
@@ -127,7 +127,18 @@ PI_FIX_TOOLS = f"{PI_TOOLS},{PI_RESEARCH_TOOLS}"
 # in PI_AGENT_TOOLS, leaving a run with no provider and a truncated toolset.
 # The per-invocation review guard is passed with `--extension`, which keeps
 # working either way.
-BARE_FLAGS = ("--no-context-files", "--no-skills")
+#
+# `--no-approve` refuses project trust, so nothing under the target repo's `.pi/`
+# loads: not its extensions, settings or packages. A dispatched agent's bounds
+# are the workbench's to set, through the guard passed with `--extension`, and a
+# repo's own extensions do not know them. A repo that confines writes to the
+# worktree blocks the review directory every phase is sent to write in, so a
+# verify gate there could not answer its checklist and wrote it into the
+# worktree instead. Project packages are cloned per worktree on startup too,
+# which concurrent agents in one worktree race on. The provider and the gh_*/web_*
+# tools come from the user scope, which this leaves loading. `pi update` in
+# ai/pi/steps.sh refuses project trust for the same reason.
+BARE_FLAGS = ("--no-context-files", "--no-skills", "--no-approve")
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
 # Mirrors AGENTS_SKILLS_DIR in lib/constants.sh, where ai/skills/steps.sh installs.
@@ -251,8 +262,8 @@ def _build_prompt_cmd(
     # pairs --print with --output-format for the same reason.
     #
     # --no-tools is what makes the shape match its name. `-p` is only
-    # non-interactive, not tool-less: Pi's built-ins stay registered and
-    # `--approve` runs them without asking, so a "stateless text-in/text-out"
+    # non-interactive, not tool-less: Pi's built-ins stay registered and run
+    # without asking, so a "stateless text-in/text-out"
     # call arrived holding a shell. A conflict resolver used it to run
     # `git rebase --edit-todo`, which opened `vi` on a pipe with no terminal,
     # and `prompt()` is UNBOUNDED — the rebase sat there until the job's own
@@ -269,7 +280,7 @@ def _build_prompt_cmd(
     # the tool it wanted and ends the turn. No JSON, and the caller's retry
     # re-sends the same prompt into the same rulebook.
     cmd = [
-        *pi, "-p", "--mode", "json", "--no-session", "--approve", "--no-tools",
+        *pi, "-p", "--mode", "json", "--no-session", "--no-tools",
         *BARE_FLAGS,
     ]
     if provider:
@@ -285,7 +296,7 @@ def _build_agent_cmd(
     pi: Sequence[str], inv: AgentInvocation, extension: str | None = None,
 ) -> list[str]:
     cmd = [
-        *pi, "--mode", "rpc", "--no-session", "--approve", "--verbose",
+        *pi, "--mode", "rpc", "--no-session", "--verbose",
         "--tools", PI_AGENT_TOOLS, *BARE_FLAGS,
     ]
     cmd += _rule_prefix_flags(inv)
@@ -328,7 +339,7 @@ def _build_fix_cmd(
     # allowlist grants it, so the one form of GitHub reach this list can express
     # is the one it declines to.
     cmd = [
-        *pi, "--mode", "rpc", "--no-session", "--approve", "--verbose",
+        *pi, "--mode", "rpc", "--no-session", "--verbose",
         "--tools", PI_FIX_TOOLS, *BARE_FLAGS,
     ]
     cmd += _rule_prefix_flags(inv)

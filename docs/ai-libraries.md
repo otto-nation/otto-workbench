@@ -4118,7 +4118,7 @@ Tool allowlists:
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
   --mode rpc       Bidirectional JSONL over stdin/stdout
-  --approve        Auto-accept project trust (like claude --permission-mode acceptEdits)
+  --no-approve     Ignore trust-gated project-local files (.pi/ extensions, settings, packages)
   --no-session     Ephemeral mode (don't persist session)
   --tools <list>   Allowlist specific tools
   --model <id>     Model selection

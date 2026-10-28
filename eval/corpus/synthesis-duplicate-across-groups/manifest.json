@@ -1,0 +1,50 @@
+{
+  "name": "synthesis-duplicate-across-groups",
+  "task": "synthesis",
+  "description": "Two groups flagged the same truncated-write risk in save, one in detail and one tersely; the other two findings are distinct",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "M1",
+      "sid": "dup-1",
+      "expect": "keep",
+      "path": "store.py",
+      "line": 5,
+      "body": "`save` opens the destination for writing and dumps into it in place, so a crash mid-write leaves a truncated file the next `load` cannot parse. Write to a temporary file in the same directory and rename it over the target.",
+      "evidence": "with open(path, \"w\") as f:"
+    },
+    {
+      "id": "S1",
+      "sid": "dup-2",
+      "expect": "drop",
+      "path": "store.py",
+      "line": 6,
+      "body": "`save` can corrupt the file if the process dies while writing.",
+      "evidence": "json.dump(data, f)"
+    },
+    {
+      "id": "M2",
+      "sid": "dup-3",
+      "expect": "keep",
+      "path": "api.py",
+      "line": 10,
+      "body": "`get` loads a caller-supplied path with no check, so a request can read any file the process can open.",
+      "evidence": "return load(path)"
+    },
+    {
+      "id": "S2",
+      "sid": "dup-4",
+      "expect": "keep",
+      "path": "store.py",
+      "line": 10,
+      "body": "`load` raises a raw FileNotFoundError for an unknown path, which `get` passes straight to the HTTP layer instead of a 404.",
+      "evidence": "with open(path) as f:"
+    }
+  ],
+  "tags": [
+    "synthesis",
+    "python",
+    "duplicate"
+  ]
+}

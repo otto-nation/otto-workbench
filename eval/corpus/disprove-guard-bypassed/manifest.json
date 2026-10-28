@@ -12,7 +12,7 @@
     },
     {
       "id": "S1", "truth": "false", "path": "uploads.py", "line": 26,
-      "body": "`read_config` opens a path chosen by its caller, so a user-supplied key can read any file on disk.",
+      "body": "`read_config` opens a path built from a user-supplied key, so it can read any file on disk.",
       "evidence": "with open(CONFIGS[key]) as handle:"
     }
   ],

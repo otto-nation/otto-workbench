@@ -4656,6 +4656,32 @@ exchange. Within that turn `SKILL_MAX_TURNS` and `SKILL_MAX_BUDGET` cap the
 tool-call turns and the spend; a scenario needing more of either hits the cap
 silently rather than completing.
 
+### eval/scoring_synthesis.py
+
+The synthesis eval task: merge planted group findings, score what survives.
+
+Synthesis turns the groups' findings into the review a reader sees, and its two
+errors cost differently. Dropping a real finding hides a defect; keeping a
+duplicate only costs the reader a line. A case therefore holds a small repo and
+the findings its groups wrote, each marked `keep` (a distinct finding the review
+must carry) or `drop` (a duplicate of another finding). The agent is shown them as
+production shows them: the merged group JSON, in the production template.
+
+| Score field | Meaning here |
+|---|---|
+| `recall` | Share of the `drop` findings the review no longer carries — the noise removed |
+| `precision` | Share of the `keep` findings the review still carries — 1.0 means nothing real was lost |
+
+A finding is matched in the output by its `sid`, which the template tells the
+agent to keep, and failing that by its path and line. Findings the agent adds
+(cross-cutting ones) match nothing planted and are not scored. A review that
+could not be read carries nothing, so it scores recall 1.0 and precision 0.0: it
+removed all the noise and all the signal, which is the error that matters.
+
+What the eval does not exercise is the pipeline around the phase: the group
+agents, the prior-review ledger, and the programmatic verification that runs
+after synthesis writes.
+
 ### eval/scoring_verify.py
 
 The verify eval task: hand the gate claimed fixes, score its verdicts.
@@ -4699,6 +4725,7 @@ tasks existed keeps working.
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
 | `disprove` | A repo and planted findings, each marked real or false | Share of false findings falsified, and share of real findings kept |
+| `synthesis` | A repo and the findings its groups wrote, each marked keep or drop | Share of drop findings removed, and share of keep findings carried |
 | `verify` | A repo, a fix pass's uncommitted edits to it, and claimed fixes each marked holds or broken | Share of broken fixes not called verified, and share of good fixes called verified |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
@@ -4723,7 +4750,7 @@ Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
 Each task names the production `Phase` it measures (review: `single`, ci-fix:
-`ci_fix`, skill: `comments_fix`, disprove: `disprove`, verify: `fix_verify`). With `--models` omitted,
+`ci_fix`, skill: `comments_fix`, disprove: `disprove`, verify: `fix_verify`, synthesis: `synthesis`). With `--models` omitted,
 `resolved_model` picks that phase's model through `agent.phases.phase_model`
 before the run, so results are labelled with the id that served them rather
 than `(default)`, and the eval measures what production runs instead of the backend's interactive

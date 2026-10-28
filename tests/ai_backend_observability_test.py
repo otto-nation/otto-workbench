@@ -642,6 +642,7 @@ _MAY_REACH_THE_BACKEND = {
     "scoring_cifix.py",
     "scoring_disprove.py",
     "scoring_skill.py",
+    "scoring_synthesis.py",
     "scoring_verify.py",
 }
 

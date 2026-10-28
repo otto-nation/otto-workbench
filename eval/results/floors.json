@@ -1048,6 +1048,66 @@
           "best": 0.0
         }
       },
+      "synthesis-duplicate-across-groups": {
+        "billed_input_mean": {
+          "floor": 113644.33333333333,
+          "best": 113644.33333333333
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.3067621587653427,
+          "best": 0.3067621587653427
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1642.6666666666667,
+          "best": 1642.6666666666667
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "synthesis-near-duplicate-wording": {
+        "billed_input_mean": {
+          "floor": 85603.33333333333,
+          "best": 85603.33333333333
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.21918896706825533,
+          "best": 0.21918896706825533
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1720.0,
+          "best": 1720.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
       "verify-claim-names-nothing": {
         "billed_input_mean": {
           "floor": 223559.66666666666,
@@ -1678,6 +1738,66 @@
         "severity_accuracy_mean": {
           "floor": 1.0,
           "best": 1.0
+        }
+      },
+      "synthesis-duplicate-across-groups": {
+        "billed_input_mean": {
+          "floor": 70174.66666666667,
+          "best": 70174.66666666667
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.8120608477198764,
+          "best": 0.8120608477198764
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1997.6666666666667,
+          "best": 1997.6666666666667
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "synthesis-near-duplicate-wording": {
+        "billed_input_mean": {
+          "floor": 81940.66666666667,
+          "best": 81940.66666666667
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.6869361870475048,
+          "best": 0.6869361870475048
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 2676.0,
+          "best": 2676.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
         }
       },
       "unchecked-error-go": {

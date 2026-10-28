@@ -1,0 +1,68 @@
+{
+  "name": "synthesis-near-duplicate-wording",
+  "task": "synthesis",
+  "description": "Five distinct findings, two of them on the same line, plus one reworded duplicate of the rounding finding",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "M1",
+      "sid": "nd-1",
+      "expect": "keep",
+      "path": "billing.py",
+      "line": 3,
+      "body": "`invoice_total` does money arithmetic in floats and rounds the result, so totals can be off by a cent and `1 + tax_rate` compounds binary error. Use `Decimal` or integer cents.",
+      "evidence": "return round(subtotal * (1 + tax_rate), 2)"
+    },
+    {
+      "id": "M2",
+      "sid": "nd-2",
+      "expect": "keep",
+      "path": "billing.py",
+      "line": 7,
+      "body": "`apply_discount` does not bound `pct`: a negative value raises the total and a value over 100 returns a negative total.",
+      "evidence": "return total - total * pct / 100"
+    },
+    {
+      "id": "S1",
+      "sid": "nd-3",
+      "expect": "keep",
+      "path": "billing.py",
+      "line": 11,
+      "body": "`split_evenly` rounds each share, so the shares do not sum to `total`: `split_evenly(10, 3)` returns three 3.33s that add to 9.99.",
+      "evidence": "return [round(total / parts, 2)] * parts"
+    },
+    {
+      "id": "S2",
+      "sid": "nd-4",
+      "expect": "keep",
+      "path": "billing.py",
+      "line": 11,
+      "body": "`split_evenly` divides by `parts` with no check, so `parts=0` raises ZeroDivisionError.",
+      "evidence": "return [round(total / parts, 2)] * parts"
+    },
+    {
+      "id": "N1",
+      "sid": "nd-5",
+      "expect": "keep",
+      "path": "billing.py",
+      "line": 2,
+      "body": "The generator variable `l` reads like the digit 1; name it `line`.",
+      "evidence": "subtotal = sum(l[\"price\"] * l[\"qty\"] for l in lines)"
+    },
+    {
+      "id": "S3",
+      "sid": "nd-6",
+      "expect": "drop",
+      "path": "billing.py",
+      "line": 3,
+      "body": "Floating point is used for currency in `invoice_total`, so the total can be a cent out.",
+      "evidence": "return round(subtotal * (1 + tax_rate), 2)"
+    }
+  ],
+  "tags": [
+    "synthesis",
+    "python",
+    "same-line-distinct"
+  ]
+}

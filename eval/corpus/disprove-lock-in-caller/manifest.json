@@ -1,0 +1,20 @@
+{
+  "name": "disprove-lock-in-caller",
+  "task": "disprove",
+  "description": "One claim says Counter.bump is an unsynchronised read-modify-write, but its only caller holds a lock; the other is a real divide-by-zero when no reading is ok",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "M1", "truth": "false", "path": "counter.py", "line": 9,
+      "body": "`bump` does an unsynchronised `self.value += 1`, a read-modify-write that loses updates when handlers run on several threads.",
+      "evidence": "self.value += 1"
+    },
+    {
+      "id": "S1", "truth": "real", "path": "runner.py", "line": 17,
+      "body": "`report` passes `average` a list filtered to ok readings, which is empty when none are ok, so `sum(values) / len(values)` raises ZeroDivisionError.",
+      "evidence": "return sum(values) / len(values)"
+    }
+  ],
+  "tags": ["disprove", "python", "guarded-upstream", "concurrency"]
+}

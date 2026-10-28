@@ -4,7 +4,7 @@
   "model": "xai/grok-4.6",
   "effort": "low",
   "runs_per_entry": 3,
-  "updated_at": "2026-10-28T19:34:59.797084+00:00",
+  "updated_at": "2026-10-28T21:01:16.228854+00:00",
   "entries": {
     "disprove-bound-query": {
       "recall_mean": 1.0,
@@ -532,6 +532,834 @@
           "duration_ms": 18974,
           "billed_input": 210211,
           "output_tokens": 1126,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "command-injection-bash": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.3055555555555555,
+      "precision_std": 0.0481125224324688,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 2.3333333333333335,
+      "cost_mean": 0.024214,
+      "duration_mean_ms": 11734,
+      "billed_input_mean": 16118.0,
+      "output_tokens_mean": 711.0,
+      "cache_read_ratio_mean": 0.5082533344580801,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.023781999999999998,
+          "duration_ms": 10617,
+          "billed_input": 16082,
+          "output_tokens": 651,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.024544,
+          "duration_ms": 11742,
+          "billed_input": 16154,
+          "output_tokens": 754,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "N1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.024315999999999997,
+          "duration_ms": 12843,
+          "billed_input": 16118,
+          "output_tokens": 728,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2"
+          ]
+        }
+      ]
+    },
+    "nil-check-go": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.02190866666666667,
+      "duration_mean_ms": 7690,
+      "billed_input_mean": 15899.333333333334,
+      "output_tokens_mean": 399.6666666666667,
+      "cache_read_ratio_mean": 0.5152421320690497,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.022348,
+          "duration_ms": 8612,
+          "billed_input": 15905,
+          "output_tokens": 471,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.021578,
+          "duration_ms": 6954,
+          "billed_input": 15880,
+          "output_tokens": 351,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.0218,
+          "duration_ms": 7506,
+          "billed_input": 15913,
+          "output_tokens": 377,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "off-by-one-python": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.5,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 1.0,
+      "cost_mean": 0.02380933333333333,
+      "duration_mean_ms": 12240,
+      "billed_input_mean": 16204.666666666666,
+      "output_tokens_mean": 625.3333333333334,
+      "cache_read_ratio_mean": 0.508173806724697,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.5,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 1,
+          "false_positive_ok": true,
+          "cost_usd": 0.02438,
+          "duration_ms": 13604,
+          "billed_input": 16273,
+          "output_tokens": 687,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.5,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 1,
+          "false_positive_ok": true,
+          "cost_usd": 0.022828,
+          "duration_ms": 8973,
+          "billed_input": 16064,
+          "output_tokens": 498,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.5,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 1,
+          "false_positive_ok": true,
+          "cost_usd": 0.02422,
+          "duration_ms": 14143,
+          "billed_input": 16277,
+          "output_tokens": 691,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1"
+          ]
+        }
+      ]
+    },
+    "sql-injection-python": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.5,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 1.0,
+      "cost_mean": 0.022818666666666668,
+      "duration_mean_ms": 8764,
+      "billed_input_mean": 16069.333333333334,
+      "output_tokens_mean": 494.6666666666667,
+      "cache_read_ratio_mean": 0.5097910012500902,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.5,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 1,
+          "false_positive_ok": true,
+          "cost_usd": 0.02285,
+          "duration_ms": 8702,
+          "billed_input": 16063,
+          "output_tokens": 502,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.5,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 1,
+          "false_positive_ok": true,
+          "cost_usd": 0.022682,
+          "duration_ms": 8201,
+          "billed_input": 16066,
+          "output_tokens": 473,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.5,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 1,
+          "false_positive_ok": true,
+          "cost_usd": 0.022924,
+          "duration_ms": 9390,
+          "billed_input": 16079,
+          "output_tokens": 509,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1"
+          ]
+        }
+      ]
+    },
+    "unchecked-error-go": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.3333333333333333,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 2.0,
+      "cost_mean": 0.032341999999999996,
+      "duration_mean_ms": 10504,
+      "billed_input_mean": 23454.0,
+      "output_tokens_mean": 601.6666666666666,
+      "cache_read_ratio_mean": 0.5164890573302963,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.042539999999999994,
+          "duration_ms": 11261,
+          "billed_input": 27102,
+          "output_tokens": 648,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.031751999999999996,
+          "duration_ms": 11353,
+          "billed_input": 27132,
+          "output_tokens": 664,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2"
+          ]
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.022733999999999997,
+          "duration_ms": 8898,
+          "billed_input": 16128,
+          "output_tokens": 493,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2"
+          ]
+        }
+      ]
+    },
+    "ci-fix-masked-exit-status": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.13380733333333333,
+      "duration_mean_ms": 15358,
+      "billed_input_mean": 150942.66666666666,
+      "output_tokens_mean": 819.0,
+      "cache_read_ratio_mean": 0.7640812832553722,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.171178,
+          "duration_ms": 17671,
+          "billed_input": 151085,
+          "output_tokens": 920,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.124736,
+          "duration_ms": 12306,
+          "billed_input": 150643,
+          "output_tokens": 655,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.105508,
+          "duration_ms": 16097,
+          "billed_input": 151100,
+          "output_tokens": 882,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-missing-binary": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.12726866666666667,
+      "duration_mean_ms": 14885,
+      "billed_input_mean": 191676.33333333334,
+      "output_tokens_mean": 732.6666666666666,
+      "cache_read_ratio_mean": 0.90148479809384,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.16468999999999998,
+          "duration_ms": 16129,
+          "billed_input": 181000,
+          "output_tokens": 843,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.10190000000000002,
+          "duration_ms": 14006,
+          "billed_input": 182815,
+          "output_tokens": 685,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.11521599999999999,
+          "duration_ms": 14520,
+          "billed_input": 211214,
+          "output_tokens": 670,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-missing-regression-test": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.1293,
+      "duration_mean_ms": 17277,
+      "billed_input_mean": 172176.0,
+      "output_tokens_mean": 723.3333333333334,
+      "cache_read_ratio_mean": 0.8518655828452815,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.142052,
+          "duration_ms": 19979,
+          "billed_input": 182617,
+          "output_tokens": 787,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.141348,
+          "duration_ms": 15436,
+          "billed_input": 182535,
+          "output_tokens": 697,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.1045,
+          "duration_ms": 16416,
+          "billed_input": 151376,
+          "output_tokens": 686,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-mktemp-trap": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.113752,
+      "duration_mean_ms": 16718,
+      "billed_input_mean": 181562.0,
+      "output_tokens_mean": 678.0,
+      "cache_read_ratio_mean": 0.9201943805506128,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.101456,
+          "duration_ms": 18448,
+          "billed_input": 181978,
+          "output_tokens": 762,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.11559799999999999,
+          "duration_ms": 18348,
+          "billed_input": 212032,
+          "output_tokens": 685,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.12420199999999998,
+          "duration_ms": 13360,
+          "billed_input": 150676,
+          "output_tokens": 587,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-sed-portability": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.12839399999999998,
+      "duration_mean_ms": 29350,
+      "billed_input_mean": 193837.0,
+      "output_tokens_mean": 1789.3333333333333,
+      "cache_read_ratio_mean": 0.9327271778571181,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.16423799999999997,
+          "duration_ms": 29145,
+          "billed_input": 213324,
+          "output_tokens": 1705,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.108274,
+          "duration_ms": 26240,
+          "billed_input": 183839,
+          "output_tokens": 1534,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.11266999999999999,
+          "duration_ms": 32667,
+          "billed_input": 184348,
+          "output_tokens": 2129,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-stat-portability": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.13965599999999997,
+      "duration_mean_ms": 30419,
+      "billed_input_mean": 227382.0,
+      "output_tokens_mean": 1871.3333333333333,
+      "cache_read_ratio_mean": 0.9556285651374369,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.145922,
+          "duration_ms": 33614,
+          "billed_input": 250573,
+          "output_tokens": 1948,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.144914,
+          "duration_ms": 30247,
+          "billed_input": 214366,
+          "output_tokens": 1881,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.12813199999999997,
+          "duration_ms": 27396,
+          "billed_input": 217207,
+          "output_tokens": 1785,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-unguarded-grep": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.10570733333333332,
+      "duration_mean_ms": 17188,
+      "billed_input_mean": 161425.66666666666,
+      "output_tokens_mean": 961.3333333333334,
+      "cache_read_ratio_mean": 0.9165911457403908,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.10366399999999998,
+          "duration_ms": 20001,
+          "billed_input": 182413,
+          "output_tokens": 1081,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.08685,
+          "duration_ms": 15768,
+          "billed_input": 150939,
+          "output_tokens": 930,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.126608,
+          "duration_ms": 15796,
+          "billed_input": 150925,
+          "output_tokens": 873,
+          "matched_ids": [],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "ci-fix-unsafe-map-read": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.11198133333333334,
+      "duration_mean_ms": 12991,
+      "billed_input_mean": 150663.66666666666,
+      "output_tokens_mean": 527.6666666666666,
+      "cache_read_ratio_mean": 0.8518458210515784,
+      "runs_measured": 3,
+      "runs_attempted": 3,
+      "runs": [
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.12336000000000001,
+          "duration_ms": 13848,
+          "billed_input": 150405,
+          "output_tokens": 473,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.129572,
+          "duration_ms": 14599,
+          "billed_input": 150910,
+          "output_tokens": 700,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "outcome": "measured",
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.083012,
+          "duration_ms": 10527,
+          "billed_input": 150676,
+          "output_tokens": 410,
           "matched_ids": [],
           "false_positive_ids": []
         }

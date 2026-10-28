@@ -98,6 +98,17 @@ class TestParseFixes:
         with pytest.raises(ValueError, match="unique"):
             parse_fixes({"items": [_fix("R1", "holds"), _fix("R1", "broken")]})
 
+    def test_an_empty_ask_is_refused(self):
+        with pytest.raises(ValueError, match="ask"):
+            parse_fixes({"items": [_fix("R1", "holds", ask="")]})
+
+    def test_a_case_without_fix_dir_is_refused(self, tmp_path):
+        case = tmp_path / "nofix"
+        case.mkdir()
+        (case / "manifest.json").write_text(json.dumps({"items": [_fix("R1", "holds")]}))
+        with pytest.raises(ValueError, match="nofix.*fix/"):
+            VerifyTask().run(case, RunOptions(model="claude-sonnet-5", effort="medium"))
+
     def test_no_items_is_refused(self):
         with pytest.raises(ValueError, match="at least one"):
             parse_fixes({})

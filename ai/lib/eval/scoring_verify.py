@@ -77,6 +77,8 @@ def parse_fixes(manifest: dict) -> list[CaseFix]:
             id=raw["id"], truth=raw["truth"], file=raw["file"], line=raw["line"],
             ask=raw["ask"], claim=raw["claim"],
         )
+        if not item.ask.strip():
+            raise ValueError(f"{item.id}: ask must not be empty")
         if item.truth not in _TRUTHS:
             raise ValueError(f"{item.id}: truth must be one of {_TRUTHS}, got {item.truth!r}")
         out.append(item)
@@ -157,6 +159,8 @@ class VerifyTask:
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
         manifest = json.loads((case_dir / "manifest.json").read_text())
         fixes = parse_fixes(manifest)
+        if not (case_dir / "fix").is_dir():
+            raise ValueError(f"{case_dir.name}: a verify case needs a fix/ directory")
         repo_dir = create_temp_repo(str(case_dir / "src"), prefix="eval-verify-")
         # The fix pass's edits stay uncommitted: the gate is told `git diff` is
         # exactly what the pass changed.

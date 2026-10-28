@@ -4538,6 +4538,35 @@ Because CI failures are usually environment-shaped, these cases put stub
 binaries on `PATH` rather than depending on what the host happens to have
 installed, so they fail the same way everywhere.
 
+### eval/scoring_disprove.py
+
+The disprove eval task: challenge planted findings, score the verdicts.
+
+The disprove gate decides which findings reach the reader, so its two errors
+cost differently. Falsifying a real defect hides it; surviving a false one only
+leaves noise a reader can dismiss. A case therefore holds a small repo and a
+list of findings a reviewer might have written, each marked `real` (it describes
+a defect that is in the code) or `false` (the code already handles it, or the
+claim misreads it). The gate is shown them rendered exactly as in production and
+asked for verdicts.
+
+| Score field | Meaning here |
+|---|---|
+| `recall` | Share of the `false` findings the gate falsified — the noise it removed |
+| `precision` | Share of the `real` findings the gate kept — 1.0 means it hid nothing real |
+
+A finding with no verdict survives, as the template says, so a gate that wrote
+nothing scores precision 1.0 and recall 0.0 rather than erroring: the number
+then reads as what it was, a gate that challenged nothing. A case with no
+finding of one kind scores that field 1.0, since there was nothing to get wrong.
+`--compare` gates on a drop in either, so a cheaper model that starts hiding
+real findings fails the same way one that drops a defect does in `review`.
+
+Findings are rendered through `review.render.render_body` and the prompt comes
+from the production template and output format, so the eval measures the prompt
+production sends. What it does not exercise is the review pipeline around the
+gate: prompt budgeting and the ingest retry.
+
 ### eval/scoring_review.py
 
 The review eval task: run review-orchestrate, score findings against a manifest.
@@ -4643,6 +4672,7 @@ tasks existed keeps working.
 | `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
+| `disprove` | A repo and planted findings, each marked real or false | Share of false findings falsified, and share of real findings kept |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
 that becomes the run's `cwd`, and a case without one is skipped. That repo is
@@ -4666,7 +4696,7 @@ Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
 Each task names the production `Phase` it measures (review: `single`, ci-fix:
-`ci_fix`, skill: `comments_fix`). With `--models` omitted, `resolved_model`
+`ci_fix`, skill: `comments_fix`, disprove: `disprove`). With `--models` omitted, `resolved_model`
 picks that phase's model through `agent.phases.phase_model` before the run, so
 results are labelled with the id that served them rather than `(default)`, and
 the eval measures what production runs instead of the backend's interactive

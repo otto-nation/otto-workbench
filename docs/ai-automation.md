@@ -345,7 +345,8 @@ each task holds is documented on [`eval/task.py`](ai-libraries.md#evaltaskpy);
 how each is scored, on the task's own module —
 [`review`](ai-libraries.md#evalscoring_reviewpy),
 [`ci-fix`](ai-libraries.md#evalscoring_cifixpy),
-[`skill`](ai-libraries.md#evalscoring_skillpy). The runner, the fixture repo,
+[`skill`](ai-libraries.md#evalscoring_skillpy),
+[`disprove`](ai-libraries.md#evalscoring_disprovepy). The runner, the fixture repo,
 and the statistics over repeated runs are shared and know nothing about any one
 task.
 

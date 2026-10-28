@@ -1,0 +1,20 @@
+{
+  "name": "disprove-guard-two-up",
+  "task": "disprove",
+  "description": "One claim says purge has no authorization check, but its only caller chain passes through require_admin two frames up; the other is a real shared mutable default",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "M1", "truth": "false", "path": "repo.py", "line": 5,
+      "body": "`purge` deletes an account and its sessions with no authorization check, so any caller can delete any account.",
+      "evidence": "conn.execute(\"DELETE FROM accounts WHERE id = ?\", (account_id,))"
+    },
+    {
+      "id": "S1", "truth": "real", "path": "service.py", "line": 10,
+      "body": "`record` uses a mutable default `sink=[]`, so every call that omits `sink` appends to one list shared across callers.",
+      "evidence": "def record(event, sink=[]):"
+    }
+  ],
+  "tags": ["disprove", "python", "guarded-upstream", "multi-hop"]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "disprove-guard-bypassed",
+  "task": "disprove",
+  "description": "The real claim sits behind a guard that looks protective but does not stop ../ traversal; the false claim is an open() on a path that only comes from a fixed allow-list",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "M1", "truth": "real", "path": "uploads.py", "line": 15, "end_line": 16,
+      "body": "`resolve` checks `path.startswith(BASE)` on a path that was never normalised, so a name like `../../etc/passwd` joins to `/srv/uploads/../../etc/passwd`, passes the check, and escapes the uploads directory.",
+      "evidence": "if not path.startswith(BASE):\n    raise ValueError(name)"
+    },
+    {
+      "id": "S1", "truth": "false", "path": "uploads.py", "line": 26,
+      "body": "`read_config` opens a path chosen by its caller, so a user-supplied key can read any file on disk.",
+      "evidence": "with open(CONFIGS[key]) as handle:"
+    }
+  ],
+  "tags": ["disprove", "python", "path-traversal", "guard-bypassed"]
+}

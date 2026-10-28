@@ -177,7 +177,8 @@ class DisproveTask:
             data={
                 "findings": findings,
                 "verdicts": {k: str(v) for k, v in verdicts.items()},
-                "summary": f"verdicts: {len(verdicts)}/{len(findings)}",
+                "summary": f"verdicts: {len(verdicts)}/{len(findings)}"
+                + ("" if verdicts else " (output unreadable or empty)"),
                 "_outcomes": verdicts,
             },
         )

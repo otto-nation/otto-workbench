@@ -152,7 +152,9 @@ def _with_unrecorded(
     checklist. Then the answer was never recordable, and silence would read as
     an ordinary "not verified" with the cause nowhere. Matched on the checklist
     path in the refusal, so only a refusal of that file speaks for every item in
-    the chunk. A refusal elsewhere is left to `_with_refusals`. The verdict is
+    the chunk. The match is a substring test, so a refusal of any call that merely
+    mentions the path (a read, a bash command) also counts; that looseness is
+    accepted. A refusal elsewhere is left to `_with_refusals`. The verdict is
     None, "nothing could be established", which is what the gate actually knows.
     """
     blocked = [r for r in refusals if tracking_file in r]

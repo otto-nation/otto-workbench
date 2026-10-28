@@ -350,7 +350,7 @@ how each is scored, on the task's own module —
 [`review`](ai-libraries.md#evalscoring_reviewpy),
 [`ci-fix`](ai-libraries.md#evalscoring_cifixpy),
 [`skill`](ai-libraries.md#evalscoring_skillpy),
-[`disprove`](ai-libraries.md#evalscoring_disprovepy). The runner, the fixture repo, and the
+[`disprove`](ai-libraries.md#evalscoring_disprovepy), [`verify`](ai-libraries.md#evalscoring_verifypy). The runner, the fixture repo, and the
 statistics over repeated runs are shared and know nothing about any one task.
 
 Landing a case costs a full eval run. `bin/local/validate-eval-baselines` fails

@@ -4656,6 +4656,32 @@ exchange. Within that turn `SKILL_MAX_TURNS` and `SKILL_MAX_BUDGET` cap the
 tool-call turns and the spend; a scenario needing more of either hits the cap
 silently rather than completing.
 
+### eval/scoring_verify.py
+
+The verify eval task: hand the gate claimed fixes, score its verdicts.
+
+The verify gate decides which fixes are published to a reviewer as done, so its
+two errors cost differently. Calling a broken fix `verified` ships a defect under
+a commit citing it; calling a good fix `broken` or `not verified` only costs a
+re-run. A case therefore holds a small repo (`src/`, committed), the edits a fix
+pass made to it (`fix/`, left uncommitted in the worktree as the gate finds
+them), and a list of claimed fixes each marked `holds` (the edit does what the
+reviewer asked) or `broken` (it does not, however sound the claim reads).
+
+| Score field | Meaning here |
+|---|---|
+| `recall` | Share of the `broken` fixes the gate did not call `verified` — the bad fixes it stopped |
+| `precision` | Share of the `holds` fixes the gate called `verified` — 1.0 means it cleared every good one |
+
+A fix with no verdict is unverified, as the engine reads it, so a gate that wrote
+nothing scores recall 1.0 and precision 0.0: it let nothing bad through and
+cleared nothing. A case with no fix of one kind scores that field 1.0.
+
+Each fix reaches the gate as production builds it: `fix.gate._verify_item`
+composes the reviewer's ask with the pass's claim and what the worktree shows,
+and the tracking file and prompt come from the production template. What the
+eval does not exercise is the review pipeline's chunking around the gate.
+
 ### eval/task.py
 
 Task-agnostic evaluation plumbing.
@@ -4673,6 +4699,7 @@ tasks existed keeps working.
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
 | `disprove` | A repo and planted findings, each marked real or false | Share of false findings falsified, and share of real findings kept |
+| `verify` | A repo, a fix pass's uncommitted edits to it, and claimed fixes each marked holds or broken | Share of broken fixes not called verified, and share of good fixes called verified |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
 that becomes the run's `cwd`, and a case without one is skipped. That repo is
@@ -4696,7 +4723,7 @@ Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
 Each task names the production `Phase` it measures (review: `single`, ci-fix:
-`ci_fix`, skill: `comments_fix`, disprove: `disprove`). With `--models` omitted,
+`ci_fix`, skill: `comments_fix`, disprove: `disprove`, verify: `fix_verify`). With `--models` omitted,
 `resolved_model` picks that phase's model through `agent.phases.phase_model`
 before the run, so results are labelled with the id that served them rather
 than `(default)`, and the eval measures what production runs instead of the backend's interactive

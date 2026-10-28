@@ -775,6 +775,368 @@
           "floor": 0.0,
           "best": 0.0
         }
+      },
+      "verify-claim-names-nothing": {
+        "billed_input_mean": {
+          "floor": 223559.66666666666,
+          "best": 223559.66666666666
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.3235807800238168,
+          "best": 0.3235807800238168
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1620.3333333333333,
+          "best": 1620.3333333333333
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "verify-dangling-import": {
+        "billed_input_mean": {
+          "floor": 251378.66666666666,
+          "best": 251378.66666666666
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.37073697719915516,
+          "best": 0.37073697719915516
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1707.0,
+          "best": 1707.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "verify-vacuous-test": {
+        "billed_input_mean": {
+          "floor": 298536.3333333333,
+          "best": 298536.3333333333
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.5636369437983303,
+          "best": 0.5636369437983303
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 2294.6666666666665,
+          "best": 2294.6666666666665
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      }
+    },
+    "pi-xai-grok-4.6": {
+      "disprove-bound-query": {
+        "billed_input_mean": {
+          "floor": 144303.66666666666,
+          "best": 144303.66666666666
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.7946893234607059,
+          "best": 0.7946893234607059
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 740.6666666666666,
+          "best": 740.6666666666666
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "disprove-guard-bypassed": {
+        "billed_input_mean": {
+          "floor": 144753.33333333334,
+          "best": 144753.33333333334
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.7609677586690639,
+          "best": 0.7609677586690639
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1259.3333333333333,
+          "best": 1259.3333333333333
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "disprove-guard-two-up": {
+        "billed_input_mean": {
+          "floor": 240292.0,
+          "best": 240292.0
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.9475355439482929,
+          "best": 0.9475355439482929
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 2244.0,
+          "best": 2244.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "disprove-guarded-upstream": {
+        "billed_input_mean": {
+          "floor": 157550.33333333334,
+          "best": 157550.33333333334
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.8269041151323516,
+          "best": 0.8269041151323516
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 2351.6666666666665,
+          "best": 2351.6666666666665
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "disprove-live-callers": {
+        "billed_input_mean": {
+          "floor": 167785.33333333334,
+          "best": 167785.33333333334
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.8803106246402269,
+          "best": 0.8803106246402269
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1073.0,
+          "best": 1073.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "disprove-lock-in-caller": {
+        "billed_input_mean": {
+          "floor": 167770.33333333334,
+          "best": 167770.33333333334
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.9270569501985392,
+          "best": 0.9270569501985392
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1356.3333333333333,
+          "best": 1356.3333333333333
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "verify-claim-names-nothing": {
+        "billed_input_mean": {
+          "floor": 209153.0,
+          "best": 209153.0
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.8695306710712599,
+          "best": 0.8695306710712599
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1576.3333333333333,
+          "best": 1576.3333333333333
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "verify-dangling-import": {
+        "billed_input_mean": {
+          "floor": 206601.66666666666,
+          "best": 206601.66666666666
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.8896425166422318,
+          "best": 0.8896425166422318
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1213.0,
+          "best": 1213.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "verify-vacuous-test": {
+        "billed_input_mean": {
+          "floor": 209070.0,
+          "best": 209070.0
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.9072267846728278,
+          "best": 0.9072267846728278
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1269.6666666666667,
+          "best": 1269.6666666666667
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
       }
     }
   }

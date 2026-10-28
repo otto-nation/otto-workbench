@@ -1,0 +1,30 @@
+{
+  "name": "verify-dangling-import",
+  "task": "verify",
+  "description": "One fix deletes a helper as unused though report.py imports it, with no test covering report.py; the other is a correct one-word message fix with a test",
+  "source": "synthetic",
+  "language": "python",
+  "items": [
+    {
+      "id": "R1",
+      "truth": "broken",
+      "file": "totals.py",
+      "line": 5,
+      "ask": "`legacy_total` looks unused. Delete it.",
+      "claim": "No test applies: `legacy_total` had no callers, so removing it changes no behaviour."
+    },
+    {
+      "id": "R2",
+      "truth": "holds",
+      "file": "messages.py",
+      "line": 2,
+      "ask": "The error reads \"could not found\". Make it \"could not find\".",
+      "claim": "tests/test_messages.py::test_not_found_names_the_thing now asserts the exact message and fails without the change."
+    }
+  ],
+  "tags": [
+    "verify",
+    "python",
+    "removed-name"
+  ]
+}

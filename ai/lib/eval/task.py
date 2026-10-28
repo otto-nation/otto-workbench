@@ -13,6 +13,7 @@ tasks existed keeps working.
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
 | `disprove` | A repo and planted findings, each marked real or false | Share of false findings falsified, and share of real findings kept |
+| `verify` | A repo, a fix pass's uncommitted edits to it, and claimed fixes each marked holds or broken | Share of broken fixes not called verified, and share of good fixes called verified |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
 that becomes the run's `cwd`, and a case without one is skipped. That repo is
@@ -36,7 +37,7 @@ Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
 Each task names the production `Phase` it measures (review: `single`, ci-fix:
-`ci_fix`, skill: `comments_fix`, disprove: `disprove`). With `--models` omitted,
+`ci_fix`, skill: `comments_fix`, disprove: `disprove`, verify: `fix_verify`). With `--models` omitted,
 `resolved_model` picks that phase's model through `agent.phases.phase_model`
 before the run, so results are labelled with the id that served them rather
 than `(default)`, and the eval measures what production runs instead of the backend's interactive
@@ -291,11 +292,17 @@ def _disprove_task() -> EvalTask:
     return DisproveTask()
 
 
+def _verify_task() -> EvalTask:
+    from eval.scoring_verify import VerifyTask
+    return VerifyTask()
+
+
 _TASK_FACTORIES = {
     DEFAULT_TASK: _review_task,
     "ci-fix": _cifix_task,
     "skill": _skill_task,
     "disprove": _disprove_task,
+    "verify": _verify_task,
 }
 
 

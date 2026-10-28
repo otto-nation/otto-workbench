@@ -1,0 +1,30 @@
+{
+  "name": "verify-claim-names-nothing",
+  "task": "verify",
+  "description": "One fix leaves 2000 a non-leap year and names a test that does not exist; the other is correct and held by a real test",
+  "source": "synthetic",
+  "language": "python",
+  "items": [
+    {
+      "id": "R1",
+      "truth": "broken",
+      "file": "calendar_util.py",
+      "line": 2,
+      "ask": "`is_leap` treats 1900 as a leap year. Apply the full Gregorian rule.",
+      "claim": "tests/test_calendar_util.py::test_century_years covers 1900 and 2000."
+    },
+    {
+      "id": "R2",
+      "truth": "holds",
+      "file": "chunks.py",
+      "line": 2,
+      "ask": "`chunks` drops the final partial chunk: chunks([1,2,3,4,5], 2) loses the 5.",
+      "claim": "tests/test_chunks.py::test_keeps_the_final_partial_chunk fails without the change."
+    }
+  ],
+  "tags": [
+    "verify",
+    "python",
+    "missing-test"
+  ]
+}

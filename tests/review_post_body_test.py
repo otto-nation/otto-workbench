@@ -43,8 +43,25 @@ class TestFormatBodyText:
         assert "Have some comments" in result
 
     def test_without_inline_shows_review_findings(self, rp):
-        result = rp.format_body_text([], has_inline=False, severity_filter={"M", "S", "N"})
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="handler.go", line=42,
+            end_line=None, body="Fix it", posted_id="M1",
+        )
+        result = rp.format_body_text([f], has_inline=False, severity_filter={"M", "S", "N"})
         assert "Review findings" in result
+
+    def test_no_findings_at_all_drops_the_lead_in(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=False, severity_filter={"M", "S", "N"},
+            sections=_make_sections(rp, summary="Clean.", static_analysis="### Nesting depth"),
+        )
+        assert "Review findings" not in result
+        assert "Have some comments" not in result
+        assert "Clean." in result
+        assert "### Nesting depth" in result
+
+    def test_no_findings_and_no_sections_is_empty(self, rp):
+        assert rp.format_body_text([], has_inline=False, severity_filter={"M"}) == ""
 
     def test_body_findings_listed_with_path_refs(self, rp):
         f = rp.Finding(

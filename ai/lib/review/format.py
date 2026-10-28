@@ -375,9 +375,12 @@ def format_body_text(
 
     labels = [s.label for s in SEVERITIES if s.key in severity_filter]
 
+    # The lead-in introduces findings, so a review with none says nothing here:
+    # "Review findings (must-fix):" above a clean verdict reads as a list that
+    # failed to render.
     if has_inline:
         parts.append(f"Have some comments marked as {', '.join(labels)}.")
-    else:
+    elif body_findings:
         parts.append(f"Review findings ({', '.join(labels)}):")
 
     after = sections.after_findings()

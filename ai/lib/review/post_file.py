@@ -80,9 +80,14 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
         data={"kept": len(findings), "excluded": filtered, "filter": args.severity},
     )
 
+    # No findings is not nothing to post. The summary, the verdict and the
+    # static-analysis section are the review too, and a caller that approves
+    # on the strength of this post submits the pending review it leaves —
+    # returning here left none, so the approval went out with an empty body.
+    # The one review that genuinely has nothing to say is caught below, off the
+    # body it would have posted.
     if not findings:
-        core.log.warn("No findings to post")
-        return 0
+        core.log.info("No findings to comment on")
 
     head_sha = sidecar.head_sha
     head_ref = sidecar.head_ref
@@ -155,6 +160,12 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
         body_findings, len(inline) > 0, severity_filter,
         sections=sections,
     )
+
+    if not inline_comments and not body_text:
+        core.log.warn("Nothing to post: no findings and no review body")
+        trail.decision("post_mode", "nothing to post",
+                       reason="no findings and every section is empty")
+        return 0
 
     commit_id = head_sha
     chunk_size = args.chunk_size

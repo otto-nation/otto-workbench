@@ -565,14 +565,16 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         assert "declined on the merits" in payload["body"]
         assert not any("declined on the merits" in c["body"] for c in payload["comments"])
 
-    def test_a_wholly_resolved_review_posts_nothing(self, rp, tmp_path, capsys):
+    def test_a_wholly_resolved_review_posts_its_body_alone(self, rp, tmp_path, capsys):
         rec = record(
             finding("S1", "already fixed", path="file.go", line=4,
                     checkbox=True, disposition=Disposition.FIXED),
-            summary="Ok",
+            summary="Every finding is resolved.",
         )
-        assert self._run_dry(rp, tmp_path, rec=rec) == 0
-        assert "{" not in capsys.readouterr().out
+        payload = self._dry_run_payload(rp, tmp_path, capsys, rec=rec)
+        assert "comments" not in payload
+        assert "Every finding is resolved." in payload["body"]
+        assert "already fixed" not in payload["body"]
 
 
 class TestDuplicateFindingsAreNotReposted:
@@ -655,3 +657,79 @@ class TestDuplicateFindingsAreNotReposted:
         body finding, not a skip, and is counted once."""
         _, tracking = self._post(rp, tmp_path)
         assert (tracking.inline_count, tracking.body_count, tracking.skipped_count) == (1, 1, 1)
+
+
+class TestACleanReviewStillPosts:
+    """A review with no findings is posted as its body alone, and tracked.
+
+    A caller that approves a PR submits the pending review this leaves, read
+    back from `post.jsonl`. With nothing posted there was nothing to submit, so
+    the approval went out with an empty body and the summary, verdict and
+    static-analysis results never reached the PR."""
+
+    STATIC_ANALYSIS = (
+        "### Nesting depth\n\n"
+        "1 violation in 1 of 3 files checked\n\n"
+        "- [ ] **[SA1]** **`tasks/check.py:116`** — depth 3 exceeds limit 2"
+    )
+
+    CLEAN = record(
+        summary="No findings across 3 files in 1 group.",
+        verdict="Approve — clean review.",
+        static_analysis=STATIC_ANALYSIS,
+    )
+
+    def _post(self, rp, tmp_path, rec):
+        import argparse
+        review_dir = tmp_path / "review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        store_record(review_file, rec, ReviewMeta(head_sha="aaa1111bbb2222"))
+
+        args = argparse.Namespace(
+            repo="org/repo", pr="1", review_file=str(review_file),
+            dry_run=False, submit=False, chunk_size=30,
+            severity="M,S,N,I", debug=False,
+        )
+        pr_data = rp.PRData(viewer_login="bot", head_sha="aaa1111bbb2222",
+                            head_ref="feat", base_ref="main", reviews=[])
+        payloads = []
+
+        def capture(endpoint, **kw):
+            if kw.get("input_text"):
+                payloads.append(json.loads(kw["input_text"]))
+            return {"id": 42}
+
+        with (
+            patch.object(rp, "fetch_pr_data", return_value=pr_data),
+            patch.object(rp, "_get_diff", return_value=""),
+            patch.object(rp, "fetch_bot_reviews", return_value=review.dedup.BotReviews()),
+            patch.object(rp, "check_review_already_posted", return_value=set()),
+            patch.object(rp, "_check_existing_pending", return_value=rp.PendingReview()),
+            patch("gh.client.api_json", side_effect=capture),
+        ):
+            code = rp.run_post(MagicMock(), args, "org/repo",
+                               rp.ReviewMeta(repo="org/repo"), review_file)
+        return code, payloads, review_dir / "post.jsonl"
+
+    def test_the_body_carries_summary_verdict_and_static_analysis(self, rp, tmp_path):
+        code, payloads, _ = self._post(rp, tmp_path, self.CLEAN)
+        assert code == 0
+        [payload] = payloads
+        assert "comments" not in payload
+        assert "No findings across 3 files" in payload["body"]
+        assert "clean review." in payload["body"]
+        assert "depth 3 exceeds limit 2" in payload["body"]
+        assert "Review findings" not in payload["body"]
+
+    def test_the_pending_review_is_tracked_for_the_approver(self, rp, tmp_path):
+        _, _, post_file = self._post(rp, tmp_path, self.CLEAN)
+        tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
+        assert tracking.review_id == 42
+        assert tracking.submitted is False
+
+    def test_a_review_with_nothing_at_all_posts_nothing(self, rp, tmp_path):
+        code, payloads, post_file = self._post(rp, tmp_path, record())
+        assert code == 0
+        assert payloads == []
+        assert not post_file.exists()

@@ -49,6 +49,23 @@ class MissingRuleSource(Exception):
     """The backend's rule-prefix source is not on disk, so an arm cannot be seeded."""
 
 
+def kept(stem: str) -> bool:
+    """Whether the trimmed arm keeps rule *stem*.
+
+    A machine-local addendum (`<rule>.local`) goes where the rule it extends
+    goes, so a machine that adds one is not a failed run. Only a rule with no
+    base in either arm stays unclassified.
+    """
+    if stem in KEPT_RULES or stem in DROPPED_RULES:
+        return stem in KEPT_RULES
+    return stem.removesuffix(".local") in KEPT_RULES
+
+
+def _classified(stem: str) -> bool:
+    base = stem.removesuffix(".local")
+    return any(name in KEPT_RULES | DROPPED_RULES for name in (stem, base))
+
+
 def classify(installed: list[str]) -> None:
     """Raise unless every installed rule name is in exactly one arm."""
     both = sorted(KEPT_RULES & DROPPED_RULES)
@@ -57,7 +74,7 @@ def classify(installed: list[str]) -> None:
             f"rules in both arms, so the trim set is contradictory: "
             f"{', '.join(both)}",
         )
-    unknown = sorted(set(installed) - KEPT_RULES - DROPPED_RULES)
+    unknown = sorted(stem for stem in installed if not _classified(stem))
     if unknown:
         raise UnclassifiedRule(
             f"rules in neither arm, so the trim set no longer describes the "
@@ -180,7 +197,7 @@ def seed_config_tree(source: Path, dest: Path, condition: str) -> Path:
 
     rules = sorted(src_rules.glob("*.md"))
     classify([rule.stem for rule in rules])
-    wanted = rules if condition == "full" else [r for r in rules if r.stem in KEPT_RULES]
+    wanted = rules if condition == "full" else [r for r in rules if kept(r.stem)]
     for rule in wanted:
         shutil.copy2(rule, rules_dir / rule.name)
 

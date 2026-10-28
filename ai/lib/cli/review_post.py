@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import cli.boundary
 from core.trail import Trail, add_trail_args
 import gh.client
 import review.dedup
@@ -34,7 +35,6 @@ import review.sections
 # editor calls unused is therefore load-bearing — deleting it silently turns the
 # patch it serves into a no-op.
 import git.client
-import core.errors
 import core.log
 import core.module_proxy
 import core.proc
@@ -84,6 +84,7 @@ core.module_proxy.install(__name__, _SUBMODULES)
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=SCRIPT,
                                      description="Post a review file to GitHub")
@@ -151,6 +152,6 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
-        core.errors.reraise(trail, exc)
+        cli.boundary.reraise(trail, exc)
     finally:
         trail.finish()

@@ -134,6 +134,9 @@ NO_DEPS_TESTS = {
     # Popen double that forwards to a subprocess.run stub; stdlib only, and
     # conftest plus the suites that stub run carry the deps.
     "tests/proc_run_bridge_support.py",
+    # Fake `gh` on PATH; stdlib and pytest only, and the suites importing it
+    # (via conftest's pytest_plugins) carry the deps.
+    "tests/stub_gh_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')

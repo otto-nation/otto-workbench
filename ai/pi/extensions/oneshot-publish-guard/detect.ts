@@ -1,3 +1,4 @@
+import { isGithubWrite, OWNERS_CHECK } from "../_shared/github-writes.ts";
 import { statements } from "../_shared/statements.ts";
 import { tokenize } from "../_shared/tokenize.ts";
 
@@ -6,93 +7,45 @@ import { tokenize } from "../_shared/tokenize.ts";
  *
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
- * file pulls in nothing but ../_shared, which imports nothing itself, so
+ * file pulls in nothing but ../_shared, which imports only Node built-ins, so
  * tests/pi_extensions_oneshot_publish.bats can run it under plain `node`.
  *
- * What counts as publishing is meant to match `_statement_publishes` in
- * ai/claude/bin/claude-bash-guard decision for decision. Two guards enforcing
- * one rule that disagree about a given command are worse than one guard,
- * because which answer you get depends on which harness you happen to be in.
- * The *when* differs: this side keys on json/print mode (a one-shot session);
- * Claude keys on a non-empty `agent_id`.
+ * What counts as publishing is `linear issue create` plus every GitHub write
+ * ../_shared/github-writes.ts recognises — one write classifier, so this rule
+ * and the owner boundary cannot disagree about what a write is. It matches
+ * `_command_publishes` in ai/claude/bin/claude-bash-guard decision for
+ * decision. Two guards enforcing one rule that disagree about a given command
+ * are worse than one guard, because which answer you get depends on which
+ * harness you happen to be in. The *when* differs: this side keys on
+ * json/print mode (a one-shot session); Claude keys on a non-empty `agent_id`.
  */
 
-const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
-const GH_PR_WRITES = new Set(["edit", "comment", "review", "create"]);
-const ISSUE_OR_PULL = /(?:^|\/)(?:issues|pulls)(?:\/|$)/;
-
-/** Words a statement will pass along, operators dropped. */
-function wordsOf(statement: string): string[] {
-  return tokenize(statement)
+/**
+ * True when STATEMENT files a Linear issue.
+ *
+ * Its own case because the GitHub classifier does not know Linear. Anchored
+ * to the command being run, so `echo 'linear issue create'` is not matched.
+ *
+ * ceiling: `linear` reached through a wrapper (`env linear …`) or an alias is
+ * not matched. Upgrade if one shows up in an agent transcript; the Claude
+ * guard reads it the same way.
+ */
+function filesLinearIssue(statement: string): boolean {
+  const words = tokenize(statement)
     .filter((token) => !token.operator)
     .map((token) => token.value);
-}
-
-/** True when WORDS name a mutating HTTP method via `-X` / `--method`. */
-function mutatingMethod(words: string[]): boolean {
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
-    if (word === "-X" || word === "--method") {
-      return MUTATING_METHODS.has((words[i + 1] ?? "").toUpperCase());
-    }
-    if (word.startsWith("--method=")) {
-      return MUTATING_METHODS.has(word.slice("--method=".length).toUpperCase());
-    }
-    if (word.startsWith("-X") && word.length > 2) {
-      return MUTATING_METHODS.has(word.slice(2).toUpperCase());
-    }
-  }
-  return false;
-}
-
-/** True when a word is a GitHub path that names issues or pulls. */
-function pathTouchesIssuesOrPulls(words: string[]): boolean {
-  return words.some((word) => ISSUE_OR_PULL.test(word));
+  return words[0] === "linear" && words[1] === "issue" && words[2] === "create";
 }
 
 /**
- * True when STATEMENT files an issue or writes to a PR.
+ * True when COMMAND files an issue or writes to GitHub.
  *
- * Anchored to the command being run so a grep over a script, or
- * `echo 'gh issue create'`, is not matched. `pr comments --triage` and a GET
- * `gh api …/issues` are reads and are not matched.
- *
- * ceiling: `gh`/`pr`/`linear` reached through an alias or a wrapper script is
- * not matched. Upgrade if one shows up; the forms an agent writes are the
- * ones listed, and the Claude guard reads them the same way.
+ * OWNERS_CHECK is the classifier the GitHub half asks; a test passes another
+ * to exercise the fail-closed path.
  */
-function statementPublishes(statement: string): boolean {
-  const words = wordsOf(statement);
-  if (words[0] === "gh" && words[1] === "issue" && words[2] === "create") {
-    return true;
-  }
-  if (words[0] === "linear" && words[1] === "issue" && words[2] === "create") {
-    return true;
-  }
-  if (words[0] === "gh" && words[1] === "pr" && GH_PR_WRITES.has(words[2] ?? "")) {
-    return true;
-  }
-  if (words[0] === "pr" && words[1] === "create") return true;
-  if (words[0] === "pr" && words[1] === "comments" && words.includes("--post")) {
-    return true;
-  }
-  if (words[0] === "pr" && words[1] === "describe" && words.includes("--post")) {
-    return true;
-  }
-  if (
-    words[0] === "gh" &&
-    words[1] === "api" &&
-    mutatingMethod(words.slice(2)) &&
-    pathTouchesIssuesOrPulls(words.slice(2))
-  ) {
-    return true;
-  }
-  return false;
-}
-
-/** True when COMMAND files an issue or writes to a PR. */
-export function isPublishing(command: string): boolean {
-  return statements(command).some((statement) => statementPublishes(statement));
+export function isPublishing(command: string, ownersCheck: string = OWNERS_CHECK): boolean {
+  if (statements(command).some(filesLinearIssue)) return true;
+  return isGithubWrite(command, ownersCheck);
 }
 
 /**

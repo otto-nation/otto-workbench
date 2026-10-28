@@ -130,6 +130,11 @@ tools:
     visibility: hidden
     description: "Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record"
 
+  - name: owners-check
+    permission: false
+    visibility: hidden
+    description: "Checks a GitHub write command against github.owners — called by both harnesses' upstream guards"
+
   - name: eval-models
     parser: cli.eval_models:build_parser
     permission: false

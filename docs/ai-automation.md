@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 650 -->
+<!-- doc-budget: 654 -->
 
 # AI Automation
 
@@ -310,6 +310,10 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
 - `~/.config/herdr/config.toml` is not managed yet (#1660).
 
 ## Configuration
+
+### GitHub owners
+
+Every GitHub write is checked against `github.owners` and refused elsewhere; unset refuses all. Record yours with `otto-workbench config set github.owners.work '[your-org]'`. The policy and where it is enforced: [`gh/owners.py`](ai-libraries.md#ghownerspy).
 
 ### Usage ledger
 

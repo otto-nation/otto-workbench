@@ -689,8 +689,13 @@ def fetch_review_body_comments(
     return pr_data.review_body_comments(my_login)
 
 
-def resolve_thread(thread_id: str) -> bool:
-    """Resolve a review thread on GitHub via GraphQL mutation."""
+def resolve_thread(thread_id: str, repo: str = "") -> bool:
+    """Resolve a review thread on GitHub via GraphQL mutation.
+
+    *repo* is the ``OWNER/REPO`` the thread belongs to, or ``HOST/OWNER/REPO``
+    on Enterprise, for the owner boundary in ``gh.client``; without it the
+    client checks the cwd's remotes.
+    """
     if not core.publishing.enabled():
         core.publishing.draft(f"resolve thread {thread_id}")
         return False
@@ -698,7 +703,7 @@ def resolve_thread(thread_id: str) -> bool:
         "query": GRAPHQL_RESOLVE,
         "variables": {"threadId": thread_id},
     })
-    return gh.client.graphql("", input_text=document).ok
+    return gh.client.graphql("", input_text=document, target_repo=repo).ok
 
 
 # ── State sync ─────────────────────────────────────────────────────────────

@@ -1,0 +1,217 @@
+# The GitHub write-shape corpus: <write|read><TAB><command>.
+# ai/lib/gh/write_shapes.py (command_is_write) is the one classifier; both agent
+# guards keep only a superset pre-filter and ask it through owners-check --classify.
+#   ai/lib/gh/write_shapes.py (command_is_write)                    tests/gh_write_shapes_test.py
+#   ai/claude/bin/claude-bash-guard (subagent rule)                 tests/github_write_shapes.bats
+#   ai/pi/extensions/oneshot-publish-guard/detect.ts (isPublishing) tests/github_write_shapes.bats
+write	gh issue create --title x --body y
+write	gh issue comment 5 --body x
+write	gh issue edit 5 --body x
+write	gh issue close 5
+write	gh issue reopen 5
+write	gh issue delete 5 --yes
+write	gh issue transfer 12 o/r
+write	gh pr create --draft --title x
+write	gh pr comment 1 --body x
+write	gh pr review 1 --comment -b x
+write	gh pr edit 1 --body x
+write	gh pr merge 1 --squash
+write	gh pr close 1
+write	gh pr reopen 1
+write	gh pr ready 1
+write	gh release create v1.0.0
+write	gh release edit v1.0.0 --notes x
+write	gh release delete v1.0.0
+write	gh release upload v1.0.0 dist.tgz
+write	gh label create follow-up --repo o/r
+write	gh api -X POST /repos/o/r/issues
+write	gh api --method PATCH repos/o/r/pulls/1
+write	gh api --method=PUT repos/o/r/issues/1/lock
+write	gh api -XDELETE repos/o/r/issues/1/lock
+write	gh api -X "POST" repos/o/r/git/refs
+write	gh api repos/o/r/issues -f title=x
+write	gh api repos/o/r/issues/1/comments -F body=@notes.md
+write	gh api repos/o/r/pulls/1/reviews --input review.json
+write	gh api repos/o/r/issues --raw-field=title=x
+write	gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "x"}) { thread { id } } }'
+write	gh api graphql --input mutation.json
+write	gh --repo o/r issue create --title x
+write	gh -R o/r pr merge 1
+write	"gh" issue create --title x
+write	gh "issue" create --title x
+write	/usr/local/bin/gh pr comment 1 --body x
+write	GH_REPO=o/r gh issue create --title x
+write	env GH_REPO=o/r gh issue create --title x
+write	eval 'gh issue create --title x'
+write	env -i GH_REPO=o/r gh issue create --title x
+write	env -u X GH_REPO=o/r gh issue create --title x
+write	env -S GH_REPO=o/r gh issue create --title x
+write	bash -c 'gh issue create --title x'
+write	sh -c 'gh pr comment 1 --body x'
+write	zsh -c 'gh issue create --title x'
+write	command gh issue create --title x
+write	exec gh issue create --title x
+write	xargs gh issue create --title
+write	sudo gh issue create --title x
+write	time gh issue create --title x
+write	bash -lc 'gh issue comment 1 -b hi --repo stranger/lib'
+write	sh -ec 'gh pr comment 1 --body x'
+write	zsh -xc 'gh issue create --title x'
+write	command gh issue comment 1 -b hi
+write	sudo -u bob gh issue comment 1 -b hi
+write	env -u FOO gh issue comment 1 -b hi
+write	xargs -n 1 gh issue create --title
+write	sudo env GH_REPO=stranger/lib gh issue comment 1 -b hi
+write	time sudo gh issue comment 1 -b hi --repo stranger/lib
+write	command time gh issue comment 1 -b hi --repo stranger/lib
+write	time env GH_REPO=stranger/lib gh issue comment 1 -b hi
+write	sudo env -u GH_REPO gh issue comment 1 -b hi
+write	xargs sudo gh issue create --title
+write	xargs -0I {} gh issue comment {} -b hi
+write	env -S 'gh issue comment 1 -b hi --repo stranger/lib'
+write	env -S 'GH_REPO=stranger/lib gh issue comment 1 -b hi'
+write	env --split-string='gh issue comment 1 -b hi'
+write	env -S'gh issue comment 1 -b hi'
+write	env -C ../s gh issue comment 1 -b hi
+write	env --chdir=../s gh issue comment 1 -b hi
+write	env --chd=../s gh issue comment 1 -b hi
+write	sudo -D ../s gh issue comment 1 -b hi
+write	sudo --chdir=../s gh issue comment 1 -b hi
+write	sudo --frobnicate gh issue comment 1 -b hi
+write	sudo -iu bob gh issue comment 1 -b hi --repo stranger/lib
+write	sudo -su bob gh issue comment 1 -b hi
+write	sudo GH_REPO=o/r gh issue comment 1 -b hi
+write	env - gh issue comment 1 -b hi
+write	/usr/bin/time -f %e gh issue comment 1 -b hi
+write	/usr/bin/env GH_REPO=o/r gh issue create --title x
+write	cd /tmp && gh issue create --title x
+write	gh issue list; gh issue create --title x
+write	pr create --draft
+write	pr --repo-dir /tmp/x create --draft
+write	pr describe --post
+write	pr comments --finish --post
+write	pr fix --post
+write	pr ci --post
+write	pr review 123
+write	review 123
+write	pr-describe --post
+write	review-post
+write	review-threads --post
+write	gh pr -R stranger/tool comment 1 -b hi
+write	gh issue --repo o/r create -t x
+write	gh pr --repo=o/r comment 1 -b hi
+write	gh pr -Ro/r merge 1
+write	gh api graphql -F query=@m.graphql
+write	gh api graphql -f query=$Q
+write	gh api graphql -f query="$Q"
+write	gh api graphql --field=query=@m.graphql
+write	gh api graphql -F owner=o
+write	gh api -X=POST repos/o/r/issues -f title=x
+write	gh api -iXPOST repos/o/r/issues
+write	gh api --method=DELETE repos/o/r/issues/1/lock
+write	timeout 60 gh pr comment 1 -b hi
+write	timeout -k 5 -s KILL 1m gh pr comment 1 -b hi
+write	nice -n 5 gh pr create --draft
+write	nice -5 gh pr comment 1 -b hi
+write	nohup gh pr comment 1 -b hi
+write	stdbuf -oL gh pr comment 1 -b hi
+write	ionice -c2 -n7 gh pr comment 1 -b hi
+write	chrt -f 10 gh pr comment 1 -b hi
+write	taskset -c 0-3 gh pr comment 1 -b hi
+write	doas gh pr comment 1 -b hi
+write	doas -u bob gh pr comment 1 -b hi
+write	gh workflow run ci.yml
+write	gh workflow enable ci.yml
+write	gh workflow disable ci.yml
+write	gh run rerun 5
+write	gh run cancel 5
+write	gh run delete 5
+write	gh repo edit o/r --description x
+write	gh repo delete o/r --yes
+write	gh repo archive o/r
+write	gh repo rename newname
+write	gh repo fork stranger/lib
+write	gh repo create o/new --public
+write	gh repo sync o/r
+write	gh secret set TOKEN -b x
+write	gh secret delete TOKEN
+write	gh variable set NAME -b x
+write	gh variable delete NAME
+write	gh pr revert 1
+write	gh pr lock 1
+write	gh pr unlock 1
+write	gh pr update-branch 1
+write	gh issue lock 1
+write	gh issue unlock 1
+write	gh issue pin 1
+write	gh issue unpin 1
+write	gh issue develop 1
+write	gh gist create notes.md
+write	gh gist edit abc
+write	gh gist delete abc
+write	gh cache delete 123
+write	gh label clone stranger/lib
+write	gh project item-add 1 --owner o --url https://github.com/o/r/issues/1
+write	gh project create --owner o --title x
+write	bash -c 'gh issue comment 1 -b x --repo stranger/x'
+write	eval eval eval eval 'gh pr view 1'
+read	gh issue list
+read	gh issue view 1
+read	gh pr view 1
+read	gh pr checks 1
+read	gh pr diff 1
+read	gh release view v1
+read	gh label list
+read	gh repo view
+read	gh api repos/o/r/issues
+read	gh api -X GET repos/o/r/issues -f state=open
+read	gh api graphql -f query='query { viewer { login } }'
+read	gh api graphql -F owner=o -f query='query($owner: String!) { repositoryOwner(login: $owner) { id } }'
+read	echo 'gh issue create'
+read	grep -rn "gh pr merge" ai/
+read	pr comments --triage
+read	pr describe --draft
+read	pr ci
+read	pr review --self --fix
+read	pr review 123 --no-post
+read	pr status
+read	review --self
+read	pr-describe
+read	review-threads --triage
+read	command -v gh
+read	xargs grep -n 'pr create'
+read	sudo apt install gh
+read	time gh pr list
+read	command gh pr view 3
+read	env -u FOO gh pr list
+read	git ls-files | xargs grep -l review
+read	sudo command -v gh
+read	command -pv gh
+read	time sudo gh pr list
+read	sudo env -u FOO gh pr list
+read	sudo -iu bob ls
+read	env -C /tmp ls
+read	/usr/bin/time -f %e make test
+read	gh api graphql -f query='query { repository(owner: "o", name: "r") { id } }'
+read	gh api -X=GET repos/o/r/issues -f state=open
+read	gh workflow list
+read	gh workflow view ci.yml
+read	gh run view 5
+read	gh run list
+read	gh repo view
+read	gh secret list
+read	gh variable list
+read	gh gist view abc
+read	gh cache list
+read	gh ruleset list
+read	gh ruleset view 1
+read	gh project list --owner o
+read	timeout 60 gh pr view 1
+read	nice -n 5 gh pr list
+read	nohup gh pr view 1
+read	bash -lc 'ls ai/lib/review'
+read	bash -c 'gh pr view 1'
+read	eval 'echo review'
+read	env -S "gh pr view 1"
+read	eval eval 'gh pr view 1'
+read	sh -c 'pr status'

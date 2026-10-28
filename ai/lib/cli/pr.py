@@ -35,6 +35,7 @@ import os
 import sys
 from pathlib import Path
 
+import cli.boundary
 import cli.dispatch
 import cli.locks
 import cli.needs
@@ -62,7 +63,6 @@ import pr.context
 import pr.sync
 import pr.push_intent
 import core.cli_reference
-import core.errors
 import core.log
 import core.tool_parser
 import core.proc
@@ -459,7 +459,7 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
                if spec.handler == "cli.ci_check:main" else {}),
         )
     except Exception as exc:
-        core.errors.reraise(trail, exc)
+        cli.boundary.reraise(trail, exc)
     finally:
         trail.finish()
 
@@ -545,6 +545,7 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
                      original_repo_dir=original_repo_dir)
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     """Run the invocation *argv* describes, and return its exit code.
 

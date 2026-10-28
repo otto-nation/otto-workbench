@@ -5,7 +5,6 @@ import itertools
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -21,7 +20,9 @@ from repo_config_guard_support import _REPO_CONFIG, _assert_config_unchanged, _c
 # The suite heartbeat's in-flight records, as a plugin of their own so this
 # module keeps the fixtures and stays within the test-layout cap.
 # Environment-variable isolation fixtures, split out for the same reason.
-pytest_plugins = ["suite_status_support", "env_isolation_support"]
+pytest_plugins = [
+    "suite_status_support", "env_isolation_support", "github_owners_support", "stub_gh_support",
+]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
@@ -499,34 +500,6 @@ def _clear_lock_env():
         os.environ.pop(var, None)
         if saved[var] is not None:
             os.environ[var] = saved[var]
-
-
-@pytest.fixture
-def stub_gh(tmp_path, monkeypatch):
-    """Put a `gh` on PATH whose body is *body*, and record every invocation.
-
-    The stub appends its argv to `calls.txt` before running *body*, so a test
-    can assert what the client actually asked for as well as what it did with
-    the answer. Shared by `gh_client_test` and `gh_budget_test`, both of which
-    need a fake `gh` binary rather than a patched `subprocess` — a mock
-    returning the string the test author expected would pass whether or not
-    the real call was ever refused.
-    """
-    def _stub(body: str) -> Path:
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        calls = tmp_path / "calls.txt"
-        script = bin_dir / "gh"
-        script.write_text(
-            "#!/bin/sh\n"
-            f'printf "%s\\n" "$*" >> {calls}\n'
-            f"{body}\n"
-        )
-        script.chmod(script.stat().st_mode | stat.S_IEXEC)
-        monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
-        return calls
-
-    return _stub
 
 
 @pytest.fixture(autouse=True)

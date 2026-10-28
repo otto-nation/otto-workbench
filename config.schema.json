@@ -263,6 +263,15 @@
         },
         "host": {
           "type": "string"
+        },
+        "owners": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },

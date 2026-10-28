@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.trail import Trail, add_trail_args
+import cli.boundary
 import agent.diagnosis
 import agent.invoke
 import agent.phases
@@ -50,7 +51,6 @@ import review.retry
 import review.state
 import review.types
 
-import core.errors
 import core.log
 import core.module_proxy
 import pr.state
@@ -104,6 +104,7 @@ _SUBMODULES = (
 core.module_proxy.install(__name__, _SUBMODULES)
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=SCRIPT, description="Review orchestration for review")
@@ -192,6 +193,6 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return core.proc.INTERRUPT_RETURNCODE
         except Exception as exc:
-            core.errors.reraise(trail, exc)
+            cli.boundary.reraise(trail, exc)
         finally:
             trail.finish()

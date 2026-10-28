@@ -39,9 +39,9 @@ from __future__ import annotations
 import argparse
 import sys
 
+import cli.boundary
 import cli.locks
 import cli.needs
-import core.errors
 import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args
@@ -155,6 +155,7 @@ def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:
     return review.comment_threads.run_threads(trail, args, ctx)
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -251,6 +252,6 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return _run_locked(trail, args, ctx, route, body)
         except Exception as exc:
-            core.errors.reraise(trail, exc)
+            cli.boundary.reraise(trail, exc)
         finally:
             trail.finish()

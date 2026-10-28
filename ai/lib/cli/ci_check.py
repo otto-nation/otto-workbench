@@ -26,9 +26,9 @@ from __future__ import annotations
 
 import sys
 
+import cli.boundary
 import cli.locks
 import cli.needs
-import core.errors
 import core.log
 import core.proc
 import core.publishing
@@ -82,6 +82,7 @@ def build_parser() -> ToolParser:
     return parser
 
 
+@cli.boundary.reports_owner_boundary
 def main(argv: list[str] | None = None, *,
          install_signal_handler: bool = True) -> int:
     """Parse *argv* and run the CI check it asks for.
@@ -131,6 +132,6 @@ def main(argv: list[str] | None = None, *,
             core.log.error(str(exc))
             return 1
         except Exception as exc:
-            core.errors.reraise(trail, exc)
+            cli.boundary.reraise(trail, exc)
         finally:
             trail.finish()

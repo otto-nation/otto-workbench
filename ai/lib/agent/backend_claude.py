@@ -18,7 +18,6 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import agent.machine_env
@@ -27,11 +26,10 @@ import core.children
 import core.log
 import core.timeouts
 import agent.vertex_quota
-from agent.backend import AgentInvocation, agent_env
+from agent.backend import AgentInvocation, abort_preflight, agent_env
 from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
 from agent.context_ceiling import claude_window
-from agent.models import ModelRef
-from agent.pi_models import abort_preflight
+from agent.models import PhaseModels
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 from core.phases import Phase, Thinking
 
@@ -347,7 +345,7 @@ def ledger_thinking(thinking: str | None) -> str | None:
     return effort(thinking)
 
 
-def preflight(models: Mapping[ModelRef, Sequence[Phase]], trail, cwd: str) -> bool:
+def preflight(models: PhaseModels, trail, cwd: str) -> bool:
     """Refuse a model another provider serves, then check Vertex AI quota.
 
     The CLI is pointed at one provider by its environment and takes ``--model``

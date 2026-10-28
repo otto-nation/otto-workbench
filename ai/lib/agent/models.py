@@ -30,12 +30,14 @@ Not: which layer wins (``agent.phases``), what a backend does with the parts.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum, auto
+from typing import TypeAlias
 
 from config.workbench_config import ModelsConfig
 from core.errors import OperatorError
-from core.phases import Thinking, Tier
+from core.phases import Phase, Thinking, Tier
 
 _LEVELS = frozenset(level.value for level in Thinking)
 _TIERS = frozenset(tier.value for tier in Tier)
@@ -57,6 +59,12 @@ class ModelRef:
         provider = f"{self.provider}/" if self.provider else ""
         level = f":{self.level}" if self.level else ""
         return f"{provider}{self.id}{level}"
+
+
+# What a preflight is handed: each model reference a run would use, with the
+# phases that request it. Keyed by reference rather than id because an id is a
+# name in one provider's catalogue.
+PhaseModels: TypeAlias = Mapping[ModelRef, Sequence[Phase]]
 
 
 class ModelLayer(Enum):

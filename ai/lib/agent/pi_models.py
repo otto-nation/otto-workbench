@@ -33,13 +33,10 @@ from pathlib import Path
 
 import agent.pi_binary
 import core.errors
-import core.log
 import core.proc
 import core.timeouts
-import core.trail
-from agent.models import ModelRef
-from collections.abc import Mapping, Sequence
-from core.phases import Phase
+from agent.backend import abort_preflight
+from agent.models import PhaseModels
 
 def _pi_settings_path() -> Path:
     """``~/.pi/agent/settings.json``, or ``WORKBENCH_PI_SETTINGS`` when set.
@@ -280,15 +277,7 @@ def require_model_with_provider(provider: str | None, model: str | None) -> None
         raise ModelNotConfigured(provider)
 
 
-def abort_preflight(trail: core.trail.Trail, reason: str) -> None:
-    """Log and record one model-preflight failure, shared by every backend."""
-    core.log.error(f"Cannot start the run: {reason}")
-    trail.decision("model_preflight", "aborting run", reason=reason)
-
-
-def check_targets(
-    models: Mapping[ModelRef, Sequence[Phase]], trail: core.trail.Trail, cwd: str,
-) -> bool:
+def check_targets(models: PhaseModels, trail, cwd: str) -> bool:
     """False when a phase's model is not listed under the provider it names.
 
     ``models`` maps each model reference to the phases requesting it. Each is

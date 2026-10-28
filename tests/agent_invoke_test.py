@@ -129,9 +129,18 @@ class TestRunPromptResolution:
 
     def test_passes_the_resolved_model_and_thinking_level(self, backend, tmp_path):
         kwargs = self._kwargs(backend, tmp_path)
-        assert kwargs["model"] == agent.phases.phase_model(Phase.DESCRIBE, None)
-        assert kwargs["thinking"] == agent.phases.phase_thinking(Phase.DESCRIBE)
-        assert kwargs["provider"] == agent.phases.phase_provider()
+        settings = agent.phases.phase_settings(Phase.DESCRIBE, None)
+        assert (kwargs["model"], kwargs["thinking"], kwargs["provider"]) == (
+            settings.model, settings.thinking, settings.provider)
+
+    def test_the_provider_and_level_come_from_the_phases_model(self, backend, tmp_path, monkeypatch):
+        """One reference names all three, so the backend gets all three from it."""
+        monkeypatch.delenv(Phase.DESCRIBE.thinking_env_key, raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        monkeypatch.setenv(Phase.DESCRIBE.model_env_key, "openai/gpt-6-luna:low")
+        kwargs = self._kwargs(backend, tmp_path)
+        assert (kwargs["model"], kwargs["provider"], kwargs["thinking"]) == (
+            "gpt-6-luna", "openai", "low")
 
     def test_an_env_override_reaches_the_backend(self, backend, tmp_path, monkeypatch):
         """Being a phase is what earns these calls an operator-movable model."""
@@ -305,15 +314,21 @@ class TestRunAgentQuotaRetry:
         monkeypatch.setattr(agent.invoke.time, "sleep", lambda seconds: None)
         return calls
 
-    def _inv(self, tmp_path, model="sonnet"):
+    def _inv(self, tmp_path, model="sonnet", provider=None):
         return agent.backend.AgentInvocation(
-            prompt="p", cwd=str(tmp_path), model=model,
+            prompt="p", cwd=str(tmp_path), model=model, provider=provider,
             session_log=str(tmp_path / "s.jsonl"),
         )
 
     def test_a_quota_failure_is_retried_once(self, monkeypatch, tmp_path):
         calls = self._agent(monkeypatch, [1, 0])
         assert agent.invoke.run_agent(self._inv(tmp_path)) == 0
+        assert len(calls) == 2
+
+    def test_a_quota_failure_with_no_model_is_retried_too(self, monkeypatch, tmp_path):
+        """A phase on the backend's default model hits quota like any other."""
+        calls = self._agent(monkeypatch, [1, 0])
+        assert agent.invoke.run_agent(self._inv(tmp_path, model=None)) == 0
         assert len(calls) == 2
 
     def test_any_other_failure_is_returned_as_is(self, monkeypatch, tmp_path):
@@ -326,6 +341,36 @@ class TestRunAgentQuotaRetry:
         assert agent.invoke.run_agent(self._inv(tmp_path)) == 0
         assert len(calls) == 1
 
+    def test_a_429_holds_back_the_agents_on_that_provider_only(self, monkeypatch, tmp_path):
+        """The throttle is keyed by the provider the invocation names."""
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+        self._agent(monkeypatch, [1, 0])
+        throttle = agent.invoke.QuotaThrottle()
+        inv = self._inv(tmp_path, model="grok-4.6", provider="xai")
+        agent.invoke.run_agent(inv, throttle=throttle)
+        assert throttle.resume_at("xai") > 0
+        assert throttle.resume_at() == 0
+
+        slept = []
+        monkeypatch.setattr(agent.invoke.time, "sleep", lambda s: slept.append(s))
+        agent.invoke.QuotaThrottle().wait_if_needed("google-vertex-claude")
+        assert slept == []
+        agent.invoke.QuotaThrottle().wait_if_needed("xai")
+        assert slept
+
+    def test_an_agent_waits_on_the_provider_it_calls(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+        self._agent(monkeypatch, [0])
+        waits = []
+
+        class Recording:
+            def wait_if_needed(self, provider=None):
+                waits.append(provider)
+
+        inv = self._inv(tmp_path, model="grok-4.6", provider="xai")
+        agent.invoke.run_agent(inv, throttle=Recording())
+        assert waits == ["xai"]
+
     def test_a_shared_throttle_holds_the_other_agents_back(
         self, monkeypatch, tmp_path,
     ):
@@ -334,7 +379,7 @@ class TestRunAgentQuotaRetry:
         throttle = agent.invoke.QuotaThrottle()
         agent.invoke.run_agent(self._inv(tmp_path), throttle=throttle)
         # The backoff the failure set is what a sibling agent waits out.
-        assert throttle._resume_at > 0
+        assert throttle.resume_at() > 0
 
         slept = []
         monkeypatch.setattr(agent.invoke.time, "sleep", lambda s: slept.append(s))

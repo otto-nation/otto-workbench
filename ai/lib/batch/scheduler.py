@@ -14,8 +14,10 @@ from typing import Callable
 
 import batch.admission
 import batch.events
+import batch.machine
 import batch.outcomes
 import batch.plan
+import batch.publish
 import batch.report
 import batch.store
 import batch.targets
@@ -26,8 +28,9 @@ from batch.model import (STEP_ORDER, CancelState, Decision, DecisionKind, DirtyR
                          EvidenceKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
                          StepStatus, stacked_on_items)
 from batch.plan import PlanRow
-from batch.requests import Cancel, Decide, Outcome
-from batch.steps import StepProcess, WorktreeResult, ensure_worktree, restore_generated_dirt, step_argv
+from batch.requests import Cancel, Decide, Outcome, Release
+from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure_worktree,
+                         restore_generated_dirt, step_argv)
 from config.workbench_config import BatchConfig
 from pr.comments_fix import CloseoutDebt
 
@@ -44,6 +47,18 @@ def _local_head(worktree: str) -> str:
 
 def _contains_commit(worktree: str, sha: str) -> bool:
     return git.client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=worktree)
+
+
+def _descends(worktree: str, old: str, new: str) -> bool:
+    """Whether *new* is *old* or a descendant of it, read in *worktree*."""
+    return git.client.ok("merge-base", "--is-ancestor", old, new, cwd=worktree)
+
+
+def _new_commits(worktree: str, base: str) -> list[str] | None:
+    """The non-merge commits HEAD gained since *base*, oldest first; None when git
+    could not list them."""
+    r = git.client.run("rev-list", "--reverse", "--no-merges", f"{base}..HEAD", cwd=worktree)
+    return r.stdout.split() if r.ok else None
 
 
 def _unpublished(worktree: str, remote_sha: str) -> bool:
@@ -84,7 +99,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                            explicit=explicit and s in chosen)
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
-                          head_sha=r.head_sha, steps=recs, base_ref=r.base_ref))
+                          head_sha=r.head_sha, steps=recs, base_ref=r.base_ref,
+                          repo_key=r.repo_key))
     # A fork's head branch names a branch in another repo — often `main` —
     # so keying it under the base repo would stack every PR based on `main`.
     by_branch = {(r.repo, r.branch): r.key for r in rows if not r.is_fork}
@@ -104,7 +120,8 @@ def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRo
     # The remote sha, not head_sha: a replan that echoes its input must never
     # read as GitHub reporting the plan-time head again.
     return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.remote_sha, False,
-                   {}, local_head=local_head, ref_namespace=ref_namespace)
+                   {}, local_head=local_head, ref_namespace=ref_namespace,
+                   repo_key=item.repo_key)
 
 
 def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,
@@ -158,6 +175,11 @@ def emit_outcome(run: Run, outcome: Outcome, *,
     if isinstance(request, Cancel):
         emit("cancel_requested", run=run.id, kill=request.kill, **failed)
         return
+    if isinstance(request, Release):
+        for key in outcome.finished:
+            emit("item_finished", run=run.id, item=key, status=run.item(key).status.value,
+                 **failed)
+        return
     decided = isinstance(request, Decide)
     emit("decision_resolved", run=run.id, decision=request.decision if decided else "",
          action=request.action if decided else "", **failed)
@@ -195,14 +217,20 @@ class Scheduler:
                  dirty: Callable[[str], bool] = git.client.is_dirty,
                  rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
                  unpublished: Callable[[str, str], bool] = _unpublished,
+                 descends: Callable[[str, str, str], bool] = _descends,
+                 commits: Callable[[str, str], list[str] | None] = _new_commits,
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None,
-                 release: Callable[[Run], object] | None = None):
+                 release: Callable[[Run, frozenset[str]], object] | None = None,
+                 machine: batch.machine.Machine | batch.machine.PerRun | None = None,
+                 hold_tree: Callable[[Item], str] | None = None,
+                 branch: Callable[[str], str] = checked_out_branch):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
-        # Called with the run after every commit a tick makes, so the driver
-        # can give back the target lock of an item that is now terminal. A
+        # Called with the run and the items whose step is still live after
+        # every commit a tick makes, so the driver can give back the target
+        # lock of an item that is now terminal and has no process running. A
         # scheduler built without one (a test, a dry tick) holds nothing.
-        self._release = release or (lambda run: None)
+        self._release = release or (lambda run, live: None)
         self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
@@ -218,6 +246,19 @@ class Scheduler:
         self._contains = contains
         self._dirty, self._rebasing = dirty, rebasing
         self._unpublished = unpublished
+        # What other drivers on the machine are running, and the floor slot.
+        # Without one the scheduler sees only itself (`PerRun`), as before.
+        self._machine = machine or batch.machine.PerRun()
+        # Holds an item's worktree for the run once it is assigned; returns
+        # who holds it instead when it is busy. Supplied by the driver, which
+        # holds the item targets; without one no checkout is held.
+        self._hold_tree = hold_tree or (lambda item: "")
+        self._branch = branch
+        self._peers = batch.machine.Peers()
+        # Whether this pass refused a step on the host's say: the driver is
+        # waiting, and with nothing running it queues for the floor slot.
+        self._refused = False
+        self._descends, self._commits = descends, commits
 
     @property
     def run(self) -> Run:
@@ -255,6 +296,12 @@ class Scheduler:
 
     def _finish(self, live: _Live, code: int) -> None:
         item, rec = live.item, live.rec
+        if item.terminal:
+            rec.exit_code, rec.ended_at, rec.status = (
+                code, batch.store.now_iso(), StepStatus.INTERRUPTED)
+            self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
+                       status=rec.status.value, exit_code=code)
+            return
         # The HEAD the step's first attempt started from: trailers and movement
         # are read across every attempt, so a retry that commits nothing cannot
         # hide a `Fix-Checks: red` commit an earlier attempt left drafted.
@@ -266,7 +313,10 @@ class Scheduler:
         if rec.watch and batch.outcomes.settled_report(live.proc.stdout()):
             item.ci_rechecked = True
         rec.watch = False
-        moved = self._head(item.worktree) != base
+        head = self._head(item.worktree)
+        moved = head != base
+        if rec.step is not Step.REBASE and head != live.head_before:
+            self._record_commits(item, rec, live.head_before, head)
         # Drafted means this step left work the publish owes the remote: commits
         # since its first attempt started, or — for a comments pass, which drafts
         # its replies even when it commits nothing — any clean exit. Sticky: a
@@ -288,6 +338,21 @@ class Scheduler:
             _decide(self.run, item, rec.step.value, draft.kind, draft.payload, emit=self._emit)
         self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
                    status=rec.status.value, exit_code=code)
+
+    def _record_commits(self, item: Item, rec: StepRecord, before: str, head: str) -> None:
+        """Add the commits this attempt made to *rec*, for publish to check are kept.
+
+        A listing git refused records the attempt's tip instead: a branch that
+        still carries it carries everything beneath it, so the gate stays closed
+        on the work rather than forgetting it.
+        """
+        new = self._commits(item.worktree, before) if before else None
+        if new is None:
+            if before:
+                self._emit("commits_unrecorded", run=self.run.id, item=item.key,
+                           step=rec.step.value, head=head)
+            new = [head] if head else []
+        rec.commits.extend(sha for sha in new if sha not in rec.commits)
 
     # ── admitting ────────────────────────────────────────────────────────
 
@@ -323,6 +388,31 @@ class Scheduler:
                     emit=self._emit)
             return False
         item.worktree = res.path
+        if busy := self._hold_tree(item):
+            # Not this item's worktree until the run holds it: a retry assigns
+            # and holds again.
+            item.worktree = ""
+            _decide(self.run, item, "worktree", DecisionKind.FAILED,
+                    {"reason": batch.outcomes.FailureReason.LOCK_BUSY.value, "detail": busy},
+                    emit=self._emit)
+            return False
+        return True
+
+    def _off_branch(self, item: Item, rec: StepRecord) -> bool:
+        """Whether *item*'s worktree stands on another branch, deciding when it does.
+
+        Checked before every start: the worktree is the operator's between
+        steps, and a step run on whatever they switched to would commit to,
+        rebase or review the wrong branch.
+        """
+        current = self._branch(item.worktree)
+        if current == item.branch:
+            return False
+        on = f"is on {current}" if current else "is on no branch git could name"
+        _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
+                {"reason": batch.publish.Refusal.WRONG_BRANCH.value,
+                 "detail": f"{item.worktree} {on}, not {item.branch}"},
+                emit=self._emit)
         return True
 
     def _close(self, item: Item) -> None:
@@ -371,13 +461,17 @@ class Scheduler:
 
     def _refresh_remote(self, item: Item, remote: str) -> None:
         """Adopt GitHub's head as the lease only while nothing local was built on
-        the old one, and only when the local branch already contains it — so a
-        colleague's push never becomes the head a force-push leases on."""
+        the old one, only when the local branch already contains it, and only
+        when it moved forward from the old lease — so neither a colleague's push
+        nor a colleague's reset becomes the head a push leases on. A remote reset
+        backwards is left as the lease's problem: adopting it would have the
+        local branch, still holding the removed commits, push them back."""
         if not remote or remote == item.remote_sha:
             return
         if any(r.drafted for r in item.steps):
             return
-        if self._contains(item.worktree, remote):
+        if self._contains(item.worktree, remote) and \
+                self._descends(item.worktree, item.remote_sha, remote):
             item.remote_sha = remote
 
     def _pending(self, item: Item) -> StepRecord | None:
@@ -413,10 +507,16 @@ class Scheduler:
                        step=rec.step.value, reason=reason)
         item.status, item.wait_reason = ItemStatus.WAITING_ADMISSION, reason
 
+    def _live_steps(self) -> list[batch.machine.LiveStep]:
+        return [batch.machine.LiveStep(live.item.key, live.rec.step.value, live.item.repo,
+                                       self._estimates.get(live.item.repo, live.rec.step),
+                                       live.peak)
+                for live in self._live.values()]
+
     def _host_for_admit(self) -> batch.admission.HostSample:
         sample = self._host()
-        pending = sum(max(0, self._estimates.get(live.item.repo, live.rec.step) - live.peak)
-                      for live in self._live.values())
+        own = sum(s.pending for s in self._live_steps())
+        pending = own + self._peers.pending
         if sample.mem_available is None or not pending:
             return sample
         return batch.admission.HostSample(max(0, sample.mem_available - pending),
@@ -487,14 +587,42 @@ class Scheduler:
             if bases and all(self.run.item(k).terminal for k in bases):
                 self.session.apply(Decide(decision=d.id, action="retry"))
 
+    def _verdict(self, item: Item, rec: StepRecord) -> batch.admission.Verdict:
+        """The host's answer for *rec*, and the floor slot's when the host refuses
+        a driver with nothing running. A driver that queued first goes first."""
+        def ask(floor: bool) -> batch.admission.Verdict:
+            return batch.admission.decide(
+                self._host_for_admit(), running=len(self._live), limit=max(1, self.run.pool),
+                estimate=self._estimates.get(item.repo, rec.step), cfg=self.cfg,
+                floor=floor, elsewhere=self._peers.live)
+        if ahead := self._machine.ahead():
+            if not self._live:
+                self._machine.queue()
+            return batch.admission.Verdict(
+                False, f"waiting behind batch run {ahead}, which queued for the machine first")
+        verdict = ask(False)
+        if verdict.admit or self._live or not self._machine.take_floor():
+            return verdict
+        return ask(True)
+
     def _admit(self) -> None:
         self._release_stacked()
+        self._peers = self._machine.sync(self._live_steps())
+        self._admit_items()
+        # Waiting for the floor means refused with nothing running; a driver
+        # with a step live is not in the queue.
+        self._machine.settle(self._live_steps(), waiting=self._refused and not self._live)
+
+    def _admit_items(self) -> None:
+        self._refused = False
         for item in self.run.items:
             if not self._ready(item) or not self._ensure_worktree(item):
                 continue
             rec = self._pending(item)
             if rec is None:
                 self._close(item)
+                continue
+            if self._off_branch(item, rec):
                 continue
             if self._tree_blocks(item, rec):
                 continue
@@ -503,11 +631,9 @@ class Scheduler:
             if self._repo_busy(item, rec):
                 self._refuse(item, rec, f"another rebase or CI step is fetching in {item.repo_dir}")
                 continue
-            verdict = batch.admission.decide(self._host_for_admit(), running=len(self._live),
-                                       limit=max(1, self.run.pool),
-                                       estimate=self._estimates.get(item.repo, rec.step),
-                                       cfg=self.cfg)
+            verdict = self._verdict(item, rec)
             if not verdict.admit:
+                self._refused = True
                 self._refuse(item, rec, verdict.reason)
                 continue
             fresh = self._confirm(item, rec)
@@ -577,6 +703,12 @@ class Scheduler:
         for live in self._live.values():
             live.proc.kill()
 
+    def _kill_terminal_live(self) -> None:
+        """SIGTERM the live step of every item that is now terminal (a release)."""
+        for live in self._live.values():
+            if live.item.terminal:
+                live.proc.kill()
+
     def _blocked_status(self, cancel: CancelState | None) -> RunStatus | None:
         if self._live:
             return None
@@ -597,9 +729,13 @@ class Scheduler:
         # The inbox reports each outcome as it is applied; the returned list is
         # not emitted again here.
         self.session.drain(settle=False)
+        # A release may have made a live item terminal: stop its step so
+        # `_finish` cannot requeue it. Its locks stay held until the step has
+        # exited and been reaped; `live` below is what keeps them.
+        self._kill_terminal_live()
         # The drain committed after each request, so an item a queued drop-pr
         # finished is on disk: its lock goes now, not after an inline publish.
-        self._release(self.run)
+        self._release(self.run, frozenset(self._live))
         cancel = self.run.cancel
         kill = cancel is not None and cancel.kill
         if kill:
@@ -608,7 +744,7 @@ class Scheduler:
         if cancel is None:
             self._admit()
         self.session.commit()
-        self._release(self.run)
+        self._release(self.run, frozenset(self._live))
         return self._blocked_status(cancel)
 
     def _loop(self) -> RunStatus:

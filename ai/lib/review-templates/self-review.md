@@ -8,28 +8,8 @@ ${env_section}
 
 ## Review format
 
-Do not write any `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not.
-
-Write the review as an actionable checklist. Use this exact structure:
-
-```
-# Self-Review: ${repo} — ${branch_name}
-
-## Summary
-One sentence: what the changes do and overall quality assessment. On a re-review, do not count the prior findings here ("13 of 19 fixed") — the `## Prior findings` ledger is the record of what became of them, and a tally written twice is a tally that can disagree with itself
-
-## Must fix
-- [ ] **[M1]** `path/file.ext:LINE` — Description of the issue
-
-## Should fix
-- [ ] **[S1]** `path/file.ext:LINE` — Description of the issue
-
-## Nit
-- [ ] **[N1]** `path/file.ext:LINE` — Description of the issue
-
-## Idioms
-- [ ] **[I1]** `path/file.ext:LINE` — Description of the issue
-```
+Write the review as one JSON document, shaped as the Output section below shows. The harness renders it as an actionable checklist, so each finding is one thing to fix.
+`summary` is one sentence: what the changes do and an overall quality assessment. On a re-review, do not count the prior findings there ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself.
 
 ## Review angles
 
@@ -43,16 +23,14 @@ Apply these 7 lenses when scanning the diff:
 7. **Altitude** — special cases layered on shared infrastructure instead of generalizing
 
 Rules:
-- Every finding MUST start with `- [ ]` (unchecked checkbox)
-- Every finding MUST include a file:line reference
-- Use M/S/N/I severity prefixes with sequential numbering per category
-- Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file
-- Do NOT include a File Triage section
-- Do NOT include a Verdict section
-- Omit empty severity sections entirely (no "None" or "N/A")
+- Every finding names its file in `path` and its line in `line`; null only for a finding about the change as a whole
+- IDs are M/S/N/I and a number, sequential per severity
+- Must-fix and should-fix findings must carry `evidence` copied verbatim from the referenced file
+- Leave `triage` as []
+- Leave `verdict` as ""
 - A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it
-- A finding already annotated `*(declined — reason)*` was adjudicated — carry it forward with the annotation intact rather than re-raising it as open
-- On a re-review — a `## Prior review` section is present below — add the `## Prior findings` ledger it asks for after the severity sections
+- On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open
+- On a re-review — a `## Prior review` section is present below — fill `prior_findings` as it asks
 
 ## Output
 ${output_block}

@@ -6,8 +6,7 @@
 # `*.env.yml` shape, and the cross-validation modes — is documented once, in
 # [Registries](registries.md#schema). `KNOWN_TOOL_FIELDS`,
 # `KNOWN_COMMAND_FIELDS` and `KNOWN_ENV_FIELDS` below are what
-# `validate-registries` rejects unknown keys against, and `MODEL_ROLES` is the
-# vocabulary it checks a `role` value against.
+# `validate-registries` rejects unknown keys against.
 #
 # Sourced directly by its consumers — `bin/local/generate-tool-context`,
 # `bin/local/validate-registries`, `packages/summary.sh`, `summary.sh`, and
@@ -40,12 +39,7 @@ KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs
 KNOWN_COMMAND_FIELDS="name description scope when detail"
 # Known env entry fields (within a registry's env[] array), same purpose
 # shellcheck disable=SC2034
-KNOWN_ENV_FIELDS="var target comment default setup_url prefix claude_env role"
-# Values `role` may take. Owned here rather than in the validator so the
-# vocabulary the collector below matches on and the one validate-registries
-# enforces cannot drift apart.
-# shellcheck disable=SC2034
-MODEL_ROLES="model-default model-tier"
+KNOWN_ENV_FIELDS="var target comment default setup_url prefix claude_env"
 
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }
@@ -493,7 +487,7 @@ collect_registries() {
   #
   # Pruned rather than filtered by path, so the walk never descends into a
   # directory holding a copy of the repo. `ignore/` is the one that bites: it is
-  # gitignored scratch, and a checkout left there presents a second `models.env.yml`
+  # gitignored scratch, and a checkout left there presents a second `vertex.env.yml`
   # and a second `aws.env.yml`, which the duplicate-var check reads as two
   # registries declaring the same var and fails the push for a file that is not
   # part of the repo. The set matches `list_shell_scripts` in lib/files.sh, which
@@ -791,8 +785,8 @@ collect_registry_permissions() {
 # collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]
 # Populates two caller arrays (via nameref) with the env vars declared by every
 # registry whose meta block sets `claude_env: true`:
-#   sources — the canonical names in ~/.env.local (e.g. AI_MODEL)
-#   targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL)
+#   sources — the canonical names in ~/.env.local (e.g. GOOGLE_CLOUD_PROJECT)
+#   targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_VERTEX_PROJECT_ID)
 # When a registry entry has no `target:` field, the target defaults to the source
 # name (backward compatible with registries that predate the mapping). An entry
 # carrying `claude_env: false` is skipped, so a flagged registry can hold one
@@ -847,54 +841,6 @@ collect_claude_env_vars() {
       [[ -z "$target" || "$target" == "null" ]] && target="$var"
       __sources_out+=("$var")
       __targets_out+=("$target")
-    done
-  done
-}
-
-# collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [PACKAGES_DIR]
-# Populates two caller arrays (via nameref) with the env vars every registry
-# declares as carrying a model id, in declaration order, and the `role` each one
-# was declared with.
-#
-# `role` says what a variable *is*; `claude_env` above says where it may be
-# published. The two are orthogonal, and reusing the latter for this would be
-# wrong rather than merely loose: `ai/lib/vertex.env.yml` is flagged for the
-# mirror, so a collector keyed on that flag would report GOOGLE_CLOUD_PROJECT
-# and CLOUD_ML_REGION as models and a sync would offer a GCP project id as
-# something to run a session on.
-#
-# No registry-level flag gates this, because a `role` is a claim about one
-# entry and reads the same wherever it appears — unlike the audience question
-# `meta.claude_env` exists to force once per file. Install checks are not
-# consulted, for the reason collect_claude_env_vars gives: what a harness ends
-# up with is decided by what ~/.env.local actually sets.
-#
-# Cross-registry duplicates are validate-registries' job (env var names are
-# unique across every registry), so nothing is deduplicated here.
-collect_model_env_vars() {
-  local -n __vars_out=$1
-  local -n __roles_out=$2
-  local scan_dir="$3"
-  local packages_dir="${4:-$scan_dir/packages}"
-
-  __vars_out=()
-  __roles_out=()
-  local -a registries=()
-  _reg_collect_scan registries "$scan_dir" "$packages_dir" || return 1
-
-  local file count i var role
-  for file in "${registries[@]}"; do
-    [[ -f "$file" ]] || continue
-    reg_len_into count "$file" env
-    [[ "$count" -gt 0 ]] || continue
-
-    for (( i=0; i<count; i++ )); do
-      reg_get_into role "$file" env "$i" role
-      [[ " $MODEL_ROLES " == *" $role "* ]] || continue
-      reg_get_into var "$file" env "$i" var
-      [[ -n "$var" && "$var" != "null" ]] || continue
-      __vars_out+=("$var")
-      __roles_out+=("$role")
     done
   done
 }

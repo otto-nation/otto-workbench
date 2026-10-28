@@ -4,7 +4,7 @@ Runs each corpus case through the task its manifest declares — review today,
 ci-fix next — and scores the result against that case's expectations.
 
 Usage:
-  eval-models --corpus eval/corpus/ --models sonnet,opus --effort medium
+  eval-models --corpus eval/corpus/ --models claude-sonnet-5,grok-4.7 --effort medium
   eval-models --entry unchecked-error-go --runs 3
   eval-models --dry-run
 """

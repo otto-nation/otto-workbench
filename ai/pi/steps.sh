@@ -348,98 +348,39 @@ step_pi_extensions() {
   return 0
 }
 
-# _pi_build_models OUT — reads the model env vars the registries declare out of
-# ~/.env.local and sets OUT to a JSON object with defaultModel + enabledModels,
-# or {} when there is no default to build around. The provider prefix comes from
-# the template. A nameref rather than stdout, so the registry scan it loads stays
-# in the caller's shell for step_pi_settings' reg_scan_hold to share — a
-# `$(...)` would load it in a subshell and throw it away.
+# _pi_models OUT — sets OUT to the Pi half of wb_config_harness_models: the
+# defaultModel, defaultProvider, defaultThinkingLevel, enabledModels and
+# modelThinkingLevels the machine-wide `models.*` name. A key nothing names is
+# absent, so the overlay in sync-settings.jq leaves Pi's own value standing.
+# A nameref rather than stdout, so the warning below is printed, not captured.
 #
-# Which variables carry models is not written here: ai/models.env.yml declares
-# them with a `role`, and collect_model_env_vars reads it, so a tier added there
-# reaches Pi without this function changing. Claude Code's sync reads the same
-# file through collect_claude_env_vars.
-_pi_build_models() {
-  local -n __pbm_out=$1
-  __pbm_out='{}'
-
-  # Before the registry read, so a machine with no ~/.env.local answers without
-  # yq — there are no model values to be had either way, and this is the one
-  # path through the function that needs nothing beyond jq.
-  if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
+# A config that cannot be read sets OUT to {} and warns, the same as Claude
+# Code's step: the models Pi has are kept rather than withdrawn over a typo.
+_pi_models() {
+  local -n __pm_out=$1
+  __pm_out='{}'
+  local view
+  if ! view=$(wb_config_harness_models); then
+    warn "Pi's model settings left as they were — fix the models section of config.yml"
     return 0
   fi
-
-  # Lazily, because ai/steps.sh sources this file on every CLI invocation and
-  # registries.sh is not in the ui.sh facade. WORKBENCH_STABLE_DIR rather than
-  # WORKBENCH_DIR so a sync run from a feature worktree reads the same
-  # registries Claude Code's step does — divergence between the two is what
-  # this indirection exists to remove.
-  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
-    # shellcheck source=../../lib/registries.sh
-    . "$LIB_SRC_DIR/registries.sh"
-  fi
-
-  local -a model_vars=() model_roles=()
-  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR"
-
-  local default_model="" i value
-  local -a values=()
-  for (( i=0; i<${#model_vars[@]}; i++ )); do
-    value=$(read_env_local_var "${model_vars[i]}")
-    values+=("$value")
-    if [[ "${model_roles[i]}" == model-default ]]; then
-      default_model="$value"
-    fi
-  done
-
-  if [[ -z "$default_model" ]]; then
-    return 0
-  fi
-
-  local provider values_json='[]'
-  provider=$(_pi_default_provider)
-  # Guarded because bash 4.3 treats "${arr[@]}" on an empty array as unbound.
-  if (( ${#values[@]} > 0 )); then
-    values_json=$(printf '%s\n' "${values[@]}" | jq -Rn '[inputs]')
-  fi
-
-  # Every set model is enabled, and the default leads whatever order the
-  # registry declared. An unset var is dropped rather than emitting an empty
-  # entry, so a partially-configured ~/.env.local produces a shorter list
-  # instead of clobbering working entries.
-  #
-  # Deduplicated on the way out, because two tiers may name one model — opus
-  # and sonnet both pointed at the same id is a normal way to pin a machine to
-  # one model. `unique` would sort, and the list reads defaultModel-first, so
-  # the fold below keeps first-seen order instead.
-  __pbm_out=$(jq -n \
-    --arg default "$default_model" \
-    --arg provider "$provider" \
-    --argjson values "$values_json" \
-    '{ defaultModel: $default,
-       enabledModels: ([$default] + $values
-         | map(select(. != ""))
-         | map("\($provider)/\(.)")
-         | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }')
+  __pm_out=$(jq -c '.pi' <<< "$view")
 }
 
-# _pi_default_provider — prints the provider prefix model ids are built and
-# checked against: the template's defaultProvider, or the hardcoded fallback
-# every caller shares. jq's stderr is left alone so a malformed template fails
-# loudly on the build path; the warn path, which must never fail, silences it
-# at its own call.
-_pi_default_provider() {
-  jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC"
-}
-
-# _pi_warn_unknown_models — warn when a set model env var names an id pi does
-# not list for the default provider. Never fails the sync: a missing or broken
-# `pi` is skipped, because pi may be absent or offline and a 404 mid-review is
-# still how those machines find out. Quiet when every set value is listed.
+# _pi_warn_unknown_models SETTINGS_JSON — warn when the merged settings name a
+# model pi does not list: the defaultModel, and every enabledModels entry. Never
+# fails the sync: a missing or broken `pi` is skipped, because pi may be absent
+# or offline and a 404 mid-review is still how those machines find out. Quiet
+# when every model is listed.
 #
-# Kept out of _pi_build_models because it needs `pi`, which building the model
-# list does not, and a missing or offline `pi` must not touch the merge.
+# The defaultModel is checked whoever wrote it. With models.session unset the
+# workbench leaves Pi's own value in place, and a stale one there — an id the
+# provider has since retired — fails every prompt the same way a wrong config
+# value would.
+#
+# A `provider/id` entry is checked under that provider. A bare id is checked
+# under the merged defaultProvider, or under any provider when there is none,
+# since that is where pi resolves it from.
 #
 # The catalog is the user's own pi's, asked from $HOME: a repo whose
 # .mise.toml pins an older pi, or whose .pi/settings.json loads other
@@ -447,67 +388,79 @@ _pi_default_provider() {
 # that are correct for the pi the operator actually runs.
 #
 # A provider with no rows at all is one pi did not load, not a set of wrong
-# ids, so it gets one warning instead of one per variable. The Vertex
+# ids, so it gets one warning instead of one per model. The Vertex
 # extensions decline to register when the shell has no GOOGLE_CLOUD_PROJECT or
 # no ADC file — typically a shell started before ~/.env.local or
 # `gcloud auth application-default login` supplied them — and a missing or
 # broken extension clone looks the same from here, so the message names both.
 _pi_warn_unknown_models() {
-  [[ -f "$ENV_LOCAL_FILE" ]] || return 0
-
-  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
-    # shellcheck source=../../lib/registries.sh
-    . "$LIB_SRC_DIR/registries.sh"
-  fi
-
-  local -a model_vars=() model_roles=()
-  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR" || return 0
-
-  local i value
-  local -a names=() values=()
-  for (( i=0; i<${#model_vars[@]}; i++ )); do
-    value=$(read_env_local_var "${model_vars[i]}")
-    [[ -n "$value" ]] || continue
-    names+=("${model_vars[i]}")
-    values+=("$value")
-  done
-  (( ${#names[@]} > 0 )) || return 0
+  local settings="$1"
 
   # pi may be absent (a Claude-only machine) or offline. Skip rather than fail.
   command -v pi > /dev/null 2>&1 || return 0
+
+  local default_provider
+  default_provider=$(jq -r '.defaultProvider // ""' <<< "$settings" 2> /dev/null) || return 0
+
+  local -a refs=()
+  local ref
+  while IFS= read -r ref; do
+    [[ -n "$ref" ]] && refs+=("$ref")
+  done < <(jq -r '[.defaultModel // empty] + (.enabledModels // []) | unique[]' <<< "$settings" 2> /dev/null)
+  (( ${#refs[@]} > 0 )) || return 0
 
   local listing
   listing=$(_pi_user_scope pi --list-models 2>/dev/null) || return 0
   [[ -n "$listing" ]] || return 0
 
-  local provider
-  provider=$(_pi_default_provider 2>/dev/null) || return 0
-
-  local -A listed=()
+  local -A listed=() listed_any=() loaded=()
   local col1 col2
   while read -r col1 col2 _ || [[ -n "$col1" ]]; do
     [[ "$col1" == "provider" ]] && continue
-    [[ "$col1" == "$provider" ]] || continue
     [[ -n "$col2" ]] || continue
-    listed["$col2"]=1
+    listed["$col1/$col2"]=1
+    listed_any["$col2"]=1
+    loaded["$col1"]=1
   done <<< "$listing"
 
-  if (( ${#listed[@]} == 0 )); then
-    # The project/ADC advice is the Vertex extensions' alone; another provider
-    # gets only the extension-refresh hint.
-    if [[ "$provider" == google-vertex* ]]; then
-      warn "Pi lists no models under $provider — the provider did not load. Check GOOGLE_CLOUD_PROJECT and ADC in this shell (a shell started before ~/.env.local set them lacks them: start a new one), or run: pi update --extensions"
-    else
-      warn "Pi lists no models under $provider — the provider did not load. Check that its extension is installed and configured, or run: pi update --extensions"
+  local provider id
+  local -A reported=()
+  for ref in "${refs[@]}"; do
+    provider="$default_provider"
+    id="$ref"
+    if [[ "$ref" == */* ]]; then
+      provider="${ref%%/*}"
+      id="${ref#*/}"
     fi
-    return 0
-  fi
 
-  for (( i=0; i<${#names[@]}; i++ )); do
-    [[ -n "${listed[${values[i]}]+x}" ]] && continue
-    warn "${names[i]}=${values[i]} is not listed under $provider — set it in ~/.env.local"
+    if [[ -z "$provider" ]]; then
+      [[ -n "${listed_any[$id]+x}" ]] && continue
+      warn "Pi lists no model $id under any provider — set models.* in config.yml to one it lists"
+      continue
+    fi
+
+    if [[ -z "${loaded[$provider]+x}" ]]; then
+      [[ -n "${reported[$provider]+x}" ]] && continue
+      reported["$provider"]=1
+      _pi_warn_provider_not_loaded "$provider"
+      continue
+    fi
+
+    [[ -n "${listed[$provider/$id]+x}" ]] && continue
+    warn "$id is not listed under $provider — set models.* in config.yml to a model pi lists"
   done
   return 0
+}
+
+# _pi_warn_provider_not_loaded PROVIDER — the one warning for a provider pi
+# lists no rows for. The project/ADC advice is the Vertex extensions' alone;
+# another provider gets only the extension-refresh hint.
+_pi_warn_provider_not_loaded() {
+  if [[ "$1" == google-vertex* ]]; then
+    warn "Pi lists no models under $1 — the provider did not load. Check GOOGLE_CLOUD_PROJECT and ADC in this shell (a shell started before ~/.env.local set them lacks them: start a new one), or run: pi update --extensions"
+    return 0
+  fi
+  warn "Pi lists no models under $1 — the provider did not load. Check that its extension is installed and configured, or run: pi update --extensions"
 }
 
 # _pi_warn_no_default_model SETTINGS_JSON — warn when the merged settings leave
@@ -518,22 +471,7 @@ _pi_warn_unknown_models() {
 _pi_warn_no_default_model() {
   command -v pi > /dev/null 2>&1 || return 0
   jq -e '.defaultModel // empty' <<< "$1" > /dev/null 2>&1 && return 0
-
-  # The variable to name is whichever one the registries declare as the
-  # default, so a renamed default reaches this message with the registry.
-  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
-    # shellcheck source=../../lib/registries.sh
-    . "$LIB_SRC_DIR/registries.sh"
-  fi
-  local -a model_vars=() model_roles=()
-  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR" 2> /dev/null || true
-  local i default_var=""
-  for (( i=0; i<${#model_vars[@]}; i++ )); do
-    if [[ "${model_roles[i]}" == model-default ]]; then
-      default_var="${model_vars[i]}"
-    fi
-  done
-  warn "Pi has no default model — set ${default_var:-the default model} in ~/.env.local, or pi falls back to its first provider's default"
+  warn "Pi has no default model — run: otto-workbench config set models.session <tier or model>, or pi falls back to its first provider's default"
   return 0
 }
 
@@ -542,26 +480,10 @@ _pi_warn_no_default_model() {
 # Merged rather than copied because Pi writes to the same file: `pi install`,
 # `pi config` and Ctrl+S in /model all land in ~/.pi/agent/settings.json.
 # Template scalars override the live file on every sync so the workbench stays
-# authoritative. Model config is derived from the vars the registries declare
-# with a model role, read out of ~/.env.local — the same SSOT Claude Code reads
-# — and applied after template scalars so it always wins.
-#
-# One registry scan for the whole step. _pi_build_models and
-# _pi_warn_no_default_model each call collect_model_env_vars against the same
-# scan_dir, and each re-scans on its own, so the yq parse of every registry
-# ran twice per sync and the second threw away what the first had cached —
-# the identical duplication step_claude_settings carries a reg_scan_hold for.
-# Safe because the step only reads the registry tree; see `reg_scan_hold` in
-# lib/registries.sh for the bound that makes it so.
+# authoritative. Model settings come from the machine-wide `models.*` in
+# config.yml — the same place Claude Code's step reads them — and are applied
+# after template scalars so they always win.
 step_pi_settings() {
-  if ! declare -F reg_scan_hold > /dev/null 2>&1; then
-    # shellcheck source=/dev/null
-    . "$LIB_SRC_DIR/registries.sh"
-  fi
-  reg_scan_hold _step_pi_settings
-}
-
-_step_pi_settings() {
   mkdir -p "$PI_AGENT_DIR"
 
   local existing="{}" content
@@ -572,7 +494,7 @@ _step_pi_settings() {
   _pi_partition_packages allowed blocked
 
   local models
-  _pi_build_models models
+  _pi_models models
 
   local result
   result=$(jq -n \
@@ -736,8 +658,8 @@ step_pi_verify() {
   return 0
 }
 
-# step_pi_models — checks the model ids ~/.env.local names against the catalog
-# the user's pi actually serves.
+# step_pi_models — checks the models Pi's settings name against the catalog the
+# user's pi actually serves.
 #
 # Runs after step_pi_packages, not inside step_pi_settings: the catalog for a
 # provider comes from its extension clone, and the clone is what that step
@@ -745,7 +667,82 @@ step_pi_verify() {
 # models, and every correct id reads as unknown.
 step_pi_models() {
   command -v pi > /dev/null 2>&1 || return 0
-  _pi_warn_unknown_models
+  local settings
+  settings=$(cat "$PI_SETTINGS_FILE" 2> /dev/null) || return 0
+  _pi_warn_unknown_models "$settings"
+}
+
+# step_pi_compaction — sizes Pi's per-model compaction reserves from the
+# machine-wide `context.compact_at`, so every model whose window is wider than
+# the ceiling compacts at it. Pi compacts when
+# `contextTokens > contextWindow - reserveTokens`; the reserve that turns that
+# into the ceiling depends on each model's window, which only the catalogue
+# knows — hence a step after step_pi_packages, for the reason step_pi_models
+# gives, rather than a key in step_pi_settings' overlay.
+#
+# Writes `compaction.modelOverrides["provider/id"].reserveTokens` for each listed
+# model wider than the ceiling, and removes it from each listed model at or under
+# it, so lowering or raising the ceiling never leaves a stale reserve behind.
+# Other fields of an entry (keepRecentTokens), and entries for models the
+# catalogue does not list, are left as they are. While the ceiling is set it owns
+# the reserve of every listed model: a hand-set one is replaced.
+#
+# Unset, each reserve $COMPACTION_RECORD_FILE says an earlier sync wrote is
+# withdrawn while it still holds that value, and nothing else is touched. The
+# catalogue is listed only when there is a ceiling to size against.
+step_pi_compaction() {
+  command -v pi > /dev/null 2>&1 || return 0
+
+  local view
+  if ! view=$(wb_config_harness_context); then
+    warn "Pi's compaction settings left as they were — fix the context section of config.yml"
+    return 0
+  fi
+
+  local reserves='{}' withdraw='{}'
+  if jq -e '.compact_at == null' <<< "$view" > /dev/null; then
+    withdraw=$(wb_compaction_record pi)
+    [[ "$withdraw" != '{}' ]] || return 0
+  else
+    local listing
+    listing=$(_pi_user_scope pi --list-models 2> /dev/null) || listing=""
+    if ! view=$(wb_config_harness_context "$listing"); then
+      warn "Pi's compaction settings left as they were — fix the context section of config.yml"
+      return 0
+    fi
+    reserves=$(jq -c '.pi.reserveTokens' <<< "$view")
+    if [[ "$reserves" == '{}' ]]; then
+      warn "Pi lists no models, so context.compact_at was not applied to Pi — run otto-workbench sync again once pi --list-models works"
+      return 0
+    fi
+  fi
+
+  local existing="{}" content
+  content=$(cat "$PI_SETTINGS_FILE" 2> /dev/null) || true
+  [[ -n "$content" ]] && existing="$content"
+
+  local result
+  result=$(jq --argjson reserves "$reserves" --argjson withdraw "$withdraw" '
+    def drop($k):
+      del(.compaction.modelOverrides[$k].reserveTokens)
+      | if .compaction.modelOverrides[$k] == {} then del(.compaction.modelOverrides[$k]) else . end;
+    reduce ($reserves | to_entries[]) as $r (.;
+      if $r.value != null then .compaction.modelOverrides[$r.key].reserveTokens = $r.value
+      elif .compaction.modelOverrides[$r.key] == null then .
+      else drop($r.key) end)
+    | reduce ($withdraw | to_entries[]) as $r (.;
+      if .compaction.modelOverrides[$r.key].reserveTokens == $r.value then drop($r.key) else . end)
+    | if .compaction.modelOverrides == {} then del(.compaction.modelOverrides) else . end
+    | if .compaction == {} then del(.compaction) else . end
+  ' <<< "$existing") || { err "Failed to write Pi's compaction settings"; return 1; }
+
+  if [[ "$result" != "$(jq . <<< "$existing")" ]]; then
+    wb_write_json_file "$PI_SETTINGS_FILE" "$result" \
+      || { err "Failed to write $PI_SETTINGS_FILE"; return 1; }
+  fi
+  wb_compaction_record_set pi "$(jq -c 'with_entries(select(.value != null))' <<< "$reserves")" \
+    || warn "Could not record Pi's compaction reserves in $COMPACTION_RECORD_FILE — unsetting context.compact_at will not withdraw them"
+  return 0
 }
 
 # _export_pi_config DIR — copies Pi config into DIR for tarball export.
@@ -786,6 +783,9 @@ sync_pi() {
 
   sync_header "pi models"
   step_pi_models
+
+  sync_header "pi compaction"
+  step_pi_compaction
 }
 
 register_pi_steps() {
@@ -797,6 +797,7 @@ register_pi_steps() {
   register_step "Pi packages"    step_pi_packages
   register_step "Pi skew"        step_pi_verify
   register_step "Pi models"      step_pi_models
+  register_step "Pi compaction"  step_pi_compaction
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

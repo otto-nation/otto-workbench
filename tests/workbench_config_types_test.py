@@ -72,10 +72,10 @@ def test_the_pyyaml_fallback_writes_the_same_types(roots, monkeypatch):
     """Two writers, one coercion — the fallback cannot disagree about the type."""
     monkeypatch.setattr(config.workbench_config_write.shutil, "which", lambda _: None)
     config.workbench_config_write.set_value(config.workbench_config.GITHUB_SSH_443_KEY, "true")
-    config.workbench_config_write.set_value("agent.model", "sonnet")
+    config.workbench_config_write.set_value("models.deep", "sonnet")
     cfg = config.workbench_config.load_config()
     assert cfg.github.ssh_over_443 is True
-    assert cfg.agent.model == "sonnet"
+    assert cfg.models.deep == "sonnet"
 
 
 def test_a_list_key_refuses_the_scalar_this_writer_can_offer(roots):

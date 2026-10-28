@@ -15,7 +15,7 @@ setup() {
 
   export PACKAGES_DIR="$TMPDIR/packages"
   mkdir -p "$PACKAGES_DIR"
-  printf 'brew "rtk"  # mise: rtk\nbrew "otto-test-syspkg"  # linux: system\nbrew "mas"  # macos-only\nbrew "pinned"  # mise: pinned@9\nbrew "zsh-foo"  # git: https://example.com/zsh-foo\n' > "$PACKAGES_DIR/Brewfile"
+  printf 'brew "rtk"  # mise: rtk\nbrew "otto-test-syspkg"  # linux: system\nbrew "mas"  # macos-only\nbrew "pinned"  # mise: pinned@9\nbrew "zsh-foo"  # git: https://example.com/zsh-foo\nbrew "uv"  # mise: uv\nbrew "pytool"  # mise: pipx:pytool[uvx_args=--with pytool-extra]\n' > "$PACKAGES_DIR/Brewfile"
 
   # Exported, because the stubs read them from the environment.
   export BREW_LOG="$TMPDIR/brew-args"
@@ -47,9 +47,12 @@ if [[ "$1" == which ]]; then
 fi
 echo "$*" >> "$MISE_LOG"
 [[ -z "${MISE_INSTALL_FAILS:-}" ]] || exit 1
+# The shim is named for the tool the spec installs: the last argument without
+# its backend prefix, options or version (`pipx:pytool[...]` installs pytool).
+tool="${!#}"; tool="${tool##*:}"; tool="${tool%%\[*}"; tool="${tool%%@*}"
 mkdir -p "$MISE_DATA_DIR/shims"
-printf '#!/bin/sh\nexit 0\n' > "$MISE_DATA_DIR/shims/rtk"
-chmod +x "$MISE_DATA_DIR/shims/rtk"
+printf '#!/bin/sh\nexit 0\n' > "$MISE_DATA_DIR/shims/$tool"
+chmod +x "$MISE_DATA_DIR/shims/$tool"
 EOF
   chmod +x "$STUBS/mise"
 }
@@ -238,6 +241,91 @@ EOF2
   [ "$status" -eq 1 ]
   [[ "$output" != *"rtk installed"* ]]
   [[ "$output" == *"brew install rtk"* ]]
+}
+
+@test "a failed brew install falls back to mise when mise is present" {
+  # A formula Homebrew cannot install on this machine — a dependency it would
+  # build from source with a compiler too old for it — still has a mise spec.
+  export BREW_INSTALL_FAILS=1
+  run _run_install "$(_path_with brew mise)"
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$BREW_LOG")" == "install rtk" ]]
+  [[ "$(cat "$MISE_LOG")" == "use -g rtk" ]]
+  [[ "$output" == *"Homebrew could not install rtk — falling back to mise"* ]]
+  [[ "$output" == *"RESOLVED=$MISE_DATA_DIR/shims/rtk"* ]]
+  [[ "$output" == *"rtk installed"* ]]
+}
+
+# passes-at-base: asserts the fallback never bootstraps mise, which base never did either
+@test "a failed brew install does not bootstrap mise for the fallback" {
+  export BREW_INSTALL_FAILS=1
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/should-not-run"
+  run _run_install "$(_path_with brew)"
+  [ "$status" -eq 1 ]
+  [ ! -e "$INSTALLER_LOG" ]
+  [ ! -e "$MISE_LOG" ]
+}
+
+@test "a failed brew install whose mise fallback also fails points at the doctors" {
+  # Offering `brew install rtk, or: mise use -g rtk` here would name the two
+  # commands that just failed.
+  export BREW_INSTALL_FAILS=1 MISE_INSTALL_FAILS=1
+  run _run_install "$(_path_with brew mise)"
+  [ "$status" -eq 1 ]
+  [[ "$(cat "$MISE_LOG")" == "use -g rtk" ]]
+  [[ "$output" == *"mise could not install rtk — Homebrew failed too"*"brew doctor, mise doctor"* ]]
+  [[ "$output" != *"install it manually"* ]]
+  [[ "$output" != *"rtk installed"* ]]
+}
+
+@test "a pipx spec handed to mise gets uv first when uv is absent" {
+  run _run_install "$(_path_with mise)" pytool
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MISE_LOG")" = "$(printf '%s\n' 'use -g uv' 'use -g pipx:pytool[uvx_args=--with pytool-extra]')" ]
+  [[ "$output" == *"pytool installed"* ]]
+}
+
+@test "a pipx spec gets uv even where pipx runs, since only uv reads uvx_args" {
+  # mise's pipx backend falls back to pipx without uv, and pipx installs the
+  # package without the `--with` extras the spec asks for: pytest without
+  # pytest-xdist, which runs the suite serially.
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/pipx"
+  chmod +x "$STUBS/pipx"
+  run _run_install "$(_path_with mise pipx)" pytool
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MISE_LOG")" = "$(printf '%s\n' 'use -g uv' 'use -g pipx:pytool[uvx_args=--with pytool-extra]')" ]
+}
+
+@test "a pipx spec whose uv cannot be installed stops before mise and names uv" {
+  # The mise failure that would follow names neither uv nor the backend, so
+  # its hint would send the operator after the wrong problem.
+  printf 'brew "pytool"  # mise: pipx:pytool[uvx_args=--with pytool-extra]\n' > "$PACKAGES_DIR/Brewfile"
+  run _run_install "$(_path_with mise)" pytool
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"mise's pipx backend needs uv, which could not be installed"* ]]
+  [ ! -e "$MISE_LOG" ]
+  [[ "$output" != *"pytool installed"* ]]
+}
+
+@test "a failed brew install of a pipx entry falls back with uv installed first" {
+  # The case this fallback exists for: pytest's formula fails to build, and its
+  # mise spec is a pipx one on a Homebrew machine that never needed uv.
+  export BREW_INSTALL_FAILS=1
+  run _run_install "$(_path_with brew mise)" pytool
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BREW_LOG")" = "$(printf '%s\n' 'install pytool' 'install uv')" ]
+  [ "$(cat "$MISE_LOG")" = "$(printf '%s\n' 'use -g uv' 'use -g pipx:pytool[uvx_args=--with pytool-extra]')" ]
+  [[ "$output" == *"pytool installed"* ]]
+}
+
+# passes-at-base: asserts an entry with no mise spec is never handed to mise, as before
+@test "a failed brew install of an entry with no mise spec does not call mise" {
+  export BREW_INSTALL_FAILS=1
+  run _run_install "$(_path_with brew mise)" otto-test-syspkg
+  [ "$status" -eq 1 ]
+  [ ! -e "$MISE_LOG" ]
+  [[ "$output" == *"Homebrew could not install otto-test-syspkg — install it manually"* ]]
 }
 
 @test "a failed mise install is not reported as an install" {

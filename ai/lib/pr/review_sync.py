@@ -41,6 +41,8 @@ class ReviewReport(Protocol):
     cache_read_tokens: int
     cache_write_tokens: int
     unpushed_fix_commit: str
+    reviewed_through: str
+    workable: int | None
 
 
 def sync_review_domain(
@@ -87,6 +89,9 @@ def sync_review_domain(
         domain.failure_detail = report.failure_detail
         domain.recoverable = report.recoverable
         domain.unpushed_fix_commit = report.unpushed_fix_commit
+        # As-is: `ReviewSummary.verdict_sha` owns the `or head_sha` fallback.
+        domain.reviewed_through = report.reviewed_through
+        domain.workable = report.workable
         domain.cost_usd = report.cost_usd
         domain.total_tokens = (
             report.input_tokens + report.output_tokens

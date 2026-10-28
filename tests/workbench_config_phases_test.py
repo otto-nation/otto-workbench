@@ -2,7 +2,8 @@
 
 Five layers answer a phase's settings — explicit argument, phase env, global
 env, project config, global config — and each test pins one boundary between
-two of them.
+two of them. The config's section-level model is the phase's tier,
+``models.<tier>``: scout is a light phase and fix a standard one.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ def phase_cfg(roots):
     """A config that sets a phase model at both scopes, for layering tests."""
     config_root, project = roots
     _write(config_root / "config.yml", """
+models:
+  light: global-section
 agent:
-  model: global-section
   phases:
     scout:
       model: global-phase
@@ -47,7 +49,7 @@ def test_layer_5_global_config_beats_the_built_in(roots):
     import agent.phases
 
     config_root, project = roots
-    _write(config_root / "config.yml", "agent:\n  model: from-global\n")
+    _write(config_root / "config.yml", "models:\n  light: from-global\n")
     cfg = config.workbench_config.load_config(project)
     assert agent.phases.phase_model(Phase.SCOUT, None, cfg) == "from-global"
 
@@ -59,13 +61,15 @@ def test_layer_4_project_config_beats_the_global(phase_cfg):
     assert agent.phases.phase_model(Phase.SCOUT, None, cfg) == "project-phase"
 
 
-def test_a_phase_entry_beats_the_section_within_one_file(roots):
+def test_a_phase_entry_beats_its_tier_within_one_file(roots):
     import agent.phases
 
     config_root, project = roots
     _write(config_root / "config.yml", """
+models:
+  light: section
+  standard: section
 agent:
-  model: section
   phases:
     scout:
       model: phase
@@ -105,7 +109,7 @@ def test_phase_model_loads_the_config_itself_when_not_given_one(roots):
     import agent.phases
 
     config_root, _ = roots
-    _write(config_root / "config.yml", "agent:\n  model: from-disk\n")
+    _write(config_root / "config.yml", "models:\n  light: from-disk\n")
     assert agent.phases.phase_model(Phase.SCOUT, None) == "from-disk"
 
 

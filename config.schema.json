@@ -49,35 +49,19 @@
             }
           ]
         },
-        "model": {
-          "oneOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "thinking": {
           "oneOf": [
             {
               "type": "string",
               "enum": [
+                "off",
+                "minimal",
                 "low",
                 "medium",
-                "high"
+                "high",
+                "xhigh",
+                "max"
               ]
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "provider": {
-          "oneOf": [
-            {
-              "type": "string"
             },
             {
               "type": "null"
@@ -104,9 +88,13 @@
                   {
                     "type": "string",
                     "enum": [
+                      "off",
+                      "minimal",
                       "low",
                       "medium",
-                      "high"
+                      "high",
+                      "xhigh",
+                      "max"
                     ]
                   },
                   {
@@ -137,6 +125,66 @@
               "create"
             ]
           }
+        }
+      }
+    },
+    "models": {
+      "type": "object",
+      "properties": {
+        "deep": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "standard": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "light": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "compact_at": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

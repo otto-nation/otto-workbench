@@ -7,19 +7,18 @@ path and description that decide whether two findings are duplicates are the
 pair that hashes to a stable ID, and a stable ID is how a later reconciliation
 recognises a finding a review restates.
 
-Reading that identity off a finding line is `review.grammar`'s job, not this
-module's: `FindingIdentity` answers both questions, so deduplication and
-carry-forward cannot come to different conclusions about one line. Reading a
+Reading that identity off a finding's fields is `review.grammar`'s job, not
+this module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one record. Reading a
 review is `review.document`'s job, checking findings against the tree is
 `review.verify`'s, and the `Finding` every side holds is `review.types`' — a
 consumer that only holds findings needs none of this. Deciding what became of
 a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
-carries its extent. Deduplication walks those records and drops a repeat by
-`FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
-record that never reaches the merged document rather than a span cut out of
-it.
+A `RecordFinding` already carries its fields. Deduplication walks those
+records and drops a repeat by `FindingIdentity.dedup_key` within the same ID
+prefix, so a duplicate is a record that never reaches the merged document
+rather than a second copy of it.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -27,9 +26,9 @@ they like; merging, deduplication, and evidence verification all remove
 findings, and a final pass closes the gaps so each severity numbers from 1 with
 no holes.
 
-Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
-…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
-a reference, and references are rewritten through the same map, so a finding
+Only a finding on the record — a `RecordFinding` in `findings` — gets a number.
+A mention of an ID inside a finding's body, summary, or other prose is a
+reference, and references are rewritten through the same map, so a finding
 that cites another one still cites the same one afterwards.
 
 Every severity is renumbered over the whole set of sections rather than one
@@ -68,18 +67,15 @@ pooled map answers with whichever group happens to have declared that number.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from review.grammar import (
-    SEVERITY_KEY, TRIAGE_LINE_RE,
-    DedupKey, FindingIdentity, parse_ledger_line,
+    SEVERITY_KEY,
+    DedupKey, FindingIdentity,
 )
-from review.record import RecordFinding, ReviewRecord, SeveritySection
-from review.render import finding_line
-from review.types import (
-    SEVERITIES, FindingRef, LedgerEntry,
-    disposition_precedence,
-)
+from review.record import LedgerLine, RecordFinding, ReviewRecord, SeveritySection
+from review.types import SEVERITIES
 
 # ── Renumbering ──────────────────────────────────────────────────────────────
 
@@ -202,10 +198,7 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRe
         if not f.visible:
             return f
         new_id = renumbering.moves.get(FindingId(f.severity, f.seq))
-        return replace(
-            f, id=str(new_id) if new_id else f.id,
-            lead=renumbering.rewrite(f.lead), body=renumbering.rewrite(f.body),
-        )
+        return replace(f, id=str(new_id) if new_id else f.id, body=renumbering.rewrite(f.body))
     return replace(
         record,
         findings=tuple(moved(f) for f in record.findings),
@@ -229,6 +222,29 @@ def renumber_record(
     return _rewrite_record(record, _renumbering(declared, merged_into or {}))
 
 
+def append_findings(
+    base: ReviewRecord, added: Sequence[RecordFinding],
+) -> ReviewRecord:
+    """Append *added* with IDs above each severity's highest in *base*.
+
+    `renumber_record` maps by old ID and cannot split two findings that share
+    one, so newcomers are numbered first and the gap-closer runs after.
+    """
+    if not added:
+        return base
+    highest: dict[str, int] = {}
+    for finding in base.findings:
+        if not finding.visible:
+            continue
+        highest[finding.severity] = max(highest.get(finding.severity, 0), finding.seq)
+    numbered = []
+    for finding in added:
+        next_seq = highest.get(finding.severity, 0) + 1
+        highest[finding.severity] = next_seq
+        numbered.append(replace(finding, id=f"{finding.severity}{next_seq}"))
+    return renumber_record(replace(base, findings=base.findings + tuple(numbered)))
+
+
 # ── Triage and deduplication ─────────────────────────────────────────────────
 
 _EMPTY_SECTION_LINE_RE = re.compile(
@@ -242,44 +258,22 @@ def _clean_section_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _dedup_ledger(ledger: str) -> str:
-    """Collapse repeats — two groups can disposition the same prior finding.
+def _dedup_ledger(lines: list[LedgerLine]) -> tuple[LedgerLine, ...]:
+    """One line per prior finding — two groups can disposition the same one.
 
-    When two groups disagree about one finding, the strongest verdict wins:
-    a finding is gone only when no group reports it, and a declined one stays
-    declined however many groups still see the code it describes.
+    When they disagree the stronger verdict wins, in `PriorDisposition`'s
+    order: a finding is gone only when no group still sees it, and a declined
+    one stays declined. The first group to reach a verdict keeps its slot and
+    its wording when a later one only repeats it. Lines are matched on the ID
+    alone, whatever path each group copied: the prior review numbers each
+    finding once.
     """
-    slot: dict[FindingRef, int] = {}
-    seen_prose: set[str] = set()
-    lines: list[str] = []
-    for line in ledger.split("\n"):
-        entry = parse_ledger_line(line)
-        if entry and entry.ref in slot:
-            _keep_strongest_disposition(lines, slot[entry.ref], entry)
-            continue
-        if not entry and line.strip() in seen_prose:
-            continue
-        if entry:
-            slot[entry.ref] = len(lines)
-        else:
-            seen_prose.add(line.strip())
-        lines.append(line)
-    return "\n".join(lines).strip() + "\n"
-
-
-def _keep_strongest_disposition(
-    lines: list[str], index: int, entry: LedgerEntry,
-) -> None:
-    """Let a stronger verdict overwrite the one already kept for its finding.
-
-    Strictly stronger, so the first group to reach a verdict keeps the wording
-    when a later one only repeats it. The ordering is `PriorDisposition`'s —
-    a still-open verdict cannot reopen a finding another group declined.
-    """
-    kept = parse_ledger_line(lines[index])
-    kept_rank = disposition_precedence(kept.disposition if kept else None)
-    if disposition_precedence(entry.disposition) > kept_rank:
-        lines[index] = entry.text
+    kept: dict[str, LedgerLine] = {}
+    for line in lines:
+        held = kept.get(line.id)
+        if held is None or line.disposition.precedence > held.disposition.precedence:
+            kept[line.id] = line
+    return tuple(kept.values())
 
 
 def _shift_record(group: ReviewRecord, offsets: dict[str, int]) -> ReviewRecord:
@@ -326,7 +320,8 @@ def _dedup_records(findings: list[RecordFinding]) -> _DedupedRecords:
     merged_into: dict[FindingId, FindingId] = {}
     kept: list[RecordFinding] = []
     for f in findings:
-        identity = FindingIdentity.of(finding_line(f, sids=True).split("\n", 1)[0])
+        # A finding with no file has no location for two groups to agree on.
+        identity = FindingIdentity.of_fields(f.path, f.line, f.body) if f.path else None
         key = (f.severity, identity.dedup_key) if identity else None
         if key is not None and key in seen:
             merged_into[FindingId(f.severity, f.seq)] = seen[key]
@@ -342,13 +337,12 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
     offsets = {s.key: 0 for s in SEVERITIES}
     findings: list[RecordFinding] = []
     triage: list = []
-    ledgers: list[str] = []
+    ledgers: list[LedgerLine] = []
     notes: list[SeveritySection] = []
     for group in groups:
         shifted = _shift_record(group, offsets)
-        triage += [e for e in (shifted.triage or ()) if TRIAGE_LINE_RE.match(e.text)]
-        if (ledger := _clean_section_text(shifted.ledger)):
-            ledgers.append(ledger)
+        triage += [e for e in (shifted.triage or ()) if e.path]
+        ledgers += shifted.ledger
         notes += [
             replace(s, note=_clean_section_text(s.note)) for s in shifted.severity_sections
             if _clean_section_text(s.note)
@@ -361,13 +355,13 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
     seen_paths: set[str] = set()
     unique_triage = []
     for entry in triage:
-        key = entry.path or entry.text
+        key = entry.path or entry.note
         if key not in seen_paths:
             seen_paths.add(key)
             unique_triage.append(entry)
     merged = ReviewRecord(
         triage=tuple(unique_triage), findings=deduped.findings,
         severity_sections=tuple(notes),
-        ledger=_dedup_ledger("\n".join(ledgers)).strip() if ledgers else "",
+        ledger=_dedup_ledger(ledgers),
     )
     return renumber_record(merged, deduped.merged_into)

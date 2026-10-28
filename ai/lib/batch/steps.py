@@ -216,7 +216,31 @@ def _mise_trust(cfg: Path) -> core.proc.CmdResult:
     )
 
 
+def checked_out_branch(worktree: str) -> str:
+    """The branch *worktree* stands on — the one being rebased while a rebase is
+    paused — or "" when git cannot say or HEAD is detached outside a rebase.
+
+    A paused rebase detaches HEAD by design; the branch it will land on is in
+    `rebase-merge/head-name` (or `rebase-apply/` for an `am`-style rebase).
+    """
+    if not worktree or not Path(worktree).is_dir():
+        return ""
+    current = git.client.current_branch(worktree)
+    if current and current != "HEAD":
+        return current
+    for state in ("rebase-merge", "rebase-apply"):
+        path = git.client.out("rev-parse", "--git-path", f"{state}/head-name", cwd=worktree)
+        head = Path(worktree, path) if path else None
+        if head is not None and head.is_file():
+            return head.read_text().strip().removeprefix("refs/heads/")
+    return ""
+
+
 def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:
+    # git.client raises on a cwd that does not exist; a checkout removed since
+    # the plan is a decision for the operator, not a traceback out of the driver.
+    if not Path(repo_dir).is_dir():
+        return WorktreeResult("", False, f"the checkout {repo_dir} no longer exists")
     found = git.topology.find_worktree_for_branch(branch, cwd=repo_dir)
     path = str(found) if found else git.topology.wt_switch(branch, cwd=repo_dir)
     if not path:

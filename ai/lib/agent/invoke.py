@@ -54,19 +54,10 @@ def _require_shape(phase: Phase, shape: PhaseShape, runner: str):
     return spec
 
 
-@dataclass(frozen=True)
-class _Knobs:
-    """The three settings every shape resolves the same way, whatever runs it."""
-
-    model: str | None
-    thinking: str | None
-    provider: str | None
-
-
 def _resolved(
     phase: Phase, config: WorkbenchConfig | None, *,
     effort: Effort | None = None, model: str | None = None,
-) -> _Knobs:
+) -> agent.phases.PhaseSettings:
     """The three settings, with whatever the caller resolved above them.
 
     ``effort`` and ``model`` are the two layers a phase cannot supply itself:
@@ -74,11 +65,7 @@ def _resolved(
     A caller outside a review has neither and passes neither, which is the same
     resolution this made before they existed.
     """
-    return _Knobs(
-        model=agent.phases.phase_model(phase, model, config),
-        thinking=agent.phases.phase_thinking(phase, effort, config),
-        provider=agent.phases.phase_provider(config),
-    )
+    return agent.phases.phase_settings(phase, model, config, effort)
 
 
 # ── Prompt shape ─────────────────────────────────────────────────────────────
@@ -183,15 +170,19 @@ def run_agent(
     a fixed backoff this agent waits out alone.
     """
     if throttle:
-        throttle.wait_if_needed()
+        throttle.wait_if_needed(inv.provider)
 
     rc = agent.backend.invoke_agent(inv)
-    if rc != 0 and inv.model and agent.session.is_quota_error(inv.session_log):
+    if rc != 0 and agent.session.is_quota_error(inv.session_log):
+        # A phase on the backend's default model has no id to name, and hits
+        # quota like any other.
+        model = inv.model or "the provider default"
         if throttle:
-            wait = throttle.report_exhausted(inv.model)
+            wait = throttle.report_exhausted(model, inv.provider)
             time.sleep(wait)
         else:
-            core.log.warn(f"Quota exhausted on {inv.model} — retrying once after 30s backoff")
+            where = f" ({inv.provider})" if inv.provider else ""
+            core.log.warn(f"Quota exhausted on {model}{where} — retrying once after 30s backoff")
             time.sleep(30)
         rc = _invoke_once(inv)
     return rc
@@ -244,6 +235,7 @@ def run_fix(
     hint_select: Callable[[Diagnosis], str] = agent.retry.hint_for,
     repo: str | None = None,
     pr: str | None = None,
+    branch: str | None = None,
     config: WorkbenchConfig | None = None,
     effort: Effort | None = None,
     model: str | None = None,
@@ -288,10 +280,12 @@ def run_fix(
             model=knobs.model,
             thinking=knobs.thinking,
             provider=knobs.provider,
+            compact_at=knobs.compact_at,
             label=name,
             task=task or str(phase),
             repo=repo,
             pr=pr,
+            branch=branch,
             phase=str(phase),
         ))
         return exit_code

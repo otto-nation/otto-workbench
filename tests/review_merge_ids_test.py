@@ -15,7 +15,8 @@ import review.merge
 from review.grammar import FindingIdentity
 from review.types import SEVERITIES, PriorDisposition
 
-from review_merge_support import _review
+from review_merge_support import _group_of
+from review_record_support import finding
 
 
 def _stable_id(path: str, desc: str) -> str:
@@ -50,78 +51,6 @@ class TestComputeStableId:
 
 
 class TestPriorDisposition:
-    def test_parses_the_word_the_prompt_asks_for(self):
-        assert PriorDisposition.parse("Fixed") is PriorDisposition.FIXED
-        assert (
-            PriorDisposition.parse("Still open — see below")
-            is PriorDisposition.STILL_OPEN
-        )
-
-    def test_unrecognised_wording_has_no_disposition(self):
-        assert PriorDisposition.parse("moved to a follow-up") is None
-
-    def test_a_qualified_verdict_is_not_read_as_its_optimistic_half(self):
-        assert PriorDisposition.parse("Fixed, but only on the happy path") is None
-        assert PriorDisposition.parse("Fixed in a follow-up branch") is None
-
-    def test_a_verdict_ending_a_sentence_is_still_a_verdict(self):
-        """The form a review writes when the explanation is prose, not a clause."""
-        assert (
-            PriorDisposition.parse("Fixed. `check_key` now calls it directly.")
-            is PriorDisposition.FIXED
-        )
-        assert PriorDisposition.parse("Still open.") is PriorDisposition.STILL_OPEN
-
-    def test_a_verdict_with_italicised_detail_is_still_a_verdict(self):
-        """Emphasis carries no meaning here — the same line parses unitalicised."""
-        assert (
-            PriorDisposition.parse("Fixed *(removed entirely in 89f66d9)*")
-            is PriorDisposition.FIXED
-        )
-        assert (
-            PriorDisposition.parse("Still open *the guard is still there*")
-            is PriorDisposition.STILL_OPEN
-        )
-        assert (
-            PriorDisposition.parse("Declined *(documented `ceiling:` tradeoff)*")
-            is PriorDisposition.DECLINED
-        )
-
-    def test_underscore_emphasis_reads_the_same_as_asterisk(self):
-        assert (
-            PriorDisposition.parse("Fixed _(removed entirely in 89f66d9)_")
-            is PriorDisposition.FIXED
-        )
-        assert (
-            PriorDisposition.parse("Still open _the guard is still there_")
-            is PriorDisposition.STILL_OPEN
-        )
-        assert (
-            PriorDisposition.parse("Declined _(documented `ceiling:` tradeoff)_")
-            is PriorDisposition.DECLINED
-        )
-
-    def test_a_verdict_a_word_is_glued_to_is_not_a_verdict(self):
-        """`-` and `_` join words, so a glued one is inside one, not a break."""
-        assert PriorDisposition.parse("Fixed_up in a follow-up branch") is None
-        assert PriorDisposition.parse("Fixed-up in a follow-up branch") is None
-        assert PriorDisposition.parse("Still open_ended, see below") is None
-
-    def test_a_dash_glued_to_the_verdict_still_breaks_the_line(self):
-        """Only the two word-joining characters are read as part of a word."""
-        assert (
-            PriorDisposition.parse("Fixed\u2014the guard is gone")
-            is PriorDisposition.FIXED
-        )
-        assert PriorDisposition.parse("Fixed: the guard is gone") is PriorDisposition.FIXED
-
-    def test_parses_a_declined_verdict(self):
-        assert PriorDisposition.parse("Declined") is PriorDisposition.DECLINED
-        assert (
-            PriorDisposition.parse("Declined — documented `ceiling:` tradeoff")
-            is PriorDisposition.DECLINED
-        )
-
     def test_the_older_two_verdicts_keep_their_spelling(self):
         """A review file written before Declined existed still has to parse."""
         assert PriorDisposition.FIXED.value == "Fixed"
@@ -138,46 +67,55 @@ class TestPriorDisposition:
 # ── 3. shifting one group's IDs ─────────────────────────────────────────────
 
 
-def _shift(offsets: dict[str, int], **by_key: str):
+def _shift(offsets: dict[str, int], *findings):
     """A group shifted past `offsets`; returns the record and the updated offsets."""
     full = {s.key: 0 for s in SEVERITIES}
     full.update(offsets)
-    out = review.merge._shift_record(_review(**by_key), full)
+    out = review.merge._shift_record(_group_of(*findings), full)
     return out, full
 
 
 class TestShiftGroup:
     def test_offset_zero(self):
-        text = "- **[S1]** **`a.go:1`** — finding\n- **[S2]** **`a.go:2`** — another"
-        out, offsets = _shift({}, S=text)
+        out, offsets = _shift(
+            {},
+            finding("S1", "finding", path="a.go"),
+            finding("S2", "another", path="a.go", line=2),
+        )
         assert [f.id for f in out.findings] == ["S1", "S2"]
         assert offsets["S"] == 2
 
     def test_positive_offset(self):
-        text = "- **[S1]** **`a.go:1`** — finding\n- **[S2]** **`a.go:2`** — another"
-        out, offsets = _shift({"S": 3}, S=text)
+        out, offsets = _shift(
+            {"S": 3},
+            finding("S1", "finding", path="a.go"),
+            finding("S2", "another", path="a.go", line=2),
+        )
         assert [f.id for f in out.findings] == ["S4", "S5"]
         assert offsets["S"] == 5
 
     def test_a_repeated_id_counts_once(self):
-        _out, offsets = _shift({}, M="- **[M1]** **`a.go:1`** — finding\n  see [M1] above")
+        _out, offsets = _shift(
+            {}, finding("M1", "finding\n  see [M1] above", path="a.go"),
+        )
         assert offsets["M"] == 1
 
     def test_offset_carries_references(self):
         # The offset is what keeps two groups' IDs apart. A reference left behind
         # would name whatever the earlier group happened to put at that number.
-        text = (
-            "- **[S1]** **`a.go:1`** — first\n"
-            "- **[S2]** **`a.go:2`** — second, see S1 above and [S1] again"
+        out, _offsets = _shift(
+            {"S": 2},
+            finding("S1", "first", path="a.go"),
+            finding("S2", "second, see S1 above and [S1] again", path="a.go", line=2),
         )
-        out, _offsets = _shift({"S": 2}, S=text)
         assert "see S3 above and [S3] again" in out.findings[1].body
 
     def test_offset_shifts_ids_it_did_not_expect(self):
         # IDs arrive however the agent wrote them; gaps are closed later, not here.
         out, offsets = _shift(
             {"S": 2},
-            S="- **[S1]** **`a.go:1`** — first\n- **[S7]** **`a.go:2`** — second",
+            finding("S1", "first", path="a.go"),
+            finding("S7", "second", path="a.go", line=2),
         )
         assert [f.id for f in out.findings] == ["S3", "S9"]
         # What the next group has to clear, not how many findings this one had.
@@ -188,7 +126,8 @@ class TestShiftGroup:
         # finding — no group can name one — it is a reference to nothing. This
         # is the last pass that knows the reference came from this group.
         out, _offsets = _shift(
-            {"S": 2}, S="- **[S1]** **`a.go:1`** — first, see S4 elsewhere",
+            {"S": 2},
+            finding("S1", "first, see S4 elsewhere", path="a.go"),
         )
         assert "see [removed] elsewhere" in out.findings[0].body
         assert "S4" not in out.findings[0].body
@@ -198,7 +137,8 @@ class TestShiftGroup:
         # so this one cannot be citing another group's. Left alone, the pooled
         # map would resolve it onto whichever group did declare an S1.
         out, _offsets = _shift(
-            {"M": 1}, M="- **[M1]** **`a.go:1`** — issue a, blocked on [S1]",
+            {"M": 1},
+            finding("M1", "issue a, blocked on [S1]", path="a.go"),
         )
         assert "issue a, blocked on [removed]" in out.findings[0].body
 
@@ -208,8 +148,8 @@ class TestShiftGroup:
         # the earlier groups left on that number.
         out, _offsets = _shift(
             {"M": 1, "S": 2},
-            M="- **[M1]** **`a.go:1`** — issue a, blocked on [S1]",
-            S="- **[S1]** **`a.go:9`** — issue b",
+            finding("M1", "issue a, blocked on [S1]", path="a.go"),
+            finding("S1", "issue b", path="a.go", line=9),
         )
         must = next(f for f in out.findings if f.severity == "M")
         should = next(f for f in out.findings if f.severity == "S")
@@ -221,7 +161,7 @@ class TestShiftGroup:
         # A malformed review is still a declaration: reading only the Must-fix
         # section for M would leave this one behind and then blank it out as a
         # dangling reference when the gaps close.
-        out, _offsets = _shift({"S": 2}, M="- **[S1]** **`a.go:1`** — misfiled")
+        out, _offsets = _shift({"S": 2}, finding("S1", "misfiled", path="a.go"))
         assert out.findings[0].id == "S3"
         assert "misfiled" in out.findings[0].body
 

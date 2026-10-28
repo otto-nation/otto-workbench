@@ -222,10 +222,93 @@ class IssueProvider(StrEnum):
 
 @dataclass(frozen=True)
 class PhaseOverride:
-    """Per-phase settings, matching the two knobs the phase env keys expose."""
+    """Per-phase settings, matching the two knobs the phase env keys expose.
+
+    ``model`` takes what a ``models.*`` value takes, or a tier name to borrow
+    another tier's model (``synthesis: {model: deep}``).
+    """
 
     model: str | None = None
     thinking: Thinking | None = None
+
+
+@dataclass(frozen=True)
+class ModelsConfig:
+    """Which model each tier runs on: ``provider/model[:level]``, any provider.
+
+    The one place a model is named. A phase declares a tier on its spec and
+    reads its model from here, so moving every light phase to a cheaper model
+    is one key. ``provider/`` names where the model is served — the part Pi
+    reads as ``--provider`` and the Claude CLI does not take — and is left off
+    for the backend's default provider. ``:level`` is a thinking level the
+    tier runs at, one of ``Thinking``'s values; a suffix that is not one is part
+    of the id (Bedrock ids end ``:0``).
+
+    Unset, a tier names no model and its phases run on the backend's own
+    default: there is no built-in model.
+
+    ``session`` is what an interactive Claude Code or Pi session starts on — a
+    tier name, or a model in the same grammar. The workbench writes it into each
+    harness's settings at sync. Unset, each harness keeps its own default.
+    ``auto`` routes instead: Claude Code runs ``opusplan`` (deep while planning,
+    standard otherwise), and Pi runs ``workbench/auto``, which starts on
+    standard, moves to deep when a planning skill loads, back to standard for
+    good at the first edit outside the workspace's plans and specs, and sends
+    requests outside the agent loop (compaction summaries) to light. It needs
+    all three tiers set, each naming its provider.
+    """
+
+    deep: str | None = None
+    standard: str | None = None
+    light: str | None = None
+    session: str | None = None
+
+
+@dataclass(frozen=True)
+class ContextConfig:
+    """How large a conversation may grow before it is compacted.
+
+    ``compact_at`` is a token count, and a ceiling rather than a target: a model
+    whose window is at or below it compacts where it always did, near the
+    window. Above it, every turn resends the whole history, so a 1M-token
+    window left to fill costs several times per request what the same work
+    costs compacted at 200k — and several providers charge more again for the
+    tokens past a breakpoint.
+
+    The workbench applies it everywhere a conversation can grow:
+
+    - Claude Code's ``autoCompactWindow``, written at sync, and ``--autocompact``
+      on the pipeline's agent runs, which do not read user settings. The CLI
+      takes 100k to 1M, so a value outside that runs at the nearer end.
+    - Pi's ``compaction.modelOverrides``, written at sync for every model the
+      catalogue lists with a wider window. Pi's pipeline runs read the same file.
+    - The review prompt budget, which plans against the smaller of this and the
+      model's window.
+
+    Unset, each harness compacts at its own default. Unsetting it withdraws what
+    an earlier sync wrote, where the value is still the one it wrote — a window
+    chosen with ``/autocompact`` since then, or a reserve edited by hand, stays.
+
+    Machine-wide only: both harnesses keep it in machine-wide settings, and Pi
+    takes no per-run override, so a repo's value would be one the review budget
+    planned against while Pi compacted somewhere else.
+    """
+
+    compact_at: int | None = field(
+        default=None,
+        metadata={"scope": ScopeRule(
+            frozenset({GLOBAL_SCOPE}),
+            "both harnesses keep it in machine-wide settings, and Pi takes no"
+            " per-run override, so a repo's value would never reach Pi",
+        )},
+    )
+
+    def __post_init__(self):
+        # Checked here, where the file is read, rather than by each harness:
+        # Pi refuses a reserve larger than the window, and a ceiling of zero
+        # would compact after every turn.
+        if self.compact_at is not None and self.compact_at <= 0:
+            raise ValueError(f"context.compact_at must be a positive token count, not {self.compact_at}")
 
 
 @dataclass(frozen=True)
@@ -273,10 +356,11 @@ class IssuesConfig:
 class AgentConfig:
     """How this machine sizes an agent invocation.
 
-    ``model``, ``thinking`` and ``provider`` are the file forms of
-    WORKBENCH_AI_MODEL, _THINKING and _PROVIDER; ``phases`` is the file form
-    of the per-phase keys ``Phase.model_env_key`` derives. A phase entry beats
-    the section-level value, matching how a phase env key beats the global one.
+    ``thinking`` is the file form of WORKBENCH_AI_THINKING; ``phases`` is the
+    file form of the per-phase keys ``Phase.model_env_key`` derives. A phase
+    entry beats the section-level value, matching how a phase env key beats the
+    global one. Which model a phase runs is ``models.*``, by the phase's tier;
+    the provider is part of that model's reference.
 
     Top-level rather than under ``review``: a phase is any agent invocation the
     workbench sizes, and the review pipeline is one domain of them. Which model
@@ -292,9 +376,7 @@ class AgentConfig:
     """
 
     backend: Backend | None = None
-    model: str | None = None
     thinking: Thinking | None = None
-    provider: str | None = None
     phases: dict[Phase, PhaseOverride] = field(default_factory=dict)
 
 
@@ -483,8 +565,8 @@ class BatchConfig:
 
     `pool_max` caps whatever a caller asks for. The rest feed admission
     control, which decides actual concurrency from host pressure;
-    `pool_default` is the fixed concurrency used where the host exposes no
-    pressure metrics.
+    `pool_default` is the fixed concurrency, counted across every batch
+    driver on the machine, used where the host exposes no pressure metrics.
     """
 
     pool_max: int = 2
@@ -498,6 +580,8 @@ class BatchConfig:
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    models: ModelsConfig = field(default_factory=ModelsConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     issues: IssuesConfig = field(default_factory=IssuesConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)

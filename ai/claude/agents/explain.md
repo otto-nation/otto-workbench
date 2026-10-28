@@ -1,7 +1,7 @@
 ---
 name: explain
 description: Fast text-in/text-out explainer. Answers questions from provided input without exploring files or suggesting edits.
-model: inherit
+tier: light
 source: otto-workbench/ai/claude/agents/explain.md
 ---
 

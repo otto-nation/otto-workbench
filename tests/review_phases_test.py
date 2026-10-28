@@ -18,6 +18,7 @@ import review.steps
 from agent.registry import REVIEW_PHASES
 from core.phases import AgentKind, Effort, Phase, Thinking
 import agent.backend
+from review_phases_support import _job, _omitted_job
 
 
 class TestPhaseLogPath:
@@ -54,13 +55,13 @@ class TestPhaseOutputPath:
     def test_derives_into_the_review_directory(self, tmp_path):
         review_file = str(tmp_path / "review.md")
         assert review.paths.phase_output_path(review_file, Phase.HOLISTIC) == str(
-            tmp_path / "holistic.md"
+            tmp_path / "holistic.json"
         )
 
     def test_group_carries_its_index(self, tmp_path):
         review_file = str(tmp_path / "review.md")
         assert review.paths.phase_output_path(review_file, Phase.GROUP, 2) == str(
-            tmp_path / "group-2.md"
+            tmp_path / "group-2.json"
         )
 
     def test_group_without_an_index_raises(self, tmp_path):
@@ -73,38 +74,23 @@ class TestPhaseOutputPath:
                 str(tmp_path / "review.md"), Phase.DISPROVE, 3
             )
 
+    def test_single_writes_single_json(self, tmp_path):
+        assert review.paths.phase_output_path(
+            str(tmp_path / "review.md"), Phase.SINGLE,
+        ) == str(tmp_path / "single.json")
+
+    def test_synthesis_writes_synthesis_json(self, tmp_path):
+        assert review.paths.phase_output_path(
+            str(tmp_path / "review.md"), Phase.SYNTHESIS,
+        ) == str(tmp_path / "synthesis.json")
+
     def test_a_phase_with_no_artifact_raises(self, tmp_path):
         # Unlike phase_log_path there is no caller-side fallback, and an
         # empty name would derive to the review *directory* — a wrong path
         # that reads as a real one.
-        for phase in (Phase.SYNTHESIS, Phase.SINGLE, Phase.FIX):
+        for phase in (Phase.FIX, Phase.FIX_VERIFY):
             with pytest.raises(ValueError):
                 review.paths.phase_output_path(str(tmp_path / "review.md"), phase)
-
-
-def _job(tmp_path, effort=Effort.MEDIUM):
-    from gh.types import PRContext, PRMetadata
-    from review.types import ReviewJob
-
-    return ReviewJob(
-        repo="org/repo", pr_number="42",
-        pr=PRMetadata("t", "", "head", "main", "abc123", 100, 5, 3, []),
-        ctx=PRContext(), wt_path=str(tmp_path),
-        review_file=str(tmp_path / "review.md"),
-        session_log=str(tmp_path / "session.jsonl"),
-        effort=effort,
-    )
-
-
-def _omitted_job(tmp_path, omitted=(), effort=Effort.MEDIUM):
-    from review.types import PreflightData
-
-    job = _job(tmp_path, effort)
-    job.preflight = PreflightData(
-        diff="", commit_log="", file_contents={}, file_permissions={},
-        instructions_md="", architecture_md="", omitted_files=list(omitted),
-    )
-    return job
 
 
 class TestPhaseRunnerResolution:
@@ -158,10 +144,10 @@ class TestPhaseRunnerResolution:
         runner = review.pipeline.PhaseRunner(job, Phase.DISPROVE)
         assert runner.max_turns == review.phases.PHASES[Phase.DISPROVE].max_turns
 
-    def test_provider_reads_env(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "vertex")
+    def test_provider_comes_from_the_models_reference(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(Phase.GROUP.model_env_key, "vertex/gemini-3.7-flash")
         runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
-        assert runner.provider == "vertex"
+        assert (runner.provider, runner.model) == ("vertex", "gemini-3.7-flash")
 
     def test_model_reads_phase_env_key(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
@@ -207,6 +193,11 @@ class TestPhaseRunnerInvocation:
         runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.invocation("P", 42).max_turns == 42
 
+    def test_labels_the_ledger_row(self, tmp_path):
+        runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
+        inv = runner.invocation("P")
+        assert (inv.repo, inv.pr, inv.branch) == ("org/repo", "42", "head")
+
     def test_add_dirs_grant_only_the_review_artifact_dir(self, tmp_path):
         # Never the shared reviews root: a root grant is how scratch files
         # ended up beside unrelated reviews.
@@ -248,7 +239,7 @@ class TestPhaseRunnerReachesBackend:
         def __init__(self):
             self.waited = False
 
-        def wait_if_needed(self):
+        def wait_if_needed(self, provider=None):
             self.waited = True
 
     def test_invoke_forwards_invocation_and_throttle(self, tmp_path, monkeypatch):
@@ -256,7 +247,6 @@ class TestPhaseRunnerReachesBackend:
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_GROUP_MODEL", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-        monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
 
         import agent.invoke
 
@@ -277,7 +267,8 @@ class TestPhaseRunnerReachesBackend:
         assert job.throttle.waited
         inv = seen["inv"]
         assert inv.agent is AgentKind.REVIEWER_LITE
-        assert inv.model == "sonnet"
+        # Nothing configures a model, so none reaches the backend.
+        assert inv.model is None
         assert inv.thinking is Thinking.HIGH
         assert inv.max_budget == 8.0
         # As above: the seam under test is what reaches the backend, and the
@@ -489,12 +480,10 @@ class TestExecutorsUseTheResolvedBudget:
 
     def test_disprove_does_not_pay_for_omitted_files(self, tmp_path, monkeypatch):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
-        text = "## Must fix\n- [ ] **[M1]** must fix something\n"
-        Path(job.review_file).write_text(text)
-        from review.ingest import ingest_review
-        record = ingest_review(text, strict=False)
+        from review_record_support import finding, record
+        rec = record(finding("M1", "must fix something", path="", checkbox=True))
         inv = self._first_invocation(
-            monkeypatch, lambda: review.steps._phase_disprove(job, record, text),
+            monkeypatch, lambda: review.steps._phase_disprove(job, rec),
         )
         assert inv.max_turns == review.phases.PHASES[Phase.DISPROVE].max_turns
 
@@ -636,7 +625,7 @@ class TestApiOverflowRecoversInPhase:
             prompts.append(inv.prompt)
             Path(inv.session_log).write_text("{}\n")
             if inv.prompt == "SMALL":
-                Path(inv.output_path).write_text("ok")
+                Path(inv.output_path).write_text("{}")
             return 0
 
         monkeypatch.setattr(review.phases, "build_prompt", fake_build)
@@ -708,41 +697,24 @@ class TestApiOverflowRecoversInPhase:
 
 
 class TestReadScan:
-    """`read_scan`'s three outcomes: transformed, verbatim, and refused.
+    """`read_scan` loads the file a resume finds, or refuses a phase with no scan."""
 
-    `PhaseScan.read` defaults to `None` rather than to an identity function —
-    `None` means the raw artifact *is* what the next phase needs, not that the
-    scan forgot to declare a reader. `read_scan` is the only thing that has to
-    know the difference, so it is the only thing this class pins.
-    """
-
-    def test_a_scan_with_a_reader_transforms_the_raw_text(self):
-        """SCOUT is the one real phase whose scan supplies a `read`."""
-        raw = "## Investigation leads\n- **`app.py:10`** — a real concern\n"
-        result = review.phases.read_scan(Phase.SCOUT, raw)
+    def test_a_scan_with_a_reader_renders_the_file(self, tmp_path):
+        output = tmp_path / "scout.json"
+        output.write_text('{"leads": [{"path": "app.py", "line": 10, "concern": "c"}]}')
+        result = review.phases.read_scan(Phase.SCOUT, str(output))
         assert "Investigation leads from scout scan" in result
-        assert "app.py:10" in result
-        assert result != raw
+        assert "`app.py:10`" in result
 
-    def test_a_scan_with_no_reader_returns_the_raw_text_unchanged(self):
-        """HOLISTIC's scan declares no `read` of its own.
+    def test_a_malformed_file_is_read_as_nothing(self, tmp_path):
+        output = tmp_path / "holistic.json"
+        output.write_text("not json")
+        assert review.phases.read_scan(Phase.HOLISTIC, str(output)) == ""
 
-        A real phase rather than a hand-built `PhaseScan`: HOLISTIC already
-        exercises the `read is None` branch in production, so nothing here
-        needs to be synthetic to pin what `None` means.
-        """
-        raw = "Whatever the holistic scan wrote, unparsed."
-        assert review.phases.read_scan(Phase.HOLISTIC, raw) == raw
-
-    def test_a_phase_with_no_scan_of_its_own_raises(self):
-        """SINGLE has a registry entry but declares no scan at all.
-
-        `read_scan` only reaches the table when `raw` is non-empty — an empty
-        artifact returns `""` regardless of phase, which is why this passes
-        real content rather than relying on that short-circuit.
-        """
+    def test_a_phase_with_no_scan_of_its_own_raises(self, tmp_path):
+        """SINGLE has a registry entry but declares no scan at all."""
         with pytest.raises(ValueError, match="declares no scan of its own"):
-            review.phases.read_scan(Phase.SINGLE, "some content")
+            review.phases.read_scan(Phase.SINGLE, str(tmp_path / "missing.json"))
 
 
 class TestGroupWorkerSlots:
@@ -854,29 +826,3 @@ class TestParallelFailFast:
         assert skipped
 
 
-class TestValidateGroupOutputTolerance:
-    """A6b's net: _validate_group_output already accepts a short complete
-    doc, an empty doc, and whatever is on disk at the call.
-    """
-
-    # passes-at-base: one known heading is already enough for the merge to read
-    def test_a_short_complete_group_doc_validates(self, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("## Must fix\n- **[M1]** **`a.py:1`** — issue\n")
-        assert review.phases._validate_group_output(str(f), "g") is True
-
-    # passes-at-base: empty output is already not a failure here
-    def test_an_empty_group_doc_validates(self, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("")
-        assert review.phases._validate_group_output(str(f), "g") is True
-
-    # passes-at-base: the function reads the path each call, so a rewrite is a later read
-    def test_a_doc_rewritten_mid_run_validates_the_current_bytes(self, tmp_path):
-        f = tmp_path / "group.md"
-        f.write_text("## Must fix\n- **[M1]** finding\n")
-        assert review.phases._validate_group_output(str(f), "g") is True
-        f.write_text("not a document")
-        assert review.phases._validate_group_output(str(f), "g") is False
-        f.write_text("## Nit\n- **[N1]** nit\n")
-        assert review.phases._validate_group_output(str(f), "g") is True

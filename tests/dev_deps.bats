@@ -86,18 +86,6 @@ _sc_lab() {
   [[ "$output" == *"HELPER pytest"* ]]
 }
 
-@test "without Homebrew, uv is installed before pytest" {
-  run _run _install_pytest
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER uv"*"HELPER pytest"* ]]
-}
-
-@test "with Homebrew, uv is left alone" {
-  printf '#!/bin/sh\nexit 0\n' > "$STUBS/brew"
-  run _run _install_pytest "$STUBS:/usr/bin:/bin"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"HELPER uv"* ]]
-}
 
 @test "a shellcheck at another version is moved to the CI pin on the mise path" {
   [ -n "$(_sc_pin)" ]

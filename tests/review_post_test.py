@@ -17,8 +17,9 @@ if str(LIB_DIR) not in sys.path:
 from pr.state import PostedAs, PostTracking
 from core.serde import from_dict as serde_from_dict
 import review.dedup
-from review.types import ReviewMeta, review_meta_from_dict
-from review_record_support import store_review
+from review.record import Disposition, LedgerLine, ProseSection, TriageEntry
+from review.types import PriorDisposition, ReviewMeta, review_meta_from_dict
+from review_record_support import finding, record, store_record
 
 
 class TestShaDriftReverify:
@@ -33,11 +34,9 @@ class TestShaDriftReverify:
         "+line\n"
     )
 
-    REVIEW_TEXT = (
-        "<!-- head_sha: aaa1111bbb2222 -->\n"
-        "## Summary\nOk\n\n"
-        "## Must fix\n"
-        "- **[M1]** **`file.go:5`** — Fix this bug\n"
+    REVIEW = record(
+        finding("M1", "Fix this bug", path="file.go", line=5),
+        summary="Ok",
     )
 
     def _make_args(self, tmp_path, repo="org/repo", pr="1", head_sha="aaa1111bbb2222"):
@@ -45,7 +44,7 @@ class TestShaDriftReverify:
         review_dir = tmp_path / "review"
         review_dir.mkdir(exist_ok=True)
         review_file = review_dir / "review.md"
-        store_review(review_file, self.REVIEW_TEXT, ReviewMeta(head_sha=head_sha, repo=repo))
+        store_record(review_file, self.REVIEW, ReviewMeta(head_sha=head_sha, repo=repo))
         args = argparse.Namespace()
         args.repo = repo
         args.pr = pr
@@ -191,32 +190,16 @@ class TestDryRunIntegration:
     _REPO_ROOT = _Path(__file__).resolve().parent.parent
     _REVIEW_POST = _REPO_ROOT / "ai" / "bin" / "review-post"
 
-    REVIEW_MD = (
-        "# Review: test-org/test-repo#42 — Fix handler\n"
-        "<!-- head_sha: abc123def456 -->\n"
-        "\n"
-        "## File Triage\n"
-        "- `handler.go` — **Tier 2** (application logic)\n"
-        "\n"
-        "## Prior findings\n"
-        "- **[M4]** `handler.go` — Fixed\n"
-        "- **[S7]** `config.sh` — Still open\n"
-        "\n"
-        "## Must fix\n"
-        "\n"
-        "- **[M1]** **`handler.go:11`** — missing error check\n"
-        "\n"
-        "## Should fix\n"
-        "\n"
-        "- **[S1]** **`handler.go:25`** — unclear variable name\n"
-        "\n"
-        "## Nit\n"
-        "\n"
-        "- **[N1]** **`config.sh:2`** — trailing whitespace\n"
-        "\n"
-        "## Verdict\n"
-        "\n"
-        "Request changes.\n"
+    REVIEW = record(
+        finding("M1", "missing error check", path="handler.go", line=11),
+        finding("S1", "unclear variable name", path="handler.go", line=25),
+        finding("N1", "trailing whitespace", path="config.sh", line=2),
+        verdict="Request changes.",
+        triage=(TriageEntry("handler.go", "**Tier 2** (application logic)"),),
+        ledger=(
+            LedgerLine("M4", PriorDisposition.FIXED, "handler.go"),
+            LedgerLine("S7", PriorDisposition.STILL_OPEN, "config.sh"),
+        ),
     )
 
     DIFF_TEXT = (
@@ -237,13 +220,16 @@ class TestDryRunIntegration:
         " echo hello\n"
     )
 
-    def _setup_review(self, tmp_path, text=None, **meta):
+    def _setup_review(self, tmp_path, rec=None, **meta):
         """Write the review through the store into tmp_path."""
         review_dir = tmp_path / "test-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
         payload = {"repo": "test/repo", "head_sha": "abc123def456", **meta}
-        store_review(review_file, text or self.REVIEW_MD, review_meta_from_dict(payload))
+        store_record(
+            review_file, rec if rec is not None else self.REVIEW,
+            review_meta_from_dict(payload),
+        )
         return review_file
 
     @classmethod
@@ -352,7 +338,7 @@ class TestDryRunIntegration:
         review_dir.mkdir()
         review_file = review_dir / "review.md"
         # meta.json present but missing the 'repo' field
-        store_review(review_file, self.REVIEW_MD, ReviewMeta(head_sha="abc123"))
+        store_record(review_file, self.REVIEW, ReviewMeta(head_sha="abc123"))
         result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode != 0
         assert "repo" in result.stderr.lower() or "meta" in result.stderr.lower()
@@ -368,7 +354,7 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "foreign-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        store_review(review_file, self.REVIEW_MD, review_meta_from_dict({
+        store_record(review_file, self.REVIEW, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
             "head_ref": "someone-else/feat/x",
         }))
@@ -385,7 +371,7 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "own-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        store_review(review_file, self.REVIEW_MD, review_meta_from_dict({
+        store_record(review_file, self.REVIEW, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
             "head_ref": "isaac/feat/mine",
         }))
@@ -409,11 +395,19 @@ class TestDryRunIntegration:
         # A prose reference is what `resolve_permalinks` rewrites, and it only
         # runs with both refs in hand — the stock fixture has neither, so it
         # renders no permalink at all and could not see a wrong forge.
-        store_review(
+        store_record(
             review_file,
-            self.REVIEW_MD.replace(
-                "- **[M1]** **`handler.go:11`** — missing error check",
-                "- **[M1]** **`handler.go:11`** — missing error check, see handler.go:11",
+            record(
+                finding("M1", "missing error check, see handler.go:11",
+                        path="handler.go", line=11),
+                finding("S1", "unclear variable name", path="handler.go", line=25),
+                finding("N1", "trailing whitespace", path="config.sh", line=2),
+                verdict="Request changes.",
+                triage=(TriageEntry("handler.go", "**Tier 2** (application logic)"),),
+                ledger=(
+                    LedgerLine("M4", PriorDisposition.FIXED, "handler.go"),
+                    LedgerLine("S7", PriorDisposition.STILL_OPEN, "config.sh"),
+                ),
             ),
             review_meta_from_dict({
                 "repo": "test/repo", "head_sha": "abc123def456",
@@ -449,7 +443,7 @@ class TestDryRunIntegration:
         review_dir = tmp_path / "unclaimed"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        store_review(review_file, self.REVIEW_MD, review_meta_from_dict({
+        store_record(review_file, self.REVIEW, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
             "head_ref": "someone-else/feat/x",
         }))
@@ -459,32 +453,20 @@ class TestDryRunIntegration:
         assert result.returncode == 0
 
     def test_dry_run_includes_static_analysis(self, tmp_path):
-        review_with_sa = (
-            "# Review: test-org/test-repo#42 — Fix handler\n"
-            "<!-- head_sha: abc123def456 -->\n"
-            "\n"
-            "## Summary\n"
-            "Clean refactor.\n"
-            "\n"
-            "## Must fix\n"
-            "\n"
-            "- **[M1]** **`handler.go:11`** — missing error check\n"
-            "\n"
-            "## Static Analysis\n"
-            "\n"
-            "### Nesting depth\n"
-            "1 violation in 1 of 3 files checked\n"
-            "\n"
-            "- **`config.sh:42`** — depth 5 exceeds limit 4 (in main())\n"
-            "\n"
-            "## Verdict\n"
-            "\n"
-            "Request changes.\n"
+        rec = record(
+            finding("M1", "missing error check", path="handler.go", line=11),
+            summary="Clean refactor.",
+            verdict="Request changes.",
+            static_analysis=(
+                "### Nesting depth\n"
+                "1 violation in 1 of 3 files checked\n\n"
+                "- **`config.sh:42`** — depth 5 exceeds limit 4 (in main())"
+            ),
         )
         review_dir = tmp_path / "sa-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        store_review(review_file, review_with_sa, review_meta_from_dict({
+        store_record(review_file, rec, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
         }))
         result = self._run_dry_run(review_file, tmp_path)
@@ -494,29 +476,19 @@ class TestDryRunIntegration:
         assert "depth 5 exceeds limit 4" in payload["body"]
 
     def test_dry_run_auto_discovers_unknown_section(self, tmp_path):
-        review_with_custom = (
-            "# Review: test-org/test-repo#42 — Fix handler\n"
-            "<!-- head_sha: abc123def456 -->\n"
-            "\n"
-            "## Summary\n"
-            "Clean refactor.\n"
-            "\n"
-            "## Must fix\n"
-            "\n"
-            "- **[M1]** **`handler.go:11`** — missing error check\n"
-            "\n"
-            "## Performance Notes\n"
-            "\n"
-            "Consider caching the DB query at handler.go:15.\n"
-            "\n"
-            "## Verdict\n"
-            "\n"
-            "Request changes.\n"
+        rec = record(
+            finding("M1", "missing error check", path="handler.go", line=11),
+            summary="Clean refactor.",
+            verdict="Request changes.",
+            extra=(ProseSection(
+                "Performance Notes",
+                "Consider caching the DB query at handler.go:15.",
+            ),),
         )
         review_dir = tmp_path / "autodiscovery-review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        store_review(review_file, review_with_custom, review_meta_from_dict({
+        store_record(review_file, rec, review_meta_from_dict({
             "repo": "test/repo", "head_sha": "abc123def456",
         }))
         result = self._run_dry_run(review_file, tmp_path)
@@ -538,23 +510,23 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         "+line\n"
     )
 
-    REVIEW_TEXT = (
-        "<!-- head_sha: aaa1111bbb2222 -->\n"
-        "## Summary\nOk\n\n"
-        "## Should fix\n"
-        "- [x] **[S1]** **`file.go:4`** — already fixed by the fix pass\n"
-        "- [ ] **[S2]** **`file.go:5`** — declined on the merits. "
-        "*(declined — the tradeoff is deliberate)*\n"
-        "- [ ] **[S3]** **`file.go:6`** — genuinely open\n"
+    REVIEW = record(
+        finding("S1", "already fixed by the fix pass", path="file.go", line=4,
+                checkbox=True, disposition=Disposition.FIXED),
+        finding("S2", "declined on the merits.", path="file.go", line=5,
+                checkbox=True, disposition=Disposition.DECLINED,
+                reason="the tradeoff is deliberate"),
+        finding("S3", "genuinely open", path="file.go", line=6, checkbox=True),
+        summary="Ok",
     )
 
-    def _run_dry(self, rp, tmp_path, review_text=None) -> int:
+    def _run_dry(self, rp, tmp_path, rec=None) -> int:
         import argparse
         review_dir = tmp_path / "review"
         review_dir.mkdir(exist_ok=True)
         review_file = review_dir / "review.md"
-        store_review(
-            review_file, review_text or self.REVIEW_TEXT,
+        store_record(
+            review_file, rec if rec is not None else self.REVIEW,
             ReviewMeta(head_sha="aaa1111bbb2222"),
         )
 
@@ -572,8 +544,8 @@ class TestPostSkipsResolvedAndDeclinedFindings:
             return rp.run_post(MagicMock(), args, "org/repo",
                                 rp.ReviewMeta(repo="org/repo"), review_file)
 
-    def _dry_run_payload(self, rp, tmp_path, capsys, review_text=None):
-        assert self._run_dry(rp, tmp_path, review_text) == 0
+    def _dry_run_payload(self, rp, tmp_path, capsys, rec=None):
+        assert self._run_dry(rp, tmp_path, rec) == 0
         out = capsys.readouterr().out
         return json.loads(out[out.index("{"):out.rindex("}") + 1])
 
@@ -594,13 +566,12 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         assert not any("declined on the merits" in c["body"] for c in payload["comments"])
 
     def test_a_wholly_resolved_review_posts_nothing(self, rp, tmp_path, capsys):
-        text = (
-            "<!-- head_sha: aaa1111bbb2222 -->\n"
-            "## Summary\nOk\n\n"
-            "## Should fix\n"
-            "- [x] **[S1]** **`file.go:4`** — already fixed\n"
+        rec = record(
+            finding("S1", "already fixed", path="file.go", line=4,
+                    checkbox=True, disposition=Disposition.FIXED),
+            summary="Ok",
         )
-        assert self._run_dry(rp, tmp_path, review_text=text) == 0
+        assert self._run_dry(rp, tmp_path, rec=rec) == 0
         assert "{" not in capsys.readouterr().out
 
 
@@ -620,15 +591,11 @@ class TestDuplicateFindingsAreNotReposted:
 
     DUPLICATE = "the conversion error is discarded and nothing logs it"
 
-    REVIEW_TEXT = (
-        "<!-- head_sha: aaa1111bbb2222 -->\n"
-        "## Summary\nOk\n\n"
-        "## Should fix\n"
-        f"- **[S1]** **`file.go:4`** — {DUPLICATE}\n"
-        "- **[S2]** **`file.go:5`** — a separate problem nobody has raised\n"
-        "\n"
-        "## Nit\n"
-        "- **[N1]** **`elsewhere.go:9`** — outside the diff, so it goes in the body\n"
+    REVIEW = record(
+        finding("S1", DUPLICATE, path="file.go", line=4),
+        finding("S2", "a separate problem nobody has raised", path="file.go", line=5),
+        finding("N1", "outside the diff, so it goes in the body", path="elsewhere.go", line=9),
+        summary="Ok",
     )
 
     def _post(self, rp, tmp_path):
@@ -636,7 +603,7 @@ class TestDuplicateFindingsAreNotReposted:
         review_dir = tmp_path / "review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        store_review(review_file, self.REVIEW_TEXT, ReviewMeta(head_sha="aaa1111bbb2222"))
+        store_record(review_file, self.REVIEW, ReviewMeta(head_sha="aaa1111bbb2222"))
 
         args = argparse.Namespace(
             repo="org/repo", pr="1", review_file=str(review_file),

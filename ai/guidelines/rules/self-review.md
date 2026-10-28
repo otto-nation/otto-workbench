@@ -134,28 +134,40 @@ one more increment is not the fix for it.
 ## The Review Covers One Commit
 
 A review is written against the SHA in its `<!-- head_sha: -->`, and says nothing about
-anything committed after it. Two commits pushed after a passing review are two commits that
-reached the merge unreviewed, however green the review file looks.
+anything committed after it — with one exception the fix pass earns itself. Two commits
+pushed after a passing review are two commits that reached the merge unreviewed, however
+green the review file looks.
 
-1. Before creating a PR, check the review's `head_sha` against `git rev-parse HEAD`. If HEAD
+1. Before creating a PR, check the review's `head_sha` — or its `<!-- covered_sha: -->`
+   when the header carries one — against `git rev-parse HEAD`. If HEAD
    has moved, re-run the review with `--fix` — do not open the PR on the strength of a
    review of an earlier commit
-2. The same applies to a commit that only fixes review findings. Fixing what a review found
-   changes the code the review was written against, so the fixes are themselves unreviewed.
-   Re-run with `--fix` before creating the PR
+2. A fix pass's own commit is covered when the pass qualified it, and the header then
+   names it as `<!-- covered_sha: -->`. It qualifies only when the commit landed on the
+   reviewed commit, the repo's checks were green over it, the verify gate verified every
+   fix it claims, and it touches nothing but the fixed findings' files and their tests —
+   never the file of a finding the pass left unfixed. A later fix pass that lands on a
+   covered fix commit is covered in turn. When the header carries no `covered_sha`, or
+   HEAD has moved past it, the fixes are unreviewed: re-run with `--fix` before creating
+   the PR. A commit you make by hand is never covered, and neither is a fix commit with
+   a hand commit beneath it
 3. If the branch already has an open PR and you have pushed to it, re-run the review with
    `--fix --push` (see Before PR Creation above). A push you made by hand needs a PR comment
    saying what changed; the review's own push does not. See `git-operations.md` § A Branch
    With an Open PR Is Shared
 
-Re-running is cheap and finds real defects: a second pass over a branch whose first pass was
-clean has caught an injection left open by caller discipline, a docstring overclaiming what
+Re-running is not cheap. Six rounds on one branch cost about $13 and 44 minutes, two
+thirds of it in verify runs, while every round's fix commit invalidated the review that
+produced it. `covered_sha` is what bounds the loop now, not habit. It still finds real
+defects when a re-run is owed: a second pass over a branch whose first pass was clean
+has caught an injection left open by caller discipline, a docstring overclaiming what
 its tests covered, and duplicated test logic across two suites.
 
 ## Session-Start
 
 Check `~/.local/state/workbench/reviews/` for a self-review matching the current repo and branch:
 
-1. Read it and check `<!-- head_sha: -->` against current HEAD (`git rev-parse HEAD`)
+1. Read it and check `<!-- covered_sha: -->` when present, else `<!-- head_sha: -->`,
+   against current HEAD (`git rev-parse HEAD`)
 2. If HEAD matches: present unresolved findings summary (count of open `- [ ]` items by severity)
 3. If HEAD has moved: note the review may be stale and offer to re-run with `--fix`

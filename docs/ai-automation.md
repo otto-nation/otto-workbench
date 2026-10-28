@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 624 -->
+<!-- doc-budget: 650 -->
 
 # AI Automation
 
@@ -334,7 +334,7 @@ scores the result against that case's `manifest.json`.
 
 ```bash
 eval-models --dry-run                          # validate the corpus, run nothing
-eval-models --models sonnet,opus --runs 3      # compare models
+eval-models --models claude-sonnet-5,grok-4.7 --runs 3   # compare models
 eval-models --compare                          # diff against eval/results/ baselines
 eval-models --save-baselines                   # record new baselines
 ```
@@ -345,9 +345,9 @@ each task holds is documented on [`eval/task.py`](ai-libraries.md#evaltaskpy);
 how each is scored, on the task's own module —
 [`review`](ai-libraries.md#evalscoring_reviewpy),
 [`ci-fix`](ai-libraries.md#evalscoring_cifixpy),
-[`skill`](ai-libraries.md#evalscoring_skillpy). The runner, the fixture repo,
-and the statistics over repeated runs are shared and know nothing about any one
-task.
+[`skill`](ai-libraries.md#evalscoring_skillpy),
+[`disprove`](ai-libraries.md#evalscoring_disprovepy). The runner, the fixture repo, and the
+statistics over repeated runs are shared and know nothing about any one task.
 
 Landing a case costs a full eval run. `bin/local/validate-eval-baselines` fails
 any corpus entry that no baseline in `eval/results/` covers, and
@@ -408,16 +408,42 @@ next write overwrites the edit; nothing reads it back.
   falsified — replaces the checkbox and annotation ledgers.
   `review-orchestrate --track` files the findings a fix pass left skipped or
   unreached.
-- **Agent output** is read once, at one ingest boundary
-  ([`review/ingest.py`](ai-libraries.md#reviewingestpy)). A malformed entry —
-  an unknown severity, a duplicate ID — is rejected with a named error, and the
-  agent gets one repair turn; a second rejection is an agent failure.
-- **A review directory with no `review.json`** — one written before the record
-  existed — is stale. The next `pr review` regenerates it from scratch; a
-  re-review of it runs full rather than incremental.
-- `pr review --repair` re-syncs the recorded summary when `review.json` already
-  loads. It rebuilds from the group files only when there is no readable
-  `review.json` (stale or missing).
+- **Agent output** is JSON. Each phase writes one artifact ([`review/artifacts.py`](ai-libraries.md#reviewartifactspy)) — `scout.json`, `holistic.json`, `group-N.json`, `single.json`/`synthesis.json`, `disprove.json` — shaped like the prompt example generated from the dataclass the reader checks. Ingest ([`review/ingest.py`](ai-libraries.md#reviewingestpy)) reads it once: invalid JSON (line and column), a schema violation or a malformed entry (JSON path) is rejected with one repair turn; a second rejection is an agent failure.
+- **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
+- **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
+- `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
+
+### How self-review rounds converge
+
+A `pr review --self --fix` round ends with a fix commit that moves HEAD. What
+keeps the next round from starting over:
+
+- **A qualifying fix commit counts as reviewed.** The header carries
+  `covered_sha` when that commit landed on the reviewed commit, checks were
+  green, every fix was verified, it touches only the fixed findings' files
+  and their tests, and no file of a finding the pass left unfixed. That SHA
+  counts as reviewed; a later review still measures its delta from `head_sha`.
+- **Re-reviews do only new work.** Same-HEAD dirty files (including ones the
+  last round read that have since been reverted) are incremental; `--force`
+  keeps the run full. New nits outside the delta are dropped; new nits inside
+  it stay as `held_nits` until a full review. A prior decline on an unchanged
+  file is restated without an agent. A sticky skip keeps a finding away from
+  the fix agent while its anchor is unchanged — it does not settle it.
+- **Verify names inherited failures.** A red check re-run at the pass's base
+  that was already red becomes `Fix-Checks: preexisting` only when every
+  failure is inherited; one new failure keeps it red. The fixes stay and
+  publishing is still held.
+- **`pr fix` skips the review** when only declined, skipped or held findings
+  remain.
+- **An interrupted pass resumes.** The next run on the same HEAD stashes the
+  leftovers and, with `--fix`, resumes the fix step; `--force` or a failed
+  set-aside does not resume.
+- **A raced commit is recorded** as `head_moved_to`; the review covers the
+  pinned head only.
+
+Module detail: [`review/convergence.py`](ai-libraries.md#reviewconvergencepy),
+[`fix/baseline.py`](ai-libraries.md#fixbaselinepy),
+[`review/fix_logs.py`](ai-libraries.md#reviewfix_logspy).
 
 ### How a review's verdict is decided
 
@@ -702,7 +728,7 @@ pr batch status [RUN_ID]                 # the run report (JSON); --offline skip
 pr batch status [RUN_ID] --full          # the raw run state
 pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  # JSON `applied`; `queued`+`holder` when deferred
-pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` if a holder will apply it
+pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
@@ -721,17 +747,17 @@ its own paused replay or restoring unstaged generated files. A mise toml is trus
 
 An item that closes with drafted work, an owed closeout (`pr status`'s `⚠ closeout owed`),
 or local commits the planned head lacks (`unpublished`, never auto-published) opens one
-`publish` decision. Publish fetches the branch and refuses (`failed`) with `fetch_failed`,
-`remote_moved`, `not_comparable`, `not_incorporated`, or
-`not_incorporated_remote`. Otherwise it fast-forwards with
+`publish` decision. Publish fetches the branch and refuses (`failed`) with `wrong_branch`,
+`fetch_failed`, `remote_moved`, `not_comparable`, `not_incorporated`, `not_incorporated_remote`,
+or `drafted_dropped` (see `batch.publish`). Otherwise it fast-forwards with
 `pr push --expect <planned head>`, or force-pushes with
 `pr rebase --push-only --expect <planned head>`, then runs
 `pr comments --finish --post` when the comments step drafted, items were
 tracked, or a closeout is owed — with `--track-all` when the owed part is
 a tracking issue. A commit `--finish` pushes becomes the lease.
-`force-publish` answers only `not_incorporated_remote` for the listed
+`force-publish` answers only `not_incorporated_remote` and `drafted_dropped` for the listed
 commits (a hand `--fork-point` rebase: the skipped ones); a new one refuses again.
-A publish `retry` leases on a remote equal to local, or on `remote_moved` resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish STEPS` resolves that
+A publish `retry` leases on a remote equal to local; on `remote_moved` it leases on a remote that fast-forwarded the lease to a commit local holds, or else resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish STEPS` resolves that
 decision when the item closes with no open decision and every drafted
 step is listed and `done`; an owed closeout counts as `comments`.
 `--watch-ci` re-checks CI once after a push and reopens on red;
@@ -774,11 +800,11 @@ Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` a
 
 A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues a waiting or interrupted run; a recorded cancel is final and resume refuses it. `open-chat` is UI-only.
 
-Admission starts a step when free memory
-minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
-under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
-one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no
-pressure metrics (macOS) use `batch.pool_default` (1). State lives under
+Admission counts every batch driver on the machine: a step starts when free memory, less other
+drivers' pending steps and `batch.mem_reserve`, covers its observed peak and pressure stays under
+`batch.cpu_pressure_max` / `batch.mem_pressure_max`. Drivers that queued first start first, and with
+nothing running anywhere the queue's head starts one step regardless ([`batch/machine.py`](ai-libraries.md#batchmachinepy)). `--pool` and `batch.pool_max` (default 2)
+cap a run; with no pressure metrics (macOS) `batch.pool_default` (1) caps steps machine-wide. State lives under
 `~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces that have no live claim and no run ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### The Pi package the sync declares, and who gets it
@@ -787,9 +813,9 @@ Pi reads *and writes* `~/.pi/agent/settings.json` — `pi install`, `pi config` 
 Ctrl+S in `/model` all land there — so `step_pi_settings` ([`ai/pi/steps.sh`](../ai/pi/steps.sh))
 merges the workbench's template into that file rather than copying over it. Scalar
 keys are seeds: one the live file already carries stays as whatever set it first,
-so a changed template default never reaches a machine that has the key; delete
-it there to be re-seeded. A model id `pi --list-models` does not list for the
-default provider is a sync warning, not a failure. That check (`step_pi_models`)
+so a changed template default never reaches a machine that has the key; delete it there to be re-seeded. Model keys come from `models.*` instead (`otto-workbench config models`), and per-model compaction reserves from `context.compact_at` (`otto-workbench config context`, written by `step_pi_compaction` after the package refresh). `models.session: auto` starts Pi on `workbench/auto`, the virtual model the `model-router` extension registers to route each request to a tier, and Claude Code on `opusplan`. A
+`defaultModel` or `enabledModels` entry `pi --list-models` does not list is a
+sync warning, not a failure, whoever wrote it. That check (`step_pi_models`)
 runs after the package refresh and asks the user's own pi from `$HOME`, so neither
 a stale extension clone nor a repo's pinned pi reads as a wrong id. AI runs pick
 their pi per repo: the managed install, or the repo's mise pin when it is newer

@@ -7,6 +7,10 @@
 # rather than $CLAUDE_SRC_DIR, so a copied tree loads its own copy.
 # shellcheck source=scaffold.sh
 . "$(dirname "${BASH_SOURCE[0]}")/scaffold.sh"
+# Agent installation, with each agent's tier rendered into its model, lives in
+# agents.sh for the same reason.
+# shellcheck source=agents.sh
+. "$(dirname "${BASH_SOURCE[0]}")/agents.sh"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -299,6 +303,102 @@ _claude_mirror_env() {
   ' <<< "$result"
 }
 
+# _claude_apply_models RESULT_VAR — rewrites the merged settings document held in
+# RESULT_VAR with its model settings taken from the machine-wide `models.*`
+# (wb_config_harness_models). A nameref rather than stdout, because the warnings
+# below are printed to stdout and a `$(...)` would splice them into the JSON.
+#
+# - The tier aliases (ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL) are owned
+#   outright: a tier the config leaves unset, or names a non-Claude model for,
+#   is deleted from the env block, so an alias never outlives the tier behind it.
+#   ANTHROPIC_MODEL is deleted too — `model` carries the session now, and the two
+#   would otherwise disagree.
+# - `model` is written only while models.session is set, and `effortLevel`
+#   only while it names a level, mapped as the pipeline maps it
+#   (agent.backend_claude.effort: off and minimal run at low). Otherwise each stays
+#   whatever /model, /effort or a hand edit left, since those are the keys
+#   Claude Code itself also writes here. The cost: a level this sync wrote is
+#   not withdrawn when the config stops naming one — sync cannot tell its own
+#   write from an /effort choice, and losing the operator's is the worse error.
+#
+# A config that cannot be read leaves the document unchanged and warns: a sync
+# that withdrew every alias over a typo would be worse than one a line late.
+_claude_apply_models() {
+  local -n __cam_result=$1
+  local view
+  if ! view=$(wb_config_harness_models); then
+    warn "Claude Code's model settings left as they were — fix the models section of config.yml"
+    return 0
+  fi
+
+  local skipped_text skipped
+  if ! skipped_text=$(jq -r '.claude.skipped[]' <<< "$view"); then
+    warn "Claude Code's model settings left as they were — config models printed no skipped list"
+    return 0
+  fi
+  while IFS= read -r skipped; do
+    [[ -n "$skipped" ]] && warn "$skipped"
+  done <<< "$skipped_text"
+
+  __cam_result=$(jq --argjson view "$view" '
+    ($view.claude) as $c
+    | .settings.env = (((.settings.env // {})
+        | with_entries(select(.key | IN($c.managed_env[]) | not))) + $c.env)
+    | if (.settings.env | length) == 0 then del(.settings.env) else . end
+    | if $c.model == null then . else .settings.model = $c.model end
+    | if $c.effortLevel == null then . else .settings.effortLevel = $c.effortLevel end
+  ' <<< "$__cam_result")
+}
+
+# _claude_apply_context RESULT_VAR — sets `autoCompactWindow` in the merged
+# settings document held in RESULT_VAR from the machine-wide `context.compact_at`
+# (wb_config_harness_context), so an interactive session compacts at the same
+# ceiling the pipeline's `--autocompact` does. A nameref for the reason
+# _claude_apply_models gives.
+#
+# Unset, the window an earlier sync wrote is withdrawn only while it still holds
+# the value $COMPACTION_RECORD_FILE says it wrote: a window set since by hand,
+# or by a Claude Code older than 2.1.288 — whose `/autocompact` wrote this key
+# before it moved to per-model `modelSettings` — is the operator's and stays. A
+# window saved with `/autocompact` for one model outranks this key for that
+# model, which is Claude Code's precedence, not ours.
+#
+# The record is written before the settings file it describes. Safe in that
+# order because withdrawal compares values: a record ahead of a write that
+# failed names a value the file does not hold, and withdraws nothing.
+_claude_apply_context() {
+  local -n __cac_result=$1
+  local view
+  if ! view=$(wb_config_harness_context); then
+    warn "Claude Code's auto-compact window left as it was — fix the context section of config.yml"
+    return 0
+  fi
+
+  local skipped
+  if ! skipped=$(jq -r '.claude.skipped[]' <<< "$view"); then
+    warn "Claude Code's auto-compact window left as it was — config context printed no skipped list"
+    return 0
+  fi
+  [[ -z "$skipped" ]] || warn "$skipped"
+
+  local recorded window
+  recorded=$(wb_compaction_record claude)
+  window=$(jq -c '.claude.autoCompactWindow' <<< "$view")
+  __cac_result=$(jq --argjson w "$window" --argjson rec "$recorded" '
+    if $w != null then .settings.autoCompactWindow = $w
+    elif $rec.autoCompactWindow != null
+      and .settings.autoCompactWindow == $rec.autoCompactWindow
+    then del(.settings.autoCompactWindow)
+    else . end
+  ' <<< "$__cac_result")
+
+  local record='{}'
+  [[ "$window" == null ]] || record=$(jq -nc --argjson w "$window" '{autoCompactWindow: $w}')
+  wb_compaction_record_set claude "$record" \
+    || warn "Could not record the auto-compact window in $COMPACTION_RECORD_FILE — unsetting context.compact_at will not withdraw it"
+  return 0
+}
+
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
 # Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
@@ -382,6 +482,10 @@ _step_claude_settings() {
   # be written once and never corrected again.
   result=$(_claude_mirror_env "$result") \
     || { err "Failed to mirror $ENV_LOCAL_FILE into settings.json"; return 1; }
+  _claude_apply_models result \
+    || { err "Failed to write the model tiers into settings.json"; return 1; }
+  _claude_apply_context result \
+    || { err "Failed to write the auto-compact window into settings.json"; return 1; }
 
   # Both halves are staged before either is published. The two files describe
   # each other: a manifest that ran ahead of the settings file — or trailed it —
@@ -417,38 +521,6 @@ _step_claude_settings() {
 # Quiet unless something changed; lib/permission_mirror.py owns the decisions.
 step_claude_container_settings() {
   python3 "$LIB_SRC_DIR/permission_mirror.py"
-}
-
-# step_claude_agents — copies each agent markdown file into ~/.claude/agents/.
-# Supports user overrides: user/ai/claude/agents/<name>.md replaces the default,
-# user/ai/claude/agents/<name>.disabled suppresses it entirely.
-step_claude_agents() {
-  [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
-  mkdir -p "$CLAUDE_AGENTS_DIR"
-  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/" || true
-
-  local -A layers
-  resolve_layers "$CLAUDE_AGENTS_SRC_DIR" "$USER_AGENTS_DIR" "*.md" layers
-
-  # Prune agents in target that are no longer in either layer
-  local item
-  for item in "$CLAUDE_AGENTS_DIR"/*.md; do
-    [[ -e "$item" || -L "$item" ]] || continue
-    local name
-    name=$(basename "$item")
-    if [[ -z "${layers[$name]+set}" ]]; then
-      rm "$item"
-      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}" || true
-    fi
-  done
-
-  # Install from merged layers
-  local name source label
-  for name in "${!layers[@]}"; do
-    source="${layers[$name]}"
-    label="${name%.md}"
-    install_file "$source" "$CLAUDE_AGENTS_DIR/$name" "$label"
-  done
 }
 
 # step_claude_machine_profile — generates ~/.claude/machine/machine.md unconditionally.
@@ -610,10 +682,17 @@ _export_claude_config() {
     cp "$rule" "$dest/rules/"
   done
 
-  # Agents: copy all .md files
-  local agent
+  # Agents: copy all .md files. A tiered agent goes as `model: inherit`: the
+  # tiers are this machine's models.*, and the host it is exported to has its own.
+  local agent rendered rc
   for agent in "$CLAUDE_AGENTS_SRC_DIR"/*.md; do
     [[ -f "$agent" ]] || continue
+    rc=0
+    rendered=$(_claude_render_agent "$agent" "") || rc=$?
+    if [[ "$rc" -eq 11 ]]; then
+      printf '%s\n' "$rendered" > "$dest/agents/$(basename "$agent")"
+      continue
+    fi
     cp "$agent" "$dest/agents/"
   done
 

@@ -49,7 +49,7 @@ import pr.target
 from agent.registry import phase_skips
 from core.phases import Effort, Mode
 from review.paths import (
-    read_review_meta, stamp_reviewed,
+    read_review_meta, stamp_reviewed, write_review_meta,
 )
 # The function rather than the module: `git.client` binds `run` and `ok`, which
 # `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
@@ -66,7 +66,7 @@ from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
-from agent.phases import ModelAlias, collect_phase_models, resolve_effort
+from agent.phases import collect_phase_models, resolve_effort
 from review.pipeline import (
     EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
@@ -101,36 +101,19 @@ def _budgets_are_derivable(phase_models, trail, cwd: str) -> bool:
 
     Checked here, beside the backend preflight, because the alternative is
     discovering it once per phase after the review has already paid for
-    metadata and preflight collection.
-
-    An unresolved tier alias is not a failure — it is what `AI_SONNET_MODEL`
-    being unset looks like, which is the ordinary first-party-API setup — but
-    it does mean the budget is the tier's conservative floor rather than the
-    model's real window, so it is said out loud rather than left to be
-    inferred from a smaller review.
+    metadata and preflight collection. Phases with no configured model are
+    absent from `phase_models` and budget against the unset-model floor.
     """
-    for model, phases in sorted(phase_models.items()):
+    for ref, phases in sorted(phase_models.items(), key=lambda item: item[0].spec()):
         named = ", ".join(str(p) for p in phases)
         try:
-            budget = prompt_budget_bytes(model, cwd=cwd)
+            budget = prompt_budget_bytes(ref.id, cwd=cwd)
         except UnknownModelWindow as exc:
             core.log.error(f"Cannot budget prompts for {named}: {exc}")
             trail.decision(
                 "prompt_budget", "aborting review", reason=str(exc),
             )
             return False
-        alias = ModelAlias.parse(model)
-        if alias is not None:
-            core.log.warn(
-                f"{model!r} is an unresolved tier alias, so the tier floor "
-                f"({budget // 1024}KB) is the budget for {named} rather than "
-                f"the model's own window. Set {alias.env_key} to budget "
-                f"against the real one."
-            )
-            trail.decision(
-                "prompt_budget", "budgeting against the tier floor",
-                reason=f"{model} did not resolve to a concrete model id",
-            )
     return True
 
 
@@ -353,6 +336,10 @@ def _run_phases(trail, args, job) -> _PhasesRun:
     function does, and a phase added here is swept without anyone remembering
     to sweep it.
     """
+    # getattr: `--fix` has callers that build their own args, as
+    # `_file_open_findings` notes; an absent flag is the ordinary run.
+    if getattr(args, "resume_fix", False):
+        return _resume_fix_pass(trail, args, job)
     if _is_no_op_rereview(job):
         trail.decision(
             "empty_delta", "no agent ran",
@@ -417,13 +404,38 @@ def _run_phases(trail, args, job) -> _PhasesRun:
     return _PhasesRun(pipeline=pipeline, fix_rc=rc)
 
 
+def _resume_fix_pass(trail, args, job) -> _PhasesRun:
+    """The fix pass alone, over the review this HEAD already has.
+
+    The review is not redone: nothing it read has changed, and the pass that
+    stopped had already been handed its findings. The leftovers were set aside
+    before this process started (`review.run._interrupted_pass`), so the pass
+    starts clean. No publish happens on this path, so the sidecar's
+    `started_at` is stamped with this run's start first — `review.fix_logs`
+    keeps the pass's logs under it and the summary looks them up by it.
+    """
+    trail.decision("fix_pass", "resuming an interrupted fix pass",
+                   reason="the last fix pass on this HEAD stopped before it committed")
+    core.log.info("Resuming the interrupted fix pass — the review on this HEAD stands")
+    review_dir = Path(job.artifact_dir)
+    write_review_meta(review_dir, replace(read_review_meta(review_dir),
+                                          started_at=job.started_at))
+    _inject_static_analysis_section(job)
+    with trail.span("fix_pass"):
+        rc = run_fix_pass(job, trail)
+    _file_open_findings(args, job, trail)
+    return _PhasesRun(pipeline=Pipeline.SINGLE, fix_rc=rc)
+
+
 def run_orchestrate(trail, args, repo, session_log) -> int:
     _log_ai_backend(trail)
     # Against the worktree's own config, not just the global scope: this is the
     # same resolution `ReviewJob.config` makes, and checking a different one
     # would clear a model the review never runs while missing the one it does.
+    # Before metadata and collection are paid for, not at the first phase.
+    agent.phases.reject_removed_provider_env()
     phase_models = collect_phase_models(args.model, args.repo_dir)
-    if not agent.backend.preflight(phase_models, trail):
+    if not agent.backend.preflight(phase_models, trail, args.repo_dir):
         return 1
     if not _budgets_are_derivable(phase_models, trail, args.repo_dir):
         return 1
@@ -453,6 +465,9 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         model=args.model, effort=resolve_effort(args.effort),
         skip_phases=phase_skips(args),
         include_generated=args.generated,
+        # getattr: the suites build `args` by hand, and an absent flag is the
+        # ordinary case.
+        full_review=getattr(args, "full_review", False),
     )
     job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
 
@@ -490,6 +505,9 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     # phase that produced none exits the process rather than returning, so
     # nothing below this line runs for it. Stamping here rather than beside the
     # sidecar write is what makes `reviewed_at` mean reviewed.
+    # On `--resume-fix` this records the resume, not a review: `_resume_fix_pass`
+    # does not re-run the review, so `reviewed_at` is when the interrupted pass
+    # finished rather than when the findings were written.
     stamp_reviewed(Path(job.artifact_dir))
 
     result = {

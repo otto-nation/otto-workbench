@@ -181,11 +181,14 @@ Every key any of them accepts:
 | `reuse.level` | `lite`, `full`, `ultra` | — |
 | `reuse.default` | `lite`, `full`, `ultra` | `full` |
 | `agent.backend` | `claude`, `pi` | — |
-| `agent.model` | string | — |
-| `agent.thinking` | `low`, `medium`, `high` | — |
-| `agent.provider` | string | — |
+| `agent.thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | — |
 | `agent.phases.<phase>.model` | string | — |
-| `agent.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
+| `agent.phases.<phase>.thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | — |
+| `models.deep` | string | — |
+| `models.standard` | string | — |
+| `models.light` | string | — |
+| `models.session` | string | — |
+| `context.compact_at` | integer | — |
 | `review.effort` | `low`, `medium`, `high` | — |
 | `review.self_effort` | `low`, `medium`, `high` | — |
 | `issues.provider` | `linear`, `github`, `jira` | — |
@@ -207,6 +210,8 @@ Every key any of them accepts:
 | `batch.mem_pressure_max` | number | `5.0` |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `ci_verify`, `rebase`, `prepush_fix`, `describe`, `create`
+
+`context.compact_at` may only be written at global scope: both harnesses keep it in machine-wide settings, and Pi takes no per-run override, so a repo's value would never reach Pi.
 
 `fix.verify_command` may only be written at container, project scope: it names a command inside one repo's checkout, which a machine-wide value would point every other repo at.
 
@@ -258,7 +263,7 @@ Six layers decide an agent value, highest first:
 
 | # | Layer | Example |
 |---|-------|---------|
-| 1 | Explicit flag | `--model opus`, `--effort high` |
+| 1 | Explicit flag | `--model claude-sonnet-5`, `--effort high` |
 | 2 | Phase env var | `WORKBENCH_AI_SCOUT_MODEL` |
 | 3 | Global env var | `WORKBENCH_AI_MODEL` |
 | 4 | Project config | `<worktree>/.workbench.yml` |
@@ -266,8 +271,12 @@ Six layers decide an agent value, highest first:
 | 6 | Global config | `config.yml` |
 
 Within one file an `agent.phases.<phase>` entry outranks the `agent.*` section
-it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
-phase keeps every sibling the layers below it set.
+it sits under, and a phase's model entry outranks `models.<tier>` for its tier.
+Layers 4 through 6 deep-merge, so a project file that sets one phase keeps
+every sibling the layers below it set.
+
+A model no layer names is left to the backend's own default. A model names its
+own provider (`xai/grok-4.6`); no setting supplies one to every model.
 
 Layer 5 exists only in the bare-repo worktree layout, where every checkout is
 a peer of the bare `.git` inside a container directory — the same directory
@@ -293,6 +302,11 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 | `wb_config_ensure_file [FILE]` | create FILE holding just the modeline, when it does not already exist. |
 | `wb_config_split_record RECORD SCOPE_OUT VALUE_OUT DIR_OUT` | the three fields of one `otto-workbench config get` record, assigned to the named variables. |
 | `wb_config_get KEY [DEFAULT]` | a dotted config key resolved for the repo the caller is standing in, or DEFAULT when no scope sets it. Returns 1, printing why, when KEY is not one the config surface defines. |
+| `wb_config_harness_models` | prints, as one JSON object, what the machine-wide `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`, in the shape `config models` documents in `lib/config_cli.py`. Returns 1, printing why, when the config names a tier it leaves unset or cannot be read. |
+| `wb_config_harness_context [LISTING]` | prints, as one JSON object, what the machine-wide `context.compact_at` says Claude Code's and Pi's compaction settings should hold, in the shape `config context` documents in `lib/config_cli.py`. LISTING is a `pi --list-models` listing; without one the Pi half is empty. Returns 1, printing why, when the config cannot be read. |
+| `wb_compaction_record HALF` | prints the object HALF (`claude` or `pi`) of $COMPACTION_RECORD_FILE: what the last sync wrote for context.compact_at into that harness's settings. `{}` when nothing was recorded or the file is unreadable, which withdraws nothing. |
+| `wb_compaction_record_set HALF JSON` | replaces HALF of $COMPACTION_RECORD_FILE with JSON, leaving the other harness's half as it was. Returns 1 when the file cannot be written. |
+| `wb_write_json_file PATH JSON` | replaces PATH with JSON through a sibling temp file, so a sync that dies mid-write leaves the old file whole. 0644, as the settings files it replaces are; mktemp answers 0600. Returns 1, leaving no temp file behind, when the write fails. |
 
 Loaded via `ui.sh`.
 
@@ -359,7 +373,7 @@ It has no dependencies beyond ENV_LOCAL_FILE (from lib/constants.sh), so a
 caller that has not loaded the facade can source it on its own:
 
 ```bash
-read_env_local_var AI_MODEL
+read_env_local_var GOOGLE_CLOUD_PROJECT
 ```
 
 | Function | Purpose |
@@ -380,6 +394,7 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 |----------|---------|
 | `install_symlink SOURCE TARGET [LABEL] [--no-prompt]` | Creates or updates a symlink at TARGET pointing to SOURCE. LABEL defaults to the basename of SOURCE. |
 | `install_file SOURCE TARGET [LABEL]` | Copies SOURCE to TARGET if content differs. Removes stale symlinks at TARGET. Idempotent — no-op if file is already up to date. |
+| `install_text TEXT TARGET [LABEL]` | install_file for content held in a variable: writes TEXT to TARGET when it differs, replacing a symlink, and prints the same status line. TEXT is written with one trailing newline, the form a `$(...)` capture of a file compares equal to. |
 | `copy_dir SRC DST [GLOB] [--strip-ext] [--prune]` | Copies all files matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. --strip-ext removes the file extension from the display label. --prune removes stale files (or symlinks) in DST whose source counterpart is gone. |
 | `symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]` | Symlinks all items matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. |
 | `normalize_path PATH` | collapses "." and ".." segments out of an absolute path string, purely lexically (the input need not exist). |
@@ -438,6 +453,7 @@ the one caller that must leave the environment alone, so it asks
 | Function | Purpose |
 |----------|---------|
 | `git_shared_dir DIR` | the shared git directory DIR's repository uses, resolved to a physical path. Non-zero and silent when git cannot answer for DIR. |
+| `git_bare_container DIR` | the bare-repo container DIR's repository sits in, printed; non-zero and silent when DIR is not in that layout. |
 
 ### git_remote.sh
 
@@ -632,7 +648,7 @@ Cask lines are implicitly macos-only.
 | `package_lookup NAME OUT` | fills assoc OUT with the manifest entry for NAME (full formula or its short name) plus OUT[manifest]. Returns 1 when NAME is in no manifest under $PACKAGES_DIR. |
 | `package_entries FILE OUT` | fills array OUT with FILE's short names in order. |
 | `packages_use_bundle` | 0 when package stacks install with `brew bundle`: macOS with Homebrew on PATH. Everywhere else stacks install entry by entry through install_package, which still prefers Homebrew (Linuxbrew) where it exists but skips the macOS-only entries and casks a Linux brew cannot install. Reads `uname -s` rather than $OSTYPE, which bash sets itself and a caller cannot vary. |
-| `install_package NAME [--version V]` | installs the manifest package NAME with Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`), bootstrapping mise first when neither is present. Skipped when the entry's binary already runs; a mise shim with no active version does not count. Returns 1 when NAME is in no manifest, has no mise spec on a machine without Homebrew, or the install fails; 2 on a usage error, including --version on a spec that already contains '@'. |
+| `install_package NAME [--version V]` | installs the manifest package NAME with Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`), bootstrapping mise first when neither is present. A Homebrew install that fails falls back to mise when the entry has a mise spec and mise is already installed. A spec handed to mise gets its backend's prerequisite installed first (MISE_BACKEND_PREREQS: uv for `pipx:`), and is not attempted when that fails. Skipped when the entry's binary already runs; a mise shim with no active version does not count. Returns 1 when NAME is in no manifest, has no mise spec on a machine without Homebrew, or the install fails; 2 on a usage error, including --version on a spec that already contains '@'. |
 
 Loaded via `ui.sh`.
 
@@ -1027,8 +1043,7 @@ The schema these functions read — the meta block, the tool entry fields, the
 `*.env.yml` shape, and the cross-validation modes — is documented once, in
 [Registries](registries.md#schema). `KNOWN_TOOL_FIELDS`,
 `KNOWN_COMMAND_FIELDS` and `KNOWN_ENV_FIELDS` below are what
-`validate-registries` rejects unknown keys against, and `MODEL_ROLES` is the
-vocabulary it checks a `role` value against.
+`validate-registries` rejects unknown keys against.
 
 Sourced directly by its consumers — `bin/local/generate-tool-context`,
 `bin/local/validate-registries`, `packages/summary.sh`, `summary.sh`, and
@@ -1056,8 +1071,7 @@ the caller has not already sourced `constants.sh`, since an
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
 | `reg_scan_hold CMD [ARG...]` | run CMD with one registry scan shared by every collector it calls. |
 | `collect_registry_permissions ARRAY_REF SCAN_DIR [PACKAGES_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
-| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
-| `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |
+| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. GOOGLE_CLOUD_PROJECT) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_VERTEX_PROJECT_ID) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
 
 ### summary.sh
 

@@ -50,7 +50,7 @@ _make_project() {
 
 @test "wb_config_get prints nothing for a key no scope sets" {
   printf 'reuse:\n  level: ultra\n' > "$WORKBENCH_CONFIG_FILE"
-  run wb_config_get "agent.model"
+  run wb_config_get "models.deep"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
@@ -68,19 +68,19 @@ _make_project() {
 }
 
 @test "wb_config_get prefers the project file over the global one" {
-  printf 'agent:\n  model: sonnet\n' > "$WORKBENCH_CONFIG_FILE"
-  _make_project 'agent:
-  model: opus
+  printf 'models:\n  deep: sonnet\n' > "$WORKBENCH_CONFIG_FILE"
+  _make_project 'models:
+  deep: opus
 '
-  run wb_config_get "agent.model"
+  run wb_config_get "models.deep"
   [ "$status" -eq 0 ]
   [ "$output" = "opus" ]
 }
 
 @test "wb_config_get falls back to the global file for a key the project omits" {
-  printf 'agent:\n  model: sonnet\nreview:\n  effort: high\n' > "$WORKBENCH_CONFIG_FILE"
-  _make_project 'agent:
-  model: opus
+  printf 'models:\n  deep: sonnet\nreview:\n  effort: high\n' > "$WORKBENCH_CONFIG_FILE"
+  _make_project 'models:
+  deep: opus
 '
   run wb_config_get "review.effort"
   [ "$status" -eq 0 ]
@@ -110,8 +110,8 @@ _make_project() {
 }
 
 @test "wb_config_get survives a malformed config file" {
-  printf 'agent:\n  model: [unclosed\n' > "$WORKBENCH_CONFIG_FILE"
-  run wb_config_get "agent.model" "sonnet"
+  printf 'models:\n  deep: [unclosed\n' > "$WORKBENCH_CONFIG_FILE"
+  run wb_config_get "models.deep" "sonnet"
   [ "$status" -eq 0 ]
   [ "$output" = "sonnet" ]
 }

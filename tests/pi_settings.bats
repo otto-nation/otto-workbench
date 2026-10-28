@@ -18,12 +18,6 @@ teardown() {
   common_teardown
 }
 
-# _write_live JSON — the settings file Pi and the operator already wrote.
-_write_live() {
-  mkdir -p "$AGENT_DIR"
-  printf '%s\n' "$1" > "$LIVE"
-}
-
 # _write_live_packages ENTRY... — a live file whose packages hold ENTRY..., each
 # a plain source string. Built with jq so the sources stay shell values rather
 # than becoming a second spelling of $PKG inside a JSON literal.
@@ -36,10 +30,8 @@ _write_live_packages() {
 # bash because /bin/bash on macOS is 3.2 and has no namerefs — a PATH narrow
 # enough to lose gh would otherwise run the step under a shell it predates.
 #
-# yq for the same reason as jq: _pi_build_models reads the registries through
-# collect_model_env_vars. Both tests here reach the {} return before that,
-# since ENV_LOCAL_FILE defaults to /dev/null — the symlink is so a reordering
-# fails on its merits rather than on a PATH accident.
+# python3 for the same reason as jq: the step reads its models through
+# lib/config_cli.py, and the system one may be older than the code it runs.
 # _real_bin CMD — the binary CMD actually runs: the first non-shim on PATH, else
 # what mise names behind its shim. Linking a mise shim instead would break once
 # PATH is narrowed, since a shim with no global version only works by falling
@@ -54,7 +46,7 @@ _real_bin() {
 
 _hide_gh() {
   ln -sf "$(_real_bin jq)" "$BIN/jq"
-  ln -sf "$(_real_bin yq)" "$BIN/yq"
+  ln -sf "$(_real_bin python3)" "$BIN/python3"
   ln -sf "$BASH" "$BIN/bash"
   # The base system minus gh. gh is commonly installed in /usr/bin itself, so
   # putting /usr/bin on PATH would leave it found and the case would test a
@@ -307,309 +299,171 @@ _live() {
 }
 
 @test "the template carries no hardcoded model keys" {
-  # Model config comes from ~/.env.local at sync time, not the template.
-  # A hardcoded defaultModel or enabledModels would fight the SSOT.
-  run jq -e 'has("defaultModel")' "$REPO_ROOT/ai/pi/settings.json"
+  # Model settings come from config.yml's models.* at sync time. A template
+  # defaultModel, enabledModels or defaultProvider would fight that one source.
+  run jq -e 'has("defaultModel") or has("enabledModels") or has("defaultProvider")' \
+    "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -ne 0 ]
-  run jq -e 'has("enabledModels")' "$REPO_ROOT/ai/pi/settings.json"
-  [ "$status" -ne 0 ]
 }
 
-# ── model injection from ~/.env.local ────────────────────────────────────────────
+# ── model settings from config.yml's models.* ─────────────────────────────────
 
-@test "env vars set defaultModel and enabledModels" {
-  _seed_env_local \
-    'export AI_MODEL=claude-opus-5' \
-    "export AI_OPUS_MODEL='claude-opus-5'" \
-    "export AI_SONNET_MODEL='claude-sonnet-5'" \
-    "export AI_HAIKU_MODEL='claude-haiku-4-5@20251001'"
+@test "the tiers and the session set Pi's model keys" {
+  _seed_config 'models:' \
+    '  deep: anthropic/claude-opus-5-5:high' \
+    '  standard: anthropic/claude-sonnet-5-5' \
+    '  light: openai/gpt-6-luna' \
+    '  session: deep'
   _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ "$(_live '.defaultModel')" = "claude-opus-5" ]
-  [ "$(_live '.enabledModels | length')" = "3" ]
-  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
-  [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-sonnet-5" ]
-  [ "$(_live '.enabledModels[2]')" = "google-vertex-claude/claude-haiku-4-5@20251001" ]
-  _teardown_env_local
+  [ "$(_live '.defaultModel')" = "claude-opus-5-5" ]
+  [ "$(_live '.defaultProvider')" = "anthropic" ]
+  [ "$(_live '.defaultThinkingLevel')" = "high" ]
+  [ "$(_live '.enabledModels | join(",")')" = "anthropic/claude-opus-5-5,anthropic/claude-sonnet-5-5,openai/gpt-6-luna" ]
+  [ "$(_live '.modelThinkingLevels | tojson')" = '{"anthropic/claude-opus-5-5":"high"}' ]
 }
 
-@test "partial env — only AI_MODEL set builds a one-entry enabledModels" {
-  _seed_env_local 'export AI_MODEL=claude-opus-5'
+@test "a routed session starts Pi on workbench/auto beside the tiers" {
+  _write_live '{"defaultProvider": "google-vertex-claude", "defaultModel": "claude-opus-4-8"}'
+  _seed_config 'models:' \
+    '  deep: anthropic/claude-opus-5-5:high' \
+    '  standard: anthropic/claude-sonnet-5-5' \
+    '  light: anthropic/claude-haiku-5-5' \
+    '  session: auto'
   _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ "$(_live '.defaultModel')" = "claude-opus-5" ]
-  [ "$(_live '.enabledModels | length')" = "1" ]
-  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
-  _teardown_env_local
+  [ "$(_live '.defaultProvider + "/" + .defaultModel')" = "workbench/auto" ]
+  [ "$(_live '.enabledModels | join(",")')" = "anthropic/claude-opus-5-5,anthropic/claude-sonnet-5-5,anthropic/claude-haiku-5-5,workbench/auto" ]
 }
 
-@test "no AI_MODEL leaves model keys to whatever the template or live file had" {
-  _seed_env_local '# nothing set'
+@test "a bare id is qualified with the provider the settings end up with" {
+  # Pi adds a bare pattern once per provider serving it, warning every start,
+  # and keys modelThinkingLevels by exact provider/id.
+  _write_live '{"defaultProvider": "google-vertex-claude"}'
+  _seed_config 'models:' '  deep: claude-opus-5-5:high' '  light: anthropic/claude-haiku-5-5'
   _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
-  # Template has defaultModel from _write_template
-  [ "$(_live '.defaultModel')" = "claude-opus-4-6" ]
-  _teardown_env_local
+  [ "$(_live '.enabledModels | join(",")')" = "google-vertex-claude/claude-opus-5-5,anthropic/claude-haiku-5-5" ]
+  [ "$(_live '.modelThinkingLevels | tojson')" = '{"google-vertex-claude/claude-opus-5-5":"high"}' ]
 }
 
-@test "env-derived models override stale live values" {
-  _seed_env_local 'export AI_MODEL=claude-opus-5'
-  _write_live '{"defaultModel": "claude-opus-4-6", "enabledModels": ["google-vertex-claude/claude-opus-4-6"]}'
+@test "with no provider anywhere a bare id stays bare and its level is dropped" {
+  _write_template_without_model
+  _seed_config 'models:' '  deep: claude-opus-5-5:high'
   _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ "$(_live '.defaultModel')" = "claude-opus-5" ]
-  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
-  _teardown_env_local
+  [ "$(_live '.enabledModels | join(",")')" = "claude-opus-5-5" ]
+  [ "$(_live 'has("modelThinkingLevels")')" = "false" ]
 }
 
 @test "two tiers naming one model list it once" {
   # Pinning a machine to a single model by pointing several tiers at it is a
-  # normal configuration, and enabledModels is a set — the same id twice is
-  # not a second model to enable.
-  _seed_env_local \
-    'export AI_MODEL=claude-opus-5' \
-    "export AI_OPUS_MODEL='claude-sonnet-5'" \
-    "export AI_SONNET_MODEL='claude-sonnet-5'"
+  # normal configuration, and enabledModels is a set.
+  _seed_config 'models:' \
+    '  deep: anthropic/claude-opus-5-5' \
+    '  standard: claude-opus-5-5' \
+    '  session: anthropic/claude-opus-5-5'
+  _write_live '{"defaultProvider": "anthropic"}'
   _stub_gh 'echo "{}"'
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ "$(_live '.enabledModels | length')" = "2" ]
-  # defaultModel leads, then the one distinct tier value.
-  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
-  [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-sonnet-5" ]
-  _teardown_env_local
+  [ "$(_live '.enabledModels | join(",")')" = "anthropic/claude-opus-5-5" ]
 }
 
-# ── the model list comes from the registries, not from ai/pi/steps.sh ─────────
-
-# _seed_registry_tree ENTRIES_YAML — a scan root holding one *.env.yml with
-# ENTRIES_YAML as its env[], for pointing WORKBENCH_STABLE_DIR at.
-_seed_registry_tree() {
-  mkdir -p "$TMPDIR/registries"
-  cat > "$TMPDIR/registries/models.env.yml" << YAML
-meta:
-  section: "test models"
-  validation: none
-env:
-$1
-YAML
-  export WORKBENCH_STABLE_DIR="$TMPDIR/registries"
-}
-
-_teardown_registry_tree() {
-  unset WORKBENCH_STABLE_DIR
-}
-
-@test "a tier added to a registry reaches Pi with no change to the step" {
-  # The point of the role field: ai/pi/steps.sh names no model variable, so a
-  # fifth tier is a registry edit and nothing else. AI_FAST_MODEL exists in no
-  # shipped registry — only in the fixture below.
-  _seed_registry_tree '  - var: AI_MODEL
-    role: model-default
-  - var: AI_FAST_MODEL
-    role: model-tier'
-  _seed_env_local \
-    'export AI_MODEL=claude-opus-5' \
-    "export AI_FAST_MODEL='claude-fast-1'"
-  _stub_gh 'echo "{}"'
-
-  run _run_step
-  [ "$status" -eq 0 ]
-  [ "$(_live '.enabledModels | length')" = "2" ]
-  [ "$(_live '.enabledModels[1]')" = "google-vertex-claude/claude-fast-1" ]
-  _teardown_env_local
-  _teardown_registry_tree
-}
-
-@test "a var carrying no role is not a model" {
-  # The guard against keying the list on claude_env instead: ai/lib/vertex.env.yml
-  # is flagged for the settings.json mirror, and its GOOGLE_CLOUD_PROJECT would
-  # otherwise be offered as something to run a session on.
-  _seed_registry_tree '  - var: AI_MODEL
-    role: model-default
-  - var: GOOGLE_CLOUD_PROJECT
-    claude_env: true'
-  _seed_env_local \
-    'export AI_MODEL=claude-opus-5' \
-    'export GOOGLE_CLOUD_PROJECT=some-gcp-project'
-  _stub_gh 'echo "{}"'
-
-  run _run_step
-  [ "$status" -eq 0 ]
-  [ "$(_live '.enabledModels | length')" = "1" ]
-  [ "$(_live '.enabledModels[0]')" = "google-vertex-claude/claude-opus-5" ]
-  _teardown_env_local
-  _teardown_registry_tree
-}
-
-@test "no model-default declared leaves model keys alone" {
-  _seed_registry_tree '  - var: AI_OPUS_MODEL
-    role: model-tier'
-  _seed_env_local "export AI_OPUS_MODEL='claude-opus-5'"
-  _stub_gh 'echo "{}"'
-
-  run _run_step
-  [ "$status" -eq 0 ]
-  # Template's defaultModel survives, and no enabledModels was built from the
-  # lone tier — a list with no default in it is not one Pi could select from.
-  [ "$(_live '.defaultModel')" = "claude-opus-4-6" ]
-  [ "$(_live 'has("enabledModels")')" = "false" ]
-  _teardown_env_local
-  _teardown_registry_tree
-}
-
-# ── one registry scan per sync, not one per collector ──────────────────────────
-
-@test "step_pi_settings shares one registry scan between build and warn" {
-  # _pi_build_models and _pi_warn_no_default_model each call
-  # collect_model_env_vars against the same scan_dir. step_pi_settings wraps
-  # both in one reg_scan_hold, so the second call must reuse the first's scan
-  # rather than rescanning the directory on disk.
-  #
-  # Proven the same way registries_cache.bats proves reg_scan_hold's sharing:
-  # through the hold's own cost rather than its benefit. collect_model_env_vars
-  # is wrapped so its first call — _pi_build_models' — rewrites the registry
-  # out from under AI_MODEL to declare AI_OTHER_MODEL instead. Nothing is set
-  # in ~/.env.local and the template carries no model, so the merge leaves no
-  # defaultModel and the warning names the registry's default var. An unheld
-  # second call would read the rewritten file and name AI_OTHER_MODEL; a held
-  # call still names AI_MODEL from the scan _pi_build_models already loaded.
+@test "no models in config.yml leaves Pi's own model keys alone" {
   _write_template_without_model
-  mkdir -p "$TMPDIR/registries"
-  cat > "$TMPDIR/registries/models.env.yml" << 'YAML'
-meta:
-  section: "test models"
-  validation: none
-env:
-  - var: AI_MODEL
-    role: model-default
-YAML
-  _seed_env_local '# nothing set'
+  _write_live '{"defaultModel": "claude-opus-5-5", "enabledModels": ["claude-*"], "defaultProvider": "anthropic"}'
   _stub_gh 'echo "{}"'
 
-  run bash -c '
-    set -e
-    success() { echo "OK $*"; }
-    warn()    { echo "WARN $*"; }
-    err()     { echo "ERR $*"; }
-    skip()    { echo "SKIP $*"; }
-    PI_AGENT_DIR="$2"
-    PI_SETTINGS_FILE="$2/settings.json"
-    PI_SETTINGS_SRC="$3"
-    PI_SYNC_SETTINGS_JQ="$1/ai/pi/sync-settings.jq"
-    ENV_LOCAL_FILE="$4"
-    LIB_SRC_DIR="$1/lib"
-    WORKBENCH_STABLE_DIR="$5"
-    REGISTRY_FILE="$5/models.env.yml"
-    . "$1/lib/env.sh"
-    . "$1/lib/registries.sh"
-    __orig_def=$(declare -f collect_model_env_vars)
-    eval "_orig_collect_model_env_vars${__orig_def#collect_model_env_vars}"
-    collect_model_env_vars() {
-      _orig_collect_model_env_vars "$@"
-      cat > "$REGISTRY_FILE" << YAML2
-meta:
-  section: "test models"
-  validation: none
-env:
-  - var: AI_OTHER_MODEL
-    role: model-default
-YAML2
-    }
-    . "$1/ai/pi/steps.sh"
-    step_pi_settings
-  ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "$TMPDIR/.env.local" "$TMPDIR/registries"
+  run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"set AI_MODEL in ~/.env.local"* ]]
-  _teardown_env_local
+  [ "$(_live '.defaultModel + " " + .defaultProvider')" = "claude-opus-5-5 anthropic" ]
+  [ "$(_live '.enabledModels | join(",")')" = "claude-*" ]
 }
 
-@test "a malformed template surfaces jq's error on the build path" {
-  _seed_env_local 'export AI_MODEL=claude-opus-5'
-  printf '{ not json' > "$TEMPLATE"
+@test "a level saved in /thinking for another model survives the sync" {
+  _write_live '{"modelThinkingLevels": {"openai/gpt-6": "low", "anthropic/claude-opus-5-5": "medium"}}'
+  _seed_config 'models:' '  deep: anthropic/claude-opus-5-5:max'
+  _stub_gh 'echo "{}"'
 
-  # The script is single-quoted on purpose: its $N are bash -c's positional
-  # args. ShellCheck exempts that under a bare `run`, not under `run --flag`.
-  # shellcheck disable=SC2016
-  run --separate-stderr bash -c '
-    set -e
-    warn() { :; }
-    PI_SETTINGS_SRC="$2"
-    ENV_LOCAL_FILE="$3"
-    LIB_SRC_DIR="$1/lib"
-    WORKBENCH_STABLE_DIR="$1"
-    . "$1/lib/env.sh"
-    . "$1/ai/pi/steps.sh"
-    _pi_build_models out
-    echo "built: $out"
-  ' _ "$REPO_ROOT" "$TEMPLATE" "$ENV_LOCAL_FILE"
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.modelThinkingLevels | tojson')" = '{"openai/gpt-6":"low","anthropic/claude-opus-5-5":"max"}' ]
+}
+
+@test "a config naming an unset tier warns and leaves the model keys alone" {
+  _write_template_without_model
+  _write_live '{"defaultModel": "claude-opus-5-5"}'
+  _seed_config 'models:' '  session: light'
+  _stub_gh 'echo "{}"'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN Pi's model settings left as they were"* ]]
+  [ "$(_live '.defaultModel')" = "claude-opus-5-5" ]
+}
+
+@test "a malformed template fails the step rather than writing settings" {
+  printf '{ not json' > "$TEMPLATE"
+  _stub_gh 'echo "{}"'
+
+  run _run_step
   [ "$status" -ne 0 ]
-  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
-  [[ "$stderr" == *"parse error"* ]]
-  [[ "$output" != *"built:"* ]]
-  _teardown_env_local
+  [ ! -e "$LIVE" ]
 }
 
 # ── A missing default model ─────────────────────────────────────────────────
 # Settings left with no defaultModel send pi to its first provider's default,
 # a Gemini preview its location may not serve. Nothing fails loudly, so sync
-# says so. (Claude Code's ANTHROPIC_* names are renamed to AI_* before this
-# step runs; see ai_adopt_legacy_model_vars in ai/steps.sh.)
+# says so.
 
 # _write_template_without_model — the shipped shape: no model keys at all.
 _write_template_without_model() {
-  jq -n --arg p "$PKG" '{defaultProvider: "google-vertex-claude", packages: [$p]}' > "$TEMPLATE"
+  jq -n --arg p "$PKG" '{packages: [$p]}' > "$TEMPLATE"
 }
 
-@test "settings left with no defaultModel warn, naming the registry's default var" {
+@test "settings left with no defaultModel warn, naming models.session" {
   _write_template_without_model
-  _seed_env_local '# nothing set'
   _stub_gh 'echo "{}"'
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN Pi has no default model — set AI_MODEL in ~/.env.local"* ]]
+  [[ "$output" == *"WARN Pi has no default model — run: otto-workbench config set models.session"* ]]
   [ "$(_live '.defaultModel // "none"')" = "none" ]
-  _teardown_env_local
 }
 
 @test "a defaultModel the operator chose in pi is not reported missing" {
   # /model + Ctrl+S writes defaultModel into the live file; that is a default.
   _write_template_without_model
   _write_live '{"defaultModel": "claude-opus-5-5"}'
-  _seed_env_local '# nothing set'
   _stub_gh 'echo "{}"'
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *"Pi has no default model"* ]]
-  _teardown_env_local
 }
 
-@test "an env-derived default is not reported missing" {
+@test "a session in config.yml is not reported missing" {
   _write_template_without_model
-  _seed_env_local 'export AI_MODEL=claude-opus-5-5'
+  _seed_config 'models:' '  session: anthropic/claude-opus-5-5'
   _stub_gh 'echo "{}"'
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *"Pi has no default model"* ]]
-  _teardown_env_local
 }
 
 @test "no defaultModel on a machine without pi is silent" {
   _write_template_without_model
-  _seed_env_local '# nothing set'
   _stub_gh 'echo "{}"'
   _hide_pi
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *"Pi has no default model"* ]]
-  _teardown_env_local
 }

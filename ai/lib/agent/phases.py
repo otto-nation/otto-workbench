@@ -10,21 +10,31 @@ One precedence chain, most specific first, for every knob a phase has:
     explicit argument  >  WORKBENCH_AI_<PHASE>_*  >  WORKBENCH_AI_*
                        >  agent.phases.<phase>.*  >  agent.*  >  built-in
 
+A model is chosen by the same chain, with the phase's tier as its last layer:
+``agent.phases.<phase>.model`` beats ``models.<spec.tier>``. Every layer is
+written in `agent.models`' grammar, so a value names a provider and a thinking
+level as well as an id, and a tier name borrows that tier's model.
+
+Each part of the chosen reference ranks where the layer that wrote it ranks.
+Its provider belongs to its id — an id is a name in one provider's catalogue —
+so a provider is written on the reference (``xai/grok-4.6``) and nowhere else;
+a reference that names none leaves the backend's own default provider in
+charge. There is no setting that supplies one to every phase, because that would
+send an id to a catalogue it is not a name in. Its level joins the thinking
+chain at its layer's height (`phase_settings`).
+
 The effort preset sits between the config and the built-in for thinking level,
 the one knob a review's depth setting flattens. It also scales the turn budget,
 but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
-``opus``, ``haiku``) is then resolved through ``AI_SONNET_MODEL`` /
-``AI_OPUS_MODEL`` / ``AI_HAIKU_MODEL``, falling back to the
-``ANTHROPIC_DEFAULT_*_MODEL`` names those were renamed from. An alias names a
-tier, not a deployment — on Vertex and Bedrock the account provisions a
-specific model ID, and that is where it lives. A concrete model ID anywhere in
-the chain passes through untouched. The Claude CLI does this resolution itself;
-the Pi backend does not, so it happens here before dispatch and both backends
-land on the same model.
+**No built-in model.** A phase names a tier, not a model, so when no layer
+sets one — the tier unset in ``models`` too — the model is ``None`` and the
+backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
+Pi refuses a provider without a model; a reference always carries its id, so
+no phase reaches that, and ``agent.pi_models.require_model_with_provider`` stays
+as the spawn's own guard for a caller that hands a provider in directly.
 """
 
 # doc-group: pipeline
@@ -32,10 +42,13 @@ land on the same model.
 from __future__ import annotations
 
 import os
-from enum import StrEnum
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import agent.context_ceiling
 import config.workbench_config
+import core.errors
+from agent.models import ModelLayer, ModelRef, ResolvedModel, resolve, tier_ref
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import ENV_PREFIX, Effort, Phase, Thinking
@@ -44,150 +57,42 @@ from config.workbench_config import WorkbenchConfig
 # The keys that cover every phase at once, one layer below the per-phase ones.
 GLOBAL_MODEL_ENV = f"{ENV_PREFIX}MODEL"
 GLOBAL_THINKING_ENV = f"{ENV_PREFIX}THINKING"
-PROVIDER_ENV = f"{ENV_PREFIX}PROVIDER"
+
+# Read only to refuse it: it once supplied a provider to every reference that
+# named none, and a value left in a shell must not go on quietly doing nothing.
+REMOVED_PROVIDER_ENV = f"{ENV_PREFIX}PROVIDER"
 
 # What one file preflight could not fit into the prompt costs a phase that has
 # to open it itself: one turn to read, one to act on what it found.
 OMITTED_FILE_TURNS = 2
 
 
-# ── Model aliases ────────────────────────────────────────────────────────────
-
-
-class ModelAlias(StrEnum):
-    """Short model names that resolve to a concrete model id via env override.
-
-    Anything not listed here is already a concrete id and passes through
-    untouched.
-    """
-
-    SONNET = "sonnet"
-    OPUS = "opus"
-    HAIKU = "haiku"
-
-    @property
-    def env_key(self) -> str:
-        """The variable ~/.env.local sets for this tier.
-
-        Mirrors the ``var`` field of the matching ``ai/models.env.yml`` entry,
-        which is the SSOT for model env var names; ``test_alias_env_keys_match_the_registry``
-        in tests/review_orchestrate_models_test.py fails if the two spellings drift apart again.
-        """
-        return f"AI_{self.upper()}_MODEL"
-
-    @property
-    def legacy_env_key(self) -> str:
-        """The pre-rename name, still read so an un-migrated machine resolves.
-
-        The 20260908 migration renamed these in ~/.env.local but nothing taught
-        the reader the new spelling, so every alias silently stopped resolving
-        and each phase dispatched the bare word ``sonnet`` as a model id. This
-        is the registry's ``target`` field: the name the Claude Code settings
-        mirror still publishes, so a machine that has only ever had the old
-        export keeps working.
-        """
-        return f"ANTHROPIC_DEFAULT_{self.upper()}_MODEL"
-
-    @classmethod
-    def parse(cls, model: str) -> ModelAlias | None:
-        try:
-            return cls(model)
-        except ValueError:
-            return None
-
-
-def resolve_alias(model: str) -> str:
-    """Swap a tier alias for the provisioned model ID. Concrete IDs pass through.
-
-    The current name wins over the pre-rename one, so a machine carrying both
-    (the migration leaves the old export in place under Claude Code's settings
-    mirror) resolves against the value its ~/.env.local actually sets.
-    """
-    alias = ModelAlias.parse(model)
-    if alias is None:
-        return model
-    for key in (alias.env_key, alias.legacy_env_key):
-        provisioned = os.environ.get(key)
-        if provisioned:
-            return provisioned
-    return model
-
-
-def origin_of(model: str) -> str | None:
-    """The env key currently holding *model*, if any.
-
-    ``resolve_alias`` maps a tier name onto this value; the key that supplied
-    it is what an unserved-id error should name. A concrete id that matches
-    no env var has no origin here — it came from ``--model``, ``agent.model``,
-    or a built-in default.
-    """
-    if not model:
-        return None
-    keys = (key for alias in ModelAlias for key in (alias.env_key, alias.legacy_env_key))
-    for key in keys:
-        if os.environ.get(key) == model:
-            return key
-    return None
-
-
 # ── Environment layers ───────────────────────────────────────────────────────
 
 
-def _select_model(explicit: str | None, env_key: str, default: str) -> str:
-    """The winning model name by precedence, before any alias resolution."""
-    if explicit:
-        return explicit
-    from_env = os.environ.get(env_key)
-    if from_env:
-        return from_env
-    global_env = os.environ.get(GLOBAL_MODEL_ENV)
-    if global_env:
-        return global_env
-    return default
+class RemovedSetting(core.errors.OperatorError):
+    """A setting this machine still carries that nothing reads any more."""
+
+    def __init__(self, name: str, instead: str):
+        self.name = name
+        super().__init__(f"{name} is no longer read. {instead}")
 
 
-def resolve_model(explicit: str | None, env_key: str, default: str) -> str:
-    """Pick the model for a phase, then map any tier alias to its provisioned ID.
+def reject_removed_provider_env() -> None:
+    """Raise `RemovedSetting` when WORKBENCH_AI_PROVIDER is set, even to "".
 
-    Precedence: explicit argument, the phase's own key, WORKBENCH_AI_MODEL, the
-    caller's default. Whichever wins is resolved through AI_<TIER>_MODEL — so
-    naming a tier anywhere in the chain honors the deployment configured for it.
+    Ignoring it would send a run to Pi's default provider with no sign that the
+    operator asked for another. Refused where a phase's settings are resolved,
+    so every path that names a model — `phase_model`, `collect_phase_models`,
+    `phase_settings` — stops on it.
     """
-    return resolve_alias(_select_model(explicit, env_key, default))
-
-
-def resolve_thinking(explicit: str | None, env_key: str, default: str | None) -> str | None:
-    """The thinking level: explicit, the phase's own key, the global key, default.
-
-    Returns a plain string rather than a ``Thinking``: the env layers are
-    operator input and can name a level the enum does not carry (``xhigh``),
-    which the backend passes through.
-    """
-    if explicit:
-        return explicit
-    from_env = os.environ.get(env_key)
-    if from_env:
-        return from_env
-    global_env = os.environ.get(GLOBAL_THINKING_ENV)
-    if global_env:
-        return global_env
-    return default
-
-
-def resolve_provider() -> str | None:
-    """The backend provider the environment asks for, if any."""
-    return os.environ.get(PROVIDER_ENV)
-
-
-def phase_provider(cfg: WorkbenchConfig | None = None) -> str | None:
-    """The backend provider an invocation runs against: the env key, then config.
-
-    Not per-phase: a provider is where the models are served from, and a run
-    that reached half its phases on one deployment and half on another would be
-    unattributable. The phase argument other resolvers take is deliberately
-    absent so no caller can imply otherwise.
-    """
-    return resolve_provider() or _config(cfg).agent.provider
+    if REMOVED_PROVIDER_ENV in os.environ:
+        raise RemovedSetting(
+            REMOVED_PROVIDER_ENV,
+            "A model names its provider: write provider/id in models.<tier>, "
+            "agent.phases.<phase>.model, WORKBENCH_AI_MODEL or --model "
+            "(for example xai/grok-4.6), and unset the variable.",
+        )
 
 
 # ── Config layers ────────────────────────────────────────────────────────────
@@ -202,37 +107,119 @@ def _config(cfg: WorkbenchConfig | None) -> WorkbenchConfig:
     return cfg if cfg is not None else config.workbench_config.load_config_or_default()
 
 
-def _config_model(phase: Phase, cfg: WorkbenchConfig) -> str | None:
-    """The model this phase's config asks for: its own entry, else the section."""
+def resolve_phase_model(
+    phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
+) -> ResolvedModel | None:
+    """The model a phase runs on and the layer that named it; None when none does.
+
+    Precedence, highest first: the explicit argument, the phase env key, the
+    global env key, ``agent.phases.<phase>.model``, then ``models.<tier>`` for
+    the phase's tier. Any layer but the last may name a tier instead of a model,
+    and one naming an unset tier raises `agent.models.UnsetTier` rather than
+    letting a lower layer answer. The phase's own tier unset is not an error:
+    it runs on the backend's default.
+    """
+    reject_removed_provider_env()
+    phase = Phase(phase)
+    cfg = _config(cfg)
     override = cfg.agent.phases.get(phase)
-    if override is not None and override.model:
-        return override.model
-    return cfg.agent.model
+    layers = (
+        (ModelLayer.EXPLICIT, explicit, "--model"),
+        (ModelLayer.PHASE_ENV, os.environ.get(phase.model_env_key), phase.model_env_key),
+        (ModelLayer.GLOBAL_ENV, os.environ.get(GLOBAL_MODEL_ENV), GLOBAL_MODEL_ENV),
+        (ModelLayer.PHASE_CONFIG, override.model if override is not None else None,
+         f"agent.phases.{phase.value}.model"),
+    )
+    for layer, value, where in layers:
+        ref = resolve(value, cfg.models, where=where)
+        if ref is not None:
+            return ResolvedModel(ref, layer)
+    ref = tier_ref(PHASES[phase].tier, cfg.models)
+    return ResolvedModel(ref, ModelLayer.TIER) if ref is not None else None
 
 
 def phase_model(
     phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
-) -> str:
-    """Resolve the model for a phase.
+) -> str | None:
+    """The model id a phase runs on, None when nothing configures one (see `resolve_phase_model`)."""
+    resolved = resolve_phase_model(phase, explicit, cfg)
+    return resolved.ref.id if resolved is not None else None
 
-    Precedence, highest first: the explicit argument, the phase env key, the
-    global env key, the config file (phase entry then section), the phase's
-    built-in default. The env layers live in ``resolve_model``; the config and
-    built-in layers collapse into the default handed to it.
+
+@dataclass(frozen=True)
+class PhaseSettings:
+    """What one invocation of a phase runs with, resolved from one reading of its model.
+
+    ``compact_at`` is ``context.compact_at``, which is machine-wide
+    (`agent.context_ceiling.machine_ceiling`), the same value the review budget
+    plans against.
     """
+
+    model: str | None
+    provider: str | None
+    thinking: str | None
+    compact_at: int | None = None
+
+
+def _level_from(resolved: ResolvedModel | None, *layers: ModelLayer) -> str | None:
+    """The level on *resolved*'s reference, when one of *layers* supplied it."""
+    if resolved is None or resolved.layer not in layers:
+        return None
+    return resolved.ref.level
+
+
+def phase_settings(
+    phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
+    effort: Effort | None = None,
+) -> PhaseSettings:
+    """Model, provider and thinking level for one invocation of *phase*.
+
+    The three are read from one `resolve_phase_model`, so a reference's
+    provider and level cannot come from a different layer than its id.
+
+    The provider is the reference's; None leaves the backend's own default
+    provider in charge. Raises `RemovedSetting` while WORKBENCH_AI_PROVIDER is
+    set.
+
+    The thinking level is the first of these that is set — each a setting for
+    one phase before the matching setting for every phase, and a thinking key
+    before a level carried on a model at the same height:
+
+        a level on --model
+        WORKBENCH_AI_<PHASE>_THINKING, then a level on WORKBENCH_AI_<PHASE>_MODEL
+        WORKBENCH_AI_THINKING, then a level on WORKBENCH_AI_MODEL
+        the config layers — `phase_thinking_default`
+    """
+    reject_removed_provider_env()
     phase = Phase(phase)
     cfg = _config(cfg)
-    return resolve_model(
-        explicit,
-        phase.model_env_key,
-        _config_model(phase, cfg) or PHASES[phase].model,
+    resolved = resolve_phase_model(phase, explicit, cfg)
+    env_chain = (
+        _level_from(resolved, ModelLayer.EXPLICIT),
+        os.environ.get(phase.thinking_env_key),
+        _level_from(resolved, ModelLayer.PHASE_ENV),
+        os.environ.get(GLOBAL_THINKING_ENV),
+        _level_from(resolved, ModelLayer.GLOBAL_ENV),
+    )
+    thinking = next((level for level in env_chain if level), None)
+    ref = resolved.ref if resolved is not None else None
+    return PhaseSettings(
+        model=ref.id if ref is not None else None,
+        provider=ref.provider if ref is not None else None,
+        thinking=thinking or phase_thinking_default(phase, effort, cfg, resolved),
+        compact_at=agent.context_ceiling.machine_ceiling(),
     )
 
 
 def collect_phase_models(
     explicit: str | None, project_root: Path | str | None = None,
-) -> dict[str, list[Phase]]:
+) -> dict[ModelRef, list[Phase]]:
     """Map each model the review pipeline would use to the phases requesting it.
+
+    Keyed by the reference without its thinking level: an id is a name in one
+    provider's catalogue, so what a backend can serve is the provider and id
+    together, and the level is a setting on a call to it. Two phases that differ
+    only in level share an entry.
 
     Callers use this to check every distinct model once up front and to name
     the env keys worth changing when one of them is unusable.
@@ -245,45 +232,56 @@ def collect_phase_models(
     checking models a review will actually use must pass it. Without one only
     the global scope is read, while the review itself resolves against
     `ReviewJob.config` — project- and container-scoped — so a repo overriding
-    `agent.model` in its own `.workbench.yml` would be checked against a model
-    it never runs.
+    a tier in its own `.workbench.yml` would be checked against a model it
+    never runs.
     """
-    models: dict[str, list[Phase]] = {}
+    models: dict[ModelRef, list[Phase]] = {}
     cfg = config.workbench_config.load_config_or_default(project_root)
     for phase in REVIEW_PHASES:
-        models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
+        resolved = resolve_phase_model(phase, explicit, cfg)
+        # A phase with no model runs on the backend's default, which preflight
+        # cannot name; `unset_review_phases` reports those for the budget floor.
+        if resolved is not None:
+            models.setdefault(replace(resolved.ref, level=None), []).append(phase)
     return models
+
+
+def unset_review_phases(
+    explicit: str | None, project_root: Path | str | None = None,
+) -> list[Phase]:
+    """The review phases no layer names a model for (see `collect_phase_models`)."""
+    cfg = config.workbench_config.load_config_or_default(project_root)
+    return [phase for phase in REVIEW_PHASES if not phase_model(phase, explicit, cfg)]
 
 
 def phase_thinking_default(
     phase: Phase, effort: Effort | None = None,
-    cfg: WorkbenchConfig | None = None,
-) -> Thinking | None:
-    """The thinking level below the env layers: config, effort preset, spec.
+    cfg: WorkbenchConfig | None = None, resolved: ResolvedModel | None = None,
+) -> str | None:
+    """The thinking level from the config file down, the first of these that is set.
 
-    A phase entry beats the section, and both beat the effort preset — a level
-    written for one phase is more specific than one the preset flattens
-    everything to. ``effort=None`` is a phase running outside a review, where
-    there is no preset to flatten anything and the spec stands under the config.
+        agent.phases.<phase>.thinking, then a level on agent.phases.<phase>.model
+        a level on models.<tier> for the phase's tier
+        agent.thinking
+        the effort preset, then the spec
+
+    A setting for one phase beats one for its tier, which beats one for every
+    phase. ``resolved`` is the phase's model, when the caller has one; a level
+    it carries from an env or explicit layer ranks above this function, in
+    `phase_settings`. ``effort=None`` is a phase running outside a review,
+    where there is no preset to flatten anything.
     """
     cfg = _config(cfg)
     override = cfg.agent.phases.get(phase)
     if override is not None and override.thinking is not None:
         return override.thinking
+    level = _level_from(resolved, ModelLayer.PHASE_CONFIG, ModelLayer.TIER)
+    if level:
+        return level
     if cfg.agent.thinking is not None:
         return cfg.agent.thinking
     preset = EFFORT_PRESETS[effort].thinking if effort is not None else None
     return preset if preset is not None else PHASES[phase].thinking
-
-
-def phase_thinking(
-    phase: Phase, effort: Effort | None = None,
-    cfg: WorkbenchConfig | None = None,
-) -> str | None:
-    """The thinking level a phase runs at, env layers included."""
-    return resolve_thinking(
-        None, phase.thinking_env_key, phase_thinking_default(phase, effort, cfg),
-    )
 
 
 def resolve_effort(

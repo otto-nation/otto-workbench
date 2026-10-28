@@ -11,9 +11,11 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields carry today's markdown verbatim — `lead`, `verdict`, `ledger`,
-`extra`, `severity_sections` — so the cut-over renders what the markdown
-pipeline wrote. They go when agents write JSON and the verdict is derived.
+Some fields still carry markdown an agent wrote — `verdict`,
+`extra`, `severity_sections` — and go when agents write JSON and the verdict
+is derived. A record written at schema 1, before agents wrote JSON, is
+upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the
+stable IDs its posted comments carry.
 """
 
 # doc-group: findings
@@ -30,9 +32,9 @@ from typing import get_args, get_origin, get_type_hints
 import core.log
 import core.serde
 from review.paths import FILENAME_RECORD
-from review.types import SEVERITIES, Finding
+from review.types import SEVERITIES, Finding, FindingRef, PriorDisposition
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Disposition(StrEnum):
@@ -68,17 +70,16 @@ def defuse_first_line(body: str) -> str:
 
 @dataclass(frozen=True)
 class RecordFinding:
-    """One finding. `lead` is the declaration text between the ID tag and the
-    body — the location as written and its separator (`**`a.py:3`** — `);
-    `body` is everything after it, continuation lines included, annotations
-    excluded; `evidence` is the quoted code, never rendered."""
+    """One finding. `path`/`line`/`end_line` are where it points (`path` is ""
+    for a finding about the PR as a whole); `body` is its markdown, first line
+    the claim; `evidence` is the code it quotes, verbatim, never rendered on
+    the page."""
 
     id: str
     severity: str
     path: str = ""
     line: int | None = None
     end_line: int | None = None
-    lead: str = ""
     body: str = ""
     evidence: str = ""
     stable_id: str = ""
@@ -136,6 +137,7 @@ class RecordFinding:
             body="\n".join([head, *cont]).strip(), stable_id=self.stable_id,
             checked=self.disposition is Disposition.FIXED,
             declined=self.disposition is Disposition.DECLINED,
+            skipped=self.disposition is Disposition.SKIPPED,
             decline_reason=self.reason if self.disposition is Disposition.DECLINED else "",
         )
 
@@ -169,10 +171,13 @@ class FocusArea:
 
 @dataclass(frozen=True)
 class TriageEntry:
-    """One File Triage line, verbatim; `path` is "" for a line naming none."""
+    """One File Triage line: the file, and what the group made of it.
+
+    `path` is "" for a line that names more than one file or none.
+    """
 
     path: str = ""
-    text: str = ""
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -198,6 +203,35 @@ class ProseSection:
 
 
 @dataclass(frozen=True)
+class LedgerLine:
+    """What a re-review says became of one prior finding.
+
+    `id` and `path` are copied from the prior review, which is how the line is
+    matched to the finding it is about. `note` is the detail the agent gave,
+    which nothing reads back.
+    """
+
+    id: str
+    disposition: PriorDisposition
+    path: str | None = None
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "disposition", PriorDisposition(self.disposition))
+
+    def covers(self, ref: FindingRef) -> bool:
+        """Whether this line accounts for `ref`.
+
+        A line naming no path stands on its ID alone. One naming a path has to
+        name the right one, or a single line would account for every prior
+        finding with that ID.
+        """
+        if self.id != ref.finding_id:
+            return False
+        return not self.path or self.path == ref.path
+
+
+@dataclass(frozen=True)
 class ReviewRecord:
     schema_version: int = SCHEMA_VERSION
     summary: str = ""
@@ -213,7 +247,7 @@ class ReviewRecord:
     # PR 0 carriers of today's markdown; see the module docstring.
     verdict: str = ""
     severity_sections: tuple[SeveritySection, ...] = ()
-    ledger: str = ""
+    ledger: tuple[LedgerLine, ...] = ()
     extra: tuple[ProseSection, ...] = ()
 
     @property
@@ -268,6 +302,73 @@ def _field_dropped(written, loaded, hint) -> bool:
     return not (written is None and optional)
 
 
+def unquote_evidence(evidence: str) -> str:
+    """The code of the first fenced block in blockquoted evidence.
+
+    Quote markers, fence lines and blank quoted lines go; the code's own
+    indentation after the marker stays. A finding with no fence has no
+    evidence and passes the gate, as the markdown-era extractor treated it.
+    """
+    inside = False
+    code = []
+    for raw in evidence.split("\n"):
+        text = raw.lstrip()
+        text = text[2:] if text.startswith("> ") else text.removeprefix(">")
+        fence = text.lstrip().startswith("```")
+        if fence and inside:
+            break
+        if fence:
+            inside = True
+            continue
+        if inside and text.strip():
+            code.append(text.rstrip())
+    return "\n".join(code)
+
+
+def _triage_v2(entry: dict) -> dict:
+    """A schema-1 triage entry (`text`, the whole list item) as its path and note."""
+    path, text = entry.get("path", ""), entry.get("text", "").strip()
+    head = f"- `{path}`"
+    if not path or not text.startswith(head):
+        return {"path": "", "note": text.removeprefix("- ").strip()}
+    note = text[len(head):].strip()
+    separator = next((s for s in ("—", "--", "-") if note.startswith(s)), "")
+    return {"path": path, "note": note[len(separator):].strip()}
+
+
+def _finding_v2(finding: dict) -> dict:
+    out = {k: v for k, v in finding.items() if k != "lead"}
+    out["evidence"] = unquote_evidence(finding.get("evidence") or "")
+    return out
+
+
+# ceiling: a schema-1 record is rewritten to schema 2 on every load, by a
+# reader that knows the markdown era's shapes, rather than once on disk.
+# Upgrade trigger: delete `_upgrade_v1`, `_finding_v2`, `_triage_v2` and the
+# branch in `load_record` once SCHEMA_VERSION moves past 2 — a record still at
+# 1 then reads as stale, as every other unknown schema does.
+def _upgrade_v1(raw: dict) -> dict:
+    """A schema-1 record as schema 2 reads it: the same review in today's shapes.
+
+    `lead` goes, because the fields render the location; `approach` is a
+    finding and is upgraded as one. Evidence loses the blockquote it was quoted
+    in. A triage line becomes its path and note. The ledger goes, non-empty or
+    not: its IDs number the round before, and the one writer that stored a
+    non-empty one (`_write_clean_review`) should have cleared it as every other
+    did. Stored stable IDs are kept: they are the sids posted comments carry. An
+    entry that is not an object is passed through for `_dropped_field` to report.
+    """
+    out = {k: v for k, v in raw.items() if k != "ledger"}
+    out["schema_version"] = SCHEMA_VERSION
+    if isinstance(raw.get("approach"), dict):
+        out["approach"] = _finding_v2(raw["approach"])
+    if isinstance(raw.get("findings"), list):
+        out["findings"] = [_finding_v2(f) if isinstance(f, dict) else f for f in raw["findings"]]
+    if isinstance(raw.get("triage"), list):
+        out["triage"] = [_triage_v2(e) if isinstance(e, dict) else e for e in raw["triage"]]
+    return out
+
+
 def _dropped_field(raw: dict, record: ReviewRecord) -> str | None:
     """Name of a present-on-disk field serde dropped or shortened, if any."""
     for name, hint in get_type_hints(ReviewRecord).items():
@@ -295,7 +396,10 @@ def load_record(review_dir: Path, filename: str = FILENAME_RECORD) -> ReviewReco
         core.log.warn(f"{path} could not be read — treating the review as stale")
         return None
     version = raw.get("schema_version")
-    if version != SCHEMA_VERSION:
+    # `True == 1`: only an int is schema 1, so a boolean stays stale.
+    if type(version) is int and version == 1:
+        raw = _upgrade_v1(raw)
+    elif version != SCHEMA_VERSION:
         core.log.warn(f"{path} is schema {version!r}, not {SCHEMA_VERSION} — treating the review as stale")
         return None
     try:

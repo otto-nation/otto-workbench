@@ -103,9 +103,11 @@ the PR. No `--push` here — `pr create` pushes in Step 4.
 Read the review from `~/.local/state/workbench/reviews/`, present what the fix
 pass did — fixed, skipped, and why — and work through whatever it left open as
 your human partner directs. A review covers exactly the SHA in its
-`<!-- head_sha: -->`, and the fix pass commits, so its own commit is unreviewed.
-Re-run before opening the PR, and check `head_sha` against `git rev-parse HEAD`
-to be sure.
+`<!-- head_sha: -->`, plus the fix commit in its `<!-- covered_sha: -->` when
+the pass qualified it — landed on the reviewed commit, checks green, every
+fix verified, nothing but fixed files and their tests, and no file of a
+finding it left unfixed. Before opening the PR, check `git rev-parse HEAD`
+against that value; if it is neither, re-run.
 
 Skip only if your human partner explicitly says to.
 
@@ -182,7 +184,7 @@ If you do have to push again before the PR merges:
 | Branch targets something other than `main` | Substitute it, and pass `--base` in Step 4 |
 | Detached HEAD | `git switch -c` a branch first — `pr create` has nothing to push otherwise |
 | Review findings open after the fix pass | Work through them, then re-run the review |
-| HEAD moved since the review | Re-run `pr review --self --fix` before the PR |
+| HEAD moved past the review's `covered_sha`/`head_sha` | Re-run `pr review --self --fix` before the PR |
 | Ready to ship | `pr create --draft` |
 | Human partner named a next step | Do that directly |
 | PR open, more work needed | Follow-up PR by default; if pushing by hand, comment first |
@@ -196,7 +198,7 @@ If you do have to push again before the PR merges:
 | "It's a small change — merge it into main locally" | Every change reaches `main` through a merged PR, no exceptions. |
 | "I'll open it ready, it's finished" | `--draft`. Ready is the reviewer's signal, not yours. |
 | "`gh pr create` is right here" | `pr create` applies the template, issue linking, and assignee rules. |
-| "The review passed earlier" | It covered one SHA. If HEAD moved — including for the fix pass's own commit — re-run. |
+| "The review passed earlier" | It covered one SHA and, at most, the fix commit it qualified. If HEAD moved past both — a hand commit included — re-run. |
 | "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
 | "I'll push the last fix quietly by hand" | A branch with an open PR is shared. Say what changed. |
 | "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |

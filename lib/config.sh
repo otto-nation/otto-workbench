@@ -74,7 +74,7 @@
 #
 # | # | Layer | Example |
 # |---|-------|---------|
-# | 1 | Explicit flag | `--model opus`, `--effort high` |
+# | 1 | Explicit flag | `--model claude-sonnet-5`, `--effort high` |
 # | 2 | Phase env var | `WORKBENCH_AI_SCOUT_MODEL` |
 # | 3 | Global env var | `WORKBENCH_AI_MODEL` |
 # | 4 | Project config | `<worktree>/.workbench.yml` |
@@ -82,8 +82,12 @@
 # | 6 | Global config | `config.yml` |
 #
 # Within one file an `agent.phases.<phase>` entry outranks the `agent.*` section
-# it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
-# phase keeps every sibling the layers below it set.
+# it sits under, and a phase's model entry outranks `models.<tier>` for its tier.
+# Layers 4 through 6 deep-merge, so a project file that sets one phase keeps
+# every sibling the layers below it set.
+#
+# A model no layer names is left to the backend's own default. A model names its
+# own provider (`xai/grok-4.6`); no setting supplies one to every model.
 #
 # Layer 5 exists only in the bare-repo worktree layout, where every checkout is
 # a peer of the bare `.git` inside a container directory — the same directory
@@ -178,4 +182,66 @@ wb_config_get() {
 
   if [[ -n "$fallback" ]]; then echo "$fallback"; fi
   return 0
+}
+
+# wb_config_harness_models — prints, as one JSON object, what the machine-wide
+# `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`,
+# in the shape `config models` documents in `lib/config_cli.py`. Returns 1,
+# printing why, when the config names a tier it leaves unset or cannot be read.
+#
+# Both harness syncs read their models through this, so neither parses a model
+# reference in bash and the two cannot read one differently.
+wb_config_harness_models() {
+  python3 "$WORKBENCH_DIR/lib/config_cli.py" models
+}
+
+# wb_config_harness_context [LISTING] — prints, as one JSON object, what the
+# machine-wide `context.compact_at` says Claude Code's and Pi's compaction
+# settings should hold, in the shape `config context` documents in
+# `lib/config_cli.py`. LISTING is a `pi --list-models` listing; without one the
+# Pi half is empty. Returns 1, printing why, when the config cannot be read.
+wb_config_harness_context() {
+  if [[ $# -eq 0 ]]; then
+    python3 "$WORKBENCH_DIR/lib/config_cli.py" context
+    return
+  fi
+  python3 "$WORKBENCH_DIR/lib/config_cli.py" context --pi-listing - <<< "$1"
+}
+
+# wb_compaction_record HALF — prints the object HALF (`claude` or `pi`) of
+# $COMPACTION_RECORD_FILE: what the last sync wrote for context.compact_at into
+# that harness's settings. `{}` when nothing was recorded or the file is
+# unreadable, which withdraws nothing.
+wb_compaction_record() {
+  jq -c --arg half "$1" '.[$half] // {}' "$COMPACTION_RECORD_FILE" 2> /dev/null || echo '{}'
+}
+
+# wb_compaction_record_set HALF JSON — replaces HALF of $COMPACTION_RECORD_FILE
+# with JSON, leaving the other harness's half as it was. Returns 1 when the file
+# cannot be written.
+wb_compaction_record_set() {
+  local current updated
+  current=$(cat "$COMPACTION_RECORD_FILE" 2> /dev/null) || current=""
+  jq -e 'type == "object"' <<< "$current" > /dev/null 2>&1 || current='{}'
+  updated=$(jq -c --arg half "$1" --argjson value "$2" '.[$half] = $value' <<< "$current") || return 1
+  wb_write_json_file "$COMPACTION_RECORD_FILE" "$updated"
+}
+
+# wb_write_json_file PATH JSON — replaces PATH with JSON through a sibling temp
+# file, so a sync that dies mid-write leaves the old file whole. 0644, as the
+# settings files it replaces are; mktemp answers 0600. Returns 1, leaving no
+# temp file behind, when the write fails.
+#
+# The temp file is removed on the failure path rather than from an EXIT trap: a
+# function in a sourced library cannot take the trap without replacing the one
+# its caller set.
+wb_write_json_file() {
+  local path="$1" tmp
+  mkdir -p "$(dirname "$path")" || return 1
+  tmp=$(mktemp "$path.XXXXXX") || return 1
+  if printf '%s\n' "$2" > "$tmp" && chmod 644 "$tmp" && mv "$tmp" "$path"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
 }

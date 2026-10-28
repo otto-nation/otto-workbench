@@ -27,8 +27,10 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import git_in, init_repo  # noqa: E402
 import review.verify  # noqa: E402
-from review.ingest import ingest_review  # noqa: E402
+from review.record import Disposition, RecordFinding, ReviewRecord  # noqa: E402
 from review.render import render_body  # noqa: E402
+from review.verify import post_process_record  # noqa: E402
+from review_record_support import finding, record  # noqa: E402
 
 
 def _verifies(path: str, evidence: str | None, wt_path: str) -> bool:
@@ -36,63 +38,12 @@ def _verifies(path: str, evidence: str | None, wt_path: str) -> bool:
     return review.verify._match_evidence(path, evidence, wt_path)["match_result"]
 
 
-def _headed(text: str) -> str:
-    if text.lstrip().startswith("## "):
-        return text
-    heading = "## Must fix\n" if "**[M" in text else "## Should fix\n"
-    return heading + text
-
-
-def _parse_findings_for_verification(text: str) -> list[dict]:
-    out = []
-    for f in ingest_review(_headed(text), strict=False).visible:
-        finding = review.verify._verification_finding(f)
-        if finding is not None:
-            out.append(finding)
-    return out
-
-
-def _verify_findings(text: str, wt_path: str, changed=()):
-    done = review.verify._verify_record(
-        ingest_review(_headed(text), strict=False), wt_path, changed,
-    )
+def _verify_findings(rec, wt_path: str, changed=()):
+    done = review.verify._verify_record(rec, wt_path, changed)
     return render_body(done.record), done.verification
 
 
 # ── Evidence verification ────────────────────────────────────────────────────
-
-
-class TestExtractEvidence:
-    def test_extracts_from_blockquoted_fenced_code(self):
-        body = (
-            "missing error check on `db.Query()`\n"
-            "  > ```go\n"
-            "  > result := db.Query(query)\n"
-            "  > ```"
-        )
-        assert review.verify._extract_evidence(body) == "result := db.Query(query)"
-
-    def test_multiline_snippet(self):
-        body = (
-            "description\n"
-            "  > ```python\n"
-            "  > x = 1\n"
-            "  > y = 2\n"
-            "  > ```"
-        )
-        assert review.verify._extract_evidence(body) == "x = 1\ny = 2"
-
-    def test_returns_none_when_no_evidence(self):
-        assert review.verify._extract_evidence("just a description, no code block") is None
-
-    def test_handles_no_language_tag(self):
-        body = (
-            "desc\n"
-            "  > ```\n"
-            "  > some_code()\n"
-            "  > ```"
-        )
-        assert review.verify._extract_evidence(body) == "some_code()"
 
 
 class TestNormalizeCode:
@@ -249,16 +200,16 @@ class TestVerificationDetail:
     def test_match_records_pass(self, tmp_path):
         src = tmp_path / "handler.go"
         src.write_text("func foo() {\n\tresult := db.Query(q)\n}\n")
-        finding = {"id": "S1", "severity": "S", "path": "handler.go", "body": ""}
-        detail = review.verify._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
+        detail = review.verify._match_evidence("handler.go", "result := db.Query(q)", str(tmp_path))
+        detail.update(id="S1", severity="S")
         assert detail["match_result"] is True
         assert detail["file_exists"] is True
 
     def test_mismatch_records_failure(self, tmp_path):
         src = tmp_path / "handler.go"
         src.write_text("func foo() {\n\tx := 1\n}\n")
-        finding = {"id": "S1", "severity": "S", "path": "handler.go", "body": ""}
-        detail = review.verify._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
+        detail = review.verify._match_evidence("handler.go", "result := db.Query(q)", str(tmp_path))
+        detail.update(id="S1", severity="S")
         assert detail["match_result"] is False
         assert "longest_match_prefix" in detail
         assert "first_mismatch" in detail
@@ -268,14 +219,11 @@ class TestVerifyFindings:
     def test_returns_verification_summary(self, tmp_path):
         src = tmp_path / "handler.go"
         src.write_text("package main\n\nfunc foo() {\n\tresult := db.Query(q)\n}\n")
-        text = (
-            "## Should fix\n"
-            "- [ ] **[S1]** **`handler.go:42`** — desc\n"
-            "  > ```go\n"
-            "  > result := db.Query(q)\n"
-            "  > ```\n"
-        )
-        out_text, result = _verify_findings(text, str(tmp_path))
+        rec = record(finding(
+            "S1", "desc", path="handler.go", line=42,
+            evidence="result := db.Query(q)", checkbox=True,
+        ))
+        out_text, result = _verify_findings(rec, str(tmp_path))
         assert result["dropped"] == []
         assert result["findings_checked"] == 1
         assert result["findings_passed"] == 1
@@ -285,93 +233,16 @@ class TestVerifyFindings:
     def test_drops_unverified_and_returns_details(self, tmp_path):
         src = tmp_path / "handler.go"
         src.write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
-        text = (
-            "## Should fix\n"
-            "- [ ] **[S1]** **`handler.go:42`** — desc\n"
-            "  > ```go\n"
-            "  > result := db.Query(q)\n"
-            "  > ```\n"
-        )
-        out_text, result = _verify_findings(text, str(tmp_path))
+        rec = record(finding(
+            "S1", "desc", path="handler.go", line=42,
+            evidence="result := db.Query(q)", checkbox=True,
+        ))
+        out_text, result = _verify_findings(rec, str(tmp_path))
         assert result["dropped"] == ["S1"]
         assert result["findings_dropped"] == 1
         assert result["details"][0]["match_result"] is False
         assert "S1" not in out_text
 
-
-class TestParseVerificationStripsLine:
-    def test_path_excludes_line_number(self):
-        text = '- **[M1]** **`pkg/handler.go:42`** — missing error check\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "pkg/handler.go"
-
-    def test_path_excludes_line_range(self):
-        text = '- **[S1]** **`pkg/handler.go:10-20`** — issue\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "pkg/handler.go"
-
-    def test_checkbox_path_excludes_line(self):
-        text = '- [ ] **[M1]** `handler.go:42` — desc\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "handler.go"
-
-    def test_an_escaped_underscore_in_the_written_path_is_unescaped(self):
-        from review.record import RecordFinding
-        finding = review.verify._verification_finding(RecordFinding(
-            id="M1", severity="M",
-            lead="**`pkg/foo\\_bar.py`** — ", body="gap",
-        ))
-        assert finding["path"] == "pkg/foo_bar.py"
-
-
-class TestParseVerificationReadsThePostersLocation:
-    """Verification checks the file the poster will place the finding on.
-
-    The path comes from `finding_location`, not from a second reading of the
-    line. That second reading kept any suffix it did not know as part of the
-    path, so a finding at `replay.py:_short` was stat'd as a file literally
-    named that and dropped as "file not found" while the poster read the same
-    line as `replay.py`.
-    """
-
-    @pytest.mark.parametrize("location, path", [
-        ("ai/lib/git/replay.py:_short", "ai/lib/git/replay.py"),
-        ("ai/lib/git/replay.py:_short:12", "ai/lib/git/replay.py"),
-        ("pkg/x.py:Foo.bar", "pkg/x.py"),
-        ("pkg/x.py:~690", "pkg/x.py"),
-        ("pkg/x.py:L12", "pkg/x.py"),
-    ])
-    def test_a_suffix_that_is_not_a_line_number_comes_off(self, location, path):
-        text = f"- **[S1]** `{location}` — gap\n"
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == path
-
-    def test_agrees_with_the_poster_on_every_location(self):
-        """The property the fix is for, rather than a list of shapes."""
-        locations = [
-            "ai/lib/git/replay.py:_short", "src/x.py:64,82", "pkg/x.py:Foo.bar",
-            "src/my notes.py:12-18", "ai/bin/ci-check", "handler.go:42",
-        ]
-        for location in locations:
-            line = f"- **[S1]** **`{location}`** — gap"
-            verified = _parse_findings_for_verification(line + "\n")
-            posted = ingest_review(_headed(line + "\n"), strict=False).findings[0].path
-            assert verified[0]["path"] == posted, location
-
-    @pytest.mark.parametrize("location, path", [
-        ("ns:module.py", "ns:module.py"),
-        ("C:/src/x.py", "C:/src/x.py"),
-        ("C:/src/x.py:12", "C:/src/x.py"),
-        ("Makefile:3", "Makefile"),
-    ])
-    def test_a_location_the_poster_cannot_place_is_checked_as_written(self, location, path):
-        """No placement to contradict, so the gate keeps checking what was written.
-
-        Skipping these would let an unsupported quote through whenever its
-        file has a name the poster cannot read — the gate failing open.
-        """
-        text = f"- **[M1]** **`{location}`** — missing error check\n"
-        assert _parse_findings_for_verification(text)[0]["path"] == path
 
 
 class TestVerifyFindsTheFileThePosterWould:
@@ -381,11 +252,7 @@ class TestVerifyFindsTheFileThePosterWould:
     finding that was dropped in production is the subject.
     """
 
-    _EVIDENCE = (
-        "  > ```python\n"
-        "  > def _short(sha):\n"
-        "  > ```\n"
-    )
+    _EVIDENCE = "def _short(sha):"
 
     @staticmethod
     def _tree(tmp_path):
@@ -395,19 +262,23 @@ class TestVerifyFindsTheFileThePosterWould:
         git_in(tmp_path, "add", ".")
         return str(tmp_path)
 
+    def _quoted(self, fid, body, path, line=1, **fields):
+        return record(finding(
+            fid, body, path=path, line=line,
+            evidence=self._EVIDENCE, checkbox=True, **fields,
+        ))
+
     def test_a_symbol_suffixed_finding_survives(self, tmp_path):
-        text = (
-            "## Should fix\n"
-            "- [ ] **[S1]** `ai/lib/git/replay.py:_short` — fail-open gap\n"
-            + self._EVIDENCE
+        rec = self._quoted(
+            "S1", "fail-open gap", path="ai/lib/git/replay.py", line=None,
         )
-        _, result = _verify_findings(text, self._tree(tmp_path))
+        _, result = _verify_findings(rec, self._tree(tmp_path))
         assert result["dropped"] == []
         assert result["findings_passed"] == 1
 
     def test_a_bare_basename_resolves_to_the_tracked_file(self, tmp_path):
-        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
-        _, result = _verify_findings(text, self._tree(tmp_path))
+        rec = self._quoted("S1", "gap", path="replay.py")
+        _, result = _verify_findings(rec, self._tree(tmp_path))
         assert result["dropped"] == []
         assert result["details"][0]["resolved_path"] == "ai/lib/git/replay.py"
 
@@ -416,8 +287,8 @@ class TestVerifyFindsTheFileThePosterWould:
         (tmp_path / "other").mkdir()
         (tmp_path / "other/replay.py").write_text("def _short(sha):\n")
         git_in(tmp_path, "add", ".")
-        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
-        _, result = _verify_findings(text, wt)
+        rec = self._quoted("S1", "gap", path="replay.py")
+        _, result = _verify_findings(rec, wt)
         assert result["dropped"] == ["S1"]
         assert result["details"][0]["file_exists"] is False
 
@@ -432,8 +303,8 @@ class TestVerifyFindsTheFileThePosterWould:
         (tmp_path / "other").mkdir()
         (tmp_path / "other/replay.py").write_text("def _short(sha):\n")
         git_in(tmp_path, "add", ".")
-        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
-        _, result = _verify_findings(text, wt, ["ai/lib/git/replay.py"])
+        rec = self._quoted("S1", "gap", path="replay.py")
+        _, result = _verify_findings(rec, wt, ["ai/lib/git/replay.py"])
         assert result["dropped"] == []
         assert result["details"][0]["resolved_path"] == "ai/lib/git/replay.py"
 
@@ -450,169 +321,57 @@ class TestVerifyFindsTheFileThePosterWould:
         (tmp_path / "README.md").write_text("root readme\n")
         (tmp_path / "pkg/README.md").write_text("def _short(sha):\n")
         git_in(tmp_path, "add", ".")
-        text = "## Should fix\n- [ ] **[S1]** `README.md:5` — gap\n" + self._EVIDENCE
-        _, result = _verify_findings(text, wt, ["pkg/README.md"])
+        rec = self._quoted("S1", "gap", path="README.md", line=5)
+        _, result = _verify_findings(rec, wt, ["pkg/README.md"])
         assert result["dropped"] == []
         assert result["details"][0]["resolved_path"] == "pkg/README.md"
 
     def test_a_file_the_diff_deleted_is_dropped_as_not_found(self, tmp_path):
         """The PR's file list names deleted files; the worktree does not hold them."""
         wt = self._tree(tmp_path)
-        text = "## Should fix\n- [ ] **[S1]** `ai/lib/git/gone.py:1` — gap\n"
-        _, result = _verify_findings(text, wt, ["ai/lib/git/gone.py"])
+        rec = record(finding(
+            "S1", "gap", path="ai/lib/git/gone.py", checkbox=True,
+        ))
+        _, result = _verify_findings(rec, wt, ["ai/lib/git/gone.py"])
         assert result["dropped"] == ["S1"]
         assert result["details"][0]["file_exists"] is False
 
-    def test_an_unplaceable_finding_with_no_such_quote_is_still_dropped(self, tmp_path):
-        """`Makefile` reads as no location to the poster; the gate still checks it."""
-        wt = self._tree(tmp_path)
-        (tmp_path / "Makefile").write_text("all:\n\ttrue\n")
-        text = "## Should fix\n- [ ] **[S1]** **`Makefile:3`** — gap\n" + self._EVIDENCE
-        _, result = _verify_findings(text, wt)
-        assert result["dropped"] == ["S1"]
-        assert result["details"][0]["file_exists"] is True
-
     def test_a_worktree_that_is_not_there_drops_rather_than_raising(self, tmp_path):
         """Resolution asks git, and git cannot start in a missing directory."""
-        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
-        _, result = _verify_findings(text, str(tmp_path / "gone"))
+        rec = self._quoted("S1", "gap", path="replay.py")
+        _, result = _verify_findings(rec, str(tmp_path / "gone"))
         assert result["dropped"] == ["S1"]
 
     def test_a_file_that_does_not_exist_is_still_dropped(self, tmp_path):
-        text = "## Should fix\n- [ ] **[S1]** `ai/lib/git/nope.py:1` — gap\n" + self._EVIDENCE
-        _, result = _verify_findings(text, self._tree(tmp_path))
+        rec = self._quoted("S1", "gap", path="ai/lib/git/nope.py")
+        _, result = _verify_findings(rec, self._tree(tmp_path))
         assert result["dropped"] == ["S1"]
 
 
-class TestParseVerificationReadsALineList:
-    """A finding naming two discrete lines still names one file.
-
-    A duplicate declaration is the case that produces this location: the
-    finding cites both offsets, and the path used to keep the whole `:64,82`
-    suffix. `_match_evidence` then stat'd a path no filesystem holds and
-    `_drop_reason` called it "file not found", discarding a correct finding
-    about a file that was right there.
-    """
-
-    def test_a_comma_separated_pair_leaves_the_path(self):
-        text = '- **[S2]** `ai/lib/review/run.py:64,82` — duplicate field\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "ai/lib/review/run.py"
-
-    def test_a_three_line_list_leaves_the_path(self):
-        text = '- **[S2]** `ai/lib/review/run.py:12,18,24` — duplicate field\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "ai/lib/review/run.py"
-
-    def test_a_real_file_named_by_a_line_list_is_found(self, tmp_path):
-        """The drop this whole fix exists to prevent, end to end.
-
-        Through the seam the run uses: the reader strips the location, and
-        `_match_evidence` stats what it handed back. Calling `_match_evidence`
-        with an unstripped path instead would test a layer that never sees one.
-        """
-        (tmp_path / "run.py").write_text('command: str = ""\n')
-        text = '- **[S2]** `run.py:64,82` — duplicate field\n'
-        finding = _parse_findings_for_verification(text)[0]
-        detail = review.verify._match_evidence(finding["path"], None, str(tmp_path))
-        assert detail["file_exists"]
-        assert detail["match_result"]
+def test_a_finding_without_a_path_is_not_evidence_checked(tmp_path):
+    """X2: a label is not a file; the gate has nothing to check it against."""
+    f = RecordFinding(id="M1", severity="M", body="**Documentation** — the README is stale")
+    done = post_process_record(ReviewRecord(findings=(f,)), str(tmp_path))
+    assert [x.id for x in done.record.visible] == ["M1"]
+    assert done.verification["findings_checked"] == 0
 
 
-class TestParseVerificationSpacedPaths:
-    def test_spaced_path_finding_is_not_swallowed_by_the_previous_one(self):
-        text = (
-            "## Must fix\n"
-            "- [ ] **[M1]** **`pkg/a.go:1`** — First finding\n"
-            "- [ ] **[M2]** **`src/my notes.py:2`** — Second finding, spaced path\n"
-            "- [ ] **[M3]** **`pkg/c.go:3`** — Third finding\n"
-        )
-        findings = _parse_findings_for_verification(text)
-        assert [f["id"] for f in findings] == ["M1", "M2", "M3"]
-        assert findings[0]["body"] == "First finding"
-        assert findings[1]["path"] == "src/my notes.py"
-
-    def test_spaced_path_with_line_range(self):
-        text = '- **[S1]** **`src/my notes.py:12-18`** — issue\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "src/my notes.py"
-
-    def test_non_ascii_spaced_path(self):
-        text = '- [ ] **[M1]** **`src/café brûlé.py:42`** — desc\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "src/café brûlé.py"
-
-    def test_spaced_path_in_a_bare_code_span(self):
-        text = '- **[N1]** `docs/release notes.md:3` — stale\n'
-        findings = _parse_findings_for_verification(text)
-        assert findings[0]["path"] == "docs/release notes.md"
-
-    def test_unchecked_and_plain_forms_both_parse(self):
-        text = (
-            "- [ ] **[M1]** **`pkg/a.go:1`** — checkbox form\n"
-            "- **[M2]** **`pkg/b.go:2`** — plain form\n"
-        )
-        findings = _parse_findings_for_verification(text)
-        assert [f["id"] for f in findings] == ["M1", "M2"]
-        assert [f["body"] for f in findings] == ["checkbox form", "plain form"]
-
-    def test_checked_finding_is_not_returned(self):
-        text = '- [x] **[M1]** **`src/my notes.py:2`** — done\n'
-        assert _parse_findings_for_verification(text) == []
+def test_raw_evidence_is_matched_against_the_file(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\ny = compute(x)\n")
+    good = RecordFinding(id="M1", severity="M", path="a.py", line=2, body="b", evidence="y = compute(x)")
+    bad = RecordFinding(id="S1", severity="S", path="a.py", line=2, body="b", evidence="y = other(x)")
+    done = post_process_record(ReviewRecord(findings=(good, bad)), str(tmp_path))
+    assert [x.id for x in done.record.visible] == ["M1"]
+    assert done.verification["dropped"] == ["S1"]
 
 
-class TestVerificationReadsEachFindingsOwnBody:
-    """A finding is checked against the evidence written under it and no other.
-
-    `VERIFY_FINDING_RE` selects which findings this gate checks; it does not
-    decide where one ends. A declaration it cannot read used to be appended to
-    the finding above it, which is how a finding came to be verified against a
-    quotation belonging to its neighbour.
-    """
-
-    UNREADABLE_LOCATION = (
-        "## Must fix\n"
-        "- **[M1]** **`a.go:1`** — one\n"
-        "  > ```go\n"
-        "  > x := 1\n"
-        "  > ```\n"
-        "- **[M2]** Nil pointer dereference at handler.go:42\n"
-        "  > ```go\n"
-        "  > y := 2\n"
-        "  > ```\n"
-        "- **[M3]** **`c.go:3`** — three\n"
+def test_checked_finding_is_not_returned(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    f = RecordFinding(
+        id="M1", severity="M", path="a.py", line=1, body="done",
+        evidence="not in the file", checkbox=True,
+        disposition=Disposition.FIXED,
     )
-
-    def test_an_unreadable_location_is_not_checked(self):
-        findings = _parse_findings_for_verification(self.UNREADABLE_LOCATION)
-        assert [f["id"] for f in findings] == ["M1", "M3"]
-
-    def test_an_unreadable_location_does_not_join_the_finding_above_it(self):
-        findings = _parse_findings_for_verification(self.UNREADABLE_LOCATION)
-        assert review.verify._extract_evidence(findings[0]["body"]) == "x := 1"
-
-    def test_a_ledger_entry_is_not_checked(self):
-        text = (
-            "## Must fix\n"
-            "- **[M1]** **`a.go:1`** — one\n"
-            "## Prior findings\n"
-            "- **[S1]** **`old.go:2`** — Fixed\n"
-        )
-        findings = _parse_findings_for_verification(text)
-        assert [f["id"] for f in findings] == ["M1"]
-
-    def test_a_body_stops_at_the_resolved_finding_below_it(self):
-        text = (
-            "## Must fix\n"
-            "- **[M1]** **`a.go:1`** — one\n"
-            "  > ```go\n"
-            "  > x := 1\n"
-            "  > ```\n"
-            "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
-            "  > ```go\n"
-            "  > y := 2\n"
-            "  > ```\n"
-        )
-        findings = _parse_findings_for_verification(text)
-        assert [f["id"] for f in findings] == ["M1"]
-        assert "y := 2" not in findings[0]["body"]
+    done = post_process_record(ReviewRecord(findings=(f,)), str(tmp_path))
+    assert [x.id for x in done.record.visible] == ["M1"]
+    assert done.verification["findings_checked"] == 0

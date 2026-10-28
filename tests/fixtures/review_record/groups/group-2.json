@@ -1,0 +1,45 @@
+{
+  "triage": [
+    {
+      "path": "src/app.py",
+      "note": "reviewed; overlaps group 1."
+    },
+    {
+      "path": "src/cli.py",
+      "note": "reviewed; flag parsing."
+    }
+  ],
+  "findings": [
+    {
+      "id": "M1",
+      "path": "src/cli.py",
+      "line": 4,
+      "end_line": null,
+      "body": "`--timeout` is compared before it is validated, so a negative timeout is accepted.",
+      "evidence": "if args.timeout > elapsed:",
+      "sid": "",
+      "declined": ""
+    },
+    {
+      "id": "S1",
+      "path": "src/app.py",
+      "line": 2,
+      "end_line": null,
+      "body": "The retry loop never sleeps between attempts, so a flapping endpoint is hammered.",
+      "evidence": "",
+      "sid": "",
+      "declined": ""
+    },
+    {
+      "id": "N1",
+      "path": "src/cli.py",
+      "line": 1,
+      "end_line": null,
+      "body": "Unused import `os`.",
+      "evidence": "",
+      "sid": "",
+      "declined": ""
+    }
+  ],
+  "prior_findings": []
+}

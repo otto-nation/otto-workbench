@@ -1,0 +1,20 @@
+{
+  "name": "disprove-bound-query",
+  "task": "disprove",
+  "description": "One SQL injection claim is real (search_notes interpolates the term); the other flags a query that binds its parameter",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "M1", "truth": "false", "path": "repo.py", "line": 5,
+      "body": "`orders_for` builds its SQL from `customer_id`, which allows SQL injection.",
+      "evidence": "cur = conn.execute(\"SELECT id, total FROM orders WHERE customer_id = ?\", (customer_id,))"
+    },
+    {
+      "id": "M2", "truth": "real", "path": "repo.py", "line": 10,
+      "body": "`search_notes` interpolates `term` into the SQL string with an f-string, which allows SQL injection.",
+      "evidence": "query = f\"SELECT id, body FROM notes WHERE body LIKE '%{term}%'\""
+    }
+  ],
+  "tags": ["disprove", "python", "sql-injection"]
+}

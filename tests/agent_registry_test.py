@@ -21,8 +21,10 @@ class TestPhasesRegistry:
     def test_covers_every_phase(self):
         assert set(PHASES) == set(Phase)
 
-    def test_every_phase_defaults_to_sonnet(self):
-        assert {s.model for s in PHASES.values()} == {"sonnet"}
+    def test_no_phase_names_a_model_only_a_tier(self):
+        """Which model serves a tier is the config's answer; a spec names how much model."""
+        assert all(not hasattr(s, "model") for s in PHASES.values())
+        assert all(s.tier is not None for s in PHASES.values())
 
     def test_every_phase_carries_a_label(self):
         assert all(s.label for s in PHASES.values())
@@ -340,24 +342,22 @@ class TestPhaseOutputNames:
 
     def test_preserves_current_filenames(self):
         expected = {
-            Phase.SINGLE: "",
-            Phase.HOLISTIC: "holistic.md",
-            Phase.SCOUT: "scout.md",
-            Phase.GROUP: "group-{}.md",
-            Phase.SYNTHESIS: "",
-            Phase.DISPROVE: "disprove.md",
+            Phase.SINGLE: "single.json",
+            Phase.HOLISTIC: "holistic.json",
+            Phase.SCOUT: "scout.json",
+            Phase.GROUP: "group-{}.json",
+            Phase.SYNTHESIS: "synthesis.json",
+            Phase.DISPROVE: "disprove.json",
             Phase.FIX: "",
             Phase.FIX_VERIFY: "",
         }
         assert {p: PHASES[p].output_filename for p in REVIEW_PHASES} == expected
 
     def test_phases_that_write_no_findings_artifact(self):
-        # single and synthesis produce review.md, fix edits it in place, and
-        # the verify gate answers on the fix engine's own checklist.
+        # fix edits the review through the record, and the verify gate answers
+        # on the fix engine's own checklist.
         empty = {p for p in REVIEW_PHASES if not PHASES[p].output_filename}
-        assert empty == {
-            Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX, Phase.FIX_VERIFY,
-        }
+        assert empty == {Phase.FIX, Phase.FIX_VERIFY}
 
     def test_every_artifact_name_is_distinct(self):
         names = [
@@ -380,6 +380,5 @@ class TestPhaseOutputNames:
         ]
         assert specs
         for spec in specs:
-            assert spec.log_filename.removesuffix(".jsonl") == (
-                spec.output_filename.removesuffix(".md")
-            )
+            stem = spec.output_filename.removesuffix(".md").removesuffix(".json")
+            assert spec.log_filename.removesuffix(".jsonl") == stem

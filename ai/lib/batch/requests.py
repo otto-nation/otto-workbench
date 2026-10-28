@@ -1,9 +1,9 @@
-"""Typed inbound requests for a `pr batch` run: decide, cancel, or malformed.
+"""Typed inbound requests for a `pr batch` run: decide, cancel, release, or malformed.
 
 A request file without ``kind`` parses as a ``Decide``, so files queued by
 older code stay valid. ``to_dict`` always writes the tag. ``drain_order``
-puts every ``Cancel`` ahead of decisions so a cancel never loses to a
-publish queued beside it.
+puts every ``Cancel`` ahead of everything else (by name) so a cancel never
+loses to a publish or release queued beside it.
 """
 
 # doc-group: batch
@@ -20,6 +20,7 @@ from batch.model import Decision
 class Kind(enum.Enum):
     DECIDE = "decide"
     CANCEL = "cancel"
+    RELEASE = "release"
 
 
 @dataclass(frozen=True)
@@ -37,11 +38,17 @@ class Cancel:
 
 
 @dataclass(frozen=True)
+class Release:
+    item: str
+    kill: bool = False
+
+
+@dataclass(frozen=True)
 class Malformed:
     reason: str
 
 
-Request = Decide | Cancel | Malformed
+Request = Decide | Cancel | Release | Malformed
 
 
 @dataclass(frozen=True)
@@ -64,10 +71,11 @@ class Outcome:
 
 
 def parse(raw: object) -> Request:
-    """Turn a JSON value into a ``Decide``, ``Cancel``, or ``Malformed``.
+    """Turn a JSON value into a ``Decide``, ``Cancel``, ``Release``, or ``Malformed``.
 
     A dict with no ``kind``, or ``kind == decide``, is a ``Decide`` and needs
     string ``decision`` and ``action``. ``kind == cancel`` is a ``Cancel``.
+    ``kind == release`` is a ``Release`` and needs a string ``item``.
     Anything else is ``Malformed``.
     """
     if not isinstance(raw, dict):
@@ -77,7 +85,16 @@ def parse(raw: object) -> Request:
         return _parse_decide(raw)
     if kind == Kind.CANCEL.value:
         return Cancel(kill=bool(raw.get("kill")))
+    if kind == Kind.RELEASE.value:
+        return _parse_release(raw)
     return Malformed(f"unknown kind {kind!r}")
+
+
+def _parse_release(raw: dict) -> Request:
+    item = raw.get("item")
+    if not isinstance(item, str):
+        return Malformed("item must be a str" if "item" in raw else "missing item")
+    return Release(item=item, kill=bool(raw.get("kill")))
 
 
 def _parse_decide(raw: dict) -> Request:
@@ -92,10 +109,12 @@ def _parse_decide(raw: dict) -> Request:
         commit=raw.get("commit", ""))
 
 
-def to_dict(request: Decide | Cancel) -> dict:
+def to_dict(request: Decide | Cancel | Release) -> dict:
     """JSON object for *request*, always tagged with ``kind``."""
     if isinstance(request, Cancel):
         return {"kind": Kind.CANCEL.value, "kill": request.kill}
+    if isinstance(request, Release):
+        return {"kind": Kind.RELEASE.value, "item": request.item, "kill": request.kill}
     return {
         "kind": Kind.DECIDE.value,
         "decision": request.decision,

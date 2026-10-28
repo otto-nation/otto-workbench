@@ -1,7 +1,7 @@
 ---
 name: reviewer-lite
 description: Lightweight code reviewer for group and angles phases. Receives pre-collected data — no context gathering needed. Produces categorized findings (must-fix, should-fix, nit). Never modifies anything.
-model: inherit
+tier: standard
 source: otto-workbench/ai/claude/agents/reviewer-lite.md
 ---
 
@@ -61,21 +61,9 @@ Review changed lines through these lenses:
 
 ## Evidence requirements
 
-Every finding that asserts something about the codebase must include a source reference proving the claim — file path and line number.
+Every finding that asserts something about the codebase must include a source reference proving the claim — its `path` and `line`.
 
-For Must-fix and Should-fix findings, include a verbatim code snippet as an evidence block:
-
-```markdown
-- **[M1]** **`pkg/handler.go:42`** — missing error check on `db.Query()`
-  > ```go
-  > result := db.Query(query)
-  > ```
-```
-
-Rules:
-- Snippet must appear verbatim in the file at the referenced location
-- Keep snippets to 1–5 lines
-- Nit and Idiom findings do not require evidence blocks
+Every Must-fix and Should-fix finding carries `evidence`: 1–5 lines copied verbatim from the referenced location, as plain code with no `>` markers and no fence. It is checked against the file after you write. Nit and Idiom findings do not require evidence.
 
 ## Severity calibration
 
@@ -86,35 +74,9 @@ Rules:
 
 ## Output format
 
-Use the Write tool to save findings to the output path specified in the prompt. `## File Triage` stays in the local review file for coverage tracking; it is stripped before the summary is posted to the PR. Format:
+Write your output to the path the prompt names, as ONE JSON document — nothing before or after it, no code fence. Every phase that runs this agent writes its own shape: the prompt's `## Output` section shows it, with what every field holds, and that example is generated from the reader that checks your file. An unknown key is rejected; a first-round example omits the re-review carry fields, which the reader still accepts. You are given one turn to fix a rejected file.
 
-```markdown
-## File Triage
-- `path/to/file.go` — **Tier 2** (application logic)
-...
-
-## Must fix
-- **[M1]** **`<file>:<line>`** — <finding>
-  > ```lang
-  > verbatim snippet
-  > ```
-
-## Should fix
-- **[S1]** **`<file>:<line>`** — <finding>
-  > ```lang
-  > verbatim snippet
-  > ```
-
-## Nit
-- **[N1]** **`<file>:<line>`** — <finding>
-
-## Idioms
-- **[I1]** **`<file>:<line>`** — <finding>
-```
-
-Severity section headers MUST be exactly `## Must fix`, `## Should fix`, `## Nit`, `## Idioms` — h2 level, no hyphens, no nesting. Omit severity sections with no findings. Skip files with no issues. A re-review adds one more h2 section, `## Prior findings`, when the prompt asks for it — each line dispositioned with exactly one of `Fixed`, `Still open`, or `Declined`, written first on the line. That section is bookkeeping and is stripped before the review is posted.
-
-Finding format: `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap the file path in backticks inside the bold markers.
+Every finding has an `id` (M, S, N or I and a number), a `path` (repo-relative, no `:line`, or null for the PR as a whole), `line`/`end_line`, and a markdown `body` whose first line states the defect. `triage` stays in the local review for coverage tracking; it is stripped before the review is posted. A re-review fills `prior_findings` when the prompt asks for it, each entry's `disposition` exactly one of `Fixed`, `Still open`, or `Declined`; it is bookkeeping and is stripped before the review is posted.
 
 ## Constraints
 - NEVER modify source files, apply patches, or create commits — only write to the review output path

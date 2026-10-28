@@ -8,14 +8,15 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model. It subtracts
+the fallback when the catalogue cannot be read or lacks the model, and capped at
+``context.compact_at`` when that is set. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
-them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
-takes its tier's floor rather than failing, because an unset
-`AI_*_MODEL` is the ordinary first-party-API setup; only a
-concrete model nobody has measured raises `UnknownModelWindow`.
+them. `prompt_budget_bytes` is that derivation. A phase with no configured
+model takes the unset-model floor rather than failing, because leaving the
+choice to the backend is an ordinary setup; only a concrete model nobody has
+measured raises `UnknownModelWindow`.
 
 The byte figure can only ever be conservative: no byte count bounds a token
 count without knowing the content's density, so `BYTES_PER_TOKEN_FLOOR` assumes
@@ -35,8 +36,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import agent.pi_models
-from agent.phases import ModelAlias, collect_phase_models
-from agent.pi_models import listing_rows
+from agent.context_ceiling import backend_ceiling, capped_window, machine_ceiling
+from agent.phases import collect_phase_models, unset_review_phases
+from agent.pi_models import listed_windows
 from core.phases import Backend
 from review.grouping import classify_tier, format_profiles_section
 
@@ -63,14 +65,14 @@ MODEL_CONTEXT_TOKENS = {
     "claude-haiku-4-5": 200_000,
 }
 
-# What an unresolved tier alias is worth. `agent.phases.phase_model` returns the
-# literal "sonnet" when AI_SONNET_MODEL is unset, which is the
-# ordinary first-party-API setup rather than a misconfiguration — so this is a
-# case to budget conservatively for, not one to refuse. The figure is the
-# narrowest window any model in that tier has: assuming the smallest is safe
-# whichever concrete model the alias turns out to name, where assuming the
-# largest would budget a 200k model against a 1M window.
-ALIAS_FLOOR_TOKENS = 200_000
+# What a phase with no configured model is worth. `agent.phases.phase_model`
+# returns None when no layer names a model, and the backend then serves the call
+# from its own default — a model preflight cannot name, so its window is
+# unknown here. That is an ordinary setup, not a misconfiguration, so it is
+# budgeted conservatively rather than refused: the narrowest window in common
+# use is safe whichever model the backend picks, where assuming a large one
+# would budget a 200k model against a 1M window.
+UNSET_MODEL_FLOOR_TOKENS = 200_000
 
 # The reply is not free and comes out of the same window. Sized over the
 # largest review output observed rather than the typical one, since the cost of
@@ -190,35 +192,6 @@ MAX_DELTA_LIST_ENTRIES = 200
 MIN_DELTA_DIFF_BYTES = 2_048
 
 
-def _parse_context_tokens(raw: str) -> int | None:
-    """A `pi --list-models` context cell as an integer token count, or None.
-
-    Suffixes: K=1_000, M=1_000_000. Decimals are allowed. The result is
-    floored — overestimating a window is the expensive direction.
-    """
-    text = raw.strip()
-    if not text:
-        return None
-    multiplier = 1
-    suffix = text[-1]
-    if suffix in ("K", "k"):
-        multiplier = 1_000
-        text = text[:-1]
-    elif suffix in ("M", "m"):
-        multiplier = 1_000_000
-        text = text[:-1]
-    try:
-        amount = float(text)
-    except ValueError:
-        return None
-    if amount < 0:
-        return None
-    tokens = int(amount * multiplier)
-    if tokens <= 0:
-        return None
-    return tokens
-
-
 def _parse_pi_list_models(text: str) -> dict[str, int]:
     """Model id -> context window, taking the minimum across providers.
 
@@ -231,12 +204,7 @@ def _parse_pi_list_models(text: str) -> dict[str, int]:
     changes.
     """
     windows: dict[str, int] = {}
-    for _provider, model, rest in listing_rows(text):
-        if not rest:
-            continue
-        tokens = _parse_context_tokens(rest[0])
-        if tokens is None:
-            continue
+    for (_provider, model), tokens in listed_windows(text).items():
         previous = windows.get(model)
         if previous is None or tokens < previous:
             windows[model] = tokens
@@ -259,9 +227,9 @@ class UnknownModelWindow(RuntimeError):
     """A model that is in neither pi's catalogue nor the fallback table.
 
     Raised rather than defaulted, because a model nobody has measured is as
-    likely to be narrower than the alias floor as wider, and guessing wide is
-    the expensive direction. An unresolved alias is not this case — see
-    `ALIAS_FLOOR_TOKENS`.
+    likely to be narrower than the floor as wider, and guessing wide is the
+    expensive direction. A phase with no configured model is not this case —
+    see `UNSET_MODEL_FLOOR_TOKENS`.
     """
 
     def __init__(
@@ -295,39 +263,50 @@ class UnknownModelWindow(RuntimeError):
     ) -> "UnknownModelWindow":
         """A window the reserves alone exhaust, so no prompt could ever fit.
 
-        Unreachable while every recorded window is 200,000 against 96,000 of
-        reserves on Claude (64,000 on pi). It is raised rather than clamped
-        because the alternative is a negative budget that `_fit_budget`'s
-        `max(0, ...)` guards absorb without complaint — every phase would then
-        refuse every prompt, and the reason would be a table entry nobody
-        would think to look at.
+        Every recorded window is at least 200,000 against 96,000 of reserves on
+        Claude (64,000 on pi), so in practice this is a ``context.compact_at``
+        set below them. It is raised rather than clamped because the
+        alternative is a negative budget that `_fit_budget`'s `max(0, ...)`
+        guards absorb without complaint — every phase would then refuse every
+        prompt, and the reason would be a setting nobody would think to look at.
         """
         reserved = COMPLETION_RESERVE_TOKENS + overhead_reserve_tokens(backend)
         return cls(model, (
-            f"{model!r} has a {window:,}-token window, which its reserves "
-            f"({reserved:,}) exhaust — no prompt could fit. Lower "
-            f"COMPLETION_RESERVE_TOKENS or the backend overhead reserve, or do "
-            f"not review with this model."
+            f"{model!r} is budgeted against a {window:,}-token window, which its "
+            f"reserves ({reserved:,}) exhaust — no prompt could fit. Raise "
+            f"context.compact_at above {reserved:,} if it is set, or do not "
+            f"review with this model."
         ))
 
 
-def model_window_tokens(model: str, *, cwd: Path | str) -> int:
+def model_window_tokens(
+    model: str | None, *, cwd: Path | str, backend: Backend | None = None,
+) -> int:
     """The context window ``model`` is budgeted against, reviewing in *cwd*.
 
-    Order: the provider catalogue of the pi that would run in *cwd*, then
-    `MODEL_CONTEXT_TOKENS`, then the unresolved-alias floor. Anything else
-    raises `UnknownModelWindow`.
+    No model (the backend's default serves the phase) budgets at
+    `UNSET_MODEL_FLOOR_TOKENS`. Otherwise: the provider catalogue of the pi that
+    would run in *cwd*, then `MODEL_CONTEXT_TOKENS`. Anything else raises
+    `UnknownModelWindow`, whatever the ceiling below.
+
+    Capped where *backend* compacts under ``context.compact_at`` — on Claude
+    Code the window the CLI clamps it to, on Pi the ceiling itself — since a
+    prompt planned past it would be summarised before the agent had worked on
+    it, and it is what the operator chose to pay per request. ``None`` asks the
+    selected backend.
     """
+    if backend is None:
+        from agent.backend import selected_backend
+
+        backend = selected_backend()
+    compact_at = backend_ceiling(machine_ceiling(), backend)
+    if not model:
+        return capped_window(UNSET_MODEL_FLOOR_TOKENS, compact_at)
     catalogue = _pi_catalogue_windows(cwd)
-    window = catalogue.get(model)
-    if window is not None:
-        return window
-    window = MODEL_CONTEXT_TOKENS.get(model)
-    if window is not None:
-        return window
-    if ModelAlias.parse(model) is not None:
-        return ALIAS_FLOOR_TOKENS
-    raise UnknownModelWindow(model, catalogue=catalogue)
+    window = catalogue.get(model, MODEL_CONTEXT_TOKENS.get(model))
+    if window is None:
+        raise UnknownModelWindow(model, catalogue=catalogue)
+    return capped_window(window, compact_at)
 
 
 def overhead_reserve_tokens(backend: Backend | None = None) -> int:
@@ -346,14 +325,14 @@ def overhead_reserve_tokens(backend: Backend | None = None) -> int:
 
 
 def prompt_budget_tokens(
-    model: str, backend: Backend | None = None, *, cwd: Path | str,
+    model: str | None, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What one prompt to ``model`` may cost, in tokens.
 
     The window less what the reply needs and less the system prompt and tool
     schemas the CLI adds out of sight, priced for ``backend``.
     """
-    window = model_window_tokens(model, cwd=cwd)
+    window = model_window_tokens(model, cwd=cwd, backend=backend)
     budget = window - COMPLETION_RESERVE_TOKENS - overhead_reserve_tokens(backend)
     if budget <= 0:
         raise UnknownModelWindow.too_narrow(model, window, backend)
@@ -361,7 +340,7 @@ def prompt_budget_tokens(
 
 
 def prompt_budget_bytes(
-    model: str, backend: Backend | None = None, *, cwd: Path | str,
+    model: str | None, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What one prompt to ``model`` may cost, in bytes of rendered prompt.
 
@@ -382,7 +361,7 @@ def prompt_budget_bytes(
 
 
 def ladder_target_bytes(
-    model: str, backend: Backend | None = None, *, cwd: Path | str,
+    model: str | None, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What the budget ladder may plan to spend, below the refusal ceiling.
 
@@ -416,11 +395,16 @@ def collection_budget_bytes(
     Without it the phases resolve against the global scope alone and collection
     can be sized against a ceiling no phase actually budgets to. It is also
     the directory whose pi supplies the context windows.
+
+    A phase with no configured model counts at the unset-model floor, so
+    collection never outgrows what that phase's prompt is budgeted against.
     """
-    return min(
-        ladder_target_bytes(model, backend, cwd=project_root)
-        for model in collect_phase_models(explicit_model, project_root)
-    )
+    models: list[str | None] = [
+        ref.id for ref in collect_phase_models(explicit_model, project_root)
+    ]
+    if unset_review_phases(explicit_model, project_root):
+        models.append(None)
+    return min(ladder_target_bytes(model, backend, cwd=project_root) for model in models)
 
 
 def fixed_preflight_bytes(

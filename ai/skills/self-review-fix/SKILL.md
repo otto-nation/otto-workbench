@@ -58,7 +58,9 @@ internally via `pr_context` — pass the argument through directly.
    ```
 
 If the review file exists, read it with the Read tool. Extract the
-`<!-- head_sha: -->` value and compare against the **resolved branch** HEAD:
+`<!-- covered_sha: -->` value when the header has one — the fix commit the last
+pass qualified as reviewed — and otherwise `<!-- head_sha: -->`. Compare it
+against the **resolved branch** HEAD:
 ```bash
 git rev-parse <branch_name>
 ```
@@ -77,6 +79,18 @@ pr review --self --fix --push --branch <branch_name>
 
 Run synchronously — do **not** background this command. Step 4 reads
 the completed review file; backgrounding produces stale results.
+
+A run on a HEAD whose last fix pass was interrupted does not review again
+unless `--force` or the set-aside fails: it sets
+the interrupted pass's untouched edits aside in `git stash`, names each file it
+stashed, and resumes the fix pass. `git stash list` names the entry; `git stash pop`
+restores it. Without `--fix`, the run reviews the stashed files incrementally.
+
+On an incremental round the fix pass leaves new nit and idiom findings open rather
+than fixing them, and keeps leaving them open while later incremental rounds carry
+them; `meta.json` lists them as `held_nits` and the log names them. They are still
+in the review for you to take or leave, and the next full review hands them to the
+fix pass.
 
 Pass the resolved branch name via `--branch` so the `pr` wrapper can
 route it to context resolution. `pr review` handles bare repos, worktree

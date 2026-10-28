@@ -51,53 +51,33 @@ from pathlib import Path
 import git.client
 import core.log
 import core.serde
-from review.grammar import (
-    SID_MARKER_RE, FindingIdentity, parse_ledger_line,
-)
+from review.grammar import SID_MARKER_RE
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
-from review.record import Disposition, ReviewRecord
+from review.record import Disposition, LedgerLine, ReviewRecord
 from review.render import finding_line
 from review.store import StoredReview
-from review.types import (
-    DISPOSITION_TAIL_BREAKS, DISPOSITION_TAIL_WORD_JOINERS, FindingRef,
-    LedgerEntry, PriorDisposition, PriorFinding, ReviewMeta,
-)
-from core.text import join_or, plural
-
-# ── Carry-forward identity ───────────────────────────────────────────────────
-
-def _stable_ids(text: str) -> set[str]:
-    """Every prior-finding identity the text carries.
-
-    Both the markers in carried-forward text and the ID each finding line
-    hashes to on its own — a synthesis agent that retypes a carried finding
-    drops the marker but keeps the path and the wording, so the recomputed ID
-    is the part that survives it.
-    """
-    ids = set(SID_MARKER_RE.findall(text))
-    for raw in text.split("\n"):
-        identity = FindingIdentity.of(raw.strip())
-        if identity:
-            ids.add(identity.stable_id)
-    return ids
-
+from review.types import FindingRef, PriorDisposition, PriorFinding, ReviewMeta
+from core.text import plural
 
 # ── Reading the prior review ─────────────────────────────────────────────────
 
 def _record_stable_ids(record: ReviewRecord) -> set[str]:
-    """Every prior-finding identity the review carries: markers, finding identities,
-    and any finding-shaped line in its prose — the same set `_stable_ids` read off text."""
+    """Every prior-finding identity the review carries.
+
+    A finding's own `sid` (copied from the prior finding it carries forward) and
+    its stable ID, plus any `<!-- sid: -->` marker in the review's prose. A
+    finding restated only in words is not carried: the agent that carried it
+    was asked for its sid.
+    """
     ids = {f.sid for f in record.findings if f.sid} | {f.stable_id for f in record.findings if f.stable_id}
-    texts = [record.ledger, record.summary, record.verdict, *(e.body for e in record.extra),
-             *(f.body for f in record.findings)]
-    for text in texts:
-        ids |= _stable_ids(text)
+    for text in (record.summary, record.verdict, *(e.body for e in record.extra),
+                 *(f.body for f in record.findings)):
+        ids |= set(SID_MARKER_RE.findall(text))
     return ids
 
 
-def _record_ledger(record: ReviewRecord) -> list[LedgerEntry]:
-    entries = (parse_ledger_line(raw) for raw in record.ledger.split("\n"))
-    return [entry for entry in entries if entry]
+def _record_ledger(record: ReviewRecord) -> list[LedgerLine]:
+    return list(record.ledger)
 
 
 def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
@@ -107,11 +87,11 @@ def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
         if f.disposition is Disposition.FIXED:
             continue
         line = finding_line(f)
-        identity = FindingIdentity.of(line.split("\n", 1)[0])
         out.append(PriorFinding(
-            ref=FindingRef(f.id, identity.path if identity else ""),
+            ref=FindingRef(f.id, f.path),
             stable_id=f.stable_id,
             text="\n".join(raw.strip() for raw in line.split("\n")).strip(),
+            declined=f.disposition is Disposition.DECLINED,
         ))
     return out
 
@@ -145,29 +125,32 @@ class DispositionSource(StrEnum):
 
     LEDGER = "ledger"
     CARRIED = "carried"
+    # The prior round declined it, and the file it names has not changed since.
+    # A verdict a review stated, carried rather than re-stated.
+    PRIOR = "prior"
     TREE = "tree"
     NONE = "none"
 
     @property
     def stated(self) -> bool:
         """Whether the review said this, rather than the pipeline inferring it."""
-        return self in (DispositionSource.LEDGER, DispositionSource.CARRIED)
+        return self in (DispositionSource.LEDGER, DispositionSource.CARRIED,
+                        DispositionSource.PRIOR)
 
 
 class UndecidedReason(StrEnum):
     """Why a finding reached no verdict.
 
     Undecided is only a useful warning while it means "the review passed this
-    by". Three of the four members below are something else — two of them a
-    line this pipeline could not read, one a check it was in no position to run
-    — and lumping them in with the omissions is what turns the warning into
-    noise the reader learns to skip.
+    by". Two of the three members below are something else — a location this
+    pipeline could not read, a check it was in no position to run — and lumping
+    them in with the omissions is what turns the warning into noise the reader
+    learns to skip.
 
     Declaration order is the order `_report` prints the groups: the ones a
     reader can act on come first.
     """
 
-    UNREADABLE_VERDICT = "unreadable verdict"
     NO_LOCATION = "no location parsed"
     NOT_MENTIONED = "not accounted for"
     NOT_CHECKABLE = "not checkable"
@@ -179,7 +162,6 @@ class UndecidedReason(StrEnum):
 
 
 _UNDECIDED_HEADINGS = {
-    UndecidedReason.UNREADABLE_VERDICT: "the ledger names these but states no verdict this could read",
     UndecidedReason.NO_LOCATION: "these name no file this could read, so nothing could be checked",
     UndecidedReason.NOT_MENTIONED: "neither this review nor the tree accounts for these",
     UndecidedReason.NOT_CHECKABLE: "there was nothing to check these against",
@@ -191,9 +173,8 @@ class PriorRecord:
     """One prior finding, what became of it, and how that was settled.
 
     `disposition` is None when nothing settled it, and `reason` then says which
-    kind of nothing — the ledger naming the finding without a verdict this can
-    read is a different failure from the review never mentioning it, and only
-    the second is the review's.
+    kind of nothing. An unreadable ledger line is dropped rather than recorded,
+    so it never settles from the ledger; the finding falls to the tree check.
     """
 
     ref: FindingRef = field(default_factory=FindingRef)
@@ -388,8 +369,9 @@ def _shorten(span: str) -> str:
 def _settle(
     finding: PriorFinding,
     carried: set[str],
-    ledger: list[LedgerEntry],
+    ledger: list[LedgerLine],
     tree: _Tree,
+    changed: frozenset[str] | None = None,
 ) -> PriorRecord:
     """The disposition of one prior finding, from the first source that has one.
 
@@ -397,24 +379,37 @@ def _settle(
     — a judgement no amount of reading the tree recovers. A carry-forward comes
     next and means the finding is still open, whatever the tree looks like: a
     reviewer who just looked at the code outranks an inference about it.
+    A prior decline whose file is outside `changed` comes third: it is the prior
+    review's statement, outranked only by this review's own.
     """
     entry = next((e for e in ledger if e.covers(finding.ref)), None)
-    if entry and entry.disposition:
+    if entry is not None:
         return PriorRecord(finding.ref, entry.disposition, DispositionSource.LEDGER,
                            "the ledger says so")
     if finding.stable_id in carried:
         return PriorRecord(finding.ref, PriorDisposition.STILL_OPEN,
                            DispositionSource.CARRIED, "this review restates it")
+    if _declined_and_untouched(finding, changed):
+        return PriorRecord(finding.ref, PriorDisposition.DECLINED, DispositionSource.PRIOR,
+                           f"declined last round, and `{finding.ref.path}` has not changed since")
     inference = tree.infer(finding)
     if inference.disposition:
         return PriorRecord(finding.ref, inference.disposition, DispositionSource.TREE,
                            inference.basis)
-    if entry:
-        return PriorRecord(finding.ref, None, DispositionSource.LEDGER,
-                           f'the ledger line reads "{entry.text.strip()}"',
-                           UndecidedReason.UNREADABLE_VERDICT)
     return PriorRecord(finding.ref, None, DispositionSource.NONE, inference.basis,
                        inference.reason)
+
+
+def _declined_and_untouched(finding: PriorFinding, changed: frozenset[str] | None) -> bool:
+    """Whether the prior round's decline still stands with nobody restating it.
+
+    A decline is a judgement about code; while the file it names is outside the
+    change set the code is the code that was judged, so asking an agent to say
+    "Declined" again is the cost with no answer it could change. Unknown change
+    set, or no file named, settles nothing.
+    """
+    path = finding.ref.path
+    return finding.declined and bool(path) and changed is not None and path not in changed
 
 
 def reconcile(
@@ -422,6 +417,7 @@ def reconcile(
     review: ReviewRecord,
     wt_path: str = "",
     head_sha: str = "",
+    changed: frozenset[str] | None = None,
 ) -> Reconciliation:
     """What `review` made of every finding the prior review reported.
 
@@ -431,6 +427,7 @@ def reconcile(
     """
     return _reconcile_findings(
         _prior_findings(prior.record), prior.meta, review, wt_path, head_sha,
+        changed,
     )
 
 
@@ -440,6 +437,7 @@ def _reconcile_findings(
     review: ReviewRecord,
     wt_path: str,
     head_sha: str,
+    changed: frozenset[str] | None = None,
 ) -> Reconciliation:
     """`reconcile()`'s body, taking the prior findings already parsed.
 
@@ -453,13 +451,14 @@ def _reconcile_findings(
         prior_sha=tree.prior_sha,
         prior_date=prior_meta.date,
         head_sha=head_sha or (git.client.head_sha(wt_path) if wt_path else ""),
-        records=[_settle(finding, carried, ledger, tree) for finding in findings],
+        records=[_settle(finding, carried, ledger, tree, changed) for finding in findings],
     )
 
 
 def passed_over(
     prior: StoredReview | None, review: ReviewRecord, wt_path: str = "",
     head_sha: str = "",
+    changed: frozenset[str] | None = None,
 ) -> list[PriorFinding]:
     """The prior findings `review` left out that the tree at `wt_path` still holds.
 
@@ -472,9 +471,9 @@ def passed_over(
     caller that already has the value in hand should pass it.
 
     Only `NOT_MENTIONED` qualifies. It is the one undecided reason that is the
-    review's own omission; the other three are this pipeline's failures — a
-    verdict it could not parse, a location it could not read, a tree it had
-    nothing to check against — and asking an agent again settles none of them.
+    review's own omission; the other two are this pipeline's failures — a
+    location it could not read, a tree it had nothing to check against — and
+    asking an agent again settles none of them.
 
     Records come back one per finding in parse order, so the two lists are
     zipped rather than matched on a label, which two findings in one file may
@@ -484,7 +483,7 @@ def passed_over(
         return []
     findings = _prior_findings(prior.record)
     reconciliation = _reconcile_findings(
-        findings, prior.meta, review, wt_path, head_sha,
+        findings, prior.meta, review, wt_path, head_sha, changed,
     )
     return [
         finding
@@ -509,10 +508,10 @@ def _report(reconciliation: Reconciliation, sidecar: str = "") -> None:
     the reader to skip it.
 
     The undecided are then printed by `UndecidedReason` rather than as one
-    list, because they are not one thing: a line this could not read is a
-    defect here and says what shape would have parsed, while a finding the
-    review passed by is a defect there. Run together they read as the second,
-    which is how six unreadable verdicts once reported as six omissions.
+    list, because they are not one thing: a location this could not parse is a
+    defect here, while a finding the review passed by is a defect there. Run
+    together they read as the second. An unreadable ledger line is dropped
+    rather than recorded, and the finding falls to the tree check.
     """
     if not reconciliation.records:
         return
@@ -538,43 +537,6 @@ def _report_group(reason: UndecidedReason, records: list[PriorRecord]) -> None:
     core.log.dim(f"{reason.heading} ({len(records)}):")
     for record in records:
         core.log.dim(f"  {record.ref.label} — {record.basis}")
-    if reason is UndecidedReason.UNREADABLE_VERDICT:
-        core.log.dim(f"  {_VERDICT_SHAPE}")
-
-
-# What to write instead, for the reader who has just been shown a line that did
-# not parse. Both the words and the punctuation come from what the parser
-# accepts, so this cannot describe a shape the parser would reject.
-#
-# Glyphs rather than the prose `review.prompt_prior` instructs a model with:
-# this is read beside the character that failed, by someone matching it, and
-# the prose names collapse across exactly the line that matters here — "a dash"
-# is the two unconditional dashes and the conditional hyphen, "italics" is the
-# unconditional asterisk and the conditional underscore, so no prose list can
-# state the rule without contradicting itself.
-#
-# The rule is the second half of the message instead, and the split is the
-# parser's own: `DISPOSITION_TAIL_WORD_JOINERS` is the class the regex requires
-# a leading space or a trailing non-word character around, so a character moved
-# between the two sets moves between the two halves here. Printed in one list,
-# they read as unconditional breaks, and a reader who takes the message at its
-# word glues a hyphen mid-word and writes the line the parser rejected. Both
-# classes are `review.types`' own, split there for the regex, so the message
-# names each half rather than re-deriving either.
-#
-# Dropped entirely rather than rendered empty when nothing is conditional, so
-# retiring the joiner class leaves a message with one honest list instead of a
-# caveat naming no characters.
-_VERDICT_JOINER_CAVEAT = (
-    f" (also {join_or(list(DISPOSITION_TAIL_WORD_JOINERS))}, but only where a "
-    "space precedes one or a non-word character follows — glued inside a word "
-    "neither breaks the verdict)"
-) if DISPOSITION_TAIL_WORD_JOINERS else ""
-_VERDICT_SHAPE = (
-    f"write one of {join_or([d.value for d in PriorDisposition])} first, then "
-    f"end the line or break with one of: {' '.join(DISPOSITION_TAIL_BREAKS)}"
-    f"{_VERDICT_JOINER_CAVEAT}"
-)
 
 
 def record_prior_findings(
@@ -582,6 +544,8 @@ def record_prior_findings(
     prior: StoredReview | None,
     review: ReviewRecord,
     wt_path: str = "",
+    head_sha: str = "",
+    changed: frozenset[str] | None = None,
 ) -> Reconciliation | None:
     """Reconcile `review` against `prior` and record it beside `review_file`.
 
@@ -589,10 +553,12 @@ def record_prior_findings(
     which the review still says what it made of the prior findings. Returns
     None when there is nothing to reconcile — no prior review, or a prior
     review that reported no findings. `review_file` is the sidecar path only.
+    `head_sha` is the commit the run pinned; the range is labelled with it
+    rather than with a live HEAD that may have moved since.
     """
     if prior is None:
         return None
-    reconciliation = reconcile(prior, review, wt_path)
+    reconciliation = reconcile(prior, review, wt_path, head_sha, changed=changed)
     if not reconciliation.records:
         return None
     _report(reconciliation, _write(review_file, reconciliation))

@@ -11,14 +11,6 @@ setup() {
   load 'test_helper'
   load 'review_orchestrate_helper'
   common_setup
-  # Model resolution reads these; the developer's own shell usually has them
-  # set. Both spellings: AI_* is what ~/.env.local exports and what wins, and
-  # leaving it set let a real shell value beat the one a test had just written
-  # into the legacy name.
-  unset AI_SONNET_MODEL AI_OPUS_MODEL AI_HAIKU_MODEL
-  unset ANTHROPIC_DEFAULT_SONNET_MODEL
-  unset ANTHROPIC_DEFAULT_OPUS_MODEL
-  unset ANTHROPIC_DEFAULT_HAIKU_MODEL
 }
 
 teardown() {
@@ -55,11 +47,12 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
-@test "model defaults: single default value across all phases" {
+@test "model defaults: every phase names a tier and no model" {
   result=$(_py "
-print(sorted({s.model for s in mod.PHASES.values()}))
+specs = mod.PHASES.values()
+print(all(s.tier is not None for s in specs), any(hasattr(s, 'model') for s in specs))
 ")
-  [ "$result" = "['sonnet']" ]
+  [ "$result" = "True False" ]
 }
 
 @test "model defaults: registry covers every phase" {
@@ -69,103 +62,60 @@ print(sorted(mod.PHASES) == sorted(mod.Phase))
   [ "$result" = "True" ]
 }
 
-@test "resolve_model: explicit override wins" {
+# The env layers, through the public resolver. The tier beneath them is pinned
+# in tests/agent_models_test.py; the config file is sandboxed here and names
+# no tier, so a phase with no env layer resolves to nothing.
+
+@test "phase_model: explicit override wins over the env" {
+  result=$(_py "
+import os
+os.environ.pop('WORKBENCH_AI_MODEL', None)
+os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-sonnet-5'
+print(mod.phase_model('group', 'claude-haiku-4-5'))
+")
+  [ "$result" = "claude-haiku-4-5" ]
+}
+
+@test "phase_model: the phase env var answers" {
+  result=$(_py "
+import os
+os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-haiku-4-5'
+os.environ.pop('WORKBENCH_AI_MODEL', None)
+print(mod.phase_model('group', None))
+")
+  [ "$result" = "claude-haiku-4-5" ]
+}
+
+@test "phase_model: the global env var answers" {
+  result=$(_py "
+import os
+os.environ['WORKBENCH_AI_MODEL'] = 'claude-haiku-4-5'
+os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
+print(mod.phase_model('group', None))
+")
+  [ "$result" = "claude-haiku-4-5" ]
+}
+
+@test "phase_model: None when no layer names a model" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model('haiku', 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
+print(mod.phase_model('group', None))
 ")
-  [ "$result" = "haiku" ]
+  [ "$result" = "None" ]
 }
 
-@test "resolve_model: env var beats default" {
-  result=$(_py "
-import os
-os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'haiku'
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['WORKBENCH_AI_GROUP_MODEL']
-")
-  [ "$result" = "haiku" ]
-}
-
-@test "resolve_model: global env var beats default" {
-  result=$(_py "
-import os
-os.environ['WORKBENCH_AI_MODEL'] = 'haiku'
-os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['WORKBENCH_AI_MODEL']
-")
-  [ "$result" = "haiku" ]
-}
-
-@test "resolve_model: default when no override" {
-  result=$(_py "
-import os
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-for a in mod.ModelAlias:
-    os.environ.pop(a.env_key, None)
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-")
-  [ "$result" = "sonnet" ]
-}
-
-@test "resolve_model: alias resolved via AI_<TIER>_MODEL env" {
-  result=$(_py "
-import os
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-os.environ['AI_SONNET_MODEL'] = 'claude-sonnet-5'
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['AI_SONNET_MODEL']
-")
-  [ "$result" = "claude-sonnet-5" ]
-}
-
-@test "resolve_model: alias still resolved via the pre-rename env name" {
-  result=$(_py "
-import os
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
-os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-4-5'
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
-")
-  [ "$result" = "claude-sonnet-4-5" ]
-}
-
-@test "resolve_model: the current env name beats the pre-rename one" {
+@test "phase_model: tier env vars do not rewrite a Claude tier word" {
   result=$(_py "
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
 os.environ['AI_SONNET_MODEL'] = 'claude-sonnet-5'
 os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-4-5'
-print(mod.resolve_model(None, 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['AI_SONNET_MODEL']
-del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
+print(mod.phase_model('group', 'sonnet'), mod.phase_model('group', None))
 ")
-  [ "$result" = "claude-sonnet-5" ]
-}
-
-@test "resolve_model: explicit alias resolved via AI_<TIER>_MODEL env" {
-  result=$(_py "
-import os
-os.environ.pop('WORKBENCH_AI_MODEL', None)
-os.environ['AI_OPUS_MODEL'] = 'claude-opus-4-6'
-print(mod.resolve_model('opus', 'WORKBENCH_AI_GROUP_MODEL', 'sonnet'))
-del os.environ['AI_OPUS_MODEL']
-")
-  [ "$result" = "claude-opus-4-6" ]
+  [ "$result" = "sonnet None" ]
 }
 
 # ── Prompt building ──────────────────────────────────────────────────────────
@@ -187,7 +137,7 @@ result = mod.build_prompt(mod.Phase.SINGLE, job, max_turns=15)
 print(result)
 ')
   [[ "$result" == *"PR #99"* ]]
-  [[ "$result" == *"/tmp/review.md"* ]]
+  [[ "$result" == *"/tmp/single.json"* ]]
 }
 
 @test "build_prompt: group includes holistic block when content set" {
@@ -206,9 +156,9 @@ job = mod.ReviewJob(
 result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
-    holistic_content="Watch for API mismatches",
+    holistic_content="## Holistic context\nWatch for API mismatches",
 )
-print("FOUND" if "Holistic context" in result else "MISSING")
+print("FOUND" if "Watch for API mismatches" in result else "MISSING")
 ')
   [ "$result" = "FOUND" ]
 }

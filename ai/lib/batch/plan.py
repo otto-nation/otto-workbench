@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import batch.targets
 import core.log
 import core.serde
 import core.session_lock
@@ -149,6 +150,9 @@ class PlanRow:
     ref_namespace: str = ""
     # What pr's saved state says is owed (CloseoutDebt.describe()), "" when nothing is.
     closeout: str = ""
+    # Origin key of the repo (pr.target.repo_key_from_origin) taken at plan time;
+    # the per-repo batch lock is named after it. "" when the checkout had no origin.
+    repo_key: str = ""
 
     @property
     def key(self) -> str:
@@ -350,15 +354,13 @@ def namespaces_in(repo_dir: str) -> list[str]:
 def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:
     # An empty --refmap is what stops git's opportunistic update: with a
     # command-line refspec it still applies remote.origin.fetch and would move
-    # refs/remotes/origin/* alongside the namespace. maintenance.auto=false and
-    # gc.auto=0 stop the detached `git maintenance run --auto` a fetch otherwise
-    # starts, which can pack refs and take packed-refs.lock after the fetch
-    # returns. FETCH_HEAD is written (it takes no packed-refs lock); SHA specs
-    # update no refs.
+    # refs/remotes/origin/* alongside the namespace. `git.client` runs every
+    # fetch with maintenance off and under the repository's fetch mutex.
+    # FETCH_HEAD is written (it takes no packed-refs lock); SHA specs update no
+    # refs.
     return git.client.run(
         "fetch", "--quiet", "--no-tags", "--refmap=", "origin", *specs,
         cwd=repo_dir,
-        config={"maintenance.auto": "false", "gc.auto": "0"},
     ).ok
 
 
@@ -485,6 +487,8 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
 
     That commit is the local worktree's HEAD when there is one — it carries any
     unpushed fix commits — and GitHub's head otherwise, where nothing local exists.
+    A fix commit the review counts as reviewed (`ReviewMeta.covered_sha`) covers
+    the subject too.
     """
     stored = review.store.read_review(review_file)
     if stored is None:
@@ -493,7 +497,7 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
             "self-review predates review.json" if review_file.is_file() else "no self-review yet",
         )
     subject = local_head or head_sha
-    reviewed = stored.meta.head_sha
+    reviewed = stored.meta.reviewed_through
     if review.document.covers(reviewed, subject):
         return StepNeed(False, "self-review is current")
     of = f"self-review is of {git.client.abbrev(reviewed) or 'an unknown head'}"
@@ -545,6 +549,17 @@ def _review_file(repo: str, branch: str) -> Path:
 
 
 def _repo_slug(repo_dir: str) -> str:
+    """`owner/repo` for a `--checkout`, or a PlanError naming what is wrong with it.
+
+    Checked here rather than left to `detect_repo`, which exits the process on
+    a checkout with no remote, and to git, which raises `FileNotFoundError` on
+    one that does not exist: both reached the operator as a traceback or a
+    message naming `gh repo view` rather than the flag they passed.
+    """
+    if not Path(repo_dir).is_dir():
+        raise PlanError(f"--checkout {repo_dir} does not exist")
+    if not git.client.ok("remote", "get-url", "origin", cwd=repo_dir):
+        raise PlanError(f"--checkout {repo_dir} has no origin remote to plan from")
     return pr.context.detect_repo(repo_dir)
 
 
@@ -556,7 +571,7 @@ def _local_heads(repo_dir: str) -> dict[str, str]:
 
 def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
          ref_namespace: str = "", viewer: str = "",
-         remote_heads: dict[str, str] | None = None) -> PlanRow:
+         remote_heads: dict[str, str] | None = None, repo_key: str = "") -> PlanRow:
     branch, head = node["headRefName"], node["headRefOid"]
     base = node.get("baseRefName") or ""
     fork = bool(node.get("isCrossRepository"))
@@ -577,6 +592,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
         local_head=local_head, base_ref=base, is_fork=fork, ci_state=ci_state,
         ref_namespace=ref_namespace,
         closeout=_closeout_from(state).describe(),
+        repo_key=repo_key,
     )
 
 
@@ -612,6 +628,7 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
     viewer = (data.get("viewer") or {}).get("login", "")
     heads: dict[str, dict[str, str]] = {}
+    keys: dict[str, str] = {}
     rows = []
     for n in (data.get("search") or {}).get("nodes") or []:
         name = (n.get("repository") or {}).get("nameWithOwner") or ""
@@ -621,10 +638,11 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
         repo_dir = repo_dirs[slug]
         if repo_dir not in heads:
             heads[repo_dir] = _local_heads(repo_dir)
+            keys[repo_dir] = batch.targets.origin_key(repo_dir)
         rows.append(_row(
             n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), ""),
             (namespaces or {}).get(repo_dir, ""), viewer,
-            (remote_heads or {}).get(repo_dir)))
+            (remote_heads or {}).get(repo_dir), repo_key=keys[repo_dir]))
     return sorted(rows, key=lambda r: (r.repo, r.pr))
 
 
@@ -717,4 +735,5 @@ def replan_row(row: PlanRow) -> PlanRow | None:
     if node.get("state") != "OPEN":
         return None
     return _row(node, row.repo_dir, row.repo, row.local_head, row.ref_namespace,
-                (data.get("viewer") or {}).get("login", ""))
+                (data.get("viewer") or {}).get("login", ""),
+                repo_key=row.repo_key)

@@ -212,6 +212,18 @@ def test_a_remote_commit_refusal_names_the_commits_to_check():
     assert "force-publish" in entry["actions"]
 
 
+def test_a_dropped_drafted_commit_refusal_says_how_to_restore_it():
+    item = _item(1)
+    item.worktree = "/wt/b1"
+    run = _run([item], [_d(DecisionKind.FAILED, "publish", {
+        "reason": "drafted_dropped", "detail": "1 commit(s) the batch drafted …",
+        "commits": ["c1 fix: ours"], "exit_code": 1, "log_tail": []})])
+    entry = _only_next(run)
+    assert entry["prep"] == ("cherry-pick c1 fix: ours back onto b1 in /wt/b1 and retry, "
+                             "or force-publish without them")
+    assert "force-publish" in entry["actions"]
+
+
 def test_a_failed_review_points_at_its_log_and_session_log(reviews_dir):
     session = review.paths.self_review_dir("o/r", "b1") / review.paths.FILENAME_SESSION
     session.parent.mkdir(parents=True)

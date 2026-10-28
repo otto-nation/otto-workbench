@@ -11,8 +11,8 @@
 | `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` and its target lock released / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry also `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
-| `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry adopts a remote that fast-forwarded the lease to a commit the local branch holds, and otherwise `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
+| `failed` | `force-publish` | only `reason: not_incorporated_remote` or `drafted_dropped`; same as `publish` past exactly the commits listed in the refusal, added to those the item was already forced past (a newly appeared commit refuses again) |
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done` and its target lock released; local commits stay and nothing is pushed |
 
@@ -67,6 +67,10 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
     DecisionKind.INTERRUPTED: frozenset({"retry", "skip-step", "drop-pr"}),
     DecisionKind.PUBLISH: frozenset({"publish", "discard"}),
 }
+# The publish refusals `force-publish` can push past: each lists the commits it
+# would lose, and the operator confirms exactly that list.
+_FORCEABLE = frozenset({batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value,
+                        batch.publish.Refusal.DRAFTED_DROPPED.value})
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
 # What default_runner writes before each child command's output in a publish log.
@@ -157,9 +161,8 @@ def _unavailable(decision: Decision, action: str, item: Item) -> str:
     if action == "rebase-from-fork-point" and not _named_fork_point(decision.payload):
         return ("this refusal names no fork point; "
                 "rebase-from-fork-point is not available")
-    if action == "force-publish" and decision.payload.get("reason") != \
-            batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
-        return "force-publish only answers a not_incorporated_remote refusal"
+    if action == "force-publish" and decision.payload.get("reason") not in _FORCEABLE:
+        return "force-publish only answers a not_incorporated_remote or drafted_dropped refusal"
     if action == "undo" and (decision.step != Step.REBASE.value or not item.pre_rebase_head):
         return "undo needs a rebase step_review with a recorded pre-rebase head"
     return ""
@@ -302,6 +305,7 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
         if ok:
             rec = item.step(Step.REBASE)
             rec.status, rec.drafted = StepStatus.SKIPPED, False
+            rec.commits = []
             item.pre_rebase_head = ""
         else:
             created.append(_fail(run, item, "rebase"))
@@ -328,7 +332,7 @@ def _reopen_for_ci(run: Run, item: Item) -> None:
         return
     item.ci_watched = True
     for rec in item.steps:
-        rec.drafted = False
+        rec.drafted, rec.commits = False, []
     ci = item.step(Step.CI)
     ci.status, ci.watch = StepStatus.PENDING, True
     item.status = ItemStatus.QUEUED
@@ -368,8 +372,10 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
         # seam re-reads it; an unreadable branch falls back to the pre-push tip.
         item.remote_sha = item.published_sha = read(item).local or tree.local
         # CI on the head just pushed has not been read, whatever an earlier
-        # re-check of an earlier push found.
+        # re-check of an earlier push found. What the operator forced past is
+        # behind this push, and confirms nothing about the next one.
         item.ci_rechecked = False
+        item.forced = []
     for argv in rest:
         if run_cmd(argv, log_path=log) != 0:
             # `--finish` may have pushed before the replies failed; lease that
@@ -380,6 +386,8 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
     # replies, so the remote may have moved under our own hand.
     adopted = bool(rest) and _adopt_own_push(item, read(item))
     item.status = ItemStatus.DONE
+    # A confirmation covers one publish; a completed one spends it, push or not.
+    item.forced = []
     if plan.pushes or adopted:
         _reopen_for_ci(run, item)
     return []
@@ -419,17 +427,23 @@ def apply(run: Run, request: Decide, *, pr_bin: str,
         # patch-equivalent remote (reset --keep) when the tree is clean of
         # tracked changes and every local commit is already on it. It is not
         # published_sha: the batch pushed nothing.
+        # A fast-forward is checked before patch equivalence: it needs no reset
+        # and leaves the local branch exactly as it is.
         after = (tree or batch.publish.read_tree)(item)
+        moved = decision.payload.get("reason") == batch.publish.Refusal.REMOTE_MOVED.value
         if _moved_to_local(item, after):
             item.remote_sha = after.remote
-        elif (decision.payload.get("reason") == batch.publish.Refusal.REMOTE_MOVED.value
-              and batch.publish.try_adopt_equivalent_remote(item, after)):
+        elif moved and batch.publish.remote_fast_forwarded(item, after):
+            item.remote_sha = after.remote
+        elif moved and batch.publish.try_adopt_equivalent_remote(item, after):
             item.remote_sha = after.remote
     run_cmd = command_runner(item, runner)
     if request.action in ("publish", "force-publish"):
+        if request.action == "force-publish":
+            item.forced.extend(c for c in decision.payload.get("commits", [])
+                               if c not in item.forced)
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
-                           confirmed=decision.payload.get("commits", [])
-                           if request.action == "force-publish" else (),
+                           confirmed=item.forced,
                            closeout=closeout or batch.plan.closeout_debt)
         decision.resolution, decision.resolved_at = request.action, now_iso()
         return created

@@ -34,7 +34,7 @@ Pi CLI reference:
   --no-session     Ephemeral mode (don't persist session)
   --tools <list>   Allowlist specific tools
   --model <id>     Model selection
-  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh
+  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh, max
   --append-system-prompt <text>  Inject additional system prompt
   --verbose        Verbose output
 
@@ -66,15 +66,17 @@ import agent.usage
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
+from agent.models import PhaseModels
 from agent.pi_binary import PiSpawn, PiUnresolvable
-from agent.pi_models import ModelNotServed, not_served_message, require_listed_model
+from agent.pi_models import ModelNotConfigured, ModelNotServed, not_served_message
+from agent.pi_models import check_targets, require_listed_model, require_model_with_provider
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
     release as release_rule_prefix,
 )
 from agent.backend_events import (
-    _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
+    _log_stderr, parse_pi_cost, parse_pi_event, pi_prompt_result,
     pi_run_error, pi_tool_signature, pi_wrote_output,
 )
 from agent.backend_pi_rpc import (
@@ -950,7 +952,7 @@ def _prompt_with_dirs(inv: AgentInvocation) -> str:
 
 
 def _refused_before_spawn(
-    err: ModelNotServed | PiUnresolvable, session_log: str, model: str | None,
+    err: ModelNotServed | PiUnresolvable | ModelNotConfigured, session_log: str, model: str | None,
 ) -> int:
     """Record a refusal raised before any spawn the way every other refusal is recorded.
 
@@ -986,9 +988,11 @@ def _exit_code(proc: subprocess.Popen, stream: StreamResult) -> int:
     return proc.returncode
 
 
-def _refusal_line(err: ModelNotServed | PiUnresolvable) -> str:
+def _refusal_line(err: ModelNotServed | PiUnresolvable | ModelNotConfigured) -> str:
     if isinstance(err, PiUnresolvable):
         return f"cannot choose a pi binary: {err}"
+    if isinstance(err, ModelNotConfigured):
+        return f"not started: {err}"
     return f"pi refused the run: {err}"
 
 
@@ -997,9 +1001,11 @@ def _checked_spawn(
 ) -> PiSpawn:
     """How to start the pi for *cwd* from *env*, with *model* checked against its catalogue.
 
-    Raises `PiUnresolvable` or `ModelNotServed`. Resolved first so the model is
-    checked by the same binary, started the same way, that will be spawned.
+    Raises `ModelNotConfigured`, `PiUnresolvable` or `ModelNotServed`. Resolved
+    first so the model is checked by the same binary, started the same way,
+    that will be spawned.
     """
+    require_model_with_provider(provider, model)
     spawn = agent.pi_binary.resolve(cwd).spawn(env)
     require_listed_model(model, provider, pi=spawn.argv)
     return spawn
@@ -1008,13 +1014,34 @@ def _checked_spawn(
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
-def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
-    """No pre-run checks — Pi resolves models and provider routing itself.
+def ledger_provider() -> None:
+    """Nothing: Pi's log names the provider on every assistant message.
 
-    ``models`` and ``trail`` are accepted for interface parity with the
-    Claude backend.
+    A reading from settings would be where this process thinks the request
+    went, which a spawn under another settings home can contradict; an absent
+    provider is more honest than an inferred one.
     """
-    return True
+    return None
+
+
+def ledger_thinking(thinking: str | None) -> str | None:
+    """The level the call asked for, asked only when the log named none.
+
+    Pi's log names the level each message ran at, after its own clamping, and
+    that wins whenever there is one. A call that dies before its first message
+    has none, and without this its ledger row would carry no level where the
+    same failure on Claude Code carries one.
+    """
+    return thinking or None
+
+
+def preflight(models: PhaseModels, trail, cwd: str) -> bool:
+    """Check each model against the catalogue of the provider it names (`check_targets`).
+
+    ``models`` maps each model reference to the phases requesting it, and ``cwd``
+    picks the pi whose catalogue answers.
+    """
+    return check_targets(models, trail, cwd)
 
 
 def prompt(
@@ -1037,7 +1064,7 @@ def prompt(
     env = agent.machine_env.base_env(cwd)
     try:
         spawn = _checked_spawn(cwd, model, provider, env)
-    except (ModelNotServed, PiUnresolvable) as err:
+    except (ModelNotServed, PiUnresolvable, ModelNotConfigured) as err:
         core.log.error(_refusal_line(err))
         return "", _RPC_ERROR_EXIT_CODE, None
     cmd = _build_prompt_cmd(spawn.argv, model=model, provider=provider, thinking=thinking)
@@ -1071,7 +1098,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
     """
     try:
         spawn = _checked_spawn(inv.cwd, inv.model, inv.provider, _spawn_env(inv))
-    except (ModelNotServed, PiUnresolvable) as err:
+    except (ModelNotServed, PiUnresolvable, ModelNotConfigured) as err:
         return _refused_before_spawn(err, inv.session_log, inv.model)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(spawn.argv, inv, extension=ext)
@@ -1136,7 +1163,7 @@ def _finish(proc: subprocess.Popen, stream: StreamResult, session_log: str) -> i
     # Reading stderr blocks until the child closes it, so it is only safe once
     # the child is gone. A group that survived SIGKILL never closes it.
     if _wait_for_exit(proc, abandoned=stream.error is not None):
-        _log_stderr_on_failure(proc, session_log)
+        _log_stderr(proc, session_log)
     return _exit_code(proc, stream)
 
 
@@ -1148,7 +1175,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
     """
     try:
         spawn = _checked_spawn(inv.cwd, inv.model, inv.provider, _spawn_env(inv))
-    except (ModelNotServed, PiUnresolvable) as err:
+    except (ModelNotServed, PiUnresolvable, ModelNotConfigured) as err:
         return _refused_before_spawn(err, inv.session_log, inv.model)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(spawn.argv, inv, extension=ext)

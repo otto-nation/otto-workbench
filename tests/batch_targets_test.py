@@ -70,6 +70,41 @@ def test_a_vanished_checkout_has_no_target():
     assert batch.targets.item_target_dir(_item("/r", "feat/a", 1)) is None
 
 
+def test_item_repo_key_prefers_the_recorded_key():
+    item = _item("/r", "feat/a", 1)
+    item.repo_key = "recorded-key-aaaaaaaa"
+    assert batch.targets.item_repo_key(item) == "recorded-key-aaaaaaaa"
+    assert batch.targets.item_target_dir(item) == pr.target.target_dir(
+        "recorded-key-aaaaaaaa", "feat/a")
+
+
+def test_item_repo_key_reads_origin_when_unset(repo):
+    assert batch.targets.item_repo_key(_item(repo, "feat/a", 1)) == (
+        pr.target.repo_key_from_origin(str(repo)))
+
+
+def test_item_repo_key_for_a_relative_repo_dir_uses_the_slug_not_cwd(tmp_path, monkeypatch):
+    cwd_repo = repo_with_origin(tmp_path / "cwd")
+    monkeypatch.chdir(cwd_repo)
+    item = _item(".", "feat/a", 1)
+    item.repo = "Other/Repo"
+    item.key = "Other/Repo#1"
+    got = batch.targets.item_repo_key(item)
+    assert got == pr.target.repo_key_for_slug("Other/Repo")
+    assert got != pr.target.repo_key_from_origin(str(cwd_repo))
+
+
+def test_run_repo_keys_are_sorted_and_deduplicated(repo):
+    key = pr.target.repo_key_from_origin(str(repo))
+    a = _item(repo, "feat/a", 1)
+    a.repo_key = key
+    b = _item(repo, "feat/b", 2)
+    b.repo_key = key
+    c = _item("/missing", "feat/c", 3)
+    run = Run(id="r", started_at="t", steps=[], pool=1, auto_publish=[], items=[a, b, c])
+    assert batch.targets.run_repo_keys(run) == [key]
+
+
 def test_child_env_names_only_the_items_target_when_this_process_holds_it(repo, monkeypatch):
     monkeypatch.setenv(LOCK_ENV, "/x:/y")
     monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
@@ -224,3 +259,16 @@ def test_item_holds_release_every_target_left_when_the_block_ends(repo):
         assert holds.release_finished(run) == []
         assert core.run_lock.is_held(ta)
     assert not core.run_lock.is_held(ta)
+
+
+def test_item_holds_keep_a_terminal_items_target_while_its_step_is_live(repo):
+    """A released item whose killed step has not exited yet keeps its lock."""
+    a = _item(repo, "feat/a", 1)
+    run = Run(id="r", started_at="t", steps=[Step.REVIEW], pool=1, auto_publish=[], items=[a])
+    ta = batch.targets.item_target_dir(a)
+    with batch.targets.ItemHolds() as holds:
+        _holding(holds, (ta, [a.key]))
+        a.status = ItemStatus.DROPPED
+        assert holds.release_finished(run, live={a.key}) == []
+        assert core.run_lock.is_held(ta)
+        assert holds.release_finished(run, live=set()) == [ta]

@@ -1,3 +1,4 @@
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -14,7 +15,8 @@ import batch.events  # noqa: E402
 import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-from batch.requests import Cancel, Decide, Envelope, Malformed  # noqa: E402
+import batch.targets  # noqa: E402
+from batch.requests import Cancel, Decide, Envelope, Malformed, Release  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
@@ -374,6 +376,58 @@ def test_cancel_kill_force_kills_what_the_tracked_step_already_outlived():
     batch.store.write_request(h.run.id, Cancel(kill=True))
     h.sched._once()
     assert calls == [False, True]
+
+
+def test_release_kill_of_a_live_step_does_not_requeue_the_item():
+    """A killed step exits a tick later: its item's locks are given back only then,
+    and the step's exit does not requeue the released item."""
+    released = []
+    h = Harness([row(1)])
+    holds = batch.targets.ItemHolds()
+    target = Path("/t")
+    holds.take(target, ["o/r#1"], contextlib.nullcontext())
+
+    def release(run, live):
+        if holds.release_finished(run, live):
+            released.append(["o/r#1"])
+
+    h.sched._release = release
+    orig = h._spawn
+
+    def spawn(argv, **kw):
+        proc = orig(argv, **kw)
+        proc.state = "running"
+
+        def poll():
+            if proc.state == "killed":
+                proc.state = "exited"
+                return None
+            return 143 if proc.state == "exited" else None
+
+        def kill(*, force=False):
+            if proc.state == "running":
+                proc.state = "killed"
+
+        proc.poll = poll
+        proc.kill = kill
+        return proc
+
+    h.sched._spawn = spawn
+    h.sched._admit()
+    assert h.spawned
+    assert h.run.items[0].status is batch.model.ItemStatus.RUNNING
+    batch.store.write_request(h.run.id, Release("o/r#1", kill=True))
+    h.sched._once()
+    item = h.run.items[0]
+    assert item.status is batch.model.ItemStatus.DROPPED
+    assert not released and holds.held() == [target]
+    h.sched._once()
+    assert ["o/r#1"] in released and holds.held() == []
+    assert item.status is batch.model.ItemStatus.DROPPED
+    rec = next(r for r in item.steps if r.status is not batch.model.StepStatus.PENDING
+               and r.status is not batch.model.StepStatus.SKIPPED)
+    assert rec.status is batch.model.StepStatus.INTERRUPTED
+    assert not h.run.open_decisions(item.key)
 
 
 def test_interrupt_kills_live_children_and_marks_the_run():

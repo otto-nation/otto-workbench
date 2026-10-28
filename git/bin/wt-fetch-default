@@ -59,6 +59,32 @@ _abort() {
   exit 1
 }
 
+# What a fetch leaves behind when another fetch into the same repository raced
+# it — every worktree shares one .git, and `pr` commands fetch into it
+# concurrently. Each clears on a second attempt. ai/lib/git/client.py's
+# FETCH_RETRYABLE is the same pattern; a test holds the two in agreement.
+FETCH_RETRYABLE='cannot lock ref .* but expected|did not send all necessary objects|not our ref|fatal: bad object refs/'
+
+# Unlike the Python client this takes no fetch mutex, so it can still race a
+# workbench Python fetch into the same repository; the retry below covers it.
+#
+# _fetch ARGS... — `git fetch ARGS...`, retried once on a race's leftovers.
+#
+# Maintenance is off for the same reason the Python client turns it off: the
+# detached `git maintenance run --auto` a fetch starts can take
+# packed-refs.lock after the fetch returns and fail the next one. git's own
+# output is relayed to stderr either way, so a failure still explains itself.
+_fetch() {
+  local out status=0
+  out=$(git -c maintenance.auto=false -c gc.auto=0 fetch "$@" 2>&1) || status=$?
+  if (( status != 0 )) && [[ "$out" =~ $FETCH_RETRYABLE ]]; then
+    status=0
+    out=$(git -c maintenance.auto=false -c gc.auto=0 fetch "$@" 2>&1) || status=$?
+  fi
+  [[ -z "$out" ]] || printf '%s\n' "$out" >&2
+  return "$status"
+}
+
 branch="${1:-}"
 if [[ -z "$branch" ]]; then
   err "Usage: $(basename "$0") <branch>"
@@ -80,7 +106,7 @@ worktree=$(git worktree list --porcelain | awk -v ref="refs/heads/$branch" '
 ')
 
 if [[ -n "$worktree" ]]; then
-  git fetch origin "$branch" \
+  _fetch origin "$branch" \
     || _abort "Could not fetch origin/$branch."
   git -C "$worktree" merge --ff-only "origin/$branch" \
     || _abort "'$branch' at $worktree could not fast-forward to origin/$branch."
@@ -89,5 +115,5 @@ fi
 
 # One call does both refs: fetching into refs/heads/<branch> from a configured
 # remote updates that remote's tracking ref alongside it.
-git fetch origin "$branch:$branch" \
+_fetch origin "$branch:$branch" \
   || _abort "Could not fast-forward '$branch' to origin/$branch."

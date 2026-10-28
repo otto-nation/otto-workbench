@@ -41,17 +41,19 @@ _make_review() {
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from review.ingest import ingest_review
+from review.record import RecordFinding, ReviewRecord
 from review.store import write_review
 from review.types import ReviewMeta, review_meta_from_dict
 lib, path, name, reviewed_at = sys.argv[1:5]
-text = (
-    f"# Self-Review: otto-nation/{name} — branch\n\n"
-    "## Should fix\n"
-    "- [ ] **[S1]** `a.py:1` — something worth saying about tests and mocks\n"
-)
+rec = ReviewRecord(findings=(
+    RecordFinding(
+        id="S1", severity="S", path="a.py", line=1,
+        body="something worth saying about tests and mocks",
+        checkbox=True,
+    ),
+))
 meta = review_meta_from_dict({"reviewed_at": reviewed_at}) if reviewed_at else ReviewMeta()
-write_review(Path(path), ingest_review(text, strict=False), meta)
+write_review(Path(path), rec, meta)
 PY
 }
 

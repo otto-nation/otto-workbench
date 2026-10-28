@@ -1,7 +1,7 @@
 ---
 name: incident
 description: Structured production incident investigation. Read-only triage — gathers symptoms, checks recent changes, forms ranked hypotheses. Never modifies anything.
-model: inherit
+tier: deep
 source: otto-workbench/ai/claude/agents/incident.md
 ---
 

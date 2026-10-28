@@ -6,8 +6,10 @@ still the head the batch planned from (`Item.remote_sha`):
 
 | Tree | Command |
 |---|---|
+| the worktree stands on another branch than the item's | refuse: `wrong_branch` |
 | the fetch failed | refuse: `fetch_failed` |
 | the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
+| a commit a step drafted is not on the branch, as itself, a patch-equivalent, or a replay `git.replay` can follow | refuse: `drafted_dropped` |
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
@@ -27,11 +29,23 @@ to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
 `--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. A branch the operator rebased
-by hand with `--fork-point` reaches that refusal too: the commits the fork
-point skipped are the ones listed, and the rebase's start tip stays the one
-the batch saw before the hand rebase (`batch.resolve`, `force`), so
-`not_incorporated` does not fire for it. The lease advances as soon as
+appeared since is refused again) or drops the PR. A `drafted_dropped` one lists
+the drafted commits the branch no longer carries — a hand `reset --hard`, a
+rebase that dropped one, a hand push without it — and is answered by
+cherry-picking them back and retrying, or by `force-publish` past exactly that
+list. A commit whose replay git could not determine is listed too, marked
+unverifiable: the gate fails closed. Confirmations accumulate on the item
+(`Item.forced`), so confirming one refusal never reopens the other.
+
+A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
+of the old lease that the local branch already contains (`remote_fast_forwarded`)
+— the push that follows is a fast-forward and loses nothing.
+
+A branch the operator rebased by hand with `--fork-point` reaches the
+`not_incorporated_remote` refusal too: the commits the fork point skipped are
+the ones listed, and the rebase's start tip stays the one the batch saw before
+the hand rebase (`batch.resolve`, `force`), so `not_incorporated` does not fire
+for it. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 """
 
@@ -45,7 +59,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import batch.steps
 import git.client
+import git.replay
 import rebase.target
 from batch.model import Item, Step
 from pr.comments_fix import CloseoutDebt
@@ -59,6 +75,10 @@ class Refusal(StrEnum):
     NOT_INCORPORATED_REMOTE = "not_incorporated_remote"
     FETCH_FAILED = "fetch_failed"
     UNLANDED_FIXES = "unlanded_fixes"
+    DRAFTED_DROPPED = "drafted_dropped"
+    # Also the reason the scheduler records when a step would start on a
+    # worktree standing on another branch: one value for one condition.
+    WRONG_BRANCH = "wrong_branch"
 
 
 @dataclass(frozen=True)
@@ -72,7 +92,10 @@ class TreeState:
     commits as equivalents rather than ancestors, and counts as incorporated.
     ``unincorporated`` names the remote commits (``"<sha> <subject>"``) with no
     patch-equivalent in the local branch — what a force-push of a diverged
-    branch would throw away.
+    branch would throw away. ``dropped`` names the commits a step drafted that
+    the local branch no longer carries (``"<sha> <subject>"``, suffixed
+    ``(unverifiable)`` where git could not say) — what publishing the branch as
+    it stands would lose.
     """
 
     local: str
@@ -81,6 +104,11 @@ class TreeState:
     fetched: bool = True
     incorporated: bool = True
     unincorporated: tuple[str, ...] = ()
+    dropped: tuple[str, ...] = ()
+    # The branch the worktree stands on (`batch.steps.checked_out_branch`),
+    # "" when git could not say. None only in a tree built without reading
+    # one — a test's — and then not checked.
+    checked_out: str | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +154,84 @@ def _start_incorporated(item: Item, cwd: str) -> bool:
     return _unincorporated(item, cwd, item.pre_rebase_head) == ()
 
 
+def drafted_commits(item: Item) -> list[str]:
+    """Every commit *item*'s steps recorded, in step order, each once."""
+    return list(dict.fromkeys(sha for rec in item.steps for sha in rec.commits))
+
+
+class _Carried(StrEnum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+def _carried(wt: str, branch: str, sha: str, finder: git.replay.ReplayFinder) -> _Carried:
+    """Whether *branch* still carries *sha*; UNKNOWN when git could not say.
+
+    On the branch as itself, or as a patch-equivalent (`git cherry` against
+    *sha* alone), or as the replay `git.replay` follows through git's rewrite
+    record — a conflict resolution or a squash keeps the work under a
+    different patch. An ambiguous replay counts as carried: two commits holding
+    the change is not the change lost.
+    """
+    ref = f"refs/heads/{branch}"
+    if git.client.ok("merge-base", "--is-ancestor", sha, ref, cwd=wt):
+        return _Carried.YES
+    if _cherry_plus(wt, ref, sha, f"{sha}^") == ():
+        return _Carried.YES
+    replay = finder.find(sha)
+    if replay.status is git.replay.ReplayStatus.NONE:
+        return _Carried.NO
+    if replay.status is git.replay.ReplayStatus.UNKNOWN:
+        return _Carried.UNKNOWN
+    return _Carried.YES
+
+
+# Appended to the label of a drafted commit whose replay git could not determine.
+_UNVERIFIABLE = " (unverifiable)"
+
+_DROPPED_CACHE: dict[tuple[str, str, str, tuple[str, ...]], tuple[str, ...]] = {}
+
+
+def _dropped(item: Item, wt: str) -> tuple[str, ...]:
+    """The drafted commits *item*'s branch no longer carries, labelled for the refusal.
+
+    One publish reads the tree several times; the answer depends only on the
+    branch tip and the drafted list, so it is computed once per pair. An answer
+    holding an unverifiable commit is not kept: git declining once — a timeout,
+    a locked object — must not refuse that tip for the rest of the driver's life.
+
+    ceiling: the cache lives for the process and is never evicted. Entries are
+    a few labels per item per tip a publish read. Upgrade trigger: if a
+    long-lived driver ever reads enough distinct tips for this to show in its
+    RSS, key it by run and drop a run's entries when the run finishes.
+    """
+    drafted = tuple(drafted_commits(item))
+    if not drafted:
+        return ()
+    tip = git.client.out("rev-parse", "--verify", "--quiet", f"refs/heads/{item.branch}", cwd=wt)
+    key = (wt, item.branch, tip, drafted)
+    if tip and key in _DROPPED_CACHE:
+        return _DROPPED_CACHE[key]
+    result = _compute_dropped(item, wt, drafted)
+    if tip and not any(label.endswith(_UNVERIFIABLE) for label in result):
+        _DROPPED_CACHE[key] = result
+    return result
+
+
+def _compute_dropped(item: Item, wt: str, drafted: Sequence[str]) -> tuple[str, ...]:
+    finder = git.replay.ReplayFinder(Path(wt))
+    dropped: list[str] = []
+    for sha in drafted:
+        carried = _carried(wt, item.branch, sha, finder)
+        if carried is _Carried.YES:
+            continue
+        subject = git.client.out("log", "-1", "--format=%s", sha, cwd=wt)
+        label = f"{git.client.abbrev(sha)} {subject}".rstrip()
+        dropped.append(label if carried is _Carried.NO else f"{label}{_UNVERIFIABLE}")
+    return tuple(dropped)
+
+
 def read_tree(item: Item) -> TreeState:
     """Fetch *item*'s branch alone and compare it with the local branch."""
     wt, branch = item.worktree, item.branch
@@ -149,7 +255,9 @@ def read_tree(item: Item) -> TreeState:
             divergence = RefDivergence()
         else:
             unincorporated = found
-    return TreeState(local, remote, divergence, fetched, incorporated, unincorporated)
+    dropped = _dropped(item, wt) if item.worktree else ()
+    return TreeState(local, remote, divergence, fetched, incorporated, unincorporated,
+                     dropped, batch.steps.checked_out_branch(wt))
 
 
 def _has_staged(wt: str) -> bool:
@@ -185,6 +293,23 @@ def try_adopt_equivalent_remote(item: Item, tree: TreeState) -> bool:
     return git.client.run("reset", "--keep", tree.remote, cwd=wt).ok
 
 
+def remote_fast_forwarded(item: Item, tree: TreeState) -> bool:
+    """Whether the remote moved forward from the lease to a commit the local branch holds.
+
+    ``lease ⊑ remote ⊑ local``: pushing the local branch over that remote is a
+    fast-forward, so nothing anyone pushed is lost. Fails closed on a fetch that
+    failed, a missing ref, or an ancestry git will not confirm. Does not write
+    the lease — the caller does.
+    """
+    if not (tree.fetched and tree.remote and tree.local and item.remote_sha):
+        return False
+    if tree.remote == item.remote_sha or not item.worktree:
+        return False
+    wt = item.worktree
+    return (git.client.ok("merge-base", "--is-ancestor", item.remote_sha, tree.remote, cwd=wt)
+            and git.client.ok("merge-base", "--is-ancestor", tree.remote, tree.local, cwd=wt))
+
+
 def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> PublishPlan:
     return PublishPlan(refusal=refusal, detail=detail, commits=list(commits or []))
 
@@ -212,14 +337,19 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
          no_verify: bool = False) -> PublishPlan:
     """The commands that publish *item* given *tree*, or the refusal that stops it.
 
-    *confirmed* is the operator's ``force-publish``: the remote commits listed
-    in the refusal they answered. It pushes past those and past nothing else —
-    a remote commit that appeared since is refused again, with the full list.
+    *confirmed* is the operator's ``force-publish``: the commits listed in the
+    refusals they answered, remote or drafted. It pushes past those and past
+    nothing else — a commit that appeared since is refused again, with the full
+    list.
     *closeout* is what `pr` recorded as owed to the PR; when it is owed the
     comments command runs even with nothing drafted or to push.
     """
     wt = ["--repo-dir", item.worktree]
     nv = ["--no-verify"] if no_verify else []
+    if tree.checked_out is not None and tree.checked_out != item.branch:
+        return _refuse(Refusal.WRONG_BRANCH,
+                       f"{item.worktree} is on {tree.checked_out or 'no branch git could name'}, "
+                       f"not {item.branch}")
     if not tree.fetched:
         return _refuse(Refusal.FETCH_FAILED, f"could not fetch {item.branch}")
     if not item.remote_sha or tree.remote != item.remote_sha:
@@ -234,6 +364,10 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
             Refusal.UNLANDED_FIXES,
             "the fix commit was refused, or the worktree still holds staged fixes",
         )
+    if set(tree.dropped) - set(confirmed):
+        return _refuse(Refusal.DRAFTED_DROPPED,
+                       f"{len(tree.dropped)} commit(s) the batch drafted are not on "
+                       f"{item.branch}", list(tree.dropped))
     commands: list[list[str]] = []
     if div.diverged:
         if not tree.incorporated:

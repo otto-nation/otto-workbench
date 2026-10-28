@@ -1,24 +1,13 @@
 # Review record golden fixtures (PR 0 parity)
 
-Captured from otto-workbench 765f6a9e, before `review.json` existed, by a
-scratch script that drove today's writers directly:
+The record cases are `record.json` (and `evidence_dropped/raw.json`,
+`fix_annotated/before.json`), converted at schema 2 from the PR-0 markdown
+captures by Task 4's script; the markdown is gone.
 
-| Case | Produced by |
-|---|---|
-| synthesis_pr, self_incremental_fixed | handwritten in the shape of real synthesis / incremental self-reviews (fictional content) |
-| merged | `review.merge.merge_records` over `groups/group-1.md`, `groups/group-2.md` |
-| mechanical_fallback | `review.outcome._write_mechanical_fallback` + `review.state._inject_failures_and_status` |
-| clean | `review.outcome._write_clean_review` |
-| unchanged | `review.outcome.write_unchanged_review` with `synthesis_pr` as the prior review |
-| evidence_dropped | `review.outcome._post_process_review` over `raw.md` against `tree/` |
-| fix_annotated | captured from `review.fix._apply_outcomes` + `_apply_static_outcomes` over `before.md` (those helpers are gone; the same cases now go through `review.fix.apply_outcomes` / `apply_static_outcomes`) |
-| rebuild | `review.rebuild.rebuild` over `groups/` |
+Parity is `canonical(render(record.json)) == canonical(expected.md)`.
 
-`input.md` is what today's code wrote. `expected.md`, where present, is the same
-document with its sections in spec §2 order (deviations D2/D4 in the plan).
-`meta.json` is the `ReviewMeta` whose rendered header equals `input.md`'s.
-Parity is `canonical(render(...)) == canonical(expected.md or input.md)` — see
-`tests/review_record_support.py`.
+`merged/expected.md` is `merge_records` over `groups/group-N.json`, rendered
+with sids and evidence (Task 8).
 
 The tree under `tree/src/` is stored as `*.py.txt` (`app.py.txt`, `cli.py.txt`,
 `util.py.txt`) so `bin/local/validate-test-layout` does not treat those files as

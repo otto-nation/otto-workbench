@@ -263,6 +263,12 @@ report_for() {
   [[ "$output" == *"at least $TEST_JOBS_FLOOR"* ]]
   [[ "$output" == *"at most $TEST_JOBS_CAP"* ]]
   [[ "$output" == *"TEST_HEARTBEAT_SECS"* ]]
+  [[ "$output" == *"--changed"* ]]
+  [[ "$output" == *"--direct"* ]]
+  [[ "$output" == *"--files"* ]]
+  [[ "$output" == *"--base"* ]]
+  [[ "$output" == *"WORKBENCH_FIX_BASELINE"* ]]
+  [[ "$output" == *"exits 75"* ]]
 }
 
 @test "bats and pytest run under the suite heartbeat" {

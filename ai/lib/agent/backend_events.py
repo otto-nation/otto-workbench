@@ -10,6 +10,7 @@ works identically regardless of backend.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,15 +23,128 @@ if TYPE_CHECKING:
     import agent.usage
 
 
-def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
-    """Append stderr to the session log when a subprocess exits non-zero."""
-    if proc.returncode == 0:
+# The key `ai/pi/extensions-cli/review-guard.ts` sets on a tool call it refused,
+# and the heading a clean exit's refusals are filed under in the session log.
+GUARD_REFUSAL_KEY = "blocked"
+GUARD_REFUSALS_HEADER = "--- guard refusals ---"
+
+
+def _log_stderr(proc: subprocess.Popen, session_log: str) -> None:
+    """Append what a finished agent's stderr says that its session log must keep.
+
+    On a non-zero exit, all of it, as before. On a clean exit, only the lines a
+    guard wrote for a tool call it refused: a gate that exits 0 having been
+    refused every test run reports "unavailable", and these lines are the only
+    record of why. The rest of a clean exit's stderr is the guard's per-call
+    log, which is noise in a session log.
+
+    Only safe once the child has exited — reading a live child's stderr blocks
+    until it closes the pipe — which is how both backends call it.
+    """
+    if proc.stderr is None or not session_log:
         return
     stderr_output = proc.stderr.read()
-    if not stderr_output or not session_log:
+    if not stderr_output:
         return
+    if proc.returncode != 0:
+        _append(session_log, f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+        return
+    refused = [line for line in stderr_output.splitlines() if _refusal(line)]
+    if refused:
+        _append(session_log, f"\n{GUARD_REFUSALS_HEADER}\n" + "\n".join(refused) + "\n")
+
+
+def _append(session_log: str, text: str) -> None:
     with open(session_log, "a") as f:
-        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+        f.write(text)
+
+
+def _refusal(line: str) -> str:
+    """The reason a guard line gives for refusing a tool call, or "" for any other line."""
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return ""
+    reason = record.get(GUARD_REFUSAL_KEY) if isinstance(record, dict) else None
+    return reason if isinstance(reason, str) else ""
+
+
+# What pi returns as an untimed error result without running a tool, besides a
+# guard's block. Each carries fixed text and none is a refusal: an abort and an
+# unknown tool (`pi-agent-core` `agent-loop.js`, `prepareToolCall`), arguments
+# failing schema validation (`pi-ai` `utils/validation.js`,
+# `Validation failed for tool "<name>":`), and every call in a response cut off
+# by the output token limit (`agent-loop.js`, `failToolCallsFromTruncatedMessage`).
+_PI_ABORTED = "Operation aborted"
+_PI_UNKNOWN_TOOL = re.compile(r"^Tool \S+ not found$")
+_PI_INVALID_ARGS = 'Validation failed for tool "'
+_PI_TRUNCATED = re.compile(
+    r'^Tool call ".*?" was not executed: the response hit the output token limit')
+
+
+def _tool_end(line: str) -> dict | None:
+    """The pi `tool_execution_end` event *line* holds, or None for any other line."""
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(event, dict) or event.get("type") != "tool_execution_end":
+        return None
+    return event
+
+
+def _refused_call(event: dict) -> str:
+    """The reason a pi `tool_execution_end` *event* gives for a call that never ran, or "".
+
+    Pi returns a call a `tool_call` handler blocked as an immediate error
+    result: `isError` set, the handler's reason as the result text, and no
+    `durationMs`, which only an executed call carries. Every guard's refusal
+    has this shape, including the global ones that write nothing to stderr.
+    Pi's own untimed errors are excluded by their fixed text.
+    """
+    # ceiling: an exception thrown by a tool's `prepareArguments`, or by a
+    # `tool_call` handler itself, comes back the same way with whatever text it
+    # threw, so one reads as a refusal here. Upgrade trigger: once pi's event
+    # names the blocking extension, or a verdict is seen citing such an
+    # exception as a refusal, key on that instead.
+    if event.get("isError") is not True or "durationMs" in event:
+        return ""
+    result = event.get("result")
+    content = result.get("content") if isinstance(result, dict) else None
+    text = " ".join(c.get("text", "") for c in content or () if isinstance(c, dict)).strip()
+    if text == _PI_ABORTED or _PI_UNKNOWN_TOOL.match(text):
+        return ""
+    if text.startswith(_PI_INVALID_ARGS) or _PI_TRUNCATED.match(text):
+        return ""
+    return text
+
+
+def guard_refusals(session_log: str | Path) -> tuple[str, ...]:
+    """Every refusal reason the session log at *session_log* records, in order.
+
+    Pi's `tool_execution_end` events when the log proves this pi times its
+    calls — at least one event carries `durationMs` — since only then does a
+    missing `durationMs` mean the call never ran. They record every guard's
+    block, one per refused call. Any other log (a backend that streams no
+    events, or a pi that times nothing) falls back to the blocks `_log_stderr`
+    writes, the clean exit's refusal block or a failed exit's whole stderr,
+    which carry review-guard's own JSON lines. Never both: review-guard's block
+    appears in each, and counting it twice would double the number a verdict
+    reports.
+    """
+    # ceiling: a session whose every tool call was refused has no timed event,
+    # so it falls back to stderr and a global guard's refusals there go
+    # uncounted. Upgrade trigger: once a gate verdict is seen reading "not
+    # verified" with no refusal named after a session that ran no tool, read
+    # pi's version from the log instead of inferring it from `durationMs`.
+    path = Path(session_log)
+    if not path.is_file():
+        return ()
+    lines = path.read_text(errors="replace").splitlines()
+    events = [event for event in map(_tool_end, lines) if event is not None]
+    if any("durationMs" in event for event in events):
+        return tuple(reason for reason in map(_refused_call, events) if reason)
+    return tuple(reason for reason in map(_refusal, lines) if reason)
 
 
 @dataclass

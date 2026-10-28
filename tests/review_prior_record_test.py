@@ -8,20 +8,20 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from core.phases import Phase
-from review.ingest import ingest_review
 from review.phases import PhaseResult
 from review.prompt_prior import _build_prior_section, _scoped
 from review.reconcile import _prior_findings, passed_over, reconcile
+from review.record import LedgerLine, SeveritySection
 from review.render import BANNER
 from review.steps import _carry_forward_prior_findings
 from review.store import StoredReview
-from review.types import Group, PreflightData, ReviewMeta
+from review.types import Group, PreflightData, PriorDisposition, ReviewMeta
 
-from review_record_support import fixture_meta, fixture_text
+from review_record_support import finding, fixture_meta, fixture_record, record
 
 
 def _prior() -> StoredReview:
-    return StoredReview(ingest_review(fixture_text("synthesis_pr", "input.md")), fixture_meta("synthesis_pr"))
+    return StoredReview(fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"))
 
 
 def test_prior_findings_come_from_the_record():
@@ -30,13 +30,15 @@ def test_prior_findings_come_from_the_record():
 
 
 def test_a_fixed_prior_finding_is_not_reconciled():
-    prior = StoredReview(ingest_review(fixture_text("self_incremental_fixed", "input.md")),
+    prior = StoredReview(fixture_record("self_incremental_fixed"),
                          fixture_meta("self_incremental_fixed"))
     assert "N1" not in [p.ref.finding_id for p in _prior_findings(prior.record)]
 
 
 def test_reconcile_dates_the_prior_from_its_sidecar():
-    review = ingest_review("## Prior findings\n- **[S1]** **`apps/server/src/voice/transcriber.ts:343`** — Fixed\n")
+    review = record(ledger=(LedgerLine(
+        "S1", PriorDisposition.FIXED, "apps/server/src/voice/transcriber.ts",
+    ),))
     result = reconcile(_prior(), review)
     assert result.prior_date == "2026-10-15"
 
@@ -48,9 +50,10 @@ def test_the_prompt_quotes_the_prior_record_without_bookkeeping():
     assert BANNER not in section
 
 
-def test_scoping_keeps_only_located_findings_in_the_group():
+def test_scoping_keeps_line_less_findings_by_path():
+    """`[I1]` names `voice.ts` with no line; the group holding the file carries it."""
     scoped = _scoped(_prior().record, ["apps/web/src/stores/voice.ts"])
-    assert [f.id for f in scoped.findings] == ["S2"]
+    assert [f.id for f in scoped.findings] == ["S2", "I1"]
 
 
 def test_a_stale_prior_means_no_prior_section():
@@ -64,36 +67,6 @@ def test_the_delta_is_measured_from_the_prior_sidecar(monkeypatch):
                           pr=SimpleNamespace(head_sha="ffff"), wt_path="/nowhere")
     monkeypatch.setattr(review.collect.git.client, "out", lambda *a, **k: "commit")
     assert review.collect._prior_sha_for_delta(job) == "2cb613ec084559a9590f074eabde546c44b284a3"
-
-
-_BARE = "## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n"
-_DOCKER = "## Must fix\n- [ ] **[M2]** **`Dockerfile:50`** — no USER\n"
-
-
-def test_carry_forward_keeps_a_bare_path_on_the_record_with_its_sid():
-    prior = StoredReview(ingest_review(_BARE, strict=False), ReviewMeta())
-    carried = _carry_forward_prior_findings(
-        prior, [Group(name="auth", files=["src/auth.go"], lines=1)], {1},
-    )
-    assert carried is not None
-    assert [f.id for f in carried.record.findings] == ["M1"]
-    assert all(f.sid == f.stable_id for f in carried.record.findings)
-    assert any(
-        s.note == "### Carried forward: auth" for s in carried.record.severity_sections
-    )
-
-
-def test_carry_forward_keeps_an_extensionless_dockerfile_on_the_record():
-    prior = StoredReview(ingest_review(_DOCKER, strict=False), ReviewMeta())
-    carried = _carry_forward_prior_findings(
-        prior, [Group(name="docker", files=["Dockerfile"], lines=1)], {1},
-    )
-    assert carried is not None
-    assert [f.id for f in carried.record.findings] == ["M2"]
-    assert all(f.sid for f in carried.record.findings)
-    assert any(
-        s.note == "### Carried forward: docker" for s in carried.record.severity_sections
-    )
 
 
 def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
@@ -116,7 +89,7 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
         review.pipeline, "group_files",
         lambda pr: [
             Group(name="auth", files=["src/auth.go"], lines=250),
-            Group(name="docker", files=["Dockerfile"], lines=250),
+            Group(name="docker", files=["docker/build.sh"], lines=250),
         ],
     )
     monkeypatch.setattr(
@@ -124,17 +97,16 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     )
 
     prior = StoredReview(
-        ingest_review(
-            "## Must fix\n"
-            "- [ ] **[M1]** src/auth.go:10 — auth bug\n"
-            "- [ ] **[M2]** **`Dockerfile:50`** — no USER\n",
-            strict=False,
+        record(
+            finding("M1", "auth bug", path="src/auth.go", line=10, checkbox=True),
+            finding("M2", "no USER", path="docker/build.sh", line=50, checkbox=True),
+            severity_sections=(SeveritySection("M"),),
         ),
         ReviewMeta(),
     )
     files = [
         {"path": "src/auth.go", "additions": 250, "deletions": 0},
-        {"path": "Dockerfile", "additions": 250, "deletions": 0},
+        {"path": "docker/build.sh", "additions": 250, "deletions": 0},
     ]
     job = ReviewJob(
         repo="org/repo", pr_number="1",
@@ -153,10 +125,27 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
             delta_files=["src/auth.go"], prior_head_sha="0ldc0de",
         ),
     )
+    from review.artifacts import declinable_sids
+    from review.state import PIPELINE_SCHEMA_VERSION
+    written = []
+    real_write = review.pipeline._write_pipeline_state
+    monkeypatch.setattr(review.pipeline, "_write_pipeline_state",
+                        lambda job, state: written.append(state) or real_write(job, state))
+    real_merge = review.pipeline._merge_round
+    monkeypatch.setattr(review.pipeline, "_merge_round",
+                        lambda *a, **k: captured.update(declinable=k["declinable"]) or real_merge(*a, **k))
     review.pipeline.run_multi_phase(job, disprove=False)
     merged = captured["merged"]
-    assert [f.id for f in merged.record.findings] == ["M2"]
+    assert [(f.path, f.body) for f in merged.record.findings] == [
+        ("docker/build.sh", "no USER"),
+    ]
+    assert [f.id for f in merged.record.findings] == ["M1"]
     assert all(f.sid for f in merged.record.findings)
     assert any(
         s.note == "### Carried forward: docker" for s in merged.record.severity_sections
     )
+    # A fresh run stamps the version where it constructs the state; a resume
+    # refuses any state file without it (X8).
+    assert written and written[0].schema_version == PIPELINE_SCHEMA_VERSION
+    # The groups may decline only what the prior round held.
+    assert captured["declinable"] == declinable_sids(prior) != frozenset()

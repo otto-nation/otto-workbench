@@ -22,6 +22,7 @@ from review.static_analysis import (
 )
 
 from review_fix_pass_support import git_wt, _make_job, _run, _outcome
+from review_record_support import finding, record
 
 
 def _violation(
@@ -59,7 +60,7 @@ class TestStaticViolationsAsWork:
     """
 
     def test_a_violation_becomes_an_item_the_agent_is_handed(self, git_wt, tmp_path):
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job = _make_job(git_wt, tmp_path, rec=record(), files=["src.py"])
         job.static_results = _static_results(_violation("SA1", "src.py", 12))
         inv = _run(job, {"SA1": "fixed"})
 
@@ -78,7 +79,7 @@ class TestStaticViolationsAsWork:
         keeps only the last of the two either way; this asserts that loss is
         reported rather than silent, for both id shapes.
         """
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job = _make_job(git_wt, tmp_path, rec=record(), files=["src.py"])
         adapter = review.fix.ReviewFixAdapter(
             job, [],
             violations=[
@@ -100,7 +101,7 @@ class TestStaticViolationsAsWork:
         guarantee. Without it such a violation would be handed to the agent as
         work and then refused at the commit as out of scope.
         """
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job = _make_job(git_wt, tmp_path, rec=record(), files=["src.py"])
         adapter = review.fix.ReviewFixAdapter(
             job, [], violations=[_violation("SA1", "elsewhere.py", 3)],
         )
@@ -114,7 +115,7 @@ class TestStaticViolationsAsWork:
         Before this the pass returned early on an empty findings list, so the
         violations were reported and never acted on.
         """
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job = _make_job(git_wt, tmp_path, rec=record(), files=["src.py"])
         job.static_results = _static_results(_violation("SA1", "src.py", 12))
         inv = _run(job, {"SA1": "fixed"})
 
@@ -123,14 +124,14 @@ class TestStaticViolationsAsWork:
     # passes-at-base: asserts the early return this change was careful to keep
     def test_a_clean_review_with_no_violations_still_runs_nothing(self, git_wt, tmp_path):
         """A second work stream must not make an empty one a reason to run."""
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job = _make_job(git_wt, tmp_path, rec=record(), files=["src.py"])
         inv = _run(job, {})
         inv.assert_not_called()
 
     def test_findings_and_violations_are_handed_over_together(self, git_wt, tmp_path):
         job = _make_job(
             git_wt, tmp_path,
-            "## Must fix\n- [ ] **[M1]** `src.py:1` — Missing guard\n",
+            rec=record(finding("M1", "Missing guard", path="src.py", checkbox=True)),
             files=["src.py"],
         )
         job.static_results = _static_results(_violation("SA1", "src.py", 12))
@@ -151,7 +152,7 @@ class TestStaticViolationsAsWork:
         An agent invited to argue with the checker produces a decline where the
         repo wanted an early return.
         """
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job = _make_job(git_wt, tmp_path, rec=record(), files=["src.py"])
         job.static_results = _static_results(_violation("SA1", "src.py", 12))
         inv = _run(job, {"SA1": "fixed"})
 
@@ -163,7 +164,7 @@ class TestStaticViolationsAsWork:
         """Five turns an item against an eighty-turn cap: an uncapped section
         would spend the whole budget on mechanical edits."""
         over = review.fix._MAX_STATIC_ITEMS + 5
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
+        job = _make_job(git_wt, tmp_path, rec=record(), files=["src.py"])
         # One site each: `_static_items` collapses a site to a single item, so
         # violations sharing a function would test that collapse instead.
         job.static_results = _static_results(*[
@@ -267,10 +268,7 @@ class TestADeclineSurvivesTheNextRound:
     def _declined_round(self, git_wt, tmp_path):
         """Run a pass that declines SA1, and hand back the job."""
         job = _make_job(
-            git_wt, tmp_path,
-            "## Must fix\n\n## Static Analysis\n\n"
-            "- [ ] **[SA1]** **`src.py:4`** — depth 5 exceeds limit 4 (in f())\n",
-            files=["src.py"],
+            git_wt, tmp_path, rec=record(), files=["src.py"],
         )
         job.static_results = _static_results(
             _violation("SA1", "src.py", 4, context="in f()"),
@@ -334,10 +332,7 @@ class TestADeclineSurvivesTheNextRound:
     def test_a_skip_is_not_persisted(self, git_wt, tmp_path):
         """Work still owed belongs back in the next round's list."""
         job = _make_job(
-            git_wt, tmp_path,
-            "## Must fix\n\n## Static Analysis\n\n"
-            "- [ ] **[SA1]** **`src.py:4`** — depth 5 exceeds limit 4 (in f())\n",
-            files=["src.py"],
+            git_wt, tmp_path, rec=record(), files=["src.py"],
         )
         job.static_results = _static_results(
             _violation("SA1", "src.py", 4, context="in f()"),
@@ -458,7 +453,6 @@ class TestApplyStaticOutcomes:
         quoted = "- [ ] **[SA1]** **`src.py:9`** — depth 5 exceeds limit 4"
         finding = RecordFinding(
             id="M1", severity="M", path="t.py", line=1,
-            lead="`t.py:1` — ",
             body=f"the fixture quotes a declaration:\n  {quoted}",
             checkbox=True,
         )
@@ -506,7 +500,7 @@ class TestApplyStaticOutcomes:
         """
         job = _make_job(
             git_wt, tmp_path,
-            "## Must fix\n\n" + self.SECTION,
+            rec=record(static_analysis=self.SECTION),
             files=["src.py"],
         )
         job.static_results = _static_results(

@@ -35,6 +35,7 @@ from gh.types import PRContext, PRMetadata
 from pr.domains import ReviewVerdict
 from review.document import ReviewDocument
 from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
+from review_record_support import finding, record
 
 # Derived from the preset the jobs here run at, so a changed threshold moves
 # these with it rather than leaving a suite that passes for the wrong reason.
@@ -44,16 +45,16 @@ _BIG_PR = {
     "deletions": _PRESET.multi_phase_line_threshold * 4,
     "changed_files": _PRESET.multi_phase_file_threshold * 12,
 }
-_PRIOR = synthetic_review(
-    meta="head_sha: 0ldc0de",
-    findings="## Must fix\n- **[M1]** `a.py:1` — a bug nobody has fixed\n",
+_PRIOR = record(
+    finding("M1", "a bug nobody has fixed"),
+    summary="Synthesized.",
     verdict="Request changes",
 )
 # A prior run that approved while holding a finding the fast path must not
 # clear: its stale verdict is the one a document carrying two would report.
-_PRIOR_APPROVED = synthetic_review(
-    meta="head_sha: 0ldc0de",
-    findings="## Must fix\n- **[M1]** `a.py:1` — a bug nobody has fixed\n",
+_PRIOR_APPROVED = record(
+    finding("M1", "a bug nobody has fixed"),
+    summary="Synthesized.",
     verdict="Approve — the prior run's call",
 )
 
@@ -81,7 +82,7 @@ class _Trail:
         return any(n == name for n, _, _ in self.decisions)
 
 
-def _job(tmp_path, *, prior_review="", **pr_overrides) -> ReviewJob:
+def _job(tmp_path, *, prior_review=None, **pr_overrides) -> ReviewJob:
     pr_fields = {
         "title": "t", "body": "", "head": "feat", "base": "main",
         "head_sha": "newc0de", "additions": 10, "deletions": 0,
@@ -95,12 +96,11 @@ def _job(tmp_path, *, prior_review="", **pr_overrides) -> ReviewJob:
         session_log=str(tmp_path / "session.jsonl"),
         generator_version="1.0.0", effort=Effort.MEDIUM,
     )
-    if prior_review:
-        from review.ingest import ingest_review
+    if prior_review is not None:
         from review.store import StoredReview
         from review.types import ReviewMeta
         job.prior = StoredReview(
-            ingest_review(prior_review, strict=False),
+            prior_review,
             ReviewMeta(date="2026-01-01", head_sha="0ldc0de"),
         )
     return job

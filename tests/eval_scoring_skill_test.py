@@ -23,9 +23,18 @@ from core.phases import Phase
 from eval.scoring import RunOutcome
 from eval.task import RunArtifacts, RunOptions
 import agent.backend
+import agent.context_ceiling
 import agent.phases
+from agent.models import ModelLayer, ModelRef, ResolvedModel
 
 from eval_scoring_skill_support import _run, _artifacts, _skill_case
+
+
+@pytest.fixture(autouse=True)
+def _a_configured_model(monkeypatch):
+    """Production configures a model for eval runs; with none, eval refuses
+    (see eval_run_models_test) rather than label results with nothing."""
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
 
 
 class TestGroupMatches:
@@ -418,7 +427,7 @@ class TestRunWiring:
             for path in artifacts.temp_dirs:
                 shutil.rmtree(path, ignore_errors=True)
 
-    def test_empty_model_resolves_through_phase_model_before_invoke_fix(
+    def test_empty_model_resolves_through_the_phase_before_invoke_fix(
             self, monkeypatch, tmp_path):
         case_dir = _skill_case(
             tmp_path, skill="pr-rebase", prompt="go",
@@ -430,26 +439,27 @@ class TestRunWiring:
             captured["model"] = inv.model
             captured["thinking"] = inv.thinking
             captured["provider"] = inv.provider
+            captured["compact_at"] = inv.compact_at
             return 0
 
         monkeypatch.setattr(agent.backend, "invoke_fix", stub_invoke_fix)
+        # One reference carries all three; the scorer must pass each part on.
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        monkeypatch.delenv(Phase.COMMENTS_FIX.thinking_env_key, raising=False)
         monkeypatch.setattr(
-            agent.phases, "phase_model",
-            lambda phase, explicit, cfg=None: "resolved-skill",
+            agent.phases, "resolve_phase_model",
+            lambda phase, explicit, cfg=None: ResolvedModel(
+                ModelRef("resolved-skill", provider="anthropic", level="low"), ModelLayer.TIER),
         )
-        monkeypatch.setattr(
-            agent.phases, "phase_thinking",
-            lambda phase, effort=None, cfg=None: "low",
-        )
-        monkeypatch.setattr(
-            agent.phases, "phase_provider", lambda cfg=None: "anthropic",
-        )
+        # The ceiling production fix passes run under, so eval numbers describe them.
+        monkeypatch.setattr(agent.context_ceiling, "machine_ceiling", lambda: 250_000)
 
         artifacts = eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
         try:
             assert captured["model"] == "resolved-skill"
             assert captured["thinking"] == "low"
             assert captured["provider"] == "anthropic"
+            assert captured["compact_at"] == 250_000
             assert eval.scoring_skill.SkillTask.phase is Phase.COMMENTS_FIX
         finally:
             for path in artifacts.temp_dirs:

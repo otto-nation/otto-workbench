@@ -21,9 +21,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.usage import format_tokens, parse_session_log
+import agent.usage
 import core.log
 from pr.domains import ReviewVerdict
-from review.paths import aggregate_session_usage
+from review.paths import aggregate_session_usage, read_review_meta
+import review.fix_logs
+from review.convergence import fix_candidates
 from review.document import ReviewDocument
 from review.state import (
     build_failure_detail, build_recoverable, read_pipeline_status,
@@ -35,6 +38,11 @@ from review.verdict import open_counts, resolve_review_verdict
 
 def _empty_findings() -> dict[str, int]:
     return {**{s.json_key: 0 for s in SEVERITIES}, "total": 0}
+
+
+def _workable_count(doc: ReviewDocument, held: tuple[str, ...]) -> int:
+    """Open findings a fix pass would still take."""
+    return len(fix_candidates(doc.open_findings, held, quiet=True))
 
 
 @dataclass(frozen=True)
@@ -73,6 +81,15 @@ class ReviewSummaryReport:
     # in-process by `review.completion.record_domain`. Putting it on the wire
     # would widen a published contract for a value nothing out there reads.
     unpushed_fix_commit: str = ""
+    # The latest commit this review answers "is a re-run needed" for
+    # (`ReviewMeta.reviewed_through`). Not in `to_json` for the same reason
+    # `unpushed_fix_commit` is not: in-process readers take the typed report.
+    reviewed_through: str = ""
+    # Open findings a fix pass would still take: not declined, not skipped,
+    # and not in `ReviewMeta.held_nits`. Counts findings, not static-analysis
+    # violations (which `run_fix_pass` also acts on). Not in `to_json`;
+    # `pr.review_sync` reads the typed report.
+    workable: int = 0
 
     def to_json(self) -> dict:
         """The summary as the dict written to stdout."""
@@ -135,7 +152,9 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
     resolved = resolve_review_verdict(doc, mode=meta.mode)
     verdict = resolved.value if resolved else ""
 
-    usage = aggregate_session_usage(review_dir)
+    fix_pass = usage_logs(review_dir, "", "")
+    usage = agent.usage.merge(
+        [aggregate_session_usage(review_dir), *(parse_session_log(p) for p in fix_pass)])
 
     status = read_pipeline_status(review_dir)
     failure_detail = build_failure_detail(review_dir)
@@ -162,6 +181,8 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
         cache_write_tokens=usage.cache_write_tokens,
         duration_ms=usage.duration_ms,
         unpushed_fix_commit=meta.unpushed_fix_commit,
+        reviewed_through=meta.reviewed_through,
+        workable=_workable_count(doc, meta.held_nits),
     )
 
 
@@ -175,6 +196,19 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
             review_file=review_file,
         )
     return f"REVIEW_SUMMARY:{json.dumps(report.to_json())}"
+
+
+def usage_logs(review_dir: Path | None, session_log: str, post_session_log: str) -> list[str]:
+    """Every session log this run's cost is read from: the run's own, and its fix pass's.
+
+    The fix pass's logs are read from the copy `review.fix_logs` kept, keyed by
+    this run's start, because the live ones are swept before the summary prints.
+    """
+    fix_pass = (
+        review.fix_logs.logs_for(review_dir, read_review_meta(review_dir).started_at)
+        if review_dir else []
+    )
+    return [log for log in (session_log, post_session_log) if log] + fix_pass
 
 
 def format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:
@@ -252,7 +286,7 @@ def print_summary(
         core.log.dim(f"PR:              {pr_url}")
     elif branch_name:
         core.log.dim(f"Branch:          {branch_name}")
-    usage_line = format_usage(session_log, post_session_log, wall_clock_ms=wall_clock_ms)
+    usage_line = format_usage(*usage_logs(review_dir, session_log, post_session_log), wall_clock_ms=wall_clock_ms)
     if usage_line:
         core.log.dim(usage_line.strip())
     core.log.blank()

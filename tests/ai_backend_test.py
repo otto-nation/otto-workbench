@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend
 import agent.usage
+from agent.models import ModelRef
 import git.client
 
 
@@ -187,8 +188,8 @@ class TestPreflightDispatch:
     def test_routes_to_claude_backend(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "claude")
         import agent.backend_claude
-        monkeypatch.setattr(agent.backend_claude, "preflight", lambda models, trail: False)
-        assert agent.backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is False
+        monkeypatch.setattr(agent.backend_claude, "preflight", lambda models, trail, cwd: False)
+        assert agent.backend.preflight({ModelRef("claude-sonnet-5"): ["group"]}, MagicMock(), ".") is False
 
     def test_pi_backend_skips_vertex_quota(self, monkeypatch):
         """Regression: Vertex env left exported must not abort a Pi run."""
@@ -203,7 +204,7 @@ class TestPreflightDispatch:
             pytest.fail("Pi run reached the Vertex quota API")
 
         monkeypatch.setattr(agent.vertex_quota, "check_quota", _unreachable)
-        assert agent.backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True
+        assert agent.backend.preflight({ModelRef("claude-sonnet-5"): ["group"]}, MagicMock(), ".") is True
 
 
 class TestAgentInvocation:
@@ -230,13 +231,14 @@ class TestAgentInvocation:
         assert inv.agent is None
         assert inv.max_turns is None
         assert inv.max_budget is None
-        assert inv.model == ""
+        assert inv.model is None
         assert inv.thinking is None
         assert inv.provider is None
         assert inv.label == ""
         assert inv.task is None
         assert inv.repo is None
         assert inv.pr is None
+        assert inv.branch is None
         assert inv.env is None
         assert inv.rules_home == ""
 

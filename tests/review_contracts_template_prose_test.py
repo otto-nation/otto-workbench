@@ -22,22 +22,25 @@ import agent.templates  # noqa: E402
 from agent.registry import PHASES  # noqa: E402
 from core.phases import PhaseShape  # noqa: E402
 
-# Every source that tells an agent what to write under `## Summary`. The
-# constraint below is stated in each rather than shared from one place: two of
-# them phrase it mid-clause in a numbered task list and two inside a fenced
-# output skeleton, and `review.prompt`'s `_REREVIEW_CTX` sets the house
-# precedent of spelling per-phase instructional prose out in full. The copies
-# are kept honest here instead.
-_SUMMARY_CONTRACT_RE = re.compile(r"(?m)(?:^## Summary\b|Write ## Summary)")
+# Every source that tells an agent what to write in `summary`. The constraint
+# below is stated in each rather than shared from one place, and
+# `review.prompt`'s `_REREVIEW_CTX` sets the house precedent of spelling
+# per-phase instructional prose out in full. The copies are kept honest here
+# instead.
+_SUMMARY_CONTRACT_RE = re.compile(
+    r"(?m)(?:^## Summary\b|Write ## Summary|Write `summary`|`summary` is one sentence)"
+)
 
 # A tally of prior findings in the Summary is prose no one computes: the
 # ledger that does record them is stripped before publish, so a wrong count
 # reaches the PR as the only surviving statement about the prior round.
 _NO_PRIOR_TALLY = (
-    "On a re-review, do not count the prior findings here "
-    '("13 of 19 fixed") — the `## Prior findings` ledger is the record of '
-    "what became of them, and a tally written twice is a tally that can "
-    "disagree with itself"
+    '`prior_findings` is the record of what became of them, and a tally '
+    "written twice is a tally that can disagree with itself"
+)
+_NO_PRIOR_TALLY_MD = (
+    "the `## Prior findings` ledger is the record of what became of them, "
+    "and a tally written twice is a tally that can disagree with itself"
 )
 
 
@@ -81,8 +84,9 @@ def test_summary_contract_sources_are_found():
 )
 def test_summary_contract_forbids_a_prior_findings_tally(path):
     """Every `## Summary` contract carries the no-tally constraint, verbatim."""
-    assert _NO_PRIOR_TALLY in path.read_text(), (
-        f"{path.name} states a `## Summary` contract without the "
+    text = path.read_text()
+    assert _NO_PRIOR_TALLY in text or _NO_PRIOR_TALLY_MD in text, (
+        f"{path.name} states a summary contract without the "
         f"no-prior-tally constraint. Add this sentence verbatim:\n\n{_NO_PRIOR_TALLY}"
     )
 
@@ -317,4 +321,13 @@ def test_synthesis_cross_cutting_step_matches_its_template(name, step):
     assert re.search(rf"^{step}\. Add any cross-cutting findings", body, re.M), (
         f"{name} does not number 'Add any cross-cutting findings' as step "
         f"{step}, but _SYNTHESIS_CROSS_CUTTING_STEP tells the guard it does."
+    )
+
+
+@pytest.mark.parametrize("name", ["synthesis.md", "self-review-synthesis.md"])
+def test_synthesis_keeps_a_carried_finding_sid(name):
+    """A restated finding without its sid is dropped as a new nit."""
+    body = (TEMPLATE_DIR / name).read_text()
+    assert "Keep each finding's `sid`" in body, (
+        f"{name} does not tell the agent to keep a carried finding's sid"
     )

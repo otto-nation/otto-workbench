@@ -12,6 +12,7 @@ tasks existed keeps working.
 | `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
+| `disprove` | A repo and planted findings, each marked real or false | Share of false findings falsified, and share of real findings kept |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
 that becomes the run's `cwd`, and a case without one is skipped. That repo is
@@ -35,10 +36,10 @@ Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
 Each task names the production `Phase` it measures (review: `single`, ci-fix:
-`ci_fix`, skill: `comments_fix`). With `--models` omitted, `resolved_model`
-picks that phase's model through `agent.phases.phase_model` before the run, so
-results are labelled with the id that served them rather than `(default)`, and
-the eval measures what production runs instead of the backend's interactive
+`ci_fix`, skill: `comments_fix`, disprove: `disprove`). With `--models` omitted,
+`resolved_model` picks that phase's model through `agent.phases.phase_model`
+before the run, so results are labelled with the id that served them rather
+than `(default)`, and the eval measures what production runs instead of the backend's interactive
 default. `--models` still wins when given.
 """
 
@@ -285,10 +286,16 @@ def _skill_task() -> EvalTask:
     return SkillTask()
 
 
+def _disprove_task() -> EvalTask:
+    from eval.scoring_disprove import DisproveTask
+    return DisproveTask()
+
+
 _TASK_FACTORIES = {
     DEFAULT_TASK: _review_task,
     "ci-fix": _cifix_task,
     "skill": _skill_task,
+    "disprove": _disprove_task,
 }
 
 
@@ -299,13 +306,44 @@ def get_task(name: str) -> EvalTask:
     return _TASK_FACTORIES[name]()
 
 
-def resolved_model(task: EvalTask, explicit: str) -> str:
-    """The model *task* runs: *explicit* when given, else its production phase's.
+class EvalModelUnset(ValueError):
+    """No `--models` and no configured model for the task's phase."""
 
-    The one rule for an omitted `--models`, read both where the run labels its
-    results and where the task invokes the agent, so the label and the model
-    that served it cannot disagree. Resolving through `agent.phases.phase_model`
+
+def _unset(task: EvalTask) -> EvalModelUnset:
+    return EvalModelUnset(
+        f"no model for the {task.phase} phase: pass --models, or set the "
+        "phase's models.<tier> or WORKBENCH_AI_MODEL so the results can be "
+        "labelled with the model that served them"
+    )
+
+
+def resolved_model(task: EvalTask, explicit: str) -> str:
+    """The model *task* runs, as the label its results are filed under.
+
+    *explicit* when given, else its production phase's. The one rule for an
+    omitted `--models`, read both where the run labels its results and, through
+    `resolved_settings`, where the task invokes the agent, so the label and the
+    model that served it cannot disagree. Resolving through `agent.phases`
     pins what production uses rather than falling through to the backend's
-    interactive default.
+    interactive default — and when production configures nothing, there is no
+    model to label the results with, so this raises `EvalModelUnset`.
+
+    The label is the id, with the level when the reference writes one: one
+    model at two levels is two results. The provider is left out, so a model
+    the tiers now name with its provider still files under the baseline its
+    bare id was recorded as.
     """
-    return explicit or agent.phases.phase_model(task.phase, None)
+    resolved = agent.phases.resolve_phase_model(task.phase, explicit or None)
+    if resolved is None:
+        raise _unset(task)
+    ref = resolved.ref
+    return f"{ref.id}:{ref.level}" if ref.level else ref.id
+
+
+def resolved_settings(task: EvalTask, explicit: str) -> agent.phases.PhaseSettings:
+    """Model, provider and thinking level for invoking *task* (see `resolved_model`)."""
+    settings = agent.phases.phase_settings(task.phase, explicit or None)
+    if settings.model is None:
+        raise _unset(task)
+    return settings

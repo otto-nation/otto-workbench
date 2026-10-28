@@ -116,29 +116,29 @@ print(mod._diagnose_result_type(r).message)
 
 @test "try_recover_output: recovers review from denied Bash heredoc write" {
   cat > "$TMPDIR/session.jsonl" <<'EOF'
-{"type":"result","is_error":true,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"cat > /tmp/review.md << 'REVIEW_EOF'\n## Summary\nNo issues found.\n\n## Verdict\nApprove\nREVIEW_EOF"}}]}
+{"type":"result","is_error":true,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"cat > /tmp/review.json << 'REVIEW_EOF'\n{\"summary\": \"No issues found.\", \"verdict\": \"Approve\"}\nREVIEW_EOF"}}]}
 EOF
   _py_here <<PYEOF
-mod.try_recover_output('$TMPDIR/session.jsonl', '$TMPDIR/recovered.md')
+mod.try_recover_output('$TMPDIR/session.jsonl', '$TMPDIR/recovered.json')
 PYEOF
-  [ -f "$TMPDIR/recovered.md" ]
-  grep -q "## Summary" "$TMPDIR/recovered.md"
-  grep -q "## Verdict" "$TMPDIR/recovered.md"
+  [ -f "$TMPDIR/recovered.json" ]
+  grep -q '"summary"' "$TMPDIR/recovered.json"
+  grep -q '"verdict"' "$TMPDIR/recovered.json"
 }
 
 @test "try_recover_output: recovers review from denied Write tool" {
   python3 -c "
 import json
 record = {'type': 'result', 'is_error': True, 'permission_denials': [
-    {'tool_name': 'Write', 'tool_input': {'file_path': '/tmp/review.md', 'content': '## Summary\nClean review.\n\n## Verdict\nApprove\n'}}
+    {'tool_name': 'Write', 'tool_input': {'file_path': '/tmp/review.json', 'content': '{\"summary\": \"Clean review.\", \"verdict\": \"Approve\"}'}}
 ]}
 print(json.dumps(record))
 " > "$TMPDIR/session2.jsonl"
   _py_here <<PYEOF
-mod.try_recover_output('$TMPDIR/session2.jsonl', '$TMPDIR/recovered2.md')
+mod.try_recover_output('$TMPDIR/session2.jsonl', '$TMPDIR/recovered2.json')
 PYEOF
-  [ -f "$TMPDIR/recovered2.md" ]
-  grep -q "## Summary" "$TMPDIR/recovered2.md"
+  [ -f "$TMPDIR/recovered2.json" ]
+  grep -q '"summary"' "$TMPDIR/recovered2.json"
 }
 
 @test "try_recover_output: no-op when session log missing" {

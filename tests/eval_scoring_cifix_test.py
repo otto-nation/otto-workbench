@@ -26,11 +26,20 @@ from eval.scoring_cifix import CiFixTask, run_verify, verify_command
 from eval.scoring import RunOutcome, ScoringResult, aggregate_runs
 from eval.task import RunArtifacts, RunOptions, get_task, outcome_for
 import agent.backend
+import agent.context_ceiling
 import agent.phases
+from agent.models import ModelLayer, ModelRef, ResolvedModel
 
 CORPUS = REPO_ROOT / "eval" / "corpus"
 
 VERIFY_TIMEOUT = 60
+
+
+@pytest.fixture(autouse=True)
+def _a_configured_model(monkeypatch):
+    """Production configures a model for eval runs; with none, eval refuses
+    (see eval_run_models_test) rather than label results with nothing."""
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
 
 
 def _cifix_cases() -> list[Path]:
@@ -218,7 +227,7 @@ class TestCiFixTaskRun:
         assert seen["task"] == "eval-ci-fix"
         _rm(artifacts)
 
-    def test_empty_model_resolves_through_phase_model_before_invoke_fix(
+    def test_empty_model_resolves_through_the_phase_before_invoke_fix(
             self, tmp_path, monkeypatch):
         seen = {}
 
@@ -226,20 +235,20 @@ class TestCiFixTaskRun:
             seen["model"] = inv.model
             seen["thinking"] = inv.thinking
             seen["provider"] = inv.provider
+            seen["compact_at"] = inv.compact_at
             return 0
 
         monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
+        # One reference carries all three; the scorer must pass each part on.
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        monkeypatch.delenv(Phase.CI_FIX.thinking_env_key, raising=False)
         monkeypatch.setattr(
-            agent.phases, "phase_model",
-            lambda phase, explicit, cfg=None: "resolved-ci-fix",
+            agent.phases, "resolve_phase_model",
+            lambda phase, explicit, cfg=None: ResolvedModel(
+                ModelRef("resolved-ci-fix", provider="anthropic", level="low"), ModelLayer.TIER),
         )
-        monkeypatch.setattr(
-            agent.phases, "phase_thinking",
-            lambda phase, effort=None, cfg=None: "low",
-        )
-        monkeypatch.setattr(
-            agent.phases, "phase_provider", lambda cfg=None: "anthropic",
-        )
+        # The ceiling production fix passes run under, so eval numbers describe them.
+        monkeypatch.setattr(agent.context_ceiling, "machine_ceiling", lambda: 250_000)
         case_dir = _case(tmp_path, "exit 1\n")
 
         artifacts = CiFixTask().run(
@@ -248,6 +257,7 @@ class TestCiFixTaskRun:
         assert seen["model"] == "resolved-ci-fix"
         assert seen["thinking"] == "low"
         assert seen["provider"] == "anthropic"
+        assert seen["compact_at"] == 250_000
         assert CiFixTask.phase is Phase.CI_FIX
         _rm(artifacts)
 

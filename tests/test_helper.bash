@@ -43,6 +43,23 @@ require_zsh() {
   return 1
 }
 
+# Claude Code runs its Bash tool from a snapshot of the login shell's
+# functions, taken with `typeset +f | grep -vE '^_[^_]'` (read from the
+# installed binary): every name with a single leading underscore is left out.
+# This is the one copy of that filter the suites share.
+CLAUDE_SNAPSHOT_DROPPED_RE='^_[^_]'
+
+# claude_snapshot FILE — what a Claude Code shell snapshot keeps of the
+# functions FILE defines once sourced under `zsh -f`: one definition per kept
+# function, ready to source into a fresh shell. The caller supplies whatever
+# environment FILE needs to load.
+claude_snapshot() {
+  zsh -fc "
+    source '$1'
+    typeset +f | grep -vE '$CLAUDE_SNAPSHOT_DROPPED_RE' | while IFS= read -r f; do functions \"\$f\"; done
+  "
+}
+
 common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
   # causes git commands in tests to target the real repo instead of temp repos)
@@ -93,6 +110,19 @@ common_setup() {
   # this call, pointing at a file it wrote — see lint_sweep.bats.
   export GIT_CONFIG_GLOBAL="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/gitconfig-global"
   export GIT_CONFIG_SYSTEM=/dev/null
+
+  # A workbench config root of its own, for the same reason: `models:`, `agent:`
+  # and the rest of config.yml decide which model a phase resolves to and which
+  # backend an AI call uses, so a suite that reads the developer's real file
+  # passes or fails by whose machine runs it. pytest already draws this floor
+  # (`_isolate_workbench_config`); without it here, a machine that sets
+  # `models.light` fails every suite asserting an unset model.
+  #
+  # Left absent rather than created: a fresh machine has no file there, which is
+  # the state a test that wants config writes into. A suite pointing the root
+  # elsewhere (gate_sandbox, a fixture of its own) exports again after this call
+  # and wins.
+  export WORKBENCH_CONFIG_DIR="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/workbench-config"
 
   # Pin mise's global config to the real one, for the same reason git gets a
   # config of its own: a test that swaps HOME otherwise changes what mise

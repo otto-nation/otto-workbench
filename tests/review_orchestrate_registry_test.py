@@ -2,6 +2,7 @@
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
@@ -10,6 +11,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
 
+from core.phases import Mode, Phase
+from review.artifacts import DisproveArtifact, GroupArtifact, ReviewArtifact, output_format
+from review.prompt import build_common_sections
+from review.store import StoredReview
+from review.types import ReviewMeta
+import review.registry
+from review_prompt_support import MAX_PROMPT_BYTES, _make_job, _make_preflight
+from review_record_support import finding, record
 from conftest import TEST_MODEL as _TEST_MODEL, model_budget_bytes
 
 _TEST_BUDGET = model_budget_bytes()
@@ -335,3 +344,69 @@ class TestBuildPromptPreflight:
         assert "NOT in the PR" not in result
         assert "must be read directly" not in result
         assert "Read source files directly" in result
+
+
+def test_the_output_block_carries_the_format_after_the_write_recipe():
+    job = _make_job(_make_preflight())
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    built = review.registry.for_phase(Phase.DISPROVE).build(
+        job, common, {"artifact": DisproveArtifact}, "/tmp/d.json",
+    )
+    block = built.builder.vars["output_block"]
+    assert block.startswith("Write your output to: /tmp/d.json")
+    assert block.endswith("\n\n" + output_format(DisproveArtifact, Mode.PR, rereview=False))
+
+
+def test_build_prompt_hands_the_builder_its_artifact(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(review.registry, "fit_rendered_prompt", lambda phase, job, **kw: seen.update(kw) or "p")
+    monkeypatch.setattr(review.registry, "selected_backend", lambda: None)
+    monkeypatch.setattr(review.registry, "phase_model", lambda *a, **k: "model")
+    entry = review.registry._PHASES[Phase.DISPROVE]
+    monkeypatch.setitem(review.registry._PHASES, Phase.DISPROVE, replace(entry, artifact=DisproveArtifact))
+    review.registry.build_prompt(Phase.DISPROVE, _make_job(_make_preflight()), max_turns=5, review_content="x")
+    assert seen["extra"]["artifact"] is DisproveArtifact
+
+
+def test_the_single_prompt_shows_the_carry_fields_only_with_a_prior_section():
+    """D20: the builder that built the prior section decides; `job.prior` alone over-shows."""
+    job = _make_job(_make_preflight())
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    build = review.registry.for_phase(Phase.SINGLE).build
+    first = build(job, common, {"artifact": ReviewArtifact}, "/tmp/s.json").builder.vars["output_block"]
+    job.prior = StoredReview(record(finding("M1", "still broken")), ReviewMeta())
+    again = build(job, common, {"artifact": ReviewArtifact}, "/tmp/s.json").builder.vars["output_block"]
+    assert "`findings[].sid`" not in first and "`prior_findings`" not in first
+    assert "`findings[].sid`" in again and "`prior_findings`" in again
+
+
+def test_the_group_prompt_shows_the_carry_fields_only_for_a_prior_finding_in_its_files():
+    """D20: a prior finding outside the group's files builds no prior section, so no carry fields."""
+    job = _make_job(_make_preflight())
+    job.prior = StoredReview(record(finding("M1", "still broken", path="a.py", line=1)), ReviewMeta())
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    build = review.registry.for_phase(Phase.GROUP).build
+
+    def output_block(files: list[str]) -> str:
+        extra = {
+            "artifact": GroupArtifact, "group_idx": 1, "group_count": 1, "group_name": "g",
+            "group_files_formatted": "\n".join(files), "group_file_paths": files,
+        }
+        return build(job, common, extra, "/tmp/group-1.json").builder.vars["output_block"]
+
+    outside, inside = output_block(["b.py"]), output_block(["a.py"])
+    assert "`findings[].sid`" not in outside and "`prior_findings`" not in outside
+    assert "`findings[].sid`" in inside and "`prior_findings`" in inside
+
+
+def test_the_synthesis_prompt_shows_the_carry_fields_only_on_a_re_review():
+    """D20: synthesis has no `## Prior review` section to test; a prior round is what it carries."""
+    job = _make_job(_make_preflight())
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    build = review.registry.for_phase(Phase.SYNTHESIS).build
+    extra = {"artifact": ReviewArtifact, "group_count": 2, "merged_content": "```json\n{}\n```"}
+    first = build(job, common, extra, "/tmp/synthesis.json").builder.vars["output_block"]
+    job.prior = StoredReview(record(finding("M1", "still broken")), ReviewMeta())
+    again = build(job, common, extra, "/tmp/synthesis.json").builder.vars["output_block"]
+    assert "`findings[].sid`" not in first and "`prior_findings`" not in first
+    assert "`findings[].sid`" in again and "`prior_findings`" in again

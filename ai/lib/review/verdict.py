@@ -187,6 +187,10 @@ NO_CHANGES_SUMMARY = (
     "No agent ran — the author has committed nothing since the prior review. "
     "Its findings are carried forward below unchanged."
 )
+SETTLED_SUMMARY = (
+    "Synthesis did not run — no group reported a new finding, and every prior "
+    "finding was settled without it."
+)
 
 
 def _summary_lead(counts: dict[str, int], *, group_count: int, summary_note: str,

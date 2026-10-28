@@ -363,7 +363,7 @@ _wait() {
   "
   [ "$status" -eq 0 ]
   [[ "$output" == *"foreground"* ]]
-  [[ "$output" == *"bash tool's own \`timeout\` parameter (check its unit)"* ]]
+  [[ "$output" == *"coreutils \`timeout <seconds>\` inside the command"* ]]
   [[ "$output" == *"do not end the turn"* ]]
 }
 

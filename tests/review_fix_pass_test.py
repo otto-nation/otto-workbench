@@ -30,15 +30,16 @@ from agent.registry import PHASES
 import fix.engine
 import fix.gate
 import review.document
-import review.ingest
 import fix.suite
 import review.fix
 import review.paths
 import review.types
 from core.phases import Effort, Phase
 from pr.fix import FixOutcome
+from review.record import Disposition
 from review.types import Finding
 import fix.verify
+from review_record_support import finding, record
 
 from review_fix_pass_support import (
     _PUSHED,
@@ -60,10 +61,12 @@ class TestTheWorkSet:
     def test_only_open_findings_become_items(self, git_wt, tmp_path):
         job = _make_job(
             git_wt, tmp_path,
-            "## Must fix\n"
-            "- [x] **[M1]** `a.py:1` — Already fixed\n"
-            "- [ ] **[M2]** `b.py:2` — *(declined — documented tradeoff)* — Lock\n"
-            "- [ ] **[M3]** `c.py:3` — Still open\n",
+            rec=record(
+                finding("M1", "Already fixed", checkbox=True, disposition=Disposition.FIXED),
+                finding("M2", "Lock", path="b.py", line=2, checkbox=True,
+                        disposition=Disposition.DECLINED, reason="documented tradeoff"),
+                finding("M3", "Still open", path="c.py", line=3, checkbox=True),
+            ),
         )
         inv = _run(job, {"M3": "fixed"})
 
@@ -73,7 +76,7 @@ class TestTheWorkSet:
 
     def test_an_item_is_labelled_with_its_severity_section(self, git_wt, tmp_path):
         """The agent orders its work by severity, so the section has to reach it."""
-        job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `a.py:1` — Style\n")
+        job = _make_job(git_wt, tmp_path, rec=record(finding("N1", "Style", checkbox=True)))
         adapter = review.fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.items()[0].label == review.types.severity_by_key("N").section
@@ -81,14 +84,16 @@ class TestTheWorkSet:
     def test_a_review_with_nothing_open_never_runs_the_agent(self, git_wt, tmp_path):
         job = _make_job(
             git_wt, tmp_path,
-            "## Must fix\n"
-            "- [ ] **[M1]** `src.py:1` — *(declined — documented tradeoff)* — Lock\n",
+            rec=record(finding(
+                "M1", "Lock", path="src.py", checkbox=True,
+                disposition=Disposition.DECLINED, reason="documented tradeoff",
+            )),
         )
         inv = _run(job, {})
         inv.assert_not_called()
 
     def test_no_review_file_never_runs_the_agent(self, git_wt, tmp_path):
-        job = _make_job(git_wt, tmp_path, "")
+        job = _make_job(git_wt, tmp_path)
         inv = _run(job, {})
         inv.assert_not_called()
 
@@ -100,7 +105,7 @@ class TestWhatTheReviewLendsTheAgentCall:
         self, git_wt, tmp_path,
     ):
         """Resolved from the process cwd, these answered for the wrong worktree."""
-        job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `src.py:1` — Style\n")
+        job = _make_job(git_wt, tmp_path, rec=record(finding("N1", "Style", path="src.py", checkbox=True)))
         job.model = "claude-opus-5"
         job.effort = Effort.HIGH
         inv = _run(job, {"N1": "fixed"})
@@ -118,7 +123,7 @@ class TestWhatTheReviewLendsTheAgentCall:
         The engine's own default sits under a name the sweep never asks for, so
         a `--fix` pass would leave its session log behind in a finished review.
         """
-        job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `src.py:1` — Style\n")
+        job = _make_job(git_wt, tmp_path, rec=record(finding("N1", "Style", path="src.py", checkbox=True)))
         adapter = review.fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.session_log == Path(
@@ -130,7 +135,7 @@ class TestWhatTheReviewLendsTheAgentCall:
         self, git_wt, tmp_path,
     ):
         """The tracking file lives there, not in the worktree under review."""
-        job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `src.py:1` — Style\n")
+        job = _make_job(git_wt, tmp_path, rec=record(finding("N1", "Style", path="src.py", checkbox=True)))
         adapter = review.fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.tracking_path.parent in adapter.add_dirs()
@@ -149,7 +154,7 @@ class TestTheVerifyGate:
     review's sweep looks for them.
     """
 
-    REVIEW = "## Must fix\n- [ ] **[M1]** `helper.py:1` — Missing helper\n"
+    REVIEW = record(finding("M1", "Missing helper", path="helper.py", checkbox=True))
 
     @patch("git.push.push", return_value=_PUSHED)
     def test_a_fix_the_gate_falsifies_is_not_committed_as_fixed(
@@ -161,7 +166,7 @@ class TestTheVerifyGate:
         change with no assertion behind it — and both were truthful under the
         box's own contract.
         """
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
@@ -184,7 +189,7 @@ class TestTheVerifyGate:
     def test_a_fix_the_gate_confirms_is_committed_as_fixed(
         self, mock_push, git_wt, tmp_path,
     ):
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
@@ -201,7 +206,7 @@ class TestTheVerifyGate:
         stub in `_run` patches the runner, not the wiring — so this asserts the
         argument reaches `fix.engine.run`.
         """
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         with patch.object(fix.engine, "run") as run:
             review.fix.run_fix_pass(job)
 
@@ -225,7 +230,7 @@ class TestTheVerifyGate:
         The engine's default sits under a name `review.gc` never asks for, so a
         gated pass would leave its session log beside the deliverable.
         """
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         adapter = review.fix.ReviewFixAdapter(job, [_finding("M1")])
 
         assert adapter.verify_session_log(1) == Path(
@@ -248,7 +253,7 @@ class TestTheCommitScope:
     def _adapter(self, git_wt, tmp_path, *, files=None):
         job = _make_job(
             git_wt, tmp_path,
-            "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n",
+            rec=record(finding("M1", "Bug", checkbox=True)),
             files=files,
         )
         return review.fix.ReviewFixAdapter(job, [_finding("M1")])
@@ -265,7 +270,7 @@ class TestTheCommitScope:
         self, git_wt, tmp_path, capsys,
     ):
         """Edits still commit; without review.json the answers have nowhere to land."""
-        job = _make_job(git_wt, tmp_path, "")
+        job = _make_job(git_wt, tmp_path)
         Path(job.review_file).write_text(
             "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n",
         )
@@ -433,13 +438,13 @@ class TestBranchScope:
     about the branch — and landing drops it so the file stays dirty.
     """
 
-    REVIEW = "## Must fix\n- [ ] **[M1]** `helper.py:1` — Missing helper\n"
+    REVIEW = record(finding("M1", "Missing helper", path="helper.py", checkbox=True))
 
     @patch("git.push.push", return_value=_PUSHED)
     def test_an_out_of_branch_edit_is_reported_and_left_uncommitted(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
-        job = _make_job(git_wt, tmp_path, self.REVIEW, files=["helper.py"])
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW, files=["helper.py"])
 
         def agent_run():
             (git_wt / "helper.py").write_text("def helper(): pass\n")
@@ -460,7 +465,7 @@ class TestBranchScope:
     def test_an_in_branch_edit_is_committed(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
-        job = _make_job(git_wt, tmp_path, self.REVIEW, files=["helper.py"])
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW, files=["helper.py"])
         _run(
             job, {"M1": "fixed"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
@@ -480,7 +485,7 @@ class TestBranchScope:
         git_out(git_wt, "commit", "-qm", "add foo")
         job = _make_job(
             git_wt, tmp_path,
-            "## Must fix\n- [ ] **[M1]** `src/foo.py:1` — Needs a test\n",
+            rec=record(finding("M1", "Needs a test", path="src/foo.py", checkbox=True)),
             files=["src/foo.py"],
         )
 
@@ -494,7 +499,7 @@ class TestBranchScope:
 
     def test_the_prompt_carries_the_branch_file_list(self, git_wt, tmp_path):
         job = _make_job(
-            git_wt, tmp_path, self.REVIEW,
+            git_wt, tmp_path, rec=self.REVIEW,
             files=["src/auth.go", "pkg/util.go"],
             base="feat/parent",
         )
@@ -513,108 +518,3 @@ class TestBranchScope:
         assert "${branch_files}" not in prompt
         assert "${finding_anchors}" not in prompt
         assert "${branch_base}" not in prompt
-
-
-# ── the parsers the pass reads its work set through ─────────────────────────
-
-
-class TestParseCheckboxState:
-    def test_unchecked_finding(self):
-        text = "## Must fix\n- [ ] **[M1]** **`file.go:10`** — Bug found\n"
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert len(findings) == 1
-        assert findings[0].checked is False
-
-    def test_checked_finding(self):
-        text = "## Must fix\n- [x] **[M1]** **`file.go:10`** — Bug fixed\n"
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert len(findings) == 1
-        assert findings[0].checked is True
-
-    def test_no_checkbox_finding(self):
-        text = "## Must fix\n- **[M1]** **`file.go:10`** — Bug found\n"
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert len(findings) == 1
-        assert findings[0].checked is False
-
-    def test_mixed_checkbox_states(self):
-        text = (
-            "## Must fix\n"
-            "- [x] **[M1]** **`a.go:1`** — Fixed\n"
-            "- [ ] **[M2]** **`b.go:2`** — Not fixed\n"
-            "## Nit\n"
-            "- [x] **[N1]** **`c.go:3`** — Also fixed\n"
-        )
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert len(findings) == 3
-        by_id = {f.id: f for f in findings}
-        assert by_id["M1"].checked is True
-        assert by_id["M2"].checked is False
-        assert by_id["N1"].checked is True
-
-
-class TestParseDeclinedFindings:
-    """`*(declined — reason)*` is where an adjudicated verdict survives.
-
-    The `## Prior findings` ledger is stripped before the review file is
-    finished, so a decline recorded only there would reach the next fix pass
-    looking like an ordinary open finding.
-    """
-
-    def test_reads_the_reason_off_the_line(self):
-        text = (
-            "## Must fix\n"
-            "- [ ] **[M1]** `a.go:1` — *(declined — documented `ceiling:` tradeoff)* "
-            "— Global lock serialises writes\n"
-        )
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert findings[0].declined is True
-        assert findings[0].decline_reason == "documented `ceiling:` tradeoff"
-
-    def test_a_decline_without_a_reason_still_registers(self):
-        text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(declined)* — Body\n"
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert findings[0].declined is True
-        assert findings[0].decline_reason == ""
-
-    def test_a_trailing_annotation_registers(self):
-        """The templates also let the annotation close the line."""
-        text = (
-            "## Must fix\n"
-            "- [ ] **[M1]** `a.go:1` — Global lock *(declined — by design)*\n"
-        )
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert findings[0].declined is True
-        assert findings[0].decline_reason == "by design"
-
-    def test_a_finding_that_only_describes_the_annotation_is_not_declined(self):
-        """Reviewing this parser writes the annotation into a finding's prose.
-
-        Read as a decline, the finding leaves `run_fix_pass`'s work set
-        permanently, and nothing warns that it did.
-        """
-        text = (
-            "## Must fix\n"
-            "- [ ] **[M1]** `review_document.py:99` — The `*(declined — reason)*` "
-            "annotation is matched anywhere in the line, so prose trips it\n"
-        )
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert findings[0].declined is False
-        assert findings[0].decline_reason == ""
-
-    def test_a_skip_is_not_a_decline(self):
-        """A skip is work deferred; a decline is work rejected."""
-        text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(skipped — needs design)* — Body\n"
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert findings[0].declined is False
-
-    def test_a_file_without_declines_parses_unchanged(self):
-        """Review files predating `Declined` must keep parsing."""
-        text = (
-            "## Must fix\n"
-            "- [x] **[M1]** `a.go:1` — Fixed\n"
-            "- [ ] **[M2]** `b.go:2` — Still open\n"
-        )
-        findings = [f.view() for f in review.ingest.ingest_review(text, strict=False).visible]
-        assert [f.declined for f in findings] == [False, False]
-        assert [f.decline_reason for f in findings] == ["", ""]

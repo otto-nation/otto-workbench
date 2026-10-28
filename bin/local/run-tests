@@ -15,7 +15,7 @@
 # nothing the failure output does not. A caller that wants it back passes it
 # after --.
 #
-# Usage: bin/local/run-tests [--bats|--pytest] [--shard N/M] [-- RUNNER_ARGS...]
+# Usage: bin/local/run-tests [--bats|--pytest] [--shard N/M] [--changed] [--direct] [--files LIST] [--base REF] [-- RUNNER_ARGS...]
 # Exit code: 0 when every suite it ran passed, 1 otherwise.
 
 set -e
@@ -128,7 +128,7 @@ report_jobs() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--bats|--pytest] [--shard N/M] [-- RUNNER_ARGS...]
+Usage: $(basename "$0") [--bats|--pytest] [--shard N/M] [--changed] [--direct] [--files LIST] [--base REF] [-- RUNNER_ARGS...]
 
 Run the test suites with the repo's parallelism settings. With no suite flag,
 runs bats and then pytest, stopping at the first failure.
@@ -145,9 +145,13 @@ Options:
                   The pytest counterpart of --files.
   --changed       Run only the files the diff can reach, working tree
                   included, via select-tests and select-pytest. Falls back to
-                  the whole suite when a selector is missing or declines.
+                  the whole suite when a selector is missing or declines,
+                  except under WORKBENCH_FIX_BASELINE, which exits 75 instead.
   --base REF      With --changed: diff against REF. Default: WORKBENCH_FIX_BASE
                   when set (a fix pass's starting commit), else origin/main.
+  --direct        With --changed: select pytest files by direct import only
+                  (one hop through tests/ support modules). The fix pass's
+                  selection; the pre-push gate keeps the transitive closure.
   --              Pass every remaining argument through to the runner
   -h, --help      Show this help
 
@@ -157,6 +161,11 @@ Environment:
                   other test runs are not already holding. Set it to take the
                   sizing back; TEST_JOBS=1 restores the serial ordering.
   WORKBENCH_FIX_BASE  Default --base for --changed; a fix pass exports it.
+  WORKBENCH_FIX_PATHS_FILE  With --changed: select for the paths in this file
+                  instead of a diff; a fix pass exports it.
+  WORKBENCH_FIX_BASELINE  With --changed: never widen to the whole suite; a
+                  selector that is missing or fails exits 75. A fix pass
+                  exports it to the re-run at its pre-pass tree only.
   TEST_HEARTBEAT_SECS
                   Seconds between stderr progress lines while a suite runs.
                   Default 60. 0 disables the heartbeat (the child is still
@@ -538,6 +547,29 @@ CHANGED=false
 # what the pass's own edits reach), and origin/main otherwise.
 CHANGED_BASE=""
 
+# DIRECT — with --changed, ask select-pytest for direct importers only (--direct):
+# the fix pass's selection, where the transitive closure is the pre-push gate's.
+DIRECT=false
+
+# NO_SELECTION_EXIT — what a fix pass's baseline re-run exits with rather than
+# widening a selection it could not make to the whole suite. fix.suite reads it
+# as "no baseline" (fix.suite.NO_SELECTION_EXIT; tests/fix_baseline_test.py
+# fails if the two drift).
+NO_SELECTION_EXIT=75
+
+# _no_selection SELECTOR — a selector that is missing or failed. Outside a
+# baseline re-run the whole suite stands in for it (see select_changed). Under
+# WORKBENCH_FIX_BASELINE, which the fix engine exports to that re-run only, the
+# run exits instead: a whole-suite run to compare one pass's failures against
+# is the cost the comparison exists to avoid, and never a local run's to spend.
+_no_selection() {
+  if [[ -n "${WORKBENCH_FIX_BASELINE:-}" ]]; then
+    err "$1 could not select for a fix pass's baseline re-run — not widening to the whole suite"
+    exit "$NO_SELECTION_EXIT"
+  fi
+  return 0
+}
+
 # select_changed — fill BATS_FILES and PYTEST_FILES from the selectors.
 #
 # A selector that is missing or fails leaves its variable empty, which run_bats
@@ -556,16 +588,32 @@ CHANGED_BASE=""
 # in front of the target developers run between edits.
 select_changed() {
   local selected base="${CHANGED_BASE:-${WORKBENCH_FIX_BASE:-origin/main}}"
+  local -a scope=(--base "$base") py_flags=()
+  # A fix pass hands the paths it changed, so a re-run at its pre-pass tree
+  # selects exactly what the pass run selected instead of diffing that tree.
+  if [[ -n "${WORKBENCH_FIX_PATHS_FILE:-}" ]]; then
+    scope=(--paths-file "$WORKBENCH_FIX_PATHS_FILE")
+  fi
+  if $DIRECT; then
+    py_flags=(--direct)
+  fi
+  if [[ "$1" != pytest ]]; then
+    [[ -x "$WORKBENCH_DIR/bin/local/select-tests" ]] || _no_selection select-tests
+  fi
   if [[ "$1" != pytest ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-tests" ]]; then
-    if selected=$("$WORKBENCH_DIR/bin/local/select-tests" --base "$base" 2>/dev/null); then
+    if selected=$("$WORKBENCH_DIR/bin/local/select-tests" "${scope[@]}" 2>/dev/null); then
       [[ -n "$selected" ]] || BATS_NONE=true
     else
+      _no_selection select-tests
       selected=""
     fi
     BATS_FILES="$selected"
   fi
+  if [[ "$1" != bats ]]; then
+    [[ -x "$WORKBENCH_DIR/bin/local/select-pytest" ]] || _no_selection select-pytest
+  fi
   if [[ "$1" != bats ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-pytest" ]]; then
-    selected=$("$WORKBENCH_DIR/bin/local/select-pytest" --base "$base" 2>/dev/null) || selected=""
+    selected=$("$WORKBENCH_DIR/bin/local/select-pytest" "${scope[@]}" "${py_flags[@]+"${py_flags[@]}"}" 2>/dev/null) || { _no_selection select-pytest; selected=""; }
     PYTEST_FILES="$selected"
   fi
 }
@@ -604,10 +652,17 @@ main() {
       -h|--help) usage; exit 0 ;;
       --bats) suite=bats ;;
       --pytest) suite=pytest ;;
-      --shard) shift; SHARD="$1" ;;
-      --files) shift; BATS_FILES="$1" ;;
-      --pytest-files) shift; PYTEST_FILES="$1" ;;
+      --shard)
+        [[ -n "${2:-}" ]] || { err "--shard requires an argument"; exit 2; }
+        shift; SHARD="$1" ;;
+      --files)
+        [[ -n "${2:-}" ]] || { err "--files requires an argument"; exit 2; }
+        shift; BATS_FILES="$1" ;;
+      --pytest-files)
+        [[ -n "${2:-}" ]] || { err "--pytest-files requires an argument"; exit 2; }
+        shift; PYTEST_FILES="$1" ;;
       --changed) CHANGED=true ;;
+      --direct) DIRECT=true ;;
       --base)
         [[ -n "${2:-}" ]] || { err "--base requires an argument"; exit 2; }
         shift; CHANGED_BASE="$1" ;;
@@ -639,6 +694,11 @@ main() {
 
   if [[ -n "$CHANGED_BASE" ]] && ! $CHANGED; then
     err "--base only applies with --changed"
+    exit 1
+  fi
+
+  if $DIRECT && ! $CHANGED; then
+    err "--direct only applies with --changed"
     exit 1
   fi
 

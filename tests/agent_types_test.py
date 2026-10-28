@@ -15,19 +15,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import agent.types
+from agent.registry import PHASES
 from agent.types import ItemScaling, PhaseSpec
-from core.phases import Mode, Phase, PhaseDomain, PhaseShape
+from core.phases import Mode, Phase, PhaseDomain, PhaseShape, Tier
 
 
 class TestPhaseSpecDefaults:
     def test_is_frozen(self):
-        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review", tier=Tier.STANDARD)
         with pytest.raises(dataclasses.FrozenInstanceError):
             spec.max_turns = 99
 
     def test_a_new_phase_inherits_the_omitted_bump(self):
         """The default is on, so forgetting the flag over-budgets rather than under."""
-        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review", tier=Tier.STANDARD)
         assert spec.scales_with_omitted is True
 
     def test_a_new_phase_is_a_tool_using_agent(self):
@@ -37,11 +39,16 @@ class TestPhaseSpecDefaults:
         write to it; defaulting to PROMPT would silently drop the tools a
         forgetful declaration still expects to have.
         """
-        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review", tier=Tier.STANDARD)
         assert spec.shape is PhaseShape.AGENT
 
+    def test_a_phase_must_name_its_tier(self):
+        """A spec with no tier would run on the backend's default whatever the tiers say."""
+        with pytest.raises(TypeError, match="tier"):
+            PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+
     def test_a_new_phase_takes_no_pinned_agent_or_budget(self):
-        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review", tier=Tier.STANDARD)
         assert spec.agent is None
         assert spec.max_budget is None
         assert spec.thinking is None
@@ -71,24 +78,28 @@ class TestPhaseSpecArtifactNames:
 
     @staticmethod
     def _review(phase: Phase) -> PhaseSpec:
-        return PhaseSpec(phase, PhaseDomain.REVIEW, "label")
+        return PhaseSpec(phase, PhaseDomain.REVIEW, "label", tier=Tier.STANDARD)
 
     def test_both_names_share_the_phase_as_their_stem(self):
         spec = self._review(Phase.HOLISTIC)
         assert spec.log_filename == "holistic.jsonl"
-        assert spec.output_filename == "holistic.md"
+        assert spec.output_filename == "holistic.json"
 
     def test_the_fan_out_phase_carries_an_index(self):
         spec = self._review(Phase.GROUP)
         assert spec.log_filename == "group-{}.jsonl"
-        assert spec.output_filename == "group-{}.md"
+        assert spec.output_filename == "group-{}.json"
 
     def test_single_names_no_log_of_its_own(self):
         # It writes to the job's log, which the caller may point anywhere.
         assert self._review(Phase.SINGLE).log_filename == ""
 
-    def test_a_phase_that_writes_the_review_file_names_no_artifact(self):
-        for phase in (Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX):
+    def test_single_and_synthesis_write_json_artifacts(self):
+        assert self._review(Phase.SINGLE).output_filename == "single.json"
+        assert self._review(Phase.SYNTHESIS).output_filename == "synthesis.json"
+
+    def test_a_phase_that_writes_no_findings_artifact(self):
+        for phase in (Phase.FIX, Phase.FIX_VERIFY):
             assert self._review(phase).output_filename == ""
 
     def test_a_phase_outside_review_names_no_review_artifact(self):
@@ -98,7 +109,7 @@ class TestPhaseSpecArtifactNames:
         path — the review sweep would glob for it and the fix pass would look
         for its log where it never lands.
         """
-        spec = PhaseSpec(Phase.COMMENTS_FIX, PhaseDomain.COMMENTS, "Fix pass")
+        spec = PhaseSpec(Phase.COMMENTS_FIX, PhaseDomain.COMMENTS, "Fix pass", tier=Tier.STANDARD)
         with pytest.raises(ValueError, match="entry point"):
             spec.output_filename
         with pytest.raises(ValueError, match="entry point"):
@@ -110,7 +121,7 @@ class TestPhaseSpecTemplates:
 
     @staticmethod
     def _review(phase: Phase, template) -> PhaseSpec:
-        return PhaseSpec(phase, PhaseDomain.REVIEW, "label", template=template)
+        return PhaseSpec(phase, PhaseDomain.REVIEW, "label", tier=Tier.STANDARD, template=template)
 
     def test_one_template_answers_every_mode(self):
         spec = self._review(Phase.HOLISTIC, "holistic.md")
@@ -131,7 +142,7 @@ class TestPhaseSpecTemplates:
 
     def test_a_phase_declaring_no_template_says_so(self):
         """An empty string reaches `render` as a missing file one layer later."""
-        spec = PhaseSpec(Phase.REBASE, PhaseDomain.REBASE, "Rebase assist")
+        spec = PhaseSpec(Phase.REBASE, PhaseDomain.REBASE, "Rebase assist", tier=Tier.STANDARD)
         with pytest.raises(ValueError, match="no prompt template"):
             spec.template_for()
 

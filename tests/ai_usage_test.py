@@ -277,6 +277,16 @@ def test_record_creates_ledger_dir(ledger):
     assert ledger.is_dir()
 
 
+def test_record_includes_branch_and_invocation(ledger):
+    agent.usage.record(
+        script="review-orchestrate", entry_point="agent", backend="pi", model=None,
+        usage=SessionUsage(), exit_code=0, repo="o/r", pr="7",
+        branch="isaac/fix/x", invocation="0123456789ab",
+    )
+    rec = _records(ledger)[0]
+    assert (rec["branch"], rec["invocation"]) == ("isaac/fix/x", "0123456789ab")
+
+
 def test_record_includes_optional_context(ledger):
     agent.usage.record(
         script="review-threads", entry_point="fix", backend="claude", model=None,
@@ -301,6 +311,8 @@ def test_record_omits_absent_optional_context(ledger):
     assert "pr" not in rec
     assert "phase" not in rec
     assert "num_turns" not in rec
+    assert "branch" not in rec
+    assert "invocation" not in rec
 
 
 def test_record_includes_phase_and_the_budget(ledger):

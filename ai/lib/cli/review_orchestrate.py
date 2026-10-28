@@ -50,6 +50,7 @@ import review.retry
 import review.state
 import review.types
 
+import core.errors
 import core.log
 import core.module_proxy
 import pr.state
@@ -78,7 +79,7 @@ from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
 from agent.invoke import QuotaThrottle
 from review.fix import run_fix_pass
 from review.gc import cleaned_on_success
-from agent.phases import ModelAlias, collect_phase_models, resolve_effort
+from agent.phases import collect_phase_models, resolve_effort
 from review.pipeline import (
     DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, fetch_metadata,
     run_multi_phase, run_single_agent,
@@ -136,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",
-                        help="Override model for all agents (e.g. sonnet, opus)")
+                        help="Override model for all agents: an id from the provider's catalogue (e.g. claude-sonnet-5)")
     parser.add_argument("--effort", type=enum_arg(Effort), choices=list(Effort), default=None,
                         help="Effort preset controlling thinking, budget, phase skipping "
                              "(default: review.effort in config.yml, else medium)")
@@ -144,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Max file groups in multi-phase reviews (default: effort-based)")
     parser.add_argument("--fix", action="store_true",
                         help="Run fix pass after review to apply findings")
+    parser.add_argument("--resume-fix", action="store_true",
+                        help="Skip the review and resume the fix pass a stop "
+                             "interrupted on this HEAD (set by review --self --fix)")
     parser.add_argument("--post", action="store_true",
                         help="Let the fix pass push its commit; without it the "
                              "push is drafted")
@@ -159,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--recover-sha", default="",
                         help="Commit a --recover run must complete against "
                              "(pins metadata to the failed run's HEAD)")
+    parser.add_argument("--full-review", action="store_true",
+                        help="Review a self-review's commit in full even when the "
+                             "working tree gives it a delta (set by review --self --force)")
     add_trail_args(parser)
     args = parser.parse_args(argv)
 
@@ -185,7 +192,6 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return core.proc.INTERRUPT_RETURNCODE
         except Exception as exc:
-            trail.error("unexpected_error", str(exc))
-            raise
+            core.errors.reraise(trail, exc)
         finally:
             trail.finish()

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+import core.serde
 import core.timeouts
 from config.workbench_config import (
     CONFIG_HEADER,
@@ -43,6 +44,7 @@ from config.workbench_config import (
     ConfigScopeError,
     ConfigValueError,
     ScopeRule,
+    WorkbenchConfig,
     container_config_path,
     defines_key,
     global_config_path,
@@ -206,6 +208,27 @@ def coerce_value(key: str, value: str) -> bool | int | float | str:
     return value
 
 
+def check_field(key: str, typed: bool | int | float | str) -> None:
+    """Raise ``ConfigValueError`` when *typed* is a value the field's own type refuses.
+
+    A section that checks its fields where the file is read (``ContextConfig``)
+    would otherwise accept a write the next read fails on — and the failure is
+    every command that loads the config, not the one key. Built as a config
+    holding only this key, so the check is the dataclass's own and is not
+    restated here.
+    """
+    nested: dict = {}
+    *parents, leaf = key.split(".")
+    node = nested
+    for part in parents:
+        node = node.setdefault(part, {})
+    node[leaf] = typed
+    try:
+        core.serde.from_dict(WorkbenchConfig, nested)
+    except ValueError as exc:
+        raise ConfigValueError(str(exc)) from exc
+
+
 def _coerce_number(key: str, value: str, wanted: str) -> int | float:
     """``value`` as the number *wanted* names, or a ``ConfigValueError``.
 
@@ -327,6 +350,7 @@ def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBA
             f"  write it with: otto-workbench config set {key} {value}"
         )
     typed = coerce_value(key, value)
+    check_field(key, typed)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(CONFIG_HEADER + "\n")

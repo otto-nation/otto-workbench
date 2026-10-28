@@ -93,7 +93,7 @@ def _count_failure_note(exc: BaseException) -> str:
 
 def count_tokens(
     text: str,
-    model: str,
+    model: str | None,
     *,
     system: str = "",
     tools: list[dict] | None = None,

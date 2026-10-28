@@ -21,6 +21,7 @@ import core.timeouts
 import eval.baselines
 import eval.run
 import eval.task
+from agent.models import ModelLayer, ModelRef, ResolvedModel
 from agent.usage import SessionUsage
 import eval.scoring
 from eval.scoring import ScoringResult
@@ -205,6 +206,13 @@ class _StubTask:
 
     def score(self, artifacts, manifest):
         return ScoringResult("", "", 0, recall=0.5, cost_usd=artifacts.usage.cost)
+
+
+@pytest.fixture(autouse=True)
+def _a_configured_model(monkeypatch):
+    """Production configures a model for these runs; with none, eval refuses
+    (see eval_run_models_test) rather than label results with nothing."""
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
 
 
 @pytest.fixture
@@ -656,8 +664,9 @@ def test_an_omitted_model_is_resolved_for_the_label_but_not_handed_to_the_task(
 
     _seed_claude_and_stub_task(tmp_path, monkeypatch, _get_task)
     monkeypatch.setattr(
-        eval.task.agent.phases, "phase_model",
-        lambda phase, explicit, cfg=None: "resolved-label-model",
+        eval.task.agent.phases, "resolve_phase_model",
+        lambda phase, explicit, cfg=None: ResolvedModel(
+            ModelRef("resolved-label-model"), ModelLayer.TIER),
     )
     output, _ = eval.run.run_eval(_args(tmp_path, runs=1), tmp_path)
 

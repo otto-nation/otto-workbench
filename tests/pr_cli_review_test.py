@@ -11,7 +11,7 @@ import pytest
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
 from conftest import make_ctx
-from review_record_support import seed_review, store_review
+from review_record_support import finding, record, seed_record, store_record
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
@@ -253,7 +253,7 @@ def test_cmd_review_does_not_rewrite_domain_after_delegate(
 def test_cmd_review_repair_succeeds_with_review_file(mock_sync, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
-    store_review(review_dir / "review.md", "## Nit\n- **[N1]** path:1 — style\n")
+    store_record(review_dir / "review.md", record(finding("N1", "path:1 — style", path="")))
     rc = cli.pr.cmd_review(["--repair"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     mock_sync.assert_called_once()
@@ -280,7 +280,7 @@ def test_cmd_review_repair_no_pr_fails():
 def test_cmd_review_summary_outputs_json(reviews_dir, capsys):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
-    store_review(review_dir / "review.md", "## Must fix\n- **[M1]** path:1 — bug\n")
+    store_record(review_dir / "review.md", record(finding("M1", "path:1 — bug", path="")))
     rc = cli.pr.cmd_review(["--summary"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     out = capsys.readouterr().out
@@ -314,7 +314,7 @@ def test_cmd_review_mutual_exclusivity_three():
 
 def _a_review(reviews_dir, **meta):
     """An attributed review, which is what a listing test is usually about."""
-    return seed_review(reviews_dir, name="repo-42", repo="acme/widget", **meta)
+    return seed_record(reviews_dir, name="repo-42", repo="acme/widget", **meta)
 
 
 def test_review_list_resolves_no_context_at_all():

@@ -243,6 +243,51 @@ _warn_no_brew_install() {
   warn "$label has no install without Homebrew (${disposition:-no install annotation in its manifest})"
 }
 
+# The manifest package each mise backend needs before it can install anything,
+# keyed by the backend prefix of a mise spec (`pipx:pytest` → pipx). A backend
+# with no entry needs nothing beyond mise. Adding one is an entry here.
+#
+# pipx needs uv rather than pipx itself: mise's pipx backend falls back to pipx
+# without uv, but options such as `uvx_args=--with pytest-xdist` are uv's, and
+# pipx installs the package without them.
+declare -gA MISE_BACKEND_PREREQS=(
+  [pipx]=uv
+)
+
+# _install_mise_backend_prereq MISE_SPEC — installs the package MISE_SPEC's mise
+# backend needs (MISE_BACKEND_PREREQS) through install_package, unless it
+# already runs. Returns 1, having said which package and why, when it cannot.
+_install_mise_backend_prereq() {
+  local mise_tool="$1" backend prereq
+  [[ "$mise_tool" == *:* ]] || return 0
+  backend="${mise_tool%%:*}"
+  prereq="${MISE_BACKEND_PREREQS[$backend]:-}"
+  [[ -n "$prereq" ]] || return 0
+  _cmd_runnable "$prereq" && return 0
+  install_package "$prereq" && return 0
+  warn "mise's $backend backend needs $prereq, which could not be installed — install $prereq, then re-run"
+  return 1
+}
+
+# _install_via_mise LABEL MISE_SPEC HINT — `mise use -g MISE_SPEC`, after its
+# backend's prerequisite, then the shims dir prepended to PATH for the rest of
+# this run. Returns 1, with HINT, when mise fails, and without trying mise when
+# the prerequisite could not be installed, since mise would fail for a reason
+# HINT does not name.
+_install_via_mise() {
+  local label="$1" mise_tool="$2" hint="$3"
+  _install_mise_backend_prereq "$mise_tool" || return 1
+  info "Installing $label via mise..."
+  if ! mise use -g "$mise_tool"; then
+    warn "mise could not install $label — $hint"
+    return 1
+  fi
+  case ":$PATH:" in
+    *":$MISE_SHIMS_DIR:"*) ;;
+    *) export PATH="$MISE_SHIMS_DIR:$PATH" ;;
+  esac
+}
+
 # _install_brew_or_mise CMD FORMULA MISE_SPEC LABEL [DISPOSITION] — private
 # worker for install_package. The public contract lives there.
 #
@@ -251,6 +296,12 @@ _warn_no_brew_install() {
 # a mise install the tool lives behind a shim that is not on PATH until the next
 # login, so the shims dir is prepended for the rest of this run: the steps that
 # follow look the tool up with command -v.
+#
+# Why the Homebrew failure falls back: Homebrew can fail on a machine it still
+# runs on — a dependency with no bottle for this macOS is built from source, and
+# an older compiler cannot build it. Why mise is never bootstrapped for it: on a
+# Homebrew machine that would install a second installer the operator did not
+# choose.
 _install_brew_or_mise() {
   local cmd="$1" formula="$2" mise_tool="$3" label="$4" disposition="${5:-}"
   local manual="brew install $formula"
@@ -277,23 +328,21 @@ _install_brew_or_mise() {
 
   if command -v brew >/dev/null 2>&1; then
     info "Installing $label via Homebrew..."
-    if ! brew install "$formula"; then
+    if brew install "$formula"; then
+      doctor="brew doctor"
+    elif [[ -n "$mise_tool" ]] && command -v mise >/dev/null 2>&1; then
+      warn "Homebrew could not install $label — falling back to mise"
+      _install_via_mise "$label" "$mise_tool" \
+        "Homebrew failed too; see the output above, then check: brew doctor, mise doctor" || return 1
+      looked="$MISE_SHIMS_DIR"
+      doctor="mise doctor"
+    else
       warn "Homebrew could not install $label — install it manually: $manual"
       return 1
     fi
-    doctor="brew doctor"
   elif command -v mise >/dev/null 2>&1; then
-    info "Installing $label via mise..."
-    if ! mise use -g "$mise_tool"; then
-      warn "mise could not install $label — install it manually: $manual"
-      return 1
-    fi
-    local shims="$MISE_SHIMS_DIR"
-    case ":$PATH:" in
-      *":$shims:"*) ;;
-      *) export PATH="$shims:$PATH" ;;
-    esac
-    looked="$shims"
+    _install_via_mise "$label" "$mise_tool" "install it manually: $manual" || return 1
+    looked="$MISE_SHIMS_DIR"
     doctor="mise doctor"
   else
     warn "Neither Homebrew nor mise found — install $label manually: $manual"

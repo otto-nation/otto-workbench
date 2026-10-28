@@ -23,7 +23,6 @@ and the rest.
 from __future__ import annotations
 
 import functools
-import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -76,10 +75,9 @@ def severity_by_key(key: str) -> SeverityConfig:
 class PriorDisposition(StrEnum):
     """What a re-review says became of a prior finding.
 
-    The values are the words the prompt asks for and the words the ledger is
-    parsed for, so the two cannot drift apart. `FIXED` and `STILL_OPEN` keep
-    their original spellings: a review file written before `DECLINED` existed
-    still parses.
+    The values are what the strict reader validates `disposition` against.
+    `FIXED` and `STILL_OPEN` keep their original spellings: a review file
+    written before `DECLINED` existed still loads.
 
     Declaration order is load-bearing: `precedence` reads it, so a member
     declared later outranks every member above it.
@@ -92,22 +90,6 @@ class PriorDisposition(StrEnum):
     # work: carrying an adjudicated finding as open re-presents it every review
     # and feeds it back into the next fix pass.
     DECLINED = "Declined"
-
-    @classmethod
-    def parse(cls, text: str) -> "PriorDisposition | None":
-        """The disposition a ledger line states, if it states one plainly.
-
-        The verdict has to stand on its own — the whole text, or ahead of the
-        break that introduces its detail. A qualified one ("Fixed, but only on
-        the happy path") is left unparsed rather than read as its optimistic
-        half.
-        """
-        lowered = text.strip().lower()
-        for member in cls:
-            rest = lowered.removeprefix(member.value.lower())
-            if rest != lowered and _DISPOSITION_TAIL_RE.match(rest):
-                return member
-        return None
 
     @property
     def precedence(self) -> int:
@@ -127,80 +109,6 @@ class PriorDisposition(StrEnum):
 _DISPOSITION_PRECEDENCE = {
     member: rank for rank, member in enumerate(PriorDisposition, 1)
 }
-
-# An entry whose wording the parser could not read a verdict from. It loses to
-# any verdict it can read, and holds its slot against another unreadable one.
-_NO_DISPOSITION_PRECEDENCE = 0
-
-
-def disposition_precedence(disposition: "PriorDisposition | None") -> int:
-    """`precedence`, tolerating the unparsed entry a ledger may also carry."""
-    return _NO_DISPOSITION_PRECEDENCE if disposition is None else disposition.precedence
-
-
-# What may follow a disposition without qualifying it: nothing, or a break that
-# introduces detail rather than a caveat.
-#
-# The full stop is on the list because a review states a verdict in a sentence
-# as readily as in a clause — "Fixed. `check_key` now calls it directly." is the
-# same claim as "Fixed — `check_key` now calls it directly.", and the prompt's
-# example cannot show every punctuation a model will reach for. The comma stays
-# off it: what follows a comma qualifies the verdict rather than explaining it.
-#
-# The markdown emphasis characters are on it for the same reason the full stop
-# is: "Fixed *(removed in 89f66d9)*" is the claim "Fixed (removed in 89f66d9)"
-# already makes, and the ledger is markdown, so a model italicises its detail
-# whether or not the prompt shows that form. Emphasis carries no meaning here —
-# stripping it changes nothing about what the line claims — so it introduces
-# detail rather than qualifying the verdict.
-#
-# Each character is mapped to the words the prompt uses for it, because neither
-# can be derived from the other: three of these are "a dash" and two are
-# "italics", so a glyph list built from the keys would instruct a model worse
-# than prose does, and prose alone has now gone stale twice. The prompt is held
-# to these names by `TestLedgerInstructionNamesEveryBreak`, so a character added
-# here fails a test until `review.prompt_prior` says how to write it.
-DISPOSITION_TAIL_PROSE = {
-    "—": "a dash",
-    "–": "a dash",
-    "-": "a dash",
-    ":": "a colon",
-    ".": "a full stop",
-    "(": "an opening bracket",
-    "*": "italics",
-    "_": "italics",
-}
-DISPOSITION_TAIL_PUNCTUATION = "".join(DISPOSITION_TAIL_PROSE)
-
-# The two characters above that join words as readily as they break them. Glued
-# straight onto the verdict and straight onto what follows, neither is a break
-# at all — "Fixed_up in a follow-up branch" and "Fixed-up in a follow-up branch"
-# are the unparseable "Fixed in a follow-up branch" with the space spelled
-# differently, not a verdict with detail after it. So they break the line only
-# where a space precedes them or a non-word character follows: "Fixed _reason_"
-# and a trailing "Fixed -" still read as verdicts, while a hyphenated or
-# underscored word does not. Every other character in the map cannot sit inside
-# a word in the first place and is read wherever it appears.
-#
-# Public, unlike the regex built from it: the diagnostic printed for a verdict
-# that did not parse (`review.reconcile`) has to show these two apart from the
-# rest, and a second hand-typed "-_" there would be this rule restated where
-# nothing holds the two copies together.
-DISPOSITION_TAIL_WORD_JOINERS = "-_"
-
-# The rest of the map: every character that breaks a verdict wherever it
-# appears. Public for the same reason the joiner class is — the diagnostic in
-# `review.reconcile` lists these as the unconditional breaks, and a second
-# comprehension there would be this one subtraction with two owners.
-DISPOSITION_TAIL_BREAKS = "".join(
-    c for c in DISPOSITION_TAIL_PUNCTUATION if c not in DISPOSITION_TAIL_WORD_JOINERS
-)
-_DISPOSITION_TAIL_RE = re.compile(
-    rf"^(?:\s*$"
-    rf"|\s*[{re.escape(DISPOSITION_TAIL_BREAKS)}]"
-    rf"|\s+[{re.escape(DISPOSITION_TAIL_WORD_JOINERS)}]"
-    rf"|[{re.escape(DISPOSITION_TAIL_WORD_JOINERS)}](?!\w))"
-)
 
 
 # ── Coverage ─────────────────────────────────────────────────────────────────
@@ -282,7 +190,7 @@ class ReplyState(StrEnum):
 class GroupSkip(StrEnum):
     """Why the group phase is not running a group.
 
-    The two reasons disagree about what a missing ``group-N.md`` means, so they
+    The two reasons disagree about what a missing ``group-N.json`` means, so they
     stay distinct all the way to the executor. A recovery skip reuses a prior
     attempt's output, which must therefore be on disk — its absence is a real
     failure. A carried skip never had output: an incremental run takes that
@@ -292,6 +200,39 @@ class GroupSkip(StrEnum):
 
     RECOVERY = "recovery"
     CARRIED = "carried"
+
+
+# ── Sticky skips ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class StickySkip:
+    """A finding the fix pass handed to a person, held until its file changes.
+
+    Keyed in `ReviewMeta.sticky_skips` by `path:line`. `blob` is the anchor
+    file's object id when the skip was made: while the file still hashes to it,
+    its lines are the lines that were judged, so a later round's finding at the
+    same anchor and `severity` is the same call and goes back to the person
+    rather than to the agent.
+    """
+
+    blob: str = ""
+    severity: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class FixInterruption:
+    """A fix pass stopped before it landed, and the edits it left behind.
+
+    `leftovers` maps each path the agent had changed to its object id when the
+    pass stopped ("" for a deletion). The next run on the same HEAD compares the
+    file against it: still equal is the agent's edit, untouched, and is set
+    aside; anything else is someone's since, and is left where it is.
+    """
+
+    head_before: str = ""
+    leftovers: dict[str, str] = field(default_factory=dict)
 
 
 # ── Review metadata ──────────────────────────────────────────────────────────
@@ -318,6 +259,11 @@ class ReviewMeta:
     host: str = ""
     pr_number: int | None = None
     head_sha: str = ""
+    # HEAD when the review was published, recorded only when a commit landed
+    # after the run pinned `head_sha` and before it wrote the review. The review
+    # covers `head_sha` and nothing later; this says so rather than re-pinning
+    # to a commit the review never read. Empty is the ordinary case.
+    head_moved_to: str = ""
     head_ref: str = ""
     base_ref: str = ""
     title: str = ""
@@ -334,6 +280,21 @@ class ReviewMeta:
     # rather than a list so the frozen dataclass is frozen all the way down.
     prior_sha: str = ""
     delta_files: tuple[str, ...] = ()
+    # The files the working tree differed from `head_sha` in when this
+    # self-review was published: what it read uncommitted, plus anything that
+    # moved while it ran — an edit made mid-run and, when a commit raced in
+    # (`head_moved_to` set), that commit's files, which the review never read.
+    # The next self-mode incremental round adds them to its change set, so a
+    # file whose edit was reverted in between — back to matching HEAD,
+    # invisible to any diff — is read again; over-listing costs a re-read,
+    # never a skipped file. Empty on a PR review and on a clean tree.
+    dirty_files: tuple[str, ...] = ()
+    # The stable ids of the nits and idioms withheld from fix work (D13): on an
+    # incremental round, the prior round's held nits plus this round's new
+    # ones; empty after a full round, which hands every severity to the fix
+    # pass. Read by `run_fix_pass`, so a resumed or later pass on this review
+    # withholds what the publishing round withheld.
+    held_nits: tuple[str, ...] = ()
     # Two timestamps because a review run has two moments worth recording and
     # they are not the same one. `started_at` is taken when the run begins;
     # `reviewed_at` is stamped only where a run reached its end with a review in
@@ -351,6 +312,20 @@ class ReviewMeta:
     # schema depend on a module it otherwise knows nothing about.
     fix_commit_sha: str = ""
     fix_commit_status: str = ""
+    # The fix commit this review counts as reviewed, set only when the fix pass
+    # that made it qualified: its one parent is a commit this review covers, the
+    # repo's checks were green, the gate verified every fix, and it committed
+    # nothing but fixed files and their tests (`review.convergence.fix_coverage`).
+    # Empty otherwise, and for a sidecar written before the field — both read as
+    # "nothing beyond head_sha". Never the base of a later delta: that is always
+    # `head_sha`.
+    covered_sha: str = ""
+    # A fix pass that was stopped before it landed. Its own field rather than a
+    # `fix_commit_status` value: that one is `CommitStatus`'s vocabulary, and an
+    # interruption is not something `land` reports. Cleared once the leftovers
+    # are set aside (`review.convergence.set_aside_leftovers`), and by any
+    # publish, which builds a fresh sidecar.
+    fix_interrupted: FixInterruption | None = None
     # Static violations a pass adjudicated rather than fixed, keyed by
     # `StaticViolation.site` and valued with the reason. The `## Static
     # Analysis` section is regenerated from a fresh scan every review, so an
@@ -363,6 +338,11 @@ class ReviewMeta:
     # Keyed on the site hash rather than the `SA<n>` id, which is a position in
     # one rendering and names a different violation in the next.
     static_declined: dict[str, str] = field(default_factory=dict)
+    # Findings the fix pass handed to a person, by `path:line`. Accumulated like
+    # `static_declined` and for its reason — the document is rewritten every
+    # round — and pruned at publish once the anchor file no longer hashes to the
+    # recorded blob. See `review.convergence.apply_sticky_skips`.
+    sticky_skips: dict[str, StickySkip] = field(default_factory=dict)
     # What the rendered header states about the run beyond attribution. They
     # live here because the record holds what the review says and the sidecar
     # holds what the run was; `review.md`'s header is rendered from these.
@@ -391,6 +371,11 @@ class ReviewMeta:
         if not self.fix_commit_status:
             return ""
         return self.fix_commit_sha if commit_unpushed(self.fix_commit_status) else ""
+
+    @property
+    def reviewed_through(self) -> str:
+        """The latest commit this review answers "is a re-run needed" for."""
+        return self.covered_sha or self.head_sha
 
 
 def meta_enum(enum_cls, value):
@@ -448,11 +433,9 @@ class Finding:
     body: str
     full_path: str = ""
     posted_id: str = ""
-    # The `FindingIdentity.stable_id` of the line this was parsed from, which a
-    # posted comment carries so a later round can match a reply thread back to
-    # the finding it hangs off. Set where the line is read rather than derived
-    # from the fields beside it: `finding_spans` replaces `body` with the whole
-    # span, and the identity hashes the declaration line's wording.
+    # The `FindingIdentity.stable_id` of this finding, which a posted comment
+    # carries so a later round can match a reply thread back to the finding it
+    # hangs off.
     stable_id: str = ""
     classification: str = ""
     skip_reason: str = ""
@@ -462,6 +445,10 @@ class Finding:
     # review saying "not at all", and the fix pass must not revisit it.
     declined: bool = False
     decline_reason: str = ""
+    # Handed to a person by a fix pass (`Disposition.SKIPPED`). Not work: the
+    # next pass does not take it, and a later round re-raising it at the same
+    # anchor is marked skipped until the file changes.
+    skipped: bool = False
 
 
 # ── Prior-finding vocabulary ─────────────────────────────────────────────────
@@ -491,26 +478,6 @@ class FindingRef:
 
 
 @dataclass(frozen=True)
-class LedgerEntry:
-    """One `## Prior findings` line: a prior finding, and what became of it."""
-
-    ref: FindingRef
-    disposition: PriorDisposition | None
-    text: str
-
-    def covers(self, ref: FindingRef) -> bool:
-        """Whether this entry accounts for `ref`.
-
-        An entry that names no path stands on its ID alone; one that names a
-        path has to name the right one, or a single entry would account for
-        every prior finding in its file.
-        """
-        if self.ref.finding_id != ref.finding_id:
-            return False
-        return not self.ref.path or self.ref.path == ref.path
-
-
-@dataclass(frozen=True)
 class PriorFinding:
     """A finding line from the prior review, as reconciliation sees it.
 
@@ -522,79 +489,9 @@ class PriorFinding:
     ref: FindingRef
     stable_id: str
     text: str = ""
-
-
-# ── Finding location and span ────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class FindingLocation:
-    """Where in the tree a finding line says its finding is.
-
-    `line` and `end_line` are the range the location names — both absent when
-    it names a file and no line of it.
-    """
-
-    path: str = ""
-    line: int | None = None
-    end_line: int | None = None
-
-    @property
-    def named(self) -> bool:
-        """Whether the line named a location at all."""
-        return bool(self.path)
-
-
-class FindingScope(StrEnum):
-    """What the heading above a finding declaration makes of it.
-
-    `DECLARED` is a declaration under a severity heading — a finding the text
-    reports as its own. `REPORTED` is one under a heading that names no
-    severity: the `## Prior findings` ledger repeats the last review's findings
-    there, and its IDs number that review rather than this one, so an edit that
-    touched them would rewrite the record of a review it is not looking at.
-    `UNHEADED` is a declaration with no heading above it at all, which is what
-    a caller holding one severity's findings on their own hands in.
-    """
-
-    DECLARED = "declared"
-    REPORTED = "reported"
-    UNHEADED = "unheaded"
-
-
-@dataclass(frozen=True)
-class FindingSpan:
-    """A finding declaration and the lines belonging to it.
-
-    `line` is the declaration itself, stripped — what a caller with a narrower
-    grammar than `FINDING_ID_RE` matches against to decide whether this is a
-    finding it wants. `start` and `end` are line indices into the text the span
-    was read from: the declaration's own line, and the line after the last one
-    its body claims. `text_of` is the slice they name.
-
-    The coordinates live here rather than on `Finding`, which the fix pass
-    serializes to disk — a line number from one reading of one document is not
-    something a stored finding should carry around.
-    """
-
-    finding: Finding
-    line: str
-    start: int
-    end: int
-    scope: FindingScope = FindingScope.UNHEADED
-
-    @property
-    def reported(self) -> bool:
-        """Whether the span sits under a heading reporting on another review."""
-        return self.scope is FindingScope.REPORTED
-
-    def text_of(self, text: str) -> str:
-        """The lines the span claims, verbatim.
-
-        Trailing blank lines included, since a caller removing the span has to
-        name every line the span owns or it leaves the gap behind.
-        """
-        return "\n".join(text.split("\n")[self.start:self.end])
+    # Whether the prior round declined it, read from the record's disposition
+    # rather than re-parsed from the rendered annotation.
+    declined: bool = False
 
 
 # ── What is under review ─────────────────────────────────────────────────────
@@ -698,6 +595,14 @@ class ReviewJob:
     # cannot do once the two sources read the same.
     skip_phases: frozenset[Phase] = frozenset()
     include_generated: bool = False
+    # Keep a same-HEAD self-review full even when the working tree gives it a
+    # delta — what `pr review --self --force` asks for.
+    full_review: bool = False
+    # The stable ids of this round's new nits, read by
+    # `review.outcome._reconcile_and_verify` while the record still carries the
+    # sids that tell a carry from a new finding; `_publish` adds them to
+    # `ReviewMeta.held_nits`. Empty on every path that adds no finding.
+    new_nits: frozenset[str] = frozenset()
     reply_threads: ReplyThreads | None = None
     verification: dict | None = None
     pr_state_data: "PRState | None" = None

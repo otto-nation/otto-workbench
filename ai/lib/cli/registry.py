@@ -29,12 +29,17 @@ going stale now that no `pr` code path would notice if it did.
 
 # doc-group: cli
 
+import json
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import batch.store
+import batch.targets
 import cli.review_modes
 import pr.context
+import pr.target
 from cli.needs import (
     LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need,
     ci_need, comments_need, has_flag, rebase_need,
@@ -112,20 +117,97 @@ def _create_need(argv: Sequence[str]) -> Need:
     return Need(REMOTE, update=False, locks=locks)
 
 
-# The batch subcommands that start or continue a run, and so must be alone.
+# The batch subcommands that start or continue a run, and so must be alone
+# over each repo they cover.
 _BATCH_EXCLUSIVE = frozenset({"run", "resume"})
 
 
-def _batch_need(argv: Sequence[str]) -> Need:
-    """`batch`'s need: `run` and `resume` hold the machine-wide batch lock; the rest take nothing.
+def _flag_values(argv: Sequence[str], name: str) -> list[str]:
+    """Values of *name* in *argv*, accepting `--flag DIR` and `--flag=DIR`.
 
-    `resolve` and `cancel` declare nothing: they write the inbox and take the
-    run resource as `applier` only when no holder is draining, never the
-    global, so they reach a live run. `status`, `next` and `plan` only read.
+    An empty `--flag=` value is ignored, as is a following token that looks like a flag.
     """
+    values: list[str] = []
+    prefix = f"{name}="
+    awaiting = False
+    for token in argv:
+        if awaiting:
+            awaiting = False
+            values += [token] if token != "--" and not token.startswith("-") else []
+            continue
+        if token == name:
+            awaiting = True
+            continue
+        if token.startswith(prefix) and token[len(prefix):]:
+            values.append(token[len(prefix):])
+    return values
+
+
+def _keys_from_plan(path: str) -> set[str]:
+    """Origin keys recorded on each row of a saved plan file."""
+    data = json.loads(Path(path).read_text())
+    keys: set[str] = set()
+    for row in data.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        key = row.get("repo_key") or ""
+        if not key:
+            key = batch.targets.origin_key(row.get("repo_dir") or "")
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _batch_keys_for_run(argv: Sequence[str]) -> set[str]:
+    keys: set[str] = set()
+    for directory in _flag_values(argv, "--checkout"):
+        if key := batch.targets.origin_key(directory):
+            keys.add(key)
+    for path in _flag_values(argv, "--plan"):
+        keys.update(_keys_from_plan(path))
+    return keys
+
+
+def _batch_keys_for_resume(argv: Sequence[str]) -> set[str]:
+    positionals = [a for a in argv if not a.startswith("-")]
+    run_id = positionals[1] if len(positionals) > 1 else ""
+    if run_id:
+        return set(batch.targets.run_repo_keys(batch.store.load(run_id)))
+    identity = pr.target.repo_identity_from_origin(os.getcwd())
+    if identity is None:
+        return set()
+    found = batch.store.covering_run_id(batch.store.RepoRef(identity.key, identity.label))
+    if not found:
+        return set()
+    return set(batch.targets.run_repo_keys(batch.store.load(found)))
+
+
+def _batch_locks(argv: Sequence[str]) -> frozenset:
+    if not argv:
+        return NO_LOCK
     sub = next((a for a in argv if not a.startswith("-")), "")
-    locks = frozenset({batch.store.BATCH_LOCK}) if sub in _BATCH_EXCLUSIVE else NO_LOCK
-    return Need(NONE, update=False, locks=locks)
+    if sub not in _BATCH_EXCLUSIVE:
+        return NO_LOCK
+    keys = _batch_keys_for_run(argv) if sub == "run" else _batch_keys_for_resume(argv)
+    return frozenset(batch.store.batch_lock(k) for k in sorted(keys))
+
+
+def _batch_need(argv: Sequence[str]) -> Need:
+    """`batch`'s need: `run` and `resume` hold one lock per repo they cover; the rest take nothing.
+
+    Empty argv or no subcommand takes nothing and does no I/O. A `--help`
+    token is not special here: the dispatcher skips every lock only when the
+    command's own parser printed help, so `--prs --help` — a value, or an
+    error — still declares the locks. A failure to compute keys takes nothing
+    and never raises: the handler then refuses a run whose repos are not held. `resolve` and
+    `cancel` and `release` declare nothing: they write the inbox and take the run resource
+    as `applier` only when no holder is draining, never the per-repo lock, so
+    they reach a live run. `status`, `next` and `plan` only read.
+    """
+    try:
+        return Need(NONE, update=False, locks=_batch_locks(argv))
+    except Exception:
+        return Need(NONE, update=False, locks=NO_LOCK)
 
 
 _SPECS: tuple[CommandSpec, ...] = (
@@ -174,7 +256,7 @@ _SPECS: tuple[CommandSpec, ...] = (
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),  script="pr-describe",
                 handler="cli.pr_describe:main"),
     # Orchestrates other commands across many PRs, so it resolves no target of
-    # its own. `run` and `resume` hold the machine-wide batch lock (see
+    # its own. `run` and `resume` hold one batch lock per repo they cover (see
     # `_batch_need`) and every item's TARGET; children pass through on a marker
     # naming only their own item. The run holds a per-run lock under the batch
     # state root.

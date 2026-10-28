@@ -24,7 +24,9 @@ import core.publishing
 import pr.attribution
 import git.client
 
+from review.record import Disposition
 from review_fix_pass_support import _PUSHED, git_wt, _committed_paths, _make_job, _run
+from review_record_support import finding, record
 
 
 def _install_failing_pre_commit(tmp_path, message: str = "gate refused") -> None:
@@ -45,10 +47,9 @@ class TestWhatALandedPassLeavesBehind:
     checked off a finding on a file that was dirty before the agent started.
     """
 
-    REVIEW = (
-        "## Must fix\n"
-        "- [ ] **[M1]** `src.py:1` — Was already being edited by hand\n"
-        "- [ ] **[M2]** `helper.py:1` — Missing helper\n"
+    REVIEW = record(
+        finding("M1", "Was already being edited by hand", path="src.py", checkbox=True),
+        finding("M2", "Missing helper", path="helper.py", checkbox=True),
     )
 
     @patch("git.push.push", return_value=_PUSHED)
@@ -57,7 +58,7 @@ class TestWhatALandedPassLeavesBehind:
     ):
         (git_wt / "tsconfig.tsbuildinfo").write_text("272KB of cache\n")
         (git_wt / "src.py").write_text("hand-edited, not by the fix agent\n")
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
 
         def agent_run():
             (git_wt / "helper.py").write_text("def helper(): pass\n")
@@ -83,7 +84,7 @@ class TestWhatALandedPassLeavesBehind:
     def test_the_commit_message_reports_what_the_pass_settled(
         self, mock_push, git_wt, tmp_path,
     ):
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
 
         def agent_run():
             (git_wt / "helper.py").write_text("def helper(): pass\n")
@@ -100,7 +101,7 @@ class TestWhatALandedPassLeavesBehind:
     def test_the_summary_reaches_the_operator_s_terminal(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         _run(job, {"M1": "declined — by design", "M2": "declined — by design"})
 
         err = capsys.readouterr().err
@@ -112,7 +113,7 @@ class TestWhatALandedPassLeavesBehind:
         self, mock_push, git_wt, tmp_path, capsys,
     ):
         """One ticked box used to look like a finished pass that skipped the rest."""
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
 
         def agent_run():
             (git_wt / "helper.py").write_text("def helper(): pass\n")
@@ -138,7 +139,7 @@ class TestWhatALandedPassLeavesBehind:
         self, mock_push, git_wt, tmp_path,
     ):
         """Every finding declined is an answer, and answers are not edits."""
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         _run(job, {"M1": "declined — by design", "M2": "declined — by design"})
 
         assert git_out(git_wt, "log", "--oneline").strip().count("\n") == 0
@@ -155,7 +156,7 @@ class TestWhatALandedPassLeavesBehind:
         hooks by default.
         """
         _install_failing_pre_commit(tmp_path)
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         _run(job, {"M2": "fixed"},
              work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"))
 
@@ -180,10 +181,7 @@ class TestTheHeldCommitIsRecorded:
             landed=git.land.LandResult(status=status, sha=sha, resume=resume),
         )
 
-    REVIEW = (
-        "## Must fix\n"
-        "- [ ] **[M1]** `a.py:1` — Missing nil check\n"
-    )
+    REVIEW = record(finding("M1", "Missing nil check", checkbox=True))
 
     def test_the_pass_records_what_it_landed(self, git_wt, tmp_path):
         """Asserted through `run_fix_pass`, not by calling the recorder.
@@ -193,7 +191,7 @@ class TestTheHeldCommitIsRecorded:
         `test_the_pass_hands_the_engine_a_gate_at_all` exists to catch one
         argument along.
         """
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
         landed = git.land.LandResult(status=git.land.CommitStatus.PUSH_HELD, sha="abc1234")
         with patch.object(fix.engine, "run",
                           return_value=fix.engine.FixRun(landed=landed)):
@@ -317,7 +315,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
 
         job = _make_job(
             git_wt, tmp_path,
-            "## Nit\n- [ ] **[N1]** `dead_code.py:1` — Dead code, delete it\n",
+            rec=record(finding("N1", "Dead code, delete it", path="dead_code.py", checkbox=True)),
         )
         _run(job, {"N1": "fixed"}, work=lambda: (git_wt / "dead_code.py").unlink())
 
@@ -330,7 +328,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         """The old path leaves via the diff, the new one via the untracked list."""
         job = _make_job(
             git_wt, tmp_path,
-            "## Nit\n- [ ] **[N1]** `src.py:1` — Misnamed module\n",
+            rec=record(finding("N1", "Misnamed module", path="src.py", checkbox=True)),
             files=["src.py", "renamed.py"],
         )
         _run(job, {"N1": "fixed"},
@@ -354,7 +352,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         """
         job = _make_job(
             git_wt, tmp_path,
-            "## Nit\n- [ ] **[N1]** `café brûlé.py:1` — Needs a docstring\n",
+            rec=record(finding("N1", "Needs a docstring", path="café brûlé.py", checkbox=True)),
         )
         _run(job, {"N1": "fixed"},
              work=lambda: (git_wt / "café brûlé.py").write_text("crème\n"))
@@ -375,7 +373,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         (git_wt / "src.py").write_text("hand edit in progress\n")
         job = _make_job(
             git_wt, tmp_path,
-            "## Must fix\n- [ ] **[M1]** `src.py:1` — Missing guard\n",
+            rec=record(finding("M1", "Missing guard", path="src.py", checkbox=True)),
         )
         _run(job, {"M1": "fixed"}, work=lambda: (git_wt / "src.py").write_text(
             "hand edit in progress\nagent fix\n",
@@ -395,7 +393,7 @@ class TestRunFixPassWhenTheSnapshotFails:
     the agent's fixes discarded and the run reported as a success.
     """
 
-    REVIEW = "## Must fix\n- [ ] **[M1]** `helper.py:1` — Missing helper\n"
+    REVIEW = record(finding("M1", "Missing helper", path="helper.py", checkbox=True))
 
     @staticmethod
     def _corrupt_index(git_wt):
@@ -413,7 +411,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         would have to either commit wholesale or throw away.
         """
         self._corrupt_index(git_wt)
-        inv = _run(_make_job(git_wt, tmp_path, self.REVIEW), {"M1": "fixed"})
+        inv = _run(_make_job(git_wt, tmp_path, rec=self.REVIEW), {"M1": "fixed"})
 
         inv.assert_not_called()
         mock_push.assert_not_called()
@@ -424,7 +422,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         self, mock_push, git_wt, tmp_path, capsys,
     ):
         """The regression: edits survive in the worktree and the run says so."""
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
 
         def agent_run():
             (git_wt / "helper.py").write_text("def helper(): pass\n")
@@ -450,7 +448,8 @@ class TestRunFixPassWhenTheSnapshotFails:
         round back over them, which is right: the commit that would have made
         them done never happened.
         """
-        job = _make_job(git_wt, tmp_path, self.REVIEW)
+        job = _make_job(git_wt, tmp_path, rec=self.REVIEW)
+        original = Path(job.review_file).read_text()
 
         def agent_run():
             (git_wt / "helper.py").write_text("def helper(): pass\n")
@@ -458,7 +457,7 @@ class TestRunFixPassWhenTheSnapshotFails:
 
         _run(job, {"M1": "fixed"}, work=agent_run)
 
-        assert Path(job.review_file).read_text() == self.REVIEW
+        assert Path(job.review_file).read_text() == original
 
 
 class TestAPassWithNothingToFix:
@@ -471,7 +470,10 @@ class TestAPassWithNothingToFix:
     a branch that had shipped.
     """
 
-    CLEAN = "## Must fix\n- [x] **[M1]** `helper.py:1` — Missing helper\n"
+    CLEAN = record(finding(
+        "M1", "Missing helper", path="helper.py", checkbox=True,
+        disposition=Disposition.FIXED,
+    ))
 
     @staticmethod
     def _with_upstream(git_wt, tmp_path, *, ahead: int):
@@ -491,7 +493,7 @@ class TestAPassWithNothingToFix:
         """The gap itself: nothing to push, and commits nobody pushed."""
         monkeypatch.setattr(core.publishing, "enabled", lambda: True)
         self._with_upstream(git_wt, tmp_path, ahead=2)
-        job = _make_job(git_wt, tmp_path, self.CLEAN)
+        job = _make_job(git_wt, tmp_path, rec=self.CLEAN)
 
         review.fix.run_fix_pass(job)
 
@@ -505,7 +507,7 @@ class TestAPassWithNothingToFix:
         monkeypatch.setattr(core.publishing, "enabled", lambda: True)
         self._with_upstream(git_wt, tmp_path, ahead=1)
 
-        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, rec=self.CLEAN))
 
         assert "1 commit ahead" in capsys.readouterr().err
 
@@ -517,7 +519,7 @@ class TestAPassWithNothingToFix:
         monkeypatch.setattr(core.publishing, "enabled", lambda: True)
         self._with_upstream(git_wt, tmp_path, ahead=0)
 
-        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, rec=self.CLEAN))
 
         assert "ahead of its remote" not in capsys.readouterr().err
 
@@ -533,7 +535,7 @@ class TestAPassWithNothingToFix:
         """
         monkeypatch.setattr(core.publishing, "enabled", lambda: True)
 
-        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, rec=self.CLEAN))
 
         assert "ahead of its remote" not in capsys.readouterr().err
 
@@ -547,7 +549,7 @@ class TestAPassWithNothingToFix:
         monkeypatch.setattr(core.publishing, "enabled", lambda: False)
         self._with_upstream(git_wt, tmp_path, ahead=2)
 
-        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, rec=self.CLEAN))
 
         assert "ahead of its remote" not in capsys.readouterr().err
 

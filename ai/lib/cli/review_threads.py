@@ -41,6 +41,7 @@ import sys
 
 import cli.locks
 import cli.needs
+import core.errors
 import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args
@@ -250,7 +251,6 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return _run_locked(trail, args, ctx, route, body)
         except Exception as exc:
-            trail.error("unexpected_error", str(exc))
-            raise
+            core.errors.reraise(trail, exc)
         finally:
             trail.finish()

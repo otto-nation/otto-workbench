@@ -45,13 +45,15 @@ from agent.session import (
     _parse_session_cost, build_add_dirs,
     diagnose_missing_output, try_recover_output,
 )
+from review.artifacts import GroupArtifact
 from review.paths import (
     phase_log_path,
     phase_output_path,
 )
-from review.document import SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument
 from review.record import ReviewRecord
-from review.ingest import IngestOutcome, ingest_with_repair
+from review.ingest import (
+    Artifact, ArtifactOutcome, IngestRejected, ingest_artifact, load_artifact,
+)
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.registry import PhaseScan, build_prompt, for_phase
@@ -61,7 +63,7 @@ from review.retry import (
     _retry_hint_for, _retry_missing_output, _was_skipped,
 )
 from review.state import PipelineState, _update_group_done, _update_group_failed
-from review.types import SEVERITIES, Group, GroupSkip, ReviewJob
+from review.types import Group, GroupSkip, ReviewJob
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases
@@ -100,15 +102,12 @@ def _phase_deliverable(
 ) -> str:
     """The one file `phase` is judged on having written, or "" if it has none.
 
-    A group or scout phase writes a named artifact. `single` and `synthesis`
-    write the review document itself, which `phase_output_path` refuses to
-    name. A fix-shaped phase edits a tracking file and has no single
-    deliverable, so it opts out and any write counts as progress there.
+    A named findings artifact is derived from the phase spec. A fix-shaped
+    phase edits a tracking file and has no single deliverable, so it opts out
+    and any write counts as progress there.
     """
     if spec.shape is PhaseShape.FIX:
         return ""
-    if not spec.output_filename:
-        return job.review_file
     return phase_output_path(job.review_file, phase, index)
 
 
@@ -140,14 +139,15 @@ class PhaseRunner:
         # progress against it, so a scratch probe is not mistaken for the
         # agent having produced its output.
         #
-        # A phase with no artifact of its own writes the review document, and
-        # `phase_output_path` raises rather than deriving a name for it. A
-        # fix-shaped phase edits a tracking file instead and keeps the prior
+        # A phase with no artifact of its own would write the review document.
+        # A fix-shaped phase edits a tracking file instead and keeps the prior
         # any-write behaviour, because its deliverable is not one document.
         self.output_path = _phase_deliverable(job, phase, index, spec)
-        self.model = agent.phases.phase_model(phase, job.model, cfg)
-        self.thinking = agent.phases.phase_thinking(phase, job.effort, cfg)
-        self.provider = agent.phases.phase_provider(cfg)
+        settings = agent.phases.phase_settings(phase, job.model, cfg, job.effort)
+        self.model = settings.model
+        self.thinking = settings.thinking
+        self.provider = settings.provider
+        self.compact_at = settings.compact_at
         self.budget = agent.phases.phase_budget(phase, job.effort)
         self.agent = None if spec.shape is PhaseShape.FIX else (
             spec.agent if spec.agent is not None else preset.agent
@@ -170,8 +170,13 @@ class PhaseRunner:
             model=self.model,
             thinking=self.thinking,
             provider=self.provider,
+            compact_at=self.compact_at,
             label=label,
             phase=str(self.phase),
+            # Labels only: the backend never reads them, the usage ledger does.
+            repo=self.job.repo or None,
+            pr=str(self.job.pr_number) or None,
+            branch=self.job.pr.head or None,
         )
 
     def invoke(
@@ -220,6 +225,9 @@ class PhaseResult:
     the reason is only reachable while the retry driver is still holding the
     session log — by the time the disprove gate records the outcome, the log
     belongs to whatever ran next.
+
+    `artifact` is the typed document the phase's agent wrote, for a step that
+    acts on it rather than on rendered text (disprove).
     """
 
     log: str = ""
@@ -227,18 +235,20 @@ class PhaseResult:
     content: str = ""
     output: str = ""
     diagnosis: Diagnosis | None = None
+    artifact: Artifact | None = None
 
     @classmethod
     def of(
         cls, log: str, content: str = "", output: str = "",
         diagnosis: "Diagnosis | None" = None,
+        artifact: "Artifact | None" = None,
     ) -> "PhaseResult":
         """Priced from the log the phase just wrote.
 
         A phase that wrote no log reads as free: `_parse_session_cost` takes a
         missing file as zero.
         """
-        return cls(log, _parse_session_cost(log), content, output, diagnosis)
+        return cls(log, _parse_session_cost(log), content, output, diagnosis, artifact)
 
 
 def _touch(path: str) -> None:
@@ -270,21 +280,22 @@ def _scan(phase: Phase) -> PhaseScan:
     return entry.scan
 
 
-def read_scan(phase: Phase, raw: str) -> str:
-    """`phase`'s raw artifact as the content the phases after it read.
-
-    Empty in, empty out — a scan that produced nothing has no leads to render.
-    A scan with no `read` of its own hands the raw text back unchanged.
+def read_scan(phase: Phase, output: str) -> str:
+    """`phase`'s artifact at `output` as the context the phases after it read, or "".
 
     Exposed alongside `run_phase` because a resumed run reaches the same file
     without running the agent that wrote it. Reading it a second way there is
-    how the resume path and the run path came to disagree about what a scout
-    scan is.
+    how the resume path and the run path came to disagree. A file that no
+    longer loads is reported and read as nothing: a resume has no agent to
+    repair it.
     """
-    if not raw:
-        return ""
     scan = _scan(phase)
-    return scan.read(raw) if scan.read else raw
+    try:
+        artifact = load_artifact(output, for_phase(phase).artifact)
+    except IngestRejected as exc:
+        core.log.warn(f"{output} cannot be reused ({exc}) — {scan.without}")
+        return ""
+    return scan.read(artifact) if scan.read else ""
 
 
 def run_phase(
@@ -331,11 +342,18 @@ def run_phase(
             phase, job, max_turns=max_turns, ladder_bytes=ladder, **prompt_args,
         )
 
+    sent = prompt
+
+    def invoke(text: str, turns: int | None = None) -> int:
+        nonlocal sent
+        sent = text
+        return runner.invoke(text, turns)
+
     diagnosis = run_with_overflow_recovery(
         prompt,
-        invoke=lambda text: runner.invoke(text),
+        invoke=lambda text: invoke(text),
         after=lambda text: _retry_missing_output(
-            runner.invoke, text, runner.session_log, output,
+            invoke, text, runner.session_log, output,
             label=label, max_turns=max_turns,
         ),
         has_output=lambda: _has_output(output),
@@ -351,44 +369,26 @@ def run_phase(
         core.log.warn(f"{label} produced no output ({diagnosis.message}) — {scan.without}")
         return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
 
-    content = read_scan(phase, Path(output).read_text())
-    return PhaseResult.of(runner.session_log, content, output)
+    outcome = ingest_artifact(
+        output, sent, invoke, for_phase(phase).artifact,
+        diagnose=lambda: diagnose_missing_output(runner.session_log, output_path=output),
+    )
+    if not outcome.ok:
+        diagnosis = outcome.diagnosis or Diagnosis(
+            DiagnosisKind.MALFORMED_OUTPUT, detail="; ".join(e.render() for e in outcome.errors),
+        )
+        core.log.warn(f"{label} output rejected ({diagnosis.message}) — {scan.without}")
+        return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
+    content = scan.read(outcome.artifact) if scan.read else ""
+    return PhaseResult.of(runner.session_log, content, output, artifact=outcome.artifact)
 
 
 # ── Phase executors ──────────────────────────────────────────────────────────
 
-# Every heading a group agent may write. A group's output is merged section by
-# section, so one that carries none of these contributes nothing to the review
-# however much the agent wrote into it.
-_VALID_SECTION_HEADERS = (
-    {s.section.lower() for s in SEVERITIES}
-    | {SECTION_FILE_TRIAGE.lower(), SECTION_PRIOR_FINDINGS.lower()}
-)
-
-
-def _validate_group_output(output_path: str, group_name: str) -> bool:
-    """Whether a group's output carries a heading the merge will read.
-
-    Warns when it does not. An empty output is not a failure here — the caller
-    has already established the agent produced something, and a group with
-    nothing to say writes an empty file legitimately.
-    """
-    content = Path(output_path).read_text()
-    if not content.strip():
-        return True
-    has_section = any(
-        line.strip()[3:].strip().lower() in _VALID_SECTION_HEADERS
-        for line in content.split("\n")
-        if line.strip().startswith("## ")
-    )
-    if not has_section:
-        core.log.warn(f"Group {group_name} output has no recognized sections — findings may be lost")
-    return has_section
-
 
 def _malformed_group(
     i: int, grp: Group, job: ReviewJob, group_output: str,
-    outcome: IngestOutcome, pipeline_state: PipelineState | None,
+    outcome: ArtifactOutcome, pipeline_state: PipelineState | None,
 ) -> tuple[int, str, GroupFailure]:
     diagnosis = outcome.diagnosis or Diagnosis(
         DiagnosisKind.MALFORMED_OUTPUT,
@@ -499,17 +499,12 @@ def _review_group(
         if pipeline_state is not None:
             _update_group_failed(job, i, diagnosis, pipeline_state)
     else:
-        outcome = ingest_with_repair(
-            group_output, sent, invoke,
-            diagnose=lambda: diagnose_missing_output(
-                group_log, output_path=group_output,
-            ),
+        outcome = ingest_artifact(
+            group_output, sent, invoke, GroupArtifact,
+            diagnose=lambda: diagnose_missing_output(group_log, output_path=group_output),
         )
         if not outcome.ok:
-            return _malformed_group(
-                i, grp, job, group_output, outcome, pipeline_state,
-            )
-        _validate_group_output(group_output, grp.name)
+            return _malformed_group(i, grp, job, group_output, outcome, pipeline_state)
         core.log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
         if pipeline_state is not None:
             _update_group_done(job, i, pipeline_state)

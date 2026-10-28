@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
 
+from agent.models import ModelRef
 from core.phases import Phase
 import agent.backend
 import pr.target
@@ -35,66 +36,42 @@ class TestPromptBudgetsArePreflighted:
     every phase in turn for the same reason.
     """
 
-    def test_an_unresolved_alias_runs_on_the_tier_floor_and_says_so(self, ro):
-        """The ordinary first-party-API setup: allowed, but not silently.
+    def test_a_tier_word_is_an_unknown_model_now(self, ro):
+        """`sonnet` is no longer rewritten through AI_SONNET_MODEL, so it is an
+        id with no recorded window, like any other unmeasured model."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            ok = ro._budgets_are_derivable({ModelRef("sonnet"): [ro.Phase.SCOUT]}, MagicMock(), ".")
+        assert not ok
 
-        `phase_model` returns the literal "sonnet" when AI_SONNET_MODEL is
-        unset — see `TestPhaseModel`, which asserts exactly that default.
-        Refusing would take out every phase on every machine not using Vertex,
-        so the run continues against the tier's floor; the warning is what
-        stops a smaller review from being the only evidence that happened.
-
-        The variable is named through `ModelAlias` rather than spelled out, for
-        the reason the next test gives: a hardcoded copy here is what kept
-        pointing operators at `ANTHROPIC_DEFAULT_SONNET_MODEL` after the
-        migration renamed it, so setting what the warning asked for fixed
-        nothing.
-        """
-        from agent.phases import ModelAlias
-
+    def test_no_configured_models_passes(self, ro):
+        """Phases with no model are absent and budget at the unset-model floor."""
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, trail, ".")
-        assert ok
-        assert "tier alias" in err.getvalue()
-        assert ModelAlias.SONNET.env_key in err.getvalue()
-        assert trail.decision.called
-
-    def test_the_warning_names_the_variable_that_would_fix_it(self, ro):
-        """The env key comes from `ModelAlias`, not from a second derivation.
-
-        Two copies of the naming convention drift the moment a tier's key stops
-        following the plain uppercase pattern, and the copy in a warning is the
-        one nobody notices is wrong.
-        """
-        from agent.phases import ModelAlias
-
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"haiku": [ro.Phase.SCOUT]}, MagicMock(), ".")
-        assert ModelAlias.HAIKU.env_key in err.getvalue()
+            assert ro._budgets_are_derivable({}, trail, ".")
+        assert err.getvalue() == ""
 
     def test_a_resolved_model_warns_about_nothing(self, ro):
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"claude-sonnet-5": [ro.Phase.SCOUT]}, trail, ".")
+            ro._budgets_are_derivable({ModelRef("claude-sonnet-5"): [ro.Phase.SCOUT]}, trail, ".")
         assert err.getvalue() == ""
         assert not trail.decision.called
 
     def test_an_unknown_concrete_model_still_aborts(self, ro):
         """A model nobody has measured is not a model to guess a window for."""
         with contextlib.redirect_stderr(io.StringIO()):
-            ok = ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT]}, MagicMock(), ".")
+            ok = ro._budgets_are_derivable({ModelRef("gpt-5"): [ro.Phase.SCOUT]}, MagicMock(), ".")
         assert not ok
 
     def test_a_known_model_passes(self, ro):
         assert ro._budgets_are_derivable(
-            {"claude-sonnet-5": [ro.Phase.SCOUT]}, MagicMock(), ".",
+            {ModelRef("claude-sonnet-5"): [ro.Phase.SCOUT]}, MagicMock(), ".",
         )
 
     def test_the_failure_names_the_phases_it_blocks(self, ro):
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT, ro.Phase.GROUP]}, trail, ".")
+            ro._budgets_are_derivable({ModelRef("gpt-5"): [ro.Phase.SCOUT, ro.Phase.GROUP]}, trail, ".")
         assert "scout" in err.getvalue() and "group" in err.getvalue()
         assert trail.decision.called
 
@@ -128,15 +105,13 @@ class TestStaticAnalysisIntegration:
         "}\n"
     )
 
-    _REVIEW_TEXT = "## Summary\nLooks good.\n\n## Verdict\nApprove"
-
     def _seed(self, review_file):
-        from review.ingest import ingest_review
         from review.store import write_review
         from review.types import ReviewMeta
+        from review_record_support import record
         write_review(
             Path(review_file),
-            ingest_review(self._REVIEW_TEXT, strict=False),
+            record(summary="Looks good.", verdict="Approve"),
             ReviewMeta(),
         )
 
@@ -477,7 +452,7 @@ class TestCleanupScope:
         def _partial(job, **_kwargs):
             review_dir = Path(job.artifact_dir)
             Path(job.review_file).write_text(self._REVIEW)
-            (review_dir / "group-1.md").write_text("finding")
+            (review_dir / "group-1.json").write_text("finding")
             state = PipelineState(
                 head_sha="abc123", group_names=["a", "b"], groups_done=[1],
                 groups_failed={2: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)},
@@ -489,7 +464,7 @@ class TestCleanupScope:
 
         review_dir = self._run(ro, monkeypatch, tmp_path, pipeline=_partial, fix=True)
 
-        assert (review_dir / "group-1.md").exists()
+        assert (review_dir / "group-1.json").exists()
         assert (review_dir / "pipeline.json").exists()
         assert (review_dir / "fix.jsonl").exists()
 
@@ -522,15 +497,15 @@ class TestCleanupScope:
         self, ro, monkeypatch, tmp_path,
     ):
         """`--prior-review` sets job.prior from prior.json, not from the text."""
-        from review.ingest import ingest_review
         from review.store import archive_prior, write_review
         from review.types import ReviewMeta
+        from review_record_support import record
 
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
         write_review(
             review_dir / "review.md",
-            ingest_review("## Summary\nprior round\n", strict=False),
+            record(summary="prior round"),
             ReviewMeta(head_sha="0ldc0de", date="2026-10-15"),
         )
         archive_prior(review_dir)
@@ -661,3 +636,43 @@ class TestSelfReviewPipeline:
         pipeline, *_ = ro._choose_pipeline(job)
 
         assert pipeline is ro.Pipeline.MULTI
+
+
+class TestRemovedProviderEnvStopsTheRun:
+    """WORKBENCH_AI_PROVIDER is refused before the review pays for anything."""
+
+    def test_run_orchestrate_refuses_it_before_collecting_anything(self, ro, monkeypatch):
+        monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "xai")
+        import agent.phases
+        monkeypatch.setattr(ro, "_log_ai_backend", lambda trail: None)
+        monkeypatch.setattr(
+            ro, "fetch_metadata",
+            lambda *a, **k: pytest.fail("metadata was collected before the check"),
+        )
+        args = MagicMock(model="", repo_dir=".")
+        with pytest.raises(agent.phases.RemovedSetting):
+            ro.run_orchestrate(MagicMock(), args, "o/r", "log")
+
+
+class TestBackendPreflightGuardsTheRun:
+    """A model the backend cannot serve stops the review before it collects anything."""
+
+    def test_a_refusal_ends_the_run_and_is_handed_the_worktree(self, ro, monkeypatch):
+        seen = {}
+
+        def refuse(models, trail, cwd):
+            seen["cwd"] = cwd
+            seen["models"] = models
+            return False
+
+        monkeypatch.setattr(ro, "_log_ai_backend", lambda trail: None)
+        monkeypatch.setattr(ro.agent.backend, "preflight", refuse)
+        monkeypatch.setattr(
+            ro, "fetch_metadata",
+            lambda *a, **k: pytest.fail("metadata was collected after a refusal"),
+        )
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "xai/grok-4.6")
+        args = MagicMock(model="", repo_dir="/the/worktree")
+        assert ro.run_orchestrate(MagicMock(), args, "o/r", "log") == 1
+        assert seen["cwd"] == "/the/worktree"
+        assert ModelRef("grok-4.6", "xai") in seen["models"]

@@ -10,12 +10,10 @@ ${env_section}
 ## Output
 ${output_block}
 
-Write no `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not.
-Format each finding as a list item: `- **[M1]** **\`<file>:<line>\`** — <finding>`. NEVER use ### headings for findings — downstream counters and posting tools parse the `- **[X1]**` list-item format only.
-Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file proving the claim.
+Must-fix and should-fix findings must carry `evidence`: the lines of the referenced file that prove the claim, copied verbatim.
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
-A finding already annotated `*(declined — reason)*` was adjudicated — carry it forward with the annotation intact rather than re-raising it as open.
-Include a `## Verdict` section: ${verdict_options}. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead.
+On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
+Set `verdict` to one of ${verdict_options}, then why. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead.
 
 ## Turn budget
 You have ${max_turns} turns (each turn can include multiple parallel tool calls).${omitted_guidance} Write a complete review file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify Must-fix and Should-fix claims against the source and rewrite the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.

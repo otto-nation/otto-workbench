@@ -469,11 +469,23 @@ class ReviewSummary(Domain):
     # nothing owed rather than as unknown — an unpushed commit is a positive
     # fact, and inferring one from silence would report it for every old state.
     unpushed_fix_commit: str = ""
+    # The latest commit this review answers "is a re-run needed" for —
+    # `covered_sha` when a qualifying fix commit counts as reviewed, else
+    # `head_sha`. Empty on a state file written before the field, which
+    # `verdict_sha` reads as `head_sha` so an older cache still describes the
+    # commit it reviewed.
+    reviewed_through: str = ""
+    # Open findings a fix pass would still take, not static-analysis
+    # violations (which `run_fix_pass` also acts on). `None` on a state file
+    # written before the field, which `pr fix` reads as the old
+    # `finding_counts` sum so an older cache still re-runs when it listed
+    # open findings. `0` is a measured empty work set, not unknown.
+    workable: int | None = None
     cost_usd: float = 0.0
     total_tokens: int = 0
 
     def verdict_sha(self) -> str:
-        return self.head_sha
+        return self.reviewed_through or self.head_sha
 
     @property
     def _incomplete(self) -> bool:

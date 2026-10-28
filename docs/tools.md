@@ -260,6 +260,8 @@ than restated here:
 | `otto-workbench config set KEY VALUE --project` | Project | Write one key into the current repo's .workbench.yml instead |
 | `otto-workbench config set KEY VALUE --container` | Container | Write one key into the .workbench.yml above a bare repo's worktrees |
 | `otto-workbench config get KEY [DIR ...]` | Project | Resolve one key for this repo, or for each named one, with the scope that answered |
+| `otto-workbench config models` | Machine | Show, as JSON, the model settings sync writes for Claude Code and Pi |
+| `otto-workbench config context [--pi-listing FILE]` | Machine | Show, as JSON, the compaction settings sync writes for Claude Code and Pi |
 | `otto-workbench config status` | Project | Show every scope, every resolved value, and the file each came from |
 
 `install` runs first-time setup: on macOS, installs Homebrew (if missing);
@@ -623,12 +625,13 @@ otto-log show <invocation> [--only]
 otto-log list [--script NAME] [--since WINDOW] [--repo org/repo]
 otto-log record --script NAME --action KEY [--detail TEXT] [--level info|warn|error]
 otto-log prune [--keep N]
-otto-log stats [--since 7d] [--by script|task|model|day|phase]
+otto-log stats [--since 7d] [--by script|task|model|provider|day|phase]
 ```
 
 `--json` on `recent`, `query`, `show`, and `list` emits JSONL. On `stats` it
 emits one JSON object per group (`group`, `calls`, `cost`, token fields,
-`median_duration_ms`; plus turn percentiles when `--by phase`).
+`median_duration_ms`, `failed`, `peak_context_tokens`; plus turn percentiles
+when `--by phase`).
 
 `record` writes one event for callers that cannot open a `Trail` themselves
 (shell close-out scripts, agents between a scan and its close). It inherits
@@ -703,7 +706,7 @@ in docs/ai-libraries.md.
 | Flag | Description |
 |------|-------------|
 | `--since` `<since>` | Time window (e.g. 24h, 7d). Default: `7d`. |
-| `--by` `<script\|task\|model\|day\|phase>` | Group rows by. Default: `script`. |
+| `--by` `<script\|task\|model\|provider\|day\|phase>` | Group rows by. Default: `script`. |
 | `--json` | Output one JSON object per group. |
 
 ### `otto-mcp-server`
@@ -813,7 +816,7 @@ Takes no flags.
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
 | `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |
-| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
+| `--model` `<name>` | Override the model for all agents: an id from the provider's catalogue (e.g. claude-sonnet-5). |
 | `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
 | `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
 | `--generated` | Include tier3-generated files (skipped by default). |
@@ -909,7 +912,7 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering, else the latest; refused when several unfinished runs cover this repo). |
+| `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering; refused when several unfinished runs cover this repo). |
 | `--verbose` | Also stream each step's stderr as step_log events. |
 
 **`pr batch resolve`** — Answer one decision
@@ -927,8 +930,16 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `[<run-id>]` | Run to cancel (default: this repo's newest unfinished covering run, else its newest covering, else the latest; refused when several unfinished runs cover this repo). |
+| `[<run-id>]` | Run to cancel (default: this repo's newest unfinished covering run, else its newest covering; refused when several unfinished runs cover this repo). |
 | `--kill` | Also terminate running steps. |
+
+**`pr batch release`** — Free one PR from a run without cancelling it
+
+| Flag | Description |
+|------|-------------|
+| `<run-id>` | Run holding the PR. |
+| `<pr>` | Item key owner/repo#N, or a PR number unique in the run. |
+| `--kill` | Also terminate the item's running step. |
 
 **`pr batch status`** — Print a run's report: what needs action, and why (JSON)
 
@@ -1085,7 +1096,7 @@ resolution, model selection, and Vertex quota preflight are in
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
 | `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |
-| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
+| `--model` `<name>` | Override the model for all agents: an id from the provider's catalogue (e.g. claude-sonnet-5). |
 | `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
 | `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
 | `--generated` | Include tier3-generated files (skipped by default). |

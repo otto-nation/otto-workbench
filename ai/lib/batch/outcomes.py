@@ -116,6 +116,10 @@ FAILURE_WHY: dict[str, str] = {
     batch.publish.Refusal.FETCH_FAILED.value: "the PR branch could not be fetched",
     batch.publish.Refusal.UNLANDED_FIXES.value:
         "the fix commit was refused, or the worktree still holds staged fixes",
+    batch.publish.Refusal.WRONG_BRANCH.value:
+        "the PR's worktree is checked out on another branch",
+    batch.publish.Refusal.DRAFTED_DROPPED.value:
+        "commits the batch drafted are no longer on the local branch",
 }
 # Written by runs before `lock_busy` existed; state files still carry it.
 FAILURE_WHY["busy"] = FAILURE_WHY[FailureReason.LOCK_BUSY]

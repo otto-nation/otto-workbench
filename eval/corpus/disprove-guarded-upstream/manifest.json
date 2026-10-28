@@ -1,0 +1,20 @@
+{
+  "name": "disprove-guarded-upstream",
+  "task": "disprove",
+  "description": "One claim is true (parse_limit crashes on None); the other misses the membership check in get_account, the only caller of load_account",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "M1", "truth": "false", "path": "service.py", "line": 11, "end_line": 12,
+      "body": "`load_account` dereferences `record[\"payload\"]` when `store.get` returns None, raising TypeError for an unknown account id.",
+      "evidence": "record = store.get(account_id)\nreturn json.loads(record[\"payload\"])"
+    },
+    {
+      "id": "S1", "truth": "real", "path": "service.py", "line": 24,
+      "body": "`parse_limit` calls `.strip()` on its argument, so a missing query parameter (None) raises AttributeError instead of a validation error.",
+      "evidence": "return int(raw.strip())"
+    }
+  ],
+  "tags": ["disprove", "python", "guarded-upstream"]
+}

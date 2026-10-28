@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "summary": "The retry loop is a good direction, but M1 blocks: the timeout is never honoured.\n\n<!-- verification-drops -->\n> **Evidence verification removed 1 finding:**\n> - Must fix \u2014 `src/cli.py`: evidence mismatch at char 3",
+  "approach": null,
+  "findings": [
+    {
+      "id": "S1",
+      "severity": "S",
+      "path": "src/app.py",
+      "line": 2,
+      "end_line": null,
+      "body": "The retry loop never sleeps between attempts.",
+      "evidence": "",
+      "stable_id": "b930d8c7",
+      "sid": "",
+      "disposition": "open",
+      "reason": "",
+      "unverified": false,
+      "checkbox": false,
+      "filed": ""
+    }
+  ],
+  "questions": [],
+  "verified": [],
+  "focus": [],
+  "triage": [
+    {
+      "path": "src/app.py",
+      "note": "reviewed; adds the retry loop."
+    }
+  ],
+  "static_analysis": "",
+  "failures": [],
+  "verdict": "Needs discussion \u2014 1 should-fix after evidence verification removed 1 finding.",
+  "severity_sections": [
+    {
+      "severity": "M",
+      "note": ""
+    },
+    {
+      "severity": "S",
+      "note": ""
+    }
+  ],
+  "ledger": [],
+  "extra": []
+}

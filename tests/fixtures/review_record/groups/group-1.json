@@ -1,0 +1,35 @@
+{
+  "triage": [
+    {
+      "path": "src/app.py",
+      "note": "reviewed; adds the retry loop."
+    },
+    {
+      "path": "src/util.py",
+      "note": "reviewed; helper only."
+    }
+  ],
+  "findings": [
+    {
+      "id": "S1",
+      "path": "src/app.py",
+      "line": 2,
+      "end_line": null,
+      "body": "The retry loop never sleeps between attempts, so a flapping endpoint is hammered.",
+      "evidence": "for attempt in range(3):\n    call()",
+      "sid": "",
+      "declined": ""
+    },
+    {
+      "id": "N1",
+      "path": "src/util.py",
+      "line": 1,
+      "end_line": null,
+      "body": "`clamp` duplicates `max(min(...))`; see [S1] for the caller.",
+      "evidence": "",
+      "sid": "",
+      "declined": ""
+    }
+  ],
+  "prior_findings": []
+}

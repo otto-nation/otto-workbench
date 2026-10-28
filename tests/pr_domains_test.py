@@ -696,6 +696,18 @@ def test_review_reports_the_commit_it_reviewed():
     assert pr.domains.ReviewSummary(head_sha="abc123").verdict_sha() == "abc123"
 
 
+def test_describes_is_true_for_a_covered_fix_commit():
+    assert pr.domains.ReviewSummary(
+        head_sha="0ldc0mmit", reviewed_through="abc123", updated_at="t",
+    ).describes("abc123")
+
+
+def test_review_reports_the_covered_commit_as_its_verdict():
+    assert pr.domains.ReviewSummary(
+        head_sha="0ldc0mmit", reviewed_through="abc123",
+    ).verdict_sha() == "abc123"
+
+
 def test_ci_reports_the_commit_of_its_latest_run():
     """Read off the run, so it cannot drift from `latest_run_id`."""
     ci = pr.domains.CIDomain(updated_at="t", latest_run_id=7)

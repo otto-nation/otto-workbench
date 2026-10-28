@@ -22,7 +22,7 @@ from pr.review_sync import sync_review_domain
 import review.completion
 from review.paths import FILENAME_RECORD, ReviewMeta, write_review_meta
 from review.summary import ReviewSummaryReport, build_review_summary, json_summary
-from review_record_support import store_review
+from review_record_support import finding, record, store_record
 
 
 def test_sync_review_domain_is_the_writer(tmp_path):
@@ -35,6 +35,8 @@ def test_sync_review_domain_is_the_writer(tmp_path):
         review_file="/r.md",
         review_type="full",
         head_sha="abc",
+        reviewed_through="def",
+        workable=3,
         findings={
             "must_fix": 1, "should_fix": 0, "nit": 2, "idiom": 0, "total": 3,
         },
@@ -58,8 +60,24 @@ def test_sync_review_domain_is_the_writer(tmp_path):
     assert loaded.review.verdict == ReviewVerdict.CHANGES_REQUESTED.value
     assert loaded.review.cost_usd == pytest.approx(1.5)
     assert loaded.review.recoverable is False
+    assert written.reviewed_through == "def"
+    assert loaded.review.reviewed_through == "def"
+    assert written.workable == 3
+    assert loaded.review.workable == 3
     assert loaded.identity.pr_number == 7
     assert loaded.identity.head_sha == "abc"
+
+
+def test_sync_review_domain_stores_reviewed_through_as_is(tmp_path):
+    """The head_sha fallback lives on verdict_sha, not on the write."""
+    ctx = make_ctx(target_dir=tmp_path / "pr" / "feat", worktree_root=tmp_path / "wt")
+    written = sync_review_domain(
+        ctx, ReviewSummaryReport(head_sha="abc", reviewed_through=""),
+    )
+    assert written is not None
+    assert written.reviewed_through == ""
+    assert written.head_sha == "abc"
+    assert written.verdict_sha() == "abc"
 
 
 def test_sync_review_domain_keeps_prior_type_when_the_report_omits_it(tmp_path):
@@ -111,8 +129,9 @@ def test_review_summary_report_to_json_matches_the_legacy_dict(tmp_path):
     Key order and values must stay byte-identical to the previous return so
     REVIEW_SUMMARY consumers and the golden json_summary tests keep passing.
     """
-    content = "## Nit\n- **[N1]** path:1 — style\n"
-    review = store_review(tmp_path / "review.md", content)
+    review = store_record(
+        tmp_path / "review.md", record(finding("N1", "path:1 — style", path="")),
+    )
 
     report = build_review_summary("org/repo", "42", str(review))
     expected = {
@@ -220,7 +239,9 @@ def test_repair_on_a_stale_dir_with_group_files_rebuilds_and_syncs(tmp_path):
         repo="org/repo", pr_number=42, head_sha="abc123def456",
     ))
     group = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
-    group.write_text("## Nit\n- **[N1]** **`a.py:1`** — x\n")
+    group.write_text(json.dumps({
+        "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}],
+    }))
     ctx = make_ctx(
         repo="org/repo", branch="feat/x", pr_number=42,
         worktree_root=tmp_path / "wt", head_sha="abc123def456",
@@ -238,7 +259,9 @@ def test_repair_on_a_stale_dir_with_group_files_rebuilds_and_syncs(tmp_path):
 
 
 def test_record_domain_syncs_a_stored_review(tmp_path):
-    review_file = store_review(tmp_path / "review.md", "## Nit\n- **[N1]** path:1 — style\n")
+    review_file = store_record(
+        tmp_path / "review.md", record(finding("N1", "path:1 — style", path="")),
+    )
     ctx = make_ctx(
         repo="org/repo", branch="feat/x", pr_number=42,
         worktree_root=tmp_path / "wt", head_sha="abc123def456",

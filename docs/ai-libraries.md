@@ -26,6 +26,34 @@ The permitted set is narrower than the layer number alone: `gh` and `agent` both
 
 The orchestration of a review run: what it checks before spending anything, how the work is split into phases, what each agent is asked, and where the run's artifacts live.
 
+### agent/context_ceiling.py
+
+``context.compact_at`` as each harness's own compaction settings read it.
+
+The config names one ceiling in tokens; each harness spells the point it
+compacts at differently, and this module is the one translation, so the two
+syncs and the pipeline cannot read the ceiling two ways.
+
+- Claude Code compacts when the context reaches its auto-compact window
+  (``autoCompactWindow`` in settings, ``--autocompact`` on the CLI), which it
+  takes from 100k to 1M tokens and caps at the model's window itself.
+- Pi compacts when ``contextTokens > contextWindow - reserveTokens``, set per
+  model under ``compaction.modelOverrides["provider/id"]``. A reserve of
+  ``window - compact_at`` makes that ``contextTokens > compact_at``. The reserve
+  decides only when compaction starts: Pi sizes the summary request from the
+  model's output limit, not from it, so a reserve of 800k on a 1M model asks
+  for no 800k-token reply.
+- The review budget plans a prompt against the ceiling the selected backend
+  actually compacts at, when that is under the model's window.
+
+The ceiling is machine-wide, and ``machine_ceiling`` is the one place it is
+read. Both harnesses keep it in machine-wide settings, and Pi takes no
+per-run override, so a repo-level value would be one the review budget
+planned against and Pi never applied.
+
+Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
+reading the catalogue (``agent.pi_models``).
+
 ### agent/diagnosis.py
 
 Why an agent run produced no output, classified once and rendered on demand.
@@ -38,6 +66,55 @@ on and `Diagnosis` is what they store, compare and print.
 Nothing here is review-specific, which is why it is not in the review layer: a
 diagnosis is a property of the invocation, and the pipeline that happens to be
 running is not part of the reason it failed.
+
+### agent/harness_models.py
+
+The model tiers as each harness's own settings read them.
+
+``models.*`` in the config is the one place a model is named. Claude Code and
+Pi each keep model settings of their own, which the workbench's sync writes
+from that one place; this module is what both syncs ask, so neither re-parses
+a reference in bash and the two cannot read one differently.
+
+Claude Code:
+
+- ``ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`` take the deep, standard and
+  light tiers, so the CLI's own ``opus``/``sonnet``/``haiku`` aliases — and the
+  subagents and ``opusplan`` that use them — follow the tiers.
+- ``model`` and ``effortLevel`` take ``models.session``.
+- An agent declaring ``tier:`` in its source frontmatter is installed with
+  that tier's model and level as its ``model:`` and ``effort:``, and with
+  ``model: inherit`` when the tier names no Claude model (``tiers``). A tier
+  at ``off`` installs ``effort: low`` and still thinks: agent frontmatter has
+  no counterpart to the ``MAX_THINKING_TOKENS=0`` a pipeline phase at ``off``
+  is spawned with.
+- A tier naming a provider the Claude CLI cannot be pointed at, or a bare id
+  that is not a Claude model, has no Claude model, and is reported rather than
+  written: the CLI runs Claude models only.
+
+Pi:
+
+- ``defaultModel``, ``defaultProvider`` and ``defaultThinkingLevel`` take
+  ``models.session``; each is left out when the session does not name it, so
+  Pi keeps the value it has.
+- ``enabledModels`` lists every tier's model and the session's, as ``/model``
+  offers them; ``modelThinkingLevels`` carries each one's level. Both are keyed
+  ``provider/id`` where the reference names a provider and by the bare id where
+  it does not: Pi's sync qualifies a bare id with the ``defaultProvider`` the
+  settings end up with, which only the live file knows.
+
+``models.session: auto`` routes instead of naming one model. Claude Code takes
+it as ``opusplan`` — the deep tier (its ``opus`` alias) while planning, the
+standard tier (``sonnet``) otherwise. Pi takes it as the ``workbench/auto``
+virtual model the ``model-router`` extension registers, which routes each
+request to a tier and reads the tiers from ``config models``' ``tiers``. It
+needs all three tiers set and each to name its provider: the router looks a
+model up by provider and id, and a bare id would be qualified with
+``workbench``, the virtual model's provider, on its way into ``enabledModels``.
+
+Not: writing the settings files (``ai/claude/steps.sh``, ``ai/pi/steps.sh``),
+the grammar a reference is written in (``agent.models``), routing a request
+(``ai/pi/extensions/model-router``).
 
 ### agent/invoke.py
 
@@ -60,6 +137,34 @@ ledger label spelled a third way. Reaching ``ai_backend`` directly is what let
 those differ; going through here is what stops them, and
 ``TestOneOwnerForBackendCalls`` is what keeps it that way.
 
+### agent/models.py
+
+What a model setting names: a provider, a model id, and a thinking level.
+
+Every layer that names a model — ``--model``, ``WORKBENCH_AI_*_MODEL``,
+``agent.phases.<p>.model`` and ``models.<tier>`` — is written in one grammar,
+``[provider/]id[:level]`` or a tier name, and read here. It is Pi's own
+``--model`` grammar. A value is parsed once and everything downstream takes the
+parts it needs: the review budget wants the id, Pi wants the provider as
+``--provider``, the thinking resolver wants the level.
+
+Two separators, each read so that a real id cannot be misread:
+
+- ``provider/`` is split at the *first* slash, and only when what precedes it
+  is shaped like a provider id — letters, digits, ``.``, ``_`` and ``-``. A
+  later slash is the id's: OpenRouter ids carry their own
+  (``openrouter/anthropic/claude-x``). A first segment holding a ``:`` is no
+  provider, so a Bedrock ARN (``arn:aws:bedrock:…:inference-profile/abc``) is a
+  bare id. The cost: an id whose first segment *is* provider-shaped always
+  names its provider, even the default one — ``anthropic/claude-x`` is
+  provider ``anthropic``.
+- ``:level`` is a suffix only when it is one of ``Thinking``'s values. Bedrock
+  ids end ``:0`` and some local ones ``:latest``; those stay part of the id.
+
+A tier name takes a level too: ``deep:high`` is the deep tier's model at high.
+
+Not: which layer wins (``agent.phases``), what a backend does with the parts.
+
 ### agent/phases.py
 
 What a phase resolves to here: the spec, the config file, the environment.
@@ -74,21 +179,31 @@ One precedence chain, most specific first, for every knob a phase has:
     explicit argument  >  WORKBENCH_AI_<PHASE>_*  >  WORKBENCH_AI_*
                        >  agent.phases.<phase>.*  >  agent.*  >  built-in
 
+A model is chosen by the same chain, with the phase's tier as its last layer:
+``agent.phases.<phase>.model`` beats ``models.<spec.tier>``. Every layer is
+written in `agent.models`' grammar, so a value names a provider and a thinking
+level as well as an id, and a tier name borrows that tier's model.
+
+Each part of the chosen reference ranks where the layer that wrote it ranks.
+Its provider belongs to its id — an id is a name in one provider's catalogue —
+so a provider is written on the reference (``xai/grok-4.6``) and nowhere else;
+a reference that names none leaves the backend's own default provider in
+charge. There is no setting that supplies one to every phase, because that would
+send an id to a catalogue it is not a name in. Its level joins the thinking
+chain at its layer's height (`phase_settings`).
+
 The effort preset sits between the config and the built-in for thinking level,
 the one knob a review's depth setting flattens. It also scales the turn budget,
 but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
-``opus``, ``haiku``) is then resolved through ``AI_SONNET_MODEL`` /
-``AI_OPUS_MODEL`` / ``AI_HAIKU_MODEL``, falling back to the
-``ANTHROPIC_DEFAULT_*_MODEL`` names those were renamed from. An alias names a
-tier, not a deployment — on Vertex and Bedrock the account provisions a
-specific model ID, and that is where it lives. A concrete model ID anywhere in
-the chain passes through untouched. The Claude CLI does this resolution itself;
-the Pi backend does not, so it happens here before dispatch and both backends
-land on the same model.
+**No built-in model.** A phase names a tier, not a model, so when no layer
+sets one — the tier unset in ``models`` too — the model is ``None`` and the
+backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
+Pi refuses a provider without a model; a reference always carries its id, so
+no phase reaches that, and ``agent.pi_models.require_model_with_provider`` stays
+as the spawn's own guard for a caller that hands a provider in directly.
 
 ### agent/registry.py
 
@@ -140,9 +255,10 @@ it; ``--no-disprove`` is read off ``skip_phases`` and beats ``--disprove`` —
 ``review.phases._should_disprove``.
 
 Each phase's model is resolved elsewhere: ``agent.phases`` layers
-``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` over the
-default on the spec here, then maps a bare alias (``sonnet``, ``opus``,
-``haiku``) through ``AI_*_MODEL`` / ``ANTHROPIC_DEFAULT_*_MODEL``.
+``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` and
+``agent.phases.<phase>.model`` over ``models.<tier>`` for the tier the spec here
+names. A spec names a tier, never a model, and a tier left unset runs its
+phases on the backend's own default.
 
 ### agent/retry.py
 
@@ -172,8 +288,9 @@ What an agent run left behind: its cost, its diagnosis, its salvage.
 Everything here reads a session log after the fact. Running the agent is
 ``agent.invoke``'s job and resolving which model it ran with is
 ``agent.phases``'s; this module is what the pipeline asks once the log exists —
-what the run cost, why it produced nothing, whether the document it was denied
-permission to save can still be recovered.
+what the run cost, why it produced nothing, whether the JSON document it was
+denied permission to save can still be recovered. Every review deliverable is
+a JSON document.
 
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
@@ -649,14 +766,15 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model. It subtracts
+the fallback when the catalogue cannot be read or lacks the model, and capped at
+``context.compact_at`` when that is set. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
-them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
-takes its tier's floor rather than failing, because an unset
-`AI_*_MODEL` is the ordinary first-party-API setup; only a
-concrete model nobody has measured raises `UnknownModelWindow`.
+them. `prompt_budget_bytes` is that derivation. A phase with no configured
+model takes the unset-model floor rather than failing, because leaving the
+choice to the backend is an ordinary setup; only a concrete model nobody has
+measured raises `UnknownModelWindow`.
 
 The byte figure can only ever be conservative: no byte count bounds a token
 count without knowing the content's density, so `BYTES_PER_TOKEN_FLOOR` assumes
@@ -719,6 +837,19 @@ module decides how a review is *reached* — which worktree, which checks, which
 prompts — and the flows differ throughout. This one decides what a finished
 review *means*, and nothing here differs at all.
 
+### review/convergence.py
+
+What keeps successive self-review rounds converging instead of circling.
+
+A round reviews what changed, settles what it can without an agent, and leaves
+the next round less to do. Each rule here closes one way the loop used to fail
+to terminate: a decline re-stated every round, a design call handed back to
+the fix agent every round, new nits on files nobody touched, a killed pass
+whose leftovers looked like author edits, and a fix commit that always moved
+HEAD past the review that produced it.
+
+`change_set` is what "did not change" means for all of them.
+
 ### review/document.py
 
 The header vocabulary of a review, and the read view of a stored one.
@@ -729,6 +860,21 @@ and `ReviewHeader.from_meta` write the header from the sidecar; `covers` is
 whether a header SHA covers a commit; `review_title` is the `# ...` line
 derived from the same sidecar. `ReviewDocument` answers sections, findings,
 open counts and the verdict off the record, never by parsing `review.md`.
+
+### review/fix_logs.py
+
+Each fix pass's session logs, kept per pass in its review directory.
+
+A fix pass writes `fix.jsonl` and one `fix_verify-<n>.jsonl` per gate chunk.
+Those names are fixed, so the next pass overwrote them, and the success sweep
+removed them — which is how a gate's "pytest unavailable" could not be traced
+to the guard that refused it. A pass now clears the live names before it runs
+(the pass before kept its copy) and copies them aside when it ends, however it
+ends, into `fix-logs/<started_at>/`. Only the newest `PASSES_KEPT` are kept.
+
+The run's summary reads the copy back, which is how `Usage:` comes to count
+the fix pass and its gate: by the time the summary prints, the sweep has
+removed the live logs it used to read.
 
 ### review/gc.py
 
@@ -1031,13 +1177,15 @@ stripped of the sections that were bookkeeping rather than findings, annotated
 with what the author said in reply to each finding, and followed by the
 instruction that asks for a disposition for every finding it carries.
 
-Scoping the prior review to a group's files keeps findings that name a line of
-one of those files. A finding without a line is file-level and is not in any
-group's slice.
+Scoping the prior review to a group's files keeps every finding that names one
+of those files, at a line or not. A finding without a line is about its file as
+a whole, and the group holding that file is the one that can carry it forward
+or settle it. Left in no group's slice it was unaccounted on every incremental
+run, and synthesis was asked to settle it each time.
 
-`_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
-an agent; both sections here interpolate it rather than restating it, and
-`review.reconcile` is what reads the ledger back afterwards.
+`_LEDGER_FIELDS_INSTRUCTION` is the one place the ledger's shape is written
+down for an agent; both sections here interpolate it rather than restating it,
+and the strict reader is what checks it afterwards.
 
 Everything else a prompt says about the PR is `review.prompt_sections`'s, and
 which sections a phase asks for is `review.prompt`'s.
@@ -1137,10 +1285,13 @@ the order those checks run in.
 
 ### review/scout.py
 
-Lead scout: parse structured investigation leads from scout phase output.
+Phase 1's context: the scout's leads or the holistic assessment, as prompt text.
 
-The scout phase replaces the holistic phase's prose output with structured
-leads that tell group reviewers exactly where to focus investigation.
+Phase 1 runs one of two scans over the whole PR. Its agent writes a
+`ScoutArtifact` or a `HolisticArtifact` (`review.artifacts`). The phases after
+it never read that file: they read the block rendered here, which every group
+prompt embeds and synthesis is shown. Each block opens with its own heading, so
+a reader needs no sentinel to tell the two apart.
 
 ### review/sections.py
 
@@ -1256,9 +1407,42 @@ That is a different question from `git.topology`, which starts from a git cwd
 and asks which of *its* worktrees holds a branch. Topology has no GitHub-slug
 lookup, no `~/git` walk, and no `gh`. The slug-to-clone path is `find_repo_root`.
 
+### review/worktree_delta.py
+
+Worktree and range file lists a review's delta is built from.
+
+A self-review's incremental file list is the working tree against the prior
+head, plus files that round already read dirty; a PR-mode fallback's is
+``prior_sha..head`` — both from numstat, which no prompt budget clips.
+`worktree_diff` is the matching patch (and its counts-only form) so the
+files a review reports and the diff it sends come off one range.
+
 ## Findings
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.
+
+### review/artifacts.py
+
+What a review agent writes: one JSON document per phase, each a frozen dataclass.
+
+Scout, holistic, group, single, synthesis and disprove each write one of the
+types here. The prompt shows the agent `example()` as `core.serde.to_dict` writes
+it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
+what `review.ingest` accepts are one schema. A test
+holds each example to the strict reader and to `problems()`, and holds the
+notes to the fields.
+
+The types are narrower than the record on purpose. `ReviewRecord` carries what
+the harness decides — dispositions, stable IDs, failures, static analysis,
+checkboxes — and an agent must not be able to write any of it. The strict
+reader rejects an unknown key, so a harness field in an agent's document is a
+named error rather than a value silently taken. `to_record` is the one
+conversion, and `as_group_artifact` is its inverse for the one prompt that
+shows a merged record back to an agent (synthesis).
+
+A finding's severity is its ID's first letter, so the two cannot disagree.
+`TriageEntry` and `LedgerLine` are the record's own types: what an agent
+writes there is exactly what the record keeps.
 
 ### review/dedup.py
 
@@ -1337,59 +1521,36 @@ line the diff never touched.
 
 ### review/grammar.py
 
-The one reading of a finding line: its ID, its location, its identity.
+The posted-comment wire format, and the identity two findings are compared on.
 
-Every regex that parses a finding declaration lives here, and so does the
-identity two findings are compared on. Before this module there were eleven
-such regexes in five files, and they disagreed: dedup read a path only when it
-was bold, while carry-forward read all four shapes and hashed them together, so
-a finding written with plain backticks was carried forward and deduplicated
-against nothing.
+A finding posted to GitHub carries its tag (`finding_tag`, `posted_finding_tag`)
+and a `<!-- sid: -->` marker (`sid_marker`). `reply_threads` reads them back off
+the PR (`SID_MARKER_RE`, `BOLD_FINDING_ID_RE`), and `review.dedup` reads a
+posted body (`BODY_FINDING_RE`, `strip_sid_markers`, `strip_line_suffix`).
+`location_ref` is how both `review.md` and the comment spell a location.
 
-One owner does not mean one pattern. `VERIFY_FINDING_RE` bounds a spaced
-filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
-and the two have to keep reading the same line the same way for different
-purposes. Both live here so a change to one is made next to the other.
+`FindingIdentity` is what makes two findings the same one: built from a
+finding's fields (`of_fields`), it owns the `DedupKey` merge deduplicates on and
+the stable ID a sid marker carries. The stable ID hashes the path and the
+body's first eighty characters, so an anchored finding keeps the sid its
+rendered line hashed to before agents wrote JSON.
 
-A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
-`:12-18` several of them match inside a span they capture, and
-`strip_line_suffix` is how such a reader takes it back off — each used to
-truncate at the last colon instead, which read `ns:module.py` as `ns` and
-verified a finding against a file that does not exist. `SEVERITY_KEY` and the
-`<!-- sid: -->` marker are the other two: `sid_marker` writes a marker,
-`strip_sid_markers` takes it back off and `SID_MARKER_RE` reads the identity
-out of one, so a marker a writer emits is one every reader here skips over.
-
-The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
-returns is a pair with names rather than two loose strings, because which half
-is the location is not something a call site should have to infer from
-position.
-
-Exact, and deliberately so: a carry-forward asks whether this is the same
-finding as one in the prior review, and a fuzzy answer there silently merges two
-findings about two lines of one file. `review.dedup` is the fuzzy answer, for
-the different question of whether a finding is about to be posted twice.
-
-Where a finding's body ends is `review.ingest`'s `finding_spans`. What a
-document is assembled from is `review.document`'s; what a finding means once
-parsed is `review.types`'.
+Agent output is not parsed here — agents write JSON (`review.artifacts`).
 
 ### review/ingest.py
 
-One ingest boundary: an agent's markdown review becomes a `ReviewRecord`, once.
+One ingest boundary: an agent's JSON artifact becomes typed data, once.
 
-Every agent artifact that becomes review state passes through `ingest_review`
-where it enters. Ingest is strict: an entry it cannot represent faithfully — an
-unknown severity token, a duplicate ID, a declaration with nothing after it — is
-an `IngestError`, never a silent repair. `ingest_with_repair` gives the agent one
-turn to fix a rejection and returns an `IngestOutcome`; a second rejection is an
-agent failure, handled as failures already are.
+Every agent output that becomes review state passes through `load_artifact`
+where it enters: `json.loads`, then the strict schema (`core.strict`), then the
+artifact's own `problems()` (`review.artifacts`). Ingest is strict. Invalid
+JSON (named by line and column), a schema violation or a malformed entry (named
+by JSON path) is an `IngestError`, never a silent repair. `ingest_artifact`
+gives the agent one turn to fix a rejection and returns an `ArtifactOutcome`;
+a second rejection is an agent failure, handled as failures already are.
 
-Text carrying the render `BANNER` is refused outright: `review.md` is a view of
-`review.json` and is never parsed back.
-
-This reads the markdown grammar — `review.grammar` for a finding line —
-and walks each finding's body here (`finding_spans`).
+`review.md` is rendered from the record and never parsed back; nothing here
+reads markdown.
 
 ### review/merge.py
 
@@ -1402,19 +1563,18 @@ path and description that decide whether two findings are duplicates are the
 pair that hashes to a stable ID, and a stable ID is how a later reconciliation
 recognises a finding a review restates.
 
-Reading that identity off a finding line is `review.grammar`'s job, not this
-module's: `FindingIdentity` answers both questions, so deduplication and
-carry-forward cannot come to different conclusions about one line. Reading a
+Reading that identity off a finding's fields is `review.grammar`'s job, not
+this module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one record. Reading a
 review is `review.document`'s job, checking findings against the tree is
 `review.verify`'s, and the `Finding` every side holds is `review.types`' — a
 consumer that only holds findings needs none of this. Deciding what became of
 a finding the prior review reported is `review.reconcile`'s.
 
-Where a finding's body ends is `review.ingest`'s: a `RecordFinding` already
-carries its extent. Deduplication walks those records and drops a repeat by
-`FindingIdentity.dedup_key` within the same ID prefix, so a duplicate is a
-record that never reaches the merged document rather than a span cut out of
-it.
+A `RecordFinding` already carries its fields. Deduplication walks those
+records and drops a repeat by `FindingIdentity.dedup_key` within the same ID
+prefix, so a duplicate is a record that never reaches the merged document
+rather than a second copy of it.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -1422,9 +1582,9 @@ they like; merging, deduplication, and evidence verification all remove
 findings, and a final pass closes the gaps so each severity numbers from 1 with
 no holes.
 
-Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
-…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
-a reference, and references are rewritten through the same map, so a finding
+Only a finding on the record — a `RecordFinding` in `findings` — gets a number.
+A mention of an ID inside a finding's body, summary, or other prose is a
+reference, and references are rewritten through the same map, so a finding
 that cites another one still cites the same one afterwards.
 
 Every severity is renumbered over the whole set of sections rather than one
@@ -1470,10 +1630,13 @@ in the diff at all is skipped. `cli.review_positions` is the command over this;
 
 Rebuild a review record from its group finding files.
 
-Ingests the group-N.md outputs, merges the records, post-processes them and
-writes a new review through the store — the recovery path when synthesis
-drifted or the review file was corrupted. `cli.review_rebuild` is the command
-over this.
+Loads the `group-N.json` artifacts, merges their records, post-processes them
+and writes a new review through the store. It is the recovery path when
+synthesis drifted or the review file was corrupted; `cli.review_rebuild` is
+the command over it. A group file that no longer loads is skipped with a
+warning, because rebuilding exists to salvage. When none of them load, the
+existing review is left untouched. A directory holding only the `group-N.md`
+files of a run from before agents wrote JSON is refused by name.
 
 ### review/reconcile.py
 
@@ -1532,9 +1695,11 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields carry today's markdown verbatim — `lead`, `verdict`, `ledger`,
-`extra`, `severity_sections` — so the cut-over renders what the markdown
-pipeline wrote. They go when agents write JSON and the verdict is derived.
+Some fields still carry markdown an agent wrote — `verdict`,
+`extra`, `severity_sections` — and go when agents write JSON and the verdict
+is derived. A record written at schema 1, before agents wrote JSON, is
+upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the
+stable IDs its posted comments carry.
 
 ### review/render.py
 
@@ -1621,9 +1786,9 @@ the quote no longer has, which makes a verbatim quote fail to match itself.
 
 The disprove gate is adversarial. Each must-fix and should-fix finding is
 challenged by an agent, and one that cannot survive the challenge is marked
-`FALSIFIED` on the record — kept, never rendered. Reading that agent's
-verdicts back and applying them is `apply_disprove`; whether the gate runs at
-all is `review.phases`'.
+`FALSIFIED` on the record — kept, never rendered. The agent writes a
+`DisproveArtifact`; `apply_disprove` reads those verdicts onto the record.
+Whether the gate runs at all is `review.phases`'.
 
 The synthesis agent wrote the Summary and the Verdict before either gate ran,
 so both can describe findings that are no longer visible. Regenerating them
@@ -1644,14 +1809,13 @@ says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review.verdict`'s. The
-finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from the record, the
-same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path` — against the files the diff changed first, as
-the poster does, and the tracked tree only when the diff has no match — so a
-finding is not placed against one file and verified against another.
+Which verdict a tally supports in the first place is `review.verdict`'s. A
+finding's evidence is the code on the record, and the file it is checked
+against is `path` — resolved with the poster's `review.format.resolve_path`
+against the files the diff changed first, as the poster does, and the tracked
+tree only when the diff has no match — so a finding is not placed against one
+file and verified against another. A finding with no path names no file, and
+is not checked.
 
 ## Publishing
 
@@ -3460,6 +3624,13 @@ memory, minus a reserve kept for every other service on the host, covers what
 that step has been seen to need, and neither CPU nor memory is under pressure.
 Running steps are never paused or killed; admission only gates the next start.
 
+The host is shared by every batch driver on it, so the caller passes in what
+the others are running (`batch.machine`): their pending memory comes off the
+sample, and their live steps count against `batch.pool_default` where there
+are no host metrics. Whether a driver may start a step regardless — the floor
+slot — is the caller's to establish and pass as `floor`; `decide` no longer
+infers it from this run having nothing running.
+
 ### batch/events.py
 
 NDJSON progress events for live consumers of `pr batch run`.
@@ -3467,6 +3638,7 @@ NDJSON progress events for live consumers of `pr batch run`.
 The state file is authoritative; events only save a consumer from polling it.
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 `generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
+`item_skipped_held` is a PR a new `run` left out because an unfinished run still holds it.
 
 ### batch/gc.py
 
@@ -3497,18 +3669,21 @@ process that predates claims and is still fetching.
 Apply one inbound request to a loaded run, and settle a run that is idle.
 
 `apply_one` is the policy: a `Decide` goes through `batch.resolve.apply`
-unless the decision already carries that action (an idempotent replay), and a
+unless the decision already carries that action (an idempotent replay), a
 `Cancel` records `Run.cancel` — `kill` only upgrades, `requested_at` is set
-the first time only. A cancel against `DONE` is an error; against `CANCELLED`
-it is a no-op success. `settle_idle` turns a recorded cancel into `CANCELLED`,
-or every item terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is
-what a caller holds: apply, settle, report.
+the first time only — and a `Release` drops one item, resolving its open
+decisions as `released`. A cancel against `DONE` is an error; against
+`CANCELLED` it is a no-op success. A release against a finished run, an
+unknown or already-terminal item, or a running item without `--kill`, is an
+error. `settle_idle` turns a recorded cancel into `CANCELLED`, or every item
+terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is what a
+caller holds: apply, settle, report.
 
-`deliver` is the one path for `pr batch resolve` and `cancel`: it writes the
-request, then either applies it in an `APPLIER` session or returns `queued`
-when a live holder that drains will apply it. A request reported `queued` is
-applied by that holder or its hand-off, or, if the holder dies, by the next
-session to open the run.
+`deliver` is the one path for `pr batch resolve`, `cancel` and `release`: it
+writes the request, then either applies it in an `APPLIER` session or returns
+`queued` when a live holder that drains will apply it. A request reported
+`queued` is applied by that holder or its hand-off, or, if the holder dies,
+by the next session to open the run.
 
 ### batch/live.py
 
@@ -3541,6 +3716,60 @@ A checkout is found by the item's `repo_dir` first, then the current
 directory. Either one counts only when its `origin` names the item's repo,
 because a relative `repo_dir` saved by an older run resolves against whatever
 directory the reader happens to be in.
+
+### batch/machine.py
+
+What every batch driver on this machine is running, so admission sees all of them.
+
+Each driver decides alone whether the host can take one more step
+(`batch.admission.decide`), but memory and CPU are the machine's, not the
+run's. Counting only its own steps, and always admitting a run's first one,
+let N concurrent batches start N steps whatever memory said. This module is
+the shared view that closes that.
+
+`<state>/batch/admission/` holds, per live driver:
+
+| File | Held / written | Read as |
+|---|---|---|
+| `<run>.lock` | `LOCK_EX`, blocking, for the driver's life | live while a non-blocking probe of it fails |
+| `<run>.json` | replaced atomically at the end of every admission pass | `pid`, `updated_at`, `waiting_since`, `live[]` |
+| `floor.lock` | `LOCK_EX`, by at most one driver at a time | the machine-wide floor slot |
+
+A peer counts only while its lock is held, so a driver killed with SIGKILL
+drops out the moment the kernel releases it; its JSON is removed by whichever
+peer next finds the lock free. Machine-wide pending memory is the sum, over
+live peers, of each running step's estimate less the peak it has reached.
+
+A driver refused with nothing running joins a queue, ordered by
+`waiting_since`. While a driver ahead of it is still waiting, every other
+driver defers — normal admission included — so the next step the host has
+room for goes to the longest waiter rather than to whichever driver happened
+to look first. Without that, a plain shared slot starves: whoever finishes
+first wins it again.
+
+The floor slot replaces the per-run "nothing running, so one step is always
+admitted" rule. The head of the queue may start one step whatever the host
+says, but only while it holds `floor.lock` and only while nothing is running
+anywhere on the machine: a starved host gets one step, not one per driver.
+The holder gives the slot back once its own running count returns to zero and
+joins the back of the queue, so under sustained pressure every waiting driver
+gets a turn within about (N-1) times the longest step. Only fresh entries
+queue: one not rewritten for `FRESH_SECONDS` belongs to a driver blocked in an
+inline publish, which still holds its lock but is not taking steps.
+
+A registry write or read that fails mid-run (a full disk, a removed directory)
+drops the driver to per-run admission with one warning, rather than raising
+out of the scheduler and killing the steps it has live.
+
+`PerRun` is the same interface with no peers and the old per-run floor. It is
+what a scheduler uses when nothing else is supplied, and what `register`
+returns, after logging, on a filesystem where `flock` is unsupported.
+
+ceiling: admissions are not serialized across drivers — a step a peer started
+is invisible until that peer's next JSON write, at most one pass later, so two
+drivers can each admit against the same headroom in that window. Upgrade
+trigger: if hosts are seen overcommitting by one step per concurrent driver,
+hold a machine-wide `admit.lock` across read-peers, decide, start, write.
 
 ### batch/model.py
 
@@ -3597,8 +3826,10 @@ still the head the batch planned from (`Item.remote_sha`):
 
 | Tree | Command |
 |---|---|
+| the worktree stands on another branch than the item's | refuse: `wrong_branch` |
 | the fetch failed | refuse: `fetch_failed` |
 | the fix commit failed, or the worktree has staged changes | refuse: `unlanded_fixes` |
+| a commit a step drafted is not on the branch, as itself, a patch-equivalent, or a replay `git.replay` can follow | refuse: `drafted_dropped` |
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
@@ -3618,11 +3849,23 @@ to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
 `--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. A branch the operator rebased
-by hand with `--fork-point` reaches that refusal too: the commits the fork
-point skipped are the ones listed, and the rebase's start tip stays the one
-the batch saw before the hand rebase (`batch.resolve`, `force`), so
-`not_incorporated` does not fire for it. The lease advances as soon as
+appeared since is refused again) or drops the PR. A `drafted_dropped` one lists
+the drafted commits the branch no longer carries — a hand `reset --hard`, a
+rebase that dropped one, a hand push without it — and is answered by
+cherry-picking them back and retrying, or by `force-publish` past exactly that
+list. A commit whose replay git could not determine is listed too, marked
+unverifiable: the gate fails closed. Confirmations accumulate on the item
+(`Item.forced`), so confirming one refusal never reopens the other.
+
+A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
+of the old lease that the local branch already contains (`remote_fast_forwarded`)
+— the push that follows is a fast-forward and loses nothing.
+
+A branch the operator rebased by hand with `--fork-point` reaches the
+`not_incorporated_remote` refusal too: the commits the fork point skipped are
+the ones listed, and the rebase's start tip stays the one the batch saw before
+the hand rebase (`batch.resolve`, `force`), so `not_incorporated` does not fire
+for it. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 
 ### batch/report.py
@@ -3661,12 +3904,12 @@ run never saw, or heads that moved since it ran, `hint` says so and points at
 
 ### batch/requests.py
 
-Typed inbound requests for a `pr batch` run: decide, cancel, or malformed.
+Typed inbound requests for a `pr batch` run: decide, cancel, release, or malformed.
 
 A request file without ``kind`` parses as a ``Decide``, so files queued by
 older code stay valid. ``to_dict`` always writes the tag. ``drain_order``
-puts every ``Cancel`` ahead of decisions so a cancel never loses to a
-publish queued beside it.
+puts every ``Cancel`` ahead of everything else (by name) so a cancel never
+loses to a publish or release queued beside it.
 
 ### batch/resolve.py
 
@@ -3683,8 +3926,8 @@ Apply an operator's answer to one decision, then move the item on.
 | `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` and its target lock released / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry also `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
-| `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry adopts a remote that fast-forwarded the lease to a commit the local branch holds, and otherwise `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
+| `failed` | `force-publish` | only `reason: not_incorporated_remote` or `drafted_dropped`; same as `publish` past exactly the commits listed in the refusal, added to those the item was already forced past (a newly appeared commit refuses again) |
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done` and its target lock released; local commits stay and nothing is pushed |
 
@@ -3720,8 +3963,8 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
-    <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
-    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
+    <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
+    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions, cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
@@ -3729,10 +3972,11 @@ Where a `pr batch` run lives on disk; the only module that touches it.
 
 `state.json` is written only by a `Session` that loaded it under the run's
 resource. The resource has no `WORKBENCH_RUN_LOCK` marker: a child neither
-inherits it nor passes through it. Lock order is `Global("batch")`, then the
-run resource, then item TARGETs, then CHECKOUT. Every take is non-blocking, so
-the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own
-TARGET before `reap` takes run resources.
+inherits it nor passes through it. Lock order is `Global("batch-<repo_key>")`
+for each repo the batch covers, then the run resource, then item TARGETs, then
+CHECKOUT. Every take is non-blocking, so the order cannot deadlock. One
+exception: `pr gc`'s dispatcher takes its own TARGET before `reap` takes run
+resources.
 
 `reap` renames the run directory to the tombstone while still holding the
 flock. `os.rename` moves `run.lock` with the directory; the flock stays on
@@ -3765,12 +4009,19 @@ Which `pr` target each batch item is, so a run can hold their locks and hand eac
 
 A batch run holds each unfinished item's target lock until that item is
 terminal (`done`, `dropped`, `skipped_closed`), so a manual `pr` command on one
-of its PRs is refused instead of interleaving with the batch's own step. A
-terminal item is one the scheduler never admits again, so `ItemHolds` releases
-its lock while the run carries on, and the PR is free for manual work at once.
+of its PRs is refused instead of interleaving with the batch's own step. Once
+an item's worktree is known — assigned, or recorded by an earlier run being
+resumed — the run holds that checkout's lock too, on the same stack, so it is
+released with the target: a `pr` command run in the worktree on another branch
+is refused as well, and the driver's own git writes there (restore, fetch,
+reset) are covered by a lock rather than by luck.
+A terminal item is one the scheduler never admits again, so `ItemHolds`
+releases its lock while the run carries on, and the PR is free for manual work
+at once.
 Its children must get through those locks, and each only through its own: a
-child is started with `WORKBENCH_RUN_LOCK` naming its item's target and nothing
-else, so a step for one PR cannot ride the batch's hold onto another. A child
+child is started with `WORKBENCH_RUN_LOCK` naming its item's target and
+`WORKBENCH_RUN_LOCK_TREE` naming its item's checkout, and nothing else, so a
+step for one PR cannot ride the batch's hold onto another. A child
 started for an item whose lock was released takes its own.
 
 The target is computed the way `pr.context` keys a run — the repo key read off
@@ -3871,7 +4122,7 @@ Pi CLI reference:
   --no-session     Ephemeral mode (don't persist session)
   --tools <list>   Allowlist specific tools
   --model <id>     Model selection
-  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh
+  --thinking <lvl> Thinking depth: off, minimal, low, medium, high, xhigh, max
   --append-system-prompt <text>  Inject additional system prompt
   --verbose        Verbose output
 
@@ -3979,6 +4230,11 @@ closest listed ids, and how to override. An empty catalogue is not that error
 — pi absent, hung, or unreadable must not block a spawn pi itself might still
 accept; Pi's stderr is the remaining signal on that path.
 
+The same check runs once, up front, for every model a run would use
+(`check_targets`): each reference is judged by the provider it names, so a run
+mixing providers fails before it pays for anything, not at the first phase that
+reaches the wrong catalogue.
+
 ### agent/rule_prefix.py
 
 Assemble a Pi system-prompt prefix from a seeded ``rules_home``.
@@ -4044,10 +4300,11 @@ Lives below the review layer so agent.backend can depend on it without inverting
 the dependency.
 
 Every AI call made through the workbench appends one record to a monthly JSONL
-file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
-the task that made the call. Python entry points record automatically through
-`agent.backend`; the shell caller that cannot use it — `run-auto-task`, which
-needs slash commands — goes through `ai-usage-log`.
+file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, the
+task that made the call, the trail invocation of the command it ran under, and
+the repo, PR and branch where the caller knows them. Python entry points record
+automatically through `agent.backend`; the shell caller that cannot use it —
+`run-auto-task`, which needs slash commands — goes through `ai-usage-log`.
 
 A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
@@ -4281,6 +4538,35 @@ Because CI failures are usually environment-shaped, these cases put stub
 binaries on `PATH` rather than depending on what the host happens to have
 installed, so they fail the same way everywhere.
 
+### eval/scoring_disprove.py
+
+The disprove eval task: challenge planted findings, score the verdicts.
+
+The disprove gate decides which findings reach the reader, so its two errors
+cost differently. Falsifying a real defect hides it; surviving a false one only
+leaves noise a reader can dismiss. A case therefore holds a small repo and a
+list of findings a reviewer might have written, each marked `real` (it describes
+a defect that is in the code) or `false` (the code already handles it, or the
+claim misreads it). The gate is shown them rendered exactly as in production and
+asked for verdicts.
+
+| Score field | Meaning here |
+|---|---|
+| `recall` | Share of the `false` findings the gate falsified — the noise it removed |
+| `precision` | Share of the `real` findings the gate kept — 1.0 means it hid nothing real |
+
+A finding with no verdict survives, as the template says, so a gate that wrote
+nothing scores precision 1.0 and recall 0.0 rather than erroring: the number
+then reads as what it was, a gate that challenged nothing. A case with no
+finding of one kind scores that field 1.0, since there was nothing to get wrong.
+`--compare` gates on a drop in either, so a cheaper model that starts hiding
+real findings fails the same way one that drops a defect does in `review`.
+
+Findings are rendered through `review.render.render_body` and the prompt comes
+from the production template and output format, so the eval measures the prompt
+production sends. What it does not exercise is the review pipeline around the
+gate: prompt budgeting and the ingest retry.
+
 ### eval/scoring_review.py
 
 The review eval task: run review-orchestrate, score findings against a manifest.
@@ -4386,6 +4672,7 @@ tasks existed keeps working.
 | `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
 | `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
+| `disprove` | A repo and planted findings, each marked real or false | Share of false findings falsified, and share of real findings kept |
 
 Every case needs a `src/` directory: it is copied into the throwaway git repo
 that becomes the run's `cwd`, and a case without one is skipped. That repo is
@@ -4409,10 +4696,10 @@ Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
 Each task names the production `Phase` it measures (review: `single`, ci-fix:
-`ci_fix`, skill: `comments_fix`). With `--models` omitted, `resolved_model`
-picks that phase's model through `agent.phases.phase_model` before the run, so
-results are labelled with the id that served them rather than `(default)`, and
-the eval measures what production runs instead of the backend's interactive
+`ci_fix`, skill: `comments_fix`, disprove: `disprove`). With `--models` omitted,
+`resolved_model` picks that phase's model through `agent.phases.phase_model`
+before the run, so results are labelled with the id that served them rather
+than `(default)`, and the eval measures what production runs instead of the backend's interactive
 default. `--models` still wins when given.
 
 ## Platform
@@ -4680,6 +4967,29 @@ still has many readers, this is the layer-1 door through which any Python layer
 reaches the same rules, and the copy of the type list is exactly what the module
 exists to prevent. A module recreated later is a module recreated as that copy.
 It goes if a second release ships with no Python reader.
+
+### core/errors.py
+
+How a run ends on an error: one line for the operator, a traceback for a bug.
+
+A failure the operator fixes by configuring something — no AI backend selected,
+a provider with no model, no pi installed — is not a bug, and a traceback
+buries the one line that says what to set. `OperatorError` marks that kind.
+
+Two pieces, split by where they act:
+
+- `reraise` is every entry point's `except` clause. It records the error on the
+  trail once and re-raises it, so a caller running the entry point in-process
+  stops as it would have on a spawn. `pr fix` must not go on to its CI pass
+  after its review pass found no backend; returning an exit code here would
+  make "this machine cannot run AI" read like "this pass found problems".
+- The process hook, installed when this module is imported, is the one place
+  that decides how an uncaught error is shown. An `OperatorError` is printed as
+  its message alone; anything else gets Python's usual traceback. The
+  interpreter exits 1 either way. Every class that subclasses `OperatorError`
+  imports this module, so the hook is in place wherever one can be raised.
+
+Not: what the operator should set (each error's own message says that).
 
 ### core/job_slots.py
 
@@ -4979,13 +5289,18 @@ Exit 0 for every repo state; non-zero only for a root that is not a directory.
 
 ### core/quota_throttle.py
 
-A machine-wide backoff shared by every agent that hits a 429.
+A machine-wide backoff shared by every agent that hits a 429 on one provider.
 
 Two review pipelines on one host used to each keep a process-local ladder
 (``threading.Lock`` plus ``time.monotonic()``). After a shared quota 429 they
 backed off independently and re-collided on the way up, because a monotonic
 clock is not comparable across processes and a lock in one address space is
 invisible to another.
+
+A 429 is a fact about one provider's quota, so each provider has a ladder and a
+file of its own: a 429 from xai holds back the agents calling xai, not the ones
+calling Claude. Agents that name no provider share the default's, which is the
+file this module always had.
 
 The wait is a wall-clock timestamp in a JSON file, not a held flock. A crash
 mid-backoff is therefore not a stale lock: the next process reads ``resume_at``
@@ -5278,6 +5593,25 @@ wrapper was holding is released and the work runs on untracked.
 One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
+
+### core/strict.py
+
+Strict reading of a dataclass from JSON someone else wrote.
+
+`core.serde.from_dict` is lenient on purpose: the files it reads are caches
+and state this workbench wrote itself, and a value that will not coerce is
+better dropped to its default than allowed to fail a run. A document an agent
+wrote is the opposite case. Dropping what does not fit is a silent repair, and
+the reader has to say exactly what is wrong so the agent can fix it.
+
+`load_strict` checks a parsed JSON value against a dataclass and reports every
+disagreement by JSON path (`$.findings[2].id`). Only once there are none does
+it build the instance, through the same `from_dict`. Both readers dispatch on
+`core.serde.classify`, so the two cannot disagree about what a hint means.
+
+`example_json` renders an instance the way `to_dict` writes it. A prompt that
+shows an agent the shape to write shows it with this, so the example and the
+reader are one schema.
 
 ### core/suite_watch.py
 
@@ -5593,6 +5927,29 @@ re-point a root before invoking a subprocess — and an import-time constant
 would capture whichever value happened to be live when the first importer
 loaded this module.
 
+### fix/baseline.py
+
+Telling a red verify run the pass caused from one it inherited.
+
+`fix.suite` runs the repo's checks over the tree a fix pass is about to commit,
+and a red result withdraws every fix the pass claimed. That is right when the
+pass broke something, and wrong when the tree was red before the pass began —
+a hand commit's failure then demotes an unrelated import hoist, and the commit
+body tells the reader the pass is to blame.
+
+So a red run is asked once more, of the tree the pass started from. The engine
+snapshots that tree before the agent runs (`snapshot`), and on red this module
+checks it out into a throwaway worktree and runs the same command with the same
+selection — `fix.suite.FIX_PATHS_ENV` names the pass's paths, so a selector
+that reads it picks the same tests over the older code. A failure both runs
+share is inherited. Only when every failure the pass run names is inherited
+does the verdict become `PREEXISTING`; a new failure beside an old one stays
+`RED`, with the old ones named in the note.
+
+Re-running the same selection, not just the failing tests, keeps the repo the
+owner of its runner: the engine cannot know how to run one test in an arbitrary
+repo, and `fix.suite` explains why it does not invent one.
+
 ### fix/suite.py
 
 Running the repo's own checks against what a fix pass just edited.
@@ -5840,6 +6197,20 @@ name is not a pathspec a later `git add` can resolve — so a fix touching such 
 file was staged as nothing and reported as applied. Applying the flag to the
 subcommand rather than to each caller is what stops the next call site from
 forgetting it.
+
+`fetch` is the one subcommand `run` does more than build an argv for. Every
+worktree of a repository shares one `.git`, and concurrent fetches into it race
+on its ref locks: one fails with `cannot lock ref`, or — under a force-push — a
+fetch whose advertisement went stale while it waited exits 0 having moved a
+remote-tracking ref backwards. So `run("fetch", ...)` holds an `flock` on
+`<git-common-dir>/workbench-fetch.mutex` for the fetch's duration, which
+serializes every workbench fetch into that repository across processes. It
+also retries once, still holding the mutex, on the failures a racing fetch
+leaves behind — the cover for a `git fetch` outside the workbench that takes no
+mutex — and passes `maintenance.auto=false` and `gc.auto=0`, so the detached
+maintenance a fetch otherwise starts cannot take `packed-refs.lock` after the
+mutex is released. Applying all three to the subcommand is what keeps a new
+fetch call site from being the one that races.
 
 Callers that still invoke git as literal argv are migrating across; a new one
 should go through the client. The one difference to know before moving a call
@@ -6814,7 +7185,7 @@ Runs each corpus case through the task its manifest declares — review today,
 ci-fix next — and scores the result against that case's expectations.
 
 Usage:
-  eval-models --corpus eval/corpus/ --models sonnet,opus --effort medium
+  eval-models --corpus eval/corpus/ --models claude-sonnet-5,grok-4.7 --effort medium
   eval-models --entry unchecked-error-go --runs 3
   eval-models --dry-run
 
@@ -6933,14 +7304,15 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
+    pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
 
-Omitting RUN_ID on resume/status/next/cancel picks this checkout's newest unfinished covering run, else its newest covering, else the latest on the machine. cancel and resume without an id refuse when more than one unfinished run covers this checkout.
+Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 
 ### cli/pr_commands.py
 
@@ -6960,9 +7332,10 @@ routing — rather than commands in their own right, which is why the registry
 points `review` and `comments` at the delegates themselves.
 
 `pr fix` decides whether to run each pass by reading the same cached state
-`pr status` prints (`_worth_running`). A cached "nothing to do" is honoured only
-when the domain can say it was measured against the current HEAD —
-`ReviewSummary.head_sha` for the review, the latest stored run's `headSha` for
+`pr status` prints (`_worth_running`). The review pass is skipped when only
+declined, skipped or held findings remain. A cached "nothing to do" is honoured
+only when the domain can say it was measured against the current HEAD —
+`ReviewSummary.reviewed_through` for the review, the latest stored run's `headSha` for
 CI. A verdict about another commit, or one that names no commit, re-runs the
 pass and says why. Skipping a necessary pass is silent and permanent, so the
 gate errs toward running whenever it cannot place the verdict. Each pass is
@@ -7296,7 +7669,7 @@ Usage:
 
 Rebuild review.md from group finding files.
 
-Reads group-N.md files from the review directory, merges findings,
+Reads group-N.json files from the review directory, merges findings,
 post-processes them, and writes a new review.md. Used to recover from
 synthesis agent formatting drift or corrupted review files.
 

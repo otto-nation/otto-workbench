@@ -1,0 +1,114 @@
+{
+  "schema_version": 2,
+  "summary": "4 findings across 3 files in 2 groups. Synthesis agent failed \u2014 findings below are from individual group reviews.",
+  "approach": null,
+  "findings": [
+    {
+      "id": "M1",
+      "severity": "M",
+      "path": "src/cli.py",
+      "line": 4,
+      "end_line": null,
+      "body": "`--timeout` is compared before it is validated, so a negative timeout is accepted.",
+      "evidence": "",
+      "stable_id": "a3143e9b",
+      "sid": "",
+      "disposition": "open",
+      "reason": "",
+      "unverified": false,
+      "checkbox": false,
+      "filed": ""
+    },
+    {
+      "id": "S1",
+      "severity": "S",
+      "path": "src/app.py",
+      "line": 2,
+      "end_line": null,
+      "body": "The retry loop never sleeps between attempts, so a flapping endpoint is hammered.",
+      "evidence": "",
+      "stable_id": "2c1732b0",
+      "sid": "",
+      "disposition": "open",
+      "reason": "",
+      "unverified": false,
+      "checkbox": false,
+      "filed": ""
+    },
+    {
+      "id": "N1",
+      "severity": "N",
+      "path": "src/util.py",
+      "line": 1,
+      "end_line": null,
+      "body": "`clamp` duplicates `max(min(...))`; see [S1] for the caller.",
+      "evidence": "",
+      "stable_id": "c9fbdb74",
+      "sid": "",
+      "disposition": "open",
+      "reason": "",
+      "unverified": false,
+      "checkbox": false,
+      "filed": ""
+    },
+    {
+      "id": "N2",
+      "severity": "N",
+      "path": "src/cli.py",
+      "line": 1,
+      "end_line": null,
+      "body": "Unused import `os`.",
+      "evidence": "",
+      "stable_id": "7e2e397e",
+      "sid": "",
+      "disposition": "open",
+      "reason": "",
+      "unverified": false,
+      "checkbox": false,
+      "filed": ""
+    }
+  ],
+  "questions": [],
+  "verified": [],
+  "focus": [],
+  "triage": [
+    {
+      "path": "src/app.py",
+      "note": "reviewed; adds the retry loop."
+    },
+    {
+      "path": "src/util.py",
+      "note": "reviewed; helper only."
+    },
+    {
+      "path": "src/cli.py",
+      "note": "reviewed; flag parsing."
+    }
+  ],
+  "static_analysis": "",
+  "failures": [
+    {
+      "agent": "synthesis",
+      "reason": "mechanical fallback",
+      "status": "fallback",
+      "recoverable": true
+    }
+  ],
+  "verdict": "Request changes \u2014 1 must-fix, 1 should-fix, 2 nit (mechanically merged, not synthesized).",
+  "severity_sections": [
+    {
+      "severity": "M",
+      "note": "(none)"
+    },
+    {
+      "severity": "S",
+      "note": ""
+    },
+    {
+      "severity": "N",
+      "note": ""
+    }
+  ],
+  "ledger": [],
+  "extra": []
+}

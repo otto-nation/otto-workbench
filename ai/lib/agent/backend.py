@@ -34,16 +34,18 @@ from __future__ import annotations
 import os
 import shutil
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import agent.machine_env
 import agent.pi_binary
 import agent.usage
+import core.errors
 import core.log
 import core.trail
 import git.client
+from agent.models import PhaseModels
 # Backend is defined in core.phases so the config layer can type agent.backend
 # without importing this module, and re-exported here because this is where
 # callers have always read it from.
@@ -53,7 +55,7 @@ ENV_AI_BACKEND = "AI_BACKEND"
 CONFIG_KEY_BACKEND = "agent.backend"
 
 
-class BackendNotSelected(RuntimeError):
+class BackendNotSelected(core.errors.OperatorError):
     """Raised when nothing says which CLI to run."""
 
 
@@ -160,15 +162,44 @@ def _require_backend() -> Backend:
     return selected
 
 
+def _ledger_fallback(served: str | None, ask: Callable[[types.ModuleType], str | None]) -> str | None:
+    """What to record when the log did not name a value: the backend's answer.
+
+    *served* is the log's own reading; *ask* puts the question to the backend
+    module. Asked only when needed, so a log that names its value costs no
+    lookup. None rather than raising: this feeds telemetry, and a row without
+    the value is better than the measured call failing over it.
+    """
+    if served:
+        return None
+    try:
+        return ask(_get_module())
+    except Exception:  # noqa: BLE001 - telemetry must never break the measured call
+        return None
+
+
 def _record(
     *, entry_point: str, usage: agent.usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
     phase: str | None = None, max_turns: int | None = None,
+    branch: str | None = None, thinking: str | None = None,
 ) -> None:
-    """Append one ledger record. A missing usage source records nothing —
-    an absent measurement is more honest than a zeroed one."""
-    if usage is None:
+    """Append one ledger record.
+
+    A missing usage source on a call that succeeded records nothing — an
+    absent measurement is more honest than a zeroed one. The same on a call
+    that failed is recorded as an unmeasured failure: without the row, a
+    crash before the first result record would vanish from the ledger and
+    `otto-log stats` could not count it.
+
+    The invocation is read here rather than passed: every process a command
+    spawns inherits the trail root, so the row names the command without any
+    of the dozen call sites having to thread it.
+    """
+    if usage is None and exit_code == 0:
         return
+    measured = usage is not None
+    usage = usage or agent.usage.SessionUsage()
     try:
         agent.usage.record(
             script=core.trail.script_name(), entry_point=entry_point,
@@ -178,6 +209,10 @@ def _record(
             backend=(sel.value if (sel := selected_backend()) else "unknown"),
             model=model, usage=usage, exit_code=exit_code,
             task=task, repo=repo, pr=pr, phase=phase, max_turns=max_turns,
+            branch=branch, invocation=core.trail.inherited_root(),
+            provider=_ledger_fallback(usage.served_provider, lambda m: m.ledger_provider()),
+            thinking=_ledger_fallback(usage.served_thinking, lambda m: m.ledger_thinking(thinking)),
+            measured=measured,
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the measured call
         pass
@@ -204,13 +239,21 @@ def _get_module() -> types.ModuleType:
     return agent.backend_claude
 
 
-def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
+def preflight(models: PhaseModels, trail, cwd: str) -> bool:
     """Verify the backend can serve the requested models before any run.
 
-    ``models`` maps each resolved model id to the phases requesting it.
-    Returns False to abort — backends fail open when they cannot tell.
+    ``models`` maps each model reference (provider and id) to the phases
+    requesting it; ``cwd`` is the worktree whose tools the run would use, for a
+    backend that has to ask them what they serve. Returns False to abort —
+    backends fail open when they cannot tell.
     """
-    return _get_module().preflight(models, trail)
+    return _get_module().preflight(models, trail, cwd)
+
+
+def abort_preflight(trail, reason: str) -> None:
+    """Log and record one model-preflight failure, so every backend words it alike."""
+    core.log.error(f"Cannot start the run: {reason}")
+    trail.decision("model_preflight", "aborting run", reason=reason)
 
 
 def _require_cwd(cwd: str, entry_point: str) -> None:
@@ -239,8 +282,7 @@ def prompt(
 
     `cwd` is required — see _require_cwd for why it has no safe default.
 
-    `thinking` and `provider` follow the same rule as on `AgentInvocation`: Pi
-    honours both, Claude Code has a flag for neither and drops them.
+    `thinking` and `provider` follow the same rule as on `AgentInvocation`.
 
     The CLI runs under the machine's environment, as an agent does (see
     `agent.machine_env`); when that cannot be built the call returns exit 1
@@ -262,7 +304,7 @@ def prompt(
         (reply, code), usage = result, None
     _record(
         entry_point="prompt", usage=usage, exit_code=code,
-        model=model, task=task, repo=repo, pr=pr,
+        model=model, task=task, repo=repo, pr=pr, thinking=thinking,
     )
     return reply, code
 
@@ -272,13 +314,19 @@ class AgentInvocation:
     """Everything a backend needs to run one agent.
 
     ``provider`` is honoured by the Pi backend and ignored by Claude Code,
-    which has no --provider flag; ``thinking`` is likewise ignored there.
+    which has no --provider flag. ``thinking`` reaches both: Pi as
+    ``--thinking``, Claude Code as ``--effort`` (``agent.backend_claude.effort``).
     ``rules_home`` is the inverse: Claude Code maps it to
     ``CLAUDE_CONFIG_DIR`` and Pi injects it with ``--append-system-prompt``,
     keeping ``--no-context-files``. All three stay on the object so callers
     do not branch on the backend.
 
-    ``task``, ``repo``, and ``pr`` are not passed to the backend at all: they
+    ``compact_at`` is the context ceiling (``context.compact_at``) the caller
+    resolved with the model. Claude Code takes it as ``--autocompact``, since
+    ``--bare`` reads no user settings; Pi reads its per-model reserves from the
+    settings file sync wrote, which is the machine-wide ceiling.
+
+    ``task``, ``repo``, ``pr`` and ``branch`` are not passed to the backend at all: they
     only label the usage ledger record for this call.
 
     ``cwd`` is the directory the backend CLI runs in. It carries a default only
@@ -310,16 +358,19 @@ class AgentInvocation:
     agent: AgentKind | None = None
     max_turns: int | None = None
     max_budget: float | None = None
-    model: str = ""
-    # Not the closed `Thinking` enum: this is read from the environment via
-    # _resolve_thinking_level() and can carry values outside that set (e.g.
-    # "xhigh"), same as `model` can carry values outside `ModelAlias`.
+    # None or empty: no --model, so the backend's own default serves the call.
+    model: str | None = None
+    # A plain string rather than `Thinking`: env layers pass operator input
+    # through as written (agent.phases.resolve_thinking), and the backend, not
+    # this record, decides what a level it does not know means.
     thinking: str | None = None
     provider: str | None = None
+    compact_at: int | None = None
     label: str = ""
     task: str | None = None
     repo: str | None = None
     pr: str | None = None
+    branch: str | None = None
     # The phase that sized this call, for the usage ledger. Separate from
     # `task`, which a caller may override to bill a sub-step (lockfile regen)
     # without losing which phase ran.
@@ -373,6 +424,8 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
         task=inv.task, repo=inv.repo, pr=inv.pr,
         phase=inv.phase,
         max_turns=inv.max_turns,
+        branch=inv.branch,
+        thinking=inv.thinking,
     )
 
 

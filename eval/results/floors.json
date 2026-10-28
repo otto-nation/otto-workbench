@@ -591,6 +591,98 @@
           "best": 0.0
         }
       }
+    },
+    "pi-claude-opus-5-5": {
+      "disprove-bound-query": {
+        "billed_input_mean": {
+          "floor": 136203.66666666666,
+          "best": 136203.66666666666
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.15713171589340522,
+          "best": 0.15713171589340522
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 619.6666666666666,
+          "best": 619.6666666666666
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "disprove-guarded-upstream": {
+        "billed_input_mean": {
+          "floor": 183674.33333333334,
+          "best": 183674.33333333334
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.3181045430725001,
+          "best": 0.3181045430725001
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 1009.6666666666666,
+          "best": 1009.6666666666666
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      },
+      "disprove-live-callers": {
+        "billed_input_mean": {
+          "floor": 167332.33333333334,
+          "best": 167332.33333333334
+        },
+        "cache_read_ratio_mean": {
+          "floor": 0.5249078441059752,
+          "best": 0.5249078441059752
+        },
+        "false_positive_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        },
+        "output_tokens_mean": {
+          "floor": 674.0,
+          "best": 674.0
+        },
+        "precision_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "recall_mean": {
+          "floor": 1.0,
+          "best": 1.0
+        },
+        "severity_accuracy_mean": {
+          "floor": 0.0,
+          "best": 0.0
+        }
+      }
     }
   }
 }

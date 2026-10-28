@@ -200,3 +200,38 @@ def test_the_scheduler_hands_classify_the_head_before_the_step(monkeypatch):
     h = Harness([row(1, ONLY_REVIEW)], heads={"/wt/b1": "before1"})
     h.sched.run_until_blocked()
     assert seen == ["before1"]
+
+
+def test_each_step_records_the_commits_it_made_but_the_rebase_does_not():
+    """Publish checks these are still on the branch; a rebase only replays existing ones."""
+    h = Harness([row(1, REBASE_AND_REVIEW)],
+                moves={("rebase", "/wt/b1"), ("review", "/wt/b1")})
+    h.sched.run_until_blocked()
+    item = h.run.items[0]
+    assert item.step(Step.REBASE).commits == []
+    assert item.step(Step.REVIEW).commits == ["review-2"]
+
+
+def test_a_commit_listing_git_refused_records_the_attempts_tip():
+    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
+                commits=lambda wt, base: None)
+    h.sched.run_until_blocked()
+    assert h.run.items[0].step(Step.REVIEW).commits == ["review-1"]
+    assert "commits_unrecorded" in h.kinds()
+
+
+def test_a_remote_reset_behind_the_lease_is_not_adopted():
+    """Regression: the local branch contained the reset-to commit, so the lease moved
+    back and the next publish pushed the removed commits again."""
+    h = Harness([row(1, ONLY_REVIEW)], replan=lambda r: batch_row_with_head(r, "h2"),
+                descends=lambda wt, old, new: False)
+    h.sched.run_until_blocked()
+    assert h.run.items[0].remote_sha == "h"
+
+
+def test_a_step_with_no_starting_head_records_its_tip_without_a_failure_event():
+    """No base to list from is not git refusing the listing."""
+    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")}, heads={"/wt/b1": ""})
+    h.sched.run_until_blocked()
+    assert h.run.items[0].step(Step.REVIEW).commits == ["review-1"]
+    assert "commits_unrecorded" not in h.kinds()

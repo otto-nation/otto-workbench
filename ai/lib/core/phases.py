@@ -123,11 +123,33 @@ class Effort(StrEnum):
 
 
 class Thinking(StrEnum):
-    """Extended-thinking level passed through to the backend."""
+    """Extended-thinking level passed through to the backend.
 
+    Pi's vocabulary, the widest any backend reads: Pi maps each level onto the
+    model's own setting and clamps one the model lacks. A level is comparable
+    only within one model — `high` on two providers is not the same depth.
+    """
+
+    OFF = "off"
+    MINIMAL = "minimal"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+
+
+class Tier(StrEnum):
+    """How much model a phase needs — the key it reads its model by from `models.*`.
+
+    Provider-neutral on purpose: which model is `deep` is a per-machine answer in
+    the config file, so no phase names a model and no vendor's tier words are
+    part of the vocabulary.
+    """
+
+    DEEP = "deep"
+    STANDARD = "standard"
+    LIGHT = "light"
 
 
 class Backend(StrEnum):

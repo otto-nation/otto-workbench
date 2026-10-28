@@ -224,9 +224,33 @@ _launch() {
   # wrapper must not depend on the loader having reached the helper first.
   local cmd
   for cmd in "${WRAPPERS[@]}"; do
-    run zsh -c "source '$SNIPPET_DIR/$cmd.zsh' && whence -w _wb_launch_in_worktree"
+    run zsh -c "source '$SNIPPET_DIR/$cmd.zsh' && whence -w wb_launch_in_worktree"
     [ "$status" -eq 0 ]
     [[ "$output" == *"function"* ]]
+  done
+}
+
+@test "each wrapper still launches from a shell snapshot that drops _-prefixed functions" {
+  # The snapshot leaves out every single-underscore name (claude_snapshot in
+  # test_helper.bash), so a wrapper whose helper is named that way is captured
+  # without it and fails with "command not found".
+  _make_seed
+  _fake_all
+
+  local cmd
+  for cmd in "${WRAPPERS[@]}"; do
+    run claude_snapshot "$SNIPPET_DIR/$cmd.zsh"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" > "$TMPDIR/snapshot-$cmd.zsh"
+
+    PATH="$FAKE_BIN:$REPO_ROOT/bin:$PATH" run zsh -fc "
+      cd '$SEED'
+      source '$TMPDIR/snapshot-$cmd.zsh'
+      $cmd hello
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LAUNCHED=$cmd IN=$SEED"* ]]
+    [[ "$output" == *"ARGS=hello"* ]]
   done
 }
 
@@ -235,7 +259,7 @@ _launch() {
   # helper exists to end. resolve-worktree is named in the helper only.
   local cmd
   for cmd in "${WRAPPERS[@]}"; do
-    grep -q "_wb_launch_in_worktree $cmd" "$SNIPPET_DIR/$cmd.zsh"
+    grep -q "wb_launch_in_worktree $cmd" "$SNIPPET_DIR/$cmd.zsh"
     # `run !`: a bare `! grep` never fails a test mid-body, so only the last
     # wrapper in the loop would be checked.
     run ! grep -q '^[^#]*resolve-worktree' "$SNIPPET_DIR/$cmd.zsh"

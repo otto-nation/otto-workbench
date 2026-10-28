@@ -142,6 +142,11 @@ class ReviewRow:
     # is on the branch for anyone to find, while a held one is knowable from
     # nowhere else once the terminal that printed its resume line is gone.
     unpushed_fix_commit: str = ""
+    # The latest commit this review answers "is a re-run needed" for
+    # (`ReviewMeta.reviewed_through`). A new optional field, so the schema
+    # does not bump. The listing itself does not decide staleness; a consumer
+    # that does reads this rather than `head_sha`.
+    reviewed_through: str = ""
     # The forge the review was run against, empty for public GitHub. Another
     # optional field, so the schema does not bump. `repo` stays the bare slug
     # every consumer already keys on — this is beside it, for a consumer that
@@ -173,6 +178,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
         pr_number=meta.pr_number,
         review_file=str(review_file),
         head_sha=meta.head_sha,
+        reviewed_through=meta.reviewed_through,
         head_ref=meta.head_ref,
         base_ref=meta.base_ref,
         review_type=meta.review_type.value if meta.review_type else "",

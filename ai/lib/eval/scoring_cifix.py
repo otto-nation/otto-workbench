@@ -105,6 +105,7 @@ class CiFixTask:
         if pre_code == 0:
             return _unfixable(repo_dir, log_dir, pre_output)
 
+        settings = eval.task.resolved_settings(self, opts.model)
         rc = agent.backend.invoke_fix(agent.backend.AgentInvocation(
             prompt=_PROMPT.format(
                 repo_dir=repo_dir,
@@ -117,9 +118,10 @@ class CiFixTask:
             add_dirs=[repo_dir],
             max_turns=FIX_MAX_TURNS,
             max_budget=FIX_MAX_BUDGET,
-            model=eval.task.resolved_model(self, opts.model),
-            thinking=agent.phases.phase_thinking(self.phase),
-            provider=agent.phases.phase_provider(),
+            model=settings.model,
+            thinking=settings.thinking,
+            provider=settings.provider,
+            compact_at=settings.compact_at,
             task="eval-ci-fix",
             repo="eval/corpus",
             rules_home=opts.rules_home,

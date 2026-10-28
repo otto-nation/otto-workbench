@@ -764,8 +764,7 @@ commits (a hand `--fork-point` rebase: the skipped ones); a new one refuses agai
 A publish `retry` leases on a remote equal to local; on `remote_moved` it leases on a remote that fast-forwarded the lease to a commit local holds, or else resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish STEPS` resolves that
 decision when the item closes with no open decision and every drafted
 step is listed and `done`; an owed closeout counts as `comments`.
-`--watch-ci` re-checks CI once after a push and reopens on red;
-`run_finished` lists `ci_not_rechecked`. `--no-verify` skips the pre-push hook on the branch push (`pr push` / `pr rebase --push-only`) and the comments closeout push.
+`--no-verify` skips the pre-push hook on the branch push (`pr push` / `pr rebase --push-only`) and the comments closeout push.
 
 A step that needs a person opens one `step_review` whose `evidence` is
 `open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,

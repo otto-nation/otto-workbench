@@ -157,9 +157,3 @@ def test_emit_outcome_reports_a_release_as_item_finished():
         ("item_finished", {"run": run.id, "item": "o/r#1", "status": "dropped"})]
 
 
-def test_ci_not_rechecked_lists_published_items_whose_ci_was_never_read():
-    run = _new_run(row(1), row(2))
-    run.items[0].published_sha = "abc"
-    run.items[1].published_sha = "def"
-    run.items[1].ci_rechecked = True
-    assert batch.scheduler.ci_not_rechecked(run) == [run.items[0].key]

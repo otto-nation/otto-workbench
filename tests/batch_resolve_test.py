@@ -538,21 +538,6 @@ def test_a_remote_somebody_else_moved_during_finish_is_not_adopted():
     assert (item.remote_sha, item.published_sha) == (planned, "")
 
 
-def test_adopting_a_finish_push_reopens_ci_under_watch_ci():
-    run = _run(_publish_decision())
-    run.watch_ci = True
-    item = run.items[0]
-    reads = iter([_even(item),
-                  TreeState(local="held", remote="held",
-                            divergence=RefDivergence(0, 0, True))])
-    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
-                        runner=Recorder(), tree=lambda i: next(reads),
-                        closeout=lambda d, b: CloseoutDebt(summary=True))
-    ci = item.step(batch.model.Step.CI)
-    assert ci.status is batch.model.StepStatus.PENDING and ci.watch is True
-    assert item.status is batch.model.ItemStatus.QUEUED
-
-
 def test_a_failed_finish_still_adopts_the_head_it_pushed():
     run = _run(_publish_decision())
     item = run.items[0]

@@ -13,7 +13,7 @@
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry adopts a remote that fast-forwarded the lease to a commit the local branch holds, and otherwise `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote` or `drafted_dropped`; same as `publish` past exactly the commits listed in the refusal, added to those the item was already forced past (a newly appeared commit refuses again) |
-| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
+| `publish` | `publish` | see `batch.publish`; success → item `done`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done` and its target lock released; local commits stay and nothing is pushed |
 
 Every action that leaves the item terminal (`dropped` or `done`) ends the
@@ -322,22 +322,6 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
     return created
 
 
-def _reopen_for_ci(run: Run, item: Item) -> None:
-    """With --watch-ci, send a just-published item back for one CI re-check.
-
-    Once per item per run: `ci_watched` is spent here, so a red re-check is
-    fixed and published once more and never watched again.
-    """
-    if not (run.watch_ci and item.has(Step.CI) and not item.ci_watched):
-        return
-    item.ci_watched = True
-    for rec in item.steps:
-        rec.drafted, rec.commits = False, []
-    ci = item.step(Step.CI)
-    ci.status, ci.watch = StepStatus.PENDING, True
-    item.status = ItemStatus.QUEUED
-
-
 def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
              read: Callable[[Item], batch.publish.TreeState], *,
              confirmed: Sequence[str] = (),
@@ -371,10 +355,8 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
         # before, since a landing may commit (hook regeneration) first. The tree
         # seam re-reads it; an unreadable branch falls back to the pre-push tip.
         item.remote_sha = item.published_sha = read(item).local or tree.local
-        # CI on the head just pushed has not been read, whatever an earlier
-        # re-check of an earlier push found. What the operator forced past is
-        # behind this push, and confirms nothing about the next one.
-        item.ci_rechecked = False
+        # What the operator forced past is behind this push, and confirms
+        # nothing about the next one.
         item.forced = []
     for argv in rest:
         if run_cmd(argv, log_path=log) != 0:
@@ -388,8 +370,6 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
     item.status = ItemStatus.DONE
     # A confirmation covers one publish; a completed one spends it, push or not.
     item.forced = []
-    if plan.pushes or adopted:
-        _reopen_for_ci(run, item)
     return []
 
 
@@ -408,7 +388,6 @@ def _adopt_own_push(item: Item, after: batch.publish.TreeState) -> bool:
     if not _moved_to_local(item, after):
         return False
     item.remote_sha = item.published_sha = after.remote
-    item.ci_rechecked = False
     return True
 
 

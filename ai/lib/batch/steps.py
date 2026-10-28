@@ -31,7 +31,7 @@ from batch.model import Step
 
 
 def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
-              wait: bool = False, watch: bool = False, fork_point: str = "") -> list[str]:
+              wait: bool = False, fork_point: str = "") -> list[str]:
     """The child process for one step. Every step runs drafted — nothing here pushes
     or posts — because publishing is the batch's own decision, made once per item
     against the tree.
@@ -48,16 +48,15 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
         if fork_point:
             argv += ["--fork-point", fork_point]
     elif step is Step.CI:
-        # ci-check claims the run lock itself and makes no startup fetch. A
-        # watch run only reads CI for the head a publish just pushed; a fix run
-        # also fixes. --no-rebase because the batch rebases in its own step
+        # ci-check claims the run lock itself and makes no startup fetch. 
+        # --no-rebase because the batch rebases in its own step
         # (and with it ci-check fetches nothing), and --head-sha because after
         # a drafted rebase local HEAD is a commit GitHub has no runs for.
         ci_bin = str(Path(pr_bin).with_name("ci-check"))
-        argv = [ci_bin] + ([] if watch else ["--fix", "--no-rebase"])
+        argv = [ci_bin, "--fix", "--no-rebase"]
         if remote_sha:
             argv += ["--head-sha", remote_sha]
-        if wait or watch:
+        if wait:
             argv.append("--wait")
     elif step is Step.COMMENTS:
         argv = [pr_bin, "comments", "--fix"]

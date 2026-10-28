@@ -40,7 +40,20 @@ injection — pass arguments through directly:
 - **Branch name** (contains `/` or is not numeric): `pr ci --branch <argument> 2>&1`
 - **PR number** (small integer): `pr ci --pr <number> 2>&1`
 - **Run ID** (large integer): `pr ci --run <run_id> 2>&1`
-- **No argument**: `pr ci 2>&1`
+- **No argument**: `pr ci 2>&1` — only when CWD is the target branch's worktree
+
+**Always pass the target explicitly.** With no argument `pr ci` resolves the
+branch from CWD, and a session often sits in the `main` worktree, so a bare
+`pr ci` reports on `main` and "all checks passed" says nothing about the PR. If
+the user names a branch, PR, or run (including a bare branch name in the
+prompt), pass it as `--branch`/`--pr`/`--run`. If nothing was named, check
+`git branch --show-current` first and stop to ask when it is `main`. State which
+branch the report is for when presenting it.
+
+**Target already owned.** `pr ci` refuses with `another pr run already owns this
+target ... (pid N)` when a `pr batch` run holds the branch. Nothing was checked.
+Do not report CI as passing or failing. Tell the user the run id and pid, and
+offer: wait, `pr batch status <run-id>`, or `kill <pid>`. Never kill it yourself.
 
 `pr ci` creates no worktree. `pr ci --fix` creates one when the branch has none.
 Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo).

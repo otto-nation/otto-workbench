@@ -181,7 +181,8 @@ def run_agent(
             wait = throttle.report_exhausted(model, inv.provider)
             time.sleep(wait)
         else:
-            core.log.warn(f"Quota exhausted on {model} — retrying once after 30s backoff")
+            where = f" ({inv.provider})" if inv.provider else ""
+            core.log.warn(f"Quota exhausted on {model}{where} — retrying once after 30s backoff")
             time.sleep(30)
         rc = _invoke_once(inv)
     return rc

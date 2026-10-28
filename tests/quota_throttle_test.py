@@ -123,6 +123,11 @@ def test_a_provider_cannot_name_a_file_outside_the_state_dir(tmp_path):
     assert "/" not in path.name
 
 
+def test_colliding_provider_ids_get_distinct_files(tmp_path):
+    assert throttle_path("a/b") != throttle_path("a_b")
+    assert len(throttle_path("x" * 500).name) < 100
+
+
 def test_a_second_exhaustion_doubles():
     assert QuotaThrottle().report_exhausted("sonnet") == 30
     assert QuotaThrottle().report_exhausted("sonnet") == 60

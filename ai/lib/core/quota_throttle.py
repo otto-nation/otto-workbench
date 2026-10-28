@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,7 @@ _THREAD_LOCK = threading.Lock()
 # What a provider id may not carry into a file name. Provider ids come from a
 # reference or Pi's own settings, so this is belt and braces, not a parser.
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+_MAX_STEM = 64
 
 
 # ceiling: one lock file per provider, upgrade to per-credential files
@@ -63,7 +65,12 @@ def throttle_path(provider: str | None = None) -> Path:
     if not provider:
         return state_dir() / LOCK_NAME
     stem, suffix = LOCK_NAME.rsplit(".", 1)
-    return state_dir() / f"{stem}-{_UNSAFE.sub('_', provider)}.{suffix}"
+    safe = _UNSAFE.sub("_", provider)
+    if safe != provider or len(safe) > _MAX_STEM:
+        # Sanitising or truncating can merge distinct ids; the digest keeps them apart.
+        digest = hashlib.sha256(provider.encode()).hexdigest()[:8]
+        safe = f"{safe[:_MAX_STEM]}-{digest}"
+    return state_dir() / f"{stem}-{safe}.{suffix}"
 
 
 class QuotaThrottle:
@@ -83,7 +90,11 @@ class QuotaThrottle:
         self._max_backoff = max_backoff
 
     def resume_at(self, provider: str | None = None) -> float:
-        """The epoch this process last set *provider*'s resume time to, 0 if never."""
+        """The epoch this process last set *provider*'s resume time to, 0 if never.
+
+        In-memory only: it ignores the shared file, so it is not the time
+        ``wait_if_needed`` will wait until.
+        """
         return self._resume_at.get(provider or None, 0.0)
 
     def report_exhausted(self, model: str, provider: str | None = None) -> float:

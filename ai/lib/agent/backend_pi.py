@@ -66,9 +66,16 @@ import agent.usage
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
+from agent.models import ModelRef
 from agent.pi_binary import PiSpawn, PiUnresolvable
-from agent.pi_models import ModelNotConfigured, ModelNotServed, not_served_message
-from agent.pi_models import require_listed_model, require_model_with_provider, check_targets
+from agent.pi_models import (
+    ModelNotConfigured,
+    ModelNotServed,
+    check_targets,
+    not_served_message,
+    require_listed_model,
+    require_model_with_provider,
+)
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
@@ -90,6 +97,7 @@ from agent.backend_pi_rpc import (
     _wait_for_exit,
 )
 from agent.stall import StallWatch
+from core.phases import Phase
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
@@ -1034,7 +1042,7 @@ def ledger_thinking(thinking: str | None) -> str | None:
     return thinking or None
 
 
-def preflight(models, trail, cwd: str) -> bool:
+def preflight(models: Mapping[ModelRef, Sequence[Phase]], trail, cwd: str) -> bool:
     """Check each model against the catalogue of the provider it names (`check_targets`).
 
     ``models`` maps each model reference to the phases requesting it, and ``cwd``

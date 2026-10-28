@@ -40,12 +40,12 @@ from pathlib import Path
 
 import agent.machine_env
 import agent.pi_binary
-from agent.models import ModelRef
 import agent.usage
 import core.errors
 import core.log
 import core.trail
 import git.client
+from agent.models import ModelRef
 # Backend is defined in core.phases so the config layer can type agent.backend
 # without importing this module, and re-exported here because this is where
 # callers have always read it from.

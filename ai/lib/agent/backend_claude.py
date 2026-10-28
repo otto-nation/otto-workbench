@@ -31,6 +31,7 @@ from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import _log_stderr, claude_display_text, parse_claude_event
 from agent.context_ceiling import claude_window
 from agent.models import ModelRef
+from agent.pi_models import abort_preflight
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
 from core.phases import Phase, Thinking
 
@@ -368,8 +369,7 @@ def preflight(models: Mapping[ModelRef, Sequence[Phase]], trail, cwd: str) -> bo
             f"serves only {served!r} (phases: {named}). Write the bare id, or set "
             "agent.backend to pi."
         )
-        core.log.error(f"Cannot start the run: {reason}")
-        trail.decision("model_preflight", "aborting run", reason=reason)
+        abort_preflight(trail, reason)
     if foreign:
         return False
     ids: dict[str, list[Phase]] = {}

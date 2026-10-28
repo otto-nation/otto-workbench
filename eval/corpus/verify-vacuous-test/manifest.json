@@ -1,0 +1,30 @@
+{
+  "name": "verify-vacuous-test",
+  "task": "verify",
+  "description": "One fix is right and held by a real test; the other sleeps a constant delay where the reviewer asked for doubling, and cites a test that mocks the function it names",
+  "source": "synthetic",
+  "language": "python",
+  "items": [
+    {
+      "id": "R1",
+      "truth": "holds",
+      "file": "config.py",
+      "line": 2,
+      "ask": "`parse_port` accepts 0 and 70000. Reject anything outside 1-65535 with a ValueError.",
+      "claim": "tests/test_config.py::test_port_range fails without the change: it asserts ValueError for 0 and 70000."
+    },
+    {
+      "id": "R2",
+      "truth": "broken",
+      "file": "retry.py",
+      "line": 11,
+      "ask": "`retry` never waits between attempts. Back off exponentially: sleep `delay`, then double it after each failure.",
+      "claim": "tests/test_retry.py::test_backoff_sleeps_between_attempts covers the new sleep."
+    }
+  ],
+  "tags": [
+    "verify",
+    "python",
+    "vacuous-test"
+  ]
+}

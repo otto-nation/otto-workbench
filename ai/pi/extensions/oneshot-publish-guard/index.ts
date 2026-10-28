@@ -13,7 +13,7 @@
  * agents run Pi in rpc mode — `_build_agent_cmd` and `_build_fix_cmd` in
  * ai/lib/agent/backend_pi.py (the argv starts `*pi, "--mode", "rpc", …`). The
  * only json-mode call there is `_build_prompt_cmd`, which passes `--no-tools`
- * (`*pi, "-p", "--mode", "json", "--no-session", "--approve", "--no-tools"`),
+ * (`*pi, "-p", "--mode", "json", "--no-session", "--no-tools"`),
  * so this handler never sees a bash call from it.
  *
  * Claude Code gets the same command set from ai/claude/bin/claude-bash-guard

@@ -111,8 +111,9 @@ def _run_chunk(
         item_id: Verdict(ok=ok, detail=detail)
         for item_id, (ok, detail) in fix.tracking.parse_verdicts(path).items()
     }
-    return _with_refusals(
-        verdicts, agent.backend_events.guard_refusals(adapter.verify_session_log(chunk)))
+    refusals = agent.backend_events.guard_refusals(adapter.verify_session_log(chunk))
+    return _with_unrecorded(
+        _with_refusals(verdicts, refusals), items, refusals, str(path))
 
 
 def _with_refusals(
@@ -137,6 +138,39 @@ def _with_refusals(
         item_id: v if v.ok is True else replace(
             v, detail=f"{v.detail}; {note}" if v.detail else note)
         for item_id, v in verdicts.items()
+    }
+
+
+def _with_unrecorded(
+    verdicts: dict[str, Verdict], items: list[FixItem],
+    refusals: tuple[str, ...], tracking_file: str,
+) -> dict[str, Verdict]:
+    """*verdicts*, plus an unverified one for each item a guard kept off the checklist.
+
+    An item the gate did not answer stays silent, because silence is no verdict
+    at all. One case is different: a guard refusing the gate's writes to its own
+    checklist. Then the answer was never recordable, and silence would read as
+    an ordinary "not verified" with the cause nowhere. Matched on the checklist
+    path in the refusal, so only a refusal of that file speaks for every item in
+    the chunk. A refusal carries only its reason, not the tool, so this cannot
+    tell a refused write from a refused read; it does not need to while guards
+    allow every read, which makes a refused call naming the checklist an attempt
+    to write it. It touches only items the gate left unanswered. A refusal
+    elsewhere is left to `_with_refusals`. The verdict is
+    None, "nothing could be established", which is what the gate actually knows.
+    """
+    blocked = [r for r in refusals if tracking_file in r]
+    if not blocked:
+        return verdicts
+    first = textwrap.shorten(blocked[0], REFUSAL_SHOWN)
+    core.log.warn(
+        f"Verify gate: {len(blocked)} write(s) to its checklist refused — "
+        f"answers could not be recorded (first: {first})")
+    note = (f"the gate could not record its answer: {len(blocked)} write(s) to "
+            f"{tracking_file} were refused (first: {first})")
+    return {
+        **{item.id: Verdict(ok=None, detail=note) for item in items},
+        **verdicts,
     }
 
 

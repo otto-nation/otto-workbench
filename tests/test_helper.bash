@@ -111,6 +111,19 @@ common_setup() {
   export GIT_CONFIG_GLOBAL="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/gitconfig-global"
   export GIT_CONFIG_SYSTEM=/dev/null
 
+  # A workbench config root of its own, for the same reason: `models:`, `agent:`
+  # and the rest of config.yml decide which model a phase resolves to and which
+  # backend an AI call uses, so a suite that reads the developer's real file
+  # passes or fails by whose machine runs it. pytest already draws this floor
+  # (`_isolate_workbench_config`); without it here, a machine that sets
+  # `models.light` fails every suite asserting an unset model.
+  #
+  # Left absent rather than created: a fresh machine has no file there, which is
+  # the state a test that wants config writes into. A suite pointing the root
+  # elsewhere (gate_sandbox, a fixture of its own) exports again after this call
+  # and wins.
+  export WORKBENCH_CONFIG_DIR="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/workbench-config"
+
   # Pin mise's global config to the real one, for the same reason git gets a
   # config of its own: a test that swaps HOME otherwise changes what mise
   # considers global, and mise ignores `trusted_config_paths` in a config that

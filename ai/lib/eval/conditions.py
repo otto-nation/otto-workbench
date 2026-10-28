@@ -49,21 +49,27 @@ class MissingRuleSource(Exception):
     """The backend's rule-prefix source is not on disk, so an arm cannot be seeded."""
 
 
+def _arm(stem: str) -> str | None:
+    """``"kept"``, ``"dropped"`` or ``None`` for rule *stem*.
+
+    The stem itself is resolved first, then its base with a machine-local
+    ``.local`` suffix removed, so an addendum goes where its rule goes.
+    """
+    for name in (stem, stem.removesuffix(".local")):
+        if name in KEPT_RULES:
+            return "kept"
+        if name in DROPPED_RULES:
+            return "dropped"
+    return None
+
+
 def kept(stem: str) -> bool:
     """Whether the trimmed arm keeps rule *stem*.
 
-    A machine-local addendum (`<rule>.local`) goes where the rule it extends
-    goes, so a machine that adds one is not a failed run. Only a rule with no
-    base in either arm stays unclassified.
+    Precondition: ``classify`` has accepted *stem*; an unclassified stem
+    returns False, which reads as dropped.
     """
-    if stem in KEPT_RULES or stem in DROPPED_RULES:
-        return stem in KEPT_RULES
-    return stem.removesuffix(".local") in KEPT_RULES
-
-
-def _classified(stem: str) -> bool:
-    base = stem.removesuffix(".local")
-    return any(name in KEPT_RULES | DROPPED_RULES for name in (stem, base))
+    return _arm(stem) == "kept"
 
 
 def classify(installed: list[str]) -> None:
@@ -74,7 +80,7 @@ def classify(installed: list[str]) -> None:
             f"rules in both arms, so the trim set is contradictory: "
             f"{', '.join(both)}",
         )
-    unknown = sorted(stem for stem in installed if not _classified(stem))
+    unknown = sorted(stem for stem in installed if _arm(stem) is None)
     if unknown:
         raise UnclassifiedRule(
             f"rules in neither arm, so the trim set no longer describes the "

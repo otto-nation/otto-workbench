@@ -1,0 +1,20 @@
+{
+  "name": "disprove-live-callers",
+  "task": "disprove",
+  "description": "One claim says legacy_slug is dead code but archive_path calls it; the other is a real off-by-one in truncate",
+  "source": "synthetic",
+  "language": "python",
+  "findings": [
+    {
+      "id": "S1", "truth": "false", "path": "util.py", "line": 8,
+      "body": "`legacy_slug` has no callers and is dead code that should be deleted.",
+      "evidence": "def legacy_slug(text):"
+    },
+    {
+      "id": "M1", "truth": "real", "path": "util.py", "line": 13,
+      "body": "`truncate` returns `limit - 1` characters, so a caller asking for 80 gets 79.",
+      "evidence": "return text[:limit - 1]"
+    }
+  ],
+  "tags": ["disprove", "python", "dead-code"]
+}

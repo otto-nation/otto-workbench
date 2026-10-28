@@ -28,6 +28,27 @@ def test_an_unrecognised_rule_fails_the_run_rather_than_joining_an_arm():
         eval.conditions.classify(installed)
 
 
+def test_a_local_addendum_follows_the_rule_it_extends():
+    installed = ["general", "git-operations", "git-operations.local", "bash.local"]
+    eval.conditions.classify(installed)
+    assert eval.conditions.kept("bash.local")
+    assert not eval.conditions.kept("git-operations.local")
+
+
+def test_a_local_addendum_to_an_unknown_rule_is_still_unclassified():
+    with pytest.raises(eval.conditions.UnclassifiedRule, match="brand-new.local"):
+        eval.conditions.classify(["general", "brand-new.local"])
+
+
+def test_the_trimmed_arm_drops_a_local_addendum_to_a_dropped_rule(tmp_path):
+    src = tmp_path / "src" / "rules"
+    src.mkdir(parents=True)
+    for name in ("general", "git-operations", "git-operations.local", "bash.local"):
+        (src / f"{name}.md").write_text(name)
+    out = eval.conditions.seed_config_tree(tmp_path / "src", tmp_path / "out", "trimmed")
+    assert sorted(p.stem for p in (out / "rules").glob("*.md")) == ["bash.local", "general"]
+
+
 def test_a_rule_in_both_arms_fails_the_run(monkeypatch):
     monkeypatch.setattr(eval.conditions, "KEPT_RULES", frozenset({"shared", "kept"}))
     monkeypatch.setattr(eval.conditions, "DROPPED_RULES", frozenset({"shared", "dropped"}))

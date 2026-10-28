@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 650 -->
+<!-- doc-budget: 654 -->
 
 # AI Automation
 
@@ -313,9 +313,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
 
 ### GitHub owners
 
-Every GitHub write — an agent's `gh` command under either harness, and `pr create`, `pr describe --post`, `pr comments --post` and review posting — is checked against `github.owners` and refused anywhere else. Unset refuses every write; `otto-workbench config set github.owners.work '[your-org]'` records yours.
-The policy and its target rules are on [`gh/owners.py`](ai-libraries.md#ghownerspy).
-Guards pre-filter then ask `owners-check`; `gh.client` is the workbench chokepoint. `WORKBENCH_ALLOW_UPSTREAM=1` is honoured only there.
+Every GitHub write is checked against `github.owners` and refused elsewhere; unset refuses all. Record yours with `otto-workbench config set github.owners.work '[your-org]'`. The policy and where it is enforced: [`gh/owners.py`](ai-libraries.md#ghownerspy).
 
 ### Usage ledger
 

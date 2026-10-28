@@ -637,45 +637,17 @@ class TestSelfReviewPipeline:
         assert pipeline is ro.Pipeline.MULTI
 
 
-class TestProviderNeedsAModel:
-    """A Pi provider with review phases that name no model stops the run early.
+class TestRemovedProviderEnvStopsTheRun:
+    """WORKBENCH_AI_PROVIDER is refused before the review pays for anything."""
 
-    Every such phase would refuse at spawn (Pi exits 1 on --provider without
-    --model); checking here costs nothing, where finding out per agent costs
-    metadata and collection first.
-    """
-
-    def _setup(self, monkeypatch, backend, provider):
-        import agent.backend
-        from core.phases import Backend
-
-        monkeypatch.setattr(agent.backend, "selected_backend", lambda: getattr(Backend, backend))
-        monkeypatch.setenv("WORKBENCH_AI_PROVIDER", provider) if provider else monkeypatch.delenv(
-            "WORKBENCH_AI_PROVIDER", raising=False,
+    def test_run_orchestrate_refuses_it_before_collecting_anything(self, ro, monkeypatch):
+        monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "xai")
+        import agent.phases
+        monkeypatch.setattr(ro, "_log_ai_backend", lambda trail: None)
+        monkeypatch.setattr(
+            ro, "fetch_metadata",
+            lambda *a, **k: pytest.fail("metadata was collected before the check"),
         )
-        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
-
-    def test_pi_with_a_provider_and_unset_phases_stops(self, ro, monkeypatch, tmp_path):
-        self._setup(monkeypatch, "PI", "xai")
-        trail = MagicMock()
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            assert not ro._models_cover_provider("", str(tmp_path), trail)
-        assert "models.<tier>" in err.getvalue()
-        assert trail.decision.called
-
-    def test_a_global_model_covers_every_phase(self, ro, monkeypatch, tmp_path):
-        self._setup(monkeypatch, "PI", "xai")
-        monkeypatch.setenv("WORKBENCH_AI_MODEL", "grok-4.7")
-        assert ro._models_cover_provider("", str(tmp_path), MagicMock())
-
-    def test_an_explicit_model_covers_every_phase(self, ro, monkeypatch, tmp_path):
-        self._setup(monkeypatch, "PI", "xai")
-        assert ro._models_cover_provider("grok-4.7", str(tmp_path), MagicMock())
-
-    def test_no_provider_is_fine(self, ro, monkeypatch, tmp_path):
-        self._setup(monkeypatch, "PI", None)
-        assert ro._models_cover_provider("", str(tmp_path), MagicMock())
-
-    def test_the_claude_backend_ignores_providers(self, ro, monkeypatch, tmp_path):
-        self._setup(monkeypatch, "CLAUDE", "xai")
-        assert ro._models_cover_provider("", str(tmp_path), MagicMock())
+        args = MagicMock(model="", repo_dir=".")
+        with pytest.raises(agent.phases.RemovedSetting):
+            ro.run_orchestrate(MagicMock(), args, "o/r", "log")

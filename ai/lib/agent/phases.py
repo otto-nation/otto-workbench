@@ -17,9 +17,11 @@ level as well as an id, and a tier name borrows that tier's model.
 
 Each part of the chosen reference ranks where the layer that wrote it ranks.
 Its provider belongs to its id — an id is a name in one provider's catalogue —
-so a provider written on the reference is the one it runs on, and
-WORKBENCH_AI_PROVIDER only supplies one to a reference that names none. Its
-level joins the thinking chain at its layer's height (`phase_settings`).
+so a provider is written on the reference (``xai/grok-4.6``) and nowhere else;
+a reference that names none leaves the backend's own default provider in
+charge. There is no setting that supplies one to every phase, because that would
+send an id to a catalogue it is not a name in. Its level joins the thinking
+chain at its layer's height (`phase_settings`).
 
 The effort preset sits between the config and the built-in for thinking level,
 the one knob a review's depth setting flattens. It also scales the turn budget,
@@ -30,8 +32,9 @@ would discard a per-phase override.
 **No built-in model.** A phase names a tier, not a model, so when no layer
 sets one — the tier unset in ``models`` too — the model is ``None`` and the
 backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
-Pi refuses a provider without a model, which
-``agent.pi_models.require_model_with_provider`` reports before anything runs.
+Pi refuses a provider without a model; a reference always carries its id, so
+no phase reaches that, and ``agent.pi_models.require_model_with_provider`` stays
+as the spawn's own guard for a caller that hands a provider in directly.
 """
 
 # doc-group: pipeline
@@ -44,6 +47,7 @@ from pathlib import Path
 
 import agent.context_ceiling
 import config.workbench_config
+import core.errors
 from agent.models import ModelLayer, ResolvedModel, resolve, tier_ref
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
@@ -53,7 +57,10 @@ from config.workbench_config import WorkbenchConfig
 # The keys that cover every phase at once, one layer below the per-phase ones.
 GLOBAL_MODEL_ENV = f"{ENV_PREFIX}MODEL"
 GLOBAL_THINKING_ENV = f"{ENV_PREFIX}THINKING"
-PROVIDER_ENV = f"{ENV_PREFIX}PROVIDER"
+
+# Read only to refuse it: it once supplied a provider to every reference that
+# named none, and a value left in a shell must not go on quietly doing nothing.
+REMOVED_PROVIDER_ENV = f"{ENV_PREFIX}PROVIDER"
 
 # What one file preflight could not fit into the prompt costs a phase that has
 # to open it itself: one turn to read, one to act on what it found.
@@ -63,9 +70,29 @@ OMITTED_FILE_TURNS = 2
 # ── Environment layers ───────────────────────────────────────────────────────
 
 
-def resolve_provider() -> str | None:
-    """The backend provider the environment asks for, if any."""
-    return os.environ.get(PROVIDER_ENV)
+class RemovedSetting(core.errors.OperatorError):
+    """A setting this machine still carries that nothing reads any more."""
+
+    def __init__(self, name: str, instead: str):
+        self.name = name
+        super().__init__(f"{name} is no longer read. {instead}")
+
+
+def reject_removed_provider_env() -> None:
+    """Raise `RemovedSetting` when WORKBENCH_AI_PROVIDER is set, even to "".
+
+    Ignoring it would send a run to Pi's default provider with no sign that the
+    operator asked for another. Refused where a phase's settings are resolved,
+    so every path that names a model — `phase_model`, `collect_phase_models`,
+    `phase_settings` — stops on it.
+    """
+    if REMOVED_PROVIDER_ENV in os.environ:
+        raise RemovedSetting(
+            REMOVED_PROVIDER_ENV,
+            "A model names its provider: write provider/id in models.<tier>, "
+            "agent.phases.<phase>.model, WORKBENCH_AI_MODEL or --model "
+            "(for example xai/grok-4.6), and unset the variable.",
+        )
 
 
 # ── Config layers ────────────────────────────────────────────────────────────
@@ -92,6 +119,7 @@ def resolve_phase_model(
     letting a lower layer answer. The phase's own tier unset is not an error:
     it runs on the backend's default.
     """
+    reject_removed_provider_env()
     phase = Phase(phase)
     cfg = _config(cfg)
     override = cfg.agent.phases.get(phase)
@@ -149,8 +177,9 @@ def phase_settings(
     The three are read from one `resolve_phase_model`, so a reference's
     provider and level cannot come from a different layer than its id.
 
-    The provider is the reference's, else WORKBENCH_AI_PROVIDER; None leaves
-    the backend's own default provider in charge.
+    The provider is the reference's; None leaves the backend's own default
+    provider in charge. Raises `RemovedSetting` while WORKBENCH_AI_PROVIDER is
+    set.
 
     The thinking level is the first of these that is set — each a setting for
     one phase before the matching setting for every phase, and a thinking key
@@ -161,6 +190,7 @@ def phase_settings(
         WORKBENCH_AI_THINKING, then a level on WORKBENCH_AI_MODEL
         the config layers — `phase_thinking_default`
     """
+    reject_removed_provider_env()
     phase = Phase(phase)
     cfg = _config(cfg)
     resolved = resolve_phase_model(phase, explicit, cfg)
@@ -175,7 +205,7 @@ def phase_settings(
     ref = resolved.ref if resolved is not None else None
     return PhaseSettings(
         model=ref.id if ref is not None else None,
-        provider=(ref.provider if ref is not None else None) or resolve_provider(),
+        provider=ref.provider if ref is not None else None,
         thinking=thinking or phase_thinking_default(phase, effort, cfg, resolved),
         compact_at=agent.context_ceiling.machine_ceiling(),
     )

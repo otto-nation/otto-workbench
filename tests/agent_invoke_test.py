@@ -135,7 +135,6 @@ class TestRunPromptResolution:
 
     def test_the_provider_and_level_come_from_the_phases_model(self, backend, tmp_path, monkeypatch):
         """One reference names all three, so the backend gets all three from it."""
-        monkeypatch.delenv("WORKBENCH_AI_PROVIDER", raising=False)
         monkeypatch.delenv(Phase.DESCRIBE.thinking_env_key, raising=False)
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         monkeypatch.setenv(Phase.DESCRIBE.model_env_key, "openai/gpt-6-luna:low")

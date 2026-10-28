@@ -275,8 +275,8 @@ it sits under, and a phase's model entry outranks `models.<tier>` for its tier.
 Layers 4 through 6 deep-merge, so a project file that sets one phase keeps
 every sibling the layers below it set.
 
-A model no layer names is left to the backend's own default; Pi refuses a
-provider without a model, so WORKBENCH_AI_PROVIDER needs one too.
+A model no layer names is left to the backend's own default. A model names its
+own provider (`xai/grok-4.6`); no setting supplies one to every model.
 
 Layer 5 exists only in the bare-repo worktree layout, where every checkout is
 a peer of the bare `.git` inside a container directory — the same directory

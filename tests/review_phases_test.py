@@ -144,10 +144,10 @@ class TestPhaseRunnerResolution:
         runner = review.pipeline.PhaseRunner(job, Phase.DISPROVE)
         assert runner.max_turns == review.phases.PHASES[Phase.DISPROVE].max_turns
 
-    def test_provider_reads_env(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "vertex")
+    def test_provider_comes_from_the_models_reference(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(Phase.GROUP.model_env_key, "vertex/gemini-3.7-flash")
         runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
-        assert runner.provider == "vertex"
+        assert (runner.provider, runner.model) == ("vertex", "gemini-3.7-flash")
 
     def test_model_reads_phase_env_key(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")

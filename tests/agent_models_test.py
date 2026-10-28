@@ -27,7 +27,7 @@ from workbench_config_support import roots, _write  # noqa: F401
 @pytest.fixture(autouse=True)
 def _no_env_layers(monkeypatch):
     """The developer's shell often exports these; every test here starts clean."""
-    for key in ("WORKBENCH_AI_MODEL", "WORKBENCH_AI_PROVIDER", "WORKBENCH_AI_THINKING"):
+    for key in ("WORKBENCH_AI_MODEL", "WORKBENCH_AI_THINKING"):
         monkeypatch.delenv(key, raising=False)
     for phase in Phase:
         monkeypatch.delenv(phase.model_env_key, raising=False)
@@ -174,19 +174,37 @@ def test_the_provider_is_the_phases_models(roots, monkeypatch):
     assert agent.phases.phase_settings(Phase.SYNTHESIS, None, cfg).provider == "anthropic"
 
 
-def test_a_provider_written_on_the_reference_beats_the_env_key(roots, monkeypatch):
+def test_an_explicit_reference_names_its_own_provider(roots):
     """An id is a name in one provider's catalogue; sending it elsewhere is a different model."""
     cfg = _cfg(roots, "models:\n  light: openai/gpt-6-luna\n")
-    monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "openrouter")
-    assert agent.phases.phase_settings(Phase.SCOUT, None, cfg).provider == "openai"
     explicit = agent.phases.phase_settings(Phase.SCOUT, "xai/grok-4.7", cfg)
     assert explicit.provider == "xai"
 
 
-def test_the_env_key_supplies_a_provider_to_a_bare_reference(roots, monkeypatch):
+@pytest.mark.parametrize("value", ["openrouter", ""])
+def test_the_removed_provider_env_key_is_refused_not_ignored(roots, monkeypatch, value):
+    """Ignoring it would send the run to the default provider with no sign why."""
     cfg = _cfg(roots, "models:\n  light: claude-haiku-5-5\n")
-    monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "google-vertex-claude")
-    assert agent.phases.phase_settings(Phase.SCOUT, None, cfg).provider == "google-vertex-claude"
+    monkeypatch.setenv("WORKBENCH_AI_PROVIDER", value)
+    with pytest.raises(agent.phases.RemovedSetting) as caught:
+        agent.phases.phase_settings(Phase.SCOUT, None, cfg)
+    assert "WORKBENCH_AI_PROVIDER" in str(caught.value)
+    assert "provider/id" in str(caught.value)
+
+
+def test_phase_model_refuses_the_removed_provider_env_key(roots, monkeypatch):
+    cfg = _cfg(roots, "models:\n  light: claude-haiku-5-5\n")
+    monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "xai")
+    with pytest.raises(agent.phases.RemovedSetting):
+        agent.phases.phase_model(Phase.SCOUT, None, cfg)
+
+
+def test_the_removed_provider_env_key_is_an_operator_error(monkeypatch):
+    """So an entry point ends on its one line, not a traceback."""
+    import core.errors
+    monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "xai")
+    with pytest.raises(core.errors.OperatorError):
+        agent.phases.reject_removed_provider_env()
 
 
 def test_a_bare_id_names_no_provider(roots):

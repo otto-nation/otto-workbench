@@ -117,6 +117,12 @@ class TestSurvivors:
         ]})
         assert len(survivors(planted, [_carried("", line=4)])) == 1
 
+    def test_an_unkeyed_finding_is_credited_to_the_keep_not_the_earlier_drop(self):
+        planted = parse_findings({"findings": [
+            _planted("S3", "drop", line=4), _planted("M1", "keep", line=4),
+        ]})
+        assert survivors(planted, [_carried("", line=4)]) == {"M1"}
+
     def test_a_finding_the_agent_added_matches_nothing(self):
         planted = parse_findings({"findings": [_planted("M1", "keep")]})
         assert survivors(planted, [_carried("", path="other.py", line=1)]) == set()

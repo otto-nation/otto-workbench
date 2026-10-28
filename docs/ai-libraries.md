@@ -4664,8 +4664,7 @@ Synthesis turns the groups' findings into the review a reader sees, and its two
 errors cost differently. Dropping a real finding hides a defect; keeping a
 duplicate only costs the reader a line. A case therefore holds a small repo and
 the findings its groups wrote, each marked `keep` (a distinct finding the review
-must carry) or `drop` (a duplicate of another finding, or a claim another
-finding in the merged content contradicts). The agent is shown them as
+must carry) or `drop` (a duplicate of another finding). The agent is shown them as
 production shows them: the merged group JSON, in the production template.
 
 | Score field | Meaning here |

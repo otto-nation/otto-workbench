@@ -4,8 +4,7 @@ Synthesis turns the groups' findings into the review a reader sees, and its two
 errors cost differently. Dropping a real finding hides a defect; keeping a
 duplicate only costs the reader a line. A case therefore holds a small repo and
 the findings its groups wrote, each marked `keep` (a distinct finding the review
-must carry) or `drop` (a duplicate of another finding, or a claim another
-finding in the merged content contradicts). The agent is shown them as
+must carry) or `drop` (a duplicate of another finding). The agent is shown them as
 production shows them: the merged group JSON, in the production template.
 
 | Score field | Meaning here |
@@ -133,7 +132,8 @@ def survivors(planted: list[Planted], carried: list[AgentFinding]) -> set[str]:
     by_sid = {c.sid for c in carried if c.sid}
     found = {p.id for p in planted if p.sid in by_sid}
     unkeyed = [c for c in carried if not c.sid]
-    for p in planted:
+    # Keeps claim first: an unkeyed finding must not hide a lost keep behind a drop.
+    for p in sorted(planted, key=lambda p: p.expect != KEEP):
         if p.id in found:
             continue
         hit = next((c for c in unkeyed if (c.path, c.line) == (p.path, p.line)), None)
@@ -200,13 +200,12 @@ class SynthesisTask:
                 "kept": sorted(kept),
                 "summary": f"carried {len(kept)}/{len(planted)} planted findings"
                 + ("" if carried else " (output unreadable or empty)"),
-                "_kept": kept,
             },
         )
 
     def score(self, artifacts: RunArtifacts, manifest: dict) -> ScoringResult:
         removed, carried = score_findings(
-            parse_findings(manifest), artifacts.data.get("_kept", set()),
+            parse_findings(manifest), set(artifacts.data.get("kept", ())),
         )
         usage = artifacts.usage
         return ScoringResult(

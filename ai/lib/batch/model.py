@@ -119,8 +119,6 @@ class StepRecord:
     start_head: str = ""
     # Named by --select: an instruction, so admission never skips it as not needed.
     explicit: bool = False
-    # The next run of this step is the one post-publish CI re-check, not a fix.
-    watch: bool = False
     # The non-merge commits each attempt added (`head_before..HEAD`, full SHAs):
     # what publish checks the branch still carries. Never recorded for the
     # rebase step, whose commits are replays of ones already on the branch.
@@ -181,11 +179,6 @@ class Item:
     pre_rebase_head: str = ""
     # The head a batch publish pushed, or "" when nothing was pushed.
     published_sha: str = ""
-    # The one post-publish CI re-check --watch-ci allows this item has been spent.
-    ci_watched: bool = False
-    # That re-check read a final CI report. A re-check that found no checks yet
-    # spends the watch without reading CI, so the summary still names the item.
-    ci_rechecked: bool = False
     # The commits the operator has `force-publish`ed past, accumulated across
     # refusals: one publish can be refused for drafted commits it dropped and
     # then for remote commits it would drop, and confirming the second must not
@@ -224,8 +217,6 @@ class Run:
     trail_root: str = ""
     items: list[Item] = field(default_factory=list)
     decisions: list[Decision] = field(default_factory=list)
-    # Re-check CI once after a publish pushes (`pr batch run --watch-ci`).
-    watch_ci: bool = False
     # Skip the pre-push hook on publish pushes (`pr batch run --no-verify`).
     no_verify: bool = False
     # The plan's private ref namespace and the repos it was fetched into;

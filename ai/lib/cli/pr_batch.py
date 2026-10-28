@@ -11,7 +11,7 @@
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
-Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
+Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --no-verify skips the pre-push hook on those publishes.
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 """
@@ -128,9 +128,6 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--prs", default="", help="Comma-separated repo#number keys to include")
     r.add_argument("--select", type=_selection, action="append", default=[],
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")
-    r.add_argument("--watch-ci", action="store_true",
-                   help="After a publish pushes, re-check CI once (ci-check --wait, up to "
-                        "its 900s --wait-timeout per item) and reopen the item on red")
     r.add_argument("--no-verify", action="store_true",
                    help="Skip the pre-push hook on every publish push (CI still runs the "
                         "gates). Persisted on the run so resume and resolve honor it")
@@ -328,8 +325,7 @@ def _conclude(run_id: str, stopped: RunStatus, reporter: _Reporter) -> int:
     run = batch.store.load(run_id)
     if run.status is not stopped:
         batch.events.emit("run_finished", run=run.id, status=run.status.value,
-                          open_decisions=len(run.open_decisions()),
-                          ci_not_rechecked=batch.scheduler.ci_not_rechecked(run))
+                          open_decisions=len(run.open_decisions()))
     code = 1 if reporter.failed else batch.report.exit_code(run.status)
     _emit_summary(run, code)
     return code
@@ -487,7 +483,7 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox)
                                       auto_publish=args.auto_publish,
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
-                                      watch_ci=args.watch_ci, no_verify=args.no_verify)
+                                      no_verify=args.no_verify)
         session = held.enter_context(batch.store.create(run, inbox=inbox,
                                                         command=f"pr batch run {run.id}"))
         # The id exists only now. From here a batch refused the lock is told

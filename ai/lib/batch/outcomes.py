@@ -309,46 +309,20 @@ def _failed(exit_code: int, log_tail: list[str], log_path: str) -> StepResult:
     return StepResult(StepStatus.FAILED, [DecisionDraft(DecisionKind.FAILED, payload)])
 
 
-def settled_report(stdout: str) -> dict | None:
-    """The final report of a `--wait` run whose CI completed, or None.
-
-    A wait that timed out still prints a final report, with whatever failures
-    had arrived by then, so a report that is not `completed` read nothing whole.
-    """
-    final = last_report(stdout, pr.ci_report.FINAL_REPORT_TYPE)
-    return final if final is not None and final.get("status") == "completed" else None
-
-
-def _watched(stdout: str) -> StepResult:
-    """A post-publish re-check: green finishes the step, red re-runs it as a fix.
-
-    No settled report — no checks found yet (`ci-check --wait` exits non-zero
-    seconds after a push), or a wait that timed out — is not a failure to
-    decide on: the step finishes and the run summary says CI was not re-checked.
-    """
-    final = settled_report(stdout)
-    red = final is not None and bool(final.get("failures"))
-    return StepResult(StepStatus.PENDING if red else StepStatus.DONE, [])
-
-
 def _needs(kind: DecisionKind, payloads: list[dict]) -> StepResult:
     return StepResult(StepStatus.NEEDS_DECISION, [DecisionDraft(kind, p) for p in payloads])
 
 
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
-             log_tail: list[str], head_before: str = "", watch: bool = False,
-             log_path: str = "") -> StepResult:
+             log_tail: list[str], head_before: str = "", log_path: str = "") -> StepResult:
     """The status and decisions a finished step leaves, read from its stdout and the tree.
 
     A clean exit yields at most one `step_review` decision, carrying every
     piece of evidence found, so two decisions on one step cannot disagree.
     *head_before* is the HEAD the step's first attempt started from; the
-    `Fix-Checks:` trailers are read from every commit after it. A *watch* run
-    is read before its exit code, which says nothing a final report does not.
+    `Fix-Checks:` trailers are read from every commit after it.
     *log_path* is the step's log, recorded on a failed decision.
     """
-    if watch:
-        return _watched(stdout)
     if step is Step.REBASE and exit_code == CONFLICTS_EXIT:
         return _needs(DecisionKind.REBASE_CONFLICT, [_rebase_payload(stdout, log_tail)])
     if step is Step.REBASE and exit_code == REFUSAL_EXIT:

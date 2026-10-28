@@ -1,10 +1,7 @@
 """Scheduler rules about the tree: dirtiness, one fetcher per repo, stacks, CI waits."""
 
-import dataclasses
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -141,9 +138,6 @@ def test_a_stacked_pr_waits_for_its_base_and_resumes_when_it_finishes():
     assert any(a[1] == "rebase" and a[-1] == "/wt/b2" for a in h.spawned)
 
 
-RED = '---\n{"type": "final", "status": "completed", "failures": {"build": {"job": "build"}}}\n'
-GREEN = '---\n{"type": "final", "status": "completed", "failures": {}}\n'
-TIMED_OUT = '---\n{"type": "final", "status": "in_progress", "failures": {}}\n'
 REVIEW_AND_CI = {Step.REBASE: NO, Step.CI: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 
 
@@ -175,93 +169,6 @@ def test_a_waiting_ci_step_is_still_refused_while_a_rebase_is_live():
     assert h.max_live == 1
     assert "--wait" in _ci_spawns(h)[0]
 
-
-def test_watch_ci_rechecks_once_and_reopens_on_red():
-    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW], watch_ci=True, stdouts={("ci", "/wt/b1"): RED})
-    real = h.sched._spawn
-
-    def spawn(argv, **kw):
-        if step_name(argv) == "ci" and "--fix" in argv:
-            h.heads["/wt/b1"] = "ci-fixed"
-        return real(argv, **kw)
-
-    h.sched._spawn = spawn
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    watch, fix = _ci_spawns(h)
-    assert "--fix" not in watch and "--wait" in watch
-    assert "--fix" in fix
-    publish = h.run.open_decisions()[0]
-    assert publish.kind is DecisionKind.PUBLISH
-    batch.store.write_request(h.run.id, Decide(publish.id, "publish"))
-    assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert len(_ci_spawns(h)) == 2
-    assert h.run.items[0].ci_watched is True
-    # The fix was pushed after the one re-check, so its CI was never read.
-    finished = [f for k, f in h.events if k == "run_finished"]
-    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
-
-
-def test_a_green_recheck_finishes_the_item():
-    """The replan says CI is not needed — a just-pushed head reports no checks yet — so
-    only the watch flag gets the re-check past `_confirm`."""
-    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW], watch_ci=True, stdouts={("ci", "/wt/b1"): GREEN},
-                replan=lambda r: dataclasses.replace(r, needs=dict(REVIEW_AND_CI)))
-    assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert len(_ci_spawns(h)) == 1
-    finished = [f for k, f in h.events if k == "run_finished"]
-    assert finished[-1]["ci_not_rechecked"] == []
-
-
-def test_a_watch_run_with_no_checks_yet_is_reported_not_rechecked():
-    """`pr ci --wait` exits 1 with "No checks found" seconds after a push: no report, no
-    failure decision, and the summary says CI was not re-checked."""
-    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW], watch_ci=True,
-                codes={("ci", "/wt/b1"): 1}, stdouts={("ci", "/wt/b1"): ""})
-    assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert len(_ci_spawns(h)) == 1
-    assert not [d for d in h.run.decisions if d.kind is DecisionKind.FAILED]
-    finished = [f for k, f in h.events if k == "run_finished"]
-    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
-
-
-def test_a_watch_run_that_timed_out_is_reported_not_rechecked():
-    """A wait that timed out still prints a final report; it read nothing whole."""
-    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW], watch_ci=True,
-                codes={("ci", "/wt/b1"): 1}, stdouts={("ci", "/wt/b1"): TIMED_OUT})
-    assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert len(_ci_spawns(h)) == 1
-    assert h.run.items[0].ci_rechecked is False
-    finished = [f for k, f in h.events if k == "run_finished"]
-    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
-
-
-def test_an_interrupted_run_names_what_was_not_rechecked():
-    h = Harness([row(1, ONLY_REVIEW), row(2)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW])
-
-    def sleep(_):
-        if h.run.items[0].published_sha:
-            raise KeyboardInterrupt
-
-    h.sched._sleep = sleep
-    with pytest.raises(KeyboardInterrupt):
-        h.sched.run_until_blocked()
-    finished = [f for k, f in h.events if k == "run_finished"]
-    assert finished[-1]["status"] == "interrupted"
-    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
-
-
-def test_without_watch_ci_the_summary_names_what_was_not_rechecked():
-    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW])
-    h.sched.run_until_blocked()
-    finished = [f for k, f in h.events if k == "run_finished"]
-    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
-    assert _ci_spawns(h) == []
 
 
 def test_unpublished_is_local_work_the_lease_lacks(tmp_path):

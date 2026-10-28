@@ -281,7 +281,7 @@ def test_confirming_one_refusal_does_not_unconfirm_the_other(tmp_path, monkeypat
     item = _item(remote="s")
     item.step(Step.CI).commits = ["c1"]
     run = batch.model.Run(id="r1", started_at="t", steps=list(batch.model.STEP_ORDER), pool=1,
-                          auto_publish=[], items=[item], watch_ci=True)
+                          auto_publish=[], items=[item])
     run.decisions = [batch.model.Decision(id="d1", item=item.key, step="publish",
                                           kind=batch.model.DecisionKind.PUBLISH)]
 
@@ -306,7 +306,6 @@ def test_confirming_one_refusal_does_not_unconfirm_the_other(tmp_path, monkeypat
     assert answer("force-publish") == []
     assert rec.calls == [["pr", "rebase", "--push-only", "--expect", "s", *WT]]
     assert item.forced == []
-    assert item.step(Step.CI).commits == []
 
 
 def test_a_forced_publish_with_nothing_to_push_spends_the_confirmation(tmp_path, monkeypatch):

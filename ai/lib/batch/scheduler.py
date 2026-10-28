@@ -80,7 +80,7 @@ def _unpublished(worktree: str, remote_sha: str) -> bool:
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
-            watch_ci: bool = False, no_verify: bool = False) -> Run:
+            no_verify: bool = False) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -112,7 +112,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             it.stacked_on = base
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
-               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []), watch_ci=watch_ci,
+               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []),
                no_verify=no_verify)
 
 
@@ -153,11 +153,6 @@ def mark_interrupted(run: Run, *, emit: Callable[..., None]) -> bool:
     for item in run.items:
         found = _interrupt_running(run, item, emit=emit) or found
     return found
-
-
-def ci_not_rechecked(run: Run) -> list[str]:
-    """Items *run* published whose CI on the pushed head was never read."""
-    return [i.key for i in run.items if i.published_sha and not i.ci_rechecked]
 
 
 def emit_outcome(run: Run, outcome: Outcome, *,
@@ -308,11 +303,8 @@ class Scheduler:
         base = rec.start_head or live.head_before
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                          log_tail=list(live.tail), head_before=base,
-                                         watch=rec.watch, log_path=rec.log_path)
+                                         log_path=rec.log_path)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
-        if rec.watch and batch.outcomes.settled_report(live.proc.stdout()):
-            item.ci_rechecked = True
-        rec.watch = False
         head = self._head(item.worktree)
         moved = head != base
         if rec.step is not Step.REBASE and head != live.head_before:
@@ -493,9 +485,7 @@ class Scheduler:
             return None
         self._refresh_remote(item, fresh.head_sha)
         need = fresh.needs.get(rec.step)
-        # A watch re-check is forced: a just-pushed head's rollup is usually
-        # absent or pending, which would read as "not needed".
-        forced = rec.explicit or rec.watch or (rec.step is Step.REVIEW and item.head_moved)
+        forced = rec.explicit or (rec.step is Step.REVIEW and item.head_moved)
         if need is not None and not need.needed and not forced:
             rec.status = StepStatus.SKIPPED
             return None
@@ -667,7 +657,7 @@ class Scheduler:
         log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
         wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
-                         wait=wait, watch=rec.watch,
+                         wait=wait,
                          fork_point=self._rebase_fork_point(item, rec))
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
@@ -676,7 +666,7 @@ class Scheduler:
                            env=batch.targets.child_env(item))
         rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)
         item.status, item.wait_reason = ItemStatus.RUNNING, ""
-        self._live[item.key] = _Live(item, rec, proc, head_before, waits=wait or rec.watch)
+        self._live[item.key] = _Live(item, rec, proc, head_before, waits=wait)
         self._emit("step_started", run=self.run.id, item=item.key, step=rec.step.value,
                    argv=argv, log_path=str(log))
 
@@ -691,13 +681,8 @@ class Scheduler:
         self.session.commit()
         self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
                    run=self.run.id, status=status.value,
-                   open_decisions=len(self.run.open_decisions()),
-                   ci_not_rechecked=self._ci_not_rechecked())
+                   open_decisions=len(self.run.open_decisions()))
         return status
-
-    def _ci_not_rechecked(self) -> list[str]:
-        """Items this run published whose CI on the pushed head was never read."""
-        return ci_not_rechecked(self.run)
 
     def _kill_live(self) -> None:
         for live in self._live.values():
@@ -775,7 +760,6 @@ class Scheduler:
         pending.append(("run_finished", {
             "run": self.run.id, "status": status.value,
             "open_decisions": len(self.run.open_decisions()),
-            "ci_not_rechecked": self._ci_not_rechecked(),
         }))
         self._flush(pending)
 

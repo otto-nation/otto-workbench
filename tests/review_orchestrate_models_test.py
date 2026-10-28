@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # The module the `ro` fixture returns, imported so bin/local/select-pytest maps
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
+from agent.models import ModelRef
 
 
 # ── 19. the env model layers ──────────────────────────────────────────────────────
@@ -110,16 +111,35 @@ class TestPhaseModel:
             "  light: claude-haiku-4-5\n",
         )
         models = ro.collect_phase_models("", tmp_path)
-        assert set(models) == {"claude-haiku-4-5"}
-        assert "sonnet" not in models
+        assert set(models) == {ModelRef("claude-haiku-4-5")}
 
     def test_collect_groups_phases_by_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         models = ro.collect_phase_models("")
-        assert models["claude-haiku-4-5"] == ["scout"]
-        assert set(models["claude-sonnet-5"]) == set(ro.REVIEW_PHASES) - {"scout"}
+        assert models[ModelRef("claude-haiku-4-5")] == ["scout"]
+        assert set(models[ModelRef("claude-sonnet-5")]) == set(ro.REVIEW_PHASES) - {"scout"}
+
+    def test_collect_keys_on_provider_and_id_together(self, ro, monkeypatch):
+        """An id is a name in one provider's catalogue, so the provider is part of the key."""
+        self._clean_env(ro, monkeypatch)
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "xai/grok-4.6")
+        monkeypatch.setenv("WORKBENCH_AI_GROUP_MODEL", "google-vertex/grok-4.6")
+        models = ro.collect_phase_models("")
+        assert models[ModelRef("grok-4.6", "xai")] == ["scout"]
+        assert models[ModelRef("grok-4.6", "google-vertex")] == ["group"]
+        assert ModelRef("grok-4.6") not in models
+
+    def test_collect_drops_the_thinking_level_from_the_key(self, ro, monkeypatch):
+        """A level is a setting on a call; two phases differing only in it share a model."""
+        self._clean_env(ro, monkeypatch)
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-sonnet-5:low")
+        models = ro.collect_phase_models("")
+        assert set(models) == {ModelRef("claude-sonnet-5")}
+        assert ro.Phase.SCOUT in models[ModelRef("claude-sonnet-5")]
 
     def test_collect_covers_every_review_phase_with_a_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
@@ -132,7 +152,7 @@ class TestPhaseModel:
         """An unset model is not a model to preflight; the budget floor covers it."""
         self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
-        assert ro.collect_phase_models("") == {"claude-haiku-4-5": [ro.Phase.SCOUT]}
+        assert ro.collect_phase_models("") == {ModelRef("claude-haiku-4-5"): [ro.Phase.SCOUT]}
 
     def test_unset_review_phases_names_the_rest(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)

@@ -13,6 +13,11 @@ names the id, where it came from when that is knowable, the provider, the
 closest listed ids, and how to override. An empty catalogue is not that error
 — pi absent, hung, or unreadable must not block a spawn pi itself might still
 accept; Pi's stderr is the remaining signal on that path.
+
+The same check runs once, up front, for every model a run would use
+(`check_targets`): each reference is judged by the provider it names, so a run
+mixing providers fails before it pays for anything, not at the first phase that
+reaches the wrong catalogue.
 """
 
 # doc-group: backend
@@ -28,6 +33,7 @@ from pathlib import Path
 
 import agent.pi_binary
 import core.errors
+import core.log
 import core.proc
 import core.timeouts
 
@@ -268,6 +274,35 @@ def require_model_with_provider(provider: str | None, model: str | None) -> None
     """Raise ``ModelNotConfigured`` for a provider with no model."""
     if provider and not model:
         raise ModelNotConfigured(provider)
+
+
+def check_targets(models, trail, cwd: str) -> bool:
+    """False when a phase's model is not listed under the provider it names.
+
+    ``models`` maps each model reference to the phases requesting it. Each is
+    checked against the catalogue of the provider it names, or of Pi's default
+    provider when it names none, so a phase on ``xai/grok-4.6`` and one on a
+    Claude id are each judged by their own provider. Every failure is reported
+    before the run stops, so one pass names every model to fix.
+
+    Fails open — True — when no pi can be chosen or its catalogue cannot be read:
+    the spawn that needs it reports the reason, and refusing here would turn an
+    optional lookup into a hard dependency.
+    """
+    try:
+        pi = agent.pi_binary.resolve(cwd).spawn(os.environ).argv
+    except agent.pi_binary.PiUnresolvable:
+        return True
+    ok = True
+    for ref, phases in sorted(models.items(), key=lambda item: item[0].spec()):
+        try:
+            require_listed_model(ref.id, ref.provider, pi=pi)
+        except ModelNotServed as exc:
+            ok = False
+            named = ", ".join(str(phase) for phase in phases)
+            core.log.error(f"Cannot start the run: {exc} Phases: {named}.")
+            trail.decision("model_preflight", "aborting run", reason=str(exc))
+    return ok
 
 
 def require_listed_model(

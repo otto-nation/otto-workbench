@@ -68,7 +68,7 @@ import core.timeouts
 from agent.backend import AgentInvocation, agent_env
 from agent.pi_binary import PiSpawn, PiUnresolvable
 from agent.pi_models import ModelNotConfigured, ModelNotServed, not_served_message
-from agent.pi_models import require_listed_model, require_model_with_provider
+from agent.pi_models import require_listed_model, require_model_with_provider, check_targets
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
@@ -1034,13 +1034,13 @@ def ledger_thinking(thinking: str | None) -> str | None:
     return thinking or None
 
 
-def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
-    """No pre-run checks — Pi resolves models and provider routing itself.
+def preflight(models, trail, cwd: str) -> bool:
+    """Check each model against the catalogue of the provider it names (`check_targets`).
 
-    ``models`` and ``trail`` are accepted for interface parity with the
-    Claude backend.
+    ``models`` maps each model reference to the phases requesting it, and ``cwd``
+    picks the pi whose catalogue answers.
     """
-    return True
+    return check_targets(models, trail, cwd)
 
 
 def prompt(

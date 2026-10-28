@@ -42,13 +42,13 @@ as the spawn's own guard for a caller that hands a provider in directly.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import agent.context_ceiling
 import config.workbench_config
 import core.errors
-from agent.models import ModelLayer, ResolvedModel, resolve, tier_ref
+from agent.models import ModelLayer, ModelRef, ResolvedModel, resolve, tier_ref
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import ENV_PREFIX, Effort, Phase, Thinking
@@ -213,8 +213,13 @@ def phase_settings(
 
 def collect_phase_models(
     explicit: str | None, project_root: Path | str | None = None,
-) -> dict[str, list[Phase]]:
+) -> dict[ModelRef, list[Phase]]:
     """Map each model the review pipeline would use to the phases requesting it.
+
+    Keyed by the reference without its thinking level: an id is a name in one
+    provider's catalogue, so what a backend can serve is the provider and id
+    together, and the level is a setting on a call to it. Two phases that differ
+    only in level share an entry.
 
     Callers use this to check every distinct model once up front and to name
     the env keys worth changing when one of them is unusable.
@@ -230,14 +235,14 @@ def collect_phase_models(
     a tier in its own `.workbench.yml` would be checked against a model it
     never runs.
     """
-    models: dict[str, list[Phase]] = {}
+    models: dict[ModelRef, list[Phase]] = {}
     cfg = config.workbench_config.load_config_or_default(project_root)
     for phase in REVIEW_PHASES:
-        model = phase_model(phase, explicit, cfg)
+        resolved = resolve_phase_model(phase, explicit, cfg)
         # A phase with no model runs on the backend's default, which preflight
         # cannot name; `unset_review_phases` reports those for the budget floor.
-        if model:
-            models.setdefault(model, []).append(phase)
+        if resolved is not None:
+            models.setdefault(replace(resolved.ref, level=None), []).append(phase)
     return models
 
 

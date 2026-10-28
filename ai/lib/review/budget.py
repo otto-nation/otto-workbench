@@ -399,7 +399,9 @@ def collection_budget_bytes(
     A phase with no configured model counts at the unset-model floor, so
     collection never outgrows what that phase's prompt is budgeted against.
     """
-    models: list[str | None] = list(collect_phase_models(explicit_model, project_root))
+    models: list[str | None] = [
+        ref.id for ref in collect_phase_models(explicit_model, project_root)
+    ]
     if unset_review_phases(explicit_model, project_root):
         models.append(None)
     return min(ladder_target_bytes(model, backend, cwd=project_root) for model in models)

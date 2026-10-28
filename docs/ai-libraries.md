@@ -4230,6 +4230,11 @@ closest listed ids, and how to override. An empty catalogue is not that error
 — pi absent, hung, or unreadable must not block a spawn pi itself might still
 accept; Pi's stderr is the remaining signal on that path.
 
+The same check runs once, up front, for every model a run would use
+(`check_targets`): each reference is judged by the provider it names, so a run
+mixing providers fails before it pays for anything, not at the first phase that
+reaches the wrong catalogue.
+
 ### agent/rule_prefix.py
 
 Assemble a Pi system-prompt prefix from a seeded ``rules_home``.

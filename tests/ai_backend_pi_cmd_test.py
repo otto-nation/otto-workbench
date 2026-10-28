@@ -4,12 +4,16 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_pi
+import agent.pi_binary
+import agent.pi_models
+from agent.models import ModelRef
 from ai_backend_test import _recording_popen
 from conftest import TEST_PI_ARGV as PI
 
@@ -460,9 +464,70 @@ class TestGuardEnv:
 
 
 class TestPreflight:
-    def test_always_passes(self):
-        """Pi resolves models itself — Vertex quota is not its config surface."""
-        assert agent.backend_pi.preflight({"claude-sonnet-5": ["group"]}, None) is True
+    def test_vertex_quota_is_not_its_config_surface(self, monkeypatch):
+        """Pi resolves models itself, so exported Vertex env must not reach a quota check."""
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        models = {ModelRef("claude-sonnet-5"): ["group"]}
+        assert agent.backend_pi.preflight(models, MagicMock(), ".") is True
+
+    def test_a_model_the_named_provider_does_not_serve_stops_the_run(self, monkeypatch):
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: _PREFLIGHT_LISTING)
+        trail = MagicMock()
+        models = {
+            ModelRef("claude-sonnet-5", "google-vertex-claude"): ["single"],
+            ModelRef("claude-sonnet-5", "xai"): ["scout"],
+        }
+        assert agent.backend_pi.preflight(models, trail, ".") is False
+        reason = trail.decision.call_args.kwargs["reason"]
+        assert "xai" in reason
+        assert "claude-sonnet-5" in reason
+        assert trail.decision.call_count == 1
+
+    def test_every_phase_is_judged_by_its_own_provider(self, monkeypatch):
+        """grok under xai and a Claude id under its own provider both pass in one run."""
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: _PREFLIGHT_LISTING)
+        models = {
+            ModelRef("claude-sonnet-5", "google-vertex-claude"): ["single"],
+            ModelRef("grok-4.6", "xai"): ["scout"],
+        }
+        assert agent.backend_pi.preflight(models, MagicMock(), ".") is True
+
+    def test_a_bare_id_is_judged_by_pis_default_provider(self, monkeypatch):
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: _PREFLIGHT_LISTING)
+        monkeypatch.setattr(agent.pi_models, "default_provider", lambda: "google-vertex-claude")
+        assert agent.backend_pi.preflight(
+            {ModelRef("claude-sonnet-5"): ["single"]}, MagicMock(), ".",
+        ) is True
+        assert agent.backend_pi.preflight(
+            {ModelRef("grok-4.6"): ["scout"]}, MagicMock(), ".",
+        ) is False
+
+    def test_every_failure_is_reported_before_the_run_stops(self, monkeypatch):
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: _PREFLIGHT_LISTING)
+        trail = MagicMock()
+        models = {ModelRef("nope-1", "xai"): ["scout"], ModelRef("nope-2", "xai"): ["group"]}
+        assert agent.backend_pi.preflight(models, trail, ".") is False
+        assert trail.decision.call_count == 2
+
+    def test_an_unreadable_catalogue_does_not_stop_the_run(self, monkeypatch):
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        models = {ModelRef("anything", "xai"): ["scout"]}
+        assert agent.backend_pi.preflight(models, MagicMock(), ".") is True
+
+    def test_no_pi_to_choose_does_not_stop_the_run(self, monkeypatch):
+        """The spawn that needs one reports why; preflight is an optional lookup."""
+        def unresolvable(_cwd):
+            raise agent.pi_binary.PiUnresolvable("no pi")
+        monkeypatch.setattr(agent.pi_binary, "resolve", unresolvable)
+        models = {ModelRef("anything", "xai"): ["scout"]}
+        assert agent.backend_pi.preflight(models, MagicMock(), ".") is True
+
+
+_PREFLIGHT_LISTING = """\
+provider              model              context  max-out  thinking  images
+google-vertex-claude  claude-sonnet-5    1M       128K     yes       yes
+xai                   grok-4.6           500K     500K     yes       yes
+"""
 
 
 class TestBareFlags:

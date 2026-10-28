@@ -87,7 +87,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     # The one review that genuinely has nothing to say is caught below, off the
     # body it would have posted.
     if not findings:
-        core.log.info("No findings to comment on — posting the review body alone")
+        core.log.info("No findings to comment on")
 
     head_sha = sidecar.head_sha
     head_ref = sidecar.head_ref

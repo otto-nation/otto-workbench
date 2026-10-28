@@ -160,9 +160,9 @@ reading it takes, and a review whose findings are all ticked posts its body
 alone. So does a review with no findings at all: the summary, verdict and
 static-analysis section are the review too, and an approver submits the pending
 review this leaves, read back from `post.jsonl`. Only a review whose body would
-also be empty posts nothing. A decline is a judgement rather than work, so it is stated: it is skipped
-by `classify_findings()` whatever the diff says about its line, and rendered by
-`format_body_text()` under its own heading in the review body, apart from the
+also be empty posts nothing. A decline is a judgement rather than work, so it
+is stated: it is skipped by `classify_findings()` whatever the diff says about
+its line, and rendered by `format_body_text()` under its own heading in the review body, apart from the
 findings the review is asking for. The ordering is what makes either reachable —
 posting normally precedes any fix pass — so both marks arrive only on a review
 posted after one, which is the run these two answers exist for.

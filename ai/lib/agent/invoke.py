@@ -170,7 +170,7 @@ def run_agent(
     a fixed backoff this agent waits out alone.
     """
     if throttle:
-        throttle.wait_if_needed()
+        throttle.wait_if_needed(inv.provider)
 
     rc = agent.backend.invoke_agent(inv)
     if rc != 0 and agent.session.is_quota_error(inv.session_log):
@@ -178,7 +178,7 @@ def run_agent(
         # quota like any other.
         model = inv.model or "the provider default"
         if throttle:
-            wait = throttle.report_exhausted(model)
+            wait = throttle.report_exhausted(model, inv.provider)
             time.sleep(wait)
         else:
             core.log.warn(f"Quota exhausted on {model} — retrying once after 30s backoff")

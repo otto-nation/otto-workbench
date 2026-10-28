@@ -239,7 +239,7 @@ class TestPhaseRunnerReachesBackend:
         def __init__(self):
             self.waited = False
 
-        def wait_if_needed(self):
+        def wait_if_needed(self, provider=None):
             self.waited = True
 
     def test_invoke_forwards_invocation_and_throttle(self, tmp_path, monkeypatch):

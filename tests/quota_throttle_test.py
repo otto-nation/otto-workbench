@@ -67,6 +67,67 @@ def test_a_second_instance_sees_the_firsts_resume_at(monkeypatch):
     assert slept[0] == pytest.approx(30, abs=2)
 
 
+def _sleeps(monkeypatch):
+    slept = []
+    monkeypatch.setattr(time, "sleep", lambda seconds: slept.append(seconds))
+    return slept
+
+
+def test_a_429_on_one_provider_holds_back_only_that_provider(monkeypatch):
+    """A quota is one provider's fact: grok throttling must not stall Claude agents."""
+    QuotaThrottle().report_exhausted("grok-4.6", "xai")
+    slept = _sleeps(monkeypatch)
+
+    QuotaThrottle().wait_if_needed("google-vertex-claude")
+    QuotaThrottle().wait_if_needed()
+    assert slept == []
+
+    QuotaThrottle().wait_if_needed("xai")
+    assert slept[0] == pytest.approx(30, abs=2)
+
+
+def test_the_default_providers_backoff_does_not_hold_back_a_named_one(monkeypatch):
+    QuotaThrottle().report_exhausted("claude-sonnet-5")
+    slept = _sleeps(monkeypatch)
+    QuotaThrottle().wait_if_needed("xai")
+    assert slept == []
+    QuotaThrottle().wait_if_needed()
+    assert slept
+
+
+def test_each_provider_climbs_its_own_ladder():
+    assert QuotaThrottle().report_exhausted("grok-4.6", "xai") == 30
+    assert QuotaThrottle().report_exhausted("grok-4.6", "xai") == 60
+    assert QuotaThrottle().report_exhausted("claude-sonnet-5", "google-vertex-claude") == 30
+    assert json.loads(throttle_path("xai").read_text())["backoff"] == 120
+    assert json.loads(throttle_path("google-vertex-claude").read_text())["backoff"] == 60
+
+
+def test_one_instance_keeps_a_ladder_per_provider():
+    """A review shares one throttle across providers; the in-memory ladder must split too."""
+    throttle = QuotaThrottle()
+    assert throttle.report_exhausted("grok-4.6", "xai") == 30
+    assert throttle.report_exhausted("claude-sonnet-5") == 30
+    assert throttle.resume_at("xai") > 0
+    assert throttle.resume_at("google-vertex-claude") == 0
+
+
+def test_the_record_names_the_provider_it_throttles():
+    QuotaThrottle().report_exhausted("grok-4.6", "xai")
+    assert json.loads(throttle_path("xai").read_text())["provider"] == "xai"
+
+
+def test_a_provider_cannot_name_a_file_outside_the_state_dir(tmp_path):
+    path = throttle_path("../../etc/x")
+    assert path.parent == tmp_path
+    assert "/" not in path.name
+
+
+def test_colliding_provider_ids_get_distinct_files(tmp_path):
+    assert throttle_path("a/b") != throttle_path("a_b")
+    assert len(throttle_path("x" * 500).name) < 100
+
+
 def test_a_second_exhaustion_doubles():
     assert QuotaThrottle().report_exhausted("sonnet") == 30
     assert QuotaThrottle().report_exhausted("sonnet") == 60
@@ -128,7 +189,7 @@ def test_an_unwritable_state_dir_still_backs_off_in_memory(tmp_path, monkeypatch
     throttle = QuotaThrottle()
     wait = throttle.report_exhausted("sonnet")
     assert wait == 30
-    assert throttle._resume_at > 0
+    assert throttle.resume_at() > 0
 
 
 def test_malformed_json_is_fail_open(monkeypatch):

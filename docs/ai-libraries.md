@@ -5259,13 +5259,18 @@ Exit 0 for every repo state; non-zero only for a root that is not a directory.
 
 ### core/quota_throttle.py
 
-A machine-wide backoff shared by every agent that hits a 429.
+A machine-wide backoff shared by every agent that hits a 429 on one provider.
 
 Two review pipelines on one host used to each keep a process-local ladder
 (``threading.Lock`` plus ``time.monotonic()``). After a shared quota 429 they
 backed off independently and re-collided on the way up, because a monotonic
 clock is not comparable across processes and a lock in one address space is
 invisible to another.
+
+A 429 is a fact about one provider's quota, so each provider has a ladder and a
+file of its own: a 429 from xai holds back the agents calling xai, not the ones
+calling Claude. Agents that name no provider share the default's, which is the
+file this module always had.
 
 The wait is a wall-clock timestamp in a JSON file, not a held flock. A crash
 mid-backoff is therefore not a stale lock: the next process reads ``resume_at``

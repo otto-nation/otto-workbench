@@ -48,7 +48,7 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
         if fork_point:
             argv += ["--fork-point", fork_point]
     elif step is Step.CI:
-        # ci-check claims the run lock itself and makes no startup fetch. 
+        # ci-check claims the run lock itself and makes no startup fetch.
         # --no-rebase because the batch rebases in its own step
         # (and with it ci-check fetches nothing), and --head-sha because after
         # a drafted rebase local HEAD is a commit GitHub has no runs for.

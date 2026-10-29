@@ -15,8 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
-from review.record import Disposition, LedgerLine, ProseSection, ReviewRecord, load_record
-from review.steps import Merged
+from review.phases import PhaseResult
+from review.record import Disposition, FocusArea, FocusSource, LedgerLine, ProseSection, ReviewRecord, load_record
+from review.steps import Merged, _phase_disprove
 from review.store import StoredReview
 from review.types import PriorDisposition, ReviewMeta
 from review.verdict import FALLBACK_SUMMARY, MECHANICAL_NOTE
@@ -701,3 +702,20 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
         assert self._extras(
             ro, tmp_path, monkeypatch, record(), prior=record(),
         )["unaccounted_prior"] == []
+
+
+def test_disprove_is_never_shown_focus(ro, tmp_path, monkeypatch):
+    seen = {}
+
+    def capture(*_a, review_content="", **_k):
+        seen["body"] = review_content
+        return PhaseResult()
+
+    monkeypatch.setattr("review.steps.run_phase", capture)
+    rec = record(
+        finding("M1", "a"), finding("M2", "b"), finding("M3", "c"),
+        summary="s",
+        focus=(FocusArea(id="F1", title="locks", source=FocusSource.USER),),
+    )
+    _phase_disprove(TestPhaseSynthesis()._make_job(ro, tmp_path), rec)
+    assert "## Focus" not in seen["body"]

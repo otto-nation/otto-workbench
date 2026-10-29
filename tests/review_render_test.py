@@ -20,6 +20,7 @@ from review.document import MetaKey
 from review.render import BANNER, evidence_block, finding_line, ledger_line, render_body, render_review, triage_line
 from review.types import PriorDisposition, ReviewMeta
 
+from review_focus_support import area, user_area
 from review_record_support import (
     canonical, expected_text, fixture_meta, fixture_record, finding, record,
 )
@@ -183,3 +184,29 @@ def test_a_ledger_line_renders_id_path_disposition_and_note():
     assert ledger_line(LedgerLine("M1", PriorDisposition.FIXED, "a.py", "moved")) == \
         "- **[M1]** `a.py` — Fixed — moved"
     assert ledger_line(LedgerLine("S2", PriorDisposition.DECLINED)) == "- **[S2]** — Declined"
+
+
+def test_focus_renders_after_the_summary_requested_first():
+    body = render_body(record(
+        finding("M1", "bug"),
+        summary="looked at locking",
+        focus=(
+            user_area("Locking"),
+            area(id="F2", title="Retries", coverage="checked backoff"),
+        ),
+    ))
+    assert body.index("## Summary") < body.index("## Focus")
+    assert body.index("## Focus") < body.index("## Must fix")
+    focus = body.split("## Focus", 1)[1].split("## ", 1)[0]
+    lines = [ln for ln in focus.splitlines() if ln.startswith("- **[")]
+    assert "Locking" in lines[0] and "*(requested)*" in lines[0]
+    assert "Retries" in lines[1] and "*(requested)*" not in lines[1]
+
+
+def test_an_unassessed_area_says_so():
+    body = render_body(record(summary="s", focus=(area(title="Locks"),)))
+    assert "*Not assessed this round.*" in body
+
+
+def test_no_focus_renders_no_section():
+    assert "## Focus" not in render_body(record(summary="s"))

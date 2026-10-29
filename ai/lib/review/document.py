@@ -29,6 +29,7 @@ from review.types import SEVERITIES, Finding, ReviewMeta, ReviewType
 # that writes it is two owners of one string. Any other header is the caller's
 # own vocabulary, passed to `section` as a string.
 SECTION_SUMMARY = "Summary"
+SECTION_FOCUS = "Focus"
 SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"

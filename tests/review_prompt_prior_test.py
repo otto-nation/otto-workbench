@@ -22,6 +22,7 @@ from review.types import PriorDisposition, ReplyState, ReviewMeta
 from review.prompt_prior import (
     _annotate_with_thread_state, _build_prior_section, _in_group, _prior_text, _scoped,
 )
+from review_focus_support import user_area
 from review_record_support import finding, record
 
 
@@ -192,6 +193,16 @@ class TestBuildPriorSectionLedger:
 
 
 class TestPriorTextOmitsBookkeeping:
+    def test_the_prior_section_leaves_out_focus(self):
+        rec = record(
+            finding("M1", "bug"),
+            summary="s",
+            focus=(user_area("Locking"),),
+        )
+        result = _prior_text(_stored(rec=rec), None)
+        assert "## Focus" not in result
+        assert "**[M1]**" in result
+
     def test_drops_triage_and_static_analysis(self):
         result = _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
         assert "File Triage" not in result

@@ -17,7 +17,10 @@ from review.record import (
     SeveritySection, TriageEntry, load_record,
 )
 from review.document import MetaKey
-from review.render import BANNER, evidence_block, finding_line, ledger_line, render_body, render_review, triage_line
+from review.render import (
+    BANNER, evidence_block, finding_line, focus_line, ledger_line, render_body, render_review,
+    triage_line,
+)
 from review.types import PriorDisposition, ReviewMeta
 
 from review_focus_support import area, user_area
@@ -206,6 +209,19 @@ def test_focus_renders_after_the_summary_requested_first():
 def test_an_unassessed_area_says_so():
     body = render_body(record(summary="s", focus=(area(title="Locks"),)))
     assert "*Not assessed this round.*" in body
+
+
+def test_a_focus_line_indents_its_rationale_and_paths():
+    line = focus_line(area(
+        id="F2", title="Retries", rationale="why\nand more",
+        paths=("a", "b"), coverage="checked",
+    ))
+    assert line == (
+        "- **[F2] Retries** — checked\n"
+        "  why\n"
+        "  and more\n"
+        "  Paths: `a`, `b`"
+    )
 
 
 def test_no_focus_renders_no_section():

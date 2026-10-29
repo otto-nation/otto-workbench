@@ -29,7 +29,7 @@ from dataclasses import replace
 import core.serde
 
 from review.document import (
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
+    SECTION_FILE_TRIAGE, SECTION_FOCUS, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 )
 from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
@@ -66,6 +66,7 @@ def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:
 # Coverage bookkeeping and machine-generated output, not prior reviewer claims.
 _PRIOR_EXCLUDED_SECTIONS = frozenset({
     SECTION_FILE_TRIAGE,
+    SECTION_FOCUS,
     SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 })

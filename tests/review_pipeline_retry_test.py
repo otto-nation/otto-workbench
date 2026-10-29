@@ -21,6 +21,9 @@ import core.log
 from review.record import Disposition, load_record
 from review.store import StoredReview
 from review.types import ReviewMeta
+from review.record import FocusSource
+from review_focus_support import DERIVED_FOCUS, user_area
+from review_prompt_support import _make_job as _prompt_job, _make_preflight
 from review_record_support import finding, record
 
 _TURNS = 15
@@ -237,7 +240,7 @@ class TestSingleAgentCleanup:
         job = _make_job(tmp_path)
 
         def _agent(inv, *_args, **_kwargs) -> int:
-            Path(inv.output_path).write_text(json.dumps({"summary": "s"}))
+            Path(inv.output_path).write_text(json.dumps({"summary": "s", "focus": DERIVED_FOCUS}))
             Path(job.session_log).write_text(_result("success") + "\n")
             return 0
 
@@ -419,7 +422,8 @@ class TestCompleteReviewReadsSectionConstants:
 def test_the_single_agent_writes_single_json_and_review_md_is_rendered(tmp_path, monkeypatch):
     job = _make_job(tmp_path)
     doc = json.dumps({"summary": "Looks fine.",
-                      "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "nit"}]})
+                      "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "nit"}],
+                      "focus": DERIVED_FOCUS})
 
     def _agent(inv, *_args, **_kwargs) -> int:
         Path(inv.output_path).write_text(doc)
@@ -447,7 +451,7 @@ def test_the_single_agent_keeps_a_decline_only_for_a_prior_finding(tmp_path, mon
     carried = {"id": "N1", "path": "a.py", "line": 1, "body": "kept",
                "sid": "3f9a2c1d", "declined": "documented"}
     invented = {**carried, "id": "N2", "body": "invented", "sid": "00000000"}
-    doc = json.dumps({"summary": "s", "findings": [carried, invented]})
+    doc = json.dumps({"summary": "s", "findings": [carried, invented], "focus": DERIVED_FOCUS})
 
     def _agent(inv, *_args, **_kwargs) -> int:
         Path(inv.output_path).write_text(doc)
@@ -459,6 +463,51 @@ def test_the_single_agent_keeps_a_decline_only_for_a_prior_finding(tmp_path, mon
     review.pipeline.run_single_agent(job, disprove=False)
     by_body = {f.body: f.disposition for f in load_record(tmp_path).findings}
     assert by_body == {"kept": Disposition.DECLINED, "invented": Disposition.OPEN}
+
+
+def test_a_second_coverage_miss_publishes_the_area_unassessed(
+    tmp_path, monkeypatch, capsys,
+):
+    job = _make_job(tmp_path)
+    job.focus = (user_area("Asked"),)
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(json.dumps({"summary": "s"}))
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    rec = load_record(tmp_path)
+    assert rec.focus[0].id == "F1" and rec.focus[0].coverage == ""
+    err = capsys.readouterr().err
+    assert "missing_coverage" in err
+    assert "only areas with missing_coverage are published as not assessed" in err
+
+
+def test_the_single_agent_derives_when_nothing_is_derived(tmp_path, monkeypatch):
+    job = _prompt_job(_make_preflight(prior_head_sha=""))
+    job.review_file = str(tmp_path / "review.md")
+    job.session_log = str(tmp_path / "session.jsonl")
+    job.wt_path = str(tmp_path)
+    seen = {}
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        seen["prompt"] = inv.prompt
+        Path(inv.output_path).write_text(json.dumps({
+            "summary": "Looks fine.", "focus": DERIVED_FOCUS,
+        }))
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    assert "Add 1–3 areas" in seen["prompt"]
+    rec = load_record(tmp_path)
+    assert rec.focus[0].title == "Retry"
+    assert rec.focus[0].source is FocusSource.DERIVED
+    assert "## Focus" in Path(job.review_file).read_text()
 
 
 def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):

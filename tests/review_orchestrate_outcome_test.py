@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
 
-from review.record import ReviewRecord, TriageEntry
+from review.record import FocusSource, ReviewRecord, TriageEntry, load_record
+from review_focus_support import area, user_area
 from review_record_support import finding, record
 
 
@@ -485,3 +486,27 @@ class TestWriteReviewSidecar:
         meta = ro.read_review_meta(tmp_path)
         assert meta.review_type == ro.ReviewType.FULL
         assert (meta.prior_sha, meta.delta_files) == ("", ())
+
+
+def test_a_mechanical_review_carries_the_run_s_areas_unassessed(ro, tmp_path):
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.focus = (user_area("A"),)
+    ro._write_mechanical_fallback(job, 1, record())
+    rec = load_record(tmp_path)
+    assert [(a.title, a.coverage) for a in rec.focus] == [("A", "")]
+
+
+def test_an_unchanged_review_does_not_carry_last_round_s_coverage(ro, tmp_path):
+    from review.store import StoredReview
+    from review.types import ReviewMeta
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.prior = StoredReview(
+        record(focus=(area(
+            id="F1", title="A", source=FocusSource.USER, coverage="old",
+        ),)),
+        ReviewMeta(),
+    )
+    job.focus = (user_area("A"),)
+    ro.write_unchanged_review(job)
+    rec = load_record(tmp_path)
+    assert [(a.title, a.coverage) for a in rec.focus] == [("A", "")]

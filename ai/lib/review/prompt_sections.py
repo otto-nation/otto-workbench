@@ -21,15 +21,18 @@ shown before it writes anything.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 import git.client
 from agent.types import EFFORT_PRESETS
 from gh.types import FILE_STAT_FMT, PRContext, PRMetadata
 from core.phases import Effort
 from review.budget import (
-    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_REVIEW_BODY_LEN, MIN_DELTA_DIFF_BYTES,
+    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_ISSUE_CONTEXT_BYTES,
+    MAX_REVIEW_BODY_LEN, MIN_DELTA_DIFF_BYTES,
 )
 from review.collect import scope_diff, truncate_diff
+from review.record import FocusArea, FocusSource
 from review.reply_threads import ReplyThreads
 from review.types import PreflightData, ReplyState, ReviewJob
 
@@ -490,9 +493,49 @@ def _is_incremental(job: ReviewJob) -> bool:
     return bool(job.preflight and job.preflight.prior_head_sha)
 
 
+def _build_focus_section(
+    areas: Sequence[FocusArea], *, derive: bool = False, note: str = "",
+) -> str:
+    """The `## Focus` block: one area per line, then optional note and derive prompt."""
+    if not areas and not derive:
+        return ""
+    lines = ["", "## Focus"]
+    for area in areas:
+        asked = " *(requested)*" if area.source is FocusSource.USER else ""
+        lines.append(f"- **{area.id}**{asked} — {area.title}")
+        if area.rationale:
+            lines.append("  Why: " + area.rationale.replace("\n", "\n  "))
+        if area.paths:
+            lines.append("  Paths: " + ", ".join(f"`{p}`" for p in area.paths))
+    if note:
+        lines.append(note)
+    if derive:
+        lines.append(
+            'Add 1–3 areas this PR most needs reviewed, each with `id: ""`, a `title`, '
+            "a `rationale`, and the `paths` it concerns (`[]` when it spans the PR)."
+        )
+    return "\n".join(lines)
+
+
 def _build_issue_section(issue_link: str, issue_context: str) -> str:
+    if not issue_link and not issue_context:
+        return ""
+    parts = ["\n## Related issue"]
     if issue_link:
-        return f"\n## Related issue\n{issue_link}"
-    if issue_context:
-        return f"\n## Related issue\n{issue_context}"
-    return ""
+        parts.append(issue_link)
+    if not issue_context:
+        return "\n".join(parts)
+    raw = issue_context.encode()
+    if len(raw) > MAX_ISSUE_CONTEXT_BYTES:
+        rest = (
+            f"read the rest at {issue_link}"
+            if issue_link else "…the rest in the tracker"
+        )
+        issue_context = (
+            f"{raw[:MAX_ISSUE_CONTEXT_BYTES].decode(errors='ignore')}"
+            f"\n\n_(issue truncated at {MAX_ISSUE_CONTEXT_BYTES // 1024} KB — {rest})_"
+        )
+    if issue_link:
+        parts.append("")
+    parts.append(issue_context)
+    return "\n".join(parts)

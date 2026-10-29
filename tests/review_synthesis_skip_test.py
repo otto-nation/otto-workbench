@@ -1,6 +1,7 @@
 """An incremental round with nothing new and nothing unsettled skips synthesis and the gate."""
 
 import contextlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review.outcome  # noqa: E402
+import review.phases  # noqa: E402
 import review.pipeline  # noqa: E402
 import review.steps  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
@@ -150,3 +152,40 @@ def test_run_multi_phase_hands_settled_to_synthesis_and_the_gate(
     review.pipeline.run_multi_phase(job, max_parallel=1)
     assert seen["synthesis"].get("settled") is nothing_new
     assert seen["gate"].get("settled") is nothing_new
+
+
+def test_phase_one_focus_reaches_the_groups(tmp_path, monkeypatch):
+    monkeypatch.setattr(review.steps, "HOLISTIC_MIN_GROUPS", 1)
+    job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
+    prompts = []
+    scout_doc = json.dumps({
+        "focus": [{"title": "Auth-retry-token", "rationale": "why", "paths": ["a.py"]}],
+    })
+    group_doc = json.dumps({
+        "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "n"}],
+    })
+
+    def fake_agent(inv, throttle=None):
+        prompts.append(inv.prompt)
+        Path(inv.session_log).write_text(
+            json.dumps({"type": "result", "subtype": "success", "num_turns": 1}) + "\n")
+        body = scout_doc if Path(inv.output_path).name.startswith("scout") else group_doc
+        Path(inv.output_path).write_text(body)
+        return 0
+
+    monkeypatch.setattr(review.phases, "run_agent", fake_agent)
+    monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
+        already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
+        resume_at_gate=False))
+    monkeypatch.setattr(review.pipeline, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.pipeline, "hold_group_workers",
+                        lambda *a: contextlib.nullcontext(1))
+    monkeypatch.setattr(review.pipeline, "_run_synthesis_or_fallback",
+                        lambda *a, **k: PhaseResult())
+    monkeypatch.setattr(review.pipeline, "_run_disprove_gate",
+                        lambda *a, **k: PhaseResult())
+    monkeypatch.setattr(review.pipeline, "_consolidate_logs", lambda *a, **k: None)
+    review.pipeline.run_multi_phase(job, max_parallel=1)
+    group_prompts = [p for p in prompts if "GROUP" in p]
+    assert group_prompts and any("Auth-retry-token" in p for p in group_prompts)

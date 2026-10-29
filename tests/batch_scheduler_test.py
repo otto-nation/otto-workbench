@@ -537,6 +537,14 @@ def test_a_ci_step_runs_against_the_planned_remote_head():
                           "--repo-dir", "/wt/b1"]]
 
 
+def test_resume_replays_the_run_s_focus():
+    h = Harness([row(1)], focus=["a"])
+    h.resume()
+    h.sched.run_until_blocked()
+    argv = next(a for a in h.spawned if a[1] == "review")
+    assert "--focus=a" in argv
+
+
 def test_a_failed_step_records_the_log_it_wrote():
     h = Harness([row(1)], codes={("rebase", "/wt/b1"): 1})
     h.sched.run_until_blocked()

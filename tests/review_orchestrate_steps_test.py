@@ -15,12 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
-from review.record import Disposition, LedgerLine, ProseSection, ReviewRecord, load_record
-from review.steps import Merged
+from review.phases import PhaseResult
+from review.record import Disposition, FocusArea, FocusSource, LedgerLine, ProseSection, ReviewRecord, load_record
+from review.steps import Merged, _phase_disprove
 from review.store import StoredReview
 from review.types import PriorDisposition, ReviewMeta
 from review.verdict import FALLBACK_SUMMARY, MECHANICAL_NOTE
 from review.verify import PostProcessed
+from review_focus_support import DERIVED_FOCUS
 from review_record_support import finding, record
 
 
@@ -79,7 +81,7 @@ class TestPhaseSynthesis:
 
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(
-                json.dumps({"summary": "Looks good.", "verdict": "Approve."}))
+                json.dumps({"summary": "Looks good.", "verdict": "Approve.", "focus": DERIVED_FOCUS}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -106,6 +108,7 @@ class TestPhaseSynthesis:
                     f"{FALLBACK_SUMMARY} in prose."
                 ),
                 "verdict": "Approve.",
+                "focus": DERIVED_FOCUS,
             }))
             Path(inv.session_log).write_text("")
             return 0
@@ -121,7 +124,7 @@ class TestPhaseSynthesis:
 
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(
-                json.dumps({"summary": "Looks good.", "verdict": "Approve."}))
+                json.dumps({"summary": "Looks good.", "verdict": "Approve.", "focus": DERIVED_FOCUS}))
             Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
             return 0
@@ -257,7 +260,7 @@ class TestPhaseSynthesis:
                 )
                 return 1
             Path(inv.output_path).write_text(
-                json.dumps({"summary": "Looks good.", "verdict": "Approve."}))
+                json.dumps({"summary": "Looks good.", "verdict": "Approve.", "focus": DERIVED_FOCUS}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -324,7 +327,7 @@ class TestPhaseSynthesis:
         """X4: an incomplete synthesis is repaired once rather than merged mechanically."""
         job = self._make_job(ro, tmp_path)
         docs = iter([json.dumps({"summary": ""}),
-                     json.dumps({"summary": "Looks good.", "verdict": "Approve — clean."})])
+                     json.dumps({"summary": "Looks good.", "verdict": "Approve — clean.", "focus": DERIVED_FOCUS})])
         prompts = []
 
         def mock_invoke(inv, **kwargs):
@@ -344,7 +347,7 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
 
         def mock_invoke(inv, **kwargs):
-            Path(inv.output_path).write_text(json.dumps({"summary": "s", "verdict": "Approve"}))
+            Path(inv.output_path).write_text(json.dumps({"summary": "s", "verdict": "Approve", "focus": DERIVED_FOCUS}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -396,7 +399,7 @@ class TestPhaseSynthesis:
         invented = {**carried, "id": "N2", "body": "invented", "sid": "00000000"}
 
         def mock_invoke(inv, **kwargs):
-            Path(inv.output_path).write_text(json.dumps({"summary": "s", "findings": [carried, invented]}))
+            Path(inv.output_path).write_text(json.dumps({"summary": "s", "findings": [carried, invented], "focus": DERIVED_FOCUS}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -415,7 +418,7 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
 
         def mock_invoke(inv, **kwargs):
-            Path(inv.output_path).write_text(json.dumps({"summary": "s", "verdict": "Approve"}))
+            Path(inv.output_path).write_text(json.dumps({"summary": "s", "verdict": "Approve", "focus": DERIVED_FOCUS}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -437,6 +440,7 @@ class TestPhaseSynthesis:
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
                 "summary": "s", "verdict": "Approve",
+                "focus": DERIVED_FOCUS,
                 "findings": [
                     {"id": "N1", "path": "a.py", "line": 1, "body": "synth one"},
                     {"id": "N2", "path": "a.py", "line": 2, "body": "synth two"},
@@ -474,6 +478,7 @@ class TestPhaseSynthesis:
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
                 "summary": "s", "verdict": "Approve", "findings": [emitted],
+                "focus": DERIVED_FOCUS,
             }))
             Path(inv.session_log).write_text("")
             return 0
@@ -504,6 +509,7 @@ class TestPhaseSynthesis:
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
                 "summary": "see [N3]", "verdict": "Approve",
+                "focus": DERIVED_FOCUS,
                 "findings": [
                     {"id": "N1", "path": "a.py", "line": 1, "body": "synth one"},
                     {"id": "N2", "path": "a.py", "line": 2, "body": "synth two"},
@@ -547,6 +553,7 @@ class TestPhaseSynthesis:
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
                 "summary": "see [N3]", "verdict": "Approve",
+                "focus": DERIVED_FOCUS,
                 "findings": [
                     {"id": "N1", "path": "a.py", "line": 1, "body": "from groups one"},
                     {"id": "N2", "path": "a.py", "line": 2, "body": "from groups two"},
@@ -591,6 +598,7 @@ class TestPhaseSynthesis:
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
                 "summary": "see [N1]", "verdict": "Approve",
+                "focus": DERIVED_FOCUS,
                 "findings": [
                     {"id": "N1", "path": "a.py", "line": 1, "body": "reworded",
                      "sid": "aaaa1111"},
@@ -668,7 +676,7 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
 
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(
-                json.dumps({"summary": "ok.", "verdict": "Approve."}))
+                json.dumps({"summary": "ok.", "verdict": "Approve.", "focus": DERIVED_FOCUS}))
             Path(inv.session_log).write_text("")
             return 0
 
@@ -701,3 +709,20 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
         assert self._extras(
             ro, tmp_path, monkeypatch, record(), prior=record(),
         )["unaccounted_prior"] == []
+
+
+def test_disprove_is_never_shown_focus(ro, tmp_path, monkeypatch):
+    seen = {}
+
+    def capture(*_a, review_content="", **_k):
+        seen["body"] = review_content
+        return PhaseResult()
+
+    monkeypatch.setattr("review.steps.run_phase", capture)
+    rec = record(
+        finding("M1", "a"), finding("M2", "b"), finding("M3", "c"),
+        summary="s",
+        focus=(FocusArea(id="F1", title="locks", source=FocusSource.USER),),
+    )
+    _phase_disprove(TestPhaseSynthesis()._make_job(ro, tmp_path), rec)
+    assert "## Focus" not in seen["body"]

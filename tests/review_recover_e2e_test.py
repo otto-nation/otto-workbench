@@ -45,14 +45,19 @@ _DENIED_RECORD = json.dumps({
 _OK_RECORD = json.dumps({"type": "result", "subtype": "success", "num_turns": 3})
 
 _GROUP_FINDING = json.dumps({"findings": [{"id": "N1", "path": "a/one.py", "line": 1, "body": "naming"}]})
-_SCOUT_DOC = json.dumps({"leads": []})
-_HOLISTIC_DOC = json.dumps({"assessment": "ok"})
+_FOCUS = [{"title": "Retry", "rationale": "why", "paths": ["a/one.py"]}]
+_SCOUT_DOC = json.dumps({"leads": [], "focus": _FOCUS})
+_HOLISTIC_DOC = json.dumps({"assessment": "ok", "focus": _FOCUS})
 _DISPROVE_DOC = json.dumps({"verdicts": []})
-_REVIEW_BODY = json.dumps({"summary": "Synthesized.", "verdict": "Approve"})
+_REVIEW_BODY = json.dumps({
+    "summary": "Synthesized.", "verdict": "Approve",
+    "focus": [{"id": "", "title": "Retry", "rationale": "r", "paths": [], "coverage": "checked"}],
+})
 _REVIEW_WITH_FINDING = json.dumps({
     "summary": "Synthesized.",
     "findings": [{"id": "M1", "path": "a/one.py", "line": 1, "body": "bug"}],
     "verdict": "Request changes",
+    "focus": [{"id": "", "title": "Retry", "rationale": "r", "paths": [], "coverage": "checked"}],
 })
 
 _FILES = ("a/one.py", "a/two.py", "b/three.py", "b/four.py")
@@ -275,7 +280,7 @@ class TestRecoverAcrossASchemaChange:
         )
 
         review.state._inject_failures_and_status(
-            job.review_file, review.state._read_pipeline_state(job),
+            job.review_file, review.state.read_pipeline_state(job),
         )
 
         assert "| group-2: b | agent error: model not available | failed |" in _review(job)

@@ -28,13 +28,14 @@ from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
 from review.convergence import change_set, drop_out_of_delta_nits, prior_ids
 from review.prompt_sections import _is_incremental
-from review.document import ReviewDocument
+from review.document import SECTION_FOCUS, ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
     GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
 )
+from review.focus import coverage_problems, covered, needs_derived
 from review.ingest import (
-    ArtifactOutcome, IngestError, IngestRejected, ingest_artifact,
+    ArtifactOutcome, IngestError, IngestErrorKind, IngestRejected, ingest_artifact,
     load_artifact,
 )
 from review.merge import append_findings, merge_records
@@ -47,7 +48,7 @@ from review.paths import phase_log_path, phase_output_path
 from review.phases import (
     PhaseResult, PhaseRunner,
     _phase_group_reviews, _should_disprove, _synthesis_max_turns,
-    read_scan, run_phase,
+    reuse_scan, run_phase,
 )
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
@@ -237,11 +238,7 @@ def _run_holistic_phase(
     output = phase_output_path(job.review_file, phase)
     if state.scanned and _has_output(output):
         core.log.info(f"Phase 1: {label} skipped (exists)")
-        return PhaseResult(
-            log=phase_log_path(job.review_file, phase),
-            content=read_scan(phase, output),
-            output=output,
-        )
+        return reuse_scan(phase, output, phase_log_path(job.review_file, phase))
 
     result = run_phase(job, phase, f"Phase 1/{group_count}: {label}...")
     state.done.add(phase)
@@ -479,10 +476,19 @@ def _phase_synthesis(
         ingest_artifact(
             output, sent, invoke, ReviewArtifact,
             diagnose=lambda: diagnose_missing_output(synthesis_log, output),
+            check=lambda a: coverage_problems(a, job.focus, derive=needs_derived(job.focus)),
         )
         if _has_output(output) else ArtifactOutcome(None)
     )
     if outcome.ok:
+        if outcome.errors:
+            listed = "; ".join(e.render() for e in outcome.errors)
+            note = (
+                " — only areas with missing_coverage are published as not assessed"
+                if any(e.kind is IngestErrorKind.MISSING_COVERAGE for e in outcome.errors)
+                else ""
+            )
+            core.log.warn(listed + note)
         record = replace(
             outcome.artifact.to_record(
                 checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
@@ -490,6 +496,8 @@ def _phase_synthesis(
             # `Review gaps` and anything else the harness wrote into the merge
             # are the run's own sections; an agent has no field to copy them into.
             extra=merged.record.extra,
+            focus=covered(job.focus, outcome.artifact.focus,
+                          [f["path"] for f in job.pr.files]),
         )
         record = _restore_held_findings(merged.record, record)
         if _is_incremental(job):
@@ -583,10 +591,13 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
         core.log.info(f"{label} skipped — no must-fix or should-fix findings")
         return DisproveRun(PhaseResult(), record)
     # The gate reads the record rendered with its evidence: the findings it
-    # challenges, their locations, and the code each one quotes.
+    # challenges, their locations, and the code each one quotes. Disprove judges
+    # truth, not where to look, so Focus is omitted.
     result = run_phase(job, Phase.DISPROVE,
                        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
-                       review_content=render_body(record, evidence=True))
+                       review_content=render_body(
+                           record, evidence=True, omit=frozenset({SECTION_FOCUS}),
+                       ))
     if result.artifact is None:
         return DisproveRun(result, record)
     applied = apply_disprove(record, result.artifact)

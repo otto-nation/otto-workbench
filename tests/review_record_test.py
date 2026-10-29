@@ -17,7 +17,7 @@ from review.document import ReviewHeader
 from review.paths import FILENAME_PRIOR_RECORD, FILENAME_RECORD
 from review.store import read_prior
 from review.record import (
-    SCHEMA_VERSION, AgentFailure, Disposition, LedgerLine, ProseSection,
+    SCHEMA_VERSION, AgentFailure, Disposition, FocusArea, FocusSource, LedgerLine, ProseSection,
     RecordFinding, ReviewRecord, SeveritySection, TriageEntry,
     defuse_first_line, load_record, save_record, unquote_evidence,
 )
@@ -302,3 +302,22 @@ def test_the_finding_builder_takes_a_stored_stable_id():
 def test_the_record_builder_holds_its_findings_in_order():
     rec = record(finding("S1"), finding("M1"), summary="s")
     assert ([f.id for f in rec.findings], rec.summary) == (["S1", "M1"], "s")
+
+
+def test_a_focus_area_without_paths_loads(tmp_path):
+    """A record written before areas carried paths loads, its areas pathless."""
+    payload = {"schema_version": SCHEMA_VERSION, "focus": [
+        {"id": "F1", "title": "Retry", "rationale": "why", "source": "user", "coverage": ""},
+    ]}
+    (tmp_path / FILENAME_RECORD).write_text(json.dumps(payload))
+    (only,) = load_record(tmp_path).focus
+    assert (only.title, only.source, only.paths) == ("Retry", FocusSource.USER, ())
+
+
+def test_focus_round_trips(tmp_path):
+    rec = ReviewRecord(focus=(
+        FocusArea("F1", "Retry", "why", source=FocusSource.USER),
+        FocusArea("F2", "Locks", paths=("pkg/", "a.go"), coverage="checked the callers"),
+    ))
+    save_record(tmp_path, rec)
+    assert load_record(tmp_path) == rec

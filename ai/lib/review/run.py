@@ -75,6 +75,8 @@ class ReviewFlags:
     # gets the PR's base or the derived stack parent.
     base: str = ""
     issue_link: str = ""
+    # The operator's --focus texts and --focus-file contents, already validated.
+    focus: tuple[str, ...] = ()
     max_parallel: int | None = None
     max_cost: float | None = None
     model: str | None = None
@@ -125,20 +127,16 @@ def run_pr_review(
     pr_head = pr_meta.get("headRefName", "")
     pr_body = pr_meta.get("body", "")
 
-    # Detected here because the lookup needs `repo_root` above and `pr_head`
-    # from the metadata just fetched. Asking the operator for one is a separate
-    # step, deferred until after the gates below — see the prompt further down.
-    issue_link = flags.issue_link
-    issue_context = ""
-    if not issue_link:
-        provider_info = review.issue.load_issue_provider(repo_root)
-        issue_id = review.issue.extract_issue_id(provider_info.name, pr_head, pr_body)
-        issue_result = review.issue.fetch_issue_context(
-            provider_info.name, issue_id, repo, provider_info.options,
-        )
-        issue_context = issue_result.context
-        if issue_result.link:
-            issue_link = issue_result.link
+    # Loaded here because detection needs `repo_root` above and `pr_head` from
+    # the metadata just fetched, and because a given `--issue` link's body is
+    # fetched through the same provider. Asking the operator for a link is a
+    # separate step, deferred until after the gates below — see the prompt
+    # further down.
+    provider = review.issue.load_issue_provider(repo_root)
+    issue = review.issue.resolve_issue_context(
+        provider, link=flags.issue_link, repo=repo, branch=pr_head, pr_body=pr_body,
+    )
+    issue_link, issue_context = issue.link, issue.context
 
     pr_url = f"{pr.target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
 
@@ -236,8 +234,14 @@ def run_pr_review(
         # Below every gate that can end the run, and below the refusal above:
         # three of them exit, two by prompting, so an issue link asked for any
         # earlier is one the operator types and then watches be discarded.
+        typed = ""
         if not issue_link and not issue_context and not flags.no_post and not flags.auto_post:
-            issue_link = core.prompt.ask("Issue link (optional, Enter to skip): ")
+            typed = core.prompt.ask("Issue link (optional, Enter to skip): ")
+            issue_link = typed
+        if typed:
+            issue_context = review.issue.context_for_link(
+                provider, issue_link, repo,
+            ).context
 
         if issue_link or issue_context:
             trail.info("issue_context", "issue context available",
@@ -261,7 +265,7 @@ def run_pr_review(
             max_cost=flags.max_cost, model=flags.model, effort=flags.effort,
             max_groups=flags.max_groups, skip_phases=flags.skip_phases,
             disprove=flags.disprove, generated=flags.generated,
-            recover_sha=recover_sha,
+            recover_sha=recover_sha, focus=flags.focus,
         )
         wall_ms = review.invoke.run(request)
 
@@ -363,17 +367,11 @@ def run_self_review(
         has_pipeline_state = resume_fix or (review_dir / FILENAME_PIPELINE_STATE).is_file()
     prior_review_path = resolve_prior_review(review_file, session_log, has_pipeline_state)
 
-    issue_link = flags.issue_link
-    issue_context = ""
-    if not issue_link:
-        provider_info = review.issue.load_issue_provider(wt_path)
-        issue_id = review.issue.extract_issue_id(provider_info.name, branch_name)
-        issue_result = review.issue.fetch_issue_context(
-            provider_info.name, issue_id, repo, provider_info.options,
-        )
-        issue_context = issue_result.context
-        if issue_result.link:
-            issue_link = issue_result.link
+    issue = review.issue.resolve_issue_context(
+        review.issue.load_issue_provider(wt_path),
+        link=flags.issue_link, repo=repo, branch=branch_name,
+    )
+    issue_link, issue_context = issue.link, issue.context
 
     if flags.fix and review.recover.recover_drifted(recover_sha, wt_path):
         core.log.error(
@@ -397,7 +395,7 @@ def run_self_review(
         max_cost=flags.max_cost, model=flags.model, effort=flags.effort,
         max_groups=flags.max_groups, skip_phases=flags.skip_phases,
         disprove=flags.disprove, generated=flags.generated,
-        recover_sha=recover_sha, fix_pass=flags.fix,
+        recover_sha=recover_sha, fix_pass=flags.fix, focus=flags.focus,
         may_publish=flags.may_publish,
         full_review=flags.force,
         resume_fix=resume_fix,

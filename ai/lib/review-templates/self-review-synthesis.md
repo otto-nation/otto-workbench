@@ -11,6 +11,8 @@ ${merged_content}
 ## Reference data
 ${preflight_data}
 ${delta_section}
+${issue_section}
+${focus_section}
 
 ## Task
 1. Write `summary` — one sentence on what the changes do and their overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself
@@ -22,7 +24,8 @@ ${delta_section}
 7. Leave `triage` as [] and `verdict` as ""
 8. If the merged findings carry `prior_findings`, copy every entry into your output unchanged — they record which prior findings the group agents found fixed, and they are stripped before the review is published. Add entries only where a section below asks you to
 9. Add any cross-cutting findings
-10. Save the COMPLETE review file as described under ## Output below
+10. Fill `focus` with one entry per area in the Focus section: what you checked and what you found, citing finding IDs. If the Focus section asks, add 1–3 areas of your own.
+11. Save the COMPLETE review file as described under ## Output below
 
 ## Output
 ${output_block}

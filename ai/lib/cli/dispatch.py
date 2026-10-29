@@ -132,13 +132,9 @@ def delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
     return frozenset(core.tool_parser.value_taking_options(resolve(factory)()))
 
 
-def positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
-    """Index in *extra* of the first bare positional, or -1 if there is none.
-
-    Options are skipped, and so is the token after an option that takes a
-    value — that token is the flag's argument, not the command's target.
-    The ``--flag=value`` form carries its own value and skips nothing.
-    """
+def _positional_indices(extra: list[str], value_flags: frozenset[str]) -> list[int]:
+    """Indices in *extra* of every bare positional, in order."""
+    indices: list[int] = []
     consumed = False
     for i, token in enumerate(extra):
         if consumed:
@@ -147,8 +143,29 @@ def positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
         if token.startswith("-"):
             consumed = token in value_flags
             continue
-        return i
-    return -1
+        indices.append(i)
+    return indices
+
+
+def positionals(extra: list[str], value_flags: frozenset[str]) -> list[str]:
+    """Every bare positional in *extra*, in order.
+
+    Options are skipped, and so is the token after an option that takes a
+    value — that token is the flag's argument, not the command's target.
+    The ``--flag=value`` form carries its own value and skips nothing, which
+    is the form `pr batch` children pass (``--focus=TEXT``).
+
+    `split_argv` cannot answer this for a command whose options take values:
+    it reads every token not starting with ``-`` as a positional, so the
+    ``retry handling`` of ``--focus "retry handling"`` would pass for a target.
+    """
+    return [extra[i] for i in _positional_indices(extra, value_flags)]
+
+
+def positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
+    """Index in *extra* of the first of `positionals`, or -1 if there is none."""
+    indices = _positional_indices(extra, value_flags)
+    return indices[0] if indices else -1
 
 
 def resolve(handler: str):

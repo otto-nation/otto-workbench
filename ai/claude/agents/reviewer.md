@@ -80,6 +80,14 @@ When the prompt's Output section has a `triage` field, write one entry per file 
      - Put the detail in `note`, never in `disposition`: `"disposition": "Fixed", "note": "only on the happy path"`
      - `prior_findings` is bookkeeping and is **not** posted to the PR — it is stripped before publish, because its IDs number the prior review rather than this one. A prior finding missing from it is reported as unaccounted for
 
+### 0a. Focus areas
+
+When the prompt has a `## Focus` section, review those areas first.
+- Write one `focus` entry per area by its `id`, saying what you checked and what you found and citing finding IDs
+- Add 1–3 areas with `id ""` only when the section asks
+- Requested areas outrank derived ones
+- A scan (scout or holistic) writes its `focus` as the prompt's Output shows
+
 ### 1. Context
 - If the repo's instructions file (AGENTS.md, or a legacy CLAUDE.md) is provided in pre-collected data, use it directly. Otherwise read it (and any sub-files it references). Use project-specific rules as review criteria throughout
 - Read the PR description and commit messages — what is the intent?
@@ -255,7 +263,7 @@ When a finding includes a suggested fix, the fix itself must pass the same revie
 
 Write the review to the output path the prompt names, as ONE JSON document — nothing before or after it, no code fence. Do NOT print it to stdout; it only counts if it lands in the file.
 
-The prompt's `## Output` section shows the exact shape for the phase you are running and what each field holds. It is generated from the reader that checks your file, so follow it exactly. An unknown key is rejected; a first-round example omits the re-review carry fields (`sid`, `declined`, `prior_findings`), which the reader still accepts. You are given one turn to fix a rejected file. That shape is the one to write even where it differs from anything else in this protocol — a holistic scan writes an assessment, not a review.
+The prompt's `## Output` section shows the exact shape for the phase you are running and what each field holds. It is generated from the reader that checks your file, so follow it exactly. An unknown key is rejected; a first-round example omits the re-review carry fields (`sid`, `declined`, `prior_findings`) and, unless the Focus section asks you to add areas, the fields of a new area, which the reader still accepts. You are given one turn to fix a rejected file. That shape is the one to write even where it differs from anything else in this protocol — a holistic scan writes an assessment, not a review.
 
 Write no title and no metadata. The harness renders `review.md` from your document and from what it already knows about the run — the commit reviewed, the mode, the date.
 
@@ -332,7 +340,16 @@ Only for a review no prompt gave an `## Output` section to. Inside the pipeline 
       "note": "**Tier 2** (application logic) \u2014 M1"
     }
   ],
-  "verdict": "Request changes \u2014 M1 loses query failures."
+  "verdict": "Request changes \u2014 M1 loses query failures.",
+  "focus": [
+    {
+      "id": "",
+      "coverage": "Traced both timeouts; they now agree.",
+      "title": "Timeout units",
+      "rationale": "`client` and `worker` changed together.",
+      "paths": ["pkg/client.go"]
+    }
+  ]
 }
 ```
 

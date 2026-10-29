@@ -333,6 +333,15 @@ def test_the_reviewer_protocol_shows_a_review_artifact_the_reader_accepts():
         assert load_strict(ReviewArtifact, json.loads(block)).problems() == ()
 
 
+def test_the_reviewer_protocol_explains_focus():
+    text = (AGENTS / "reviewer.md").read_text()
+    assert "## Focus" in text
+    assert "`focus`" in text
+    blocks = _JSON_BLOCK.findall(text)
+    assert blocks, "reviewer.md shows no JSON artifact"
+    assert any("focus" in json.loads(block) for block in blocks)
+
+
 def test_the_interactive_example_comes_after_the_whole_protocol():
     """reviewer.md is the single, holistic and synthesis system prompt; their own shape must not read as overridden."""
     text = (AGENTS / "reviewer.md").read_text()

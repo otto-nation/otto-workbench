@@ -24,6 +24,7 @@ import review.collect
 from gh.types import PRContext, PRMetadata
 from review.store import StoredReview
 from review.types import DeltaAttribution, ReviewJob, ReviewMeta
+from review_focus_support import user_area
 from review_record_support import record
 
 
@@ -97,6 +98,33 @@ class TestCollectDeltaSameSha:
         delta = review.collect._collect_delta(_delta_job(head_sha="abc123", prior_sha=None))
         assert delta.attribution is DeltaAttribution.NONE
         assert delta.proven_empty is False
+
+
+class TestFocusDecidesTheScope:
+    """An operator focus that moved since the prior round is a full review."""
+
+    @staticmethod
+    def _job(monkeypatch, prior_focus, focus):
+        job = _delta_job(head_sha="f" * 40, prior_sha="a" * 40)
+        job.prior = StoredReview(record(summary="prior", focus=prior_focus),
+                                 ReviewMeta(head_sha="a" * 40))
+        job.focus = focus
+        # The prior SHA resolves, so only focus can turn this into a full review.
+        monkeypatch.setattr(review.collect.git.client, "out", lambda *a, **k: "commit")
+        return job
+
+    def test_a_changed_focus_runs_a_full_review(self, monkeypatch, capsys):
+        job = self._job(monkeypatch, (user_area("A"),), (user_area("B"),))
+        assert review.collect._prior_sha_for_delta(job) == ""
+        assert "focus" in capsys.readouterr().err.lower()
+
+    def test_the_same_focus_stays_incremental(self, monkeypatch):
+        job = self._job(monkeypatch, (user_area("A", "why"),), (user_area("A", "why"),))
+        assert review.collect._prior_sha_for_delta(job) == "a" * 40
+
+    def test_no_focus_on_either_side_stays_incremental(self, monkeypatch):
+        job = self._job(monkeypatch, (), ())
+        assert review.collect._prior_sha_for_delta(job) == "a" * 40
 
 
 class TestCollectDeltaMode:

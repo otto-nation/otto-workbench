@@ -41,11 +41,13 @@ import batch.scheduler
 import batch.store
 import batch.targets
 import config.workbench_config
+import core.log
 import core.report
 import core.run_lock
 import core.serde
 import pr.target
-from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step
+import review.focus
+from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step, StepStatus
 from batch.requests import Cancel, Decide, Outcome, Release
 from batch.store import Role
 from core.trail import TRAIL_ROOT_ENV, Trail
@@ -77,6 +79,7 @@ _RUN_EPILOG = """\
 recipes:
   pr batch run --checkout DIR --steps rebase,ci   rebase and fix CI where needed
   pr batch run --checkout DIR                     every step, where needed
+  pr batch run --checkout DIR --steps review --focus "…"   review with a focus
 
 `run` plans for itself — no `pr batch plan` first. It is long-running and
 streams NDJSON events; start it as a background job. Step output stays in the
@@ -131,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-verify", action="store_true",
                    help="Skip the pre-push hook on every publish push (CI still runs the "
                         "gates). Persisted on the run so resume and resolve honor it")
+    review.focus.add_focus_args(r)
     r.add_argument("--verbose", action="store_true",
                    help="Also stream each step's stderr as step_log events "
                         "(it is always in the run's logs/)")
@@ -461,7 +465,18 @@ def _skip_held(rows: list[batch.plan.PlanRow]) -> list[batch.plan.PlanRow]:
     return kept
 
 
-def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox) -> _Started:
+def _warn_focus_without_review(run: Run) -> None:
+    """Warn when --focus was given but some items have no review step planned."""
+    keys = [i.key for i in run.items if not any(
+        s.step is Step.REVIEW and s.status is not StepStatus.SKIPPED for s in i.steps)]
+    if not keys:
+        return
+    core.log.warn(
+        "--focus applies only to review steps; these items have no review step: "
+        + ", ".join(keys) + " — add --select KEY=review to review them")
+
+
+def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox, *, focus) -> _Started:
     """Mint the run from *plan*, open it with `batch.store.create` on *held*, hold its items, commit.
 
     The run reaches disk only at that first commit, after every item's target
@@ -483,7 +498,9 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox)
                                       auto_publish=args.auto_publish,
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
-                                      no_verify=args.no_verify)
+                                      no_verify=args.no_verify, focus=focus)
+        if focus:
+            _warn_focus_without_review(run)
         session = held.enter_context(batch.store.create(run, inbox=inbox,
                                                         command=f"pr batch run {run.id}"))
         # The id exists only now. From here a batch refused the lock is told
@@ -512,6 +529,11 @@ def _emit_started(run: Run) -> None:
 
 
 def _cmd_run(args, bin_dir: Path) -> int:
+    try:
+        focus = review.focus.operator_texts(args)
+        review.focus.operator_areas(focus)
+    except review.focus.FocusInputError as exc:
+        return _err(str(exc))
     plan = _plan(args)
     reporter = _Reporter()
     # The run's own lock goes on `held` first, so it is released last. An
@@ -520,7 +542,7 @@ def _cmd_run(args, bin_dir: Path) -> int:
     # on one of these PRs is refused until then.
     with contextlib.ExitStack() as held:
         try:
-            started = _start_run(held, args, plan, _driver_inbox(bin_dir, reporter))
+            started = _start_run(held, args, plan, _driver_inbox(bin_dir, reporter), focus=focus)
         except _Refused as exc:
             return _err(str(exc))
         _emit_started(started.session.run)

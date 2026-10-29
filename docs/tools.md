@@ -814,6 +814,8 @@ Takes no flags.
 | `--disprove` | Enable the disprove-it gate (default: effort-based). |
 | `--json-summary` | Print a machine-readable summary on stdout. |
 | `--issue` `<url>` | Related issue to include in the review prompt. |
+| `--focus` `<text>` | An area the review must cover (repeatable; each text at most 4096 bytes; at most 5 texts). |
+| `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; each file at most 4096 bytes; at most 5 texts). |
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
 | `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |
@@ -906,6 +908,8 @@ Takes no flags.
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume and resolve honor it. |
+| `--focus` `<text>` | An area the review must cover (repeatable; each text at most 4096 bytes; at most 5 texts). |
+| `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; each file at most 4096 bytes; at most 5 texts). |
 | `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
 
 **`pr batch resume`** — Continue a run
@@ -1093,6 +1097,8 @@ resolution, model selection, and Vertex quota preflight are in
 | `--disprove` | Enable the disprove-it gate (default: effort-based). |
 | `--json-summary` | Print a machine-readable summary on stdout. |
 | `--issue` `<url>` | Related issue to include in the review prompt. |
+| `--focus` `<text>` | An area the review must cover (repeatable; each text at most 4096 bytes; at most 5 texts). |
+| `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; each file at most 4096 bytes; at most 5 texts). |
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
 | `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |

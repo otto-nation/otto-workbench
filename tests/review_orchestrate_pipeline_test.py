@@ -15,8 +15,14 @@ import cli.review_orchestrate  # noqa: F401
 
 import review.phases
 import review.pipeline
-from review.budget import MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes
+from review.artifacts import MAX_DERIVED_FOCUS
+from review.budget import (
+    DERIVED_AREA_RESERVE_BYTES, MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES,
+    fixed_preflight_bytes,
+)
+from review.prompt_sections import _build_focus_section
 from review.types import PreflightData
+from review_focus_support import area, user_area
 from review_prompt_support import _make_job
 
 
@@ -224,7 +230,10 @@ class TestGroupMergeCap:
             pf.review_profiles,
         )
         assert fixed >= 15_000  # the context files are charged at least whole
-        assert cap == 300_000 - TEMPLATE_OVERHEAD_BYTES - fixed
+        assert cap == (
+            300_000 - TEMPLATE_OVERHEAD_BYTES - fixed
+            - MAX_DERIVED_FOCUS * DERIVED_AREA_RESERVE_BYTES
+        )
 
     def test_never_below_the_diff_floor(self, monkeypatch):
         self._patch(monkeypatch, 30_000)
@@ -233,3 +242,43 @@ class TestGroupMergeCap:
             instructions_md="c" * 50_000, architecture_md="",
         )
         assert review.pipeline._group_merge_cap(self._job(pf)) == MIN_DIFF_BYTES
+
+    def test_the_merge_cap_reserves_the_focus_and_issue_sections(self, monkeypatch):
+        self._patch(monkeypatch, 300_000)
+        pf = PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            instructions_md="", architecture_md="",
+        )
+        job = self._job(pf)
+        without = review.pipeline._group_merge_cap(job)
+        job.issue_context = "x" * (6 * 1024)
+        with_issue = review.pipeline._group_merge_cap(job)
+        assert without - with_issue >= 6 * 1024
+
+    def test_the_merge_cap_reserves_room_for_phase_one_areas(self, monkeypatch):
+        self._patch(monkeypatch, 300_000)
+        pf = PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            instructions_md="", architecture_md="",
+        )
+        requested = user_area("Auth", "why")
+        derived = area(id="F2", title="Auth", rationale="why")
+        job_need = self._job(pf)
+        job_need.focus = (requested,)
+        job_held = self._job(pf)
+        job_held.focus = (requested, derived)
+        reserve = MAX_DERIVED_FOCUS * DERIVED_AREA_RESERVE_BYTES
+        extra = (
+            len(_build_focus_section(job_held.focus).encode())
+            - len(_build_focus_section(job_need.focus).encode())
+        )
+        cap_need = review.pipeline._group_merge_cap(job_need)
+        cap_held = review.pipeline._group_merge_cap(job_held)
+        assert cap_need == cap_held - reserve + extra
+        job_more = self._job(pf)
+        job_more.focus = (requested, derived, area(id="F3", title="Auth", rationale="why"))
+        extra_more = (
+            len(_build_focus_section(job_more.focus).encode())
+            - len(_build_focus_section(job_held.focus).encode())
+        )
+        assert review.pipeline._group_merge_cap(job_more) == cap_held - extra_more

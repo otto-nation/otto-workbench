@@ -4,14 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from core.markdown import escape_cell
 from review.document import (
-    SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
+    SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS, SECTION_SUMMARY, SECTION_VERDICT,
     ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, location_ref, sid_marker
-from review.record import AgentFailure, Disposition, LedgerLine, ProseSection, RecordFinding, ReviewRecord, TriageEntry
+from review.record import (
+    AgentFailure, Disposition, FocusArea, FocusSource, LedgerLine, ProseSection,
+    RecordFinding, ReviewRecord, TriageEntry,
+)
 from review.types import SEVERITIES, ReviewMeta
 
 # The line every rendered review.md carries. Agents write JSON, so nothing
@@ -63,6 +68,31 @@ def finding_line(f: RecordFinding, *, sids: bool = False, evidence: bool = False
     return f"{line}\n{evidence_block(f.evidence)}" if evidence and f.evidence else line
 
 
+def _coverage(area: FocusArea) -> str:
+    return area.coverage if area.coverage else "*Not assessed this round.*"
+
+
+def focus_line(area: FocusArea) -> str:
+    """One `## Focus` list item for review.md, with rationale and paths when set."""
+    asked = " *(requested)*" if area.source is FocusSource.USER else ""
+    head = f"- **[{area.id}] {area.title}**{asked} — {_coverage(area)}"
+    extra: list[str] = []
+    if area.rationale:
+        extra.append("  " + area.rationale.replace("\n", "\n  "))
+    if area.paths:
+        extra.append("  Paths: " + ", ".join(f"`{p}`" for p in area.paths))
+    return "\n".join([head, *extra])
+
+
+def focus_comment(areas: Sequence[FocusArea]) -> str:
+    """The GitHub-comment Focus lines: title, requested mark, coverage."""
+    lines = []
+    for area in areas:
+        asked = " *(requested)*" if area.source is FocusSource.USER else ""
+        lines.append(f"- **{area.title}**{asked} — {_coverage(area)}")
+    return "\n".join(lines)
+
+
 def failures_body(failures: tuple[AgentFailure, ...]) -> str:
     """The Agent Failures table, and the recover hint when a retry could help."""
     lines = ["| Agent | Reason | Status |", "|-------|--------|--------|"]
@@ -95,6 +125,10 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSec
         sections.append(ProseSection(SECTION_FAILURES, failures_body(record.failures)))
     if record.summary:
         sections.append(ProseSection(SECTION_SUMMARY, record.summary))
+    if record.focus:
+        sections.append(ProseSection(
+            SECTION_FOCUS, "\n".join(focus_line(a) for a in record.focus),
+        ))
     sections += _severity_sections(record, sids, evidence)
     if record.ledger:
         sections.append(ProseSection(SECTION_PRIOR_FINDINGS, "\n".join(ledger_line(e) for e in record.ledger)))

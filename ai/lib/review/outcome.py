@@ -27,6 +27,7 @@ from review.convergence import (
     apply_sticky_skips, change_set, held_nits, new_nit_ids, prior_ids,
 )
 from review.document import covers
+from review.focus import with_run_focus
 from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
@@ -106,7 +107,11 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
 
 def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
              total_groups: int = 0, status: ReviewStatus | None = None) -> None:
-    """Write `record` and this run's sidecar, and render review.md from both."""
+    """Write `record` and this run's sidecar, and render review.md from both.
+
+    Every review leaves with the run's areas, covered or not.
+    """
+    record = with_run_focus(record, job.focus)
     meta = _review_meta(job, skipped_groups=skipped_groups, total_groups=total_groups,
                         status=status)
     sticky = apply_sticky_skips(record, meta.sticky_skips, job.wt_path)
@@ -232,7 +237,8 @@ def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
 
 def _carried_record(prior: StoredReview) -> ReviewRecord:
     """The prior round's claims about the code, without its claims about its own run."""
-    return replace(prior.record, summary="", verdict="", triage=None, ledger=(), static_analysis="")
+    return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
+                   static_analysis="", focus=())
 
 
 def _post_process_review(job: ReviewJob, record: ReviewRecord,

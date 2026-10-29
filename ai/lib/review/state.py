@@ -33,7 +33,8 @@ from review.paths import (
     phase_log_path,
     review_artifact_path,
 )
-from review.record import AgentFailure, ReviewRecord
+import review.focus
+from review.record import AgentFailure, FocusArea, ReviewRecord
 from review.store import update_review
 from review.types import Group, ReviewJob, ReviewType
 from core.text import plural
@@ -85,6 +86,9 @@ class PipelineState:
     # 0 is a state file written before versioning; a resume refuses it
     # (see `_validate_resume_state`).
     schema_version: int = 0
+    # The run's requested areas, so a resume or `--recover` without `--focus`
+    # keeps them, and a resume with a different `--focus` starts fresh.
+    focus: list[FocusArea] = field(default_factory=list)
 
     @property
     def scanned(self) -> bool:
@@ -260,7 +264,7 @@ def _write_pipeline_state(job: ReviewJob, state: PipelineState):
     core.serde.write_json(Path(_pipeline_state_path(job)), core.serde.to_dict(state))
 
 
-def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
+def read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
     return PipelineState.load(Path(_pipeline_state_path(job)).parent)
 
 
@@ -290,13 +294,15 @@ def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
 
 
 def _validate_resume_state(
-    state: PipelineState, head_sha: str, groups: list[Group],
+    state: PipelineState, head_sha: str, groups: list[Group], *,
+    user_focus: "tuple[FocusArea, ...] | list[FocusArea]" = (),
 ) -> bool:
     if state.schema_version != PIPELINE_SCHEMA_VERSION:
         return False
     if state.head_sha != head_sha:
         return False
-    return state.group_names == [g.name for g in groups]
+    return (state.group_names == [g.name for g in groups]
+            and list(state.focus) == list(user_focus))
 
 
 def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
@@ -388,11 +394,13 @@ class RecoveryPlan:
 
 
 def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
-    state = _read_pipeline_state(job)
+    state = read_pipeline_state(job)
     if not state:
         return RecoveryPlan()
-    if not _validate_resume_state(state, job.pr.head_sha, groups):
-        core.log.warn("Pipeline state is stale (SHA, groups or artifact format changed) — starting fresh")
+    if not _validate_resume_state(
+        state, job.pr.head_sha, groups, user_focus=review.focus.user_areas(job.focus),
+    ):
+        core.log.warn("Pipeline state is stale (SHA, groups, focus or artifact format changed) — starting fresh")
         Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return RecoveryPlan()
 

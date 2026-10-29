@@ -219,6 +219,10 @@ class Run:
     decisions: list[Decision] = field(default_factory=list)
     # Skip the pre-push hook on publish pushes (`pr batch run --no-verify`).
     no_verify: bool = False
+    # The operator focus every review step is given (`pr batch run --focus`),
+    # persisted so resume replays it. Additive; the enum-value rule in the
+    # module docstring does not apply.
+    focus: list[str] = field(default_factory=list)
     # The plan's private ref namespace and the repos it was fetched into;
     # dropped when the run reaches a terminal state.
     ref_namespace: str = ""

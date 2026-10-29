@@ -9,7 +9,7 @@ one of them end to end.
 
 Running an agent phase is the same nine steps whichever phase it is, so there is
 one function rather than one per phase. What differs is what its artifact means
-afterwards, and that is `review.registry`'s table, read through `read_scan` so
+afterwards, and that is `review.registry`'s table, read through `reuse_scan` so
 the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
@@ -280,8 +280,8 @@ def _scan(phase: Phase) -> PhaseScan:
     return entry.scan
 
 
-def read_scan(phase: Phase, output: str) -> str:
-    """`phase`'s artifact at `output` as the context the phases after it read, or "".
+def reuse_scan(phase: Phase, output: str, log: str) -> PhaseResult:
+    """`phase`'s artifact at `output` as the result a resumed run would have.
 
     Exposed alongside `run_phase` because a resumed run reaches the same file
     without running the agent that wrote it. Reading it a second way there is
@@ -294,8 +294,9 @@ def read_scan(phase: Phase, output: str) -> str:
         artifact = load_artifact(output, for_phase(phase).artifact)
     except IngestRejected as exc:
         core.log.warn(f"{output} cannot be reused ({exc}) — {scan.without}")
-        return ""
-    return scan.read(artifact) if scan.read else ""
+        return PhaseResult(log=log, output=output)
+    content = scan.read(artifact) if scan.read else ""
+    return PhaseResult(log=log, content=content, output=output, artifact=artifact)
 
 
 def run_phase(

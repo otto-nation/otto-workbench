@@ -63,7 +63,7 @@ def test_a_stale_prior_means_no_prior_section():
 def test_the_delta_is_measured_from_the_prior_sidecar(monkeypatch):
     import review.collect
     from types import SimpleNamespace
-    job = SimpleNamespace(prior=_prior(),
+    job = SimpleNamespace(prior=_prior(), focus=(),
                           pr=SimpleNamespace(head_sha="ffff"), wt_path="/nowhere")
     monkeypatch.setattr(review.collect.git.client, "out", lambda *a, **k: "commit")
     assert review.collect._prior_sha_for_delta(job) == "2cb613ec084559a9590f074eabde546c44b284a3"

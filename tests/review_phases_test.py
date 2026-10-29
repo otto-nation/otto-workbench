@@ -625,7 +625,9 @@ class TestApiOverflowRecoversInPhase:
             prompts.append(inv.prompt)
             Path(inv.session_log).write_text("{}\n")
             if inv.prompt == "SMALL":
-                Path(inv.output_path).write_text("{}")
+                Path(inv.output_path).write_text(json.dumps({
+                    "focus": [{"title": "t", "rationale": "r", "paths": ["a.py"]}],
+                }))
             return 0
 
         monkeypatch.setattr(review.phases, "build_prompt", fake_build)
@@ -694,27 +696,6 @@ class TestApiOverflowRecoversInPhase:
         result = review.phases.run_phase(_job(tmp_path), Phase.SCOUT, "scanning...")
         assert prompts == ["BIG"]
         assert result.diagnosis.kind is DiagnosisKind.AGENT_ERROR
-
-
-class TestReadScan:
-    """`read_scan` loads the file a resume finds, or refuses a phase with no scan."""
-
-    def test_a_scan_with_a_reader_renders_the_file(self, tmp_path):
-        output = tmp_path / "scout.json"
-        output.write_text('{"leads": [{"path": "app.py", "line": 10, "concern": "c"}]}')
-        result = review.phases.read_scan(Phase.SCOUT, str(output))
-        assert "Investigation leads from scout scan" in result
-        assert "`app.py:10`" in result
-
-    def test_a_malformed_file_is_read_as_nothing(self, tmp_path):
-        output = tmp_path / "holistic.json"
-        output.write_text("not json")
-        assert review.phases.read_scan(Phase.HOLISTIC, str(output)) == ""
-
-    def test_a_phase_with_no_scan_of_its_own_raises(self, tmp_path):
-        """SINGLE has a registry entry but declares no scan at all."""
-        with pytest.raises(ValueError, match="declares no scan of its own"):
-            review.phases.read_scan(Phase.SINGLE, str(tmp_path / "missing.json"))
 
 
 class TestGroupWorkerSlots:

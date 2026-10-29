@@ -66,6 +66,23 @@ def test_state_file_saved_before_no_verify_existed_still_loads():
     assert batch.store.load(RID).no_verify is False
 
 
+def test_a_run_saved_before_focus_existed_loads_with_none():
+    run = _run()
+    seed(run)
+    path = batch.store.run_dir(RID) / "state.json"
+    data = json.loads(path.read_text())
+    del data["focus"]
+    path.write_text(json.dumps(data))
+    assert batch.store.load(RID).focus == []
+
+
+def test_focus_round_trips():
+    run = _run()
+    run.focus = ["a", "-b"]
+    seed(run)
+    assert batch.store.load(RID).focus == ["a", "-b"]
+
+
 def test_state_file_lives_under_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     seed(_run())

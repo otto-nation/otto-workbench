@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 654 -->
+<!-- doc-budget: 673 -->
 
 # AI Automation
 
@@ -449,6 +449,23 @@ Module detail: [`review/convergence.py`](ai-libraries.md#reviewconvergencepy),
 [`fix/baseline.py`](ai-libraries.md#fixbaselinepy),
 [`review/fix_logs.py`](ai-libraries.md#reviewfix_logspy).
 
+### Steering a review: focus and the related issue
+
+`pr review --focus TEXT` / `pr review --focus-file PATH` name areas the review
+must cover (repeatable; each text is 4 KB, refused when larger, at most 5). Phase 1
+(scout/holistic) derives 1–3 more; when neither runs, the writing agent does.
+Single, group and synthesis see them — groups only the areas whose paths fall
+in their files, plus pathless ones. Scout and holistic see the requested areas
+so they complement them. Disprove does not. The writer records coverage per
+area. An unassessed area renders *Not assessed this round.* A missing coverage
+line gets one repair turn; a second miss is published that way with a warning.
+A re-review without `--focus` keeps the prior requested areas and stays
+incremental. A different `--focus` replaces them and runs full — that round
+has no change set. `--issue` puts the issue's link and body in the prompt,
+capped at 8 KB, and synthesis sees it.
+
+Module detail: [`review/focus.py`](ai-libraries.md#reviewfocuspy).
+
 ### How a review's verdict is decided
 
 `ReviewVerdict` owns the four verdicts in both spellings they are written in: the
@@ -734,6 +751,9 @@ pr batch status [RUN_ID] --decision ID   # one decision: full payload and log ta
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  # JSON `applied`; `queued`+`holder` when deferred
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
+
+`pr batch run --focus` is forwarded to every review step and replayed by
+`pr batch resume`; it does not make a review step needed.
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no

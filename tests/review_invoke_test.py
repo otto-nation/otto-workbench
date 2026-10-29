@@ -201,6 +201,36 @@ def test_the_base_crosses_the_spawn(tmp_path):
     assert argv[argv.index("--base") + 1] == "feat/parent"
 
 
+def _orchestrate_args(argv, monkeypatch, tmp_path):
+    """*argv* (without the binary) as `cli.review_orchestrate`'s own parser reads it."""
+    import cli.review_orchestrate
+    import review.orchestrate
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state-root"))
+    seen = {}
+
+    def capture_args(trail, args, repo, log):
+        seen["args"] = args
+        return 0
+
+    monkeypatch.setattr(review.orchestrate, "run_orchestrate", capture_args)
+    cli.review_orchestrate.main(argv)
+    return seen["args"]
+
+
+def test_focus_crosses_the_spawn_once_per_area(tmp_path, monkeypatch):
+    """One `--focus=TEXT` token per area, so a text starting with `-` survives."""
+    argv = review.invoke.build_argv(_request(
+        tmp_path, issue_link="https://x/issues/1", issue_context="{}",
+        focus=("a", "b\nc", "-x"),
+    ))
+
+    after_issue = argv.index("--issue-context") + 2
+    assert argv[after_issue:after_issue + 3] == ["--focus=a", "--focus=b\nc", "--focus=-x"]
+    assert _orchestrate_args(argv[1:], monkeypatch, tmp_path).focus == ["a", "b\nc", "-x"]
+    unfocused = review.invoke.build_argv(_request(tmp_path, focus=()))
+    assert not any(token.startswith("--focus") for token in unfocused)
+
+
 # passes-at-base: no such field there, so the assertion is vacuous rather than satisfied — against the change, emitting `--base` unconditionally fails it
 def test_an_unresolved_base_is_left_off_the_argv(tmp_path):
     """Absent rather than empty: review-orchestrate defaults it, and `--base ""`

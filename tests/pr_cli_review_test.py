@@ -109,6 +109,19 @@ def test_cmd_review_passes_flags_through(mock_call):
     assert "--no-post" in cmd
 
 
+@patch("core.publishing.call_entry_point", return_value=0)
+def test_cmd_review_passes_focus_through(mock_call):
+    cli.pr.cmd_review(["--focus", "x"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    cmd = mock_call.call_args[0][1]
+    assert cmd[cmd.index("--focus") + 1] == "x"
+
+
+def test_a_value_flag_is_not_read_as_a_target():
+    """`--focus`'s value is its argument, so a bare run is still a self-review."""
+    argv = cli.pr._review_argv(["--focus", "retry handling"], make_ctx(pr_number=None), None)
+    assert argv == ["--self", "--focus", "retry handling"]
+
+
 # ── cmd_review --recover mode flag ───────────────────────────────────────
 
 

@@ -584,6 +584,11 @@ class ReviewJob:
     # is: `review.store` imports this module, so naming `StoredReview` here
     # would close the cycle.
     prior: "StoredReview | None" = None
+    # The run's areas, F-numbered; set by `review.orchestrate` and after
+    # phase 1 — `review.focus`. Annotated as a string for the reason `prior`
+    # is: `review.record` imports this module, so naming `FocusArea` here
+    # would close the cycle.
+    focus: "tuple[FocusArea, ...]" = ()
     mode: Mode = Mode.PR
     generator_version: str = ""
     preflight: PreflightData | None = None

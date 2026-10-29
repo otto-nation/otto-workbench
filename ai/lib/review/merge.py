@@ -208,6 +208,7 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRe
             replace(s, note=renumbering.rewrite(s.note)) for s in record.severity_sections
         ),
         extra=tuple(replace(e, body=renumbering.rewrite(e.body)) for e in record.extra),
+        focus=tuple(replace(a, coverage=renumbering.rewrite(a.coverage)) for a in record.focus),
     )
 
 

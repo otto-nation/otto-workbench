@@ -19,6 +19,8 @@ from review.state import (
     PIPELINE_SCHEMA_VERSION, PipelineState, _validate_resume_state, failures_of,
 )
 from review.types import Group
+from review_focus_support import user_area
+from review_orchestrate_support import focus_after_prior
 
 
 def _failures_md(state):
@@ -46,7 +48,7 @@ class TestPipelineStateFailureRoundTrip:
         )
         job = self._job(ro, tmp_path)
         ro._write_pipeline_state(job, self._state(ro, {1: diagnosis}))
-        assert ro._read_pipeline_state(job).groups_failed == {1: diagnosis}
+        assert ro.read_pipeline_state(job).groups_failed == {1: diagnosis}
 
     def test_a_legacy_string_recovers_the_kind_it_renders_as(self, ro, tmp_path):
         """State written before diagnoses were typed holds a rendered reason.
@@ -59,7 +61,7 @@ class TestPipelineStateFailureRoundTrip:
             "head_sha": "abc", "group_names": ["ui"],
             "groups_failed": {"1": "quota exhausted (429)"},
         }))
-        state = ro._read_pipeline_state(self._job(ro, tmp_path))
+        state = ro.read_pipeline_state(self._job(ro, tmp_path))
         assert state.groups_failed == {1: ro.Diagnosis(ro.DiagnosisKind.QUOTA_EXHAUSTED)}
 
     def test_a_legacy_string_no_kind_renders_stays_unknown(self, ro, tmp_path):
@@ -69,7 +71,7 @@ class TestPipelineStateFailureRoundTrip:
             "head_sha": "abc", "group_names": ["ui"],
             "groups_failed": {"1": "agent hit max turns (12)"},
         }))
-        state = ro._read_pipeline_state(self._job(ro, tmp_path))
+        state = ro.read_pipeline_state(self._job(ro, tmp_path))
         assert state.groups_failed == {
             1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="agent hit max turns (12)"),
         }
@@ -79,7 +81,7 @@ class TestPipelineStateFailureRoundTrip:
         Path(path).write_text(json.dumps({
             "head_sha": "abc", "group_names": ["ui"], **fields,
         }))
-        return ro._read_pipeline_state(self._job(ro, tmp_path))
+        return ro.read_pipeline_state(self._job(ro, tmp_path))
 
     @pytest.mark.parametrize("raw,kind", [
         ("all groups failed", "ALL_GROUPS_FAILED"),
@@ -420,3 +422,59 @@ def test_a_pipeline_state_from_before_json_artifacts_is_stale():
     new = PipelineState(head_sha="abc", group_names=["g1"], schema_version=PIPELINE_SCHEMA_VERSION)
     assert not _validate_resume_state(old, "abc", groups)
     assert _validate_resume_state(new, "abc", groups)
+
+
+class TestFocusAcrossAResume:
+    """A resumed run keeps the areas it was asked for, and a new ask starts fresh."""
+
+    _GROUPS = [Group(name="g1", files=["a.py"], lines=1)]
+
+    @staticmethod
+    def _job(tmp_path, focus=()):
+        from types import SimpleNamespace
+        return SimpleNamespace(review_file=str(tmp_path / "review.md"), focus=focus,
+                               pr=SimpleNamespace(head_sha="abc123"))
+
+    def _write(self, ro, tmp_path, focus):
+        state = PipelineState(head_sha="abc123", group_names=["g1"], focus=list(focus),
+                              schema_version=PIPELINE_SCHEMA_VERSION)
+        ro._write_pipeline_state(self._job(tmp_path), state)
+        return Path(ro._pipeline_state_path(self._job(tmp_path)))
+
+    def test_a_resume_with_a_different_focus_starts_fresh(self, ro, tmp_path):
+        path = self._write(ro, tmp_path, [user_area("A")])
+        plan = ro._resolve_recovery(self._job(tmp_path, (user_area("B"),)), self._GROUPS)
+        assert plan == ro.RecoveryPlan()
+        assert not path.exists()
+
+    def test_a_resume_with_the_same_focus_is_kept(self, ro, tmp_path):
+        self._write(ro, tmp_path, [user_area("A")])
+        plan = ro._resolve_recovery(self._job(tmp_path, (user_area("A"),)), self._GROUPS)
+        assert plan.state is not None
+        assert plan.state.focus == [user_area("A")]
+
+    def test_a_pre_focus_state_resumes_without_focus(self, ro, tmp_path):
+        path = Path(ro._pipeline_state_path(self._job(tmp_path)))
+        path.write_text(json.dumps({
+            "head_sha": "abc123", "group_names": ["g1"],
+            "schema_version": PIPELINE_SCHEMA_VERSION,
+        }))
+        state = ro.read_pipeline_state(self._job(tmp_path))
+        assert state.focus == []
+        assert _validate_resume_state(state, "abc123", self._GROUPS, user_focus=())
+
+    def _orchestrated_focus(self, ro, monkeypatch, tmp_path, resumed):
+        """The job's focus when a run at the job's head left `resumed` behind and the
+        prior record requested F1 Retry."""
+        review_dir = tmp_path / "review-dir"
+        review_dir.mkdir()
+        self._write(ro, review_dir, resumed)
+        return focus_after_prior(ro, monkeypatch, tmp_path)
+
+    def test_a_resume_without_focus_keeps_the_run_s_own(self, ro, monkeypatch, tmp_path):
+        focus = self._orchestrated_focus(ro, monkeypatch, tmp_path, [user_area("Own", "r")])
+        assert focus == (user_area("Own", "r"),)
+
+    def test_a_resume_that_recorded_no_focus_keeps_none(self, ro, monkeypatch, tmp_path):
+        """D7: a resumed run that asked for nothing is not handed the prior's ask."""
+        assert self._orchestrated_focus(ro, monkeypatch, tmp_path, []) == ()

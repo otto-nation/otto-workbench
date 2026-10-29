@@ -12,8 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from conftest import synthetic_review
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 # The module the `ro` fixture returns, imported so bin/local/select-pytest maps
@@ -22,9 +20,10 @@ import cli.review_orchestrate  # noqa: F401
 
 from agent.models import ModelRef
 from core.phases import Phase
-import agent.backend
 import pr.target
-import pr.state
+from review_orchestrate_support import (
+    ORCHESTRATE_REVIEW, focus_after_prior, run_orchestrated,
+)
 
 
 class TestPromptBudgetsArePreflighted:
@@ -244,85 +243,9 @@ class TestCleanupScope:
     real one leaves behind, which is all the sweep can see.
     """
 
-    _REVIEW = synthetic_review(meta="status: completed", summary="All good.")
-
-    @staticmethod
-    def _args(ro, review_file, repo_dir, **overrides):
-        from types import SimpleNamespace
-
-        defaults = {
-            "pr": "1", "review_file": str(review_file), "repo_dir": str(repo_dir),
-            "mode": ro.Mode.PR, "effort": ro.Effort.MEDIUM,
-            "prior_review": "", "issue": "", "issue_context": "",
-            "generator_version": "", "model": "", "recover_sha": "",
-            "target_dir": str(repo_dir), "max_parallel": 2,
-            "max_cost": 20.0, "max_groups": None,
-            "no_holistic": False, "no_scout": False, "no_group": False,
-            "no_synthesis": False, "no_disprove": True, "disprove": None,
-            "generated": False, "fix": False, "base": "",
-        }
-        defaults.update(overrides)
-        return SimpleNamespace(**defaults)
-
-    def _run(self, ro, monkeypatch, tmp_path, pipeline=None, out=None, **arg_overrides):
-        """Drive `run_orchestrate` over *tmp_path* with every phase faked.
-
-        Pass *out* to keep the result JSON the run prints; the default throws
-        it away, since what most of these tests read is the directory.
-        """
-        import fix.engine  # the `ro` fixture has already put `ai/lib` on the path
-        from review.reply_threads import ReplyThreads
-
-        review_dir = tmp_path / "review-dir"
-        review_dir.mkdir(exist_ok=True)
-        review_file = review_dir / "review.md"
-
-        pr_meta = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc123",
-            additions=10, deletions=0, changed_files=1,
-            files=[{"path": "a.py", "additions": 10, "deletions": 0}],
-        )
-
-        def _pipeline(job, **_kwargs):
-            Path(job.review_file).write_text(self._REVIEW)
-            Path(job.session_log).write_text("{}\n")
-            (review_dir / "meta.json").write_text("{}")
-            (review_dir / "disprove.jsonl").write_text("{}\n")
-            (review_dir / "prompt-single.md").write_text("PROMPT")
-
-        def _fix(job, _trail=None, **_kwargs):
-            artifacts = Path(job.artifact_dir)
-            (artifacts / "fix.jsonl").write_text("{}\n")
-            (artifacts / fix.engine.TRACKING_FILENAME).write_text("## <!-- fix:M1 -->\n")
-
-        monkeypatch.setattr(agent.backend, "preflight", lambda *a, **k: True)
-        monkeypatch.setattr(pr.state, "load_state", lambda *a, **k: None)
-        monkeypatch.setattr(
-            ro, "fetch_metadata",
-            lambda *a, **k: ro.RunContext(pr_meta, ro.PRContext(), None),
-        )
-        # A real record rather than a mock: `_run_phases` sizes the run off
-        # the preflight's delta fields, which a mock answers with objects that
-        # do not compare against the thresholds.
-        monkeypatch.setattr(
-            ro, "collect_preflight_data",
-            lambda job: ro.PreflightData(
-                diff="", commit_log="", file_contents={}, file_permissions={},
-                instructions_md="", architecture_md="",
-            ),
-        )
-        monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)
-        monkeypatch.setattr(ro, "run_static_analysis", lambda *a, **k: [])
-        monkeypatch.setattr(ro, "run_fix_pass", _fix)
-        monkeypatch.setattr(
-            ro, "fetch_reply_threads",
-            lambda *a, **k: ReplyThreads([], {}),
-        )
-
-        args = self._args(ro, review_file, tmp_path, **arg_overrides)
-        with contextlib.redirect_stdout(out if out is not None else io.StringIO()):
-            ro.run_orchestrate(MagicMock(), args, "org/repo", str(review_dir / "session.jsonl"))
-        return review_dir
+    _REVIEW = ORCHESTRATE_REVIEW
+    _run = staticmethod(run_orchestrated)
+    _focus_after_prior = staticmethod(focus_after_prior)
 
     def _host_for_origin(self, ro, monkeypatch, tmp_path, identity):
         """The host `run_orchestrate` puts on the job, for a given origin read.
@@ -525,6 +448,47 @@ class TestCleanupScope:
         assert seen["prior"] is not None
         assert seen["prior"].meta.head_sha == "0ldc0de"
         assert seen["prior"].record.summary.startswith("prior round")
+
+    def test_the_job_carries_operator_focus(self, ro, monkeypatch, tmp_path):
+        """`--focus` texts become F-numbered requested areas on the job."""
+        from review.record import FocusArea, FocusSource
+
+        seen = {}
+
+        def _capture(job, **_kwargs):
+            seen["focus"] = job.focus
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}")
+
+        self._run(ro, monkeypatch, tmp_path, pipeline=_capture, focus=["Retry\nwhy"])
+        assert seen["focus"] == (FocusArea(
+            id="F1", title="Retry", rationale="why", source=FocusSource.USER),)
+
+    def test_a_re_review_without_focus_keeps_the_requested_areas(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """X6: no --focus on a re-review keeps the prior round's requested areas."""
+        from review_focus_support import user_area
+
+        focus = self._focus_after_prior(ro, monkeypatch, tmp_path)
+        assert focus == (user_area("Retry", "why"),)
+
+    def test_an_incremental_review_carries_the_prior_derived_areas(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        from review_focus_support import area, user_area
+
+        focus = self._focus_after_prior(ro, monkeypatch, tmp_path, prior_head_sha="0ldc0de")
+        assert focus == (
+            user_area("Retry", "why"),
+            area("F2", "Parsing", paths=("a.py",)),
+        )
+
+    def test_a_full_review_does_not_carry_derived_areas(self, ro, monkeypatch, tmp_path):
+        from review.record import FocusSource
+
+        focus = self._focus_after_prior(ro, monkeypatch, tmp_path)
+        assert [a.source for a in focus] == [FocusSource.USER]
 
 
 class TestThePublishingGate:

@@ -17,15 +17,17 @@ Then assess:
 3. Are there cross-module design issues (inconsistent patterns, missing integrations, API mismatches)?
 4. Flag specific things that detailed per-file reviewers should watch for.
 5. Is this the right approach? Could the stated goal be achieved with a fundamentally simpler or safer design? If the direction is wrong, say so explicitly — the synthesis step can recommend disapproval.
+6. Name 1–3 areas this PR most needs reviewed — the risks particular to this change, each with a `title`, a `rationale`, and the `paths` it concerns ([] when it spans the PR).
 
 ${reviews_section}
 ${issue_section}
+${focus_section}
 ${env_section}
 
 ## Output
 ${output_block}
 
-Answer questions 1 and 2 in `assessment`. Put each thing the detailed reviewers should watch for (question 4) in `flags`, and each cross-module design issue (question 3) in `cross_module`. Only if the direction itself is wrong (question 5), set `direction_concern` to why and to what should be done instead.
+Answer questions 1 and 2 in `assessment`. Put each thing the detailed reviewers should watch for (question 4) in `flags`, and each cross-module design issue (question 3) in `cross_module`. Put item 6 in `focus`. Only if the direction itself is wrong (question 5), set `direction_concern` to why and to what should be done instead.
 Do NOT write per-file findings — those come from the detailed review phase.
 
 ## Turn budget

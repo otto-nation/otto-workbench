@@ -17,6 +17,7 @@ Equally important: mark files that do NOT need scrutiny — generated code, pure
 
 ${reviews_section}
 ${issue_section}
+${focus_section}
 ${env_section}
 
 ## Output
@@ -30,6 +31,7 @@ Rules:
 - If nothing looks suspicious, leave `leads` empty
 - Do NOT write per-file findings — those come from the detailed review phase
 - If the overall approach looks wrong — not just buggy but fundamentally misguided — set `direction_concern` to why, and to what the alternative should be; otherwise leave it ""
+- `focus`: 1–3 areas this PR most needs reviewed — the risks particular to this change, each with a `title`, a `rationale`, and the `paths` it concerns ([] when it spans the PR)
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write your leads file within the first few turns. For files listed under "Files not pre-collected," read only those critical to spotting concerns.

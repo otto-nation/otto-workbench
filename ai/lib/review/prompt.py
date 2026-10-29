@@ -60,8 +60,9 @@ from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt_prior import (
     _build_prior_section, _build_unaccounted_section,
 )
+from review.focus import areas_for_group, needs_derived, user_areas
 from review.prompt_sections import (
-    _build_delta_section, _build_env_section,
+    _build_delta_section, _build_env_section, _build_focus_section,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
     _build_reply_threads_section, _build_reviews_section,
     _build_state_context_section, _is_incremental,
@@ -92,6 +93,7 @@ class CommonSections:
     reply_threads: str
     env_section: str
     issue_section: str
+    focus_section: str
     omitted_guidance: str
     max_turns: int
     budget_bytes: int
@@ -822,13 +824,15 @@ def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
         b.set(key, value)
 
 
-def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False) -> str:
+def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False,
+                     derive_focus: bool = False, has_areas: bool = True) -> str:
     """The Output section's JSON example and field guide for this phase's artifact.
 
     `rereview` is whether this prompt carries prior findings to account for.
     Only then does the example show the fields that carry one forward (D20).
     """
-    return output_format(extra["artifact"], job.mode, rereview=rereview)
+    return output_format(extra["artifact"], job.mode, rereview=rereview,
+                         derive_focus=derive_focus, has_areas=has_areas)
 
 
 def _prompt_single(job, common, extra, output):
@@ -846,14 +850,17 @@ def _prompt_single(job, common, extra, output):
     b = PromptBuilder(common)
     b.shared(
         "pr_header", "state_context",
-        "reply_threads", "env_section", "issue_section",
+        "reply_threads", "env_section", "issue_section", "focus_section",
         "omitted_guidance", "max_turns",
     )
     _identify_review(b, job, verdict_options=VERDICT_OPTIONS)
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
     b.execution_claim_guard()
-    b.output(output, stdout_warning=True, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
+    b.output(output, stdout_warning=True, output_format=_artifact_format(
+        job, extra, rereview=bool(prior_section),
+        derive_focus=needs_derived(job.focus), has_areas=bool(job.focus),
+    ))
     b.fit(job)
     return BuiltPrompt(b, "")
 
@@ -871,7 +878,8 @@ def _prompt_synthesis(job, common, extra, output):
     """
     b = PromptBuilder(common)
     b.shared(
-        "pr_header", "state_context", "reply_threads", "max_turns",
+        "pr_header", "state_context", "reply_threads", "issue_section",
+        "focus_section", "max_turns",
     )
     _identify_review(b, job, pr_title=job.pr.title)
     b.set("repo", job.repo)
@@ -886,11 +894,20 @@ def _prompt_synthesis(job, common, extra, output):
     b.execution_claim_guard(
         cross_cutting_step=_SYNTHESIS_CROSS_CUTTING_STEP[job.mode],
     )
-    b.output(output, output_format=_artifact_format(job, extra, rereview=job.prior is not None))
+    b.output(output, output_format=_artifact_format(
+        job, extra, rereview=job.prior is not None,
+        derive_focus=needs_derived(job.focus), has_areas=bool(job.focus),
+    ))
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
     b.fit(job, skip_file_contents=True, min_diff=0)
     return BuiltPrompt(b, "")
+
+
+_SURVEY_FOCUS_NOTE = (
+    "These areas were requested and are already covered — the `focus` you derive "
+    "should add what they do not."
+)
 
 
 def _survey_prompt(job, common, extra, output):
@@ -908,6 +925,7 @@ def _survey_prompt(job, common, extra, output):
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("all_files_formatted", job.pr.all_files_formatted)
+    b.set("focus_section", _build_focus_section(user_areas(job.focus), note=_SURVEY_FOCUS_NOTE))
     b.output(output, output_format=_artifact_format(job, extra))
     b.fit(job)
     return BuiltPrompt(b, "")
@@ -941,6 +959,12 @@ def _prompt_group(job, common, extra, output):
     b.set("group_count", extra["group_count"])
     b.set("group_name", extra["group_name"])
     b.set("group_files_formatted", extra["group_files_formatted"])
+    b.set(
+        "focus_section",
+        _build_focus_section(
+            areas_for_group(job.focus, group_files) if group_files else job.focus,
+        ),
+    )
     b.execution_claim_guard()
     b.output(output, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
     b.fit(job, file_filter=file_filter, skip_project_context=True)
@@ -967,6 +991,7 @@ def build_common_sections(
         reply_threads=_build_reply_threads_section(job.reply_threads),
         env_section=_build_env_section(job.wt_path, preflight=job.preflight),
         issue_section=_build_issue_section(job.issue_link, job.issue_context),
+        focus_section=_build_focus_section(job.focus, derive=needs_derived(job.focus)),
         omitted_guidance=_build_omitted_guidance(
             job.preflight,
             skip_omitted=EFFORT_PRESETS[job.effort].skip_omitted_files,

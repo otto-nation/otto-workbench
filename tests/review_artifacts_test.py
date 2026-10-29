@@ -21,6 +21,7 @@ from review.artifacts import (
     HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint, _nested_dataclass,
     as_group_artifact, declinable_sids, output_format,
 )
+from review.budget import DERIVED_AREA_RESERVE_BYTES
 from review.ingest import IngestErrorKind
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.store import StoredReview
@@ -140,17 +141,54 @@ def test_each_group_rejection_names_its_kind_and_place(doc, kind, at):
     assert [(p.kind, p.at) for p in problems] == [(kind, at)]
 
 
+FOCUS_OK = {"title": "Retry", "rationale": "why", "paths": ["a.py"]}
+
+
 @pytest.mark.parametrize("kind, doc, at", [
     (ReviewArtifact, {"summary": " "}, "$.summary"),
-    (HolisticArtifact, {"assessment": ""}, "$.assessment"),
-    (ScoutArtifact, {"leads": [{"path": "a.py", "concern": ""}]}, "$.leads[0].concern"),
-    (ScoutArtifact, {"no_scrutiny": [{"path": "a.py", "reason": ""}]}, "$.no_scrutiny[0].reason"),
+    (HolisticArtifact, {"assessment": "", "focus": [FOCUS_OK]}, "$.assessment"),
+    (ScoutArtifact, {"leads": [{"path": "a.py", "concern": ""}], "focus": [FOCUS_OK]},
+     "$.leads[0].concern"),
+    (ScoutArtifact, {"no_scrutiny": [{"path": "a.py", "reason": ""}], "focus": [FOCUS_OK]},
+     "$.no_scrutiny[0].reason"),
     (DisproveArtifact, {"verdicts": [{"id": "M1", "outcome": "survives", "reason": ""}]},
      "$.verdicts[0].reason"),
 ])
 def test_an_empty_required_text_is_rejected(kind, doc, at):
     problems = load_strict(kind, doc).problems()
     assert [(p.kind, p.at) for p in problems] == [(IngestErrorKind.EMPTY_FIELD, at)]
+
+
+@pytest.mark.parametrize("kind, doc", [
+    (ScoutArtifact, {}),
+    (HolisticArtifact, {"assessment": "ok"}),
+])
+def test_a_scan_without_focus_is_rejected(kind, doc):
+    problems = load_strict(kind, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [(IngestErrorKind.FOCUS_COUNT, "$.focus")]
+
+
+@pytest.mark.parametrize("kind, extra", [
+    (ScoutArtifact, {}),
+    (HolisticArtifact, {"assessment": "ok"}),
+])
+def test_a_scan_with_four_areas_is_rejected(kind, extra):
+    problems = load_strict(kind, {**extra, "focus": [FOCUS_OK] * 4}).problems()
+    assert [(p.kind, p.at) for p in problems] == [(IngestErrorKind.FOCUS_COUNT, "$.focus")]
+
+
+def test_a_focus_path_with_a_line_is_rejected():
+    doc = {"focus": [{"title": "t", "paths": ["a.py:3"]}]}
+    problems = load_strict(ScoutArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [
+        (IngestErrorKind.LINE_IN_PATH, "$.focus[0].paths[0]")]
+
+
+def test_a_derived_area_over_the_reserve_is_rejected():
+    doc = {"focus": [{"title": "t", "rationale": "x" * (DERIVED_AREA_RESERVE_BYTES + 1)}]}
+    problems = load_strict(ScoutArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [
+        (IngestErrorKind.FOCUS_SIZE, "$.focus[0]")]
 
 
 def test_a_trailing_newline_on_a_disprove_id_is_rejected():
@@ -244,3 +282,53 @@ def test_the_merged_record_is_shown_to_synthesis_as_a_group_artifact():
     assert all(f.sid for f in shown.findings)
     assert shown.prior_findings == record.ledger
     assert load_strict(GroupArtifact, json.loads(example_json(shown))).problems() == ()
+
+
+@pytest.mark.parametrize("doc, kind, at", [
+    ({"summary": "s", "focus": [{"id": "F1", "coverage": ""}]},
+     IngestErrorKind.EMPTY_FIELD, "$.focus[0].coverage"),
+    ({"summary": "s", "focus": [{"id": "X1", "coverage": "c"}]},
+     IngestErrorKind.UNKNOWN_FOCUS, "$.focus[0].id"),
+    ({"summary": "s", "focus": [{"id": "", "coverage": "c"}]},
+     IngestErrorKind.EMPTY_FIELD, "$.focus[0].title"),
+    ({"summary": "s", "focus": [{"id": "F1", "coverage": "a"}, {"id": "F1", "coverage": "b"}]},
+     IngestErrorKind.DUPLICATE_ID, "$.focus"),
+    ({"summary": "s", "focus": [{"id": "", "title": "t", "coverage": "c"}] * 4},
+     IngestErrorKind.FOCUS_COUNT, "$.focus"),
+])
+def test_each_focus_report_rejection_names_its_kind_and_place(doc, kind, at):
+    problems = load_strict(ReviewArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [(kind, at)]
+
+
+def test_a_writer_derived_area_over_the_reserve_is_rejected():
+    doc = {"summary": "s", "focus": [{
+        "id": "", "title": "t", "coverage": "c",
+        "rationale": "x" * (DERIVED_AREA_RESERVE_BYTES + 1),
+    }]}
+    problems = load_strict(ReviewArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [
+        (IngestErrorKind.FOCUS_SIZE, "$.focus[0]")]
+
+
+def test_a_format_that_does_not_ask_for_areas_hides_the_derive_fields():
+    text = output_format(ReviewArtifact, Mode.PR, rereview=False)
+    doc = _shown_document(text)
+    assert doc["focus"]
+    assert all(set(e) == {"id", "coverage"} and e["id"] for e in doc["focus"])
+    assert "`focus[].title`" not in text
+
+
+def test_a_format_that_asks_for_areas_shows_one():
+    text = output_format(ReviewArtifact, Mode.PR, rereview=False, derive_focus=True)
+    doc = _shown_document(text)
+    blank = [e for e in doc["focus"] if e["id"] == ""]
+    assert blank and "title" in blank[0]
+
+
+def test_a_format_with_no_areas_shows_no_covering_entry():
+    text = output_format(
+        ReviewArtifact, Mode.PR, rereview=False, derive_focus=True, has_areas=False,
+    )
+    doc = _shown_document(text)
+    assert all(not e["id"] for e in doc["focus"])

@@ -249,7 +249,8 @@ def test_synthesis_drops_out_of_delta_nits_on_an_incremental_round(tmp_path, mon
         Path(inv.session_log).write_text("")
         return 0
     monkeypatch.setattr(review.phases, "run_agent", agent)
-    artifact = SimpleNamespace(to_record=lambda **_: ReviewRecord(findings=(NIT_OUT, NIT_IN)))
+    artifact = SimpleNamespace(to_record=lambda **_: ReviewRecord(findings=(NIT_OUT, NIT_IN)),
+                               focus=())
     monkeypatch.setattr(review.steps, "ingest_artifact",
                         lambda *a, **k: ArtifactOutcome(artifact))
     monkeypatch.setattr(review.steps, "_post_process_review",

@@ -14,10 +14,13 @@ if str(LIB_DIR) not in sys.path:
 from review_threads_support import _no_published_summary  # noqa: E402
 from review.reply_threads import ReplyThreads
 from review.types import ReplyState
+from review.budget import MAX_ISSUE_CONTEXT_BYTES
 from review.prompt_sections import (
-    _build_reply_threads_section, _format_general_comments,
-    _format_review_comments, _format_reviews,
+    _build_focus_section, _build_issue_section, _build_reply_threads_section,
+    _format_general_comments, _format_review_comments, _format_reviews,
 )
+from review.record import FocusSource
+from review_focus_support import area
 
 
 # ── _build_reply_threads_section ─────────────────────────────────────────────
@@ -193,3 +196,76 @@ class TestFormatGeneralComments:
 
     def test_invalid_json(self):
         assert _format_general_comments("not json") == "_None._"
+
+
+# ── _build_issue_section ─────────────────────────────────────────────────────
+
+class TestBuildIssueSection:
+    def test_link_and_body_render_together(self):
+        section = _build_issue_section(
+            "https://x/1", '{"title": "T", "body": "B"}',
+        )
+        assert "https://x/1" in section
+        assert '{"title": "T", "body": "B"}' in section
+        assert section.index("https://x/1") < section.index(
+            '{"title": "T", "body": "B"}',
+        )
+
+    def test_link_alone(self):
+        assert _build_issue_section("https://x/1", "") == (
+            "\n## Related issue\nhttps://x/1"
+        )
+
+    def test_body_alone(self):
+        assert _build_issue_section("", "BODY") == "\n## Related issue\nBODY"
+
+    def test_nothing_is_empty(self):
+        assert _build_issue_section("", "") == ""
+
+    def test_a_long_body_is_truncated_and_says_so(self):
+        link = "https://x/1"
+        body = "x" * (20 * 1024)
+        section = _build_issue_section(link, body)
+        assert body[:MAX_ISSUE_CONTEXT_BYTES] in section
+        assert body[:MAX_ISSUE_CONTEXT_BYTES + 1] not in section
+        assert f"read the rest at {link}" in section
+
+    def test_a_long_body_without_a_link_is_truncated_and_says_so(self):
+        body = "x" * (20 * 1024)
+        section = _build_issue_section("", body)
+        assert body[:MAX_ISSUE_CONTEXT_BYTES] in section
+        assert body[:MAX_ISSUE_CONTEXT_BYTES + 1] not in section
+        assert "the rest in the tracker" in section
+
+    def test_truncation_drops_a_partial_utf8_character(self):
+        euro = "€"
+        body = ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) + euro
+        section = _build_issue_section("", body)
+        assert euro not in section
+        assert "\ufffd" not in section
+        assert ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) in section
+
+
+class TestBuildFocusSection:
+    def test_requested_areas_are_marked_and_listed_first(self):
+        text = _build_focus_section((
+            area(id="F1", title="Auth", source=FocusSource.USER),
+            area(id="F2", title="DerivedBit", source=FocusSource.DERIVED),
+        ))
+        assert "- **F1** *(requested)* — Auth" in text
+        assert "- **F2** — DerivedBit" in text
+        assert text.index("Auth") < text.index("DerivedBit")
+        assert "*(requested)*" not in text[text.index("DerivedBit"):]
+
+    def test_no_areas_render_nothing(self):
+        assert _build_focus_section(()) == ""
+
+    def test_paths_and_rationale_follow_the_title(self):
+        text = _build_focus_section((
+            area(id="F1", title="Auth", rationale="check the gate",
+                 paths=("a.py", "b.py"), source=FocusSource.USER),
+        ))
+        title = text.index("- **F1** *(requested)* — Auth")
+        why = text.index("  Why: check the gate")
+        paths = text.index("  Paths: `a.py`, `b.py`")
+        assert title < why < paths

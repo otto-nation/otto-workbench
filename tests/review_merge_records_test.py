@@ -14,6 +14,7 @@ from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.render import render_body
 from review.types import PriorDisposition
 
+from review_focus_support import area
 from review_record_support import FIXTURES, canonical, finding, fixture_text, record
 
 
@@ -108,6 +109,17 @@ def test_two_groups_dispositioning_one_prior_finding_keep_the_stronger_verdict()
     assert [(e.id, e.disposition) for e in merged.ledger] == [
         ("M1", PriorDisposition.STILL_OPEN), ("S1", PriorDisposition.FIXED),
     ]
+
+
+def test_renumbering_rewrites_focus_coverage():
+    rec = record(
+        finding("M2", "a"),
+        finding("M5", "b"),
+        focus=(area(id="F1", title="t", coverage="[M5] is the one that drops the error"),),
+    )
+    out = renumber_record(rec)
+    assert [f.id for f in out.findings] == ["M1", "M2"]
+    assert out.focus[0].coverage == "[M2] is the one that drops the error"
 
 
 def test_the_stronger_verdict_wins_whichever_path_each_group_copied():

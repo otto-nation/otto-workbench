@@ -43,7 +43,11 @@ from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import PRReport  # noqa: E402
 from pr.triage_round import TriagedRound  # noqa: E402
+from review.artifacts import GroupArtifact  # noqa: E402
+from review.paths import phase_output_path  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
+from review.record import FocusSource  # noqa: E402
+from review_focus_support import area  # noqa: E402
 
 from review_contracts_support import _template_files
 
@@ -650,8 +654,9 @@ class TestPromptBudgetAccounting:
     # and the prompt sits right at the limit rather than dropping one big blob.
     _PATHS = [f"f{i:03d}.py" for i in range(60)]
 
-    def _group_prompt(self, files_formatted: str) -> str:
+    def _group_setup(self, files_formatted: str, focus=()):
         job = _make_review_job()
+        job.focus = focus
         job.pr.files = [
             {"path": p, "additions": 1, "deletions": 0} for p in self._PATHS
         ]
@@ -664,9 +669,26 @@ class TestPromptBudgetAccounting:
         extra = dict(_BUILD_PROMPT_EXTRAS[(Phase.GROUP, Mode.PR)])
         extra["group_file_paths"] = list(self._PATHS)
         extra["group_files_formatted"] = files_formatted
+        return job, extra
+
+    def _group_prompt(self, files_formatted: str, focus=()) -> str:
+        job, extra = self._group_setup(files_formatted, focus)
         return review.registry.build_prompt(
             Phase.GROUP, job, max_turns=15, **extra,
         )
+
+    def _group_once(self, files_formatted: str, focus=()) -> str:
+        """One render of `_prompt_group`, no `fit_rendered_prompt` re-plan."""
+        job, extra = self._group_setup(files_formatted, focus)
+        extra["artifact"] = GroupArtifact
+        common = review.prompt.build_common_sections(
+            job, max_turns=15, budget_bytes=MAX_PROMPT_BYTES,
+        )
+        out = phase_output_path(job.review_file, Phase.GROUP, extra["group_idx"])
+        built = review.prompt._prompt_group(job, common, extra, out)
+        template = PHASES[Phase.GROUP].template_for(job.mode)
+        assert built.builder.vars, "group builder produced no template vars"
+        return agent.templates.render(template, **built.builder.vars)
 
     def test_large_section_shrinks_the_diff_instead_of_the_prompt_budget(self):
         filler = "- filler.py\n" * 2000
@@ -681,3 +703,17 @@ class TestPromptBudgetAccounting:
             f"adding {len(filler)}B to group_files_formatted grew the prompt by "
             f"{growth}B — the section is not counted against the diff budget"
         )
+
+    def test_the_focus_section_is_never_cut(self):
+        filler = "x" * 40_000
+        small = self._group_once(
+            "- a.py", focus=(area(id="F1", title="a", source=FocusSource.USER),),
+        )
+        large = self._group_once(
+            "- a.py",
+            focus=(area(id="F1", title="a", rationale=filler, source=FocusSource.USER),),
+        )
+        assert len(small.encode()) <= MAX_PROMPT_BYTES
+        assert len(large.encode()) <= MAX_PROMPT_BYTES
+        assert filler in large
+        assert len(large) - len(small) < len(filler) // 2

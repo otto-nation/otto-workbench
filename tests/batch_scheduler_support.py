@@ -121,14 +121,15 @@ class Harness:
                  runner=None, tree=None, closeout=None, moves=(), stdouts=None,
                  contains=None, dirty=None, rebasing=None, unpublished=None,
                  descends=None, commits=None, verbose=False,
-                 machine=None, hold_tree=None, branch=None):
+                 machine=None, hold_tree=None, branch=None, focus=()):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
         self.published, self.publish_code = [], 0
         run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER),
                                       selected=selected, pool=pool,
-                                      auto_publish=list(auto_publish))
+                                      auto_publish=list(auto_publish),
+                                      focus=focus)
         self.heads = heads or {}
         publish = runner or self._publish
         tree_fn = tree or ff_tree

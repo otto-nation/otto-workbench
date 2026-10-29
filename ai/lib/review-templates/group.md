@@ -1,6 +1,7 @@
 ${holistic_block}
 ${project_context}
 ${issue_section}
+${focus_section}
 
 ${env_section}
 

@@ -119,13 +119,13 @@ def _review_argv(argv: list[str], ctx: pr.context.ResolvedContext,
         return list(argv)
     if cli.needs.has_flag(argv, "--self"):
         return list(argv)
-    positionals, _ = cli.dispatch.split_argv(argv)
-    has_pr_target = (
-        any(_is_pr_target(p) for p in positionals)
-        or _is_pr_target(original_pr)
-        or ctx.pr_number is not None
-    )
-    if has_pr_target or positionals:
+    if _is_pr_target(original_pr) or ctx.pr_number is not None:
+        return list(argv)
+    # Any positional is a target, PR or branch. Read with the delegate's arity,
+    # so the value of `--focus "retry handling"` is not one; asked only here,
+    # after the context has had its say, so a named PR costs no parser build.
+    value_flags = cli.dispatch.delegate_value_flags(COMMANDS["review"])
+    if cli.dispatch.positionals(argv, value_flags):
         return list(argv)
     return ["--self"] + list(argv)
 

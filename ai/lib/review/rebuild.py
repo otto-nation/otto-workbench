@@ -24,11 +24,12 @@ from core.trail import Trail
 from agent.registry import PHASES
 from core.phases import Phase
 from review.artifacts import GroupArtifact, declinable_sids
+from review.focus import uncovered_areas
 from review.ingest import IngestRejected, load_artifact
 from review.merge import merge_records
 from review.paths import read_review_meta
 from review.record import ReviewRecord
-from review.store import read_prior, write_review
+from review.store import read_prior, read_review, write_review
 from review.verdict import build_mechanical_record, states_verdict
 from review.verify import post_process_record
 
@@ -124,9 +125,14 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
         merged = merge_records(records)
         trail.info("merge_records", "merged group outputs", data={"group_count": len(group_files)})
         done = post_process_record(merged)
+        existing = read_review(review_file)
         record = build_mechanical_record(
             done.record, group_count=len(group_files), summary_note=REBUILD_SUMMARY,
             include_verdict=states_verdict(meta.mode), file_count=meta.changed_files,
+        )
+        record = replace(
+            record,
+            focus=tuple(uncovered_areas(existing.record.focus if existing else ())),
         )
         # Dated today and carrying no status: a rebuild cannot attest to how the
         # pipeline run ended — this is not one. write_review also writes

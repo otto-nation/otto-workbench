@@ -549,6 +549,46 @@ def test_an_attended_pr_review_still_asks_for_an_issue_link(tmp_path, monkeypatc
     assert asked.call_count == 1, "an attended review with no issue still asks"
 
 
+def test_a_typed_issue_link_on_an_attended_pr_review_fetches_its_body(
+    tmp_path, monkeypatch,
+):
+    review_file = _review_file(tmp_path, "pr")
+    tape = []
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        review.issue, "load_issue_provider",
+        lambda *a, **kw: SimpleNamespace(name="github", options={}),
+    )
+    calls = []
+
+    def fake_fetch(*args, **kw):
+        if len(args) < 2 or not args[1]:
+            return review.issue.IssueContext()
+        calls.append(args)
+        return review.issue.IssueContext(context="BODY")
+
+    monkeypatch.setattr(review.issue, "fetch_issue_context", fake_fetch)
+    monkeypatch.setattr(
+        core.prompt, "ask",
+        MagicMock(return_value="https://github.com/o/r/issues/5"),
+    )
+    captured = []
+    monkeypatch.setattr(
+        review.invoke, "run", lambda request: captured.append(request) or 0,
+    )
+
+    review.run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"),
+        _flags(no_post=False, auto_post=False), review_file, trail=MagicMock(),
+    )
+
+    request = captured[0]
+    assert calls == [("github", "5", "github.com/o/r", {})]
+    assert request.issue_context == "BODY"
+
+
 def test_a_review_that_found_its_issue_context_does_not_ask_for_a_link(
     tmp_path, monkeypatch,
 ):
@@ -597,3 +637,78 @@ def test_an_unattended_pr_review_is_never_prompted(tmp_path, monkeypatch, unatte
         make_ctx(target_dir=tmp_path / "t"), _flags(**unattended),
         review_file, trail=MagicMock(),
     )
+
+
+@pytest.mark.parametrize("flow", ["pr", "self"])
+def test_both_flows_fetch_the_body_of_an_issue_link_they_were_given(
+    tmp_path, monkeypatch, flow,
+):
+    tape = []
+    review_file = _review_file(tmp_path, flow)
+    _trace_common(monkeypatch, tape)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(tmp_path), None))
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    if flow == "pr":
+        _stub_pr_edges(monkeypatch, tmp_path, tape)
+
+    monkeypatch.setattr(
+        review.issue, "load_issue_provider",
+        lambda *a, **kw: SimpleNamespace(name="github", options={}),
+    )
+    calls = []
+
+    def fake_fetch(*args, **kw):
+        calls.append(args)
+        return review.issue.IssueContext(context="BODY")
+
+    monkeypatch.setattr(review.issue, "fetch_issue_context", fake_fetch)
+    captured = []
+    monkeypatch.setattr(
+        review.invoke, "run", lambda request: captured.append(request) or 0,
+    )
+
+    flags = _flags(issue_link="https://github.com/o/r/issues/5")
+    if flow == "self":
+        review.run.run_self_review(
+            make_ctx(target_dir=tmp_path / "t"), flags, review_file.parent,
+            str(tmp_path), recover_head_sha="", trail=MagicMock(),
+        )
+    else:
+        review.run.run_pr_review(
+            make_ctx(target_dir=tmp_path / "t"), flags, review_file,
+            trail=MagicMock(),
+        )
+
+    request = captured[0]
+    assert calls == [("github", "5", "github.com/o/r", {})]
+    assert request.issue_link == "https://github.com/o/r/issues/5"
+    assert request.issue_context == "BODY"
+
+
+@pytest.mark.parametrize("flow", ["pr", "self"])
+def test_both_flows_forward_operator_focus(tmp_path, monkeypatch, flow):
+    review_file = _review_file(tmp_path, flow)
+    _trace_common(monkeypatch, [])
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(tmp_path), None))
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    if flow == "pr":
+        _stub_pr_edges(monkeypatch, tmp_path, [])
+    captured = []
+    monkeypatch.setattr(review.invoke, "run", lambda request: captured.append(request) or 0)
+
+    flags = _flags(focus=("a",))
+    if flow == "self":
+        review.run.run_self_review(
+            make_ctx(target_dir=tmp_path / "t"), flags, review_file.parent,
+            str(tmp_path), recover_head_sha="", trail=MagicMock(),
+        )
+    else:
+        review.run.run_pr_review(
+            make_ctx(target_dir=tmp_path / "t"), flags, review_file, trail=MagicMock(),
+        )
+
+    assert captured[0].focus == ("a",)

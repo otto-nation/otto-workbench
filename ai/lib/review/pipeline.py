@@ -41,6 +41,7 @@ from pathlib import Path
 import git.client
 import core.job_slots
 import core.log
+import review.focus
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
@@ -52,20 +53,22 @@ from agent.backend import selected_backend
 from agent.phases import phase_model
 from agent.session import diagnose_missing_output
 from review.budget import (
-    MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes,
-    ladder_target_bytes,
+    DERIVED_AREA_RESERVE_BYTES, MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES,
+    fixed_preflight_bytes, ladder_target_bytes,
 )
 from review.collect import diff_section_sizes, fetch_branch_metadata
 from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
 from review.overflow import run_with_overflow_recovery
-from review.artifacts import ReviewArtifact, declinable_sids
-from review.ingest import ingest_artifact
+from review.artifacts import MAX_DERIVED_FOCUS, ReviewArtifact, declinable_sids
+from review.ingest import IngestErrorKind, ingest_artifact
 from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
-from review.prompt_sections import _is_incremental
+from review.prompt_sections import (
+    _build_focus_section, _build_issue_section, _is_incremental,
+)
 from review.registry import build_prompt
 from review.phases import PhaseResult, PhaseRunner, _should_disprove
 from review.convergence import drop_out_of_delta_nits, prior_ids
@@ -203,6 +206,8 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     outcome = ingest_artifact(
         output, sent, invoke, ReviewArtifact,
         diagnose=lambda: diagnose_missing_output(job.session_log, output),
+        check=lambda a: review.focus.coverage_problems(
+            a, job.focus, derive=review.focus.needs_derived(job.focus)),
     )
     if not outcome.ok:
         if outcome.diagnosis is not None:
@@ -214,10 +219,17 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
             core.log.error(f"review agent output rejected: {listed}")
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
+    if outcome.errors:
+        listed = "; ".join(e.render() for e in outcome.errors)
+        if any(e.kind is IngestErrorKind.MISSING_COVERAGE for e in outcome.errors):
+            listed += " — only areas with missing_coverage are published as not assessed"
+        core.log.warn(listed)
     # A carried decline is believed only for a finding the prior round held (D19).
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
     )
+    record = replace(record, focus=review.focus.covered(
+        job.focus, outcome.artifact.focus, [f["path"] for f in job.pr.files]))
     if _is_incremental(job):
         record = drop_out_of_delta_nits(record, job.preflight.delta_files, prior_ids(job)).record
     if _should_disprove(job, disprove):
@@ -268,7 +280,9 @@ def _group_merge_cap(job: ReviewJob) -> int:
     its diff: the template and the project context no lever can cut. File
     contents and the delta are levers the ladder pulls first, so they are not
     reserved here. Every profile is charged although a group renders only the
-    ones matching its files, which errs toward stopping a merge early.
+    ones matching its files, which errs toward stopping a merge early. The
+    focus section, the issue section, and the reserved room for areas phase 1
+    has not yet derived are fixed overhead per group prompt.
 
     Never below `MIN_DIFF_BYTES`: a repo whose fixed context alone fills the
     target still gets groups the ladder can floor, rather than no merges at
@@ -282,6 +296,13 @@ def _group_merge_cap(job: ReviewJob) -> int:
             pf.instructions_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
+    fixed += len(_build_focus_section(job.focus).encode())
+    fixed += len(_build_issue_section(job.issue_link, job.issue_context).encode())
+    if review.focus.needs_derived(job.focus):
+        # ceiling: a flat reserve for areas phase 1 has not derived yet, because
+        # this cap is computed before that phase runs. Upgrade trigger: once the
+        # merge runs after phase 1, measure the adopted areas instead.
+        fixed += MAX_DERIVED_FOCUS * DERIVED_AREA_RESERVE_BYTES
     return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend(), cwd=job.wt_path) - fixed)
 
 
@@ -354,6 +375,7 @@ def run_multi_phase(
             prior_sha=job.preflight.prior_head_sha if incremental else "",
             skipped_groups=sorted(incremental_skips),
             schema_version=PIPELINE_SCHEMA_VERSION,
+            focus=list(review.focus.user_areas(job.focus)),
         )
         _write_pipeline_state(job, state)
 
@@ -362,6 +384,11 @@ def run_multi_phase(
     # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
     holistic = _run_holistic_phase(job, group_count, state, incremental)
     cost_so_far += holistic.cost
+    if holistic.artifact is not None:
+        job.focus = review.focus.adopt(
+            job.focus, holistic.artifact.focus,
+            [f["path"] for f in job.pr.files],
+        )
 
     # ── Phase 2: Groups ───────────────────────────────────────────────────────
     # Two ways every group ends up unreviewed without a single agent running,

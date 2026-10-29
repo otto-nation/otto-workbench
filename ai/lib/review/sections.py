@@ -13,11 +13,11 @@ from typing import Literal
 
 from core.text import slugify
 from review.document import (
-    SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
+    SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS, SECTION_SUMMARY, SECTION_VERDICT,
 )
 from review.record import ProseSection, ReviewRecord
-from review.render import failures_body
+from review.render import failures_body, focus_comment
 from review.types import SEVERITIES
 
 POSITION_BEFORE = "before_findings"
@@ -55,6 +55,8 @@ class SectionConfig:
 KNOWN_SECTIONS: list[SectionConfig] = [
     SectionConfig("summary", SECTION_SUMMARY, POSITION_BEFORE,
                   heading=f"## {SECTION_SUMMARY}", trailing_separator=True),
+    SectionConfig("focus", SECTION_FOCUS, POSITION_BEFORE,
+                  heading=f"### {SECTION_FOCUS}", subsection_of="summary"),
     SectionConfig("verdict", SECTION_VERDICT, POSITION_BEFORE,
                   heading=f"### {SECTION_VERDICT}", strip_action=True, subsection_of="summary"),
     SectionConfig("static_analysis", SECTION_STATIC_ANALYSIS, POSITION_AFTER),
@@ -96,6 +98,9 @@ class ReviewSections:
     def from_record(cls, record: ReviewRecord) -> ReviewSections:
         sections: list[ProseSection] = [
             ProseSection(SECTION_SUMMARY, record.summary),
+            ProseSection(
+                SECTION_FOCUS, focus_comment(record.focus) if record.focus else "",
+            ),
             ProseSection(
                 SECTION_FAILURES,
                 failures_body(record.failures) if record.failures else "",

@@ -19,8 +19,10 @@ from review_record_support import finding, record
 
 from review_phases_support import _job
 
-SCOUT_OK = json.dumps({"leads": [{"path": "a.py", "line": 3, "concern": "c"}]})
-SCOUT_BAD = json.dumps({"leads": [{"path": "a.py:3", "concern": "c"}]})
+_FOCUS = [{"title": "Retry", "rationale": "why", "paths": ["a.py"]}]
+SCOUT_OK = json.dumps({"leads": [{"path": "a.py", "line": 3, "concern": "c"}], "focus": _FOCUS})
+SCOUT_BAD = json.dumps({"leads": [{"path": "a.py:3", "concern": "c"}], "focus": _FOCUS})
+SCOUT_NO_FOCUS = json.dumps({"leads": [{"path": "a.py", "line": 3, "concern": "c"}]})
 
 
 def _fake_agent(monkeypatch, *documents):
@@ -64,10 +66,19 @@ def test_disprove_hands_back_its_typed_artifact(tmp_path, monkeypatch):
 
 def test_a_resumed_scan_is_read_from_its_file(tmp_path):
     output = tmp_path / "scout.json"
+    log = str(tmp_path / "scout.jsonl")
     output.write_text(SCOUT_OK)
-    assert review.phases.read_scan(Phase.SCOUT, str(output)).startswith("## Scout context")
+    assert review.phases.reuse_scan(Phase.SCOUT, str(output), log).content.startswith(
+        "## Scout context")
     output.write_text(SCOUT_BAD)
-    assert review.phases.read_scan(Phase.SCOUT, str(output)) == ""
+    assert review.phases.reuse_scan(Phase.SCOUT, str(output), log).content == ""
+
+
+def test_a_scan_without_focus_gets_a_repair_turn(tmp_path, monkeypatch):
+    prompts = _fake_agent(monkeypatch, SCOUT_NO_FOCUS, SCOUT_OK)
+    result = review.phases.run_phase(_job(tmp_path), Phase.SCOUT, "scanning...")
+    assert len(prompts) == 2 and "focus_count" in prompts[1]
+    assert result.artifact is not None and result.artifact.focus[0].title == "Retry"
 
 
 FINDING = {"id": "M1", "path": "a.py", "line": 1, "body": "x", "evidence": "x = 1"}

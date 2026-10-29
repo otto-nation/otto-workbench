@@ -12,9 +12,12 @@ if str(LIB_DIR) not in sys.path:
 # The module the `rp` fixture returns, imported so bin/local/select-pytest maps
 # this suite to the code it reaches through `rp`.
 import cli.review_post  # noqa: E402,F401
+from review.format import format_body_text  # noqa: E402
 from review.record import LedgerLine, ProseSection, TriageEntry  # noqa: E402
 from review.types import PriorDisposition  # noqa: E402
 
+from review.record import FocusSource  # noqa: E402
+from review_focus_support import area, user_area  # noqa: E402
 from review_record_support import finding, record  # noqa: E402
 
 
@@ -103,3 +106,16 @@ class TestReviewSections:
         rec = record(finding("M1", "bug", path="a.go", line=1))
         sections = _sections(rp, rec)
         assert sections.before_findings() == []
+
+    def test_the_comment_carries_focus_under_the_summary(self, rp):
+        rec = record(summary="looked", focus=(user_area("Locking"),))
+        body = format_body_text([], False, set(), rp.ReviewSections.from_record(rec))
+        assert body.index("## Summary") < body.index("### Focus")
+        assert "Locking" in body
+        assert body.index("### Focus") < body.index("---")
+
+    def test_the_comment_focus_line_is_title_mark_and_coverage(self, rp):
+        asked = area(title="Locking", source=FocusSource.USER, coverage="checked the mutex")
+        rec = record(summary="looked", focus=(asked,))
+        body = format_body_text([], False, set(), rp.ReviewSections.from_record(rec))
+        assert "- **Locking** *(requested)* — checked the mutex" in body.splitlines()

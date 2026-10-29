@@ -336,14 +336,14 @@ def _focus_report_problems(items: tuple[FocusReport, ...], at: str) -> list[Inge
         loc = f"{at}[{i}]"
         if not item.coverage.strip():
             out.append(_empty(f"{loc}.coverage", "a focus entry's coverage"))
-        empty_id = item.id == ""
-        if empty_id:
+        if item.id == "":
             derived += 1
-        if empty_id and not item.title.strip():
-            out.append(_empty(f"{loc}.title", "a focus area's title"))
-        elif not empty_id and _FOCUS_ID_RE.fullmatch(item.id):
+            out += _focus_item_problems(
+                AgentFocus(item.title, item.rationale, item.paths), loc)
+            continue
+        if _FOCUS_ID_RE.fullmatch(item.id):
             ids.append(item.id)
-        elif not empty_id:
+        else:
             out.append(_error(IngestErrorKind.UNKNOWN_FOCUS, f"{loc}.id",
                               f"{item.id!r} is not a focus id (F1…) or \"\""))
         out += [e for j, p in enumerate(item.paths)
@@ -689,7 +689,9 @@ CARRY_FIELDS: dict[type, frozenset[str]] = {
 DERIVE_FIELDS: dict[type, frozenset[str]] = {FocusReport: frozenset({"title", "rationale", "paths"})}
 
 
-def _focus_example(entries, *, derive_focus, has_areas):
+def _focus_example(
+    entries: tuple[FocusReport, ...], *, derive_focus: bool, has_areas: bool,
+) -> tuple[FocusReport, ...]:
     return tuple(e for e in entries if (e.id == "" and derive_focus) or (e.id != "" and has_areas))
 
 

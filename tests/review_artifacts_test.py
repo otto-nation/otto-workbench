@@ -301,6 +301,16 @@ def test_each_focus_report_rejection_names_its_kind_and_place(doc, kind, at):
     assert [(p.kind, p.at) for p in problems] == [(kind, at)]
 
 
+def test_a_writer_derived_area_over_the_reserve_is_rejected():
+    doc = {"summary": "s", "focus": [{
+        "id": "", "title": "t", "coverage": "c",
+        "rationale": "x" * (DERIVED_AREA_RESERVE_BYTES + 1),
+    }]}
+    problems = load_strict(ReviewArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [
+        (IngestErrorKind.FOCUS_SIZE, "$.focus[0]")]
+
+
 def test_a_format_that_does_not_ask_for_areas_hides_the_derive_fields():
     text = output_format(ReviewArtifact, Mode.PR, rereview=False)
     doc = _shown_document(text)

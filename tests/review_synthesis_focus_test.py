@@ -109,6 +109,7 @@ class TestSynthesisFocus:
         assert result.diagnosis is None
         rec = load_record(tmp_path)
         assert rec.focus[0].id == "F1" and rec.focus[0].coverage == ""
+        assert rec.summary == "s"
         rendered = Path(job.review_file).read_text()
         assert "*Not assessed this round.*" in rendered
         assert "missing_coverage" in capsys.readouterr().err

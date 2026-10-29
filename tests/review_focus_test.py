@@ -322,3 +322,18 @@ def test_covered_attaches_coverage_and_appends_the_writer_s_areas():
         ("F1", "Asked", "looked at callers", FocusSource.USER),
         ("F2", "Timeouts", "traced timeouts", FocusSource.DERIVED),
     ]
+
+
+def test_covered_ignores_a_report_naming_an_unknown_id():
+    out = covered((_F1,), (_rep("F1", "ok"), _rep("F9", "ghost")), ["a.py"])
+    assert [(a.id, a.coverage) for a in out] == [("F1", "ok")]
+
+
+def test_covered_ignores_derived_reports_when_the_run_already_has_one():
+    held = (_F1, area(id="F2", title="held", source=FocusSource.DERIVED))
+    reports = (_rep("F1", "ok"), _rep("", "new", title="New"))
+    out = covered(held, reports, ["a.py"])
+    assert [(a.id, a.title, a.coverage) for a in out] == [
+        ("F1", "A", "ok"),
+        ("F2", "held", ""),
+    ]

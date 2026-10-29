@@ -419,10 +419,11 @@ def test_a_failed_check_gets_one_repair_turn(tmp_path):
     assert "missing_coverage" in text
 
 
-def test_a_second_failed_check_returns_the_artifact_with_its_errors(tmp_path):
+@pytest.mark.parametrize("rc", [0, 1])
+def test_a_second_failed_check_returns_the_artifact_with_its_errors(tmp_path, rc):
     path = tmp_path / "single.json"
     path.write_text(_UNCOVERED)
-    agent = FakeAgent(path, _UNCOVERED)
+    agent = FakeAgent(path, _UNCOVERED, rc=rc)
     outcome = ingest_artifact(
         str(path), "PROMPT", agent, ReviewArtifact, check=_coverage_check,
     )

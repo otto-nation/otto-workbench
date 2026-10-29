@@ -242,7 +242,9 @@ def with_run_focus(record: ReviewRecord, areas: Sequence[FocusArea]) -> ReviewRe
     return replace(record, focus=tuple(_uncovered(areas)))
 
 
-def coverage_problems(artifact, areas, *, derive: bool) -> tuple[IngestError, ...]:
+def coverage_problems(
+    artifact: Any, areas: Sequence[FocusArea], *, derive: bool,
+) -> tuple[IngestError, ...]:
     """Run-context errors: every area answered, and derived entries only when asked."""
     reports = artifact.focus
     held = {a.id for a in areas}
@@ -274,7 +276,9 @@ def coverage_problems(artifact, areas, *, derive: bool) -> tuple[IngestError, ..
     return tuple(out)
 
 
-def covered(areas, reports, pr_files) -> tuple[FocusArea, ...]:
+def covered(
+    areas: Sequence[FocusArea], reports: Sequence[Any], pr_files: Sequence[str],
+) -> tuple[FocusArea, ...]:
     """`areas` with matching coverage, then derived `id ""` reports when needed.
 
     An area with no report keeps `coverage = ""`. A report naming an unknown

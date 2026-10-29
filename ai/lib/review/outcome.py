@@ -27,8 +27,8 @@ from review.convergence import (
     apply_sticky_skips, change_set, held_nits, new_nit_ids, prior_ids,
 )
 from review.document import covers
-from review.paths import read_review_meta
 from review.focus import with_run_focus
+from review.paths import read_review_meta
 from review.prompt_sections import _is_incremental
 from review.reconcile import record_prior_findings
 from review.record import ReviewRecord

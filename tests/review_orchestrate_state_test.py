@@ -447,6 +447,22 @@ class TestFocusAcrossAResume:
         assert plan == ro.RecoveryPlan()
         assert not path.exists()
 
+    def test_a_resume_with_a_different_focus_says_why(self, ro, tmp_path, capsys):
+        self._write(ro, tmp_path, [user_area("A")])
+        ro._resolve_recovery(self._job(tmp_path, (user_area("B"),)), self._GROUPS)
+        err = capsys.readouterr().err
+        assert "requested focus differs" in err
+        assert "--focus" in err
+
+    def test_a_moved_head_names_the_head(self, ro, tmp_path, capsys):
+        self._write(ro, tmp_path, [user_area("A")])
+        job = self._job(tmp_path, (user_area("A"),))
+        job.pr.head_sha = "other"
+        ro._resolve_recovery(job, self._GROUPS)
+        err = capsys.readouterr().err
+        assert "head moved" in err
+        assert "focus" not in err
+
     def test_a_resume_with_the_same_focus_is_kept(self, ro, tmp_path):
         self._write(ro, tmp_path, [user_area("A")])
         plan = ro._resolve_recovery(self._job(tmp_path, (user_area("A"),)), self._GROUPS)

@@ -35,7 +35,7 @@ from review.artifacts import (
 )
 from review.focus import coverage_problems, covered, needs_derived
 from review.ingest import (
-    ArtifactOutcome, IngestError, IngestRejected, ingest_artifact,
+    ArtifactOutcome, IngestError, IngestErrorKind, IngestRejected, ingest_artifact,
     load_artifact,
 )
 from review.merge import append_findings, merge_records
@@ -482,9 +482,13 @@ def _phase_synthesis(
     )
     if outcome.ok:
         if outcome.errors:
-            core.log.warn(
-                "; ".join(e.render() for e in outcome.errors)
-                + " — uncovered areas are published as not assessed")
+            listed = "; ".join(e.render() for e in outcome.errors)
+            note = (
+                " — only areas with missing_coverage are published as not assessed"
+                if any(e.kind is IngestErrorKind.MISSING_COVERAGE for e in outcome.errors)
+                else ""
+            )
+            core.log.warn(listed + note)
         record = replace(
             outcome.artifact.to_record(
                 checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),

@@ -206,7 +206,7 @@ Module detail: [`review/convergence.py`](ai-libraries.md#reviewconvergencepy),
 ### Steering a review: focus and the related issue
 
 `pr review --focus TEXT` / `pr review --focus-file PATH` name areas the review
-must cover (repeatable; each file is 4 KB, refused when larger). Phase 1
+must cover (repeatable; each text is 4 KB, refused when larger, at most 5). Phase 1
 (scout/holistic) derives 1–3 more; when neither runs, the writing agent does.
 Single, group and synthesis see them — groups only the areas whose paths fall
 in their files, plus pathless ones. Scout and holistic see the requested areas

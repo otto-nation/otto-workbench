@@ -112,4 +112,6 @@ class TestSynthesisFocus:
         assert rec.summary == "s"
         rendered = Path(job.review_file).read_text()
         assert "*Not assessed this round.*" in rendered
-        assert "missing_coverage" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "missing_coverage" in err
+        assert "only areas with missing_coverage are published as not assessed" in err

@@ -24,6 +24,7 @@ from core.trail import Trail
 from agent.registry import PHASES
 from core.phases import Phase
 from review.artifacts import GroupArtifact, declinable_sids
+from review.focus import _uncovered
 from review.ingest import IngestRejected, load_artifact
 from review.merge import merge_records
 from review.paths import read_review_meta
@@ -129,8 +130,10 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
             done.record, group_count=len(group_files), summary_note=REBUILD_SUMMARY,
             include_verdict=states_verdict(meta.mode), file_count=meta.changed_files,
         )
-        record = replace(record, focus=tuple(
-            replace(a, coverage="") for a in existing.record.focus) if existing else ())
+        record = replace(
+            record,
+            focus=tuple(_uncovered(existing.record.focus if existing else ())),
+        )
         # Dated today and carrying no status: a rebuild cannot attest to how the
         # pipeline run ended — this is not one. write_review also writes
         # meta.json (today's rebuild never did) because the header is rendered

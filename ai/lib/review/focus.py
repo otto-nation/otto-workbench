@@ -39,9 +39,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
-from review.artifacts import MAX_DERIVED_FOCUS
+from review.artifacts import MAX_DERIVED_FOCUS, AgentFocus, FocusReport, ReviewArtifact
 from review.budget import MAX_FOCUS_AREAS, MAX_FOCUS_BYTES
 from review.ingest import IngestError, IngestErrorKind
 from review.record import FocusArea, FocusSource, ReviewRecord
@@ -58,11 +57,17 @@ def add_focus_args(parser: argparse.ArgumentParser) -> None:
     """`--focus TEXT` and `--focus-file PATH`, both repeatable (dest `focus`, `focus_file`)."""
     parser.add_argument(
         "--focus", action="append", default=[], metavar="TEXT",
-        help=f"An area the review must cover (repeatable; at most {MAX_FOCUS_BYTES} bytes each)",
+        help=(
+            f"An area the review must cover (repeatable; each text at most "
+            f"{MAX_FOCUS_BYTES} bytes; at most {MAX_FOCUS_AREAS} texts)"
+        ),
     )
     parser.add_argument(
         "--focus-file", action="append", default=[], metavar="PATH",
-        help=f"A file whose contents are a focus area (repeatable; at most {MAX_FOCUS_BYTES} bytes)",
+        help=(
+            f"A file whose contents are a focus area (repeatable; each file at most "
+            f"{MAX_FOCUS_BYTES} bytes; at most {MAX_FOCUS_AREAS} texts)"
+        ),
     )
 
 
@@ -200,7 +205,7 @@ def carry_derived(areas: Sequence[FocusArea], prior: StoredReview | None,
     return _renumber([*user_areas(areas), *carried])
 
 
-def _derived_area(item: Any, pr_files: Sequence[str]) -> FocusArea:
+def _derived_area(item: FocusReport | AgentFocus, pr_files: Sequence[str]) -> FocusArea:
     return FocusArea(
         id="", title=item.title.strip(), rationale=item.rationale.strip(),
         paths=_in_pr(tuple(item.paths), pr_files), source=FocusSource.DERIVED,
@@ -208,7 +213,7 @@ def _derived_area(item: Any, pr_files: Sequence[str]) -> FocusArea:
     )
 
 
-def adopt(areas: Sequence[FocusArea], derived: Sequence[Any],
+def adopt(areas: Sequence[FocusArea], derived: Sequence[FocusReport | AgentFocus],
           pr_files: Sequence[str]) -> tuple[FocusArea, ...]:
     """areas plus up to MAX_DERIVED_FOCUS new DERIVED areas.
 
@@ -243,7 +248,7 @@ def with_run_focus(record: ReviewRecord, areas: Sequence[FocusArea]) -> ReviewRe
 
 
 def coverage_problems(
-    artifact: Any, areas: Sequence[FocusArea], *, derive: bool,
+    artifact: ReviewArtifact, areas: Sequence[FocusArea], *, derive: bool,
 ) -> tuple[IngestError, ...]:
     """Run-context errors: every area answered, and derived entries only when asked."""
     reports = artifact.focus
@@ -277,7 +282,7 @@ def coverage_problems(
 
 
 def covered(
-    areas: Sequence[FocusArea], reports: Sequence[Any], pr_files: Sequence[str],
+    areas: Sequence[FocusArea], reports: Sequence[FocusReport], pr_files: Sequence[str],
 ) -> tuple[FocusArea, ...]:
     """`areas` with matching coverage, then derived `id ""` reports when needed.
 

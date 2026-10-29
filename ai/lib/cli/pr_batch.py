@@ -465,6 +465,17 @@ def _skip_held(rows: list[batch.plan.PlanRow]) -> list[batch.plan.PlanRow]:
     return kept
 
 
+def _warn_focus_without_review(run: Run) -> None:
+    """Warn when --focus was given but some items have no review step planned."""
+    keys = [i.key for i in run.items if not any(
+        s.step is Step.REVIEW and s.status is not StepStatus.SKIPPED for s in i.steps)]
+    if not keys:
+        return
+    core.log.warn(
+        "--focus applies only to review steps; no review is planned for: "
+        + ", ".join(keys) + " — add --select KEY=review to review them")
+
+
 def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox, *, focus) -> _Started:
     """Mint the run from *plan*, open it with `batch.store.create` on *held*, hold its items, commit.
 
@@ -488,8 +499,8 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       no_verify=args.no_verify, focus=focus)
-        if focus and (keys := [i.key for i in run.items if not any(s.step is Step.REVIEW and s.status is not StepStatus.SKIPPED for s in i.steps)]):
-            core.log.warn("--focus applies only to review steps; no review is planned for: " + ", ".join(keys) + " — add --select KEY=review to review them")
+        if focus:
+            _warn_focus_without_review(run)
         session = held.enter_context(batch.store.create(run, inbox=inbox,
                                                         command=f"pr batch run {run.id}"))
         # The id exists only now. From here a batch refused the lock is told
@@ -519,8 +530,10 @@ def _emit_started(run: Run) -> None:
 
 def _cmd_run(args, bin_dir: Path) -> int:
     try:
-        review.focus.operator_areas(focus := review.focus.operator_texts(args))
-    except review.focus.FocusInputError as exc: return _err(str(exc))
+        focus = review.focus.operator_texts(args)
+        review.focus.operator_areas(focus)
+    except review.focus.FocusInputError as exc:
+        return _err(str(exc))
     plan = _plan(args)
     reporter = _Reporter()
     # The run's own lock goes on `held` first, so it is released last. An

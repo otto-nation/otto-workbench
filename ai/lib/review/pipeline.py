@@ -62,7 +62,7 @@ from review.grouping import (
 )
 from review.overflow import run_with_overflow_recovery
 from review.artifacts import MAX_DERIVED_FOCUS, ReviewArtifact, declinable_sids
-from review.ingest import ingest_artifact
+from review.ingest import IngestErrorKind, ingest_artifact
 from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
@@ -221,7 +221,9 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         sys.exit(1)
     if outcome.errors:
         listed = "; ".join(e.render() for e in outcome.errors)
-        core.log.warn(f"{listed} — uncovered areas are published as not assessed")
+        if any(e.kind is IngestErrorKind.MISSING_COVERAGE for e in outcome.errors):
+            listed += " — only areas with missing_coverage are published as not assessed"
+        core.log.warn(listed)
     # A carried decline is believed only for a finding the prior round held (D19).
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
@@ -372,7 +374,8 @@ def run_multi_phase(
             review_type=ReviewType.of(incremental),
             prior_sha=job.preflight.prior_head_sha if incremental else "",
             skipped_groups=sorted(incremental_skips),
-            schema_version=PIPELINE_SCHEMA_VERSION, focus=list(review.focus.user_areas(job.focus)),
+            schema_version=PIPELINE_SCHEMA_VERSION,
+            focus=list(review.focus.user_areas(job.focus)),
         )
         _write_pipeline_state(job, state)
 

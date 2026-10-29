@@ -20,7 +20,7 @@ from review.state import (
 )
 from review.types import Group
 from review_focus_support import user_area
-from review_orchestrate_test import TestCleanupScope as _OrchestrateRun
+from review_orchestrate_support import focus_after_prior
 
 
 def _failures_md(state):
@@ -469,7 +469,7 @@ class TestFocusAcrossAResume:
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
         self._write(ro, review_dir, resumed)
-        return _OrchestrateRun()._focus_after_prior(ro, monkeypatch, tmp_path)
+        return focus_after_prior(ro, monkeypatch, tmp_path)
 
     def test_a_resume_without_focus_keeps_the_run_s_own(self, ro, monkeypatch, tmp_path):
         focus = self._orchestrated_focus(ro, monkeypatch, tmp_path, [user_area("Own", "r")])

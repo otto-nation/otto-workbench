@@ -27,7 +27,7 @@ ${env_section}
 ## Output
 ${output_block}
 
-Answer questions 1 and 2 in `assessment`. Put each thing the detailed reviewers should watch for (question 4) in `flags`, and each cross-module design issue (question 3) in `cross_module`. Only if the direction itself is wrong (question 5), set `direction_concern` to why and to what should be done instead.
+Answer questions 1 and 2 in `assessment`. Put each thing the detailed reviewers should watch for (question 4) in `flags`, and each cross-module design issue (question 3) in `cross_module`. Put item 6 in `focus`. Only if the direction itself is wrong (question 5), set `direction_concern` to why and to what should be done instead.
 Do NOT write per-file findings — those come from the detailed review phase.
 
 ## Turn budget

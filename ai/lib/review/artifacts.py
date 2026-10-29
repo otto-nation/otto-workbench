@@ -39,6 +39,7 @@ from core.serde import HintKind, classify
 from core.text import join_or
 from pr.domains import ReviewVerdict
 from review.grammar import SEVERITY_KEY, FindingIdentity, strip_line_suffix
+from review.budget import DERIVED_AREA_RESERVE_BYTES
 from review.ingest import IngestError, IngestErrorKind
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord, TriageEntry
 from review.store import StoredReview
@@ -335,6 +336,25 @@ def _focus_path_problems(path: str, at: str) -> list[IngestError]:
     return []
 
 
+def _focus_line_bytes(item: AgentFocus) -> int:
+    return len((item.title + item.rationale + "".join(item.paths)).encode())
+
+
+def _focus_item_problems(item: AgentFocus, at: str) -> list[IngestError]:
+    out: list[IngestError] = []
+    if not item.title.strip():
+        out.append(_empty(f"{at}.title", "a focus area's title"))
+    for j, path in enumerate(item.paths):
+        out += _focus_path_problems(path, f"{at}.paths[{j}]")
+    size = _focus_line_bytes(item)
+    if size > DERIVED_AREA_RESERVE_BYTES:
+        out.append(_error(
+            IngestErrorKind.FOCUS_SIZE, at,
+            f"{size} bytes; a derived area is capped at {DERIVED_AREA_RESERVE_BYTES}",
+        ))
+    return out
+
+
 def _agent_focus_problems(
     items: tuple[AgentFocus, ...], at: str, *, lo: int = 1, hi: int = MAX_DERIVED_FOCUS,
 ) -> list[IngestError]:
@@ -345,10 +365,7 @@ def _agent_focus_problems(
             f"{len(items)} focus areas; need {lo}–{hi}",
         ))
     for i, item in enumerate(items):
-        if not item.title.strip():
-            out.append(_empty(f"{at}[{i}].title", "a focus area's title"))
-        for j, path in enumerate(item.paths):
-            out += _focus_path_problems(path, f"{at}[{i}].paths[{j}]")
+        out += _focus_item_problems(item, f"{at}[{i}]")
     return out
 
 
@@ -382,10 +399,7 @@ class ScoutArtifact:
                      SeverityHint.SHOULD_FIX, "The new FooType is handled here but not in bar_handler.go."),
             ),
             no_scrutiny=(QuietFile("pkg/api.pb.go", "generated code, no custom logic"),),
-            focus=(
-                AgentFocus("Retry handling", "Backoff changed", ("pkg/retry.go",)),
-                AgentFocus("Caller contracts", "Every caller assumed a fixed delay", ("pkg/handler.go",)),
-            ),
+            focus=_EXAMPLE_FOCUS,
         )
 
 
@@ -413,10 +427,7 @@ class HolisticArtifact:
                        "The scope is focused.",
             flags=("`retry.go` changes the backoff — check every caller that assumed a fixed delay",),
             cross_module=("`client` and `worker` now disagree on the timeout's unit",),
-            focus=(
-                AgentFocus("Retry handling", "Backoff changed", ("pkg/retry.go",)),
-                AgentFocus("Caller contracts", "Every caller assumed a fixed delay", ("pkg/handler.go",)),
-            ),
+            focus=_EXAMPLE_FOCUS,
         )
 
 
@@ -490,6 +501,14 @@ _EXAMPLE_SUMMARY = (
     "a dropped query error on the hot path."
 )
 _EXAMPLE_VERDICT = f"{ReviewVerdict.CHANGES_REQUESTED.prose} — M1 loses query failures."
+_EXAMPLE_FOCUS = (
+    AgentFocus("Retry handling", "Backoff changed", ("pkg/retry.go",)),
+    AgentFocus("Caller contracts", "Every caller assumed a fixed delay", ("pkg/handler.go",)),
+)
+_SCAN_FOCUS_NOTE = (
+    "1–3 areas this PR most needs reviewed — the risks particular to this "
+    "change, each with a title, a rationale, and the paths it concerns"
+)
 
 
 # ── What the prompt says about each field ───────────────────────────────────
@@ -562,8 +581,7 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "no_scrutiny": "files deep reviewers can skip",
         "direction_concern": "only if the approach itself is wrong: why, and what to do "
                              "instead; \"\" otherwise",
-        "focus": "1–3 areas this PR most needs reviewed — the risks particular to this "
-                 "change, each with a title, a rationale, and the paths it concerns",
+        "focus": _SCAN_FOCUS_NOTE,
     },
     HolisticArtifact: {
         "assessment": "markdown: whether the PR does what it claims, and whether its scope "
@@ -572,8 +590,7 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "cross_module": "cross-module design issues, one per entry",
         "direction_concern": "only if the approach itself is wrong: why, and what to do "
                              "instead; \"\" otherwise",
-        "focus": "1–3 areas this PR most needs reviewed — the risks particular to this "
-                 "change, each with a title, a rationale, and the paths it concerns",
+        "focus": _SCAN_FOCUS_NOTE,
     },
     DisproveVerdict: {
         "id": "a must-fix or should-fix finding ID from the review",

@@ -496,6 +496,7 @@ def _is_incremental(job: ReviewJob) -> bool:
 def _build_focus_section(
     areas: Sequence[FocusArea], *, derive: bool = False, note: str = "",
 ) -> str:
+    """The `## Focus` block: one area per line, then optional note and derive prompt."""
     if not areas and not derive:
         return ""
     lines = ["", "## Focus"]

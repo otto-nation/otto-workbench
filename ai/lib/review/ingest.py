@@ -38,6 +38,7 @@ class IngestErrorKind(StrEnum):
     BAD_LOCATION = "bad_location"
     BAD_CARRY = "bad_carry"
     FOCUS_COUNT = "focus_count"
+    FOCUS_SIZE = "focus_size"
 
 
 @dataclass(frozen=True)

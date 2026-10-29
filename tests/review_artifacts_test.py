@@ -21,6 +21,7 @@ from review.artifacts import (
     HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint, _nested_dataclass,
     as_group_artifact, declinable_sids, output_format,
 )
+from review.budget import DERIVED_AREA_RESERVE_BYTES
 from review.ingest import IngestErrorKind
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.store import StoredReview
@@ -181,6 +182,13 @@ def test_a_focus_path_with_a_line_is_rejected():
     problems = load_strict(ScoutArtifact, doc).problems()
     assert [(p.kind, p.at) for p in problems] == [
         (IngestErrorKind.LINE_IN_PATH, "$.focus[0].paths[0]")]
+
+
+def test_a_derived_area_over_the_reserve_is_rejected():
+    doc = {"focus": [{"title": "t", "rationale": "x" * (DERIVED_AREA_RESERVE_BYTES + 1)}]}
+    problems = load_strict(ScoutArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [
+        (IngestErrorKind.FOCUS_SIZE, "$.focus[0]")]
 
 
 def test_a_trailing_newline_on_a_disprove_id_is_rejected():

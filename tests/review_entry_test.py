@@ -150,8 +150,12 @@ def test_focus_flags_reach_the_flags(cr, reviews_dir, tmp_path, monkeypatch):
     focus_file = tmp_path / "focus.md"
     focus_file.write_text("Retries\nwhy they loop\n")
     seen = {}
-    monkeypatch.setattr(cr, "_run_self_review",
-                        lambda args, argv, gv: _outcome(seen.setdefault("args", args)))
+
+    def capture_args(args, argv, gv):
+        seen["args"] = args
+        return _outcome()
+
+    monkeypatch.setattr(cr, "_run_self_review", capture_args)
     argv = ["--self", "--focus", "a", "--focus-file", str(focus_file)]
 
     assert cr.main(argv) == 0
@@ -175,6 +179,23 @@ def test_an_oversized_focus_file_is_refused_before_any_work(cr, reviews_dir, tmp
     monkeypatch.setattr(pr.context, "resolve_at", refuse("resolve_at"))
 
     assert cr.main(["--self", "--focus-file", str(big)]) == 1
+    assert reached == []
+
+
+def test_an_untitled_focus_is_refused_before_any_work(cr, reviews_dir, monkeypatch):
+    reached = []
+
+    def refuse(name):
+        def call(*_a, **_kw):
+            reached.append(name)
+            raise AssertionError(f"{name} reached")
+        return call
+
+    monkeypatch.setattr(review.run, "run_self_review", refuse("run_self_review"))
+    monkeypatch.setattr(cli.locks, "claim_declared", refuse("claim_declared"))
+    monkeypatch.setattr(pr.context, "resolve_at", refuse("resolve_at"))
+
+    assert cr.main(["--self", "--focus", "###"]) == 1
     assert reached == []
 
 

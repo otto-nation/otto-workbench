@@ -207,8 +207,12 @@ def _orchestrate_args(argv, monkeypatch, tmp_path):
     import review.orchestrate
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state-root"))
     seen = {}
-    monkeypatch.setattr(review.orchestrate, "run_orchestrate",
-                        lambda trail, args, repo, log: seen.setdefault("args", args) and 0)
+
+    def capture_args(trail, args, repo, log):
+        seen["args"] = args
+        return 0
+
+    monkeypatch.setattr(review.orchestrate, "run_orchestrate", capture_args)
     cli.review_orchestrate.main(argv)
     return seen["args"]
 

@@ -26,7 +26,6 @@ import functools
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import core.serde
 import config.workbench_config
@@ -35,11 +34,6 @@ from gh.types import PRContext, PRMetadata
 from core.phases import Effort, Mode, Phase
 from pr.domains import ReviewStatus
 from pr.state import now_iso
-
-# For annotations only: `review.record` imports this module, so a runtime
-# import would close the cycle.
-if TYPE_CHECKING:
-    from review.record import FocusArea
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────
@@ -591,7 +585,9 @@ class ReviewJob:
     # would close the cycle.
     prior: "StoredReview | None" = None
     # The run's areas, F-numbered; set by `review.orchestrate` and after
-    # phase 1 — `review.focus`.
+    # phase 1 — `review.focus`. Annotated as a string for the reason `prior`
+    # is: `review.record` imports this module, so naming `FocusArea` here
+    # would close the cycle.
     focus: "tuple[FocusArea, ...]" = ()
     mode: Mode = Mode.PR
     generator_version: str = ""

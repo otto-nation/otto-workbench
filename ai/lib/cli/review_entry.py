@@ -474,10 +474,12 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
         core.log.error("--no-post and --post are mutually exclusive")
         return 1
 
-    # Every --focus-file is read and checked here, before either flow spends
-    # anything: an oversized or unreadable file is refused, never truncated.
+    # Every --focus / --focus-file is read and checked here, before either
+    # flow spends anything: oversized, unreadable, or untitled text is refused,
+    # never truncated.
     try:
         parsed.focus_texts = review.focus.operator_texts(parsed)
+        review.focus.operator_areas(parsed.focus_texts)
     except review.focus.FocusInputError as exc:
         core.log.error(str(exc))
         return 1

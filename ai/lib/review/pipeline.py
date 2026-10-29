@@ -206,6 +206,8 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     outcome = ingest_artifact(
         output, sent, invoke, ReviewArtifact,
         diagnose=lambda: diagnose_missing_output(job.session_log, output),
+        check=lambda a: review.focus.coverage_problems(
+            a, job.focus, derive=review.focus.needs_derived(job.focus)),
     )
     if not outcome.ok:
         if outcome.diagnosis is not None:
@@ -217,10 +219,15 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
             core.log.error(f"review agent output rejected: {listed}")
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
+    if outcome.errors:
+        listed = "; ".join(e.render() for e in outcome.errors)
+        core.log.warn(f"{listed} — uncovered areas are published as not assessed")
     # A carried decline is believed only for a finding the prior round held (D19).
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
     )
+    record = replace(record, focus=review.focus.covered(
+        job.focus, outcome.artifact.focus, [f["path"] for f in job.pr.files]))
     if _is_incremental(job):
         record = drop_out_of_delta_nits(record, job.preflight.delta_files, prior_ids(job)).record
     if _should_disprove(job, disprove):

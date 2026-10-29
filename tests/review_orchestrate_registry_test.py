@@ -458,6 +458,18 @@ def test_a_group_sees_only_its_areas_and_pathless_ones():
     assert "OtherFile" not in result
 
 
+@pytest.mark.parametrize("phase, extra", [
+    (Phase.SINGLE, {}),
+    (Phase.SYNTHESIS, {"group_count": 2, "merged_content": "x"}),
+])
+def test_a_writer_prompt_with_no_areas_shows_no_covering_example(phase, extra):
+    job = _make_job(_make_preflight())
+    job.focus = ()
+    result = review.registry.build_prompt(phase, job, max_turns=15, **extra)
+    assert '"id": "F1"' not in result
+    assert '"id": ""' in result
+
+
 def test_the_scout_sees_only_requested_areas():
     job = _make_job(_make_preflight())
     job.focus = (

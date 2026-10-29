@@ -11,11 +11,13 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from review.budget import MAX_FOCUS_AREAS, MAX_FOCUS_BYTES
+from review.artifacts import FocusReport, ReviewArtifact
 from review.focus import (
     FocusInputError, add_focus_args, adopt, areas_for_group, carry_derived,
-    focus_changed, needs_derived, operator_areas, operator_texts, resolve_user_areas,
-    user_areas, with_run_focus,
+    coverage_problems, covered, focus_changed, needs_derived, operator_areas,
+    operator_texts, resolve_user_areas, user_areas, with_run_focus,
 )
+from review.ingest import IngestErrorKind
 from review.record import FocusSource
 from review.store import StoredReview
 from review.types import ReviewMeta
@@ -277,3 +279,46 @@ def test_an_agent_s_focus_is_kept():
 def test_an_empty_record_gets_the_run_s_areas():
     out = with_run_focus(record(), [area(title="run", coverage="stale")])
     assert [(a.title, a.coverage) for a in out.focus] == [("run", "")]
+
+
+# ── coverage_problems / covered ──────────────────────────────────────────────
+
+_F1 = area(id="F1", title="A", source=FocusSource.USER)
+_F2 = area(id="F2", title="B", source=FocusSource.USER)
+_BOTH = (_F1, _F2)
+
+
+def _art(*reports):
+    return ReviewArtifact(summary="s", focus=tuple(reports))
+
+
+def _rep(fid, coverage="checked", **kw):
+    return FocusReport(fid, coverage, **kw)
+
+
+@pytest.mark.parametrize("reports, derive, kind", [
+    ((_rep("F1"), _rep("F2")), False, None),
+    ((_rep("F1"),), False, IngestErrorKind.MISSING_COVERAGE),
+    ((_rep("F1"), _rep("F2"), _rep("F9")), False, IngestErrorKind.UNKNOWN_FOCUS),
+    ((_rep("F1"), _rep("F2")), True, IngestErrorKind.FOCUS_COUNT),
+    ((_rep("F1"), _rep("F2"), _rep("", title="x")), False, IngestErrorKind.FOCUS_COUNT),
+    ((_rep("F1"), _rep("F2"), _rep("", title="x"), _rep("", title="y")), True, None),
+], ids=["complete", "missing-F2", "unknown-F9", "derive-none", "no-derive-one", "derive-two"])
+def test_coverage_problems(reports, derive, kind):
+    errors = coverage_problems(_art(*reports), _BOTH, derive=derive)
+    if kind is None:
+        assert errors == ()
+    else:
+        assert errors[0].kind is kind
+
+
+def test_covered_attaches_coverage_and_appends_the_writer_s_areas():
+    reports = (
+        _rep("F1", "looked at callers"),
+        _rep("", "traced timeouts", title="Timeouts", paths=("a.py",)),
+    )
+    out = covered((user_area("Asked"),), reports, ["a.py"])
+    assert [(a.id, a.title, a.coverage, a.source) for a in out] == [
+        ("F1", "Asked", "looked at callers", FocusSource.USER),
+        ("F2", "Timeouts", "traced timeouts", FocusSource.DERIVED),
+    ]

@@ -37,3 +37,6 @@ class Derived:
 def derived_report(title, rationale="", paths=(), coverage=""):
     """A derived focus entry as a phase reports it, with `paths` as a tuple."""
     return Derived(title=title, rationale=rationale, paths=tuple(paths), coverage=coverage)
+
+
+DERIVED_FOCUS = [{"id": "", "title": "Retry", "rationale": "r", "paths": [], "coverage": "checked"}]

@@ -217,6 +217,7 @@ class ReviewArtifact:
     triage: tuple[TriageEntry, ...] = ()
     prior_findings: tuple[LedgerLine, ...] = ()
     verdict: str = ""
+    focus: tuple[FocusReport, ...] = ()
 
     def problems(self) -> tuple[IngestError, ...]:
         summary = [] if self.summary.strip() else [_empty("$.summary", "the summary")]
@@ -225,6 +226,7 @@ class ReviewArtifact:
             + _triage_problems(self.triage, "$.triage")
             + _findings_problems(self.findings, "$.findings")
             + _ledger_problems(self.prior_findings, "$.prior_findings")
+            + _focus_report_problems(self.focus, "$.focus")
         )
 
     def to_record(self, *, checkbox: bool, declinable: frozenset[str]) -> ReviewRecord:
@@ -242,6 +244,7 @@ class ReviewArtifact:
         full = cls(
             summary=_EXAMPLE_SUMMARY, findings=_EXAMPLE_FINDINGS, triage=_EXAMPLE_TRIAGE,
             prior_findings=_EXAMPLE_LEDGER, verdict=_EXAMPLE_VERDICT,
+            focus=_EXAMPLE_FOCUS_REPORT,
         )
         return full if mode is Mode.PR else replace(full, triage=(), verdict="")
 
@@ -311,6 +314,44 @@ class Lead:
 class QuietFile:
     path: str
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class FocusReport:
+    id: str
+    coverage: str
+    title: str = ""
+    rationale: str = ""
+    paths: tuple[str, ...] = ()
+
+
+_FOCUS_ID_RE = re.compile(r"^F[1-9]\d*$")
+
+
+def _focus_report_problems(items: tuple[FocusReport, ...], at: str) -> list[IngestError]:
+    out: list[IngestError] = []
+    ids: list[str] = []
+    derived = 0
+    for i, item in enumerate(items):
+        loc = f"{at}[{i}]"
+        if not item.coverage.strip():
+            out.append(_empty(f"{loc}.coverage", "a focus entry's coverage"))
+        empty_id = item.id == ""
+        if empty_id:
+            derived += 1
+        if empty_id and not item.title.strip():
+            out.append(_empty(f"{loc}.title", "a focus area's title"))
+        elif not empty_id and _FOCUS_ID_RE.fullmatch(item.id):
+            ids.append(item.id)
+        elif not empty_id:
+            out.append(_error(IngestErrorKind.UNKNOWN_FOCUS, f"{loc}.id",
+                              f"{item.id!r} is not a focus id (F1…) or \"\""))
+        out += [e for j, p in enumerate(item.paths)
+                for e in _focus_path_problems(p, f"{loc}.paths[{j}]")]
+    if derived > MAX_DERIVED_FOCUS:
+        out.append(_error(IngestErrorKind.FOCUS_COUNT, at,
+                          f"{derived} derived areas; at most {MAX_DERIVED_FOCUS}"))
+    return out + _duplicates(ids, at)
 
 
 @dataclass(frozen=True)
@@ -505,6 +546,11 @@ _EXAMPLE_FOCUS = (
     AgentFocus("Retry handling", "Backoff changed", ("pkg/retry.go",)),
     AgentFocus("Caller contracts", "Every caller assumed a fixed delay", ("pkg/handler.go",)),
 )
+_EXAMPLE_FOCUS_REPORT = (
+    FocusReport("F1", "Checked every caller of `retry()`; M1 is the one that drops the error."),
+    FocusReport("", "Traced both timeouts; they now agree.", title="Timeout units",
+                rationale="`client` and `worker` changed together.", paths=("pkg/client.go",)),
+)
 _SCAN_FOCUS_NOTE = (
     "1–3 areas this PR most needs reviewed — the risks particular to this "
     "change, each with a title, a rationale, and the paths it concerns"
@@ -558,6 +604,8 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "triage": "a PR review: one entry per changed file; a self-review: []",
         "prior_findings": _LEDGER_NOTE,
         "verdict": "a PR review: the verdict the task asks for, then why; a self-review: \"\"",
+        "focus": "one entry for EVERY area in the prompt's Focus section, by its `id`; "
+                  "add your own with id \"\" only where that section asks you to",
     },
     Lead: {
         "path": "the file the lead is about",
@@ -601,6 +649,11 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "verdicts": "one per finding you challenged; a finding left out survives",
     },
 }
+FIELD_NOTES[FocusReport] = {
+    "id": "the area's id from the Focus section, or \"\" for one you add",
+    "coverage": "what you checked and what you found, citing finding IDs",
+    **{k: FIELD_NOTES[AgentFocus][k] for k in ("title", "rationale", "paths")},
+}
 
 # Fields an example leaves at their default on purpose: showing a filled-in
 # direction concern would invite one on every run.
@@ -633,6 +686,11 @@ CARRY_FIELDS: dict[type, frozenset[str]] = {
     GroupArtifact: frozenset({"prior_findings"}),
     ReviewArtifact: frozenset({"prior_findings"}),
 }
+DERIVE_FIELDS: dict[type, frozenset[str]] = {FocusReport: frozenset({"title", "rationale", "paths"})}
+
+
+def _focus_example(entries, *, derive_focus, has_areas):
+    return tuple(e for e in entries if (e.id == "" and derive_focus) or (e.id != "" and has_areas))
 
 
 def _shown_fields(kind: type, hidden: dict[type, frozenset[str]]) -> list:
@@ -662,14 +720,21 @@ def _field_guide(kind: type, hidden: dict[type, frozenset[str]], prefix: str = "
     return lines
 
 
-def output_format(kind: type, mode: Mode, *, rereview: bool) -> str:
+def output_format(kind: type, mode: Mode, *, rereview: bool,
+                  derive_focus: bool = False, has_areas: bool = True) -> str:
     """What a prompt's Output section shows: the example, then every field's meaning.
 
     `rereview` is whether the prompt carries prior findings to account for;
     without it the carry fields (`CARRY_FIELDS`) are neither shown nor explained.
+    `has_areas` defaults to true so a format rendered outside a run shows the
+    covering example.
     """
-    hidden = {} if rereview else CARRY_FIELDS
-    shown = _example_dict(kind, core.serde.to_dict(kind.example(mode)), hidden)
+    hidden = {**(CARRY_FIELDS if not rereview else {}), **({} if derive_focus else DERIVE_FIELDS)}
+    example = kind.example(mode)
+    if kind is ReviewArtifact:
+        example = replace(example, focus=_focus_example(
+            example.focus, derive_focus=derive_focus, has_areas=has_areas))
+    shown = _example_dict(kind, core.serde.to_dict(example), hidden)
     return (
         "The file holds ONE JSON document — nothing before or after it, no code fence, "
         "no commentary — shaped like this example, with your own content in place of "

@@ -43,6 +43,7 @@ from typing import Any
 
 from review.artifacts import MAX_DERIVED_FOCUS
 from review.budget import MAX_FOCUS_AREAS, MAX_FOCUS_BYTES
+from review.ingest import IngestError, IngestErrorKind
 from review.record import FocusArea, FocusSource, ReviewRecord
 from review.store import StoredReview
 
@@ -239,3 +240,51 @@ def with_run_focus(record: ReviewRecord, areas: Sequence[FocusArea]) -> ReviewRe
     if record.focus:
         return record
     return replace(record, focus=tuple(_uncovered(areas)))
+
+
+def coverage_problems(artifact, areas, *, derive: bool) -> tuple[IngestError, ...]:
+    """Run-context errors: every area answered, and derived entries only when asked."""
+    reports = artifact.focus
+    held = {a.id for a in areas}
+    answered = {r.id for r in reports if r.id}
+    out: list[IngestError] = []
+    for area in areas:
+        if area.id not in answered:
+            out.append(IngestError(
+                IngestErrorKind.MISSING_COVERAGE, 0,
+                f"{area.id} ({area.title}) has no entry", at="$.focus",
+            ))
+    for i, report in enumerate(reports):
+        if report.id and report.id not in held:
+            out.append(IngestError(
+                IngestErrorKind.UNKNOWN_FOCUS, 0,
+                f"{report.id} names no area", at=f"$.focus[{i}].id",
+            ))
+    derived = sum(1 for r in reports if r.id == "")
+    if derive and derived == 0:
+        out.append(IngestError(
+            IngestErrorKind.FOCUS_COUNT, 0,
+            "add 1–3 areas of your own", at="$.focus",
+        ))
+    if not derive and derived:
+        out.append(IngestError(
+            IngestErrorKind.FOCUS_COUNT, 0,
+            "this review was not asked to add areas", at="$.focus",
+        ))
+    return tuple(out)
+
+
+def covered(areas, reports, pr_files) -> tuple[FocusArea, ...]:
+    """`areas` with matching coverage, then derived `id ""` reports when needed.
+
+    An area with no report keeps `coverage = ""`. A report naming an unknown
+    id is ignored. Derived reports are adopted only when `needs_derived(areas)`.
+    """
+    by_id = {r.id: r for r in reports if r.id}
+    attached = tuple(
+        replace(a, coverage=by_id[a.id].coverage if a.id in by_id else "")
+        for a in areas
+    )
+    if not needs_derived(areas):
+        return attached
+    return adopt(attached, [r for r in reports if r.id == ""], pr_files)

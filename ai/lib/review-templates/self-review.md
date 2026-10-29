@@ -31,6 +31,7 @@ Rules:
 - A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it
 - On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open
 - On a re-review — a `## Prior review` section is present below — fill `prior_findings` as it asks
+- Fill `focus` with one entry per area in the Focus section: what you checked and what you found, citing finding IDs. If the Focus section asks, add 1–3 areas of your own.
 
 ## Output
 ${output_block}

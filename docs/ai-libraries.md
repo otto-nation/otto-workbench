@@ -1580,7 +1580,9 @@ artifact's own `problems()` (`review.artifacts`). Ingest is strict. Invalid
 JSON (named by line and column), a schema violation or a malformed entry (named
 by JSON path) is an `IngestError`, never a silent repair. `ingest_artifact`
 gives the agent one turn to fix a rejection and returns an `ArtifactOutcome`;
-a second rejection is an agent failure, handled as failures already are.
+a second schema rejection is an agent failure, handled as failures already are.
+A `check` is the run's context — what the artifact must answer that its own
+fields cannot say. A second failed check still returns the artifact.
 
 `review.md` is rendered from the record and never parsed back; nothing here
 reads markdown.

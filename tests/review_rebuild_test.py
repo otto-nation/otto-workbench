@@ -14,6 +14,8 @@ from core.phases import Phase  # noqa: E402
 from review.paths import FILENAME_PRIOR_RECORD, ReviewMeta, read_review_meta, write_review_meta  # noqa: E402
 from review.record import Disposition, load_record, save_record  # noqa: E402
 from review.rebuild import rebuild  # noqa: E402
+from review.record import FocusSource  # noqa: E402
+from review_focus_support import area  # noqa: E402
 from review_record_support import finding, record, store_record  # noqa: E402
 
 
@@ -135,6 +137,31 @@ def test_a_rejected_group_file_is_skipped_and_the_rest_rebuilt(tmp_path):
     (tmp_path / "meta.json").write_text(json.dumps({"repo": "o/r"}))
     assert rebuild(tmp_path, "1", script="test") == 0
     assert [f.id for f in load_record(tmp_path).visible] == ["M1"]
+
+
+def test_a_rebuild_carries_focus(tmp_path):
+    held = tmp_path / "held"
+    held.mkdir()
+    (held / "group-1.json").write_text(
+        json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]}),
+    )
+    store_record(
+        held / "review.md",
+        record(focus=(area(id="F1", title="Asked", source=FocusSource.USER, coverage="old"),)),
+        ReviewMeta(repo="o/r"),
+    )
+    assert rebuild(held, "1", script="test") == 0
+    rec = load_record(held)
+    assert [(a.id, a.title, a.coverage) for a in rec.focus] == [("F1", "Asked", "")]
+
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    (bare / "group-1.json").write_text(
+        json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]}),
+    )
+    (bare / "meta.json").write_text(json.dumps({"repo": "o/r"}))
+    assert rebuild(bare, "1", script="test") == 0
+    assert load_record(bare).focus == ()
 
 
 def test_a_rebuild_honours_only_the_declines_prior_json_allows(tmp_path):

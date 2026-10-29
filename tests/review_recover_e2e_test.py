@@ -49,11 +49,15 @@ _FOCUS = [{"title": "Retry", "rationale": "why", "paths": ["a/one.py"]}]
 _SCOUT_DOC = json.dumps({"leads": [], "focus": _FOCUS})
 _HOLISTIC_DOC = json.dumps({"assessment": "ok", "focus": _FOCUS})
 _DISPROVE_DOC = json.dumps({"verdicts": []})
-_REVIEW_BODY = json.dumps({"summary": "Synthesized.", "verdict": "Approve"})
+_REVIEW_BODY = json.dumps({
+    "summary": "Synthesized.", "verdict": "Approve",
+    "focus": [{"id": "", "title": "Retry", "rationale": "r", "paths": [], "coverage": "checked"}],
+})
 _REVIEW_WITH_FINDING = json.dumps({
     "summary": "Synthesized.",
     "findings": [{"id": "M1", "path": "a/one.py", "line": 1, "body": "bug"}],
     "verdict": "Request changes",
+    "focus": [{"id": "", "title": "Retry", "rationale": "r", "paths": [], "coverage": "checked"}],
 })
 
 _FILES = ("a/one.py", "a/two.py", "b/three.py", "b/four.py")

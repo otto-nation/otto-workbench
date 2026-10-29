@@ -282,3 +282,43 @@ def test_the_merged_record_is_shown_to_synthesis_as_a_group_artifact():
     assert all(f.sid for f in shown.findings)
     assert shown.prior_findings == record.ledger
     assert load_strict(GroupArtifact, json.loads(example_json(shown))).problems() == ()
+
+
+@pytest.mark.parametrize("doc, kind, at", [
+    ({"summary": "s", "focus": [{"id": "F1", "coverage": ""}]},
+     IngestErrorKind.EMPTY_FIELD, "$.focus[0].coverage"),
+    ({"summary": "s", "focus": [{"id": "X1", "coverage": "c"}]},
+     IngestErrorKind.UNKNOWN_FOCUS, "$.focus[0].id"),
+    ({"summary": "s", "focus": [{"id": "", "coverage": "c"}]},
+     IngestErrorKind.EMPTY_FIELD, "$.focus[0].title"),
+    ({"summary": "s", "focus": [{"id": "F1", "coverage": "a"}, {"id": "F1", "coverage": "b"}]},
+     IngestErrorKind.DUPLICATE_ID, "$.focus"),
+    ({"summary": "s", "focus": [{"id": "", "title": "t", "coverage": "c"}] * 4},
+     IngestErrorKind.FOCUS_COUNT, "$.focus"),
+])
+def test_each_focus_report_rejection_names_its_kind_and_place(doc, kind, at):
+    problems = load_strict(ReviewArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [(kind, at)]
+
+
+def test_a_format_that_does_not_ask_for_areas_hides_the_derive_fields():
+    text = output_format(ReviewArtifact, Mode.PR, rereview=False)
+    doc = _shown_document(text)
+    assert doc["focus"]
+    assert all(set(e) == {"id", "coverage"} and e["id"] for e in doc["focus"])
+    assert "`focus[].title`" not in text
+
+
+def test_a_format_that_asks_for_areas_shows_one():
+    text = output_format(ReviewArtifact, Mode.PR, rereview=False, derive_focus=True)
+    doc = _shown_document(text)
+    blank = [e for e in doc["focus"] if e["id"] == ""]
+    assert blank and "title" in blank[0]
+
+
+def test_a_format_with_no_areas_shows_no_covering_entry():
+    text = output_format(
+        ReviewArtifact, Mode.PR, rereview=False, derive_focus=True, has_areas=False,
+    )
+    doc = _shown_document(text)
+    assert all(not e["id"] for e in doc["focus"])

@@ -11,11 +11,13 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from review.artifacts import GroupArtifact
+from review.artifacts import GroupArtifact, ReviewArtifact
+from review.focus import coverage_problems
 from review.ingest import (
     REPAIR_MAX_TURNS, IngestError, IngestErrorKind, IngestRejected,
     ingest_artifact, load_artifact,
 )
+from review_focus_support import DERIVED_FOCUS, user_area
 
 
 class FakeAgent:
@@ -312,6 +314,7 @@ GOOD_REVIEW_JSON = json.dumps({
         {"id": "N2", "path": "b.py", "line": 1, "body": "y"},
     ],
     "verdict": "Approve.",
+    "focus": DERIVED_FOCUS,
 })
 BAD_REVIEW_JSON = json.dumps({
     "summary": "Looks good.",
@@ -393,3 +396,45 @@ def test_clean_output_spends_no_repair_turn(tmp_path):
     agent = FakeAgent(path, GOOD_JSON)
     outcome = ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
     assert outcome.ok and not outcome.repaired and agent.calls == []
+
+
+_AREA = (user_area("Retry"),)
+_UNCOVERED = json.dumps({"summary": "s"})
+_COVERED = json.dumps({"summary": "s", "focus": [{"id": "F1", "coverage": "checked"}]})
+
+
+def _coverage_check(artifact):
+    return coverage_problems(artifact, _AREA, derive=False)
+
+
+def test_a_failed_check_gets_one_repair_turn(tmp_path):
+    path = tmp_path / "single.json"
+    path.write_text(_UNCOVERED)
+    agent = FakeAgent(path, _COVERED)
+    outcome = ingest_artifact(
+        str(path), "PROMPT", agent, ReviewArtifact, check=_coverage_check,
+    )
+    assert outcome.ok and outcome.repaired and outcome.errors == ()
+    (text, _), = agent.calls
+    assert "missing_coverage" in text
+
+
+def test_a_second_failed_check_returns_the_artifact_with_its_errors(tmp_path):
+    path = tmp_path / "single.json"
+    path.write_text(_UNCOVERED)
+    agent = FakeAgent(path, _UNCOVERED)
+    outcome = ingest_artifact(
+        str(path), "PROMPT", agent, ReviewArtifact, check=_coverage_check,
+    )
+    assert outcome.ok and outcome.repaired and outcome.artifact is not None
+    assert outcome.errors[0].kind is IngestErrorKind.MISSING_COVERAGE
+
+
+def test_a_second_schema_failure_is_still_a_rejection(tmp_path):
+    path = tmp_path / "single.json"
+    path.write_text(_UNCOVERED)
+    agent = FakeAgent(path, json.dumps({"summary": ""}))
+    outcome = ingest_artifact(
+        str(path), "PROMPT", agent, ReviewArtifact, check=_coverage_check,
+    )
+    assert not outcome.ok

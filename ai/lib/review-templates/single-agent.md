@@ -14,6 +14,7 @@ Must-fix and should-fix findings must carry `evidence`: the lines of the referen
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
 On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
 Set `verdict` to one of ${verdict_options}, then why. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead.
+Fill `focus` with one entry per area in the Focus section: what you checked and what you found, citing finding IDs. If the Focus section asks, add 1–3 areas of your own.
 
 ## Turn budget
 You have ${max_turns} turns (each turn can include multiple parallel tool calls).${omitted_guidance} Write a complete review file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify Must-fix and Should-fix claims against the source and rewrite the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.

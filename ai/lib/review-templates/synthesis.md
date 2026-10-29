@@ -24,8 +24,9 @@ ${focus_section}
 6. Check for cross-file concerns — do findings in one group imply issues in files from another group? Deduplicate: if the same issue appears in multiple group reviews (same file, same concern), keep the most complete version and drop the rest
 7. If the merged findings carry `prior_findings`, copy every entry into your output unchanged — they record which prior findings the group agents found fixed, and they are stripped before the review is published. Add entries only where a section below asks you to
 8. Add any cross-cutting findings
-9. Set `verdict` to one of ${verdict_options}, then why — idiom findings do not affect it. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead
-10. Save the COMPLETE review file as described under ## Output below
+9. Fill `focus` with one entry per area in the Focus section: what you checked and what you found, citing finding IDs. If the Focus section asks, add 1–3 areas of your own.
+10. Set `verdict` to one of ${verdict_options}, then why — idiom findings do not affect it. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead
+11. Save the COMPLETE review file as described under ## Output below
 
 ## Output
 ${output_block}

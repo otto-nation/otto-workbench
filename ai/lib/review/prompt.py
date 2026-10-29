@@ -871,7 +871,7 @@ def _prompt_synthesis(job, common, extra, output):
     """
     b = PromptBuilder(common)
     b.shared(
-        "pr_header", "state_context", "reply_threads", "max_turns",
+        "pr_header", "state_context", "reply_threads", "issue_section", "max_turns",
     )
     _identify_review(b, job, pr_title=job.pr.title)
     b.set("repo", job.repo)

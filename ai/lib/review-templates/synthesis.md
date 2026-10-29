@@ -12,6 +12,7 @@ ${merged_content}
 ${preflight_data}
 ${delta_section}
 ${reviews_section}
+${issue_section}
 
 ## Task
 1. Take `triage` from the merged findings above

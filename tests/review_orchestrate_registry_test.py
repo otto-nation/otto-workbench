@@ -5,6 +5,8 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 # The module the `ro` fixture returns, imported so bin/local/select-pytest maps
@@ -410,3 +412,15 @@ def test_the_synthesis_prompt_shows_the_carry_fields_only_on_a_re_review():
     again = build(job, common, extra, "/tmp/synthesis.json").builder.vars["output_block"]
     assert "`findings[].sid`" not in first and "`prior_findings`" not in first
     assert "`findings[].sid`" in again and "`prior_findings`" in again
+
+
+@pytest.mark.parametrize("mode", [Mode.PR, Mode.SELF])
+def test_the_synthesis_prompt_carries_the_issue_section(mode):
+    job = _make_job(_make_preflight(), mode=mode)
+    job.issue_link = "https://x/1"
+    job.issue_context = "BODY-MARKER"
+    result = review.registry.build_prompt(
+        Phase.SYNTHESIS, job, max_turns=15, group_count=2, merged_content="x",
+    )
+    assert "https://x/1" in result
+    assert "BODY-MARKER" in result

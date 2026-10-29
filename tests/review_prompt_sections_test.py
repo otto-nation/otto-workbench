@@ -14,9 +14,10 @@ if str(LIB_DIR) not in sys.path:
 from review_threads_support import _no_published_summary  # noqa: E402
 from review.reply_threads import ReplyThreads
 from review.types import ReplyState
+from review.budget import MAX_ISSUE_CONTEXT_BYTES
 from review.prompt_sections import (
-    _build_reply_threads_section, _format_general_comments,
-    _format_review_comments, _format_reviews,
+    _build_issue_section, _build_reply_threads_section,
+    _format_general_comments, _format_review_comments, _format_reviews,
 )
 
 
@@ -193,3 +194,36 @@ class TestFormatGeneralComments:
 
     def test_invalid_json(self):
         assert _format_general_comments("not json") == "_None._"
+
+
+# ── _build_issue_section ─────────────────────────────────────────────────────
+
+class TestBuildIssueSection:
+    def test_link_and_body_render_together(self):
+        section = _build_issue_section(
+            "https://x/1", '{"title": "T", "body": "B"}',
+        )
+        assert "https://x/1" in section
+        assert '{"title": "T", "body": "B"}' in section
+        assert section.index("https://x/1") < section.index(
+            '{"title": "T", "body": "B"}',
+        )
+
+    def test_link_alone(self):
+        assert _build_issue_section("https://x/1", "") == (
+            "\n## Related issue\nhttps://x/1"
+        )
+
+    def test_body_alone(self):
+        assert _build_issue_section("", "BODY") == "\n## Related issue\nBODY"
+
+    def test_nothing_is_empty(self):
+        assert _build_issue_section("", "") == ""
+
+    def test_a_long_body_is_truncated_and_says_so(self):
+        link = "https://x/1"
+        body = "x" * (20 * 1024)
+        section = _build_issue_section(link, body)
+        assert body[:MAX_ISSUE_CONTEXT_BYTES] in section
+        assert body[:MAX_ISSUE_CONTEXT_BYTES + 1] not in section
+        assert f"read the rest at {link}" in section

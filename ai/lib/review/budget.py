@@ -175,6 +175,10 @@ FILE_CONTENT_MIN_SIZE = 5120
 # why the cap is per-body rather than on the section they land in.
 MAX_REVIEW_BODY_LEN = 200
 
+# The issue body is fixed overhead in every phase's prompt, so a long ticket
+# cannot spend the budget the diff is meant to fill.
+MAX_ISSUE_CONTEXT_BYTES = 8_192
+
 # How many paths either file list in the delta section spells out before it
 # summarises the rest. A list is orientation, not content — the diff above it is
 # what the agent reviews — so the tail costs bytes no reader spends. Both lists

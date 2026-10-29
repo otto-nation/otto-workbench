@@ -27,7 +27,8 @@ from agent.types import EFFORT_PRESETS
 from gh.types import FILE_STAT_FMT, PRContext, PRMetadata
 from core.phases import Effort
 from review.budget import (
-    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_REVIEW_BODY_LEN, MIN_DELTA_DIFF_BYTES,
+    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_ISSUE_CONTEXT_BYTES,
+    MAX_REVIEW_BODY_LEN, MIN_DELTA_DIFF_BYTES,
 )
 from review.collect import scope_diff, truncate_diff
 from review.reply_threads import ReplyThreads
@@ -491,8 +492,24 @@ def _is_incremental(job: ReviewJob) -> bool:
 
 
 def _build_issue_section(issue_link: str, issue_context: str) -> str:
+    if not issue_link and not issue_context:
+        return ""
+    parts = ["\n## Related issue"]
     if issue_link:
-        return f"\n## Related issue\n{issue_link}"
-    if issue_context:
-        return f"\n## Related issue\n{issue_context}"
-    return ""
+        parts.append(issue_link)
+    if not issue_context:
+        return "\n".join(parts)
+    raw = issue_context.encode()
+    if len(raw) > MAX_ISSUE_CONTEXT_BYTES:
+        rest = (
+            f"read the rest at {issue_link}"
+            if issue_link else "…the rest in the tracker"
+        )
+        issue_context = (
+            f"{raw[:MAX_ISSUE_CONTEXT_BYTES].decode(errors='ignore')}"
+            f"\n\n_(issue truncated at 8 KB — {rest})_"
+        )
+    if issue_link:
+        parts.append("")
+    parts.append(issue_context)
+    return "\n".join(parts)

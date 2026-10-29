@@ -125,9 +125,11 @@ def run_pr_review(
     pr_head = pr_meta.get("headRefName", "")
     pr_body = pr_meta.get("body", "")
 
-    # Detected here because the lookup needs `repo_root` above and `pr_head`
-    # from the metadata just fetched. Asking the operator for one is a separate
-    # step, deferred until after the gates below — see the prompt further down.
+    # Loaded here because detection needs `repo_root` above and `pr_head` from
+    # the metadata just fetched, and because a given `--issue` link's body is
+    # fetched through the same provider. Asking the operator for a link is a
+    # separate step, deferred until after the gates below — see the prompt
+    # further down.
     provider = review.issue.load_issue_provider(repo_root)
     issue = review.issue.resolve_issue_context(
         provider, link=flags.issue_link, repo=repo, branch=pr_head, pr_body=pr_body,

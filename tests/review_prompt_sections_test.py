@@ -240,4 +240,5 @@ class TestBuildIssueSection:
         body = ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) + euro
         section = _build_issue_section("", body)
         assert euro not in section
+        assert "\ufffd" not in section
         assert ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) in section

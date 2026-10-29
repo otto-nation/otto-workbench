@@ -584,8 +584,8 @@ def _github_linked_issue(link: str) -> LinkedIssue | None:
         m = _GITHUB_ISSUE_BARE.match(link)
         return LinkedIssue(m.group("id")) if m else None
     host, repo = m.group("host") or "", m.group("repo")
-    if host and host != "github.com":
-        repo = f"{host}/{repo}"
+    if host:
+        repo = f"{host.lower()}/{repo}"
     return LinkedIssue(m.group("id"), repo)
 
 

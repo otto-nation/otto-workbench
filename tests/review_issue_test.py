@@ -527,6 +527,24 @@ def test_fetch_issue_context_github_keeps_a_repo_that_names_its_own_host():
     assert "other.example.com/owner/repo" in _gh_argv(mock_run)
 
 
+def test_fetch_issue_context_github_keeps_a_public_host_against_an_enterprise_base():
+    """A github.com link is not rerouted onto issues.base_url's host."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"Bug report"}'
+    opts = {"base_url": "https://ghe.example.com"}
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        fetch_issue_context(
+            "github", "42", repo="github.com/owner/repo", opts=opts,
+        )
+
+    argv = _gh_argv(mock_run)
+    assert "github.com/owner/repo" in argv
+    assert "ghe.example.com/owner/repo" not in argv
+    assert "ghe.example.com/github.com/owner/repo" not in argv
+
+
 # ── warn_on_host_mismatch ───────────────────────────────────────────────────
 
 
@@ -594,7 +612,7 @@ class TestWarnOnHostMismatch:
 
 
 @pytest.mark.parametrize("provider, link, expected", [
-    ("github", "https://github.com/o/r/issues/12", LinkedIssue("12", "o/r")),
+    ("github", "https://github.com/o/r/issues/12", LinkedIssue("12", "github.com/o/r")),
     ("github", "https://ghe.example.com/o/r/issues/12#issuecomment-1",
      LinkedIssue("12", "ghe.example.com/o/r")),
     ("github", "#12", LinkedIssue("12")),
@@ -619,7 +637,7 @@ def test_context_for_link_keeps_the_operator_link_and_adds_the_body():
     ) as fetch:
         result = context_for_link(provider, operator, "other/repo")
     assert result == IssueContext(link=operator, context="BODY")
-    assert fetch.call_args[0][2] == "o/r"
+    assert fetch.call_args[0][2] == "github.com/o/r"
 
 
 def test_an_enterprise_link_is_fetched_from_its_own_host():
@@ -638,6 +656,18 @@ def test_an_enterprise_link_is_fetched_from_its_own_host():
     ) as fetch:
         context_for_link(provider, "#12", "ghe.example.com/o/r")
     assert fetch.call_args[0][2] == "ghe.example.com/o/r"
+
+    enterprise = IssueProviderInfo(
+        name="github", options={"base_url": "https://ghe.example.com"},
+    )
+    with patch(
+        "review.issue.fetch_issue_context",
+        return_value=IssueContext(context="BODY"),
+    ) as fetch:
+        context_for_link(
+            enterprise, "https://github.com/o/r/issues/12", "o/r",
+        )
+    assert fetch.call_args[0][2] == "github.com/o/r"
 
 
 def test_an_unreadable_link_is_kept_without_a_fetch():

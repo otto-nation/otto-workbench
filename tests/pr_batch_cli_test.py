@@ -577,8 +577,10 @@ def test_focus_warns_about_items_without_a_review_step(monkeypatch, capsys):
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(batch.model.RunStatus.DONE))
     assert _main(["batch", "run", "--checkout", "/r", "--focus", "x"]) == 0
-    warn = next(line for line in capsys.readouterr().err.splitlines()
-                if "--focus applies only to review steps" in line)
+    warns = [line for line in capsys.readouterr().err.splitlines()
+             if "--focus applies only to review steps" in line]
+    assert warns, "no --focus warning was issued"
+    warn = warns[0]
     assert "o/r#2" in warn and "o/r#1" not in warn
     assert _main(["batch", "run", "--checkout", "/r"]) == 0
     assert "--focus applies only to review steps" not in capsys.readouterr().err

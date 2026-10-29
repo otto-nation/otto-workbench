@@ -132,6 +132,7 @@ def _title_of(line: str) -> str:
 
 
 def _operator_area(text: str) -> FocusArea:
+    """First titled line is the title, the rest the rationale; a title alone (empty rationale) is valid."""
     lines = text.strip().splitlines()
     index = next((i for i, line in enumerate(lines) if _title_of(line)), None)
     if index is None:
@@ -159,7 +160,7 @@ def needs_derived(areas: Sequence[FocusArea]) -> bool:
     return not any(a.source is FocusSource.DERIVED for a in areas)
 
 
-def _uncovered(areas: Sequence[FocusArea]) -> list[FocusArea]:
+def uncovered_areas(areas: Sequence[FocusArea]) -> list[FocusArea]:
     return [replace(a, coverage="") for a in areas]
 
 
@@ -174,10 +175,10 @@ def resolve_user_areas(texts: Sequence[str], prior: StoredReview | None,
     if texts:
         return operator_areas(texts)
     if resumed is not None:
-        return _renumber(_uncovered(user_areas(resumed)))
+        return _renumber(uncovered_areas(user_areas(resumed)))
     if prior is None:
         return ()
-    return _renumber(_uncovered(user_areas(prior.record.focus)))
+    return _renumber(uncovered_areas(user_areas(prior.record.focus)))
 
 
 def _asked(areas: Sequence[FocusArea]) -> list[tuple[str, str]]:
@@ -244,7 +245,7 @@ def with_run_focus(record: ReviewRecord, areas: Sequence[FocusArea]) -> ReviewRe
     """record unchanged when it carries focus, else with `areas` (uncovered)."""
     if record.focus:
         return record
-    return replace(record, focus=tuple(_uncovered(areas)))
+    return replace(record, focus=tuple(uncovered_areas(areas)))
 
 
 def coverage_problems(

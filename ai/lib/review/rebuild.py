@@ -24,7 +24,7 @@ from core.trail import Trail
 from agent.registry import PHASES
 from core.phases import Phase
 from review.artifacts import GroupArtifact, declinable_sids
-from review.focus import _uncovered
+from review.focus import uncovered_areas
 from review.ingest import IngestRejected, load_artifact
 from review.merge import merge_records
 from review.paths import read_review_meta
@@ -132,7 +132,7 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
         )
         record = replace(
             record,
-            focus=tuple(_uncovered(existing.record.focus if existing else ())),
+            focus=tuple(uncovered_areas(existing.record.focus if existing else ())),
         )
         # Dated today and carrying no status: a rebuild cannot attest to how the
         # pipeline run ended — this is not one. write_review also writes

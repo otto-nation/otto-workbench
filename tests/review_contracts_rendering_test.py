@@ -687,6 +687,7 @@ class TestPromptBudgetAccounting:
         out = phase_output_path(job.review_file, Phase.GROUP, extra["group_idx"])
         built = review.prompt._prompt_group(job, common, extra, out)
         template = PHASES[Phase.GROUP].template_for(job.mode)
+        assert built.builder.vars, "group builder produced no template vars"
         return agent.templates.render(template, **built.builder.vars)
 
     def test_large_section_shrinks_the_diff_instead_of_the_prompt_budget(self):

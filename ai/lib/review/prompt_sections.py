@@ -533,7 +533,7 @@ def _build_issue_section(issue_link: str, issue_context: str) -> str:
         )
         issue_context = (
             f"{raw[:MAX_ISSUE_CONTEXT_BYTES].decode(errors='ignore')}"
-            f"\n\n_(issue truncated at 8 KB — {rest})_"
+            f"\n\n_(issue truncated at {MAX_ISSUE_CONTEXT_BYTES // 1024} KB — {rest})_"
         )
     if issue_link:
         parts.append("")

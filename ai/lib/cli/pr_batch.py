@@ -472,7 +472,7 @@ def _warn_focus_without_review(run: Run) -> None:
     if not keys:
         return
     core.log.warn(
-        "--focus applies only to review steps; no review is planned for: "
+        "--focus applies only to review steps; these items have no review step: "
         + ", ".join(keys) + " — add --select KEY=review to review them")
 
 

@@ -893,9 +893,9 @@ unreadable or non-UTF-8 file, an empty text, one over `MAX_FOCUS_BYTES` raw
 bytes (inline `--focus` texts included), or more than `MAX_FOCUS_AREAS` texts
 in total. The focus section is fixed overhead in every prompt and is never cut
 to fit, so it is bounded here rather than truncated later. What travels on is
-the text, never a path. A text becomes an area by one rule: its first
-non-blank line, leading `#`, `-` and `*` markers stripped, is the title, and
-the rest is the rationale.
+the text, never a path. A text becomes an area by one rule: the first line
+whose title is non-empty after leading `#`, `-` and `*` markers are stripped
+is the title, and the rest is the rationale. Text with no such line is refused.
 
 Across rounds, the requested areas are this invocation's flags, else the
 resumed run's own areas whenever there is a resumed run (an empty list

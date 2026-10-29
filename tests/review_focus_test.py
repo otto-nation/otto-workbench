@@ -13,7 +13,8 @@ if LIB_DIR not in sys.path:
 from review.budget import MAX_FOCUS_AREAS, MAX_FOCUS_BYTES
 from review.focus import (
     FocusInputError, add_focus_args, adopt, areas_for_group, carry_derived,
-    focus_changed, operator_areas, operator_texts, resolve_user_areas, with_run_focus,
+    focus_changed, needs_derived, operator_areas, operator_texts, resolve_user_areas,
+    user_areas, with_run_focus,
 )
 from review.record import FocusSource
 from review.store import StoredReview
@@ -112,6 +113,43 @@ def test_areas_are_user_and_numbered():
     assert all(a.paths == () and a.coverage == "" for a in areas)
 
 
+def test_a_marker_only_first_line_does_not_become_the_title():
+    (only,) = operator_areas(["---\n\n# Retry\n\nCheck callers"])
+    assert (only.title, only.rationale) == ("Retry", "Check callers")
+
+
+def test_text_with_no_title_is_refused():
+    with pytest.raises(FocusInputError):
+        operator_areas(["#\n---\n- "])
+
+
+# ── user_areas / needs_derived ───────────────────────────────────────────────
+
+# passes-at-base: documents the filter these helpers already apply
+def test_user_areas_keeps_requested_areas_in_order():
+    held = (area(title="d"), user_area("a"),
+            area(id="F3", title="b", source=FocusSource.USER))
+    assert [a.title for a in user_areas(held)] == ["a", "b"]
+
+
+# passes-at-base: documents the filter these helpers already apply
+def test_user_areas_is_empty_when_none_are_requested():
+    assert user_areas(()) == ()
+    assert user_areas((area(title="d"),)) == ()
+
+
+# passes-at-base: documents the filter these helpers already apply
+def test_needs_derived_when_no_derived_area_is_held():
+    assert needs_derived(())
+    assert needs_derived((user_area("asked"),))
+
+
+# passes-at-base: documents the filter these helpers already apply
+def test_needs_derived_when_a_derived_area_is_held():
+    assert not needs_derived((area(title="d"),))
+    assert not needs_derived((user_area("asked"), area(id="F2", title="d")))
+
+
 # ── adopt ────────────────────────────────────────────────────────────────────
 
 def test_requested_areas_come_first_and_derived_are_capped_at_three():
@@ -174,6 +212,12 @@ def test_without_flags_a_resumed_run_s_areas_win():
 
 def test_a_resumed_run_with_no_areas_keeps_none():
     assert resolve_user_areas([], _prior(user_area("old")), []) == ()
+
+
+def test_resumed_user_areas_carry_without_coverage():
+    resumed = [area(title="resumed", source=FocusSource.USER, coverage="stale")]
+    (only,) = resolve_user_areas([], _prior(user_area("old")), resumed)
+    assert (only.title, only.coverage, only.source) == ("resumed", "", FocusSource.USER)
 
 
 def test_without_either_the_prior_requested_areas_carry_without_coverage():

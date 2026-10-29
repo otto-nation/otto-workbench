@@ -13,9 +13,9 @@ unreadable or non-UTF-8 file, an empty text, one over `MAX_FOCUS_BYTES` raw
 bytes (inline `--focus` texts included), or more than `MAX_FOCUS_AREAS` texts
 in total. The focus section is fixed overhead in every prompt and is never cut
 to fit, so it is bounded here rather than truncated later. What travels on is
-the text, never a path. A text becomes an area by one rule: its first
-non-blank line, leading `#`, `-` and `*` markers stripped, is the title, and
-the rest is the rationale.
+the text, never a path. A text becomes an area by one rule: the first line
+whose title is non-empty after leading `#`, `-` and `*` markers are stripped
+is the title, and the rest is the rationale. Text with no such line is refused.
 
 Across rounds, the requested areas are this invocation's flags, else the
 resumed run's own areas whenever there is a resumed run (an empty list
@@ -121,17 +121,25 @@ def _title_key(title: str) -> str:
     return " ".join(title.split()).casefold()
 
 
+def _title_of(line: str) -> str:
+    return line.lstrip(_TITLE_MARKERS).strip()
+
+
 def _operator_area(text: str) -> FocusArea:
     lines = text.strip().splitlines()
+    index = next((i for i, line in enumerate(lines) if _title_of(line)), None)
+    if index is None:
+        raise FocusInputError("focus text has no title")
     return FocusArea(
-        id="", title=lines[0].lstrip(_TITLE_MARKERS).strip(),
-        rationale="\n".join(lines[1:]).strip(), source=FocusSource.USER,
+        id="", title=_title_of(lines[index]),
+        rationale="\n".join(lines[index + 1:]).strip(), source=FocusSource.USER,
     )
 
 
 def operator_areas(texts: Sequence[str]) -> tuple[FocusArea, ...]:
-    """One USER area per text: first non-blank line (leading #, -, * markers stripped) is the
-    title, the rest the rationale, stripped. Numbered F1…"""
+    """One USER area per text: first line with a non-empty title after leading #, -, *
+    markers are stripped, the rest the rationale, stripped. Numbered F1…
+    Raises FocusInputError when a text has no such title."""
     return _renumber([_operator_area(t) for t in texts if t.strip()])
 
 
@@ -153,13 +161,14 @@ def resolve_user_areas(texts: Sequence[str], prior: StoredReview | None,
                        resumed: Sequence[FocusArea] | None) -> tuple[FocusArea, ...]:
     """The requested areas for this round, in order of precedence.
 
-    This invocation's texts; else the resumed run's areas whenever `resumed is not None`, an
-    empty list included; else the prior record's requested areas, coverage cleared.
+    This invocation's texts; else the resumed run's requested areas whenever
+    `resumed is not None`, an empty list included, coverage cleared; else the prior
+    record's requested areas, coverage cleared.
     """
     if texts:
         return operator_areas(texts)
     if resumed is not None:
-        return _renumber(user_areas(resumed))
+        return _renumber(_uncovered(user_areas(resumed)))
     if prior is None:
         return ()
     return _renumber(_uncovered(user_areas(prior.record.focus)))

@@ -147,6 +147,8 @@ def resolve(args: Sequence[str], host: str) -> Scoped | None:
     group, verb = path
     if group == "gist":
         return _account("a gist")
+    if group in ("ssh-key", "gpg-key"):
+        return _account(f"a {group}")
     if group == "project":
         return _project(args, host)
     if group in ("secret", "variable"):

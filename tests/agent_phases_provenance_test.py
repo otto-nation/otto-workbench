@@ -175,3 +175,16 @@ def test_phase_settings_runs_the_level_resolve_phase_thinking_reports(roots, mon
     reported = agent.phases.resolve_phase_thinking(phase, resolved, cfg)
     ran = agent.phases.phase_settings(phase, None, cfg).thinking
     assert (reported.level if reported else None) == ran
+
+
+def test_per_phase_env_vars_do_not_leak_to_other_phases(roots, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "xai/grok-4.6:high")
+    monkeypatch.setenv("WORKBENCH_AI_FIX_THINKING", "minimal")
+    cfg = _cfg(roots, TIERS)
+    for phase in Phase:
+        resolved = agent.phases.resolve_phase_model(phase, None, cfg)
+        reported = agent.phases.resolve_phase_thinking(phase, resolved, cfg)
+        if phase is not Phase.SCOUT:
+            assert resolved is None or resolved.key != "WORKBENCH_AI_SCOUT_MODEL", phase
+        if phase is not Phase.FIX:
+            assert reported is None or reported.key != "WORKBENCH_AI_FIX_THINKING", phase

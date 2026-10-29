@@ -117,7 +117,7 @@ tools:
         description: "Show each phase's tier, model and thinking level, and the setting behind each"
         scope: "Project"
         when: "Checking which model and thinking level a phase will run on, and which key to edit to change it"
-        detail: "Resolved through agent.phases, the chain every run uses: WORKBENCH_AI_<PHASE>_* over WORKBENCH_AI_* over agent.phases.<phase>.* over agent.* over models.<tier>. For each tier: the value and the scope that set it. For each phase: its tier, the model (provider, id, level) and thinking level, each with the layer, key and scope that answered, or an error message when a setting names an unset tier. --json prints one object a front end reads instead of re-implementing the chain. Exits 0 with tiers unset; 1 only when a config file cannot be read."
+        detail: "Resolved through agent.phases, the chain every run uses: Model: WORKBENCH_AI_<PHASE>_MODEL, WORKBENCH_AI_MODEL, agent.phases.<phase>.model, models.<tier>. Thinking: WORKBENCH_AI_<PHASE>_THINKING, WORKBENCH_AI_THINKING, agent.phases.<phase>.thinking, a level on the phase model, a level on models.<tier>, agent.thinking, the spec. For each tier: the value and the scope that set it. For each phase: its tier, the model (provider, id, level) and thinking level, each with the layer, key and scope that answered, or an error message when a setting names an unset tier. --json prints one object a front end reads instead of re-implementing the chain. Exits 0 with tiers unset; 1 only when a config file cannot be read."
       - name: "config context [--pi-listing FILE]"
         description: "Show, as JSON, the compaction settings sync writes for Claude Code and Pi"
         scope: "Machine"

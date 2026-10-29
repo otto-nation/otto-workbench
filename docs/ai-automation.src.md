@@ -74,8 +74,11 @@ Every GitHub write is checked against `github.owners` and refused elsewhere; uns
 `otto-workbench config phases` prints the three tiers and, for every phase in
 the registry, the tier it reads, the model and thinking level it will run on,
 and the setting that answered each. It resolves through `agent.phases`, the
-same chain a run uses (`WORKBENCH_AI_<PHASE>_*` > `WORKBENCH_AI_*` >
-`agent.phases.<phase>.*` > `agent.*` > `models.<tier>`), so a front end reads the
+same chain a run uses (the model: `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` >
+`agent.phases.<phase>.model` > `models.<tier>`; the thinking level:
+`WORKBENCH_AI_<PHASE>_THINKING` > a level on the phase's env model >
+`WORKBENCH_AI_THINKING` > `agent.phases.<phase>.thinking` > a level on that
+phase's model > a level on `models.<tier>` > `agent.thinking` > the spec), so a front end reads the
 answer rather than re-implementing the order. `DIR` names a repo other than the
 current one. It exits 0 whenever the config loads, unset tiers included, and 1
 only when a config file cannot be read.

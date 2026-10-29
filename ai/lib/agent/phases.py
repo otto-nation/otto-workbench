@@ -281,7 +281,7 @@ def phase_settings(
         a level on --model
         WORKBENCH_AI_<PHASE>_THINKING, then a level on WORKBENCH_AI_<PHASE>_MODEL
         WORKBENCH_AI_THINKING, then a level on WORKBENCH_AI_MODEL
-        the config layers — `phase_thinking_default`
+        the config layers — `_thinking_candidates`, via `resolve_phase_thinking`
     """
     reject_removed_provider_env()
     phase = Phase(phase)

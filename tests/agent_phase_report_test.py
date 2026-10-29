@@ -32,9 +32,13 @@ def test_every_registry_phase_is_reported_in_registry_order(roots):
     assert [row.tier for row in report.tiers] == list(Tier)
 
 
+def _tier(report, tier):
+    return next(t for t in report.tiers if t.tier is tier)
+
+
 def test_an_unset_tier_is_null_with_no_scope_and_names_the_key_to_set(roots):
     report = agent.phase_report.phase_report(roots[1])
-    assert report.tiers[0] == agent.phase_report.TierRow(Tier.DEEP, None, None)
+    assert _tier(report, Tier.DEEP) == agent.phase_report.TierRow(Tier.DEEP, None, None)
     row = _row(report, Phase.SYNTHESIS)
     assert row.model is None and row.error is None
     assert row.model_source == agent.phase_report.Source("unset", "models.deep", None)
@@ -45,7 +49,7 @@ def test_a_tier_set_by_the_project_names_the_project_scope(roots):
     _write(config_root / "config.yml", "models:\n  light: openai/gpt-6-mini\n")
     _write(project / ".workbench.yml", "models:\n  light: xai/grok-4.6-mini\n")
     report = agent.phase_report.phase_report(project)
-    assert report.tiers[2] == agent.phase_report.TierRow(
+    assert _tier(report, Tier.LIGHT) == agent.phase_report.TierRow(
         Tier.LIGHT, "xai/grok-4.6-mini", config.workbench_config.PROJECT_SCOPE)
     assert _row(report, Phase.SCOUT).model_source.scope == config.workbench_config.PROJECT_SCOPE
 

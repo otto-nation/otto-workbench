@@ -20,6 +20,7 @@ resolves, so the report cannot drift from what a phase actually runs on.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -106,12 +107,17 @@ def _render(case: Case, roots, monkeypatch, capsys) -> dict:
 
 
 def _write_goldens(roots, monkeypatch, capsys) -> None:
-    """Rewrite every fixture from current output. Call from a throwaway test; never commit the call."""
+    """Rewrite every fixture from current output; run via `REGEN_GOLDENS=1 pytest -k regenerate`."""
     FIXTURES.mkdir(parents=True, exist_ok=True)
     for name, case in CASES.items():
         with monkeypatch.context() as scoped:
             got = _render(case, roots, scoped, capsys)
         (FIXTURES / f"{name}.json").write_text(json.dumps(got, indent=2) + "\n")
+
+
+@pytest.mark.skipif(os.environ.get("REGEN_GOLDENS") != "1", reason="set REGEN_GOLDENS=1 to rewrite fixtures")
+def test_regenerate_goldens(roots, monkeypatch, capsys):
+    _write_goldens(roots, monkeypatch, capsys)
 
 
 # ── Goldens ──────────────────────────────────────────────────────────────────
@@ -204,16 +210,20 @@ def test_the_report_is_what_phase_settings_resolves(name, roots, monkeypatch, ca
     got = _render(CASES[name], roots, monkeypatch, capsys)
     cfg = config.workbench_config.load_config(roots[1])
     for phase in Phase:
-        row = got["phases"][phase.value]
-        if row["error"] is not None:
-            with pytest.raises(core.errors.OperatorError):
-                agent.phases.phase_settings(phase, None, cfg)
-            continue
-        settings = agent.phases.phase_settings(phase, None, cfg)
-        model = row["model"] or {}
-        assert (model.get("id"), model.get("provider")) == (settings.model, settings.provider), phase
-        expected = str(settings.thinking) if settings.thinking is not None else None
-        assert row["thinking"] == expected, phase
+        assert phase.value in got["phases"], phase
+        _assert_row_matches_run(phase, got["phases"][phase.value], cfg)
+
+
+def _assert_row_matches_run(phase, row, cfg) -> None:
+    if row["error"] is not None:
+        with pytest.raises(core.errors.OperatorError):
+            agent.phases.phase_settings(phase, None, cfg)
+        return
+    settings = agent.phases.phase_settings(phase, None, cfg)
+    model = row["model"] or {}
+    assert (model.get("id"), model.get("provider")) == (settings.model, settings.provider), phase
+    expected = str(settings.thinking) if settings.thinking is not None else None
+    assert row["thinking"] == expected, phase
 
 
 # ── The command around the report ────────────────────────────────────────────

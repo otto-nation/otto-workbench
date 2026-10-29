@@ -67,6 +67,7 @@ class OrchestrateRequest:
     prior_review_path: str = ""
     issue_link: str = ""
     issue_context: str = ""
+    focus: tuple[str, ...] = ()
     max_parallel: int | None = None
     max_cost: float | None = None
     model: str | None = None
@@ -110,6 +111,10 @@ def build_argv(request: OrchestrateRequest) -> list[str]:
         args += ["--issue", request.issue_link]
     if request.issue_context:
         args += ["--issue-context", request.issue_context]
+    # One `--focus=TEXT` token per area: as a separate value, a text starting
+    # with `-` would be read by argparse as an option and refused.
+    for text in request.focus:
+        args.append(f"--focus={text}")
     # Forwarded only when asked for: an absent flag lets review-orchestrate
     # derive the worker count from free capacity.
     if request.max_parallel is not None:

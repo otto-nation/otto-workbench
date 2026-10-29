@@ -685,3 +685,30 @@ def test_both_flows_fetch_the_body_of_an_issue_link_they_were_given(
     assert calls == [("github", "5", "github.com/o/r", {})]
     assert request.issue_link == "https://github.com/o/r/issues/5"
     assert request.issue_context == "BODY"
+
+
+@pytest.mark.parametrize("flow", ["pr", "self"])
+def test_both_flows_forward_operator_focus(tmp_path, monkeypatch, flow):
+    review_file = _review_file(tmp_path, flow)
+    _trace_common(monkeypatch, [])
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(tmp_path), None))
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    if flow == "pr":
+        _stub_pr_edges(monkeypatch, tmp_path, [])
+    captured = []
+    monkeypatch.setattr(review.invoke, "run", lambda request: captured.append(request) or 0)
+
+    flags = _flags(focus=("a",))
+    if flow == "self":
+        review.run.run_self_review(
+            make_ctx(target_dir=tmp_path / "t"), flags, review_file.parent,
+            str(tmp_path), recover_head_sha="", trail=MagicMock(),
+        )
+    else:
+        review.run.run_pr_review(
+            make_ctx(target_dir=tmp_path / "t"), flags, review_file, trail=MagicMock(),
+        )
+
+    assert captured[0].focus == ("a",)

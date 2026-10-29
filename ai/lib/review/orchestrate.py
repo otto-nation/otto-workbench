@@ -30,6 +30,7 @@ import review.registry
 import agent.session
 import review.pipeline
 import review.finding_issue
+import review.focus
 import review.fix
 import review.gc
 import review.paths
@@ -468,6 +469,8 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         # getattr: the suites build `args` by hand, and an absent flag is the
         # ordinary case.
         full_review=getattr(args, "full_review", False),
+        # getattr: as above, a hand-built `args` carries no --focus.
+        focus=review.focus.operator_areas(getattr(args, "focus", ())),
     )
     job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
 

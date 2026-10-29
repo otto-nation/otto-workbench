@@ -17,6 +17,7 @@ Usage:
   review --no-post <pr_url_or_number>
   review --self [<pr_url_or_number>]
   review [--self] --recover [<pr_url_or_number>]
+  review [--self] [--focus TEXT]... [--focus-file PATH]... [<pr_url_or_number>]
 """
 
 # doc-group: cli
@@ -41,6 +42,7 @@ from core.trail import Trail, add_trail_args
 import pr.context
 import pr.state
 import review.completion
+import review.focus
 import review.run
 import review.worktree
 import review.paths
@@ -96,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Print a machine-readable summary on stdout")
     parser.add_argument("--issue", metavar="URL",
                         help="Related issue to include in the review prompt")
+    review.focus.add_focus_args(parser)
     # `--onto` is accepted for symmetry with `pr rebase`, which spells the same
     # question that way. The value differs in kind from that one, though: this
     # is a bare branch name resolved as `origin/<name>`, where rebase takes any
@@ -148,6 +151,8 @@ def _flags(args, argv: list[str], generator_version: str) -> review.run.ReviewFl
         command=" ".join([SCRIPT] + argv),
         base=args.base or "",
         issue_link=args.issue or "",
+        # getattr: suites build `args` by hand, without `_main_body`'s validation.
+        focus=getattr(args, "focus_texts", ()),
         max_parallel=args.max_parallel,
         max_cost=args.max_cost,
         model=args.model,
@@ -467,6 +472,14 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     # --no-post and forwarded --post to the orchestrate publishing gate.
     if parsed.no_post and parsed.post:
         core.log.error("--no-post and --post are mutually exclusive")
+        return 1
+
+    # Every --focus-file is read and checked here, before either flow spends
+    # anything: an oversized or unreadable file is refused, never truncated.
+    try:
+        parsed.focus_texts = review.focus.operator_texts(parsed)
+    except review.focus.FocusInputError as exc:
+        core.log.error(str(exc))
         return 1
 
     # One line, and the whole of it: the review's `generator:` marker names

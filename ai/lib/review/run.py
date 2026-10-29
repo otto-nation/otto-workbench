@@ -75,6 +75,8 @@ class ReviewFlags:
     # gets the PR's base or the derived stack parent.
     base: str = ""
     issue_link: str = ""
+    # The operator's --focus texts and --focus-file contents, already validated.
+    focus: tuple[str, ...] = ()
     max_parallel: int | None = None
     max_cost: float | None = None
     model: str | None = None
@@ -263,7 +265,7 @@ def run_pr_review(
             max_cost=flags.max_cost, model=flags.model, effort=flags.effort,
             max_groups=flags.max_groups, skip_phases=flags.skip_phases,
             disprove=flags.disprove, generated=flags.generated,
-            recover_sha=recover_sha,
+            recover_sha=recover_sha, focus=flags.focus,
         )
         wall_ms = review.invoke.run(request)
 
@@ -393,7 +395,7 @@ def run_self_review(
         max_cost=flags.max_cost, model=flags.model, effort=flags.effort,
         max_groups=flags.max_groups, skip_phases=flags.skip_phases,
         disprove=flags.disprove, generated=flags.generated,
-        recover_sha=recover_sha, fix_pass=flags.fix,
+        recover_sha=recover_sha, fix_pass=flags.fix, focus=flags.focus,
         may_publish=flags.may_publish,
         full_review=flags.force,
         resume_fix=resume_fix,

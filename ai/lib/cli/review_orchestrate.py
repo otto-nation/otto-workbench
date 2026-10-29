@@ -14,7 +14,8 @@ management, and interactive prompts.
 Usage:
   review-orchestrate --pr NUMBER --review-file PATH \
     --repo-dir PATH [--target-dir PATH] [--session-log PATH] \
-    [--prior-review PATH] [--issue URL] [--issue-context JSON]
+    [--prior-review PATH] [--issue URL] [--issue-context JSON] \
+    [--focus=TEXT]...
 """
 
 # doc-group: cli
@@ -119,6 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
     parser.add_argument("--issue", default="", help="Issue URL")
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
+    parser.add_argument("--focus", action="append", default=[], metavar="TEXT",
+                        help="An operator focus area (repeatable); review reads "
+                             "--focus-file and forwards its text here")
     parser.add_argument(
         "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
         help="Max concurrent group reviews (default: from the machine slot pool, cap 4)",

@@ -526,6 +526,21 @@ class TestCleanupScope:
         assert seen["prior"].meta.head_sha == "0ldc0de"
         assert seen["prior"].record.summary.startswith("prior round")
 
+    def test_the_job_carries_operator_focus(self, ro, monkeypatch, tmp_path):
+        """`--focus` texts become F-numbered requested areas on the job."""
+        from review.record import FocusArea, FocusSource
+
+        seen = {}
+
+        def _capture(job, **_kwargs):
+            seen["focus"] = job.focus
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}")
+
+        self._run(ro, monkeypatch, tmp_path, pipeline=_capture, focus=["Retry\nwhy"])
+        assert seen["focus"] == (FocusArea(
+            id="F1", title="Retry", rationale="why", source=FocusSource.USER),)
+
 
 class TestThePublishingGate:
     """`--post` is forwarded here because the fix pass lives in this process.

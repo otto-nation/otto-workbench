@@ -8003,6 +8003,7 @@ Usage:
   review --no-post <pr_url_or_number>
   review --self [<pr_url_or_number>]
   review [--self] --recover [<pr_url_or_number>]
+  review [--self] [--focus TEXT]... [--focus-file PATH]... [<pr_url_or_number>]
 
 ### cli/review_modes.py
 
@@ -8047,7 +8048,8 @@ management, and interactive prompts.
 Usage:
   review-orchestrate --pr NUMBER --review-file PATH \
     --repo-dir PATH [--target-dir PATH] [--session-log PATH] \
-    [--prior-review PATH] [--issue URL] [--issue-context JSON]
+    [--prior-review PATH] [--issue URL] [--issue-context JSON] \
+    [--focus=TEXT]...
 
 ### cli/review_positions.py
 

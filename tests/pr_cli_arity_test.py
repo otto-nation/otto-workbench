@@ -168,6 +168,16 @@ def test_internal_command_still_classifies_a_positional(mock_resolve, mock_call,
     assert read == ["fix"], "an internal command is asked, and answers empty"
 
 
+@pytest.mark.parametrize("extra,expected", [
+    (["--focus=x", "12"], ["12"]),
+    (["--focus", "retry handling"], []),
+    (["--focus", "x", "12", "feat/b"], ["12", "feat/b"]),
+    (["--self", "12"], ["12"]),
+])
+def test_positionals_skip_a_value_flag_s_argument(extra, expected):
+    assert cli.dispatch.positionals(extra, frozenset({"--focus"})) == expected
+
+
 # ── positional_index ───────────────────────────────────────────────────────
 
 

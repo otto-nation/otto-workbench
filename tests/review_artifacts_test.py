@@ -140,17 +140,47 @@ def test_each_group_rejection_names_its_kind_and_place(doc, kind, at):
     assert [(p.kind, p.at) for p in problems] == [(kind, at)]
 
 
+FOCUS_OK = {"title": "Retry", "rationale": "why", "paths": ["a.py"]}
+
+
 @pytest.mark.parametrize("kind, doc, at", [
     (ReviewArtifact, {"summary": " "}, "$.summary"),
-    (HolisticArtifact, {"assessment": ""}, "$.assessment"),
-    (ScoutArtifact, {"leads": [{"path": "a.py", "concern": ""}]}, "$.leads[0].concern"),
-    (ScoutArtifact, {"no_scrutiny": [{"path": "a.py", "reason": ""}]}, "$.no_scrutiny[0].reason"),
+    (HolisticArtifact, {"assessment": "", "focus": [FOCUS_OK]}, "$.assessment"),
+    (ScoutArtifact, {"leads": [{"path": "a.py", "concern": ""}], "focus": [FOCUS_OK]},
+     "$.leads[0].concern"),
+    (ScoutArtifact, {"no_scrutiny": [{"path": "a.py", "reason": ""}], "focus": [FOCUS_OK]},
+     "$.no_scrutiny[0].reason"),
     (DisproveArtifact, {"verdicts": [{"id": "M1", "outcome": "survives", "reason": ""}]},
      "$.verdicts[0].reason"),
 ])
 def test_an_empty_required_text_is_rejected(kind, doc, at):
     problems = load_strict(kind, doc).problems()
     assert [(p.kind, p.at) for p in problems] == [(IngestErrorKind.EMPTY_FIELD, at)]
+
+
+@pytest.mark.parametrize("kind, doc", [
+    (ScoutArtifact, {}),
+    (HolisticArtifact, {"assessment": "ok"}),
+])
+def test_a_scan_without_focus_is_rejected(kind, doc):
+    problems = load_strict(kind, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [(IngestErrorKind.FOCUS_COUNT, "$.focus")]
+
+
+@pytest.mark.parametrize("kind, extra", [
+    (ScoutArtifact, {}),
+    (HolisticArtifact, {"assessment": "ok"}),
+])
+def test_a_scan_with_four_areas_is_rejected(kind, extra):
+    problems = load_strict(kind, {**extra, "focus": [FOCUS_OK] * 4}).problems()
+    assert [(p.kind, p.at) for p in problems] == [(IngestErrorKind.FOCUS_COUNT, "$.focus")]
+
+
+def test_a_focus_path_with_a_line_is_rejected():
+    doc = {"focus": [{"title": "t", "paths": ["a.py:3"]}]}
+    problems = load_strict(ScoutArtifact, doc).problems()
+    assert [(p.kind, p.at) for p in problems] == [
+        (IngestErrorKind.LINE_IN_PATH, "$.focus[0].paths[0]")]
 
 
 def test_a_trailing_newline_on_a_disprove_id_is_rejected():

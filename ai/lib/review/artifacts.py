@@ -313,12 +313,53 @@ class QuietFile:
 
 
 @dataclass(frozen=True)
+class AgentFocus:
+    """One derived focus area as a scan writes it."""
+
+    title: str
+    rationale: str = ""
+    paths: tuple[str, ...] = ()
+
+
+def _focus_path_problems(path: str, at: str) -> list[IngestError]:
+    if not path.strip():
+        return [_error(
+            IngestErrorKind.BAD_LOCATION, at,
+            "path is empty; use [] when the area spans the PR",
+        )]
+    if strip_line_suffix(path) != path:
+        return [_error(
+            IngestErrorKind.LINE_IN_PATH, at,
+            f"{path!r} carries a line number; drop the :N suffix",
+        )]
+    return []
+
+
+def _agent_focus_problems(
+    items: tuple[AgentFocus, ...], at: str, *, lo: int = 1, hi: int = MAX_DERIVED_FOCUS,
+) -> list[IngestError]:
+    out: list[IngestError] = []
+    if not lo <= len(items) <= hi:
+        out.append(_error(
+            IngestErrorKind.FOCUS_COUNT, at,
+            f"{len(items)} focus areas; need {lo}–{hi}",
+        ))
+    for i, item in enumerate(items):
+        if not item.title.strip():
+            out.append(_empty(f"{at}[{i}].title", "a focus area's title"))
+        for j, path in enumerate(item.paths):
+            out += _focus_path_problems(path, f"{at}[{i}].paths[{j}]")
+    return out
+
+
+@dataclass(frozen=True)
 class ScoutArtifact:
     """What the scout writes (`scout.json`)."""
 
     leads: tuple[Lead, ...] = ()
     no_scrutiny: tuple[QuietFile, ...] = ()
     direction_concern: str = ""
+    focus: tuple[AgentFocus, ...] = ()
 
     def problems(self) -> tuple[IngestError, ...]:
         out: list[IngestError] = []
@@ -328,6 +369,7 @@ class ScoutArtifact:
                 out.append(_empty(f"$.leads[{i}].concern", "a lead's concern"))
         out += [_empty(f"$.no_scrutiny[{i}].reason", "a no-scrutiny reason")
                 for i, q in enumerate(self.no_scrutiny) if not q.reason.strip()]
+        out += _agent_focus_problems(self.focus, "$.focus")
         return tuple(out)
 
     @classmethod
@@ -340,6 +382,10 @@ class ScoutArtifact:
                      SeverityHint.SHOULD_FIX, "The new FooType is handled here but not in bar_handler.go."),
             ),
             no_scrutiny=(QuietFile("pkg/api.pb.go", "generated code, no custom logic"),),
+            focus=(
+                AgentFocus("Retry handling", "Backoff changed", ("pkg/retry.go",)),
+                AgentFocus("Caller contracts", "Every caller assumed a fixed delay", ("pkg/handler.go",)),
+            ),
         )
 
 
@@ -351,9 +397,14 @@ class HolisticArtifact:
     flags: tuple[str, ...] = ()
     cross_module: tuple[str, ...] = ()
     direction_concern: str = ""
+    focus: tuple[AgentFocus, ...] = ()
 
     def problems(self) -> tuple[IngestError, ...]:
-        return () if self.assessment.strip() else (_empty("$.assessment", "the assessment"),)
+        out: list[IngestError] = []
+        if not self.assessment.strip():
+            out.append(_empty("$.assessment", "the assessment"))
+        out += _agent_focus_problems(self.focus, "$.focus")
+        return tuple(out)
 
     @classmethod
     def example(cls, mode: Mode) -> HolisticArtifact:
@@ -362,6 +413,10 @@ class HolisticArtifact:
                        "The scope is focused.",
             flags=("`retry.go` changes the backoff — check every caller that assumed a fixed delay",),
             cross_module=("`client` and `worker` now disagree on the timeout's unit",),
+            focus=(
+                AgentFocus("Retry handling", "Backoff changed", ("pkg/retry.go",)),
+                AgentFocus("Caller contracts", "Every caller assumed a fixed delay", ("pkg/handler.go",)),
+            ),
         )
 
 
@@ -497,11 +552,18 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "path": "a file that needs no scrutiny",
         "reason": "why, in a few words: generated, renamed, formatting-only",
     },
+    AgentFocus: {
+        "title": "what this area is, in a few words",
+        "rationale": "why it needs review",
+        "paths": "the files or directories it concerns; [] when it spans the PR",
+    },
     ScoutArtifact: {
         "leads": "one per concern; [] if nothing looks suspicious",
         "no_scrutiny": "files deep reviewers can skip",
         "direction_concern": "only if the approach itself is wrong: why, and what to do "
                              "instead; \"\" otherwise",
+        "focus": "1–3 areas this PR most needs reviewed — the risks particular to this "
+                 "change, each with a title, a rationale, and the paths it concerns",
     },
     HolisticArtifact: {
         "assessment": "markdown: whether the PR does what it claims, and whether its scope "
@@ -510,6 +572,8 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "cross_module": "cross-module design issues, one per entry",
         "direction_concern": "only if the approach itself is wrong: why, and what to do "
                              "instead; \"\" otherwise",
+        "focus": "1–3 areas this PR most needs reviewed — the risks particular to this "
+                 "change, each with a title, a rationale, and the paths it concerns",
     },
     DisproveVerdict: {
         "id": "a must-fix or should-fix finding ID from the review",

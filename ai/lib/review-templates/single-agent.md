@@ -27,5 +27,6 @@ marked unverified and settle it afterwards.
 
 ${execution_claim_guard}
 ${issue_section}
+${focus_section}
 ${prior_section}
 ${reply_threads}

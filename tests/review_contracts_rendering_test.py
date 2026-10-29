@@ -44,6 +44,8 @@ from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import PRReport  # noqa: E402
 from pr.triage_round import TriagedRound  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
+from review.record import FocusSource  # noqa: E402
+from review_focus_support import area  # noqa: E402
 
 from review_contracts_support import _template_files
 
@@ -650,8 +652,9 @@ class TestPromptBudgetAccounting:
     # and the prompt sits right at the limit rather than dropping one big blob.
     _PATHS = [f"f{i:03d}.py" for i in range(60)]
 
-    def _group_prompt(self, files_formatted: str) -> str:
+    def _group_prompt(self, files_formatted: str, focus=()) -> str:
         job = _make_review_job()
+        job.focus = focus
         job.pr.files = [
             {"path": p, "additions": 1, "deletions": 0} for p in self._PATHS
         ]
@@ -681,3 +684,17 @@ class TestPromptBudgetAccounting:
             f"adding {len(filler)}B to group_files_formatted grew the prompt by "
             f"{growth}B — the section is not counted against the diff budget"
         )
+
+    def test_the_focus_section_is_never_cut(self):
+        filler = "x" * 40_000
+        small = self._group_prompt(
+            "- a.py", focus=(area(id="F1", title="a", source=FocusSource.USER),),
+        )
+        large = self._group_prompt(
+            "- a.py",
+            focus=(area(id="F1", title="a", rationale=filler, source=FocusSource.USER),),
+        )
+        assert len(small.encode()) <= MAX_PROMPT_BYTES
+        assert len(large.encode()) <= MAX_PROMPT_BYTES
+        assert filler in large
+        assert len(large) - len(small) < len(filler) // 2

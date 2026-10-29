@@ -1080,7 +1080,7 @@ one of them end to end.
 
 Running an agent phase is the same nine steps whichever phase it is, so there is
 one function rather than one per phase. What differs is what its artifact means
-afterwards, and that is `review.registry`'s table, read through `read_scan` so
+afterwards, and that is `review.registry`'s table, read through `reuse_scan` so
 the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the

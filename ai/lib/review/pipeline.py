@@ -53,20 +53,22 @@ from agent.backend import selected_backend
 from agent.phases import phase_model
 from agent.session import diagnose_missing_output
 from review.budget import (
-    MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes,
-    ladder_target_bytes,
+    DERIVED_AREA_RESERVE_BYTES, MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES,
+    fixed_preflight_bytes, ladder_target_bytes,
 )
 from review.collect import diff_section_sizes, fetch_branch_metadata
 from review.grouping import (
     GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
 from review.overflow import run_with_overflow_recovery
-from review.artifacts import ReviewArtifact, declinable_sids
+from review.artifacts import MAX_DERIVED_FOCUS, ReviewArtifact, declinable_sids
 from review.ingest import ingest_artifact
 from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
-from review.prompt_sections import _is_incremental
+from review.prompt_sections import (
+    _build_focus_section, _build_issue_section, _is_incremental,
+)
 from review.registry import build_prompt
 from review.phases import PhaseResult, PhaseRunner, _should_disprove
 from review.convergence import drop_out_of_delta_nits, prior_ids
@@ -269,7 +271,9 @@ def _group_merge_cap(job: ReviewJob) -> int:
     its diff: the template and the project context no lever can cut. File
     contents and the delta are levers the ladder pulls first, so they are not
     reserved here. Every profile is charged although a group renders only the
-    ones matching its files, which errs toward stopping a merge early.
+    ones matching its files, which errs toward stopping a merge early. The
+    focus section, the issue section, and the reserved room for areas phase 1
+    has not yet derived are fixed overhead per group prompt.
 
     Never below `MIN_DIFF_BYTES`: a repo whose fixed context alone fills the
     target still gets groups the ladder can floor, rather than no merges at
@@ -283,6 +287,13 @@ def _group_merge_cap(job: ReviewJob) -> int:
             pf.instructions_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
+    fixed += len(_build_focus_section(job.focus).encode())
+    fixed += len(_build_issue_section(job.issue_link, job.issue_context).encode())
+    if review.focus.needs_derived(job.focus):
+        # ceiling: a flat reserve for areas phase 1 has not derived yet, because
+        # this cap is computed before that phase runs. Upgrade trigger: once the
+        # merge runs after phase 1, measure the adopted areas instead.
+        fixed += MAX_DERIVED_FOCUS * DERIVED_AREA_RESERVE_BYTES
     return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend(), cwd=job.wt_path) - fixed)
 
 
@@ -363,6 +374,11 @@ def run_multi_phase(
     # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
     holistic = _run_holistic_phase(job, group_count, state, incremental)
     cost_so_far += holistic.cost
+    if holistic.artifact is not None:
+        job.focus = review.focus.adopt(
+            job.focus, holistic.artifact.focus,
+            [f["path"] for f in job.pr.files],
+        )
 
     # ── Phase 2: Groups ───────────────────────────────────────────────────────
     # Two ways every group ends up unreviewed without a single agent running,

@@ -19,6 +19,8 @@ from review.prompt import build_common_sections
 from review.store import StoredReview
 from review.types import ReviewMeta
 import review.registry
+from review.record import FocusSource
+from review_focus_support import area
 from review_prompt_support import MAX_PROMPT_BYTES, _make_job, _make_preflight
 from review_record_support import finding, record
 from conftest import TEST_MODEL as _TEST_MODEL, model_budget_bytes
@@ -424,3 +426,45 @@ def test_the_synthesis_prompt_carries_the_issue_section(mode):
     )
     assert "https://x/1" in result
     assert "BODY-MARKER" in result
+
+
+@pytest.mark.parametrize("mode", [Mode.PR, Mode.SELF])
+def test_single_and_synthesis_show_the_focus_section(mode):
+    job = _make_job(_make_preflight(), mode=mode)
+    job.focus = (area(id="F1", title="FOCUS-TITLE", source=FocusSource.USER),)
+    single = review.registry.build_prompt(Phase.SINGLE, job, max_turns=15)
+    syn = review.registry.build_prompt(
+        Phase.SYNTHESIS, job, max_turns=15, group_count=2, merged_content="x",
+    )
+    assert "## Focus" in single and "FOCUS-TITLE" in single
+    assert "*(requested)*" in single
+    assert "## Focus" in syn and "FOCUS-TITLE" in syn
+
+
+def test_a_group_sees_only_its_areas_and_pathless_ones():
+    job = _make_job(_make_preflight())
+    job.focus = (
+        area(id="F1", title="Pathless", source=FocusSource.USER),
+        area(id="F2", title="InGroup", paths=("a.py",)),
+        area(id="F3", title="OtherFile", paths=("z.py",)),
+    )
+    result = review.registry.build_prompt(
+        Phase.GROUP, job, max_turns=15,
+        group_idx=1, group_count=1, group_name="core",
+        group_files_formatted="- a.py", group_file_paths=["a.py"],
+    )
+    assert "Pathless" in result
+    assert "InGroup" in result
+    assert "OtherFile" not in result
+
+
+def test_the_scout_sees_only_requested_areas():
+    job = _make_job(_make_preflight())
+    job.focus = (
+        area(id="F1", title="AskedFor", source=FocusSource.USER),
+        area(id="F2", title="AlreadyDerived", source=FocusSource.DERIVED),
+    )
+    result = review.registry.build_prompt(Phase.SCOUT, job, max_turns=15)
+    assert "AskedFor" in result
+    assert "AlreadyDerived" not in result
+    assert "already covered" in result

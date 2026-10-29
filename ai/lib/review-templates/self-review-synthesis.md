@@ -12,6 +12,7 @@ ${merged_content}
 ${preflight_data}
 ${delta_section}
 ${issue_section}
+${focus_section}
 
 ## Task
 1. Write `summary` — one sentence on what the changes do and their overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself

@@ -37,6 +37,7 @@ class IngestErrorKind(StrEnum):
     LINE_IN_PATH = "line_in_path"
     BAD_LOCATION = "bad_location"
     BAD_CARRY = "bad_carry"
+    FOCUS_COUNT = "focus_count"
 
 
 @dataclass(frozen=True)

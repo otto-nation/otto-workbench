@@ -45,8 +45,9 @@ _DENIED_RECORD = json.dumps({
 _OK_RECORD = json.dumps({"type": "result", "subtype": "success", "num_turns": 3})
 
 _GROUP_FINDING = json.dumps({"findings": [{"id": "N1", "path": "a/one.py", "line": 1, "body": "naming"}]})
-_SCOUT_DOC = json.dumps({"leads": []})
-_HOLISTIC_DOC = json.dumps({"assessment": "ok"})
+_FOCUS = [{"title": "Retry", "rationale": "why", "paths": ["a/one.py"]}]
+_SCOUT_DOC = json.dumps({"leads": [], "focus": _FOCUS})
+_HOLISTIC_DOC = json.dumps({"assessment": "ok", "focus": _FOCUS})
 _DISPROVE_DOC = json.dumps({"verdicts": []})
 _REVIEW_BODY = json.dumps({"summary": "Synthesized.", "verdict": "Approve"})
 _REVIEW_WITH_FINDING = json.dumps({

@@ -47,7 +47,7 @@ from review.paths import phase_log_path, phase_output_path
 from review.phases import (
     PhaseResult, PhaseRunner,
     _phase_group_reviews, _should_disprove, _synthesis_max_turns,
-    read_scan, run_phase,
+    reuse_scan, run_phase,
 )
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
@@ -237,11 +237,7 @@ def _run_holistic_phase(
     output = phase_output_path(job.review_file, phase)
     if state.scanned and _has_output(output):
         core.log.info(f"Phase 1: {label} skipped (exists)")
-        return PhaseResult(
-            log=phase_log_path(job.review_file, phase),
-            content=read_scan(phase, output),
-            output=output,
-        )
+        return reuse_scan(phase, output, phase_log_path(job.review_file, phase))
 
     result = run_phase(job, phase, f"Phase 1/{group_count}: {label}...")
     state.done.add(phase)

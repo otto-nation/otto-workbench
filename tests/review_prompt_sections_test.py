@@ -16,9 +16,11 @@ from review.reply_threads import ReplyThreads
 from review.types import ReplyState
 from review.budget import MAX_ISSUE_CONTEXT_BYTES
 from review.prompt_sections import (
-    _build_issue_section, _build_reply_threads_section,
+    _build_focus_section, _build_issue_section, _build_reply_threads_section,
     _format_general_comments, _format_review_comments, _format_reviews,
 )
+from review.record import FocusSource
+from review_focus_support import area
 
 
 # ── _build_reply_threads_section ─────────────────────────────────────────────
@@ -242,3 +244,28 @@ class TestBuildIssueSection:
         assert euro not in section
         assert "\ufffd" not in section
         assert ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) in section
+
+
+class TestBuildFocusSection:
+    def test_requested_areas_are_marked_and_listed_first(self):
+        text = _build_focus_section((
+            area(id="F1", title="Auth", source=FocusSource.USER),
+            area(id="F2", title="DerivedBit", source=FocusSource.DERIVED),
+        ))
+        assert "- **F1** *(requested)* — Auth" in text
+        assert "- **F2** — DerivedBit" in text
+        assert text.index("Auth") < text.index("DerivedBit")
+        assert "*(requested)*" not in text[text.index("DerivedBit"):]
+
+    def test_no_areas_render_nothing(self):
+        assert _build_focus_section(()) == ""
+
+    def test_paths_and_rationale_follow_the_title(self):
+        text = _build_focus_section((
+            area(id="F1", title="Auth", rationale="check the gate",
+                 paths=("a.py", "b.py"), source=FocusSource.USER),
+        ))
+        title = text.index("- **F1** *(requested)* — Auth")
+        why = text.index("  Why: check the gate")
+        paths = text.index("  Paths: `a.py`, `b.py`")
+        assert title < why < paths

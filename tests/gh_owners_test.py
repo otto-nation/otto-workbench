@@ -501,3 +501,25 @@ def test_an_upstream_write_behind_a_process_wrapper_or_odd_flag_spelling_is_refu
     ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
     verdict = gh.owners.check_command(command, str(theirs if "stranger" not in command else ours))
     assert not verdict.ok and "stranger" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "gh repo -R stranger/lib deploy-key add key.pub",
+    "gh repo deploy-key add key.pub --repo stranger/lib",
+    "gh repo autolink create T- 'https://x/<num>' -R stranger/lib",
+])
+def test_nested_repo_writes_are_refused_for_an_upstream_repo(github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"]})
+    assert not gh.owners.check_command(command, str(tmp_path)).ok
+
+
+def test_nested_repo_write_is_allowed_for_an_own_repo(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"]})
+    assert gh.owners.check_command(
+        "gh repo deploy-key add key.pub -R otto-nation/svc", str(tmp_path)).ok
+
+
+def test_an_account_key_write_names_no_repository(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    assert not gh.owners.check_command("gh ssh-key add key.pub", str(repo)).ok

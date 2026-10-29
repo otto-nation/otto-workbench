@@ -215,3 +215,14 @@ read	eval 'echo review'
 read	env -S "gh pr view 1"
 read	eval eval 'gh pr view 1'
 read	sh -c 'pr status'
+write	gh repo deploy-key add key.pub --title ci
+write	gh repo deploy-key delete 12
+write	gh repo autolink create TICKET- 'https://x/<num>'
+write	gh repo autolink delete 3
+write	gh repo -R stranger/lib deploy-key add key.pub
+write	gh ssh-key add key.pub
+write	gh gpg-key delete ABC
+read	gh repo deploy-key list
+read	gh repo autolink list
+read	gh repo autolink view 3
+read	gh ssh-key list

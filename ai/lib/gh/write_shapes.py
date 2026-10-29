@@ -86,10 +86,17 @@ GH_WRITES: Mapping[str, frozenset[str]] = {
     "variable": frozenset({"set", "delete"}),
     "cache": frozenset({"delete"}),
     "gist": frozenset({"create", "edit", "delete", "rename"}),
+    "ssh-key": frozenset({"add", "delete"}),
+    "gpg-key": frozenset({"add", "delete"}),
     "project": frozenset({
         "create", "edit", "delete", "close", "copy", "link", "unlink", "mark-template",
         "field-create", "field-delete", "item-add", "item-archive", "item-create",
         "item-delete", "item-edit"}),
+}
+# Writes one level deeper: gh <group> <subgroup> <verb>, aimed at the usual repository.
+GH_NESTED_WRITES: Mapping[tuple[str, str], frozenset[str]] = {
+    ("repo", "deploy-key"): frozenset({"add", "delete"}),
+    ("repo", "autolink"): frozenset({"create", "delete"}),
 }
 MUTATING_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 DIRECTORY_CHANGERS = frozenset({"cd", "pushd", "popd"})
@@ -301,7 +308,7 @@ def _api_is_write(args: Sequence[str], input_text: str | None) -> bool:
     return fields
 
 
-def gh_subcommands(args: Sequence[str]) -> tuple[str, ...]:
+def gh_subcommands(args: Sequence[str], depth: int = 2) -> tuple[str, ...]:
     """gh's command group and verb, with ``-R/--repo`` skipped wherever it sits before the verb.
 
     gh's flag parser accepts a persistent flag between the group and the verb
@@ -309,7 +316,7 @@ def gh_subcommands(args: Sequence[str]) -> tuple[str, ...]:
     """
     found: list[str] = []
     i = 0
-    while i < len(args) and len(found) < 2:
+    while i < len(args) and len(found) < depth:
         _, nxt = take_repo_flag(args, i)
         if nxt != i:
             i = nxt
@@ -326,7 +333,13 @@ def gh_is_write(args: Sequence[str], input_text: str | None = None) -> bool:
         return _api_is_write(args[i + 1:], input_text)
     path = gh_subcommands(args)
     verbs = GH_WRITES.get(path[0]) if path else None
-    return verbs is not None and len(path) == 2 and path[1] in verbs
+    if verbs is not None and len(path) == 2 and path[1] in verbs:
+        return True
+    return _nested_write(gh_subcommands(args, 3))
+
+
+def _nested_write(path: Sequence[str]) -> bool:
+    return len(path) == 3 and path[2] in GH_NESTED_WRITES.get((path[0], path[1]), frozenset())
 
 
 def _review_posts(args: Sequence[str]) -> bool:

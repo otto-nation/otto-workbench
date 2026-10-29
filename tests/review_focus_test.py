@@ -14,10 +14,11 @@ from review.budget import MAX_FOCUS_AREAS, MAX_FOCUS_BYTES
 from review.artifacts import FocusReport, ReviewArtifact
 from review.focus import (
     FocusInputError, add_focus_args, adopt, areas_for_group, carry_derived,
-    coverage_problems, covered, focus_changed, needs_derived, operator_areas,
-    operator_texts, resolve_user_areas, user_areas, with_run_focus,
+    check_warning, coverage_problems, covered, focus_changed, needs_derived,
+    operator_areas, operator_texts, resolve_user_areas, user_areas,
+    with_run_focus,
 )
-from review.ingest import IngestErrorKind
+from review.ingest import IngestError, IngestErrorKind
 from review.record import FocusSource
 from review.store import StoredReview
 from review.types import ReviewMeta
@@ -337,3 +338,22 @@ def test_covered_ignores_derived_reports_when_the_run_already_has_one():
         ("F1", "A", "ok"),
         ("F2", "held", ""),
     ]
+
+
+# ── check_warning ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("kind, clause", [
+    (IngestErrorKind.MISSING_COVERAGE, "published as not assessed"),
+    (IngestErrorKind.UNKNOWN_FOCUS, "naming no area are dropped"),
+    (IngestErrorKind.FOCUS_COUNT, "only when this review asked"),
+])
+def test_check_warning_names_each_kind(kind, clause):
+    error = IngestError(kind, 0, "d", at="$.focus")
+    warning = check_warning([error])
+    assert error.render() in warning
+    assert clause in warning
+
+
+def test_check_warning_without_a_known_kind_is_the_errors_alone():
+    error = IngestError(IngestErrorKind.EMPTY_FIELD, 0, "d", at="$.focus")
+    assert check_warning([error]) == error.render()

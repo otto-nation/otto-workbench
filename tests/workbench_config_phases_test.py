@@ -125,8 +125,10 @@ agent:
       thinking: high
 """)
     cfg = config.workbench_config.load_config(project)
-    assert agent.phases.phase_thinking_default(Phase.SCOUT, Effort.MEDIUM, cfg) is Thinking.HIGH
-    assert agent.phases.phase_thinking_default(Phase.FIX, Effort.MEDIUM, cfg) is Thinking.LOW
+    scout = agent.phases.resolve_phase_thinking(Phase.SCOUT, None, cfg, Effort.MEDIUM)
+    fix = agent.phases.resolve_phase_thinking(Phase.FIX, None, cfg, Effort.MEDIUM)
+    assert scout is not None and scout.level is Thinking.HIGH
+    assert fix is not None and fix.level is Thinking.LOW
 
 
 def test_thinking_falls_back_to_the_effort_preset(roots):
@@ -135,9 +137,8 @@ def test_thinking_falls_back_to_the_effort_preset(roots):
 
     _, project = roots
     cfg = config.workbench_config.load_config(project)
-    assert agent.phases.phase_thinking_default(
-        Phase.SCOUT, Effort.HIGH, cfg,
-    ) == EFFORT_PRESETS[Effort.HIGH].thinking
+    got = agent.phases.resolve_phase_thinking(Phase.SCOUT, None, cfg, Effort.HIGH)
+    assert got is not None and got.level == EFFORT_PRESETS[Effort.HIGH].thinking
 
 
 def test_effort_falls_back_from_config_to_the_built_in(roots):

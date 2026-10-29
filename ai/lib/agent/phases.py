@@ -193,13 +193,6 @@ class ThinkingLayer(Enum):
     SPEC = auto()
 
 
-# The half of the chain `phase_thinking_default` answers: the config file down.
-_CONFIG_THINKING = frozenset({
-    ThinkingLayer.PHASE_CONFIG, ThinkingLayer.PHASE_CONFIG_MODEL, ThinkingLayer.TIER_MODEL,
-    ThinkingLayer.AGENT_CONFIG, ThinkingLayer.EFFORT, ThinkingLayer.SPEC,
-})
-
-
 @dataclass(frozen=True)
 class ResolvedThinking:
     """A phase's thinking level, the layer that supplied it, and the setting it was read from.
@@ -222,8 +215,8 @@ def _thinking_candidates(
     """Every layer of the thinking chain that sets a level, highest first.
 
     The one statement of the chain: `resolve_phase_thinking` takes the first
-    entry and `phase_thinking_default` the first config-file entry, so the level
-    a run uses and the one `config phases` reports are read from the same rows.
+    entry, so the level a run uses and the one `config phases` reports are
+    read from the same rows.
     """
     override = cfg.agent.phases.get(phase)
     preset = EFFORT_PRESETS[effort].thinking if effort is not None else None
@@ -338,32 +331,6 @@ def unset_review_phases(
     """The review phases no layer names a model for (see `collect_phase_models`)."""
     cfg = config.workbench_config.load_config_or_default(project_root)
     return [phase for phase in REVIEW_PHASES if not phase_model(phase, explicit, cfg)]
-
-
-def phase_thinking_default(
-    phase: Phase, effort: Effort | None = None,
-    cfg: WorkbenchConfig | None = None, resolved: ResolvedModel | None = None,
-) -> str | None:
-    """The thinking level from the config file down, the first of these that is set.
-
-        agent.phases.<phase>.thinking, then a level on agent.phases.<phase>.model
-        a level on models.<tier> for the phase's tier
-        agent.thinking
-        the effort preset, then the spec
-
-    A setting for one phase beats one for its tier, which beats one for every
-    phase. ``resolved`` is the phase's model, when the caller has one; a level
-    it carries from an env or explicit layer ranks above this function, in
-    `phase_settings`. ``effort=None`` is a phase running outside a review,
-    where there is no preset to flatten anything.
-    """
-    phase = Phase(phase)
-    configured = (
-        candidate for candidate in _thinking_candidates(phase, resolved, _config(cfg), effort)
-        if candidate.layer in _CONFIG_THINKING
-    )
-    first = next(configured, None)
-    return first.level if first is not None else None
 
 
 def resolve_effort(

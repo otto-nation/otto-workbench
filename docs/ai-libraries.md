@@ -876,6 +876,39 @@ The run's summary reads the copy back, which is how `Usage:` comes to count
 the fix pass and its gate: by the time the summary prints, the sweep has
 removed the live logs it used to read.
 
+### review/focus.py
+
+Focus areas as data: what the operator asked for, what phases derive, and who sees which.
+
+A review's focus is a short list of `review.record.FocusArea`s. Requested
+(`source=user`) areas come first and are always kept; derived ones follow,
+at most `review.artifacts.MAX_DERIVED_FOCUS` of them. This module is the one
+owner of how that list is built, merged across rounds, numbered (`F1…`) and
+scoped to a group. Renderers take the areas off the record and never import
+it, so the list is decided once and only shown elsewhere.
+
+Operator input is validated where it enters. `review` and `pr batch run` read
+every `--focus-file` at parse time and refuse, before anything is spent, an
+unreadable or non-UTF-8 file, an empty text, one over `MAX_FOCUS_BYTES` raw
+bytes (inline `--focus` texts included), or more than `MAX_FOCUS_AREAS` texts
+in total. The focus section is fixed overhead in every prompt and is never cut
+to fit, so it is bounded here rather than truncated later. What travels on is
+the text, never a path. A text becomes an area by one rule: its first
+non-blank line, leading `#`, `-` and `*` markers stripped, is the title, and
+the rest is the rationale.
+
+Across rounds, the requested areas are this invocation's flags, else the
+resumed run's own areas whenever there is a resumed run (an empty list
+included, so a run that recorded none keeps none), else the prior record's
+requested areas. A prior record's derived areas are carried behind them. No
+coverage is ever carried: it describes the round that wrote it.
+
+An area's path matches a file on a boundary — the file itself, or anything
+under it as a directory — so `pkg` does not reach `pkgx/a.go`. A derived or
+carried path matching no file in the PR is dropped, and an area left with no
+path is pathless and reaches every group, so a misspelt path cannot hide an
+area from the whole review.
+
 ### review/gc.py
 
 Removal of review artifacts, at every lifecycle that removes one.

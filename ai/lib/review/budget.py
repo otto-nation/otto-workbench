@@ -179,6 +179,12 @@ MAX_REVIEW_BODY_LEN = 200
 # cannot spend the budget the diff is meant to fill.
 MAX_ISSUE_CONTEXT_BYTES = 8_192
 
+# The focus section is fixed overhead in every reviewing prompt and is never
+# cut to fit, so both what one requested area may say and how many there may
+# be are bounded: `review` refuses past either rather than truncating.
+MAX_FOCUS_BYTES = 4096
+MAX_FOCUS_AREAS = 5
+
 # How many paths either file list in the delta section spells out before it
 # summarises the rest. A list is orientation, not content — the diff above it is
 # what the agent reviews — so the tail costs bytes no reader spends. Both lists

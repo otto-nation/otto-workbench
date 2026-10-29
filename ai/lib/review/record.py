@@ -159,9 +159,18 @@ class VerifiedNote:
 
 @dataclass(frozen=True)
 class FocusArea:
+    """One thing the review was asked, or chose, to look at closely.
+
+    `id` is `F1…` as the harness numbers it. `paths` are the repo-relative
+    files or directories a derived area is about; a requested area names none.
+    `coverage` is what the writing agent said of the area, or "" when no agent
+    covered it this round.
+    """
+
     id: str
     title: str = ""
     rationale: str = ""
+    paths: tuple[str, ...] = ()
     source: FocusSource = FocusSource.DERIVED
     coverage: str = ""
 

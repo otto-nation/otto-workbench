@@ -51,6 +51,10 @@ _ID_RE = re.compile(rf"^{SEVERITY_KEY}[1-9]\d*$")
 _CHALLENGED_RE = re.compile(rf"^[{SEVERITY_MUST}{SEVERITY_SHOULD}][1-9]\d*$")
 _KEYS = ", ".join(s.key for s in SEVERITIES)
 
+# How many focus areas a phase may derive. Defined here, beside the artifacts
+# that carry derived focus, and read by `review.focus` when it adopts them.
+MAX_DERIVED_FOCUS = 3
+
 
 def _error(kind: IngestErrorKind, at: str, detail: str) -> IngestError:
     return IngestError(kind, 0, detail, at=at)

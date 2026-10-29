@@ -160,15 +160,27 @@ def load_artifact(
     return artifact
 
 
-def repair_prompt(prompt: str, path: str, errors: tuple[IngestError, ...]) -> str:
-    """Re-send `prompt` with the ingest errors the agent must fix in `path`."""
+def repair_prompt(
+    prompt: str, path: str, errors: tuple[IngestError, ...], *, readable: bool = False,
+) -> str:
+    """Re-send `prompt` with the ingest errors the agent must fix in `path`.
+
+    `readable` means the document loaded and only the run's check failed.
+    """
     listed = "\n".join(f"- {e.render()}" for e in errors)
-    return (
-        f"{prompt}\n\n## Your output was rejected\n\n"
-        f"What you wrote to `{path}` cannot be read:\n\n{listed}\n\n"
-        "Fix that file in place — only what is named above — so it is the format "
-        "the Output section asks for. Do not rewrite anything else."
-    )
+    if readable:
+        body = (
+            f"What you wrote to `{path}` was read, but it leaves out what this review asked for:\n\n"
+            f"{listed}\n\nAdd or correct only what is named above, in place. Keep everything "
+            "else exactly as you wrote it."
+        )
+    else:
+        body = (
+            f"What you wrote to `{path}` cannot be read:\n\n{listed}\n\n"
+            "Fix that file in place — only what is named above — so it is the format "
+            "the Output section asks for. Do not rewrite anything else."
+        )
+    return f"{prompt}\n\n## Your output was rejected\n\n{body}"
 
 
 def ingest_artifact(
@@ -187,8 +199,9 @@ def ingest_artifact(
         return ArtifactOutcome(load_artifact(path, kind, check=check))
     except IngestRejected as exc:
         errors = exc.errors
+        readable = isinstance(exc, CheckRejected)
     core.log.warn(f"{path} rejected ({len(errors)} error(s)) — one repair turn")
-    rc = invoke(repair_prompt(prompt, path, errors), REPAIR_MAX_TURNS)
+    rc = invoke(repair_prompt(prompt, path, errors, readable=readable), REPAIR_MAX_TURNS)
     try:
         return ArtifactOutcome(load_artifact(path, kind, check=check), repaired=True)
     except CheckRejected as exc:

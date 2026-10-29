@@ -41,6 +41,7 @@ from pathlib import Path
 import git.client
 import core.job_slots
 import core.log
+import review.focus
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
@@ -353,7 +354,7 @@ def run_multi_phase(
             review_type=ReviewType.of(incremental),
             prior_sha=job.preflight.prior_head_sha if incremental else "",
             skipped_groups=sorted(incremental_skips),
-            schema_version=PIPELINE_SCHEMA_VERSION,
+            schema_version=PIPELINE_SCHEMA_VERSION, focus=list(review.focus.user_areas(job.focus)),
         )
         _write_pipeline_state(job, state)
 

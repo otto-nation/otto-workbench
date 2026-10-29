@@ -37,7 +37,7 @@ job = mod.ReviewJob(
     session_log='/tmp/s.jsonl',
 )
 mod._write_pipeline_state(job, state)
-loaded = mod._read_pipeline_state(job)
+loaded = mod.read_pipeline_state(job)
 print(f'sha={loaded.head_sha}')
 print(f'count={loaded.group_count}')
 print(f'names={loaded.group_names}')
@@ -52,7 +52,7 @@ print(f'groups={loaded.groups_done}')
   [[ "$result" == *"groups=[1, 3]"* ]]
 }
 
-@test "_read_pipeline_state: missing file returns None" {
+@test "read_pipeline_state: missing file returns None" {
   result=$(_py "
 import io, contextlib
 with contextlib.redirect_stdout(io.StringIO()):
@@ -64,13 +64,13 @@ with contextlib.redirect_stdout(io.StringIO()):
         review_file='$TMPDIR/nonexistent-review.md',
         session_log='/tmp/s.jsonl',
     )
-    result = mod._read_pipeline_state(job)
+    result = mod.read_pipeline_state(job)
 print(result)
 ")
   [ "$result" = "None" ]
 }
 
-@test "_read_pipeline_state: corrupt JSON returns None" {
+@test "read_pipeline_state: corrupt JSON returns None" {
   echo "not valid json" > "$TMPDIR/pipeline.json"
   result=$(_py "
 import io, contextlib
@@ -83,7 +83,7 @@ with contextlib.redirect_stdout(io.StringIO()):
         review_file='$TMPDIR/review.md',
         session_log='/tmp/s.jsonl',
     )
-    result = mod._read_pipeline_state(job)
+    result = mod.read_pipeline_state(job)
 print(result)
 ")
   [ "$result" = "None" ]
@@ -335,7 +335,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     mod._update_group_done(job, 3, state)
     mod._update_group_done(job, 2, state)
     mod._update_group_done(job, 1, state)  # duplicate, should not add
-    loaded = mod._read_pipeline_state(job)
+    loaded = mod.read_pipeline_state(job)
 print(f'groups={loaded.groups_done}')
 ")
   [ "$result" = "groups=[1, 2, 3]" ]
@@ -371,7 +371,7 @@ job = mod.ReviewJob(
 )
 
 mod._write_pipeline_state(job, state)
-loaded = mod._read_pipeline_state(job)
+loaded = mod.read_pipeline_state(job)
 assert loaded.groups_failed == {2: mod.Diagnosis(
     mod.DiagnosisKind.AGENT_ERROR, detail="model not available",
 )}, f"got {loaded.groups_failed}"
@@ -408,7 +408,7 @@ job = mod.ReviewJob(
     session_log=f"{d}/session.jsonl",
 )
 
-loaded = mod._read_pipeline_state(job)
+loaded = mod.read_pipeline_state(job)
 assert loaded.groups_failed == {}, f"got {loaded.groups_failed}"
 assert loaded.done == set(), f"got {loaded.done}"
 assert loaded.failed == {}, f"got {loaded.failed}"
@@ -434,7 +434,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     )
     mod._update_group_failed(job, 2, mod.Diagnosis(mod.DiagnosisKind.MAX_TURNS, num_turns=10), state)
     mod._update_group_failed(job, 3, mod.Diagnosis(mod.DiagnosisKind.AGENT_ERROR, detail='model not available'), state)
-    loaded = mod._read_pipeline_state(job)
+    loaded = mod.read_pipeline_state(job)
 reasons = {i: d.message for i, d in loaded.groups_failed.items()}
 print(f'failed={reasons}')
 print(f'done={loaded.groups_done}')

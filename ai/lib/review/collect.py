@@ -51,6 +51,7 @@ import core.log
 import core.project_context
 import git.numstat
 import pr.context
+import review.focus
 import review.worktree_delta
 from gh.types import PRMetadata
 from core.phases import Mode
@@ -612,8 +613,9 @@ def _prior_sha_for_delta(job: ReviewJob, self_files: list[str] | None = None) ->
     Every reason to review the whole PR instead is decided here: no prior
     review, a prior review that recorded no SHA, one recorded against the
     commit already checked out (unless a self-review's tree differs from what
-    that review read, which is its delta, and `--force` was not given), and
-    one naming a commit this worktree cannot resolve.
+    that review read, which is its delta, and `--force` was not given), one
+    naming a commit this worktree cannot resolve, and an operator focus that
+    differs from the prior round's.
 
     *self_files* is the self-delta list `_collect_delta` already computed, so
     a same-HEAD run does not numstat the tree twice. Direct callers omit it
@@ -625,6 +627,9 @@ def _prior_sha_for_delta(job: ReviewJob, self_files: list[str] | None = None) ->
     prior_sha = job.prior.meta.head_sha
     if not prior_sha:
         core.log.info("Prior sidecar has no head SHA — running full review")
+        return ""
+    if review.focus.focus_changed(job.focus, job.prior):
+        core.log.info("Operator focus changed since the prior review — running full review")
         return ""
     if covers(prior_sha, job.pr.head_sha):
         # Self-review reads the working tree, so a run on the reviewed commit

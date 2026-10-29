@@ -264,11 +264,13 @@ class TestCleanupScope:
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
 
-    def _run(self, ro, monkeypatch, tmp_path, pipeline=None, out=None, **arg_overrides):
+    def _run(self, ro, monkeypatch, tmp_path, pipeline=None, out=None, prior_head_sha="",
+             **arg_overrides):
         """Drive `run_orchestrate` over *tmp_path* with every phase faked.
 
         Pass *out* to keep the result JSON the run prints; the default throws
         it away, since what most of these tests read is the directory.
+        *prior_head_sha* makes the faked preflight an incremental one.
         """
         import fix.engine  # the `ro` fixture has already put `ai/lib` on the path
         from review.reply_threads import ReplyThreads
@@ -308,7 +310,7 @@ class TestCleanupScope:
             ro, "collect_preflight_data",
             lambda job: ro.PreflightData(
                 diff="", commit_log="", file_contents={}, file_permissions={},
-                instructions_md="", architecture_md="",
+                instructions_md="", architecture_md="", prior_head_sha=prior_head_sha,
             ),
         )
         monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)
@@ -540,6 +542,62 @@ class TestCleanupScope:
         self._run(ro, monkeypatch, tmp_path, pipeline=_capture, focus=["Retry\nwhy"])
         assert seen["focus"] == (FocusArea(
             id="F1", title="Retry", rationale="why", source=FocusSource.USER),)
+
+    def _focus_after_prior(self, ro, monkeypatch, tmp_path, **run_kwargs):
+        """The job's focus on a re-review of a prior round that held a requested
+        area (F1 Retry) and a covered derived one (F2 Parsing on a.py)."""
+        from review.record import FocusSource
+        from review.store import archive_prior, write_review
+        from review.types import ReviewMeta
+        from review_focus_support import area
+        from review_record_support import record
+
+        review_dir = tmp_path / "review-dir"
+        review_dir.mkdir(exist_ok=True)
+        prior_focus = (
+            area("F1", "Retry", "why", source=FocusSource.USER, coverage="checked"),
+            area("F2", "Parsing", paths=("a.py", "gone.py"), coverage="checked"),
+        )
+        write_review(review_dir / "review.md", record(summary="prior", focus=prior_focus),
+                     ReviewMeta(head_sha="0ldc0de"))
+        archive_prior(review_dir)
+        (review_dir / "prior.md").write_text("## Summary\nprior\n")
+        seen = {}
+
+        def _capture(job, **_kwargs):
+            seen["focus"] = job.focus
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}")
+
+        self._run(ro, monkeypatch, tmp_path, pipeline=_capture,
+                  prior_review=str(review_dir / "prior.md"), **run_kwargs)
+        return seen["focus"]
+
+    def test_a_re_review_without_focus_keeps_the_requested_areas(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """X6: no --focus on a re-review keeps the prior round's requested areas."""
+        from review_focus_support import user_area
+
+        focus = self._focus_after_prior(ro, monkeypatch, tmp_path)
+        assert focus == (user_area("Retry", "why"),)
+
+    def test_an_incremental_review_carries_the_prior_derived_areas(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        from review_focus_support import area, user_area
+
+        focus = self._focus_after_prior(ro, monkeypatch, tmp_path, prior_head_sha="0ldc0de")
+        assert focus == (
+            user_area("Retry", "why"),
+            area("F2", "Parsing", paths=("a.py",)),
+        )
+
+    def test_a_full_review_does_not_carry_derived_areas(self, ro, monkeypatch, tmp_path):
+        from review.record import FocusSource
+
+        focus = self._focus_after_prior(ro, monkeypatch, tmp_path)
+        assert [a.source for a in focus] == [FocusSource.USER]
 
 
 class TestThePublishingGate:

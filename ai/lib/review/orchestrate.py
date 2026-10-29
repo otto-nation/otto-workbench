@@ -469,10 +469,14 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         # getattr: the suites build `args` by hand, and an absent flag is the
         # ordinary case.
         full_review=getattr(args, "full_review", False),
-        # getattr: as above, a hand-built `args` carries no --focus.
-        focus=review.focus.operator_areas(getattr(args, "focus", ())),
     )
     job.prior = read_prior(Path(args.review_file).parent) if args.prior_review else None
+    # This run's --focus, else a resumed run's own areas at this head, else the
+    # prior round's. getattr: as above, a hand-built `args` carries no --focus.
+    resumed = review.state.read_pipeline_state(job)
+    job.focus = review.focus.resolve_user_areas(
+        getattr(args, "focus", ()), job.prior,
+        resumed.focus if resumed is not None and resumed.head_sha == job.pr.head_sha else None)
 
     job.throttle = QuotaThrottle()
     # Handed to us, not derived: --repo-dir may be a detached review worktree,
@@ -500,6 +504,10 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
             job.reply_threads = rt_future.result()
     else:
         job.preflight = collect_preflight_data(job)
+    # An incremental round keeps reviewing what the prior round chose to look at.
+    if review.prompt_sections._is_incremental(job):
+        job.focus = review.focus.carry_derived(
+            job.focus, job.prior, [f["path"] for f in job.pr.files])
 
     with cleaned_on_success(Path(job.artifact_dir)):
         phases = _run_phases(trail, args, job)

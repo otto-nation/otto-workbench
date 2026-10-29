@@ -35,6 +35,9 @@ backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
 Pi refuses a provider without a model; a reference always carries its id, so
 no phase reaches that, and ``agent.pi_models.require_model_with_provider`` stays
 as the spawn's own guard for a caller that hands a provider in directly.
+
+`otto-workbench config phases` reports these answers per phase; the JSON shape
+is `agent.phase_report`.
 """
 
 # doc-group: pipeline

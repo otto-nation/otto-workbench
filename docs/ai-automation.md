@@ -10,12 +10,8 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 
 Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 
-This page is the operator's view: what to install, what to run, and what the
-commands do. Behaviour that belongs to one module — how findings are numbered,
-what the publishing gate covers, how a run's bookkeeping is keyed, what a
-supersession preflight reads — is documented on that module in
-[AI Libraries](ai-libraries.md), so there is one copy of it and it sits next to
-the code it describes.
+This page is the operator's view: what to install, what to run, and what the commands do.
+Behaviour that belongs to one module — how findings are numbered, what the publishing gate covers, how a run's bookkeeping is keyed, what a supersession preflight reads — is documented on that module in [AI Libraries](ai-libraries.md), so there is one copy of it and it sits next to the code it describes.
 
 ## Setup
 
@@ -317,57 +313,7 @@ Every GitHub write is checked against `github.owners` and refused elsewhere; uns
 
 ### Which model each phase runs on
 
-`otto-workbench config phases` prints the three tiers and, for every phase in
-the registry, the tier it reads, the model and thinking level it will run on,
-and the setting that answered each. It resolves through `agent.phases`, the
-same chain a run uses (the model: `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` >
-`agent.phases.<phase>.model` > `models.<tier>`; the thinking level:
-`WORKBENCH_AI_<PHASE>_THINKING` > a level on the phase's env model >
-`WORKBENCH_AI_THINKING` > `agent.phases.<phase>.thinking` > a level on that
-phase's model > a level on `models.<tier>` > `agent.thinking` > the spec), so a front end reads the
-answer rather than re-implementing the order. `DIR` names a repo other than the
-current one. It exits 0 whenever the config loads, unset tiers included, and 1
-only when a config file cannot be read.
-
-`--json` prints one object:
-
-```json
-{
-  "schema": 1,
-  "tiers": {"deep": {"value": "anthropic/claude-opus-5:high", "scope": "global"},
-            "standard": {"value": null, "scope": null}, "light": {"value": "openai/gpt-6-mini:low", "scope": "project"}},
-  "phases": {
-    "synthesis": {
-      "domain": "review", "tier": "deep",
-      "model": {"provider": "anthropic", "id": "claude-opus-5", "level": "high"},
-      "model_source": {"layer": "tier", "key": "models.deep", "scope": "global", "via": null},
-      "thinking": "high",
-      "thinking_source": {"layer": "tier_model", "key": "models.deep", "scope": "global", "via": null},
-      "error": null
-    }
-  }
-}
-```
-
-- `tiers.<tier>.value` is `models.<tier>` as written, null when unset; `scope` is
-  the file that set it (`project`, `container`, `global`), null when unset.
-- `phases` is keyed by phase, in registry order. `model` is null when nothing
-  names one (the backend's default); its `model_source` then reads
-  `{"layer": "unset", "key": "models.<tier>", ...}`, the key to set. `thinking`
-  null with layer `unset` is likewise the backend's default.
-- A source's `layer` is, for a model, `phase_env`, `global_env`, `phase_config`,
-  `tier` or `unset`; for thinking, `phase_env`, `phase_env_model`, `global_env`,
-  `global_env_model`, `phase_config`, `phase_config_model`, `tier_model`,
-  `agent_config`, `spec` or `unset` — a `*_model` layer is a level carried on the
-  model that layer named. `key` is the env var or config key, null for `spec`;
-  `scope` is `env`, a file's scope, `default` for `spec`, or null when unset.
-  `via` names the tier a value borrowed by name (`synthesis: {model: light}`).
-- `error` holds the message when a phase cannot resolve — a setting naming an
-  unset tier, or `WORKBENCH_AI_PROVIDER` still exported — and every resolved
-  field of that phase is null.
-- Thinking is a phase's level outside a review's `--effort` preset; `review.effort:
-  low` or `high` lowers or raises the fallback for review phases at run time.
-- `schema` changes only when a field is removed or changes meaning.
+`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy).
 
 ### Usage ledger
 

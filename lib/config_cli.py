@@ -322,8 +322,8 @@ def _phases(args: argparse.Namespace) -> int:
 
     The answer is `agent.phase_report`'s, built on the resolver every phase runs
     through, so a caller reads the precedence chain instead of re-implementing
-    it. The JSON shape is `PhaseReport.as_json`'s, documented in
-    docs/ai-automation.md. Unset tiers and a phase that cannot resolve are both
+    it. The JSON shape is `PhaseReport.as_json`'s, documented on
+    `agent.phase_report`. Unset tiers and a phase that cannot resolve are both
     data and exit 0; a config that cannot be read raises `ConfigError`, which
     `main` turns into exit 1 with nothing on stdout.
     """

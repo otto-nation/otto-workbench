@@ -165,6 +165,31 @@ A tier name takes a level too: ``deep:high`` is the deep tier's model at high.
 
 Not: which layer wins (``agent.phases``), what a backend does with the parts.
 
+### agent/phase_report.py
+
+What every phase resolves to on this machine, and which setting answered each part.
+
+`otto-workbench config phases` prints this. A front end that lets an operator
+set models needs, per phase, the tier it reads, the model and thinking level it
+will run on, and the key to edit to change either — and must not re-implement
+the precedence chain in `agent.phases` to get them, because that copy drifts the
+moment a phase moves tier or a layer is added.
+
+So nothing here decides anything. The model and its layer come from
+`agent.phases.resolve_phase_model`, the thinking level and its layer from
+`agent.phases.resolve_phase_thinking` — the same rows `phase_settings` runs on.
+This module adds only what the resolver cannot know: which file a config key
+was read from, taken from `config.workbench_config_report.config_status`, the
+owner `config status` and `config get` already report through.
+
+Resolved as a phase outside a review: no ``--model`` and no effort preset, so
+the ``explicit*`` and ``effort`` layers never answer here. A phase whose
+settings raise an operator error (a tier name naming an unset tier,
+WORKBENCH_AI_PROVIDER still set) carries the message instead of a model; an
+unreadable config raises `ConfigError`, the one failure the report cannot work
+around. ``PhaseReport.as_json`` is the stable shape; ``docs/ai-automation.md``
+documents it.
+
 ### agent/phases.py
 
 What a phase resolves to here: the spec, the config file, the environment.

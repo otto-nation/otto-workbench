@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
 # this suite to the code it reaches through `rp`.
 import cli.review_post  # noqa: E402,F401
 from review.format import format_body_text  # noqa: E402
+from review.render import focus_comment  # noqa: E402
 from review.record import LedgerLine, ProseSection, TriageEntry  # noqa: E402
 from review.types import PriorDisposition  # noqa: E402
 
@@ -119,3 +120,8 @@ class TestReviewSections:
         rec = record(summary="looked", focus=(asked,))
         body = format_body_text([], False, set(), rp.ReviewSections.from_record(rec))
         assert "- **Locking** *(requested)* — checked the mutex" in body.splitlines()
+
+    def test_multiline_comment_coverage_stays_one_list_item(self):
+        text = focus_comment([area(title="Locks", coverage="a\n\nb")])
+        line_b = next(ln for ln in text.splitlines() if ln.strip() == "b")
+        assert line_b.startswith("  ")

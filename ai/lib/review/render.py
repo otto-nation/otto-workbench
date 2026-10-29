@@ -68,6 +68,12 @@ def finding_line(f: RecordFinding, *, sids: bool = False, evidence: bool = False
     return f"{line}\n{evidence_block(f.evidence)}" if evidence and f.evidence else line
 
 
+def _continued(text: str) -> str:
+    """A list item's later lines must be indented, or markdown ends the item."""
+    first, *rest = text.split("\n")
+    return "\n".join([first, *("  " + line if line else "" for line in rest)])
+
+
 def _coverage(area: FocusArea) -> str:
     return area.coverage if area.coverage else "*Not assessed this round.*"
 
@@ -75,10 +81,10 @@ def _coverage(area: FocusArea) -> str:
 def focus_line(area: FocusArea) -> str:
     """One `## Focus` list item for review.md, with rationale and paths when set."""
     asked = " *(requested)*" if area.source is FocusSource.USER else ""
-    head = f"- **[{area.id}] {area.title}**{asked} — {_coverage(area)}"
+    head = f"- **[{area.id}] {area.title}**{asked} — {_continued(_coverage(area))}"
     extra: list[str] = []
     if area.rationale:
-        extra.append("  " + area.rationale.replace("\n", "\n  "))
+        extra.append("  " + _continued(area.rationale))
     if area.paths:
         extra.append("  Paths: " + ", ".join(f"`{p}`" for p in area.paths))
     return "\n".join([head, *extra])
@@ -89,7 +95,7 @@ def focus_comment(areas: Sequence[FocusArea]) -> str:
     lines = []
     for area in areas:
         asked = " *(requested)*" if area.source is FocusSource.USER else ""
-        lines.append(f"- **{area.title}**{asked} — {_coverage(area)}")
+        lines.append(f"- **{area.title}**{asked} — {_continued(_coverage(area))}")
     return "\n".join(lines)
 
 

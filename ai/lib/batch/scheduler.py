@@ -10,6 +10,7 @@ import shlex
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Sequence
 from typing import Callable
 
 import batch.admission
@@ -80,7 +81,7 @@ def _unpublished(worktree: str, remote_sha: str) -> bool:
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
-            no_verify: bool = False) -> Run:
+            no_verify: bool = False, focus: Sequence[str] = ()) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -113,7 +114,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
                ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []),
-               no_verify=no_verify)
+               no_verify=no_verify, focus=list(focus))
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
@@ -658,7 +659,8 @@ class Scheduler:
         wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait,
-                         fork_point=self._rebase_fork_point(item, rec))
+                         fork_point=self._rebase_fork_point(item, rec),
+                         focus=self.run.focus)
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         rec.start_head = rec.start_head or head_before

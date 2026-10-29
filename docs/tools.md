@@ -908,6 +908,8 @@ Takes no flags.
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume and resolve honor it. |
+| `--focus` `<text>` | An area the review must cover (repeatable; at most 4096 bytes each). |
+| `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; at most 4096 bytes). |
 | `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
 
 **`pr batch resume`** — Continue a run

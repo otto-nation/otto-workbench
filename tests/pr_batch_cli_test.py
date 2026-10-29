@@ -526,6 +526,64 @@ def test_no_verify_reaches_the_run(monkeypatch):
     assert seen["no_verify"] is True
 
 
+def test_an_oversized_focus_file_refuses_the_run_before_planning(tmp_path, monkeypatch, capsys):
+    from review.budget import MAX_FOCUS_BYTES
+    big = tmp_path / "focus.md"
+    big.write_bytes(b"x" * (MAX_FOCUS_BYTES + 1))
+
+    def boom(args):
+        raise AssertionError("planned")
+
+    monkeypatch.setattr(cli.pr_batch, "_plan", boom)
+    assert _main(["batch", "run", "--checkout", "/r", "--focus-file", str(big)]) == 1
+    assert str(MAX_FOCUS_BYTES) in capsys.readouterr().err
+
+
+def test_an_untitled_focus_text_refuses_the_run_before_planning(monkeypatch, capsys):
+    def boom(args):
+        raise AssertionError("planned")
+
+    monkeypatch.setattr(cli.pr_batch, "_plan", boom)
+    assert _main(["batch", "run", "--checkout", "/r", "--focus", "###"]) == 1
+    assert "no title" in capsys.readouterr().err
+
+
+def test_run_stores_the_focus(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
+    seen = {}
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+
+    settle = stops_at(batch.model.RunStatus.DONE)
+
+    def fake_run(self):
+        seen["focus"] = list(self.run.focus)
+        return settle(self)
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--focus", "x"]) == 0
+    assert seen["focus"] == ["x"]
+
+
+def test_focus_warns_about_items_without_a_review_step(monkeypatch, capsys):
+    rows = [
+        PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                {batch.model.Step.REVIEW: StepNeed(True, "x")}),
+        PlanRow("o/r", "/r", 2, "t", "b2", "h", False,
+                {batch.model.Step.REBASE: StepNeed(True, "behind"),
+                 batch.model.Step.REVIEW: StepNeed(False, "current")}),
+    ]
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        stops_at(batch.model.RunStatus.DONE))
+    assert _main(["batch", "run", "--checkout", "/r", "--focus", "x"]) == 0
+    warn = next(line for line in capsys.readouterr().err.splitlines()
+                if "--focus applies only to review steps" in line)
+    assert "o/r#2" in warn and "o/r#1" not in warn
+    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert "--focus applies only to review steps" not in capsys.readouterr().err
+
+
 def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})

@@ -56,6 +56,17 @@ def test_the_ci_step_waits_when_asked():
                                              wait=True)
 
 
+def test_the_review_step_carries_every_focus_text():
+    argv = batch.steps.step_argv(Step.REVIEW, "pr", "/wt", focus=("a", "-b"))
+    assert argv[-4:] == ["--focus=a", "--focus=-b", "--repo-dir", "/wt"]
+
+
+def test_no_other_step_takes_focus():
+    for step in (Step.REBASE, Step.CI, Step.COMMENTS):
+        argv = batch.steps.step_argv(step, "pr", "/wt", focus=("a",))
+        assert not any(a == "--focus" or a.startswith("--focus=") for a in argv)
+
+
 def _script(tmp_path, body):
     p = tmp_path / "fake.sh"
     p.write_text("#!/bin/sh\n" + body)

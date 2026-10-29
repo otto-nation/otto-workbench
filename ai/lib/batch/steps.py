@@ -16,6 +16,7 @@ import signal
 import subprocess
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,7 +32,8 @@ from batch.model import Step
 
 
 def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
-              wait: bool = False, fork_point: str = "") -> list[str]:
+              wait: bool = False, fork_point: str = "",
+              focus: Sequence[str] = ()) -> list[str]:
     """The child process for one step. Every step runs drafted — nothing here pushes
     or posts — because publishing is the batch's own decision, made once per item
     against the tree.
@@ -42,6 +44,7 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
 
     A stacked child's rebase whose parent was rewritten in this run passes
     `--fork-point` so only the child's unique commits replay; never `--force`.
+    Only the review step takes *focus*.
     """
     if step is Step.REBASE:
         argv = [pr_bin, "rebase", "--fix", "--no-push"]
@@ -62,6 +65,7 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
         argv = [pr_bin, "comments", "--fix"]
     else:
         argv = [pr_bin, "review", "--self", "--fix", "--force"]
+        argv += [f"--focus={text}" for text in focus]
     return argv + ["--repo-dir", worktree]
 
 

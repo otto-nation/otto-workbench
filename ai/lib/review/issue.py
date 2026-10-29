@@ -30,6 +30,12 @@ from config.workbench_config import yaml_dump
 from pr.target import PUBLIC_GITHUB_HOST, is_public_github
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
+_BOUNDED_JIRA_LINEAR = re.compile(
+    rf"(?<![A-Z0-9-]){_ISSUE_PATTERN_JIRA_LINEAR.pattern}(?![0-9])")
+_GITHUB_ISSUE_URL = re.compile(
+    r"^(?:https?://(?P<host>[^/\s]+)/)?(?P<repo>[\w.-]+/[\w.-]+)"
+    r"/issues/(?P<id>\d+)(?:[/?#]\S*)?$")
+_GITHUB_ISSUE_BARE = re.compile(r"^#?(?P<id>\d+)$")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
 # The host a provider's issues live under when ``issues.base_url`` has not
 # named one. GitHub has a single public instance to fall back on; Jira is
@@ -122,6 +128,12 @@ class IssueResult:
 class IssueContext:
     link: str = ""
     context: str = ""
+
+
+@dataclass(frozen=True)
+class LinkedIssue:
+    id: str
+    repo: str = ""
 
 
 def adopt_project_review_yml(wt_path: str) -> bool:
@@ -564,6 +576,55 @@ def fetch_issue_context(
         return _fetch_jira(issue_id, opts)
 
     return IssueContext()
+
+
+def _github_linked_issue(link: str) -> LinkedIssue | None:
+    m = _GITHUB_ISSUE_URL.match(link)
+    if not m:
+        m = _GITHUB_ISSUE_BARE.match(link)
+        return LinkedIssue(m.group("id")) if m else None
+    host, repo = m.group("host") or "", m.group("repo")
+    if host and host != "github.com":
+        repo = f"{host}/{repo}"
+    return LinkedIssue(m.group("id"), repo)
+
+
+def _jira_linear_linked_issue(link: str) -> LinkedIssue | None:
+    if re.match(r"^https?://\S+$", link):
+        m = _BOUNDED_JIRA_LINEAR.search(link)
+        return LinkedIssue(m.group(0)) if m else None
+    m = re.match(rf"^{_ISSUE_PATTERN_JIRA_LINEAR.pattern}$", link)
+    return LinkedIssue(m.group(0)) if m else None
+
+
+def issue_from_link(provider: str, link: str) -> LinkedIssue | None:
+    if not provider:
+        return None
+    if provider == "github":
+        return _github_linked_issue(link)
+    if provider in ("linear", "jira"):
+        return _jira_linear_linked_issue(link)
+    return None
+
+
+def context_for_link(provider: IssueProviderInfo, link: str, repo: str) -> IssueContext:
+    linked = issue_from_link(provider.name, link)
+    if linked is None:
+        return IssueContext(link=link)
+    fetched = fetch_issue_context(
+        provider.name, linked.id, linked.repo or repo, provider.options)
+    return IssueContext(link=link, context=fetched.context)
+
+
+def resolve_issue_context(
+    provider: IssueProviderInfo, *, link: str, repo: str, branch: str,
+    pr_body: str = "",
+) -> IssueContext:
+    if link:
+        return context_for_link(provider, link, repo)
+    issue_id = extract_issue_id(provider.name, branch, pr_body)
+    return fetch_issue_context(
+        provider.name, issue_id, repo, provider.options)
 
 
 # ── Issue creation / update ────────────────────────────────────────────────

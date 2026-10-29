@@ -227,3 +227,17 @@ class TestBuildIssueSection:
         assert body[:MAX_ISSUE_CONTEXT_BYTES] in section
         assert body[:MAX_ISSUE_CONTEXT_BYTES + 1] not in section
         assert f"read the rest at {link}" in section
+
+    def test_a_long_body_without_a_link_is_truncated_and_says_so(self):
+        body = "x" * (20 * 1024)
+        section = _build_issue_section("", body)
+        assert body[:MAX_ISSUE_CONTEXT_BYTES] in section
+        assert body[:MAX_ISSUE_CONTEXT_BYTES + 1] not in section
+        assert "the rest in the tracker" in section
+
+    def test_truncation_drops_a_partial_utf8_character(self):
+        euro = "€"
+        body = ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) + euro
+        section = _build_issue_section("", body)
+        assert euro not in section
+        assert ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) in section

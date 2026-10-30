@@ -483,7 +483,7 @@ def test_a_second_coverage_miss_publishes_the_area_unassessed(
     assert rec.focus[0].id == "F1" and rec.focus[0].coverage == ""
     err = capsys.readouterr().err
     assert "missing_coverage" in err
-    assert "only areas with missing_coverage are published as not assessed" in err
+    assert "areas with no entry are published as not assessed" in err
 
 
 def test_the_single_agent_derives_when_nothing_is_derived(tmp_path, monkeypatch):

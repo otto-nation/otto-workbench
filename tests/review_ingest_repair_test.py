@@ -439,3 +439,25 @@ def test_a_second_schema_failure_is_still_a_rejection(tmp_path):
         str(path), "PROMPT", agent, ReviewArtifact, check=_coverage_check,
     )
     assert not outcome.ok
+
+
+def test_a_check_rejection_says_the_file_was_read(tmp_path):
+    path = tmp_path / "single.json"
+    path.write_text(_UNCOVERED)
+    agent = FakeAgent(path, _COVERED)
+    ingest_artifact(
+        str(path), "PROMPT", agent, ReviewArtifact, check=_coverage_check,
+    )
+    (text, _), = agent.calls
+    assert "was read" in text
+    assert "missing_coverage" in text
+    assert "cannot be read" not in text
+
+
+def test_a_schema_rejection_still_says_cannot_be_read(tmp_path):
+    path = tmp_path / "group-1.json"
+    path.write_text(BAD_JSON)
+    agent = FakeAgent(path, GOOD_JSON)
+    ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
+    (text, _), = agent.calls
+    assert "cannot be read" in text

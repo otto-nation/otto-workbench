@@ -282,6 +282,29 @@ def coverage_problems(
     return tuple(out)
 
 
+def check_warning(errors: Sequence[IngestError]) -> str:
+    """Warning after a writer's second failed focus check (D14).
+
+    Rendered errors, then one clause per kind present: uncovered areas are
+    published as not assessed, unknown entries are dropped, and extra areas
+    are kept only when this review asked for them.
+    """
+    listed = "; ".join(e.render() for e in errors)
+    kinds = {e.kind for e in errors}
+    clauses = []
+    if IngestErrorKind.MISSING_COVERAGE in kinds:
+        clauses.append("areas with no entry are published as not assessed")
+    if IngestErrorKind.UNKNOWN_FOCUS in kinds:
+        clauses.append("entries naming no area are dropped")
+    if IngestErrorKind.FOCUS_COUNT in kinds:
+        clauses.append(
+            "areas the writer added are kept only when this review asked for them",
+        )
+    if not clauses:
+        return listed
+    return f"{listed} — {'; '.join(clauses)}"
+
+
 def covered(
     areas: Sequence[FocusArea], reports: Sequence[FocusReport], pr_files: Sequence[str],
 ) -> tuple[FocusArea, ...]:

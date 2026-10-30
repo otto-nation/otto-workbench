@@ -62,7 +62,7 @@ from review.grouping import (
 )
 from review.overflow import run_with_overflow_recovery
 from review.artifacts import MAX_DERIVED_FOCUS, ReviewArtifact, declinable_sids
-from review.ingest import IngestErrorKind, ingest_artifact
+from review.ingest import ingest_artifact
 from review.outcome import _post_process_review, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
@@ -220,10 +220,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
     if outcome.errors:
-        listed = "; ".join(e.render() for e in outcome.errors)
-        if any(e.kind is IngestErrorKind.MISSING_COVERAGE for e in outcome.errors):
-            listed += " — only areas with missing_coverage are published as not assessed"
-        core.log.warn(listed)
+        core.log.warn(review.focus.check_warning(outcome.errors))
     # A carried decline is believed only for a finding the prior round held (D19).
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),

@@ -45,6 +45,7 @@ _state_lock = threading.Lock()
 # that predates JSON agent artifacts carries no version (0), and resuming it
 # would look for group-N.json where the run wrote group-N.md.
 PIPELINE_SCHEMA_VERSION = 1
+STALE_FOCUS_DIFFERS = "the requested focus differs from the interrupted run's"
 
 
 # ── The state file ───────────────────────────────────────────────────────────
@@ -293,16 +294,30 @@ def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
     )
 
 
+def _stale_reason(
+    state: PipelineState, head_sha: str, groups: list[Group], *,
+    user_focus: "tuple[FocusArea, ...] | list[FocusArea]" = (),
+) -> str:
+    """First mismatch that makes `state` not resumable.
+
+    Empty when the state is resumable. Order is schema, head, groups, focus.
+    """
+    if state.schema_version != PIPELINE_SCHEMA_VERSION:
+        return "the artifact format changed"
+    if state.head_sha != head_sha:
+        return "the head moved"
+    if state.group_names != [g.name for g in groups]:
+        return "the group plan changed"
+    if list(state.focus) != list(user_focus):
+        return STALE_FOCUS_DIFFERS
+    return ""
+
+
 def _validate_resume_state(
     state: PipelineState, head_sha: str, groups: list[Group], *,
     user_focus: "tuple[FocusArea, ...] | list[FocusArea]" = (),
 ) -> bool:
-    if state.schema_version != PIPELINE_SCHEMA_VERSION:
-        return False
-    if state.head_sha != head_sha:
-        return False
-    return (state.group_names == [g.name for g in groups]
-            and list(state.focus) == list(user_focus))
+    return not _stale_reason(state, head_sha, groups, user_focus=user_focus)
 
 
 def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
@@ -397,10 +412,14 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     state = read_pipeline_state(job)
     if not state:
         return RecoveryPlan()
-    if not _validate_resume_state(
+    reason = _stale_reason(
         state, job.pr.head_sha, groups, user_focus=review.focus.user_areas(job.focus),
-    ):
-        core.log.warn("Pipeline state is stale (SHA, groups, focus or artifact format changed) — starting fresh")
+    )
+    if reason:
+        extra = ("" if reason != STALE_FOCUS_DIFFERS else
+                 " — `--recover` reuses a run only with the areas it was asked for; "
+                 "pass the same `--focus`, or none to keep the run's areas")
+        core.log.warn(f"Pipeline state is stale ({reason}) — starting fresh{extra}")
         Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return RecoveryPlan()
 

@@ -114,4 +114,4 @@ class TestSynthesisFocus:
         assert "*Not assessed this round.*" in rendered
         err = capsys.readouterr().err
         assert "missing_coverage" in err
-        assert "only areas with missing_coverage are published as not assessed" in err
+        assert "areas with no entry are published as not assessed" in err

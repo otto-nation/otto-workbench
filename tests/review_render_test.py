@@ -224,5 +224,17 @@ def test_a_focus_line_indents_its_rationale_and_paths():
     )
 
 
+def test_multiline_focus_coverage_stays_one_list_item():
+    line = focus_line(area(
+        title="Locks",
+        coverage="Checked the retry.\n\nM1 is the one that drops it.",
+        rationale="Two callers.\n\nBoth changed.",
+    ))
+    lines = line.split("\n")
+    assert all(ln == "" or ln.startswith("  ") for ln in lines[1:])
+    assert all(not ln.endswith(" ") for ln in lines)
+    assert any(ln.startswith("  ") and "M1 is the one" in ln for ln in lines)
+
+
 def test_no_focus_renders_no_section():
     assert "## Focus" not in render_body(record(summary="s"))

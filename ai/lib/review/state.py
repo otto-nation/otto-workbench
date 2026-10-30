@@ -45,6 +45,7 @@ _state_lock = threading.Lock()
 # that predates JSON agent artifacts carries no version (0), and resuming it
 # would look for group-N.json where the run wrote group-N.md.
 PIPELINE_SCHEMA_VERSION = 1
+STALE_FOCUS_DIFFERS = "the requested focus differs from the interrupted run's"
 
 
 # ── The state file ───────────────────────────────────────────────────────────
@@ -297,10 +298,9 @@ def _stale_reason(
     state: PipelineState, head_sha: str, groups: list[Group], *,
     user_focus: "tuple[FocusArea, ...] | list[FocusArea]" = (),
 ) -> str:
-    """First mismatch that makes `state` not resumable, in today's check order.
+    """First mismatch that makes `state` not resumable.
 
-    Empty when the state is resumable. Order is schema, head SHA, group names,
-    then requested focus — the same sequence `_validate_resume_state` used.
+    Empty when the state is resumable. Order is schema, head, groups, focus.
     """
     if state.schema_version != PIPELINE_SCHEMA_VERSION:
         return "the artifact format changed"
@@ -309,7 +309,7 @@ def _stale_reason(
     if state.group_names != [g.name for g in groups]:
         return "the group plan changed"
     if list(state.focus) != list(user_focus):
-        return "the requested focus differs from the interrupted run's"
+        return STALE_FOCUS_DIFFERS
     return ""
 
 
@@ -416,11 +416,9 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
         state, job.pr.head_sha, groups, user_focus=review.focus.user_areas(job.focus),
     )
     if reason:
-        extra = (
-            " — `--recover` reuses a run only with the areas it was asked for; "
-            "pass the same `--focus`, or none to keep the run's areas"
-            if reason == "the requested focus differs from the interrupted run's" else ""
-        )
+        extra = ("" if reason != STALE_FOCUS_DIFFERS else
+                 " — `--recover` reuses a run only with the areas it was asked for; "
+                 "pass the same `--focus`, or none to keep the run's areas")
         core.log.warn(f"Pipeline state is stale ({reason}) — starting fresh{extra}")
         Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return RecoveryPlan()

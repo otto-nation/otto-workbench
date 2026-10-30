@@ -1,0 +1,342 @@
+{
+  "schema": 1,
+  "tiers": {
+    "deep": {
+      "value": null,
+      "scope": null
+    },
+    "standard": {
+      "value": null,
+      "scope": null
+    },
+    "light": {
+      "value": null,
+      "scope": null
+    }
+  },
+  "phases": {
+    "single": {
+      "domain": "review",
+      "tier": "standard",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "medium",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "holistic": {
+      "domain": "review",
+      "tier": "standard",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "medium",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "scout": {
+      "domain": "review",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "group": {
+      "domain": "review",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "synthesis": {
+      "domain": "review",
+      "tier": "deep",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.deep",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "medium",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "disprove": {
+      "domain": "review",
+      "tier": "deep",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.deep",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "medium",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "fix": {
+      "domain": "review",
+      "tier": "standard",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "fix_verify": {
+      "domain": "review",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_fix": {
+      "domain": "comments",
+      "tier": "standard",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
+        "via": null
+      },
+      "thinking": null,
+      "thinking_source": {
+        "layer": "unset",
+        "key": null,
+        "scope": null,
+        "via": null
+      },
+      "error": null
+    },
+    "comments_verify": {
+      "domain": "comments",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "ci_fix": {
+      "domain": "ci",
+      "tier": "standard",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
+        "via": null
+      },
+      "thinking": null,
+      "thinking_source": {
+        "layer": "unset",
+        "key": null,
+        "scope": null,
+        "via": null
+      },
+      "error": null
+    },
+    "ci_verify": {
+      "domain": "ci",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_triage": {
+      "domain": "comments",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": null,
+      "thinking_source": {
+        "layer": "unset",
+        "key": null,
+        "scope": null,
+        "via": null
+      },
+      "error": null
+    },
+    "rebase": {
+      "domain": "rebase",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": null,
+      "thinking_source": {
+        "layer": "unset",
+        "key": null,
+        "scope": null,
+        "via": null
+      },
+      "error": null
+    },
+    "prepush_fix": {
+      "domain": "rebase",
+      "tier": "standard",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
+        "via": null
+      },
+      "thinking": null,
+      "thinking_source": {
+        "layer": "unset",
+        "key": null,
+        "scope": null,
+        "via": null
+      },
+      "error": null
+    },
+    "describe": {
+      "domain": "describe",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": null,
+      "thinking_source": {
+        "layer": "unset",
+        "key": null,
+        "scope": null,
+        "via": null
+      },
+      "error": null
+    },
+    "create": {
+      "domain": "describe",
+      "tier": "light",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.light",
+        "scope": null,
+        "via": null
+      },
+      "thinking": null,
+      "thinking_source": {
+        "layer": "unset",
+        "key": null,
+        "scope": null,
+        "via": null
+      },
+      "error": null
+    }
+  }
+}

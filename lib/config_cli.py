@@ -5,6 +5,7 @@ Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
        otto-workbench config status
        otto-workbench config get KEY [DIR ...]
        otto-workbench config models
+       otto-workbench config phases [--json] [DIR]
        otto-workbench config context [--pi-listing FILE]
 
 `get` is the read side for a caller that is not Python.  `ai/lib/
@@ -109,6 +110,7 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
 import agent.context_ceiling  # noqa: E402
 import agent.harness_models  # noqa: E402
 import agent.models  # noqa: E402
+import agent.phase_report  # noqa: E402
 import config.workbench_config  # noqa: E402
 import config.workbench_config_report  # noqa: E402
 import config.workbench_config_write  # noqa: E402
@@ -166,6 +168,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "models", help="print the model tiers as Claude Code and Pi settings, as JSON",
     )
     harness.set_defaults(run=_models)
+    phases = sub.add_parser(
+        "phases", help="show each phase's tier, model and thinking level, and what set them",
+    )
+    phases.add_argument(
+        "--json", action="store_true", help="print one JSON object instead of a table",
+    )
+    phases.add_argument(
+        "dir", nargs="?", metavar="DIR",
+        help="a repo's work-tree root; defaults to the caller's own",
+    )
+    phases.set_defaults(run=_phases)
     context = sub.add_parser(
         "context", help="print context.compact_at as Claude Code and Pi settings, as JSON",
     )
@@ -302,6 +315,52 @@ def _context(args: argparse.Namespace) -> int:
         "pi": {"reserveTokens": reserves},
     }, separators=(",", ":")))
     return 0
+
+
+def _phases(args: argparse.Namespace) -> int:
+    """Print every tier and registry phase as this repo's config resolves them.
+
+    The answer is `agent.phase_report`'s, built on the resolver every phase runs
+    through, so a caller reads the precedence chain instead of re-implementing
+    it. The JSON shape is `PhaseReport.as_json`'s, documented on
+    `agent.phase_report`. Unset tiers and a phase that cannot resolve are both
+    data and exit 0; a config that cannot be read raises `ConfigError`, which
+    `main` turns into exit 1 with nothing on stdout.
+    """
+    root = Path(args.dir) if args.dir else _project_root()
+    report = agent.phase_report.phase_report(root)
+    if args.json:
+        print(json.dumps(report.as_json(), separators=(",", ":")))
+    else:
+        _print_phase_table(report)
+    return 0
+
+
+def _describe(source: agent.phase_report.Source) -> str:
+    """One source as a reader edits it: ``KEY (scope)``, then ``→`` the tier it borrowed."""
+    if source.layer == agent.phase_report.UNSET_LAYER:
+        return "unset"
+    text = f"{source.key or source.layer} ({source.scope})"
+    return f"{text} → {_describe(source.via)}" if source.via is not None else text
+
+
+def _print_phase_table(report: agent.phase_report.PhaseReport) -> None:
+    print(f"{BOLD}Tiers{NC}")
+    width = max(len(row.tier.value) for row in report.tiers)
+    for row in report.tiers:
+        print(f"  {row.tier.value:<{width}}  {row.value or _NO_VALUE}  {DIM}{row.scope or 'unset'}{NC}")
+
+    print(f"\n{BOLD}Phases{NC}")
+    width = max(len(row.phase.value) for row in report.phases)
+    tier_width = max(len(row.tier.value) for row in report.phases)
+    for row in report.phases:
+        head = f"  {row.phase.value:<{width}}  {row.tier.value:<{tier_width}}"
+        if row.error is not None:
+            print(f"{head}  {RED}✗{NC} {row.error}")
+            continue
+        model = row.model.spec() if row.model is not None else _NO_VALUE
+        print(f"{head}  {model}  {DIM}{_describe(row.model_source)}{NC}  "
+              f"thinking {row.thinking or _NO_VALUE}  {DIM}{_describe(row.thinking_source)}{NC}")
 
 
 def _status(_args: argparse.Namespace) -> int:

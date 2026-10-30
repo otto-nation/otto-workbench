@@ -84,10 +84,19 @@ class ModelLayer(Enum):
 
 @dataclass(frozen=True)
 class ResolvedModel:
-    """A phase's model reference, and the layer that supplied it."""
+    """A phase's model reference, the layer that supplied it, and the setting it was read from.
+
+    ``key`` is that setting as a reader would edit it: ``--model``, an env var
+    name, ``agent.phases.<phase>.model``, or ``models.<tier>`` for the tier
+    layer. ``tier`` is the tier a value borrowed by name (``synthesis: {model:
+    deep}``), and None when the value named a model itself — including the tier
+    layer, whose ``key`` already names it.
+    """
 
     ref: ModelRef
     layer: ModelLayer
+    key: str | None = None
+    tier: Tier | None = None
 
 
 class UnsetTier(OperatorError):
@@ -121,6 +130,14 @@ def tier_ref(tier: Tier, models: ModelsConfig) -> ModelRef | None:
     return parse_ref(value) if value else None
 
 
+def named_tier(value: str | None) -> Tier | None:
+    """The tier *value* names — ``deep``, ``deep:high`` — or None when it names a model or nothing."""
+    if not value:
+        return None
+    split = _split_level(value)
+    return Tier(split.id) if split.id in _TIERS else None
+
+
 def resolve(value: str | None, models: ModelsConfig, *, where: str = "a model setting") -> ModelRef | None:
     """A layer's value as a `ModelRef`: a tier name read through *models*, else parsed.
 
@@ -133,10 +150,11 @@ def resolve(value: str | None, models: ModelsConfig, *, where: str = "a model se
     """
     if not value:
         return None
-    split = _split_level(value)
-    if split.id not in _TIERS:
+    tier = named_tier(value)
+    if tier is None:
         return parse_ref(value)
-    ref = tier_ref(Tier(split.id), models)
+    ref = tier_ref(tier, models)
     if ref is None:
-        raise UnsetTier(split.id, where)
-    return replace(ref, level=split.level) if split.level else ref
+        raise UnsetTier(tier.value, where)
+    level = _split_level(value).level
+    return replace(ref, level=level) if level else ref

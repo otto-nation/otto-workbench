@@ -1,0 +1,490 @@
+{
+  "schema": 1,
+  "tiers": {
+    "deep": {
+      "value": "anthropic/claude-opus-5:high",
+      "scope": "global"
+    },
+    "standard": {
+      "value": "anthropic/claude-sonnet-5",
+      "scope": "global"
+    },
+    "light": {
+      "value": "openai/gpt-6-mini:low",
+      "scope": "global"
+    }
+  },
+  "phases": {
+    "single": {
+      "domain": "review",
+      "tier": "standard",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "holistic": {
+      "domain": "review",
+      "tier": "standard",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "scout": {
+      "domain": "review",
+      "tier": "light",
+      "model": {
+        "provider": "xai",
+        "id": "grok-4.6",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "phase_env",
+        "key": "WORKBENCH_AI_SCOUT_MODEL",
+        "scope": "env",
+        "via": null
+      },
+      "thinking": "high",
+      "thinking_source": {
+        "layer": "phase_env_model",
+        "key": "WORKBENCH_AI_SCOUT_MODEL",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "group": {
+      "domain": "review",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "synthesis": {
+      "domain": "review",
+      "tier": "deep",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "disprove": {
+      "domain": "review",
+      "tier": "deep",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "fix": {
+      "domain": "review",
+      "tier": "standard",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "fix_verify": {
+      "domain": "review",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_fix": {
+      "domain": "comments",
+      "tier": "standard",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_verify": {
+      "domain": "comments",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "ci_fix": {
+      "domain": "ci",
+      "tier": "standard",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "ci_verify": {
+      "domain": "ci",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_triage": {
+      "domain": "comments",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "rebase": {
+      "domain": "rebase",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "prepush_fix": {
+      "domain": "rebase",
+      "tier": "standard",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "describe": {
+      "domain": "describe",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "create": {
+      "domain": "describe",
+      "tier": "light",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    }
+  }
+}

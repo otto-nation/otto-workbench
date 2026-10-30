@@ -445,3 +445,20 @@ _make_repo() {
   run grep -c "/home/someone/vault" "$CONFIG"
   [ "$status" -eq 0 ]
 }
+
+@test "config --help lists phases" {
+  run "$REPO_ROOT/bin/otto-workbench" config --help
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"phases [--json] [DIR]"* ]]
+}
+
+@test "config phases --json is dispatched and reports the global tiers" {
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'models:\n  light: openai/gpt-6-mini:low\n' > "$CONFIG"
+  cd "$TMPDIR"
+  run --separate-stderr "$REPO_ROOT/bin/otto-workbench" config phases --json
+  [[ "$status" -eq 0 ]]
+  [[ "$(jq -r '.tiers.light.scope' <<<"$output")" == "global" ]]
+  [[ "$(jq -r '.phases.scout.model.id' <<<"$output")" == "gpt-6-mini" ]]
+  [[ "$(jq -r '.phases.synthesis.model_source.layer' <<<"$output")" == "unset" ]]
+}

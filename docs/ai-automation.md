@@ -10,12 +10,8 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 
 Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 
-This page is the operator's view: what to install, what to run, and what the
-commands do. Behaviour that belongs to one module — how findings are numbered,
-what the publishing gate covers, how a run's bookkeeping is keyed, what a
-supersession preflight reads — is documented on that module in
-[AI Libraries](ai-libraries.md), so there is one copy of it and it sits next to
-the code it describes.
+This page is the operator's view: what to install, what to run, and what the commands do.
+Behaviour that belongs to one module — how findings are numbered, what the publishing gate covers, how a run's bookkeeping is keyed, what a supersession preflight reads — is documented on that module in [AI Libraries](ai-libraries.md), so there is one copy of it and it sits next to the code it describes.
 
 ## Setup
 
@@ -314,6 +310,10 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
 ### GitHub owners
 
 Every GitHub write is checked against `github.owners` and refused elsewhere; unset refuses all. Record yours with `otto-workbench config set github.owners.work '[your-org]'`. The policy and where it is enforced: [`gh/owners.py`](ai-libraries.md#ghownerspy).
+
+### Which model each phase runs on
+
+`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy).
 
 ### Usage ledger
 

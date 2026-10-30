@@ -165,6 +165,75 @@ A tier name takes a level too: ``deep:high`` is the deep tier's model at high.
 
 Not: which layer wins (``agent.phases``), what a backend does with the parts.
 
+### agent/phase_report.py
+
+What every phase resolves to on this machine, and which setting answered each part.
+
+`otto-workbench config phases` prints this. A front end that lets an operator
+set models needs, per phase, the tier it reads, the model and thinking level it
+will run on, and the key to edit to change either — and must not re-implement
+the precedence chain in `agent.phases` to get them, because that copy drifts the
+moment a phase moves tier or a layer is added.
+
+So nothing here decides anything. The model and its layer come from
+`agent.phases.resolve_phase_model`, the thinking level and its layer from
+`agent.phases.resolve_phase_thinking` — the same rows `phase_settings` runs on.
+This module adds only what the resolver cannot know: which file a config key
+was read from, taken from `config.workbench_config_report.config_status`, the
+owner `config status` and `config get` already report through.
+
+Resolved as a phase outside a review: no ``--model`` and no effort preset, so
+the ``explicit*`` and ``effort`` layers never answer here. A phase whose
+settings raise an operator error (a tier name naming an unset tier,
+WORKBENCH_AI_PROVIDER still set) carries the message instead of a model; an
+unreadable config raises `ConfigError`, the one failure the report cannot work
+around. Which layer wins is `agent.phases`' chain, not this module's.
+
+**JSON.** ``PhaseReport.as_json`` is the stable shape ``config phases --json``
+prints. ``schema`` is 1 and changes only when a field is removed or changes
+meaning.
+
+```json
+{
+  "schema": 1,
+  "tiers": {"deep": {"value": "anthropic/claude-opus-5:high", "scope": "global"},
+            "standard": {"value": null, "scope": null},
+            "light": {"value": "openai/gpt-6-mini:low", "scope": "project"}},
+  "phases": {
+    "synthesis": {
+      "domain": "review", "tier": "deep",
+      "model": {"provider": "anthropic", "id": "claude-opus-5", "level": "high"},
+      "model_source": {"layer": "tier", "key": "models.deep", "scope": "global", "via": null},
+      "thinking": "high",
+      "thinking_source": {"layer": "tier_model", "key": "models.deep", "scope": "global", "via": null},
+      "error": null
+    }
+  }
+}
+```
+
+- ``tiers.<tier>.value`` is ``models.<tier>`` as written, null when unset;
+  ``scope`` is the file that set it (``project``, ``container``, ``global``),
+  null when unset.
+- ``phases`` is keyed by phase, in registry order. ``model`` is null when
+  nothing names one (the backend's default); its ``model_source`` then reads
+  ``{"layer": "unset", "key": "models.<tier>", ...}``, the key to set.
+  ``thinking`` null with layer ``unset`` is likewise the backend's default.
+- A source's ``layer`` is, for a model, ``phase_env``, ``global_env``,
+  ``phase_config``, ``tier`` or ``unset``; for thinking, ``phase_env``,
+  ``phase_env_model``, ``global_env``, ``global_env_model``, ``phase_config``,
+  ``phase_config_model``, ``tier_model``, ``agent_config``, ``spec`` or
+  ``unset`` — a ``*_model`` layer is a level carried on the model that layer
+  named. ``key`` is the env var or config key, null for ``spec``; ``scope`` is
+  ``env``, a file's scope, ``default`` for ``spec``, or null when unset.
+  ``via`` names the tier a value borrowed by name (``synthesis: {model: light}``).
+- ``error`` holds the message when a phase cannot resolve — a setting naming
+  an unset tier, or ``WORKBENCH_AI_PROVIDER`` still exported — and every
+  resolved field of that phase is null.
+- Thinking is a phase's level outside a review's ``--effort`` preset;
+  ``review.effort: low`` or ``high`` lowers or raises the fallback for review
+  phases at run time.
+
 ### agent/phases.py
 
 What a phase resolves to here: the spec, the config file, the environment.
@@ -204,6 +273,9 @@ backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
 Pi refuses a provider without a model; a reference always carries its id, so
 no phase reaches that, and ``agent.pi_models.require_model_with_provider`` stays
 as the spawn's own guard for a caller that hands a provider in directly.
+
+`otto-workbench config phases` reports these answers per phase; the JSON shape
+is `agent.phase_report`.
 
 ### agent/registry.py
 

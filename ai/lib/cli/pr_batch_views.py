@@ -42,11 +42,11 @@ def cmd_status(args) -> int:
     """`status` and `next`: the report, a projection of it, or what it summarises."""
     run_id = cli.pr_batch_common.resolve_run_id(args.run_id)
     if not run_id:
-        return cli.pr_batch_common.err("no batch runs yet")
+        return cli.pr_batch_common.fail("no batch runs yet")
     try:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     active = cli.pr_batch_common.is_active(run_id)
     if args.command == "next":
         core.report.emit_json(batch.report.next_view(report(run, active, _github(run, args))))
@@ -59,7 +59,7 @@ def cmd_status(args) -> int:
         try:
             core.report.emit_json(batch.report.decision_detail(run, args.decision))
         except KeyError:
-            return cli.pr_batch_common.err(f"run {run_id} has no decision {args.decision}")
+            return cli.pr_batch_common.fail(f"run {run_id} has no decision {args.decision}")
         return EXIT_OK
     core.report.emit_json(report(run, active, _github(run, args)))
     return EXIT_OK

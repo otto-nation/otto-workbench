@@ -471,7 +471,7 @@ def _cmd_run(args, bin_dir: Path) -> int:
         focus = review.focus.operator_texts(args)
         review.focus.operator_areas(focus)
     except review.focus.FocusInputError as exc:
-        return cli.pr_batch_common.err(str(exc))
+        return cli.pr_batch_common.fail(str(exc))
     plan = _plan(args)
     reporter = _Reporter()
     # The run's own lock goes on `held` first, so it is released last. An
@@ -482,7 +482,7 @@ def _cmd_run(args, bin_dir: Path) -> int:
         try:
             started = _start_run(held, args, plan, _driver_inbox(bin_dir, reporter), focus=focus)
         except _Refused as exc:
-            return cli.pr_batch_common.err(str(exc))
+            return cli.pr_batch_common.fail(str(exc))
         _emit_started(started.session.run)
         try:
             stopped = _drive(started.session, reporter, started.holds, bin_dir=bin_dir,
@@ -558,27 +558,27 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     import cli.pr_batch_common
     import cli.pr_batch_requests
     if refusal := cli.pr_batch_requests.ambiguous(args.run_id):
-        return cli.pr_batch_common.err(refusal)
+        return cli.pr_batch_common.fail(refusal)
     run_id = cli.pr_batch_common.resolve_run_id(args.run_id, covering_only=not args.run_id)
     if not run_id:
-        return cli.pr_batch_common.err("no batch run covers this repo; pass a run id")
+        return cli.pr_batch_common.fail("no batch run covers this repo; pass a run id")
     try:
         _require_batch_locks(batch.targets.run_repo_keys(batch.store.load(run_id)),
                              f"run {run_id} not resumed")
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     except _Refused as exc:
-        return cli.pr_batch_common.err(str(exc))
+        return cli.pr_batch_common.fail(str(exc))
     reporter = _Reporter()
     try:
         stopped = _resume(run_id, reporter, bin_dir, args.verbose, steps=args.steps)
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     except _Refused as exc:
         print(f"pr batch: {exc}", file=sys.stderr)
         return 2 if isinstance(exc, _NarrowOnly) else 1
     except (batch.store.RunBusy, batch.store.RunUnreachable) as exc:
-        return cli.pr_batch_common.err(str(exc))
+        return cli.pr_batch_common.fail(str(exc))
     return _conclude(run_id, stopped, reporter)
 
 
@@ -604,4 +604,4 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
         # status and next
         return cli.pr_batch_views.cmd_status(args)
     except batch.plan.PlanError as exc:
-        return cli.pr_batch_common.err(str(exc))
+        return cli.pr_batch_common.fail(str(exc))

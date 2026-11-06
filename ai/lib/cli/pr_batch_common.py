@@ -16,7 +16,7 @@ import pr.target
 from batch.store import Role
 
 
-def err(message: str) -> int:
+def fail(message: str) -> int:
     print(f"pr batch: {message}", file=sys.stderr)
     return 1
 

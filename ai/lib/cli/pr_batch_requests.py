@@ -75,15 +75,15 @@ def cmd_resolve(args, bin_dir: Path) -> int:
     try:
         batch.store.load(run_id)
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     request = Decide(decision=args.decision_id, action=args.action, reason=args.reason,
                      body_file=args.body_file, commit=args.commit)
     try:
         delivery = _deliver(run_id, request, bin_dir, "resolve")
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     except batch.store.RunUnreachable:
-        return cli.pr_batch_common.err(_unreachable(run_id))
+        return cli.pr_batch_common.fail(_unreachable(run_id))
     if delivery.queued:
         result: dict = {"applied": False, "queued": True, "decision": args.decision_id}
         if view := _holder_view(delivery.holder):
@@ -116,22 +116,22 @@ def ambiguous(given: str | None) -> str | None:
 
 def cmd_cancel(args, bin_dir: Path) -> int:
     if refusal := ambiguous(args.run_id):
-        return cli.pr_batch_common.err(refusal)
+        return cli.pr_batch_common.fail(refusal)
     run_id = cli.pr_batch_common.resolve_run_id(args.run_id, covering_only=not args.run_id)
     if not run_id:
-        return cli.pr_batch_common.err("no batch run covers this repo; pass a run id")
+        return cli.pr_batch_common.fail("no batch run covers this repo; pass a run id")
     try:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     if run.status in FINISHED_RUN:
-        return cli.pr_batch_common.err(f"run {run_id} is {run.status.value}")
+        return cli.pr_batch_common.fail(f"run {run_id} is {run.status.value}")
     try:
         delivery = _deliver(run_id, Cancel(kill=args.kill), bin_dir, "cancel")
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     except batch.store.RunUnreachable:
-        return cli.pr_batch_common.err(_unreachable(run_id))
+        return cli.pr_batch_common.fail(_unreachable(run_id))
     error = "" if delivery.queued else _own_error(run_id, delivery)
     result = {"cancelled": not error, "run": run_id, "queued": delivery.queued}
     if error:
@@ -177,16 +177,16 @@ def cmd_release(args, bin_dir: Path) -> int:
     try:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     item = _resolve_item(run, args.pr)
     if isinstance(item, str):
-        return cli.pr_batch_common.err(item)
+        return cli.pr_batch_common.fail(item)
     try:
         delivery = _deliver(run_id, Release(item=item.key, kill=args.kill), bin_dir, "release")
     except batch.store.RunNotFound:
-        return cli.pr_batch_common.err(f"no run {run_id}")
+        return cli.pr_batch_common.fail(f"no run {run_id}")
     except batch.store.RunUnreachable:
-        return cli.pr_batch_common.err(_unreachable(run_id))
+        return cli.pr_batch_common.fail(_unreachable(run_id))
     error = "" if delivery.queued else _own_error(run_id, delivery)
     if error:
         print(f"pr batch: {error}", file=sys.stderr)

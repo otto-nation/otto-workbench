@@ -327,7 +327,8 @@ class TestDeferredIssueProvider:
              ) as created:
             self._create()
         created.assert_called_once_with(
-            "linear", "ENG", ANY, ANY, parent_id=None, repo="owner/repo", opts={"team": "ENG"},
+            "linear", "ENG", ANY, ANY, parent_id=None, repo="owner/repo",
+            opts={"team": "ENG"}, cwd=Path("/wt"),
         )
 
     def test_a_branch_derived_id_no_longer_supplies_the_team(self, publishing_on):

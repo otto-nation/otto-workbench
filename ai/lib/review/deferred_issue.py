@@ -427,6 +427,7 @@ def create_deferred_issue(
     title = f"fix(review): deferred review comments — PR #{pr_number}"
     result = review.issue.create_issue(
         provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
+        cwd=ctx.worktree_root,
     )
     if result.filed:
         if trail:

@@ -16,6 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import gh.client
+import gh.owners
 import core.log
 import core.proc
 import core.prompt
@@ -689,7 +690,19 @@ def _create_linear(
     description: str,
     parent_id: str | None = None,
     labels: list[str] | None = None,
+    cwd: str | Path | None = None,
 ) -> CreatedIssue | None:
+    if cwd is None:
+        cwd = os.getcwd()
+    # Before labels or create: a refused body must not mutate the tracker.
+    verdict = gh.owners.check_text(f"{title}\n{description}", cwd)
+    if not verdict.ok:
+        if gh.owners.cross_ref_allowed_by_user() and verdict.references:
+            core.log.warn(
+                f"{verdict.reason} — publishing anyway because "
+                f"{gh.owners.ALLOW_CROSS_REF_ENV}=1")
+        else:
+            raise gh.owners.OwnerBoundaryError(verdict)
     with _description_file(description) as desc_file:
         cmd = [
             "linear", "issue", "create",
@@ -905,6 +918,7 @@ def create_issue(
     parent_id: str | None = None,
     repo: str = "",
     opts: dict | None = None,
+    cwd: str | Path | None = None,
 ) -> IssueResult:
     """Create an issue in the configured tracker.
 
@@ -916,6 +930,9 @@ def create_issue(
     Labels come from ``opts`` rather than a parameter: every caller already
     passes the tracker's options, and which labels a repo puts on the issues
     its automation files is a property of the repo, not of the call site.
+
+    ``cwd`` is the checkout the Linear body is judged against. ``None`` is
+    the process cwd. GitHub filing is checked inside ``gh.client`` instead.
     """
     if not core.publishing.enabled():
         core.publishing.draft(f"create {provider} issue: {title}", description)
@@ -923,7 +940,7 @@ def create_issue(
     labels = _configured_labels(opts)
     if provider == "linear":
         return _creation_result(
-            _create_linear(team, title, description, parent_id, labels))
+            _create_linear(team, title, description, parent_id, labels, cwd=cwd))
     if provider == "github":
         return _creation_result(
             _create_github(repo, title, description, labels, opts))

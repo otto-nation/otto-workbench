@@ -170,6 +170,7 @@ def file_findings(
         parent_id=review.issue.extract_issue_id(provider_info.name, _branch_of(job)),
         repo=job.repo,
         opts=provider_info.options,
+        cwd=job.wt_path,
     )
     if trail and result.filed:
         trail.info("finding_issue", f"filed {result.issue.id}",

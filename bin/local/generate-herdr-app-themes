@@ -111,8 +111,11 @@ def main(argv: list[str]) -> int:
         # A sibling temp file and an atomic replace: sync links these files
         # into herdr-app's config, so a half-written one would be read live.
         tmp = out_dir / f".{name}.tmp"
-        tmp.write_text(files[name])
-        os.replace(tmp, out_dir / name)
+        try:
+            tmp.write_text(files[name])
+            os.replace(tmp, out_dir / name)
+        finally:
+            tmp.unlink(missing_ok=True)
     return 0
 
 

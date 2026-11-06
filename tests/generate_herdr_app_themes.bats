@@ -83,3 +83,11 @@ EOF
   [ "$status" -eq 2 ]
   [[ "$output" == *"defined by another palette"* ]]
 }
+
+@test "a failed write leaves no temp file behind" {
+  _palette paper
+  mkdir "$OUT/sample.json"
+  run "$GEN" --palettes "$PAL" --out "$OUT"
+  [ "$status" -ne 0 ]
+  [ -z "$(find "$OUT" -name '*.tmp')" ]
+}

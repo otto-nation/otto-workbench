@@ -1,0 +1,122 @@
+# Gruvbox for herdr-app — the one place its colors are written down.
+#
+# bin/local/generate-herdr-app-themes renders each [themes.<name>] table into
+# ai/herdr/app/themes/<name>.generated.json, resolving every value through [palette].
+# herdr-app needs literal #rrggbb in a theme file: a color that names another
+# color makes it skip the whole file, so the hex values cannot be shared there.
+# Edit this file and regenerate; never edit the JSON.
+#
+# Palette names are the upstream ones (github.com/morhetz/gruvbox).
+
+[palette]
+dark0_hard = "#1d2021"
+dark0 = "#282828"
+dark0_soft = "#32302f"
+dark1 = "#3c3836"
+dark2 = "#504945"
+dark3 = "#665c54"
+dark4 = "#7c6f64"
+gray = "#928374"
+light0_hard = "#f9f5d7"
+light0 = "#fbf1c7"
+light0_soft = "#f2e5bc"
+light1 = "#ebdbb2"
+light2 = "#d5c4a1"
+light3 = "#bdae93"
+light4 = "#a89984"
+bright_red = "#fb4934"
+bright_green = "#b8bb26"
+bright_yellow = "#fabd2f"
+bright_blue = "#83a598"
+bright_purple = "#d3869b"
+bright_aqua = "#8ec07c"
+bright_orange = "#fe8019"
+neutral_red = "#cc241d"
+neutral_green = "#98971a"
+neutral_yellow = "#d79921"
+neutral_blue = "#458588"
+neutral_purple = "#b16286"
+neutral_aqua = "#689d6a"
+neutral_orange = "#d65d0e"
+faded_red = "#9d0006"
+faded_green = "#79740e"
+faded_yellow = "#b57614"
+faded_blue = "#076678"
+faded_purple = "#8f3f71"
+faded_aqua = "#427b58"
+faded_orange = "#af3a03"
+
+# Panel colors are all set: herdr-app otherwise derives them by desaturating
+# the terminal palette, which leaves grey chrome around Gruvbox terminals.
+
+[themes.gruvbox-dark]
+background = "dark0"
+foreground = "light1"
+selection = "dark2"
+cursor = "light1"
+ansi = [
+  "dark0", "neutral_red", "neutral_green", "neutral_yellow",
+  "neutral_blue", "neutral_purple", "neutral_aqua", "light4",
+  "gray", "bright_red", "bright_green", "bright_yellow",
+  "bright_blue", "bright_purple", "bright_aqua", "light1",
+]
+
+[themes.gruvbox-dark.colors]
+canvas = "dark0_hard"
+chrome = "dark0_hard"
+surface = "dark0"
+popover = "dark0_soft"
+raised = "dark1"
+hover = "dark1"
+selected = "dark2"
+border = "dark1"
+input = "dark2"
+foreground = "light1"
+muted = "light4"
+dim = "dark4"
+accent = "bright_yellow"
+accent_foreground = "dark0"
+solid = "light1"
+solid_foreground = "dark0"
+ring = "light3"
+working = "bright_yellow"
+blocked = "bright_red"
+done = "bright_blue"
+idle = "dark4"
+unknown = "dark4"
+
+[themes.gruvbox-light]
+background = "light0"
+foreground = "dark1"
+selection = "light2"
+cursor = "dark1"
+ansi = [
+  "light0", "neutral_red", "neutral_green", "neutral_yellow",
+  "neutral_blue", "neutral_purple", "neutral_aqua", "dark4",
+  "gray", "faded_red", "faded_green", "faded_yellow",
+  "faded_blue", "faded_purple", "faded_aqua", "dark1",
+]
+
+[themes.gruvbox-light.colors]
+canvas = "light0_soft"
+chrome = "light1"
+surface = "light0"
+popover = "light0"
+raised = "light0_soft"
+hover = "light2"
+selected = "light2"
+border = "light2"
+input = "light3"
+foreground = "dark1"
+muted = "dark3"
+dim = "gray"
+accent = "faded_yellow"
+accent_foreground = "light0"
+solid = "dark1"
+solid_foreground = "light0"
+ring = "dark3"
+working = "faded_yellow"
+blocked = "faded_red"
+done = "faded_blue"
+idle = "gray"
+unknown = "gray"

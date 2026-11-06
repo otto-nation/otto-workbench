@@ -115,3 +115,7 @@ class TestSynthesisFocus:
         err = capsys.readouterr().err
         assert "missing_coverage" in err
         assert "areas with no entry are published as not assessed" in err
+
+
+def test_merged_text_does_not_carry_claims():
+    assert "## Claims" not in Merged(record()).text

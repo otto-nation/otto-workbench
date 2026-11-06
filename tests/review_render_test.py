@@ -18,8 +18,8 @@ from review.record import (
 )
 from review.document import MetaKey
 from review.render import (
-    BANNER, evidence_block, finding_line, focus_line, ledger_line, render_body, render_review,
-    triage_line,
+    BANNER, claim_line, evidence_block, finding_line, focus_line, ledger_line,
+    render_body, render_review, triage_line,
 )
 from review.types import PriorDisposition, ReviewMeta
 
@@ -244,6 +244,7 @@ def test_no_focus_renders_no_section():
 
 def test_claims_render_after_focus():
     body = render_body(record(
+        finding("M1", "x"),
         summary="s",
         focus=(area(),),
         claims=(
@@ -251,9 +252,7 @@ def test_claims_render_after_focus():
             claim(id="C2", verdict=ClaimVerdict.UNSUPPORTED, path="", snippet=""),
         ),
     ))
-    assert body.index("## Focus") < body.index("## Claims")
-    if "## Must fix" in body:
-        assert body.index("## Claims") < body.index("## Must fix")
+    assert body.index("## Focus") < body.index("## Claims") < body.index("## Must fix")
     claims = body.split("## Claims", 1)[1].split("## ", 1)[0]
     lines = [ln for ln in claims.splitlines() if ln.startswith("- **[")]
     assert lines[0].startswith("- **[C1] supported**")
@@ -270,3 +269,11 @@ def test_unassessed_claims_say_so():
 
 def test_assessed_empty_claims_render_nothing():
     assert "## Claims" not in render_body(record(summary="s", claims=()))
+
+
+def test_a_claim_line_names_its_finding():
+    assert "Finding: **[M1]**" in claim_line(claim(finding="M1"))
+
+
+def test_a_claim_with_no_path_has_no_code_line():
+    assert "Code:" not in claim_line(claim(path=""))

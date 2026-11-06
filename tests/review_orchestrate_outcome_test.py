@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 # this suite to the code it reaches through `ro`.
 import cli.review_orchestrate  # noqa: F401
 
+import review.claims
 from review.record import FocusSource, ReviewRecord, TriageEntry, load_record
+from review_claims_support import claim
 from review_focus_support import area, user_area
 from review_record_support import finding, record
 
@@ -528,3 +530,30 @@ def test_a_review_with_a_source_and_no_writer_says_not_assessed(ro, tmp_path):
     rec = load_record(tmp_path)
     assert rec.claims is None
     assert "*Not assessed this round.*" in Path(job.review_file).read_text()
+
+
+def test_an_unchanged_review_keeps_prior_claims(ro, tmp_path):
+    from review.store import StoredReview
+    from review.types import ReviewMeta
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.pr.body = "x"
+    prior_claims = (claim(),)
+    job.prior = StoredReview(record(claims=prior_claims), ReviewMeta())
+    ro.write_unchanged_review(job)
+    rec = load_record(tmp_path)
+    assert rec.claims == prior_claims
+    assert ro.read_review_meta(tmp_path).claims_input_sha == review.claims.input_sha(job)
+
+
+def test_a_degraded_review_stamps_no_fingerprint(ro, tmp_path):
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.pr.body = "x"
+    ro._publish(job, record(claims=None))
+    assert ro.read_review_meta(tmp_path).claims_input_sha == ""
+
+
+def test_an_assessed_review_stamps_its_fingerprint(ro, tmp_path):
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.pr.body = "x"
+    ro._publish(job, record(claims=()))
+    assert ro.read_review_meta(tmp_path).claims_input_sha == review.claims.input_sha(job)

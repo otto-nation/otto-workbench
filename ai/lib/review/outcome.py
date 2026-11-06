@@ -122,7 +122,8 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
         meta, sticky_skips=sticky.marks,
         held_nits=held_nits(job, incremental=_is_incremental(job)),
         head_moved_to=_head_moved_to(job),
-        dirty_files=_dirty_files(job)))
+        dirty_files=_dirty_files(job),
+        claims_input_sha=review.claims.input_sha(job) if record.claims is not None else ""))
 
 
 def _pinned_here(job: ReviewJob) -> str:
@@ -239,7 +240,10 @@ def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
 
 
 def _carried_record(prior: StoredReview) -> ReviewRecord:
-    """The prior round's claims about the code, without its claims about its own run."""
+    """The prior round's claims about the code, without its claims about its own run.
+
+    Claims are carried because the no-op gate proved their inputs unchanged.
+    """
     return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
                    static_analysis="", focus=())
 

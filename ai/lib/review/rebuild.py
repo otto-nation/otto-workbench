@@ -133,12 +133,14 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
         record = replace(
             record,
             focus=tuple(uncovered_areas(existing.record.focus if existing else ())),
+            claims=None,
         )
         # Dated today and carrying no status: a rebuild cannot attest to how the
         # pipeline run ended — this is not one. write_review also writes
         # meta.json (today's rebuild never did) because the header is rendered
         # from it.
-        write_review(review_file, record, replace(meta, date=date.today().isoformat(), status=None))
+        write_review(review_file, record, replace(
+            meta, date=date.today().isoformat(), status=None, claims_input_sha=""))
         core.log.info(f"Rebuilt {review_file}")
         trail.info("post_process", f"processed {len(record.visible)} findings",
                    data={"finding_count": len(record.visible), "review_file": str(review_file)})

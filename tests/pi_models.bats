@@ -81,12 +81,14 @@ _vertex_default() {
   [[ "$output" != *"is not listed under"* ]]
 }
 
-@test "pi --list-models failing is silent and the step still succeeds" {
+@test "pi --list-models failing warns why and the step still succeeds" {
   _vertex_default not-a-real-model
   # setup already shadows pi with a failing binary.
 
   run _run_step step_pi_models
   [ "$status" -eq 0 ]
+  [[ "$output" == *"Pi models were not checked:"* ]]
+  [[ "$output" == *"(exit 1)"* ]]
   [[ "$output" != *"is not listed under"* ]]
 }
 

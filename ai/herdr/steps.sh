@@ -110,9 +110,11 @@ step_herdr_machine_note() {
 # _herdr_app_present — true when herdr-app is on PATH or its config dir exists.
 _herdr_app_present() { command -v herdr-app >/dev/null 2>&1 || [[ -d "$HERDR_APP_DIR" ]]; }
 
-# _herdr_app_link_themes — symlinks every generated ai/herdr/app/themes/<name>.generated.json
-# into HERDR_APP_THEMES_DIR as <name>.json, the name herdr-app reads the theme by. Identical regular file → replaced by the link; differing
-# regular file → warned about and left (it is the person's edit).
+# _herdr_app_link_themes — symlinks every generated
+# ai/herdr/app/themes/<name>.generated.json into HERDR_APP_THEMES_DIR as
+# <name>.json, the name herdr-app reads the theme by. Identical regular file →
+# replaced by the link; differing regular file → warned about and left (it is
+# the person's edit).
 _herdr_app_link_themes() {
   mkdir -p "$HERDR_APP_THEMES_DIR"
   local src name target

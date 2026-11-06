@@ -524,8 +524,13 @@ class TestPreflight:
         def unresolvable(_cwd):
             raise agent.pi_binary.PiUnresolvable("no pi")
         monkeypatch.setattr(agent.pi_binary, "resolve", unresolvable)
+        trail = MagicMock()
         models = {ModelRef("anything", "xai"): ["scout"]}
-        assert agent.backend_pi.preflight(models, MagicMock(), ".") is True
+        assert agent.backend_pi.preflight(models, trail, ".") is True
+        assert trail.warn.call_count == 1
+        assert trail.warn.call_args.args[0] == "model_preflight"
+        assert "no pi could be chosen" in trail.warn.call_args.args[1]
+        assert trail.decision.call_count == 0
 
 
 _PREFLIGHT_LISTING = """\

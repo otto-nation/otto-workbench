@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -55,6 +56,62 @@ def test_command_text_reads_a_file_at_the_scan_bound(tmp_path):
     text = gh.owner_content.command_text(
         "gh issue comment 1 --body-file exact.md", tmp_path)
     assert marker in text
+
+
+def _lie_size_zero(path: Path, monkeypatch):
+    real_stat = Path.stat
+    target = os.path.realpath(path)
+
+    def lie(self, *args, **kwargs):
+        result = real_stat(self, *args, **kwargs)
+        if os.path.realpath(self) != target:
+            return result
+        values = list(result)
+        values[6] = 0
+        return os.stat_result(values)
+
+    monkeypatch.setattr(Path, "stat", lie)
+
+
+def test_command_text_skips_an_oversize_file_even_when_stat_size_is_zero(
+        tmp_path, monkeypatch):
+    huge = tmp_path / "huge.md"
+    huge.write_text("UNIQUE_LIE" + "a" * gh.owner_content.MAX_SCAN_BYTES)
+    _lie_size_zero(huge, monkeypatch)
+    text = gh.owner_content.command_text(
+        "gh issue comment 1 --body-file huge.md", tmp_path)
+    assert "UNIQUE_LIE" not in text
+
+
+def test_command_text_reads_a_size_lying_file_within_the_cap(
+        tmp_path, monkeypatch):
+    proc = tmp_path / "proc.md"
+    proc.write_text("PROC_BODY")
+    _lie_size_zero(proc, monkeypatch)
+    text = gh.owner_content.command_text(
+        "gh issue comment 1 --body-file proc.md", tmp_path)
+    assert "PROC_BODY" in text
+
+
+def test_read_if_scannable_bounds_the_read(tmp_path, monkeypatch):
+    (tmp_path / "n.md").write_text("hi")
+    sizes: list[int] = []
+    real_open = Path.open
+
+    def wrapped(self, *args, **kwargs):
+        handle = real_open(self, *args, **kwargs)
+        inner = handle.read
+
+        def read(size=-1):
+            sizes.append(size)
+            return inner(size)
+
+        handle.read = read
+        return handle
+
+    monkeypatch.setattr(Path, "open", wrapped)
+    gh.owner_content._read_if_scannable("n.md", tmp_path)
+    assert sizes == [gh.owner_content.MAX_SCAN_BYTES + 1]
 
 
 def test_command_text_skips_missing_and_stdin(tmp_path):

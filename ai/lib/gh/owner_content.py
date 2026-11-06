@@ -267,8 +267,12 @@ def _read_if_scannable(path: str, cwd: str | Path) -> str:
     path = _expand_path(path)
     candidate = Path(path) if Path(path).is_absolute() else Path(cwd) / path
     try:
-        if not candidate.is_file() or candidate.stat().st_size > MAX_SCAN_BYTES:
+        if not candidate.is_file():
             return ""
-        return candidate.read_text(encoding="utf-8", errors="replace")
+        with candidate.open("rb") as handle:
+            data = handle.read(MAX_SCAN_BYTES + 1)
     except OSError:
         return ""
+    if len(data) > MAX_SCAN_BYTES:
+        return ""
+    return data.decode("utf-8", errors="replace")

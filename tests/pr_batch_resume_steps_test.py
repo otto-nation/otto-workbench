@@ -8,6 +8,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+# NEED, _close_open_sessions, _quiet_outcomes are re-exported so pytest
+# picks up their fixtures/autouse hooks from the support module.
 import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402

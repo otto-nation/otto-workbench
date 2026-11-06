@@ -548,6 +548,10 @@ def _cmd_run(args, bin_dir: Path) -> int:
     return _conclude(started.session.run.id, stopped, reporter)
 
 
+class _NarrowOnly(_Refused):
+    """Resume asked to add a step; a usage error (exit 2) rather than a refusal."""
+
+
 _NARROW_ONLY = "resume can only narrow steps; start a new run to add one"
 
 
@@ -570,7 +574,7 @@ def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
     if run.status in FINISHED_RUN:
         return _Refused(f"run {run.id} is {run.status.value}")
     if steps is not None and not set(steps) <= set(run.steps):
-        return _Refused(_NARROW_ONLY)
+        return _NarrowOnly(_NARROW_ONLY)
     try:
         _note_batch_locks(run)
         holds = _hold_items(held, run, "resume")
@@ -626,7 +630,7 @@ def _cmd_resume(args, bin_dir: Path) -> int:
         return _err(f"no run {run_id}")
     except _Refused as exc:
         print(f"pr batch: {exc}", file=sys.stderr)
-        return 2 if str(exc) == _NARROW_ONLY else 1
+        return 2 if isinstance(exc, _NarrowOnly) else 1
     except (batch.store.RunBusy, batch.store.RunUnreachable) as exc:
         return _err(str(exc))
     return _conclude(run_id, stopped, reporter)

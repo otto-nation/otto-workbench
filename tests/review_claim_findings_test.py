@@ -2,6 +2,7 @@
 
 import hashlib
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ if LIB_DIR not in sys.path:
 
 from core.phases import Mode
 import review.claims
+import review.merge
 import review.verify
 from review.claim_types import ClaimSource, ClaimVerdict
 from review.grammar import FindingIdentity
@@ -215,6 +217,39 @@ def test_settle_is_idempotent(tmp_path):
 def test_unassessed_claims_settle_to_nothing(tmp_path):
     rec = record(claims=None)
     assert review.claims.settle(_settle_job(tmp_path), rec) is rec
+
+
+def test_a_dangling_claim_link_is_treated_as_no_link(tmp_path):
+    rec = record(
+        finding("S1", "writer"),
+        claims=(
+            claim(id="C1", verdict=ClaimVerdict.CONTRADICTED, finding="M9"),
+            claim(id="C2", verdict=ClaimVerdict.CONTRADICTED, text="other claim"),
+        ),
+    )
+    out = review.claims.settle(_settle_job(tmp_path), rec)
+    assert out.claims[0].finding == "S2"
+    assert out.claims[1].finding == "S3"
+    assert out.finding("S2").origin is FindingOrigin.CLAIM
+    assert out.finding("S3").origin is FindingOrigin.CLAIM
+
+
+def test_settle_guard_fires_when_the_tail_is_a_writer_finding(tmp_path, monkeypatch):
+    rec = record(
+        finding("S1", "writer"),
+        claims=(claim(id="C1", verdict=ClaimVerdict.CONTRADICTED),),
+    )
+    real = review.merge.append_findings
+
+    def reorder(base, added):
+        out = real(base, added)
+        writer = tuple(f for f in out.findings if f.origin is not FindingOrigin.CLAIM)
+        derived = tuple(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
+        return replace(out, findings=derived + writer)
+
+    monkeypatch.setattr(review.merge, "append_findings", reorder)
+    with pytest.raises(RuntimeError, match=r"found 1 with origins \('WRITER',\)"):
+        review.claims.settle(_settle_job(tmp_path), rec)
 
 
 def test_a_claim_whose_snippet_is_missing_becomes_unverifiable(tmp_path):

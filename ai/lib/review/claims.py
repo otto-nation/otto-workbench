@@ -27,9 +27,11 @@ named them.
 `settle` verifies claims, derives findings from the ones that remain
 contradicted or unsupported, appends them, and links each source claim to
 its derived finding. A linked claim derives nothing, so settle is
-idempotent and a no-op carried round never derives twice. It runs at both
-writer sites before disprove, so the record disprove reads already holds
-those findings. Disprove clears the link when it falsifies the finding.
+idempotent and a no-op carried round never derives twice. A link that
+names no visible finding is treated as no link, so that claim derives.
+It runs at both writer sites before disprove, so the record disprove
+reads already holds those findings. Disprove clears the link when it
+falsifies the finding.
 Verification uses the same evidence matcher findings use: a supported or
 contradicted claim whose snippet is not in its file becomes unverifiable,
 with a note, and derives nothing.
@@ -60,7 +62,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Collection, Iterator, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 
 from core.phases import Mode
@@ -250,6 +252,10 @@ def check_warning(errors: Sequence[IngestError]) -> str:
     return review.focus.check_warning(errors, more=more)
 
 
+def _derives_finding(claim: ClaimEntry) -> bool:
+    return claim.verdict in _DERIVED_HEAD and not claim.finding
+
+
 def derived_findings(
     claims: tuple[ClaimEntry, ...] | None, *, checkbox: bool,
 ) -> tuple[RecordFinding, ...]:
@@ -270,9 +276,9 @@ def derived_findings(
         return ()
     out: list[RecordFinding] = []
     for claim in claims:
-        head = _DERIVED_HEAD.get(claim.verdict)
-        if head is None or claim.finding:
+        if not _derives_finding(claim):
             continue
+        head = _DERIVED_HEAD[claim.verdict]
         text = " ".join(claim.text.split())
         body = f"{head}: {text}\n{claim.evidence}\nSource: {claim.source.value}"
         contradicted = claim.verdict is ClaimVerdict.CONTRADICTED
@@ -296,34 +302,44 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     """Verify claims, derive findings, append them, and link each source claim.
 
     Runs at both writer sites before disprove. A claim whose cited code did
-    not verify becomes unverifiable and derives nothing. Linking is by
-    position, not stable_id: append_findings adds newcomers at the end and
-    renumber_record keeps tuple order, so the last len(derived) visible
-    findings are the derived ones, in claim order. stable_id is not unique
-    per claim — two unsupported claims that share a first line hash alike.
+    not verify becomes unverifiable and derives nothing. A finding link that
+    names no visible finding is cleared first, so a dangling link is no link
+    and the claim derives. Linking is by position, not stable_id: the claims
+    that consume an id are the same pre-append tuple derived_findings saw,
+    zipped with the last len(derived) visible findings. append_findings adds
+    newcomers at the end and renumber_record keeps tuple order. stable_id is
+    not unique per claim — two unsupported claims that share a first line
+    hash alike.
     """
     if record.claims is None:
         return record
     claims = review.verify.verified_claims(
         record.claims, job.wt_path, [f["path"] for f in job.pr.files],
     )
-    record = replace(record, claims=claims)
+    record = without_vanished_links(replace(record, claims=claims))
+    claims = record.claims
     derived = derived_findings(claims, checkbox=job.mode is Mode.SELF)
     if not derived:
         return record
+    derived_at = tuple(i for i, c in enumerate(claims) if _derives_finding(c))
     record = review.merge.append_findings(record, derived)
-    linked = record.visible[-len(derived):]
-    if any(f.origin is not FindingOrigin.CLAIM for f in linked):
+    tail = record.visible[-len(derived):]
+    origins = tuple(f.origin.name for f in tail)
+    if len(tail) != len(derived) or any(
+        f.origin is not FindingOrigin.CLAIM for f in tail
+    ):
         raise RuntimeError(
-            "derived findings are not the last visible findings",
+            f"expected {len(derived)} CLAIM findings at the end of the "
+            f"visible list; found {len(tail)} with origins {origins}",
         )
-    ids = iter(f.id for f in linked)
-    return replace(record, claims=tuple(
-        _link_claim(c, ids) for c in record.claims
-    ))
-
-
-def _link_claim(claim: ClaimEntry, ids: Iterator[str]) -> ClaimEntry:
-    if claim.finding or _DERIVED_HEAD.get(claim.verdict) is None:
-        return claim
-    return replace(claim, finding=next(ids))
+    ids = iter(f.id for f in tail)
+    linked = list(claims)
+    for i in derived_at:
+        linked[i] = replace(linked[i], finding=next(ids))
+    extra = next(ids, None)
+    if extra is not None:
+        raise RuntimeError(
+            f"expected {len(derived)} CLAIM findings at the end of the "
+            f"visible list; found {len(tail)} with origins {origins}",
+        )
+    return replace(record, claims=tuple(linked))

@@ -891,9 +891,11 @@ named them.
 `settle` verifies claims, derives findings from the ones that remain
 contradicted or unsupported, appends them, and links each source claim to
 its derived finding. A linked claim derives nothing, so settle is
-idempotent and a no-op carried round never derives twice. It runs at both
-writer sites before disprove, so the record disprove reads already holds
-those findings. Disprove clears the link when it falsifies the finding.
+idempotent and a no-op carried round never derives twice. A link that
+names no visible finding is treated as no link, so that claim derives.
+It runs at both writer sites before disprove, so the record disprove
+reads already holds those findings. Disprove clears the link when it
+falsifies the finding.
 Verification uses the same evidence matcher findings use: a supported or
 contradicted claim whose snippet is not in its file becomes unverifiable,
 with a note, and derives nothing.

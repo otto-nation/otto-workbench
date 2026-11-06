@@ -6450,6 +6450,10 @@ resolved against github.com and every configured host. Only configured owners
 count: an ``@handle`` that is not ours is not a reference, and an upstream
 owner is not returned.
 
+Text holding a backslash is also read with its JSON-style escapes decoded, so
+a reference opening an escaped line (``\\n``, ``\\uXXXX``) in a JSON body or a
+``printf`` argument is found.
+
 ``gh.owners`` imports this module, so ``references`` takes the owner map
 structurally — ``classify`` and ``hosts`` — and never imports ``gh.owners``.
 

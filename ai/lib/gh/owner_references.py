@@ -7,6 +7,10 @@ resolved against github.com and every configured host. Only configured owners
 count: an ``@handle`` that is not ours is not a reference, and an upstream
 owner is not returned.
 
+Text holding a backslash is also read with its JSON-style escapes decoded, so
+a reference opening an escaped line (``\\n``, ``\\uXXXX``) in a JSON body or a
+``printf`` argument is found.
+
 ``gh.owners`` imports this module, so ``references`` takes the owner map
 structurally — ``classify`` and ``hosts`` — and never imports ``gh.owners``.
 """
@@ -78,8 +82,34 @@ class _Hit:
     reference: Reference
 
 
+_ESCAPE_RE = re.compile(r"\\(?:u([0-9a-fA-F]{4})|(.))", re.DOTALL)
+_ESCAPED = {"n": "\n", "r": "\r", "t": "\t"}
+
+
 def references(text: str, owner_map: _OwnerMap) -> tuple[Reference, ...]:
-    """Configured-owner references in *text*, first occurrence of each, in order."""
+    """Configured-owner references in *text*, first occurrence of each, in order.
+
+    Text holding a backslash is also scanned with its escapes decoded. The
+    decoded view comes first; the literal view adds only the (kind, owner)
+    pairs the decoded one did not find, so a name that begins with an escape
+    letter (``\\nobody/lib#1``) is still found and one reference is not
+    reported twice.
+    """
+    found = _scan(text, owner_map)
+    if "\\" not in text:
+        return found
+    decoded = _scan(_ESCAPE_RE.sub(_unescape, text), owner_map)
+    named = {(ref.kind, ref.owner) for ref in decoded}
+    return decoded + tuple(ref for ref in found if (ref.kind, ref.owner) not in named)
+
+
+def _unescape(match: re.Match[str]) -> str:
+    if match.group(1) is not None:
+        return chr(int(match.group(1), 16))
+    return _ESCAPED.get(match.group(2), match.group(2))
+
+
+def _scan(text: str, owner_map: _OwnerMap) -> tuple[Reference, ...]:
     hits = _url_hits(text, owner_map)
     hits.extend(_repo_hits(text, owner_map))
     hits.extend(_mention_hits(text, owner_map))

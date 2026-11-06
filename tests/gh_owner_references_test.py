@@ -194,3 +194,24 @@ def test_without_overlap_keeps_identical_spans_and_drops_nested():
         (0, 20, "twin"),
         (25, 30, "later"),
     ]
+
+
+def test_a_reference_after_an_escaped_line_break_is_found():
+    for escape in ("\\n", "\\r", "\\t", "\\u201c"):
+        assert _refs(f"Thanks!{escape}otto-nation/lib#12", "otto-nation") == (
+            _ref(Kind.REPO_ISSUE, "otto-nation", "otto-nation/lib#12"),), escape
+    assert _refs("Thanks!\\n@otto-nation", "otto-nation") == (
+        _ref(Kind.MENTION, "otto-nation", "@otto-nation"),)
+
+
+def test_an_escaped_line_break_does_not_add_a_second_reference_text():
+    text = "see otto-nation/lib#12\\nhttps://github.com/otto-nation/lib\\nbye"
+    assert _refs(text, "otto-nation") == (
+        _ref(Kind.REPO_ISSUE, "otto-nation", "otto-nation/lib#12"),
+        _ref(Kind.URL, "otto-nation", "https://github.com/otto-nation/lib"),
+    )
+
+
+def test_a_name_beginning_with_an_escape_letter_is_still_found():
+    assert _refs("x\\nobody/lib#1", "nobody") == (
+        _ref(Kind.REPO_ISSUE, "nobody", "nobody/lib#1"),)

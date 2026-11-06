@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -204,3 +205,23 @@ def test_check_command_still_scans_cat_and_redirect_inputs(
     assert not via_cat.ok and "me/lib#12" in via_cat.reason
     assert not via_redir.ok and "me/lib#12" in via_redir.reason
     assert not via_fd.ok and "me/lib#12" in via_fd.reason
+
+
+@pytest.mark.parametrize("command", [
+    f"printf 'x\\n@me' | {_WRITE} --body-file -",
+    f"echo -e 'x\\nme/lib#12' | {_WRITE} --body-file -",
+    f"{_WRITE} --body $'x\\nme/lib#12'",
+])
+def test_check_command_refuses_a_reference_after_an_escaped_line_break(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    verdict = gh.owners.check_command(command, str(tmp_path))
+    assert not verdict.ok and verdict.references, command
+
+
+def test_check_command_refuses_a_reference_in_a_json_input_file(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "p.json").write_text(json.dumps({"body": "Thanks!\nme/lib#12"}))
+    verdict = gh.owners.check_command(
+        "gh api repos/otto-nation/svc/issues/1/comments --input p.json", str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason

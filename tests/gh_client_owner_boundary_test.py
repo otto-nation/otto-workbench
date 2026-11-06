@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -335,3 +336,16 @@ def test_a_cli_write_refusal_propagates_from_the_client(
     assert "stranger" in err
     written = calls.read_text() if calls.exists() else ""
     assert "pr edit" not in written
+
+
+@pytest.mark.parametrize("body", [
+    "Thanks!\nme/lib#12", "Thanks!\n@me", "see \u201cme/lib#12\u201d"])
+def test_a_reference_behind_a_json_escape_never_reaches_gh(stub_gh, github_owners, body):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo '{}'")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.api(
+            "repos/otto-nation/svc/issues/1/comments", method="POST",
+            input_text=json.dumps({"body": body}))
+    assert exc.value.verdict.references
+    assert not calls.exists()

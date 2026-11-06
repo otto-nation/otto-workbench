@@ -6430,6 +6430,8 @@ The whole command text is scanned, including non-write statements — a
 deliberate over-refusal, so a reference sitting next to a write cannot slip
 through unread. Every statement also contributes ``cat`` operands, ``<``
 input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
+Redirections are read with one grammar: an fd-prefixed heredoc or here-string
+names no file, and ``--body-file <(cmd)`` names none either.
 
 ### gh/owner_hooks.py
 

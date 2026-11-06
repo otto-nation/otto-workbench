@@ -11,6 +11,8 @@ The whole command text is scanned, including non-write statements — a
 deliberate over-refusal, so a reference sitting next to a write cannot slip
 through unread. Every statement also contributes ``cat`` operands, ``<``
 input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
+Redirections are read with one grammar: an fd-prefixed heredoc or here-string
+names no file, and ``--body-file <(cmd)`` names none either.
 """
 
 # doc-group: platform
@@ -18,6 +20,7 @@ input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +37,10 @@ _FILE_FLAGS = ("--body-file", "--input", "--description-file", "--notes-file")
 _FILE_PREFIXES = tuple(f"{flag}=" for flag in _FILE_FLAGS)
 _FIELD_WORDS = ("-F", "--field")
 _FIELD_PREFIX = "--field="
+
+# `--body-file <(cmd)` reaches here as a bare `<`: the tokenizer splits at the
+# paren and makes `cmd` its own statement, whose operands are scanned there.
+_PROCESS_SUBSTITUTION = "<"
 
 
 @dataclass(frozen=True)
@@ -131,7 +138,7 @@ def _named_files(args: Sequence[str]) -> tuple[str, ...]:
         if taken is None:
             i += 1
             continue
-        if taken.path:
+        if taken.path and taken.path != _PROCESS_SUBSTITUTION:
             paths.append(taken.path)
         i = taken.next_index
     return tuple(paths)
@@ -184,57 +191,49 @@ def _shell_file_paths(words: Sequence[str]) -> tuple[str, ...]:
     return tuple(paths)
 
 
+@dataclass(frozen=True)
+class _Redirected:
+    """A statement's words split into plain operands and ``<`` input paths."""
+
+    operands: tuple[str, ...]
+    inputs: tuple[str, ...]
+
+
+# One redirection word: an fd number or `&`, bash's operator (longest first),
+# then the operand when it is glued on — `2>/dev/null`, `<notes.md`, `0<<EOF`.
+# `<(` never reaches here whole: the tokenizer splits at the paren, leaving a
+# bare `<` that ends its statement.
+_REDIRECT_RE = re.compile(r"(?:\d+|&)?(<<<|<<-|<<|<|>>|>\||>&|>)(.*)", re.DOTALL)
+
+
+def _redirected(words: Sequence[str]) -> _Redirected:
+    """*words* with every redirection and its operand taken out; ``<`` operands kept as inputs."""
+    operands: list[str] = []
+    inputs: list[str] = []
+    i = 0
+    while i < len(words):
+        found = _REDIRECT_RE.fullmatch(words[i])
+        i += 1
+        if found is None:
+            operands.append(words[i - 1])
+            continue
+        target = found.group(2)
+        if not target and i < len(words):
+            target = words[i]
+            i += 1
+        if target and found.group(1) == "<":
+            inputs.append(target)
+    return _Redirected(tuple(operands), tuple(inputs))
+
+
 def _cat_operands(words: Sequence[str]) -> list[str]:
     if not words or Path(words[0]).name != "cat":
         return []
-    return _cat_input_paths(words[1:])
-
-
-def _output_redirect_consumes_next(word: str) -> bool:
-    if word in (">", ">>", "&>", ">&", "<<", "<<-", "<<<"):
-        return True
-    if word.endswith(">>"):
-        return word[:-2].isdigit() and bool(word[:-2])
-    if word.endswith(">"):
-        return word[:-1].isdigit() and bool(word[:-1])
-    return False
-
-
-def _is_shell_redirection(word: str) -> bool:
-    if word in ("<", "0<"):
-        return True
-    if word.startswith(("<<", "<(", ">(", ">", "&>")):
-        return True
-    if ">" not in word:
-        return False
-    left, _, _ = word.partition(">")
-    return left.isdigit()
-
-
-def _cat_input_paths(operands: Sequence[str]) -> list[str]:
-    paths: list[str] = []
-    skip_next = False
-    for word in operands:
-        if skip_next:
-            skip_next = False
-            continue
-        if _output_redirect_consumes_next(word):
-            skip_next = True
-            continue
-        if _is_shell_redirection(word) or word == "-" or word.startswith("-"):
-            continue
-        paths.append(word)
-    return paths
+    return [word for word in _redirected(words[1:]).operands if not word.startswith("-")]
 
 
 def _redirect_operands(words: Sequence[str]) -> list[str]:
-    paths: list[str] = []
-    for i, word in enumerate(words):
-        if word in ("<", "0<") and i + 1 < len(words):
-            paths.append(words[i + 1])
-        elif word.startswith("<") and not word.startswith("<<") and len(word) > 1:
-            paths.append(word[1:])
-    return paths
+    return list(_redirected(words).inputs)
 
 
 def _subst_operands(words: Sequence[str]) -> list[str]:
@@ -243,11 +242,9 @@ def _subst_operands(words: Sequence[str]) -> list[str]:
         inner = _subst_inner(word)
         if inner is None:
             continue
-        if inner.startswith("<"):
-            paths.append(inner[1:].strip())
-            continue
         parts = inner.split()
         paths.extend(_cat_operands(parts))
+        paths.extend(_redirected(parts).inputs)
     return paths
 
 

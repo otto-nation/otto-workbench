@@ -306,3 +306,31 @@ def test_relative_body_paths_still_names_cat_and_redirect_inputs():
         "gh pr create --body-file - < notes.md") == ("notes.md",)
     assert gh.owner_content.relative_body_paths(
         "cat 2> err.log notes.md | gh pr create --body-file -") == ("notes.md",)
+
+
+_FD_HEREDOCS = (
+    "cd sub && cat 0<<EOF | gh pr create -R otto-nation/svc --body-file -\nplain\nEOF",
+    "cd sub && cat 0<< EOF | gh pr create -R otto-nation/svc --body-file -\nplain\nEOF",
+    "cd sub && cat 0<<-EOF | gh pr create -R otto-nation/svc --body-file -\nplain\nEOF",
+    "cd sub && cat 0<<<plain | gh pr create -R otto-nation/svc --body-file -",
+    "cd sub && cat 0<<< plain | gh pr create -R otto-nation/svc --body-file -",
+)
+
+
+def test_relative_body_paths_skips_fd_prefixed_heredocs_and_here_strings():
+    for command in _FD_HEREDOCS:
+        assert gh.owner_content.relative_body_paths(command) == (), command
+
+
+def test_relative_body_paths_reads_an_fd_prefixed_input_redirect():
+    assert gh.owner_content.relative_body_paths(
+        "gh pr create --body-file - 0<notes.md") == ("notes.md",)
+
+
+def test_a_process_substitution_is_not_a_body_path_but_its_command_is_scanned(tmp_path):
+    heredoc = "cd sub && gh pr create --body-file <(cat <<'EOF'\nplain\nEOF\n)"
+    assert gh.owner_content.relative_body_paths(heredoc) == ()
+    inner = "gh issue comment 1 --body-file <(cat notes.md)"
+    assert gh.owner_content.relative_body_paths(inner) == ("notes.md",)
+    (tmp_path / "notes.md").write_text("FROM_SUBSTITUTION")
+    assert "FROM_SUBSTITUTION" in gh.owner_content.command_text(inner, tmp_path)

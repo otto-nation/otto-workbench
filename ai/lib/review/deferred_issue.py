@@ -109,6 +109,20 @@ def deferred_outcomes(state: pr.state.PRState) -> list:
     return [o for o in state.fix.fix.items if o.outcome in FILABLE_OUTCOMES]
 
 
+def filed_this_run(state: pr.state.PRState, track) -> frozenset[str]:
+    """Ids this `--finish` just filed, so the summary treats them as answered.
+
+    `report.threads` was fetched before `finalize_deferred` posted the
+    "Needs a person: … Tracked in" replies, so GitHub as the renderer sees it
+    still shows those threads unanswered. Only when an issue actually landed
+    (`deferred_issue_id` set and not still pending) are the tracked ids an
+    answer this run produced.
+    """
+    if not state.fix.deferred_issue_id or state.fix.deferred_issue_pending:
+        return frozenset()
+    return frozenset(o.id for o in deferred_outcomes(state) if o.id in track)
+
+
 def validate_track(state: pr.state.PRState, track) -> bool:
     """False once it has said that --track named a thread that is not deferred.
 

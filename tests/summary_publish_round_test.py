@@ -96,6 +96,12 @@ _ROUND_ONE_OUTCOME = ItemOutcome(
 )
 
 
+def _answered_handbacks(*outcomes):
+    """Ids the unanswered-handback gate would otherwise refuse to publish."""
+    return frozenset(
+        o.id for o in outcomes if o.outcome in pr.summary_model.NEEDS_A_PERSON)
+
+
 def _repost_over(*rows: str, outcomes=(), threads=None, report=None,
                  marker=None):
     """Render a second round's summary over a first round that was answered.
@@ -112,7 +118,8 @@ def _repost_over(*rows: str, outcomes=(), threads=None, report=None,
     with _lookup_returns(_round_one_marker(*rows, **(marker or {}))), \
             patch("pr.comments.post_issue_comment", return_value="https://url") as post:
         pr.summary_publish.render_deferred_summary(
-            state, report or PRReport(), "owner/repo", 1, threads or {})
+            state, report or PRReport(), "owner/repo", 1, threads or {},
+            answered_now=_answered_handbacks(*items))
     assert "marker" not in post.call_args.kwargs
     return post.call_args[0][2]
 
@@ -159,7 +166,9 @@ def _edit_over_chain(earlier_rows, target_rows, outcomes=(), threads=None):
         items=[*outcomes], commit_status="no_changes", summary_deferred=True))
     with _lookup_returns(earlier, target), \
             patch("pr.comments.post_issue_comment", return_value="https://url") as post:
-        pr.summary_publish.render_deferred_summary(state, PRReport(), "owner/repo", 1, threads or {})
+        pr.summary_publish.render_deferred_summary(
+            state, PRReport(), "owner/repo", 1, threads or {},
+            answered_now=_answered_handbacks(*outcomes))
     assert post.call_args.kwargs["marker"] == pr.summary_render.SUMMARY_MARKER
     return post.call_args[0][2]
 
@@ -298,7 +307,9 @@ class TestHandEditedCellsSurviveTheRender:
         state = _make_state(self._state_fix())
         with _published(published), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
-            pr.summary_publish.render_deferred_summary(state, PRReport(), "owner/repo", 1, self._threads())
+            pr.summary_publish.render_deferred_summary(
+                state, PRReport(), "owner/repo", 1, self._threads(),
+                answered_now=_answered_handbacks(*state.fix.fix.items))
         return post.call_args[0][2]
 
     def test_the_hand_written_cell_is_republished(self):
@@ -694,7 +705,8 @@ class TestAnEditKeepsItsTargetWhole:
         with _lookup_returns(marker), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
             pr.summary_publish.render_deferred_summary(
-                state, PRReport(), "owner/repo", 1, threads or {})
+                state, PRReport(), "owner/repo", 1, threads or {},
+                answered_now=_answered_handbacks(*outcomes))
         assert post.call_args.kwargs["marker"] == pr.summary_render.SUMMARY_MARKER
         return post.call_args[0][2]
 

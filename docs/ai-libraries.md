@@ -2309,9 +2309,9 @@ being wrong is asymmetric — a needless hold costs one extra command, while a
 missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both. Combining them works
-and closes out that run's deferred set, but posts a summary nobody has replied
-to yet — the discussion is supposed to happen in between. `--finish` is a second
-invocation on purpose.
+and closes out that run's deferred set only once each handed-back thread has an
+answer on GitHub — `--finish` refuses the summary until then. The discussion is
+supposed to happen in between. `--finish` is a second invocation on purpose.
 
 `--fix` triages threads, applies mechanical fixes, and resolves the verified
 ones. It withholds the summary comment whenever threads need human input,
@@ -2793,7 +2793,8 @@ answered — so by the time it returns, four separate things may be owed to a PR
 that looks, from the outside, finished. This is the phase that pays them.
 `--finish` is a second invocation on purpose — the discussion has to happen in
 between. Combining `--fix --finish` works and closes out that run's deferred
-set, but posts a summary nobody has replied to yet.
+set only once each handed-back thread has an answer on GitHub; `--finish`
+refuses the summary until then.
 
 Order is the whole design here, and it is not incidental. The push goes first,
 because every surface below cites a commit and a reviewer cannot follow a SHA
@@ -3954,6 +3955,8 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
 - `review_orchestration_failed`: the review produced no review file
 - `commit_failed`: a fix commit was refused by a hook
 - `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
+- `unanswered_handbacks`: `--finish --post` refused the summary because a thread handed to a
+  person has no reply or settlement on GitHub; answer it with `pr comments`, then retry
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
 - `github`: GitHub could not be read

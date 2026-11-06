@@ -7,6 +7,8 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
 - `review_orchestration_failed`: the review produced no review file
 - `commit_failed`: a fix commit was refused by a hook
 - `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
+- `unanswered_handbacks`: `--finish --post` refused the summary because a thread handed to a
+  person has no reply or settlement on GitHub; answer it with `pr comments`, then retry
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
 - `github`: GitHub could not be read
@@ -27,6 +29,7 @@ import batch.publish
 import git.client
 import pr.ci_report
 import pr.fix
+import pr.settlement
 import pr.state
 import pr.target
 import review.document
@@ -57,6 +60,7 @@ class FailureReason(StrEnum):
     COMMIT_FAILED = "commit_failed"
     PRE_PUSH_REJECTED = "pre_push_rejected"
     LOCK_BUSY = "lock_busy"
+    UNANSWERED_HANDBACKS = "unanswered_handbacks"
     PUSH_REJECTED = "push_rejected"
     GITHUB = "github"
     ERROR = "error"
@@ -84,6 +88,7 @@ class _Marker:
 _MARKERS = (
     _Marker(FailureReason.COMMIT_FAILED, ("commit failed:",)),
     _Marker(FailureReason.LOCK_BUSY, (LOCK_BUSY_MARKER,)),
+    _Marker(FailureReason.UNANSWERED_HANDBACKS, (pr.settlement.UNANSWERED_HANDBACKS_MARKER.lower(),)),
     _Marker(FailureReason.PRE_PUSH_REJECTED, (
         "push refused (hook)", "pre-push checks failed",
         "left uncommitted changes — not pushing")),
@@ -103,6 +108,9 @@ FAILURE_WHY: dict[str, str] = {
         "a pre-commit hook refused the fix commit",
     FailureReason.PRE_PUSH_REJECTED.value:
         "the pre-push checks rejected the push (a failing hook, or uncommitted work)",
+    FailureReason.UNANSWERED_HANDBACKS.value:
+        "a thread handed to a person has no answer on GitHub, so the summary was not posted "
+        "(the push, if any, landed; answer the thread with `pr comments`, then retry)",
     FailureReason.LOCK_BUSY.value: "another pr run held this branch's lock",
     FailureReason.PUSH_REJECTED.value: "git refused the push, or the remote did not keep it",
     FailureReason.GITHUB.value: "GitHub could not be asked about the PR",

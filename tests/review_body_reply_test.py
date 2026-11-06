@@ -29,7 +29,9 @@ import pr.comments
 import pr.context
 import pr.state
 import review.review_body_reply
-from pr.fix import ItemOutcome
+from pr.fix import FixOutcome, ItemOutcome
+from pr.thread_models import PRReport, ReportThread
+import review.comment_threads
 from gh.pr_data import PRData
 from git.land import CommitStatus
 
@@ -166,6 +168,30 @@ class TestPublishing:
         state = pr.state.load_state(ctx.target_dir)
         assert "rb-88" in state.fix.source_replies
         assert state.fix.summary_deferred is True
+
+    def test_an_unanswered_declined_thread_exits_1_and_posts_nothing(
+            self, ctx, reply_body):
+        _seed(ctx, summary_deferred=True, commit_status=CommitStatus.NO_CHANGES)
+        state = pr.state.load_state(ctx.target_dir)
+        state.fix.fix.items.append(ItemOutcome(
+            id="t1", outcome=FixOutcome.DECLINED, summary="premise is wrong",
+            decided_at="2026-03-01T12:00:00Z",
+        ))
+        pr.state.save_state(ctx.target_dir, state)
+        report = PRReport(threads=[ReportThread(
+            id="t1", my_login="me",
+            comments=[{"author": {"login": "kgn"}, "body": "x",
+                       "createdAt": "2026-03-01T11:00:00Z"}],
+        )])
+        route = review.review_body_reply.ReplyRoute(
+            pr_data=_pr_data(), source="rb-88")
+        with core.publishing.run(post=True), \
+                patch.object(review.comment_threads, "read_report", return_value=report), \
+                patch.object(pr.comments, "post_issue_comment") as post:
+            code = review.review_body_reply.run_review_body_reply(
+                ctx, route, reply_body)
+        assert code == 1
+        post.assert_not_called()
 
     def test_a_draft_stores_nothing_and_prints_the_summary(self, ctx, reply_body):
         drafts = []

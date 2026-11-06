@@ -187,7 +187,44 @@ def _shell_file_paths(words: Sequence[str]) -> tuple[str, ...]:
 def _cat_operands(words: Sequence[str]) -> list[str]:
     if not words or Path(words[0]).name != "cat":
         return []
-    return [word for word in words[1:] if word != "-" and not word.startswith("-")]
+    return _cat_input_paths(words[1:])
+
+
+def _output_redirect_consumes_next(word: str) -> bool:
+    if word in (">", ">>", "&>", ">&"):
+        return True
+    if word.endswith(">>"):
+        return word[:-2].isdigit() and bool(word[:-2])
+    if word.endswith(">"):
+        return word[:-1].isdigit() and bool(word[:-1])
+    return False
+
+
+def _is_shell_redirection(word: str) -> bool:
+    if word in ("<", "0<"):
+        return True
+    if word.startswith(("<<", "<(", ">(", ">", "&>")):
+        return True
+    if ">" not in word:
+        return False
+    left, _, _ = word.partition(">")
+    return left.isdigit()
+
+
+def _cat_input_paths(operands: Sequence[str]) -> list[str]:
+    paths: list[str] = []
+    skip_next = False
+    for word in operands:
+        if skip_next:
+            skip_next = False
+            continue
+        if _output_redirect_consumes_next(word):
+            skip_next = True
+            continue
+        if _is_shell_redirection(word) or word == "-" or word.startswith("-"):
+            continue
+        paths.append(word)
+    return paths
 
 
 def _redirect_operands(words: Sequence[str]) -> list[str]:
@@ -210,8 +247,7 @@ def _subst_operands(words: Sequence[str]) -> list[str]:
             paths.append(inner[1:].strip())
             continue
         parts = inner.split()
-        if parts and Path(parts[0]).name == "cat":
-            paths.extend(p for p in parts[1:] if p != "-" and not p.startswith("-"))
+        paths.extend(_cat_operands(parts))
     return paths
 
 

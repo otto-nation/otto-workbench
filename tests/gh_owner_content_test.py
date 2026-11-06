@@ -184,3 +184,29 @@ def test_command_text_does_not_read_a_generator_pipe(tmp_path):
     text = gh.owner_content.command_text(
         "generate-body | gh pr create --body-file -", tmp_path)
     assert "GENERATOR_SECRET" not in text
+
+
+_HEREDOC_CREATE = (
+    "cd sub && cat <<'EOF' | gh pr create -R otto-nation/svc --title t --body-file -\n"
+    "{body}\n"
+    "EOF"
+)
+_CAT_REDIRECT = (
+    "cd /tmp && cat > /tmp/b.md <<EOF\n"
+    "{body}\n"
+    "EOF"
+)
+
+
+def test_relative_body_paths_skips_heredoc_and_output_redirects():
+    heredoc = _HEREDOC_CREATE.format(body="plain body")
+    redirect = _CAT_REDIRECT.format(body="plain body")
+    assert gh.owner_content.relative_body_paths(heredoc) == ()
+    assert gh.owner_content.relative_body_paths(redirect) == ()
+
+
+def test_relative_body_paths_still_names_cat_and_redirect_inputs():
+    assert gh.owner_content.relative_body_paths(
+        "cat notes.md | gh pr create --body-file -") == ("notes.md",)
+    assert gh.owner_content.relative_body_paths(
+        "gh pr create --body-file - < notes.md") == ("notes.md",)

@@ -109,3 +109,51 @@ def test_check_command_allows_a_generator_pipe(github_owners, tmp_path):
     verdict = gh.owners.check_command(
         f"generate-body | {_WRITE} --body-file -", str(tmp_path))
     assert verdict.ok
+
+
+_HEREDOC_CREATE = (
+    "cd sub && cat <<'EOF' | gh pr create -R otto-nation/svc --title t --body-file -\n"
+    "{body}\n"
+    "EOF"
+)
+_CAT_REDIRECT = (
+    "cd /tmp && cat > /tmp/b.md <<EOF\n"
+    "{body}\n"
+    "EOF\n"
+    "gh pr create -R otto-nation/svc --title t --body-file /tmp/b.md"
+)
+
+
+def test_check_command_allows_a_heredoc_pipe_after_cd(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "sub").mkdir()
+    command = _HEREDOC_CREATE.format(body="plain body")
+    assert gh.owners.check_command(command, str(tmp_path)).ok
+
+
+def test_check_command_refuses_a_cross_group_heredoc_after_cd(
+        github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "sub").mkdir()
+    command = _HEREDOC_CREATE.format(body="see me/lib#12")
+    verdict = gh.owners.check_command(command, str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+    assert verdict.references
+
+
+def test_check_command_allows_cat_output_redirect_after_cd(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    command = _CAT_REDIRECT.format(body="plain body")
+    assert gh.owners.check_command(command, str(tmp_path)).ok
+
+
+def test_check_command_still_scans_cat_and_redirect_inputs(
+        github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "notes.md").write_text("see me/lib#12\n")
+    via_cat = gh.owners.check_command(
+        f"cat notes.md | {_WRITE} --body-file -", str(tmp_path))
+    via_redir = gh.owners.check_command(
+        f"{_WRITE} --body-file - < notes.md", str(tmp_path))
+    assert not via_cat.ok and "me/lib#12" in via_cat.reason
+    assert not via_redir.ok and "me/lib#12" in via_redir.reason

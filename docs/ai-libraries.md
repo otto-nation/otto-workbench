@@ -3898,6 +3898,8 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
 - `review_orchestration_failed`: the review produced no review file
 - `commit_failed`: a fix commit was refused by a hook
 - `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
+- `unanswered_handbacks`: `--finish --post` refused the summary because a thread handed to a
+  person has no reply or settlement on GitHub; answer it with `pr comments`, then retry
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
 - `github`: GitHub could not be read

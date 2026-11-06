@@ -627,12 +627,16 @@ def unanswered_handbacks(
     return sorted(owed, key=lambda item: item.id)
 
 
+# The phrase `report_unanswered_handbacks` prints; `batch.outcomes` classifies on it.
+UNANSWERED_HANDBACKS_MARKER = "have no answer on GitHub"
+
+
 def report_unanswered_handbacks(owed: list[ItemOutcome]) -> None:
     """Name each handed-back thread that blocked the summary, and how to answer."""
     n = len(owed)
     lines = [
         f"The summary was not published — {n} thread(s) handed to a person "
-        f"have no answer on GitHub,",
+        f"{UNANSWERED_HANDBACKS_MARKER},",
         "and the summary would report an outcome nothing on the thread backs:",
     ]
     for item in owed:

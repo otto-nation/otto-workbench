@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -153,6 +153,16 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 **Auto-trigger:** 24h (via Stop hook)
 **Trigger:** Run after upgrading runtimes, installing new tools, or when machine.md last-updated is more than 7 days old. Auto-triggers every 24h.
 **Skip:** Do not use for project-specific architecture (use architecture instead) or memory consolidation (use dream instead).
+
+### `/pr-batch`
+
+Sweep many open PRs with pr batch and turn the result into focused per-PR sessions. TRIGGER when: updating, rebasing, triaging or sweeping several open PRs, or running pr batch. SKIP: a single PR (use pr-rebase, pr-comments, ci-failures).
+
+```
+/pr-batch
+```
+**Trigger:** Use when updating, rebasing, triaging or sweeping several open PRs, or running pr batch.
+**Skip:** Do not use for a single PR (use pr-rebase, pr-comments, or ci-failures instead).
 
 ### `/pr-comments [<pr_number_or_branch>]`
 
@@ -762,7 +772,7 @@ closed, and every step runs drafted — the batch is the only thing that pushes.
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run_summary
 pr batch run --plan FILE …               # start from a saved plan
-pr batch resume [RUN_ID]                 # continue waiting or interrupted; a cancel is final
+pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
 pr batch next [RUN_ID]                   # only what needs action (JSON)
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state
@@ -772,7 +782,7 @@ pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder ap
 ```
 
 `pr batch run --focus` is forwarded to every review step and replayed by
-`pr batch resume`; it does not make a review step needed.
+`pr batch resume` (`--steps` may only narrow; it does not make a review step needed; open decisions on excluded steps still stand).
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no

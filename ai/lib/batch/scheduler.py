@@ -322,8 +322,9 @@ class Scheduler:
             item.pre_rebase_head = result.pre_rebase_head
         if rec.step is not Step.REVIEW and moved:
             item.head_moved = True
-            if item.has(Step.REVIEW) and item.step(Step.REVIEW).status in (
-                    StepStatus.SKIPPED, StepStatus.DONE):
+            if (Step.REVIEW in self.run.steps and item.has(Step.REVIEW)
+                    and item.step(Step.REVIEW).status in (
+                        StepStatus.SKIPPED, StepStatus.DONE)):
                 item.step(Step.REVIEW).status = StepStatus.PENDING
         self._estimates.observe(item.repo, rec.step, live.peak)
         item.status = ItemStatus.QUEUED

@@ -6383,9 +6383,11 @@ In order:
    requires them all in one group.
 4. Unresolvable, and so refused by the caller: a GraphQL write from a shell
    (it names its target by node ID), a REST write outside ``repos/``, a cwd
-   that is no repository or has no GitHub remote, and a cwd-resolved write in a
-   command that changes directory — which directory it runs in is not knowable
-   from the text.
+   that is no repository or has no GitHub remote, a ``--repo-dir`` whose value
+   still holds a shell variable, substitution or ``~`` (the guard reads the
+   command as text and does not expand), and a cwd-resolved write in a command
+   that changes directory — which directory it runs in is not knowable from
+   the text.
 
 A bare ``OWNER/REPO`` is on ``GH_HOST`` when set (prefix, then environment),
 else public GitHub — gh's own default host.

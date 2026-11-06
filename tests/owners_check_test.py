@@ -100,6 +100,14 @@ def test_classify_does_not_load_owners(monkeypatch, capsys):
     assert capsys.readouterr().out == "read\n"
 
 
+def test_unexpanded_repo_dir_is_refused_at_the_cli(github_owners, tmp_path, capsys):
+    github_owners({"work": ["otto-nation"]})
+    code = cli.owners_check.main(
+        ["--cwd", str(tmp_path), "--", 'pr comments --finish --post --repo-dir "$R"'])
+    assert code == cli.owners_check.REFUSED
+    assert "does not expand" in capsys.readouterr().err
+
+
 def test_the_shim_classifies_with_one_line_on_stdout():
     shim = str(REPO_ROOT / "ai" / "bin" / "owners-check")
     write = run_checked([shim, "--classify", "--", "gh issue close 3"],

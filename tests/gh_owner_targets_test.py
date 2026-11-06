@@ -198,6 +198,7 @@ def test_no_repository_at_cwd_says_so(tmp_path, monkeypatch):
     resolution = _resolve(["gh", "issue", "create"], plain)
     assert not resolution.ok
     assert "not a git repository" in resolution.reason
+    assert "--repo OWNER/REPO" in resolution.reason
 
 
 def test_the_client_resolves_a_graphql_write_by_its_hint(tmp_path):
@@ -374,3 +375,51 @@ def test_a_repo_verb_without_a_repository_falls_back_to_the_cwd(tmp_path):
     ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
     resolution = _resolve(["gh", "repo", "rename", "newname"], ours)
     assert resolution.ok and resolution.target.owners == (_owner("ours"),)
+
+
+@pytest.mark.parametrize("repo_dir", [
+    "$R",
+    "--repo-dir=$R",
+    "${R}/x",
+    "$(pwd)",
+    "`pwd`",
+    "~/x",
+])
+def test_unexpanded_repo_dir_is_refused(tmp_path, repo_dir):
+    if repo_dir.startswith("--repo-dir="):
+        words = ["pr", "comments", repo_dir]
+    else:
+        words = ["pr", "comments", "--repo-dir", repo_dir]
+    resolution = _resolve(words, tmp_path)
+    assert not resolution.ok
+    assert "does not expand" in resolution.reason
+    assert "not a git repository" not in resolution.reason
+
+
+def test_a_directory_named_dollar_r_does_not_bypass_the_guard(tmp_path):
+    remote_repo(tmp_path / "$R", "git@github.com:acme/w.git")
+    resolution = _resolve(["pr", "comments", "--repo-dir", "$R"], tmp_path)
+    assert not resolution.ok
+    assert "does not expand" in resolution.reason
+
+
+def test_workbench_refusal_names_pr_not_repo(tmp_path, monkeypatch):
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    missing = _resolve(["pr", "comments", "--repo-dir", str(plain)], tmp_path)
+    assert not missing.ok
+    assert "--pr" in missing.reason
+    assert "--repo OWNER/REPO" not in missing.reason
+    moved = _resolve(["pr", "comments"], tmp_path, after_cd=True)
+    assert not moved.ok
+    assert "--pr" in moved.reason
+    assert "--repo OWNER/REPO" not in moved.reason
+
+
+# passes-at-base: pins the remedy the message advertises
+def test_a_pr_url_is_an_explicit_workbench_target(tmp_path):
+    resolution = _resolve(
+        ["pr", "comments", "--pr", "https://github.com/acme/widget/pull/9"], tmp_path)
+    assert resolution.ok
+    assert resolution.target.owners == (_owner("acme"),)

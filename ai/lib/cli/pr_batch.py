@@ -85,6 +85,7 @@ recipes:
   pr batch run --checkout DIR --steps rebase,ci   rebase and fix CI where needed
   pr batch run --checkout DIR                     every step, where needed
   pr batch run --checkout DIR --steps review --focus "…"   review with a focus
+  pr batch resume --steps rebase,ci,comments      continue without re-running review
 
 `run` plans for itself — no `pr batch plan` first. It is long-running and
 streams NDJSON events; start it as a background job. Step output stays in the
@@ -146,6 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser("resume", help="Continue a run")
     m.add_argument("run_id", nargs="?", help=f"Run to continue (default: {_DEFAULT_RUN_REFUSES})")
+    m.add_argument("--steps", type=_steps, default=None, metavar="STEPS",
+                   help="Narrow the run to these steps (a subset of the run's). "
+                        "Each excluded pending step becomes skipped; a later commit "
+                        "does not re-queue a dropped review. Adding a step is refused")
     m.add_argument("--verbose", action="store_true",
                    help="Also stream each step's stderr as step_log events")
 
@@ -543,24 +548,46 @@ def _cmd_run(args, bin_dir: Path) -> int:
     return _conclude(started.session.run.id, stopped, reporter)
 
 
+_NARROW_ONLY = "resume can only narrow steps; start a new run to add one"
+
+
+def _narrow_resume(run: Run, steps: list[Step]) -> None:
+    """Keep only *steps* on *run*; skip each non-terminal item's pending excluded step."""
+    wanted = set(steps)
+    excluded = set(run.steps) - wanted
+    run.steps = [s for s in run.steps if s in wanted]
+    for item in run.items:
+        if item.terminal:
+            continue
+        for rec in item.steps:
+            if rec.step in excluded and rec.status is StepStatus.PENDING:
+                rec.status = StepStatus.SKIPPED
+
+
 def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
-                reporter: _Reporter, bin_dir: Path, verbose: bool) -> RunStatus | _Refused:
+                reporter: _Reporter, bin_dir: Path, verbose: bool,
+                steps: list[Step] | None = None) -> RunStatus | _Refused:
     """Drive *session* or return the refusal; the caller raises after the session exits."""
     run = session.run
     if run.status in FINISHED_RUN:
         return _Refused(f"run {run.id} is {run.status.value}")
+    if steps is not None and not set(steps) <= set(run.steps):
+        return _Refused(_NARROW_ONLY)
     try:
         _note_batch_locks(run)
         holds = _hold_items(held, run, "resume")
     except _Refused as exc:
         return exc
+    if steps is not None:
+        _narrow_resume(run, steps)
     batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
     return _drive(session, reporter, holds, bin_dir=bin_dir,
                   cfg=_cfg([i.repo_dir for i in run.items]), verbose=verbose)
 
 
-def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool) -> RunStatus:
+def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool,
+            steps: list[Step] | None = None) -> RunStatus:
     """Open *run_id* as its driver and drive it: the body of `pr batch resume`.
 
     The session's entry drain applies whatever is queued, cancels first,
@@ -575,7 +602,7 @@ def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool) -> R
         session = held.enter_context(batch.store.session(
             run_id, Role.DRIVER, inbox=_driver_inbox(bin_dir, reporter),
             command=f"pr batch resume {run_id}"))
-        result = _try_resume(held, session, reporter, bin_dir, verbose)
+        result = _try_resume(held, session, reporter, bin_dir, verbose, steps=steps)
     if isinstance(result, _Refused):
         raise result
     return result
@@ -596,10 +623,13 @@ def _cmd_resume(args, bin_dir: Path) -> int:
         return _err(str(exc))
     reporter = _Reporter()
     try:
-        stopped = _resume(run_id, reporter, bin_dir, args.verbose)
+        stopped = _resume(run_id, reporter, bin_dir, args.verbose, steps=args.steps)
     except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
-    except (batch.store.RunBusy, batch.store.RunUnreachable, _Refused) as exc:
+    except _Refused as exc:
+        print(f"pr batch: {exc}", file=sys.stderr)
+        return 2 if str(exc) == _NARROW_ONLY else 1
+    except (batch.store.RunBusy, batch.store.RunUnreachable) as exc:
         return _err(str(exc))
     return _conclude(run_id, stopped, reporter)
 

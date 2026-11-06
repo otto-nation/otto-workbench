@@ -126,9 +126,12 @@ def _restore_delta(base: frozenset[tuple[str, str]]) -> EnvDelta:
             f"{MISE_DIFF_ENV} says mise changed this process's environment, but mise is "
             "not on PATH to undo it",
         )
+    # The restore script starts several interpreters (bash, Python twice,
+    # `mise hook-env`). A loaded machine stretches that several-fold, and a
+    # timeout fails the whole agent call.
     r = core.proc.run(
         ["bash", "-c", _RESTORE_SCRIPT, "bash", sys.executable, _PRINT_ENV],
-        cwd=os.path.expanduser("~"), timeout=core.timeouts.LOCAL, env=dict(base),
+        cwd=os.path.expanduser("~"), timeout=core.timeouts.LAUNCH, env=dict(base),
     )
     if not r.ok:
         raise MachineEnvUnavailable(core.proc.failure_message(

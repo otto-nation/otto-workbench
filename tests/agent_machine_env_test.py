@@ -76,6 +76,21 @@ def _repo_applied(**extra) -> dict[str, str]:
     }
 
 
+def test_the_restore_script_is_bounded_by_the_launch_tier(mise, monkeypatch):
+    import core.proc
+    import core.timeouts
+
+    bounds = []
+
+    def run(*_a, **kw):
+        bounds.append(kw["timeout"])
+        return core.proc.CmdResult(returncode=0, stdout="A=1\0--workbench-mise-hook-env--\0A=1")
+
+    monkeypatch.setattr(agent.machine_env.core.proc, "run", run)
+    agent.machine_env.machine_env(_repo_applied())
+    assert bounds == [core.timeouts.LAUNCH]
+
+
 def test_without_a_mise_record_the_environment_is_returned_unchanged(mise):
     mise.answer(hook_rc=1)
     base = {k: v for k, v in _repo_applied().items() if k != MISE_DIFF_ENV}

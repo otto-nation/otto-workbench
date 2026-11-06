@@ -21,7 +21,7 @@ actually predicts the right answer is **what bounds the cost**:
 | `QUICK` | A session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
-| `LAUNCH` | Starting a heavyweight local CLI — a Node program that loads its extensions before it answers (`pi --list-models`, `pi --version`) | Flat cost, but the cost is process start-up, which a loaded machine stretches several-fold; a breach still means a hang. |
+| `LAUNCH` | Starting a heavyweight local process — a Node program that loads its extensions before it answers (`pi --list-models`, `pi --version`), or a short script that starts several interpreters (`mise hook-env` restore) | Flat cost, but the cost is process start-up, which a loaded machine stretches several-fold; a breach still means a hang. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add`, `status` | A bound would be wrong, not merely large. |
 
@@ -77,8 +77,10 @@ NETWORK = 30.0
 # that loads its extensions before it prints anything. `pi --list-models`
 # measured 6.4s on an idle machine and 12-17s at a load average of 14 on
 # four cores, so LOCAL's ten seconds killed listings that were healthy, only
-# slow. The cost is still flat — it does not grow with any input — so a
-# breach of this bound is a hang, not a large answer.
+# slow. The same bound covers a short restore script that starts bash, two
+# Python interpreters, and `mise hook-env` before it answers. The cost is
+# still flat — it does not grow with any input — so a breach of this bound
+# is a hang, not a large answer.
 LAUNCH = 60.0
 
 # Data-proportional work over a network — `fetch`, `gh api --paginate`. The

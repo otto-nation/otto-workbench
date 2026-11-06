@@ -607,7 +607,7 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
         _log_disprove_falsified(applied.summary)
     else:
         core.log.info(f"{label}: all {applied.summary['survived']} findings survived")
-    return DisproveRun(result, applied.record)
+    return DisproveRun(result, review.claims.without_vanished_links(applied.record))
 
 
 def _log_disprove_falsified(summary: dict) -> None:

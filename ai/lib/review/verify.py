@@ -298,7 +298,7 @@ def _verified_claim(claim: ClaimEntry, wt_path: str,
             evidence=f"{claim.evidence} *(no worktree to check the cited code against)*",
         )
     detail = _match_evidence(claim.path, claim.snippet, wt_path, tracked, changed)
-    if detail["match_result"]:
+    if detail["match_result"] and detail.get("fragments"):
         return claim
     note = f"cited code not found in `{claim.path}`: {_drop_reason(detail)}"
     return replace(

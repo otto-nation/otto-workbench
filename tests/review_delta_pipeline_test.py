@@ -309,6 +309,17 @@ class TestTheEmptyDeltaFastPath:
         _, called, _ = run_phases(job)
         assert called == ["single"]
 
+    def test_a_description_edit_is_not_a_no_op(self, tmp_path, run_phases):
+        job = self._merge_only(tmp_path)
+        job.pr.body = "old"
+        job.prior = replace(
+            job.prior,
+            meta=replace(job.prior.meta, claims_input_sha=review.claims.input_sha(job)),
+        )
+        job.pr.body = "new"
+        _, called, _ = run_phases(job)
+        assert called == ["single"]
+
     def test_an_unchanged_description_is_still_a_no_op(self, tmp_path, run_phases):
         job = self._merge_only(tmp_path)
         job.pr.body = "now does Y"

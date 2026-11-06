@@ -62,7 +62,7 @@ def test_rebuild_skips_a_group_file_carrying_the_render_banner(tmp_path, capsys)
     assert not (tmp_path / "review.md").exists()
 
 
-def test_rebuild_preserves_sidecar_fields_other_than_date_and_status(tmp_path):
+def test_rebuild_preserves_sidecar_fields_other_than_date_status_and_claims_input_sha(tmp_path):
     from datetime import date
     from pr.domains import ReviewStatus
 
@@ -76,6 +76,7 @@ def test_rebuild_preserves_sidecar_fields_other_than_date_and_status(tmp_path):
         fix_commit_sha="def456abc", fix_commit_status="unpushed",
         static_declined={"site-hash": "won't fix"},
         date="2020-01-01", status=ReviewStatus.COMPLETED,
+        claims_input_sha="stale",
     )
     write_review_meta(tmp_path, original)
     assert review.rebuild.rebuild(tmp_path, "1", script="review-rebuild") == 0
@@ -89,6 +90,7 @@ def test_rebuild_preserves_sidecar_fields_other_than_date_and_status(tmp_path):
     assert meta.static_declined == original.static_declined
     assert meta.date == date.today().isoformat()
     assert meta.status is None
+    assert meta.claims_input_sha == ""
 
 
 def test_markdown_group_files_are_named_not_read(tmp_path, capsys):

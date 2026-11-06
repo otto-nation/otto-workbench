@@ -48,6 +48,7 @@ def test_the_verdicts_are_the_four_on_disk_values():
         ),
         (True, (replace(_OK, evidence=""),), frozenset(), IngestErrorKind.BAD_CLAIM, None),
         (True, (replace(_OK, snippet=""),), frozenset(), IngestErrorKind.BAD_CLAIM, None),
+        (True, (replace(_OK, snippet="  \n"),), frozenset(), IngestErrorKind.BAD_CLAIM, None),
         (
             True,
             (replace(_OK, verdict=ClaimVerdict.CONTRADICTED, path="a.py:3"),),
@@ -79,6 +80,7 @@ def test_the_verdicts_are_the_four_on_disk_values():
         "snippet-over-cap",
         "empty-evidence",
         "supported-no-snippet",
+        "supported-whitespace-snippet",
         "contradicted-line-in-path",
         "unsupported-no-path",
         "finding-absent",

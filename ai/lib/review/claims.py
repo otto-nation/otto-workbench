@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Collection
+from dataclasses import replace
 
 import review.budget
 import review.focus
@@ -90,7 +91,7 @@ def _claim_problems(
         out.append(_error(
             IngestErrorKind.BAD_CLAIM, f"{at}.evidence", "evidence is empty",
         ))
-    if claim.verdict in _CITE and (not claim.path or not claim.snippet):
+    if claim.verdict in _CITE and (not claim.path or not claim.snippet.strip()):
         out.append(_error(
             IngestErrorKind.BAD_CLAIM, at,
             "cite the path and a verbatim snippet the verdict rests on",
@@ -106,6 +107,20 @@ def _claim_problems(
             f"{claim.finding} names no finding",
         ))
     return out
+
+
+def without_vanished_links(record):
+    """Clear claim.finding when it names no visible finding.
+
+    Disprove writes without renumbering, so a link to a falsified finding
+    would otherwise keep an id that no longer renders.
+    """
+    if not record.claims:
+        return record
+    return replace(record, claims=tuple(
+        replace(c, finding=c.finding if record.finding(c.finding) else "")
+        for c in record.claims
+    ))
 
 
 def writer_check(job) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:

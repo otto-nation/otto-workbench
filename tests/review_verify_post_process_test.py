@@ -324,13 +324,32 @@ def test_a_claim_whose_snippet_is_missing_becomes_unverifiable(tmp_path):
             claim(
                 id="C2", verdict=ClaimVerdict.CONTRADICTED, snippet="nope()",
             ),
+            claim(id="C3", snippet="nope()"),
         ),
     )
     done = post_process_record(rec, str(tmp_path), ["a.py"])
-    c1, c2 = done.record.claims
+    c1, c2, c3 = done.record.claims
     assert c1.verdict is ClaimVerdict.SUPPORTED
     assert c2.verdict is ClaimVerdict.UNVERIFIABLE
+    assert c3.verdict is ClaimVerdict.UNVERIFIABLE
     assert "cited code not found" in c2.evidence
+    assert "cited code not found" in c3.evidence
+
+
+def test_supported_claims_are_unverifiable_without_a_worktree():
+    done = post_process_record(record(claims=(claim(),)), "")
+    assert done.record.claims[0].verdict is ClaimVerdict.UNVERIFIABLE
+    assert "no worktree" in done.record.claims[0].evidence
+
+
+def test_a_blank_or_comment_only_snippet_is_unverifiable(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    rec = record(claims=(
+        claim(id="C1", snippet="  \n"),
+        claim(id="C2", snippet="# not code"),
+    ))
+    done = post_process_record(rec, str(tmp_path), ["a.py"])
+    assert {c.verdict for c in done.record.claims} == {ClaimVerdict.UNVERIFIABLE}
 
 
 def test_unsupported_and_unverifiable_claims_are_not_checked(tmp_path):

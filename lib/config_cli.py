@@ -7,6 +7,7 @@ Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
        otto-workbench config models
        otto-workbench config phases [--json] [DIR]
        otto-workbench config context [--pi-listing FILE]
+       python3 lib/config_cli.py pi-catalogue
 
 `get` is the read side for a caller that is not Python.  `ai/lib/
 workbench_config.py` owns which files a key is resolved from; bash has no
@@ -111,6 +112,7 @@ import agent.context_ceiling  # noqa: E402
 import agent.harness_models  # noqa: E402
 import agent.models  # noqa: E402
 import agent.phase_report  # noqa: E402
+import agent.pi_models  # noqa: E402
 import config.workbench_config  # noqa: E402
 import config.workbench_config_report  # noqa: E402
 import config.workbench_config_write  # noqa: E402
@@ -187,6 +189,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="a `pi --list-models` listing (- for stdin) to size Pi's per-model reserves from",
     )
     context.set_defaults(run=_context)
+    catalogue = sub.add_parser(
+        "pi-catalogue",
+        help="print the bounded `pi --list-models` listing",
+    )
+    catalogue.set_defaults(run=_pi_catalogue)
     return parser.parse_args(argv)
 
 
@@ -314,6 +321,22 @@ def _context(args: argparse.Namespace) -> int:
         },
         "pi": {"reserveTokens": reserves},
     }, separators=(",", ":")))
+    return 0
+
+
+def _pi_catalogue(_args: argparse.Namespace) -> int:
+    """Print the bounded ``pi --list-models`` listing, or the reason it cannot be read.
+
+    Stdout is the listing and nothing else; a failure writes ``str(exc)`` to
+    stderr and exits 1, so a shell caller can capture each stream. stdin is
+    not inherited: ``catalogue_text`` runs through ``core.proc.run``, which
+    opens the child on ``DEVNULL``.
+    """
+    try:
+        sys.stdout.write(agent.pi_models.catalogue_text(("pi",)))
+    except agent.pi_models.CatalogueUnreadable as exc:
+        print(exc, file=sys.stderr)
+        return 1
     return 0
 
 

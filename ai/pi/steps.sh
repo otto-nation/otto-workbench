@@ -410,7 +410,10 @@ _pi_warn_unknown_models() {
   (( ${#refs[@]} > 0 )) || return 0
 
   local listing
-  listing=$(_pi_user_scope pi --list-models 2>/dev/null) || return 0
+  listing=$(_pi_user_catalogue) || {
+    warn "Pi models were not checked: ${listing}"
+    return 0
+  }
   [[ -n "$listing" ]] || return 0
 
   local -A listed=() listed_any=() loaded=()
@@ -543,6 +546,23 @@ _pi_user_scope() {
     fi
     "$@"
   )
+}
+
+# _pi_user_catalogue — prints the bounded listing on stdout, or a reason
+# on stdout with a non-zero status.
+#
+# python3 is resolved here, in this PATH, then passed into `_pi_user_scope`
+# so mise's hook-env can put the user's `pi` on PATH without replacing the
+# workbench interpreter. stderr is merged so a caller that captures stdout
+# still sees why a failed listing failed: success writes only the table,
+# failure writes only the reason.
+_pi_user_catalogue() {
+  local py
+  py=$(command -v python3) || {
+    echo "python3 not found"
+    return 1
+  }
+  _pi_user_scope wb_pi_catalogue "$py" 2>&1
 }
 
 # step_pi_packages — refreshes the git package clones Pi resolves from
@@ -705,7 +725,10 @@ step_pi_compaction() {
     [[ "$withdraw" != '{}' ]] || return 0
   else
     local listing
-    listing=$(_pi_user_scope pi --list-models 2> /dev/null) || listing=""
+    listing=$(_pi_user_catalogue) || {
+      warn "Pi lists no models, so context.compact_at was not applied to Pi: ${listing}"
+      return 0
+    }
     if ! view=$(wb_config_harness_context "$listing"); then
       warn "Pi's compaction settings left as they were — fix the context section of config.yml"
       return 0

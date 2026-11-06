@@ -151,6 +151,7 @@ SCRIPT
   run _run_step step_pi_compaction
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARN Pi lists no models, so context.compact_at was not applied"* ]]
+  [[ "$output" == *"(exit 1)"* ]]
   cmp "$TMPDIR/before.json" "$LIVE"
 }
 

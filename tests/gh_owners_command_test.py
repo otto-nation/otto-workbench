@@ -225,3 +225,20 @@ def test_check_command_refuses_a_reference_in_a_json_input_file(github_owners, t
     verdict = gh.owners.check_command(
         "gh api repos/otto-nation/svc/issues/1/comments --input p.json", str(tmp_path))
     assert not verdict.ok and "me/lib#12" in verdict.reason
+
+
+def test_check_command_refuses_a_pwd_body_path_after_cd(github_owners, tmp_path, monkeypatch):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setenv("OLDPWD", str(tmp_path))
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "notes.md").write_text("see me/lib#12\n")
+    (tmp_path / "notes.md").write_text("plain\n")
+    for path in ("$PWD/notes.md", "${PWD}/notes.md", "$OLDPWD/notes.md"):
+        verdict = gh.owners.check_command(
+            f"cd sub && {_WRITE} --body-file {path}", str(tmp_path))
+        assert not verdict.ok, path
+        assert "after a directory change" in verdict.reason, path
+    without_cd = gh.owners.check_command(
+        f"{_WRITE} --body-file $PWD/sub/notes.md", str(tmp_path))
+    assert not without_cd.ok and "me/lib#12" in without_cd.reason

@@ -67,7 +67,7 @@ def command_text(command: str, cwd: str | Path) -> str:
 
 
 def relative_body_paths(command: str) -> tuple[str, ...]:
-    """Relative body-file paths statements in *command* name."""
+    """Body-file paths in *command* that depend on the shell's directory: relative, or spelled through ``$PWD``/``$OLDPWD``."""
     try:
         statements = gh.write_shapes.statements(command)
     except ValueError:
@@ -85,7 +85,14 @@ def _expand_path(path: str) -> str:
     return os.path.expandvars(os.path.expanduser(path))
 
 
+# `$PWD` and `$OLDPWD` are the shell's directory when the command runs, which a
+# `cd` earlier in it moves; expanded here they would name the guard's instead.
+_CWD_VAR_RE = re.compile(r"\$\{?(?:OLD)?PWD(?![A-Za-z0-9_])")
+
+
 def _is_relative(path: str) -> bool:
+    if _CWD_VAR_RE.search(path):
+        return True
     expanded = _expand_path(path)
     return bool(expanded) and expanded != "-" and not Path(expanded).is_absolute()
 
@@ -261,6 +268,14 @@ def _read_if_scannable(path: str, cwd: str | Path) -> str:
         # Upgrade trigger: if generated bodies start reaching gh through stdin
         # instead of a path.
         return ""
+    # ceiling: a body path spelled through a variable the command assigns
+    # (`F=$(mktemp); … --body-file "$F"`) is expanded in the guard's
+    # environment, where it is unset or holds something else, so the file is
+    # not read. A heredoc that fills it is still scanned as command text.
+    # Refusing such paths would break the mktemp-and-heredoc pattern: 6.8% of
+    # measured agent write commands use one, and ~5% of those resolve
+    # statically. Upgrade trigger: if a cross-group reference reaches GitHub
+    # through a variable body path.
     path = _expand_path(path)
     candidate = Path(path) if Path(path).is_absolute() else Path(cwd) / path
     try:

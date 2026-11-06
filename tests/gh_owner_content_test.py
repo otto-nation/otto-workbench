@@ -334,3 +334,9 @@ def test_a_process_substitution_is_not_a_body_path_but_its_command_is_scanned(tm
     assert gh.owner_content.relative_body_paths(inner) == ("notes.md",)
     (tmp_path / "notes.md").write_text("FROM_SUBSTITUTION")
     assert "FROM_SUBSTITUTION" in gh.owner_content.command_text(inner, tmp_path)
+
+
+def test_relative_body_paths_names_a_path_spelled_through_the_shell_directory():
+    for path in ("$PWD/n.md", "${PWD}/n.md", "${PWD:-.}/n.md", "$OLDPWD/n.md"):
+        command = f"cd sub && gh pr create --body-file {path}"
+        assert gh.owner_content.relative_body_paths(command) == (path,), path

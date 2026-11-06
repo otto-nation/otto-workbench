@@ -37,8 +37,14 @@ def _write(repo: Path, name: str, body: str) -> None:
     path.write_text(body)
 
 
-def _conflicted(tmp_path, files: dict[str, tuple[str, str, str]]) -> tuple[Path, str]:
-    """A feat-onto-main rebase paused with conflicts. files: name -> (base, main, feat)."""
+def _conflicted(
+    tmp_path, files: dict[str, tuple[str, str, str]], *, dirty: bool = False,
+) -> tuple[Path, str]:
+    """A feat-onto-main rebase paused with conflicts. files: name -> (base, main, feat).
+
+    ``dirty`` leaves an untracked file auto-stashed before the rebase starts,
+    since git refuses to stash once the index holds unmerged paths.
+    """
     repo = init_repo(tmp_path / "repo")
     for name, (base, _, _) in files.items():
         _write(repo, name, base)
@@ -53,6 +59,9 @@ def _conflicted(tmp_path, files: dict[str, tuple[str, str, str]]) -> tuple[Path,
         _write(repo, name, main)
     commit_all(repo, "main2")
     git_out(repo, "checkout", "feat")
+    if dirty:
+        _write(repo, "dirty.txt", "unstaged\n")
+        assert rebase.stash.auto_stash(str(repo)) is True
     r = git.client.run("rebase", "main", cwd=str(repo))
     assert not r.ok
     return repo, pre
@@ -181,9 +190,7 @@ def test_default_mode_never_calls_backend(tmp_path, capsys):
 def test_stop_on_conflict_keeps_paused_tree(tmp_path, capsys):
     repo, pre = _conflicted(tmp_path, {
         "a.go": ("package base\n", "package main\n", "package feat\n"),
-    })
-    _write(repo, "dirty.txt", "unstaged\n")
-    assert rebase.stash.auto_stash(str(repo)) is True
+    }, dirty=True)
     rc = rebase.lifecycle.step_conflicts(
         str(repo), _ctx(repo), rebase.types.RunMode.PUSH,
         rebase.inspect.detect_conflicts(str(repo)), _tally(pre),

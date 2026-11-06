@@ -98,6 +98,7 @@ def _rebase_returning(rc, *, posting):
     with patch.object(rebase.target, "resolve_target_ref",
                       return_value="origin/main"), \
          patch.object(rebase.commands, "cmd_start", return_value=rc) as start, \
+         patch.object(rebase.inspect, "rebase_in_progress", return_value=True), \
          patch.object(core.publishing, "enabled", return_value=posting), \
          patch.object(rebase.types, "load_or_init", return_value=state):
         yield start

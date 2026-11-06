@@ -82,7 +82,7 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
     mock_drive.assert_called_once_with(
         "/fake", ctx, rebase.types.RunMode.FIX, target_ref=_TARGET, force=False,
         tally=rebase.types.ResolutionTally(), lease=None, verify=True,
-        snapshot=None, trail=None,
+        snapshot=None, trail=None, stop_on_conflict=False,
     )
 
 

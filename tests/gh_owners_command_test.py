@@ -131,6 +131,28 @@ def test_check_command_allows_a_heredoc_pipe_after_cd(github_owners, tmp_path):
     assert gh.owners.check_command(command, str(tmp_path)).ok
 
 
+_SPACED_HEREDOCS = (
+    "cd sub && cat << 'EOF' | gh pr create -R otto-nation/svc --title t --body-file -\n"
+    "{body}\n"
+    "EOF",
+    "cd sub && cat << EOF | gh pr create -R otto-nation/svc --title t --body-file -\n"
+    "{body}\n"
+    "EOF",
+    "cd sub && cat <<- EOF | gh pr create -R otto-nation/svc --title t --body-file -\n"
+    "{body}\n"
+    "EOF",
+)
+
+
+def test_check_command_allows_a_spaced_heredoc_pipe_after_cd(
+        github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "sub").mkdir()
+    for template in _SPACED_HEREDOCS:
+        command = template.format(body="plain body")
+        assert gh.owners.check_command(command, str(tmp_path)).ok, command
+
+
 def test_check_command_refuses_a_cross_group_heredoc_after_cd(
         github_owners, tmp_path):
     github_owners({"work": ["otto-nation"], "personal": ["me"]})
@@ -139,6 +161,28 @@ def test_check_command_refuses_a_cross_group_heredoc_after_cd(
     verdict = gh.owners.check_command(command, str(tmp_path))
     assert not verdict.ok and "me/lib#12" in verdict.reason
     assert verdict.references
+
+
+def test_check_command_refuses_a_spaced_cross_group_heredoc_after_cd(
+        github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "sub").mkdir()
+    for template in _SPACED_HEREDOCS:
+        command = template.format(body="see me/lib#12")
+        verdict = gh.owners.check_command(command, str(tmp_path))
+        assert not verdict.ok and "me/lib#12" in verdict.reason, command
+        assert verdict.references, command
+
+
+def test_check_command_does_not_treat_here_string_words_as_paths(
+        github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "plain").write_text("see me/lib#12\n")
+    command = (
+        "cat <<< plain text | gh pr create -R otto-nation/svc "
+        "--title t --body-file -"
+    )
+    assert gh.owners.check_command(command, str(tmp_path)).ok
 
 
 def test_check_command_allows_cat_output_redirect_after_cd(github_owners, tmp_path):
@@ -155,5 +199,8 @@ def test_check_command_still_scans_cat_and_redirect_inputs(
         f"cat notes.md | {_WRITE} --body-file -", str(tmp_path))
     via_redir = gh.owners.check_command(
         f"{_WRITE} --body-file - < notes.md", str(tmp_path))
+    via_fd = gh.owners.check_command(
+        f"cat 2> err.log notes.md | {_WRITE} --body-file -", str(tmp_path))
     assert not via_cat.ok and "me/lib#12" in via_cat.reason
     assert not via_redir.ok and "me/lib#12" in via_redir.reason
+    assert not via_fd.ok and "me/lib#12" in via_fd.reason

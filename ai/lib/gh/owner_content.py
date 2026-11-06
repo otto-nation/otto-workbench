@@ -191,7 +191,7 @@ def _cat_operands(words: Sequence[str]) -> list[str]:
 
 
 def _output_redirect_consumes_next(word: str) -> bool:
-    if word in (">", ">>", "&>", ">&"):
+    if word in (">", ">>", "&>", ">&", "<<", "<<-", "<<<"):
         return True
     if word.endswith(">>"):
         return word[:-2].isdigit() and bool(word[:-2])

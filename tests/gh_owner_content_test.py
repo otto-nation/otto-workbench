@@ -262,8 +262,47 @@ def test_relative_body_paths_skips_heredoc_and_output_redirects():
     assert gh.owner_content.relative_body_paths(redirect) == ()
 
 
+def test_relative_body_paths_skips_spaced_heredoc_and_here_string_words():
+    spaced = (
+        "cd sub && cat << 'EOF' | gh pr create -R otto-nation/svc "
+        "--title t --body-file -\nplain body\nEOF"
+    )
+    unquoted = (
+        "cd sub && cat << EOF | gh pr create -R otto-nation/svc "
+        "--title t --body-file -\nplain body\nEOF"
+    )
+    dashed = (
+        "cd sub && cat <<- EOF | gh pr create -R otto-nation/svc "
+        "--title t --body-file -\nplain body\nEOF"
+    )
+    here_string = "cat <<< plain text | gh pr create --body-file -"
+    for command in (spaced, unquoted, dashed, here_string):
+        paths = gh.owner_content.relative_body_paths(command)
+        assert "EOF" not in paths, command
+        assert "plain" not in paths, command
+
+
+def test_command_text_does_not_read_heredoc_delimiter_files(tmp_path):
+    (tmp_path / "EOF").write_text("HEREDOC_SECRET")
+    (tmp_path / "plain").write_text("HERESTRING_SECRET")
+    spaced = gh.owner_content.command_text(
+        "cat << EOF | gh pr create --body-file -", tmp_path)
+    quoted = gh.owner_content.command_text(
+        "cat << 'EOF' | gh pr create --body-file -", tmp_path)
+    dashed = gh.owner_content.command_text(
+        "cat <<- EOF | gh pr create --body-file -", tmp_path)
+    here = gh.owner_content.command_text(
+        "cat <<< plain text | gh pr create --body-file -", tmp_path)
+    assert "HEREDOC_SECRET" not in spaced
+    assert "HEREDOC_SECRET" not in quoted
+    assert "HEREDOC_SECRET" not in dashed
+    assert "HERESTRING_SECRET" not in here
+
+
 def test_relative_body_paths_still_names_cat_and_redirect_inputs():
     assert gh.owner_content.relative_body_paths(
         "cat notes.md | gh pr create --body-file -") == ("notes.md",)
     assert gh.owner_content.relative_body_paths(
         "gh pr create --body-file - < notes.md") == ("notes.md",)
+    assert gh.owner_content.relative_body_paths(
+        "cat 2> err.log notes.md | gh pr create --body-file -") == ("notes.md",)

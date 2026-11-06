@@ -11,7 +11,7 @@ setup() {
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
   mkdir -p "$HOME" "$WORKBENCH_CONFIG_DIR"
-  unset GH_REPO GH_HOST WORKBENCH_ALLOW_UPSTREAM
+  unset GH_REPO GH_HOST WORKBENCH_ALLOW_UPSTREAM WORKBENCH_ALLOW_CROSS_REF
 }
 
 teardown() {
@@ -109,6 +109,18 @@ _checkerless_guard() {
   run _guard_at "$TMPDIR/repo" 'printenv WORKBENCH_ALLOW_UPSTREAM'
   [ "$status" -eq 2 ]
   [[ "$output" == *"override"* ]]
+  [[ "$output" == *"WORKBENCH_ALLOW_UPSTREAM"* ]]
+  [[ "$output" == *"general.md § Upstream Repositories"* ]]
+}
+
+@test "upstream guard: refuses any command that names the cross-ref override" {
+  _owners_config otto-nation
+  _upstream_repo git@github.com:otto-nation/svc.git
+  run _guard_at "$TMPDIR/repo" 'printenv WORKBENCH_ALLOW_CROSS_REF'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"override"* ]]
+  [[ "$output" == *"WORKBENCH_ALLOW_CROSS_REF"* ]]
+  [[ "$output" == *"general.md § Cross-Group References"* ]]
 }
 
 @test "upstream guard: the user's exported override does not open the guard" {

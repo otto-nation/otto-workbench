@@ -6,6 +6,8 @@
 # Herdr is an operator tool: it owns agent terminals and shows which agent is
 # waiting on you. Agents are deliberately given no permission to drive it, so
 # it never becomes a second job facility beside job_start/run_in_background.
+# Sync also themes the herdr TUI and desktop app (Gruvbox, following system
+# light/dark).
 
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -105,28 +107,160 @@ step_herdr_machine_note() {
   return 0
 }
 
+# _herdr_app_present — true when herdr-app is on PATH or its config dir exists.
+_herdr_app_present() { command -v herdr-app >/dev/null 2>&1 || [[ -d "$HERDR_APP_DIR" ]]; }
+
+# _herdr_app_link_themes — symlinks every ai/herdr/app/themes/*.json into
+# HERDR_APP_THEMES_DIR. Identical regular file → replaced by the link; differing
+# regular file → warned about and left (it is the person's edit).
+_herdr_app_link_themes() {
+  mkdir -p "$HERDR_APP_THEMES_DIR"
+  local src name target
+  for src in "$HERDR_APP_THEMES_SRC_DIR"/*.json; do
+    [[ -f "$src" ]] || continue
+    name=$(basename "$src"); target="$HERDR_APP_THEMES_DIR/$name"
+    if [[ -f "$target" && ! -L "$target" ]] && ! cmp -s "$src" "$target"; then
+      warn "herdr-app theme $name: $target differs from the workbench copy — left as is; delete it and re-run otto-workbench sync to link it"
+      continue
+    fi
+    if [[ -f "$target" && ! -L "$target" ]]; then
+      rm "$target"
+    fi
+    install_symlink "$src" "$target" "herdr-app theme $name" --no-prompt
+  done
+  return 0
+}
+
+# _herdr_app_set_theme — sets settings.json's `theme` to the light/dark pair and
+# nothing else. Never clobbers: a file that is not one JSON object, or a symlink,
+# is warned about and left.
+_herdr_app_set_theme() {
+  local light="$HERDR_APP_THEME_LIGHT" dark="$HERDR_APP_THEME_DARK" desired current updated
+  local file="$HERDR_APP_SETTINGS_FILE"
+  desired=$(jq -cn --arg l "$light" --arg d "$dark" '{light: $l, dark: $d}')
+  if [[ -L "$file" ]]; then
+    warn "$file is a symlink — left as is; set theme there to $desired"
+    return 0
+  fi
+  current='{}'
+  if [[ -e "$file" ]]; then
+    current=$(cat "$file") || { warn "Could not read $file"; return 0; }
+    jq -se 'length == 1 and (.[0] | type == "object")' <<< "$current" >/dev/null 2>&1 \
+      || { warn "$file is not a JSON object — left as is; fix it and re-run otto-workbench sync"; return 0; }
+  fi
+  if jq -e --argjson t "$desired" '.theme == $t' <<< "$current" >/dev/null 2>&1; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "herdr-app theme = $light / $dark" || true
+    return 0
+  fi
+  updated=$(jq --argjson t "$desired" '.theme = $t' <<< "$current") \
+    && wb_write_json_file "$file" "$updated" \
+    || { warn "Could not write $file — herdr-app theme not set"; return 0; }
+  success "herdr-app theme = $light / $dark"
+  return 0
+}
+
+# step_herdr_app_theme — gives herdr-app the workbench's Gruvbox light/dark themes,
+# following the system appearance. No-op when herdr-app is not installed. Non-fatal.
+step_herdr_app_theme() {
+  _herdr_app_present || return 0
+  _herdr_app_link_themes
+  _herdr_app_set_theme
+  return 0
+}
+
+# _herdr_config_swap FILE CANDIDATE — moves CANDIDATE over FILE, then asks
+# `herdr config check`; on failure puts the original back (or removes FILE when
+# there was none) and warns with herdr's diagnostic. Returns 1 when rolled back.
+_herdr_config_swap() {
+  local file="$1" candidate="$2" backup="" check diag
+  if [[ -e "$file" ]]; then
+    backup=$(mktemp "$file.XXXXXX") && cp -p "$file" "$backup" \
+      || { rm -f "$candidate" "$backup"; warn "Could not back up $file — herdr theme not set"; return 1; }
+  fi
+  mv "$candidate" "$file" || { rm -f "$candidate" "$backup"; warn "Could not write $file — herdr theme not set"; return 1; }
+  if ! check=$(herdr config check 2>&1); then
+    if [[ -n "$backup" ]]; then mv "$backup" "$file"; else rm -f "$file"; fi
+    diag=$(printf '%s\n' "$check" | awk '/config: issues found/{p=1; next} p && NF {print; exit}')
+    warn "herdr rejected $file after the theme change — restored it${diag:+: $diag}"
+    return 1
+  fi
+  rm -f "$backup"
+  return 0
+}
+
+# _herdr_reload_config — asks a running herdr server to re-read config.toml.
+# No server is not an error: the next start reads the file.
+_herdr_reload_config() {
+  local out
+  out=$(herdr server reload-config 2>&1) && return 0
+  [[ "$out" == *server_not_running* ]] && return 0
+  warn "herdr did not reload its config — run: herdr server reload-config"
+  return 0
+}
+
+# step_herdr_tui_theme — sets the herdr TUI's [theme] to the Gruvbox light/dark
+# pair with auto_switch on, so it follows the terminal's appearance. Owns only
+# name, auto_switch, light_name and dark_name; every other line of config.toml is
+# left as it was (lib/toml_table.py verifies that). A symlinked, unparseable, or
+# un-editable file is warned about and left. Non-fatal.
+#
+# A narrow step under #1660: once config.toml is rendered from a managed
+# template, the template carries these keys and this step goes.
+step_herdr_tui_theme() {
+  command -v herdr > /dev/null 2>&1 || return 0
+  local file="$HERDR_CONFIG_FILE" candidate msg status=0
+  local label="herdr theme = $HERDR_TUI_THEME_LIGHT / $HERDR_TUI_THEME_DARK (auto-switch)"
+  if [[ -L "$file" ]]; then
+    warn "$file is a symlink — left as is; set [theme] there: name=$HERDR_TUI_THEME_DARK auto_switch=true light_name=$HERDR_TUI_THEME_LIGHT dark_name=$HERDR_TUI_THEME_DARK"
+    return 0
+  fi
+  mkdir -p "$HERDR_CONFIG_DIR" && candidate=$(mktemp "$file.XXXXXX") \
+    || { warn "Could not prepare $file — herdr theme not set"; return 0; }
+  msg=$(python3 "$LIB_SRC_DIR/toml_table.py" set "$file" theme --out "$candidate" \
+          name="\"$HERDR_TUI_THEME_DARK\"" auto_switch=true \
+          light_name="\"$HERDR_TUI_THEME_LIGHT\"" dark_name="\"$HERDR_TUI_THEME_DARK\"" 2>&1) || status=$?
+  case "$status" in
+    0) ;;
+    3) rm -f "$candidate"; [[ "${WORKBENCH_SYNC:-}" != true ]] && success "$label" || true; return 0 ;;
+    *) rm -f "$candidate"; warn "herdr theme not set — ${msg:-toml_table.py exited $status}; $file left as is"; return 0 ;;
+  esac
+  _herdr_config_swap "$file" "$candidate" || return 0
+  success "$label"
+  _herdr_reload_config
+  return 0
+}
+
 # sync_herdr — runs the herdr sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 #
-# A machine without herdr is left alone rather than installed onto: the
-# install belongs to setup, where the operator chose the tool.
+# A machine without the herdr TUI binary is left alone for the TUI half
+# (install belongs to setup). The herdr-app half runs on its own presence
+# check: binary on PATH or its config dir exists.
 sync_herdr() {
-  command -v herdr > /dev/null 2>&1 || return 0
+  if command -v herdr > /dev/null 2>&1; then
+    sync_header "herdr host"
+    step_update_herdr
 
-  sync_header "herdr host"
-  step_update_herdr
+    sync_header "herdr integrations"
+    step_herdr_integrations
 
-  sync_header "herdr integrations"
-  step_herdr_integrations
+    sync_header "herdr theme"
+    step_herdr_tui_theme
 
-  step_herdr_machine_note
+    step_herdr_machine_note
+  fi
+  _herdr_app_present || return 0
+  sync_header "herdr-app theme"
+  step_herdr_app_theme
 }
 
 register_herdr_steps() {
   register_step "Install herdr"      step_install_herdr
   register_step "Update herdr"       step_update_herdr
   register_step "Herdr integrations" step_herdr_integrations
+  register_step "Herdr theme"        step_herdr_tui_theme
   register_step "Herdr machines"     step_herdr_machine_note
+  register_step "Herdr app theme"    step_herdr_app_theme
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

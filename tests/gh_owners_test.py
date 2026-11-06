@@ -757,3 +757,55 @@ def test_check_command_resolves_a_relative_body_file_without_cd(
     verdict = gh.owners.check_command(
         "gh issue comment 1 -R otto-nation/svc --body-file b.md", str(tmp_path))
     assert not verdict.ok and "me/lib#12" in verdict.reason
+
+
+_WRITE = "gh issue comment 1 -R otto-nation/svc"
+
+
+def _shell_body_commands(path: str) -> tuple[str, ...]:
+    return (
+        f'{_WRITE} --body "$(cat {path})"',
+        f"{_WRITE} --body-file {path}",
+        f"{_WRITE} -F{path}",
+        f"{_WRITE} -F={path}",
+        f"cat {path} | {_WRITE} --body-file -",
+        f"{_WRITE} --body-file - < {path}",
+    )
+
+
+def test_check_command_refuses_shell_borne_cross_group_bodies(
+        github_owners, tmp_path, monkeypatch):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    monkeypatch.setenv("HOME", str(tmp_path))
+    notes = tmp_path / "notes.md"
+    notes.write_text("see me/lib#12\n")
+    commands = _shell_body_commands("notes.md") + (
+        f'{_WRITE} --body-file ~/notes.md',
+        f'{_WRITE} --body-file "$HOME/notes.md"',
+    )
+    for command in commands:
+        verdict = gh.owners.check_command(command, str(tmp_path))
+        assert not verdict.ok and "me/lib#12" in verdict.reason, command
+        assert verdict.references, command
+
+
+def test_check_command_allows_shell_borne_bodies_without_cross_refs(
+        github_owners, tmp_path, monkeypatch):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    monkeypatch.setenv("HOME", str(tmp_path))
+    notes = tmp_path / "notes.md"
+    notes.write_text("plain body\n")
+    commands = _shell_body_commands("notes.md") + (
+        f'{_WRITE} --body-file ~/notes.md',
+        f'{_WRITE} --body-file "$HOME/notes.md"',
+    )
+    for command in commands:
+        assert gh.owners.check_command(command, str(tmp_path)).ok, command
+
+
+def test_check_command_allows_a_generator_pipe(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "notes.md").write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        f"generate-body | {_WRITE} --body-file -", str(tmp_path))
+    assert verdict.ok

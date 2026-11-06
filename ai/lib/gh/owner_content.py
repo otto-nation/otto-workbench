@@ -9,14 +9,17 @@ regular file no larger than ``MAX_SCAN_BYTES``; missing, unreadable, stdin
 
 The whole command text is scanned, including non-write statements — a
 deliberate over-refusal, so a reference sitting next to a write cannot slip
-through unread.
+through unread. Every statement also contributes ``cat`` operands, ``<``
+input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import gh.write_shapes
@@ -29,37 +32,55 @@ _FIELD_WORDS = ("-F", "--field")
 _FIELD_PREFIX = "--field="
 
 
+@dataclass(frozen=True)
+class _FlagPath:
+    """A body-file path taken from *args[i]* and the index to resume at."""
+
+    path: str
+    next_index: int
+
+
 def command_text(command: str, cwd: str | Path) -> str:
-    """*command* plus the contents of body files its write statements name."""
+    """*command* plus the contents of body files its statements name."""
     try:
         statements = gh.write_shapes.statements(command)
     except ValueError:
         return command
     chunks = [command]
     for statement in statements:
-        if not gh.write_shapes.statement_is_write(statement):
-            continue
-        chunks.extend(_file_texts(_write_words(statement), cwd))
+        words = _write_words(statement)
+        if gh.write_shapes.statement_is_write(statement):
+            chunks.extend(_file_texts(words, cwd))
+        chunks.extend(_file_texts_from(_shell_file_paths(words), cwd))
     return "\n".join(chunks)
 
 
 def relative_body_paths(command: str) -> tuple[str, ...]:
-    """Relative body-file paths write statements in *command* name."""
+    """Relative body-file paths statements in *command* name."""
     try:
         statements = gh.write_shapes.statements(command)
     except ValueError:
         return ()
     paths: list[str] = []
     for statement in statements:
+        words = _write_words(statement)
         if gh.write_shapes.statement_is_write(statement):
-            paths.extend(_relative_named(_write_words(statement)))
+            paths.extend(_relative_named(words))
+        paths.extend(path for path in _shell_file_paths(words) if _is_relative(path))
     return tuple(paths)
 
 
+def _expand_path(path: str) -> str:
+    return os.path.expandvars(os.path.expanduser(path))
+
+
+def _is_relative(path: str) -> bool:
+    expanded = _expand_path(path)
+    return bool(expanded) and expanded != "-" and not Path(expanded).is_absolute()
+
+
 def _relative_named(args: Sequence[str]) -> tuple[str, ...]:
-    return tuple(
-        path for path in _named_files(args)
-        if path and path != "-" and not Path(path).is_absolute())
+    return tuple(path for path in _named_files(args) if _is_relative(path))
 
 
 def argv_text(args: Sequence[str], input_text: str | None, cwd: str | Path) -> str:
@@ -77,8 +98,12 @@ def _write_words(statement: Sequence[str]) -> Sequence[str]:
 
 
 def _file_texts(args: Sequence[str], cwd: str | Path) -> list[str]:
+    return _file_texts_from(_named_files(args), cwd)
+
+
+def _file_texts_from(paths: Sequence[str], cwd: str | Path) -> list[str]:
     texts: list[str] = []
-    for path in _named_files(args):
+    for path in paths:
         text = _read_if_scannable(path, cwd)
         if text:
             texts.append(text)
@@ -102,28 +127,33 @@ def _named_files(args: Sequence[str]) -> tuple[str, ...]:
         if taken is None:
             i += 1
             continue
-        path, nxt = taken
-        if path:
-            paths.append(path)
-        i = nxt
+        if taken.path:
+            paths.append(taken.path)
+        i = taken.next_index
     return tuple(paths)
 
 
-def _file_flag_path(args: Sequence[str], i: int, *, api: bool) -> tuple[str, int] | None:
-    """``(path, next_index)`` when *args[i]* names a body file, else None."""
+def _file_flag_path(args: Sequence[str], i: int, *, api: bool) -> _FlagPath | None:
+    """The body file *args[i]* names, else None."""
     word = args[i]
     if word in _FILE_FLAGS:
-        return _next_value(args, i)
+        path, nxt = _next_value(args, i)
+        return _FlagPath(path, nxt)
     for prefix in _FILE_PREFIXES:
         if word.startswith(prefix):
-            return word[len(prefix):], i + 1
+            return _FlagPath(word[len(prefix):], i + 1)
     if word in _FIELD_WORDS:
         path, nxt = _next_value(args, i)
         if word == "-F" and not api and "=" not in path:
-            return path, nxt
-        return _field_file(path), nxt
+            return _FlagPath(path, nxt)
+        return _FlagPath(_field_file(path), nxt)
     if word.startswith(_FIELD_PREFIX):
-        return _field_file(word[len(_FIELD_PREFIX):]), i + 1
+        return _FlagPath(_field_file(word[len(_FIELD_PREFIX):]), i + 1)
+    if word.startswith("-F") and not word.startswith("--") and word != "-F":
+        rest = word[2:].removeprefix("=")
+        if not api and "=" not in rest:
+            return _FlagPath(rest, i + 1)
+        return _FlagPath(_field_file(rest), i + 1)
     return None
 
 
@@ -141,9 +171,60 @@ def _field_file(value: str) -> str:
     return rest[1:]
 
 
+def _shell_file_paths(words: Sequence[str]) -> tuple[str, ...]:
+    """Paths ``cat``, ``<`` redirects, and ``$(< f)`` / ``$(cat f)`` name."""
+    paths: list[str] = []
+    paths.extend(_cat_operands(words))
+    paths.extend(_redirect_operands(words))
+    paths.extend(_subst_operands(words))
+    return tuple(paths)
+
+
+def _cat_operands(words: Sequence[str]) -> list[str]:
+    if not words or Path(words[0]).name != "cat":
+        return []
+    return [word for word in words[1:] if word != "-" and not word.startswith("-")]
+
+
+def _redirect_operands(words: Sequence[str]) -> list[str]:
+    paths: list[str] = []
+    for i, word in enumerate(words):
+        if word in ("<", "0<") and i + 1 < len(words):
+            paths.append(words[i + 1])
+        elif word.startswith("<") and not word.startswith("<<") and len(word) > 1:
+            paths.append(word[1:])
+    return paths
+
+
+def _subst_operands(words: Sequence[str]) -> list[str]:
+    paths: list[str] = []
+    for word in words:
+        inner = _subst_inner(word)
+        if inner is None:
+            continue
+        if inner.startswith("<"):
+            paths.append(inner[1:].strip())
+            continue
+        parts = inner.split()
+        if parts and Path(parts[0]).name == "cat":
+            paths.extend(p for p in parts[1:] if p != "-" and not p.startswith("-"))
+    return paths
+
+
+def _subst_inner(word: str) -> str | None:
+    if word.startswith("$(") and word.endswith(")") and len(word) > 3:
+        return word[2:-1].strip()
+    return None
+
+
 def _read_if_scannable(path: str, cwd: str | Path) -> str:
     if path == "-":
+        # ceiling: stdin (--body-file -) is unread here. A pipe from `cat file`
+        # is covered by scanning cat's operand; a pipe from a generator is not.
+        # Upgrade trigger: if generated bodies start reaching gh through stdin
+        # instead of a path.
         return ""
+    path = _expand_path(path)
     candidate = Path(path) if Path(path).is_absolute() else Path(cwd) / path
     try:
         if not candidate.is_file() or candidate.stat().st_size > MAX_SCAN_BYTES:

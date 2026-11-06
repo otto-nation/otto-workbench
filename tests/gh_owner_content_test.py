@@ -140,3 +140,47 @@ def test_command_text_still_reads_api_field_file_and_skips_plain_values(tmp_path
         "gh api repos/x/y -X POST -F key=plain.md", tmp_path)
     assert "API_AT_FILE" in at_file
     assert "PLAIN_VALUE_FILE" not in plain
+
+
+def test_command_text_reads_attached_short_field_flags(tmp_path):
+    (tmp_path / "notes.md").write_text("ATTACHED_F")
+    glued = gh.owner_content.command_text(
+        "gh issue comment 1 -Fnotes.md", tmp_path)
+    equals = gh.owner_content.command_text(
+        "gh issue comment 1 -F=notes.md", tmp_path)
+    assert "ATTACHED_F" in glued
+    assert "ATTACHED_F" in equals
+
+
+def test_command_text_expands_home_in_a_body_file_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "notes.md").write_text("HOME_BODY")
+    tilde = gh.owner_content.command_text(
+        "gh issue comment 1 --body-file ~/notes.md", tmp_path / "other")
+    var = gh.owner_content.command_text(
+        'gh issue comment 1 --body-file "$HOME/notes.md"', tmp_path / "other")
+    assert "HOME_BODY" in tilde
+    assert "HOME_BODY" in var
+
+
+def test_command_text_reads_cat_and_redirect_operands(tmp_path):
+    (tmp_path / "notes.md").write_text("FROM_CAT")
+    via_cat = gh.owner_content.command_text(
+        'gh issue comment 1 --body "$(cat notes.md)"', tmp_path)
+    via_pipe = gh.owner_content.command_text(
+        "cat notes.md | gh pr create --body-file -", tmp_path)
+    via_redir = gh.owner_content.command_text(
+        "gh pr create --body-file - < notes.md", tmp_path)
+    via_subst = gh.owner_content.command_text(
+        'gh issue comment 1 --body "$(< notes.md)"', tmp_path)
+    assert "FROM_CAT" in via_cat
+    assert "FROM_CAT" in via_pipe
+    assert "FROM_CAT" in via_redir
+    assert "FROM_CAT" in via_subst
+
+
+def test_command_text_does_not_read_a_generator_pipe(tmp_path):
+    (tmp_path / "notes.md").write_text("GENERATOR_SECRET")
+    text = gh.owner_content.command_text(
+        "generate-body | gh pr create --body-file -", tmp_path)
+    assert "GENERATOR_SECRET" not in text

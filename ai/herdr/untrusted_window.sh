@@ -175,7 +175,8 @@ _herdr_untrusted_check_machine_overlap() {
     || { warn "herdr untrusted window: $default_file is not a machine array — cannot verify overlap"; return 1; }
   untrusted_ids=$(_herdr_untrusted_machine_ids "$untrusted_file") \
     || { warn "herdr untrusted window: $untrusted_file is not a machine array — cannot verify overlap"; return 1; }
-  overlap=$(jq -n --argjson d "$default_ids" --argjson u "$untrusted_ids" '$d - ($d - $u) | .[]') || return 0
+  overlap=$(jq -n --argjson d "$default_ids" --argjson u "$untrusted_ids" '$d - ($d - $u) | .[]') \
+    || { warn "herdr untrusted window: could not compute machine overlap"; return 1; }
   [[ -z "$overlap" ]] && return 0
   while IFS= read -r id || [[ -n "$id" ]]; do
     [[ -z "$id" ]] && continue

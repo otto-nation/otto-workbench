@@ -16,6 +16,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   . "$WORKBENCH_DIR/lib/ui.sh"
 fi
 
+# shellcheck source=untrusted_window.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/untrusted_window.sh"
+
 # step_install_herdr — installs herdr via its vendor installer when not on PATH.
 # Keeping an installed herdr current is step_update_herdr's job.
 step_install_herdr() {
@@ -172,9 +175,6 @@ step_herdr_app_theme() {
   _herdr_app_set_theme
   return 0
 }
-
-# shellcheck source=untrusted_window.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/untrusted_window.sh"
 
 # _herdr_config_swap FILE CANDIDATE — moves CANDIDATE over FILE, then asks
 # `herdr config check`; on failure puts the original back (or removes FILE when

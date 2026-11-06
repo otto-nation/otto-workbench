@@ -5,8 +5,9 @@ Usage: bin/local/generate-herdr-app-themes [--check] [--palettes DIR] [--out DIR
 
 Every ai/herdr/app/palettes/*.toml holds a [palette] of named hex colors and
 one [themes.<name>] table per theme, whose values are palette names. Each theme
-is rendered to ai/herdr/app/themes/<name>.json with every name replaced by its
-hex. herdr-app skips a theme file in which a color names another color, so the
+is rendered to ai/herdr/app/themes/<name>.generated.json with every name replaced
+by its hex; sync links it into herdr-app as <name>.json (HERDR_APP_THEME_SUFFIX in
+lib/constants.sh names the suffix for the sync side). herdr-app skips a theme file in which a color names another color, so the
 JSON must carry literal hex values and cannot be the source.
 
 Options:
@@ -32,6 +33,8 @@ import tomllib
 from pathlib import Path
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+# tests/herdr_app_theme.bats checks this against HERDR_APP_THEME_SUFFIX.
+SUFFIX = ".generated.json"
 
 
 class PaletteError(Exception):
@@ -57,7 +60,7 @@ def _render_source(source: Path) -> dict[str, str]:
     if bad:
         raise PaletteError(f"{source.name}: palette.{bad[0]} = {palette[bad[0]]!r} is not #rrggbb")
     return {
-        f"{theme}.json": json.dumps(_resolve(spec, palette, f"{source.name}: themes.{theme}"), indent=2) + "\n"
+        f"{theme}{SUFFIX}": json.dumps(_resolve(spec, palette, f"{source.name}: themes.{theme}"), indent=2) + "\n"
         for theme, spec in data.get("themes", {}).items()
     }
 
@@ -69,7 +72,7 @@ def render(palettes_dir: Path) -> dict[str, str]:
         files = _render_source(source)
         clash = sorted(files.keys() & out.keys())
         if clash:
-            raise PaletteError(f"{source.name}: theme {clash[0].removesuffix('.json')!r} is defined by another palette too")
+            raise PaletteError(f"{source.name}: theme {clash[0].removesuffix(SUFFIX)!r} is defined by another palette too")
         out.update(files)
     return out
 

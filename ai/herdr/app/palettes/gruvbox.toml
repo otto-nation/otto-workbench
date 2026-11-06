@@ -1,7 +1,7 @@
 # Gruvbox for herdr-app — the one place its colors are written down.
 #
 # bin/local/generate-herdr-app-themes renders each [themes.<name>] table into
-# ai/herdr/app/themes/<name>.json, resolving every value through [palette].
+# ai/herdr/app/themes/<name>.generated.json, resolving every value through [palette].
 # herdr-app needs literal #rrggbb in a theme file: a color that names another
 # color makes it skip the whole file, so the hex values cannot be shared there.
 # Edit this file and regenerate; never edit the JSON.

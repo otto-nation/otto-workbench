@@ -284,7 +284,10 @@ HERDR_APP_DIR="$HOME/.config/herdr-app"
 HERDR_APP_THEMES_DIR="$HERDR_APP_DIR/themes"
 HERDR_APP_SETTINGS_FILE="$HERDR_APP_DIR/settings.json"
 HERDR_APP_THEMES_SRC_DIR="$WORKBENCH_DIR/ai/herdr/app/themes"
-# Names (= file stems under HERDR_APP_THEMES_SRC_DIR) for the app's light/dark pair.
+# Suffix of the files bin/local/generate-herdr-app-themes writes there. Sync links
+# <name>$HERDR_APP_THEME_SUFFIX as <name>.json: herdr-app names a theme by its file stem.
+HERDR_APP_THEME_SUFFIX=".generated.json"
+# Theme names for the app's light/dark pair.
 HERDR_APP_THEME_LIGHT="gruvbox-light"
 HERDR_APP_THEME_DARK="gruvbox-dark"
 

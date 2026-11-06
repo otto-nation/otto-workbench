@@ -110,15 +110,15 @@ step_herdr_machine_note() {
 # _herdr_app_present — true when herdr-app is on PATH or its config dir exists.
 _herdr_app_present() { command -v herdr-app >/dev/null 2>&1 || [[ -d "$HERDR_APP_DIR" ]]; }
 
-# _herdr_app_link_themes — symlinks every ai/herdr/app/themes/*.json into
-# HERDR_APP_THEMES_DIR. Identical regular file → replaced by the link; differing
+# _herdr_app_link_themes — symlinks every generated ai/herdr/app/themes/<name>.generated.json
+# into HERDR_APP_THEMES_DIR as <name>.json, the name herdr-app reads the theme by. Identical regular file → replaced by the link; differing
 # regular file → warned about and left (it is the person's edit).
 _herdr_app_link_themes() {
   mkdir -p "$HERDR_APP_THEMES_DIR"
   local src name target
-  for src in "$HERDR_APP_THEMES_SRC_DIR"/*.json; do
+  for src in "$HERDR_APP_THEMES_SRC_DIR"/*"$HERDR_APP_THEME_SUFFIX"; do
     [[ -f "$src" ]] || continue
-    name=$(basename "$src"); target="$HERDR_APP_THEMES_DIR/$name"
+    name=$(basename "$src" "$HERDR_APP_THEME_SUFFIX").json; target="$HERDR_APP_THEMES_DIR/$name"
     if [[ -f "$target" && ! -L "$target" ]] && ! cmp -s "$src" "$target"; then
       warn "herdr-app theme $name: $target differs from the workbench copy — left as is; delete it and re-run otto-workbench sync to link it"
       continue

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for step_herdr_app_theme — Gruvbox theme files and settings.json's theme key.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/steps.sh ai/herdr/app/themes/*.json ai/herdr/app/palettes/*.toml lib/files.sh lib/config.sh lib/constants.sh
+# select-on: ai/herdr/steps.sh bin/local/generate-herdr-app-themes ai/herdr/app/themes/*.generated.json ai/herdr/app/palettes/*.toml lib/files.sh lib/config.sh lib/constants.sh
 
 setup() {
   load 'test_helper'
@@ -53,8 +53,8 @@ _run() {
   [ "$status" -eq 0 ]
   [ -L "$APP/themes/${APP_DARK}.json" ]
   [ -L "$APP/themes/${APP_LIGHT}.json" ]
-  [ "$(readlink "$APP/themes/${APP_DARK}.json")" = "$SRC/${APP_DARK}.json" ]
-  [ "$(readlink "$APP/themes/${APP_LIGHT}.json")" = "$SRC/${APP_LIGHT}.json" ]
+  [ "$(readlink "$APP/themes/${APP_DARK}.json")" = "$SRC/${APP_DARK}.generated.json" ]
+  [ "$(readlink "$APP/themes/${APP_LIGHT}.json")" = "$SRC/${APP_LIGHT}.generated.json" ]
   [ "$(jq -S -c . "$APP/settings.json")" = "$(jq -S -c '{theme: .}' <<< "$DESIRED_THEME")" ]
   [ "$(file_mode "$APP/settings.json")" = "644" ]
 }
@@ -82,7 +82,7 @@ _run() {
 @test "identical regular theme file is replaced by a symlink" {
   _stub_app
   mkdir -p "$APP/themes"
-  cp "$SRC/${APP_DARK}.json" "$APP/themes/${APP_DARK}.json"
+  cp "$SRC/${APP_DARK}.generated.json" "$APP/themes/${APP_DARK}.json"
   run _run step_herdr_app_theme
   [ "$status" -eq 0 ]
   [ -L "$APP/themes/${APP_DARK}.json" ]
@@ -150,17 +150,17 @@ _run() {
   ln -s /tmp/stale-theme.json "$APP/themes/${APP_DARK}.json"
   run _run step_herdr_app_theme
   [ "$status" -eq 0 ]
-  [ "$(readlink "$APP/themes/${APP_DARK}.json")" = "$SRC/${APP_DARK}.json" ]
+  [ "$(readlink "$APP/themes/${APP_DARK}.json")" = "$SRC/${APP_DARK}.generated.json" ]
 }
 
 @test "settings names resolve to shipped files" {
-  [ -f "$SRC/${APP_LIGHT}.json" ]
-  [ -f "$SRC/${APP_DARK}.json" ]
+  [ -f "$SRC/${APP_LIGHT}.generated.json" ]
+  [ -f "$SRC/${APP_DARK}.generated.json" ]
 }
 
 @test "shipped themes satisfy the app schema" {
   local file
-  for file in "$SRC/${APP_LIGHT}.json" "$SRC/${APP_DARK}.json"; do
+  for file in "$SRC/${APP_LIGHT}.generated.json" "$SRC/${APP_DARK}.generated.json"; do
     jq -e '
       (.background | test("^#[0-9a-fA-F]{6}$")) and
       (.foreground | test("^#[0-9a-fA-F]{6}$")) and
@@ -177,7 +177,7 @@ _run() {
 # theme() exposes must be set explicitly.
 @test "shipped themes set every panel color" {
   local file
-  for file in "$SRC/${APP_LIGHT}.json" "$SRC/${APP_DARK}.json"; do
+  for file in "$SRC/${APP_LIGHT}.generated.json" "$SRC/${APP_DARK}.generated.json"; do
     jq -e '
       ["canvas", "chrome", "surface", "popover", "raised", "hover", "selected", "border",
        "input", "foreground", "muted", "dim", "accent", "accent_foreground", "solid",
@@ -187,4 +187,14 @@ _run() {
         (map(. as $k | $c[$k] // "" | test("^#[0-9a-fA-F]{6}$")) | all)
     ' --argjson c "$(jq '.colors' "$file")" -n > /dev/null
   done
+}
+
+# The generator writes the suffix and sync globs for it; the two spellings must agree,
+# or sync links nothing and herdr-app silently falls back to its own theme.
+@test "generator suffix matches HERDR_APP_THEME_SUFFIX" {
+  local suffix gen_suffix
+  suffix=$(sed -n 's/^HERDR_APP_THEME_SUFFIX="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  gen_suffix=$(sed -n 's/^SUFFIX = "\(.*\)"$/\1/p' "$REPO_ROOT/bin/local/generate-herdr-app-themes")
+  [ -n "$suffix" ]
+  [ "$suffix" = "$gen_suffix" ]
 }

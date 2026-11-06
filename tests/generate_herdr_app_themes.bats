@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for bin/local/generate-herdr-app-themes — palettes render to herdr-app theme files.
 bats_require_minimum_version 1.5.0
-# select-on: bin/local/generate-herdr-app-themes ai/herdr/app/palettes/*.toml ai/herdr/app/themes/*.json
+# select-on: bin/local/generate-herdr-app-themes ai/herdr/app/palettes/*.toml ai/herdr/app/themes/*.generated.json
 
 setup() {
   load 'test_helper'
@@ -41,23 +41,23 @@ EOF
   _palette paper
   run "$GEN" --palettes "$PAL" --out "$OUT"
   [ "$status" -eq 0 ]
-  [ "$(jq -c . "$OUT/sample.json")" = '{"background":"#eeeeee","ansi":["#111111","#eeeeee"],"colors":{"accent":"#111111"}}' ]
+  [ "$(jq -c . "$OUT/sample.generated.json")" = '{"background":"#eeeeee","ansi":["#111111","#eeeeee"],"colors":{"accent":"#111111"}}' ]
 }
 
 @test "--check reports a stale theme file and leaves it" {
   _palette paper
-  printf '%s\n' '{"background":"#000000"}' > "$OUT/sample.json"
+  printf '%s\n' '{"background":"#000000"}' > "$OUT/sample.generated.json"
   run "$GEN" --check --palettes "$PAL" --out "$OUT"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"sample.json is stale"* ]]
-  [ "$(cat "$OUT/sample.json")" = '{"background":"#000000"}' ]
+  [[ "$output" == *"sample.generated.json is stale"* ]]
+  [ "$(cat "$OUT/sample.generated.json")" = '{"background":"#000000"}' ]
 }
 
 @test "--check reports a missing theme file" {
   _palette paper
   run "$GEN" --check --palettes "$PAL" --out "$OUT"
   [ "$status" -eq 1 ]
-  [ ! -e "$OUT/sample.json" ]
+  [ ! -e "$OUT/sample.generated.json" ]
 }
 
 @test "a value that is not a palette name fails without writing" {
@@ -65,7 +65,7 @@ EOF
   run "$GEN" --palettes "$PAL" --out "$OUT"
   [ "$status" -eq 2 ]
   [[ "$output" == *"themes.sample.background"*"not a name in [palette]"* ]]
-  [ ! -e "$OUT/sample.json" ]
+  [ ! -e "$OUT/sample.generated.json" ]
 }
 
 @test "a palette entry that is not #rrggbb fails" {
@@ -86,7 +86,7 @@ EOF
 
 @test "a failed write leaves no temp file behind" {
   _palette paper
-  mkdir "$OUT/sample.json"
+  mkdir "$OUT/sample.generated.json"
   run "$GEN" --palettes "$PAL" --out "$OUT"
   [ "$status" -ne 0 ]
   [ -z "$(find "$OUT" -name '*.tmp')" ]

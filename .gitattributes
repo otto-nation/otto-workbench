@@ -22,7 +22,7 @@ docs/tools.md linguist-generated=true
 tests/weights.tsv linguist-generated=true
 
 # bin/local/generate-herdr-app-themes, from ai/herdr/app/palettes/*.toml
-ai/herdr/app/themes/*.json linguist-generated=true
+ai/herdr/app/themes/*.generated.json linguist-generated=true
 
 # release-please
 CHANGELOG.md linguist-generated=true

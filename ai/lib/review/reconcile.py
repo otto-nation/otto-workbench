@@ -84,6 +84,10 @@ def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
     """Every finding the prior round still held open, with the text that reported it."""
     out = []
     for f in record.visible:
+        # Derived findings are re-derived from this round's claims and are
+        # never a prior finding to account for.
+        if f.derived:
+            continue
         if f.disposition is Disposition.FIXED:
             continue
         line = finding_line(f)

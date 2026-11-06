@@ -243,7 +243,7 @@ def _carried_record(prior: StoredReview) -> ReviewRecord:
     """The prior round's findings about the code, without its claims about its own run.
 
     The claims ledger is carried because the no-op gate proved their inputs
-    unchanged.
+    unchanged. Derived findings ride with the claims they came from.
     """
     return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
                    static_analysis="", focus=())

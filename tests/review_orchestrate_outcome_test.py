@@ -532,6 +532,23 @@ def test_a_review_with_a_source_and_no_writer_says_not_assessed(ro, tmp_path):
     assert "*Not assessed this round.*" in Path(job.review_file).read_text()
 
 
+# passes-at-base: pins that the no-op carry keeps what supersession removes elsewhere
+def test_an_unchanged_review_keeps_derived_findings_with_their_claims(ro, tmp_path):
+    from review.store import StoredReview
+    from review.types import FindingOrigin, ReviewMeta
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.pr.body = "x"
+    derived = finding(
+        "S1", "Claim contradicted: retries back off", origin=FindingOrigin.CLAIM,
+    )
+    prior_claims = (claim(id="C1", finding="S1"),)
+    job.prior = StoredReview(record(derived, claims=prior_claims), ReviewMeta())
+    ro.write_unchanged_review(job)
+    rec = load_record(tmp_path)
+    assert rec.claims == prior_claims
+    assert rec.finding("S1").origin is FindingOrigin.CLAIM
+
+
 def test_an_unchanged_review_keeps_prior_claims(ro, tmp_path):
     from review.store import StoredReview
     from review.types import ReviewMeta

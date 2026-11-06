@@ -54,7 +54,7 @@ from review.phases import (
 )
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
-from review.prompt_prior import _scoped, _with_sids
+from review.prompt_prior import _scoped, _prior_view
 from review.reconcile import passed_over
 from review.record import (
     Disposition, ProseSection, RecordFinding, ReviewRecord, SeveritySection,
@@ -537,7 +537,7 @@ def _carry_forward_prior_findings(
     for i, grp in enumerate(groups, 1):
         if i not in skip_indices:
             continue
-        scoped = _with_sids(_scoped(prior.record, grp.files))
+        scoped = _prior_view(_scoped(prior.record, grp.files))
         if scoped.findings:
             # D5: non-finding text in a severity section renders above that
             # section's findings. The heading used to live only in `text`;

@@ -19,7 +19,7 @@ from review.phases import PhaseResult  # noqa: E402
 from review.record import ReviewRecord  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
-from review.types import PreflightData, ReviewMeta  # noqa: E402
+from review.types import FindingOrigin, Group, PreflightData, ReviewMeta  # noqa: E402
 from review.verdict import BUDGET_SUMMARY, SETTLED_SUMMARY, mechanical_verdict  # noqa: E402
 from review.verify import PostProcessed  # noqa: E402
 from review_convergence_support import finding, merged, review_job  # noqa: E402
@@ -52,6 +52,23 @@ def test_nothing_new_needs_a_counted_zero(tmp_path):
 
 def test_nothing_new_is_false_with_a_failed_group(tmp_path):
     assert not review.steps._nothing_new(_job(tmp_path), merged(fresh=0), ["failure"])
+
+
+def test_a_skipped_group_does_not_carry_a_derived_finding():
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding("S1", "a real bug", path="a.py", line=1),
+            finding(
+                "S2", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+            ),
+        )),
+        ReviewMeta(),
+    )
+    carried = review.steps._carry_forward_prior_findings(
+        prior, [Group("g1", ["a.py"], 1)], {1},
+    )
+    assert carried is None or "S2" not in [f.id for f in carried.record.findings]
 
 
 def test_an_unaccounted_prior_finding_still_needs_synthesis(tmp_path):

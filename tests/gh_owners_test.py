@@ -523,3 +523,66 @@ def test_an_account_key_write_names_no_repository(github_owners, tmp_path):
     github_owners({"work": ["otto-nation"]})
     repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
     assert not gh.owners.check_command("gh ssh-key add key.pub", str(repo)).ok
+
+
+def test_check_content_allows_a_same_group_reference(github_owners):
+    github_owners({"work": ["acme"], "personal": ["me"]})
+    owners = gh.owners.OwnerMap.load()
+    verdict = gh.owners.check_content("see acme/lib#12", "work", owners)
+    assert verdict.ok and verdict.group == "work"
+    assert verdict.references == ()
+
+
+def test_check_content_refuses_another_group(github_owners):
+    github_owners({"work": ["acme"], "personal": ["me"]})
+    owners = gh.owners.OwnerMap.load()
+    verdict = gh.owners.check_content("see me/lib#12", "work", owners)
+    assert not verdict.ok
+    assert "me/lib#12" in verdict.reason
+    assert "personal" in verdict.reason and "work" in verdict.reason
+    assert "general.md § Cross-Group References" in verdict.reason
+    assert gh.owners.ALLOW_CROSS_REF_ENV in verdict.reason
+    assert verdict.references and verdict.references[0].text == "me/lib#12"
+
+
+def test_check_content_allows_an_upstream_reference(github_owners):
+    github_owners({"work": ["acme"]})
+    owners = gh.owners.OwnerMap.load()
+    verdict = gh.owners.check_content("see stranger/lib#12", "work", owners)
+    assert verdict.ok and verdict.group == "work"
+    assert verdict.references == ()
+
+
+def test_check_content_unknown_target_refuses_a_grouped_reference(github_owners):
+    github_owners({"work": ["acme"]})
+    owners = gh.owners.OwnerMap.load()
+    verdict = gh.owners.check_content("see acme/lib#12", "", owners)
+    assert not verdict.ok
+    assert "acme/lib#12" in verdict.reason
+    assert "work" in verdict.reason
+    assert "an unknown/upstream target" in verdict.reason
+    assert "general.md § Cross-Group References" in verdict.reason
+    assert verdict.references and verdict.references[0].text == "acme/lib#12"
+
+
+def test_check_content_unknown_target_allows_text_with_no_references(github_owners):
+    github_owners({"work": ["acme"]})
+    owners = gh.owners.OwnerMap.load()
+    verdict = gh.owners.check_content("no refs here", "", owners)
+    assert verdict.ok
+    assert verdict.references == ()
+
+
+def test_an_allow_carries_empty_references():
+    assert gh.owners.Verdict.allow("work").references == ()
+    assert gh.owners.Verdict.refuse("no").references == ()
+
+
+def test_the_cross_ref_override_is_exactly_one(monkeypatch):
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    assert gh.owners.cross_ref_allowed_by_user()
+    for value in ("", "0", "true"):
+        monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, value)
+        assert not gh.owners.cross_ref_allowed_by_user()
+    monkeypatch.delenv(gh.owners.ALLOW_CROSS_REF_ENV)
+    assert not gh.owners.cross_ref_allowed_by_user()

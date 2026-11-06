@@ -242,7 +242,10 @@ def catalogue_text(pi: tuple[str, ...]) -> str:
         raise CatalogueUnreadable(
             core.proc.failure_message(f"{' '.join(argv)} failed", result)
         )
-    if not listing_rows(result.stdout):
+    if not any(
+        rest and parse_context_tokens(rest[0]) is not None
+        for _provider, _model, rest in listing_rows(result.stdout)
+    ):
         raise CatalogueUnreadable(f"{' '.join(argv)} printed no model table")
     return result.stdout
 

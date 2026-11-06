@@ -346,6 +346,12 @@ class TestTheListing:
             _REAL_CATALOGUE_TEXT.cache_clear()
         assert bounds == [core.timeouts.LAUNCH]
 
+    @staticmethod
+    def _assert_timed_out(catalogue_text):
+        with pytest.raises(agent.pi_models.CatalogueUnreadable) as caught:
+            catalogue_text(PI)
+        assert "timed out after 60s" in str(caught.value)
+
     def test_a_timed_out_listing_raises_its_reason_and_is_listed_again(
         self, monkeypatch,
     ):
@@ -368,9 +374,7 @@ class TestTheListing:
         _REAL_CATALOGUE_TEXT.cache_clear()
         try:
             for _ in range(2):
-                with pytest.raises(agent.pi_models.CatalogueUnreadable) as caught:
-                    _REAL_CATALOGUE_TEXT(PI)
-                assert "timed out after 60s" in str(caught.value)
+                self._assert_timed_out(_REAL_CATALOGUE_TEXT)
             assert len(calls) == 2
             listing = True
             assert _REAL_CATALOGUE_TEXT(PI) == LISTING
@@ -379,7 +383,7 @@ class TestTheListing:
         finally:
             _REAL_CATALOGUE_TEXT.cache_clear()
 
-    @pytest.mark.parametrize("stdout", ["", "provider model context\n"])
+    @pytest.mark.parametrize("stdout", ["", "provider model context\n", "not a table"])
     def test_a_listing_with_no_model_rows_is_unreadable(self, monkeypatch, stdout):
         import core.proc
         from conftest import _REAL_CATALOGUE_TEXT

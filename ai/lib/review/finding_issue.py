@@ -171,6 +171,7 @@ def file_findings(
         repo=job.repo,
         opts=provider_info.options,
         cwd=job.wt_path,
+        host=job.host,
     )
     if trail and result.filed:
         trail.info("finding_issue", f"filed {result.issue.id}",

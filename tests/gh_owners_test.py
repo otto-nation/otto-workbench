@@ -687,6 +687,30 @@ def test_check_text_config_error_refuses(github_owners, tmp_path):
     assert not verdict.ok and "acme" in verdict.reason
 
 
+def test_published_target_parses_repo_or_falls_back():
+    assert gh.owners.published_target(repo="") is None
+    assert gh.owners.published_target(repo="not-a-repo") is None
+    parsed = gh.owners.published_target(repo="otto-nation/svc")
+    assert parsed == _owner("otto-nation")
+    hosted = gh.owners.published_target(repo="ghe.corp/acme/lib", host="ignored")
+    assert hosted == _owner("ghe.corp/acme")
+    given = _owner("me")
+    assert gh.owners.published_target(owner=given, repo="otto-nation/svc") is given
+
+
+def test_check_text_with_an_explicit_target_ignores_cwd_remotes(
+        github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    fork = remote_repo(tmp_path / "fork", "git@github.com:me/svc.git")
+    git_in(fork, "remote", "add", "upstream", "git@github.com:otto-nation/svc.git")
+    link = "[PR #1](https://github.com/otto-nation/svc/pull/1)"
+    target = gh.owners.published_target(repo="otto-nation/svc")
+    assert gh.owners.check_text(link, str(fork), target).ok
+    other = gh.owners.published_target(repo="me/notes")
+    verdict = gh.owners.check_text(link, str(fork), other)
+    assert not verdict.ok and verdict.references
+
+
 @pytest.mark.parametrize("command", [
     "gh issue comment 1 -R otto-nation/svc --body 'see me/lib#12'; "
     "gh issue comment 2 -R me/lib --body x",

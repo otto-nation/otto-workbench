@@ -58,6 +58,7 @@ import config.github_owners
 import config.workbench_config
 import gh.owner_content
 import gh.owner_references
+import gh.owner_scopes
 import gh.owner_targets
 import gh.write_shapes
 from config.github_owners import Owner
@@ -402,12 +403,30 @@ def check_gh_content(
         group, loaded)
 
 
-def check_text(text: str, cwd: str | Path) -> Verdict:
-    """Whether published *text* may go out from the checkout at *cwd*.
+def published_target(
+        owner: Owner | None = None, repo: str = "", host: str = "") -> Owner | None:
+    """An explicit publication target, or None to fall back to cwd remotes.
+
+    *owner* wins when given. Else *repo* is parsed as OWNER/REPO on *host*
+    (github.com when host is empty) or HOST/OWNER/REPO. Empty or unparseable
+    repo returns None, which ``check_text`` treats as the cwd checkout.
+    """
+    if owner is not None:
+        return owner
+    spec = (repo or "").strip()
+    if not spec:
+        return None
+    return gh.owner_scopes.repo_owner(
+        spec, (host or "").strip() or config.github_owners.DEFAULT_HOST)
+
+
+def check_text(text: str, cwd: str | Path, target: Owner | None = None) -> Verdict:
+    """Whether published *text* may go out from *target*, else the checkout at *cwd*.
 
     Unconfigured ``github.owners`` allows: nothing classifies, so nothing is
     a reference. A config error refuses. An unresolvable cwd is an unknown
-    group, which refuses any grouped reference.
+    group, which refuses any grouped reference. *target* is the owner of the
+    destination (a PR repo, a push remote); None falls back to cwd remotes.
     """
     try:
         owner_map = OwnerMap.load()
@@ -415,10 +434,12 @@ def check_text(text: str, cwd: str | Path) -> Verdict:
         return Verdict.refuse(str(exc))
     if not owner_map.configured:
         return Verdict.allow()
+    if target is not None:
+        return check_content(text, owner_map.classify(target).name, owner_map)
     resolution = gh.owner_targets.resolve_cwd(cwd, owner_map.hosts())
     group = ""
     if resolution.ok:
-        target = check_target(resolution.target, owner_map)
-        if target.ok:
-            group = target.group
+        judged = check_target(resolution.target, owner_map)
+        if judged.ok:
+            group = judged.group
     return check_content(text, group, owner_map)

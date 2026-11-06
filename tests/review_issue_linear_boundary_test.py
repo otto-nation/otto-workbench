@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from conftest import REPO_ROOT, make_ctx, remote_repo
+from conftest import REPO_ROOT, git_in, init_repo, make_ctx, remote_repo
 
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -31,6 +31,9 @@ CROSS_REF = "see me/lib#12"
 OWN_REMOTE = "git@github.com:otto-nation/svc.git"
 OTHER_REMOTE = "git@github.com:me/notes.git"
 OWNERS = {"work": ["otto-nation"], "personal": ["me"]}
+PR_LINK = "[PR #1](https://github.com/otto-nation/svc/pull/1)"
+WORK_REPO = "otto-nation/svc"
+PERSONAL_REPO = "me/notes"
 
 
 @pytest.fixture(autouse=True)
@@ -66,9 +69,9 @@ def _groups(github_owners):
     github_owners(OWNERS)
 
 
-def _job(path, pr_number="7"):
+def _job(path, pr_number="7", repo=WORK_REPO):
     return SimpleNamespace(
-        repo="owner/repo",
+        repo=repo,
         pr_number=pr_number,
         host="",
         wt_path=str(path),
@@ -97,35 +100,42 @@ def _linear_info():
     return IssueProviderInfo(name="linear", options={"team": "ENG"})
 
 
-def _file_findings(path, summary):
+def _file_findings(path, summary, repo=WORK_REPO):
     _seed(path, _finding(summary))
     info = _linear_info()
     with patch.object(review.issue, "ensure_issue_provider", return_value=info), \
             patch.object(review.issue, "load_issue_provider", return_value=info):
-        return review.finding_issue.file_findings(path, _job(path), TRACK_ALL)
+        return review.finding_issue.file_findings(path, _job(path, repo=repo), TRACK_ALL)
 
 
-def _deferred(path, body):
+def _deferred(path, body, repo=WORK_REPO):
     return review.deferred_issue.create_deferred_issue(
-        "linear", body, make_ctx(worktree_root=path), "owner/repo", 42,
+        "linear", body, make_ctx(worktree_root=path), repo, 42,
         {"team": "ENG"}, None, publishing_open=True,
     )
 
 
-def _deferred_update(path, body):
+def _deferred_update(path, body, repo=WORK_REPO):
     return review.deferred_issue.update_deferred_issue(
-        "linear", "ENG-1", body, "owner/repo", None, cwd=path,
+        "linear", "ENG-1", body, repo, None, cwd=path,
     )
 
 
-def _create_or_update(path, body):
+def _create_or_update(path, body, repo=WORK_REPO):
     info = _linear_info()
     entry = CommentItem(id="t1", summary=body, file="a.go", line=1, reason=body)
     with patch.object(review.issue, "ensure_issue_provider", return_value=info):
         return review.deferred_issue.create_or_update_deferred_issue(
-            [entry], "owner/repo", 42, {}, make_ctx(worktree_root=path),
+            [entry], repo, 42, {}, make_ctx(worktree_root=path),
             "ENG-1", None,
         )
+
+
+def _fork_checkout(tmp_path):
+    path = init_repo(tmp_path / "fork")
+    git_in(path, "remote", "add", "origin", "git@github.com:me/svc.git")
+    git_in(path, "remote", "add", "upstream", OWN_REMOTE)
+    return path
 
 
 def test_a_cross_group_body_never_reaches_linear(
@@ -209,7 +219,7 @@ def test_file_findings_uses_the_review_worktree(
     _groups(github_owners)
     calls = _linear_spy(monkeypatch)
     same = remote_repo(tmp_path / "same", OTHER_REMOTE)
-    result = _file_findings(same, CROSS_REF)
+    result = _file_findings(same, CROSS_REF, repo=PERSONAL_REPO)
     assert result is not None and result.filed is True
     assert any("create" in cmd for cmd in calls)
 
@@ -230,7 +240,7 @@ def test_create_deferred_issue_uses_the_review_worktree(
     _groups(github_owners)
     calls = _linear_spy(monkeypatch)
     same = remote_repo(tmp_path / "same", OTHER_REMOTE)
-    result = _deferred(same, CROSS_REF)
+    result = _deferred(same, CROSS_REF, repo=PERSONAL_REPO)
     assert result.filed is True
     assert any("create" in cmd for cmd in calls)
 
@@ -320,7 +330,7 @@ def test_update_deferred_issue_uses_the_review_worktree(
     _groups(github_owners)
     calls = _linear_spy(monkeypatch)
     same = remote_repo(tmp_path / "same", OTHER_REMOTE)
-    result = _deferred_update(same, CROSS_REF)
+    result = _deferred_update(same, CROSS_REF, repo=PERSONAL_REPO)
     assert result.filed is True
     assert any("update" in cmd for cmd in calls)
 
@@ -341,6 +351,56 @@ def test_create_or_update_deferred_issue_uses_the_review_worktree(
     _groups(github_owners)
     calls = _linear_spy(monkeypatch)
     same = remote_repo(tmp_path / "same", OTHER_REMOTE)
-    result = _create_or_update(same, CROSS_REF)
+    result = _create_or_update(same, CROSS_REF, repo=PERSONAL_REPO)
     assert result.filed is True
     assert any("update" in cmd for cmd in calls)
+
+
+def test_linear_allows_the_pr_link_from_a_fork_checkout(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    fork = _fork_checkout(tmp_path)
+    result = create_issue(
+        "linear", "ENG", "title", PR_LINK, repo=WORK_REPO, cwd=fork)
+    assert result.filed is True
+    assert any("create" in cmd for cmd in calls)
+
+
+def test_linear_update_allows_the_pr_link_from_a_fork_checkout(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    fork = _fork_checkout(tmp_path)
+    assert update_issue(
+        "linear", "ENG-1", PR_LINK, repo=WORK_REPO, cwd=fork) is True
+    assert any("update" in cmd for cmd in calls)
+
+
+def test_linear_allows_the_pr_link_outside_a_repo(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    result = create_issue(
+        "linear", "ENG", "title", PR_LINK, repo=WORK_REPO, cwd=tmp_path)
+    assert result.filed is True
+    assert any("create" in cmd for cmd in calls)
+    assert update_issue(
+        "linear", "ENG-1", PR_LINK, repo=WORK_REPO, cwd=tmp_path) is True
+    assert any("update" in cmd for cmd in calls)
+
+
+def test_linear_refuses_the_pr_link_for_another_group_repo(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    fork = _fork_checkout(tmp_path)
+    with pytest.raises(gh.owners.OwnerBoundaryError) as created:
+        create_issue(
+            "linear", "ENG", "title", PR_LINK, repo=PERSONAL_REPO, cwd=fork)
+    assert "otto-nation" in str(created.value)
+    with pytest.raises(gh.owners.OwnerBoundaryError) as updated:
+        update_issue(
+            "linear", "ENG-1", PR_LINK, repo=PERSONAL_REPO, cwd=fork)
+    assert "otto-nation" in str(updated.value)
+    assert calls == []

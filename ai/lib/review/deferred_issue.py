@@ -349,7 +349,7 @@ def build_deferred_issue_body(
 
 def update_deferred_issue(
     provider: str, issue_id: str, body: str, repo: str, opts: dict | None,
-    cwd: str | Path | None = None,
+    cwd: str | Path | None = None, host: str = "",
 ) -> IssueResult:
     """Refresh the tracking issue that already exists for this cycle.
 
@@ -361,7 +361,7 @@ def update_deferred_issue(
     the process cwd.
     """
     ok = review.issue.update_issue(
-        provider, issue_id, body, repo=repo, opts=opts, cwd=cwd,
+        provider, issue_id, body, repo=repo, opts=opts, cwd=cwd, host=host,
     )
     if not ok:
         core.log.error(f"Failed to update deferred issue {issue_id}")
@@ -435,6 +435,7 @@ def create_deferred_issue(
     result = review.issue.create_issue(
         provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
         cwd=ctx.worktree_root if ctx.worktree_root else None,
+        host=ctx.host,
     )
     if result.filed:
         if trail:
@@ -528,7 +529,7 @@ def create_or_update_deferred_issue(
     if existing_issue_id:
         updated = update_deferred_issue(
             provider, existing_issue_id, body, repo, provider_info.options,
-            cwd=worktree,
+            cwd=worktree, host=ctx.host,
         )
         return IssueResult(updated.delivery, CreatedIssue(
             id=updated.issue.id, url=updated.issue.url or existing_issue_url,

@@ -20,8 +20,9 @@ import gh.owners
 import review.deferred_issue
 import review.finding_issue
 import review.issue
+from pr.thread_models import CommentItem
 from review.deferred_issue import TRACK_ALL
-from review.issue import IssueProviderInfo, create_issue
+from review.issue import IssueProviderInfo, create_issue, update_issue
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.store import write_review
 from review.types import ReviewMeta
@@ -109,6 +110,22 @@ def _deferred(path, body):
         "linear", body, make_ctx(worktree_root=path), "owner/repo", 42,
         {"team": "ENG"}, None, publishing_open=True,
     )
+
+
+def _deferred_update(path, body):
+    return review.deferred_issue.update_deferred_issue(
+        "linear", "ENG-1", body, "owner/repo", None, cwd=path,
+    )
+
+
+def _create_or_update(path, body):
+    info = _linear_info()
+    entry = CommentItem(id="t1", summary=body, file="a.go", line=1, reason=body)
+    with patch.object(review.issue, "ensure_issue_provider", return_value=info):
+        return review.deferred_issue.create_or_update_deferred_issue(
+            [entry], "owner/repo", 42, {}, make_ctx(worktree_root=path),
+            "ENG-1", None,
+        )
 
 
 def test_a_cross_group_body_never_reaches_linear(
@@ -216,3 +233,114 @@ def test_create_deferred_issue_uses_the_review_worktree(
     result = _deferred(same, CROSS_REF)
     assert result.filed is True
     assert any("create" in cmd for cmd in calls)
+
+
+def test_a_cross_group_title_never_reaches_linear(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        create_issue("linear", "ENG", CROSS_REF, "plain body", cwd=own)
+    assert "me/lib#12" in str(exc.value)
+    assert calls == []
+
+
+def test_a_refused_body_never_creates_labels(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    with pytest.raises(gh.owners.OwnerBoundaryError):
+        create_issue(
+            "linear", "ENG", "title", CROSS_REF, cwd=own,
+            opts={"team": "ENG", "labels": ["follow-up"]},
+        )
+    assert calls == []
+
+
+def test_a_malformed_owners_map_is_not_lifted_by_the_override(
+        github_owners, tmp_path, monkeypatch):
+    github_owners({"work": ["acme"], "personal": ["ACME"]})
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        create_issue("linear", "ENG", "title", CROSS_REF, cwd=own)
+    assert not exc.value.verdict.references
+    assert calls == []
+
+
+def test_an_update_with_a_cross_group_body_never_reaches_linear(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        update_issue("linear", "ENG-1", CROSS_REF, cwd=own)
+    assert "me/lib#12" in str(exc.value)
+    assert calls == []
+
+
+def test_the_cross_ref_override_runs_linear_update(
+        github_owners, tmp_path, monkeypatch, capsys):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    assert update_issue("linear", "ENG-1", CROSS_REF, cwd=own) is True
+    assert any("update" in cmd for cmd in calls)
+    err = capsys.readouterr().err
+    assert "me/lib#12" in err
+    assert f"{gh.owners.ALLOW_CROSS_REF_ENV}=1" in err
+
+
+def test_an_update_with_no_grouped_references_runs_linear(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    assert update_issue("linear", "ENG-1", "plain body", cwd=own) is True
+    assert any("update" in cmd for cmd in calls)
+
+
+def test_update_deferred_issue_refuses_a_cross_group_body(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        _deferred_update(own, CROSS_REF)
+    assert "me/lib#12" in str(exc.value)
+    assert calls == []
+
+
+def test_update_deferred_issue_uses_the_review_worktree(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    same = remote_repo(tmp_path / "same", OTHER_REMOTE)
+    result = _deferred_update(same, CROSS_REF)
+    assert result.filed is True
+    assert any("update" in cmd for cmd in calls)
+
+
+def test_create_or_update_deferred_issue_refuses_a_cross_group_body(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    own = remote_repo(tmp_path / "own", OWN_REMOTE)
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        _create_or_update(own, CROSS_REF)
+    assert "me/lib#12" in str(exc.value)
+    assert calls == []
+
+
+def test_create_or_update_deferred_issue_uses_the_review_worktree(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    calls = _linear_spy(monkeypatch)
+    same = remote_repo(tmp_path / "same", OTHER_REMOTE)
+    result = _create_or_update(same, CROSS_REF)
+    assert result.filed is True
+    assert any("update" in cmd for cmd in calls)

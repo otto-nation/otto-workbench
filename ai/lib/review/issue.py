@@ -684,6 +684,27 @@ def _linear_label_names(team: str) -> frozenset[str]:
         _run_issue_cli(["linear", "label", "list", "--all", "--json"]), "Linear")
 
 
+def _check_linear_text(text: str, cwd: str | Path | None) -> None:
+    """Refuse *text* that names a grouped owner the checkout is not in.
+
+    Create and update share this so a rebuilt deferred body cannot skip the
+    check the create path already runs. A content refusal is the only kind
+    ``WORKBENCH_ALLOW_CROSS_REF=1`` lifts; a config error has empty
+    ``verdict.references`` and still raises.
+    """
+    if cwd is None:
+        cwd = os.getcwd()
+    # Before labels or create: a refused body must not mutate the tracker.
+    verdict = gh.owners.check_text(text, cwd)
+    if not verdict.ok:
+        if gh.owners.cross_ref_allowed_by_user() and verdict.references:
+            core.log.warn(
+                f"{verdict.reason} — publishing anyway because "
+                f"{gh.owners.ALLOW_CROSS_REF_ENV}=1")
+        else:
+            raise gh.owners.OwnerBoundaryError(verdict)
+
+
 def _create_linear(
     team: str,
     title: str,
@@ -692,17 +713,7 @@ def _create_linear(
     labels: list[str] | None = None,
     cwd: str | Path | None = None,
 ) -> CreatedIssue | None:
-    if cwd is None:
-        cwd = os.getcwd()
-    # Before labels or create: a refused body must not mutate the tracker.
-    verdict = gh.owners.check_text(f"{title}\n{description}", cwd)
-    if not verdict.ok:
-        if gh.owners.cross_ref_allowed_by_user() and verdict.references:
-            core.log.warn(
-                f"{verdict.reason} — publishing anyway because "
-                f"{gh.owners.ALLOW_CROSS_REF_ENV}=1")
-        else:
-            raise gh.owners.OwnerBoundaryError(verdict)
+    _check_linear_text(f"{title}\n{description}", cwd)
     with _description_file(description) as desc_file:
         cmd = [
             "linear", "issue", "create",
@@ -758,7 +769,10 @@ def _run_issue_cmd(cmd_prefix: list[str], description: str) -> bool:
             return False
 
 
-def _update_linear(issue_id: str, description: str) -> bool:
+def _update_linear(
+    issue_id: str, description: str, cwd: str | Path | None = None,
+) -> bool:
+    _check_linear_text(description, cwd)
     ok = _run_issue_cmd(
         ["linear", "issue", "update", issue_id, "--description-file"],
         description,
@@ -961,13 +975,18 @@ def update_issue(
     description: str,
     repo: str = "",
     opts: dict | None = None,
+    cwd: str | Path | None = None,
 ) -> bool:
-    """Update an existing issue's description. Returns True on success."""
+    """Update an existing issue's description. Returns True on success.
+
+    ``cwd`` is the checkout the Linear body is judged against. ``None`` is
+    the process cwd. GitHub filing is checked inside ``gh.client`` instead.
+    """
     if not core.publishing.enabled():
         core.publishing.draft(f"update {provider} issue {issue_id}", description)
         return False
     if provider == "linear":
-        return _update_linear(issue_id, description)
+        return _update_linear(issue_id, description, cwd=cwd)
     if provider == "github":
         return _update_github(repo, issue_id, description, opts)
     core.log.dim(f"Issue update not supported for provider: {provider}")

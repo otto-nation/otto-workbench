@@ -269,6 +269,11 @@ def _run_group_phase(
     return GroupPhaseResult(outputs=group_outputs, failures=failed_groups, cost=cost)
 
 
+def _writer_must_rejudge(job: ReviewJob) -> bool:
+    """The prior holds claim findings only the writer can re-judge."""
+    return bool(open_derived_findings(job.prior))
+
+
 def _run_synthesis_or_fallback(
     job: ReviewJob, state: PipelineState,
     holistic_content: str, group_count: int,
@@ -286,7 +291,8 @@ def _run_synthesis_or_fallback(
     """
     all_groups_failed = len(failed_groups) == group_count
 
-    if not merged.record.visible and not failed_groups:
+    if (not merged.record.visible and not failed_groups
+            and not _writer_must_rejudge(job)):
         core.log.info("No findings from any group — writing clean review")
         _write_clean_review(
             job, group_count, merged.record, skipped_groups=n_skipped,
@@ -393,12 +399,11 @@ def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailur
     `_prior_findings`) is not settled here: those are re-derived from this
     round's claims, so this returns False and the writer re-judges them. A
     round that adds nothing does not withdraw what the last one asked for.
-    The disprove gate reads the same answer: with nothing new there is
-    nothing it has not already challenged.
+    The disprove gate runs whenever the writer re-judges (settled False).
     """
     if not _is_incremental(job) or failed_groups or merged.fresh != 0:
         return False
-    if open_derived_findings(job.prior):
+    if _writer_must_rejudge(job):
         return False
     return not _unaccounted(job, merged.record)
 

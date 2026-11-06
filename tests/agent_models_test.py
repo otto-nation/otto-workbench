@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.phases
 import config.workbench_config
-from agent.models import ModelRef, UnsetTier, parse_ref, resolve
+from agent.models import ModelRef, UnsetTier, parse_ref, resolve, unversioned_id
 from agent.registry import PHASES
 from config.workbench_config import ModelsConfig
 from core.phases import Effort, Phase, Thinking, Tier
@@ -57,6 +57,14 @@ def _no_env_layers(monkeypatch):
 def test_a_reference_parses_into_its_parts(value, ref):
     assert parse_ref(value) == ref
     assert parse_ref(value).spec() == value
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    ("claude-haiku-4-5@20251001", "claude-haiku-4-5"),
+    ("claude-sonnet-4-6", "claude-sonnet-4-6"),
+])
+def test_an_unversioned_id_drops_only_the_version_suffix(value, expected):
+    assert unversioned_id(value) == expected
 
 
 def test_every_thinking_level_is_a_level_suffix():

@@ -8,7 +8,8 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model. A catalogue
+the fallback (read by the id without its `@version`) when the catalogue cannot
+be read or lacks the model. A catalogue
 that cannot be read is retried by the next lookup, never cached, and when the
 table cannot answer either `UnknownModelWindow` quotes why it could not be read.
 It is capped at
@@ -40,6 +41,7 @@ from pathlib import Path
 
 import agent.pi_models
 from agent.context_ceiling import backend_ceiling, capped_window, machine_ceiling
+from agent.models import unversioned_id
 from agent.phases import collect_phase_models, unset_review_phases
 from agent.pi_models import listed_windows
 from core.phases import Backend
@@ -48,7 +50,8 @@ from review.grouping import classify_tier, format_profiles_section
 # ── The token ceiling, and the bytes it buys ─────────────────────────────────
 
 # Fallback when pi's provider catalogue cannot be read, or does not list the
-# model. Figures originally come from `pi --list-models` (and from
+# model. Keys are undated ids; a dated id (`<id>@<version>`) reads its undated
+# entry. Figures originally come from `pi --list-models` (and from
 # `result.modelUsage[*].contextWindow` in session logs). A model absent from
 # both the catalogue and this table has no entry to guess at:
 # `prompt_budget_bytes` refuses rather than defaulting, because every default
@@ -209,13 +212,10 @@ MIN_DELTA_DIFF_BYTES = 2_048
 def _parse_pi_list_models(text: str) -> dict[str, int]:
     """Model id -> context window, taking the minimum across providers.
 
-    Assumes the model column is a bare id — the same spelling a resolved
-    review model uses (`claude-haiku-4-5`), with no `@version` or
-    `provider/` decoration. A deployment whose provider lists ids that way
-    (`claude-haiku-4-5@20251001`, `xai/grok-4.6`) would never match here and
-    would fall through to `MODEL_CONTEXT_TOKENS` silently rather than loudly
-    — worth re-checking this assumption if the catalogue's own format ever
-    changes.
+    Keyed by the model column exactly as listed, so a dated Vertex id stays
+    dated (`claude-haiku-4-5@20251001`) — the spelling an operator configures
+    and the provider serves. Only the fallback table is read by the undated id
+    (`agent.models.unversioned_id`).
     """
     windows: dict[str, int] = {}
     for (_provider, model), tokens in listed_windows(text).items():
@@ -325,7 +325,9 @@ def model_window_tokens(
     except agent.pi_models.CatalogueUnreadable as exc:
         catalogue = {}
         unreadable = str(exc)
-    window = catalogue.get(model, MODEL_CONTEXT_TOKENS.get(model))
+    window = catalogue.get(model)
+    if window is None:
+        window = MODEL_CONTEXT_TOKENS.get(unversioned_id(model))
     if window is None:
         raise UnknownModelWindow(model, catalogue=catalogue, unreadable=unreadable)
     return capped_window(window, compact_at)

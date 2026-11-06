@@ -402,6 +402,13 @@ class TestTheWindowPrefersPisCatalogue:
         ))
         assert model_window_tokens("grok-4.6", cwd=".") == 120_000
 
+    def test_a_dated_id_falls_back_to_its_undated_table_entry(self):
+        from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
+
+        assert model_window_tokens("claude-haiku-4-5@20251001", cwd=".") == (
+            MODEL_CONTEXT_TOKENS["claude-haiku-4-5"]
+        )
+
     def test_a_listing_that_timed_out_is_listed_again_by_the_budget(self, monkeypatch):
         import core.proc
         from core.proc import CmdResult

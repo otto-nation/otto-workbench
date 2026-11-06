@@ -838,7 +838,8 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model. A catalogue
+the fallback (read by the id without its `@version`) when the catalogue cannot
+be read or lacks the model. A catalogue
 that cannot be read is retried by the next lookup, never cached, and when the
 table cannot answer either `UnknownModelWindow` quotes why it could not be read.
 It is capped at

@@ -46,6 +46,7 @@ import core.proc
 import core.serde
 import core.timeouts
 import core.workbench_paths
+from agent.models import unversioned_id
 from core.phases import Phase
 
 try:
@@ -120,9 +121,7 @@ def resolve_vertex_model_id(model: str) -> str:
 
     'claude-sonnet-5' -> 'anthropic-claude-sonnet-5'
     """
-    # Strip @version suffix (e.g. claude-haiku-4-5@20251001 -> claude-haiku-4-5)
-    if "@" in model:
-        model = model.split("@")[0]
+    model = unversioned_id(model)
 
     if not model.startswith(_PUBLISHER_PREFIX):
         model = f"{_PUBLISHER_PREFIX}{model}"

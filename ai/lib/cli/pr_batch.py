@@ -26,14 +26,13 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import batch.admission
 import batch.events
 import batch.inbox
-import batch.live
 import batch.machine
 import batch.plan
 import batch.report
@@ -42,14 +41,20 @@ import batch.store
 import batch.targets
 import config.workbench_config
 import core.log
-import core.report
 import core.run_lock
 import core.serde
 import pr.target
 import review.focus
 from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step, StepStatus
-from batch.requests import Cancel, Decide, Outcome, Release
+from batch.requests import Outcome
 from batch.store import Role
+from cli.pr_batch_requests import (
+    _ambiguous,
+    _cmd_cancel,
+    _cmd_release,
+    _cmd_resolve,
+)
+from cli.pr_batch_views import _cmd_plan, _cmd_status, _offline, _report
 from core.trail import TRAIL_ROOT_ENV, Trail
 
 EXIT_OK = batch.report.EXIT_OK
@@ -178,14 +183,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _offline(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--offline", action="store_true",
-                   help="Skip the `github` section: report only what this machine saved, "
-                        "without asking GitHub for the run's repos' open PRs. Without it, a read "
-                        "runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), "
-                        "even while a driver holds the run")
-
-
 def _err(message: str) -> int:
     print(f"pr batch: {message}", file=sys.stderr)
     return 1
@@ -275,14 +272,6 @@ def _active(run_id: str) -> bool:
     """
     found = batch.store.holder(run_id)
     return found is not None and found.role in (Role.DRIVER, None)
-
-
-def _report(run: Run, active: bool, github: dict | None = None) -> dict:
-    """The whole report for *run*, with what its inbox still holds and what it rejected."""
-    return batch.report.build(run, active=active,
-                              pending_requests=batch.store.pending_requests(run.id),
-                              failed_requests=batch.store.failed_requests(run.id),
-                              github=github)
 
 
 def _emit_summary(run: Run, code: int) -> None:
@@ -613,221 +602,6 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     except (batch.store.RunBusy, batch.store.RunUnreachable, _Refused) as exc:
         return _err(str(exc))
     return _conclude(run_id, stopped, reporter)
-
-
-def _unreachable(run_id: str) -> str:
-    return (f"run {run_id} is unreachable; the request is in its inbox and "
-            f"will be applied by the next session to open it")
-
-
-def _deliver(run_id: str, request: Decide | Cancel | Release, bin_dir: Path,
-             verb: str) -> batch.inbox.Delivery:
-    """`batch.inbox.deliver`, naming on stderr each earlier request the same drain failed."""
-    delivery = batch.inbox.deliver(run_id, request,
-                                   batch.inbox.ApplyContext(pr_bin=str(bin_dir / "pr")),
-                                   command=f"pr batch {verb} {run_id}")
-    for other in delivery.others:
-        if not other.ok:
-            print(f"pr batch: request {other.name}: {other.error}", file=sys.stderr)
-    return delivery
-
-
-def _own_error(run_id: str, delivery: batch.inbox.Delivery) -> str:
-    """This request's error, or "" if it applied.
-
-    When another session applied it, the error is read from `rejected/`.
-    """
-    if delivery.own is not None:
-        return delivery.own.error
-    for failed in batch.store.failed_requests(run_id):
-        if failed.name == delivery.name:
-            return failed.error
-    return ""
-
-
-@dataclass(frozen=True)
-class _HolderView:
-    """The queued-resolve `holder` object."""
-
-    role: str | None
-    pid: int
-    command: str
-
-
-def _holder_view(holder: batch.store.Holder | None) -> dict | None:
-    """The queued-resolve `holder` object, or None when the delivery named nobody."""
-    if holder is None:
-        return None
-    return asdict(_HolderView(None if holder.role is None else holder.role.value,
-                              holder.pid, holder.command))
-
-
-def _cmd_resolve(args, bin_dir: Path) -> int:
-    run_id = args.run_id
-    try:
-        batch.store.load(run_id)
-    except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
-    request = Decide(decision=args.decision_id, action=args.action, reason=args.reason,
-                     body_file=args.body_file, commit=args.commit)
-    try:
-        delivery = _deliver(run_id, request, bin_dir, "resolve")
-    except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
-    except batch.store.RunUnreachable:
-        return _err(_unreachable(run_id))
-    if delivery.queued:
-        result: dict = {"applied": False, "queued": True, "decision": args.decision_id}
-        if view := _holder_view(delivery.holder):
-            result["holder"] = view
-        core.report.emit_json(result)
-        return EXIT_OK
-    error = _own_error(run_id, delivery)
-    if delivery.own is None and not error:
-        error = "the drain did not report this request"
-    applied = delivery.own is not None and not error
-    result = {"applied": applied, "decision": args.decision_id,
-              "open_decisions": len(batch.store.load(run_id).open_decisions())}
-    if error:
-        result["errors"] = [error]
-        print(f"pr batch: {error}", file=sys.stderr)
-    core.report.emit_json(result)
-    return EXIT_OK if applied else 1
-
-
-def _ambiguous(given: str | None) -> str | None:
-    """The refusal for a mutating no-id call when several unfinished runs cover this repo."""
-    if given or not (repo := _cwd_repo()):
-        return None
-    candidates = batch.store.unfinished_covering(repo)
-    if len(candidates) > 1:
-        return ("more than one unfinished run covers this repo "
-                f"({', '.join(candidates)}); pass a run id")
-    return None
-
-
-def _cmd_cancel(args, bin_dir: Path) -> int:
-    if refusal := _ambiguous(args.run_id):
-        return _err(refusal)
-    run_id = _run_id(args.run_id, covering_only=not args.run_id)
-    if not run_id:
-        return _err("no batch run covers this repo; pass a run id")
-    try:
-        run = batch.store.load(run_id)
-    except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
-    if run.status in FINISHED_RUN:
-        return _err(f"run {run_id} is {run.status.value}")
-    try:
-        delivery = _deliver(run_id, Cancel(kill=args.kill), bin_dir, "cancel")
-    except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
-    except batch.store.RunUnreachable:
-        return _err(_unreachable(run_id))
-    error = "" if delivery.queued else _own_error(run_id, delivery)
-    result = {"cancelled": not error, "run": run_id, "queued": delivery.queued}
-    if error:
-        # The run finished before the cancel reached it; say what it ended as.
-        result["status"] = batch.store.load(run_id).status.value
-        print(f"pr batch: {error}", file=sys.stderr)
-    core.report.emit_json(result)
-    return 1 if error else EXIT_OK
-
-
-def _resolve_item(run: Run, given: str) -> Item | str:
-    """The item *given* names, or an error to print."""
-    if given.isdigit():
-        matches = [i for i in run.items if i.pr == int(given)]
-        if len(matches) == 1:
-            return matches[0]
-        if not matches:
-            return f"run {run.id} has no PR {given}"
-        listed = ", ".join(i.key for i in matches)
-        return f"PR {given} matches more than one item ({listed}); pass owner/repo#N"
-    try:
-        return run.item(given)
-    except KeyError:
-        listed = ", ".join(i.key for i in run.items) or "none"
-        return f"run {run.id} has no item {given} (have {listed})"
-
-
-def _release_view(item: Item, *, run_id: str, queued: bool, released: bool) -> dict:
-    drafted = [{"step": r.step.value, "commits": list(r.commits)}
-               for r in item.steps if r.drafted]
-    closeout = ""
-    if item.repo_dir and Path(item.repo_dir).is_dir():
-        try:
-            closeout = batch.plan.closeout_debt(item.repo_dir, item.branch).describe()
-        except (OSError, TypeError, ValueError):
-            closeout = ""
-    return {"released": released, "run": run_id, "item": item.key, "queued": queued,
-            "worktree": item.worktree, "drafted": drafted, "closeout": closeout}
-
-
-def _cmd_release(args, bin_dir: Path) -> int:
-    run_id = args.run_id
-    try:
-        run = batch.store.load(run_id)
-    except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
-    item = _resolve_item(run, args.pr)
-    if isinstance(item, str):
-        return _err(item)
-    try:
-        delivery = _deliver(run_id, Release(item=item.key, kill=args.kill), bin_dir, "release")
-    except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
-    except batch.store.RunUnreachable:
-        return _err(_unreachable(run_id))
-    error = "" if delivery.queued else _own_error(run_id, delivery)
-    if error:
-        print(f"pr batch: {error}", file=sys.stderr)
-    try:
-        current = batch.store.load(run_id).item(item.key)
-    except (batch.store.RunNotFound, KeyError):
-        current = item
-    core.report.emit_json(_release_view(current, run_id=run_id, queued=delivery.queued,
-                                        released=not error))
-    return 1 if error else EXIT_OK
-
-
-def _cmd_status(args) -> int:
-    """`status` and `next`: the report, a projection of it, or what it summarises."""
-    run_id = _run_id(args.run_id)
-    if not run_id:
-        return _err("no batch runs yet")
-    try:
-        run = batch.store.load(run_id)
-    except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
-    active = _active(run_id)
-    if args.command == "next":
-        core.report.emit_json(batch.report.next_view(_report(run, active, _github(run, args))))
-        return EXIT_OK
-    if args.full:
-        core.report.emit_json({"schema_version": run.schema_version, "active": active,
-                               "run": core.serde.to_dict(run)})
-        return EXIT_OK
-    if args.decision:
-        try:
-            core.report.emit_json(batch.report.decision_detail(run, args.decision))
-        except KeyError:
-            return _err(f"run {run_id} has no decision {args.decision}")
-        return EXIT_OK
-    core.report.emit_json(_report(run, active, _github(run, args)))
-    return EXIT_OK
-
-
-def _github(run: Run, args) -> dict:
-    """The report's `github` section: GitHub's open PRs for *run*'s repos, unless --offline."""
-    return batch.live.skipped() if args.offline else batch.live.view(run, cwd=os.getcwd())
-
-
-def _cmd_plan(args) -> int:
-    # A standalone plan is a read: no namespace, nothing to drop. `run --plan`
-    # from a saved file reads mergeStateStatus instead of namespaced refs.
-    core.report.emit_json(core.serde.to_dict(batch.plan.build_plan(args.checkout)))
-    return EXIT_OK
 
 
 def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None = None,

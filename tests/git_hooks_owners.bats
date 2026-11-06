@@ -200,6 +200,13 @@ _msg() {
   [ -f "$INTENTS" ]
 }
 
+@test "commit-msg run by hand with no args still allows" {
+  _two_groups
+  cd "$W" || return 1
+  run "$REPO_ROOT/git/hooks/commit-msg"
+  [ "$status" -eq 0 ]
+}
+
 @test "pre-push run by hand with fewer args still allows" {
   _two_groups
   cd "$W" || return 1

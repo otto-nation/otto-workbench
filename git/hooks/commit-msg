@@ -22,7 +22,9 @@ _workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=
 if [[ -n "$_workbench" && -f "$_workbench/lib/owners_check.sh" ]]; then
   # shellcheck source=../../lib/owners_check.sh
   . "$_workbench/lib/owners_check.sh"
-  owners_check_hook "$_workbench" --message-file "$1" --cwd "$PWD" || exit 1
+  if [[ -n "${1:-}" ]]; then
+    owners_check_hook "$_workbench" --message-file "${1:-}" --cwd "$PWD" || exit 1
+  fi
 fi
 
 # Delegate to the repo-local hook, which a global core.hooksPath otherwise

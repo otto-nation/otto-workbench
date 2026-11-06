@@ -381,7 +381,7 @@ def _path_binary(note: str, root: Path) -> PiBinary:
             f"no pi to run: no managed install at {root}, {note}, and no pi on PATH"
         )
     try:
-        result = core.proc.run([path, "--version"], timeout=core.timeouts.LOCAL)
+        result = core.proc.run([path, "--version"], timeout=core.timeouts.LAUNCH)
     except OSError as exc:
         raise PiUnresolvable(f"cannot run {path} --version: {exc}") from exc
     lines = [line for line in result.stdout.splitlines() if line.strip()]

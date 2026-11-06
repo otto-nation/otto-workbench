@@ -224,7 +224,7 @@ def catalogue_text(pi: tuple[str, ...]) -> str:
     """
     try:
         result = core.proc.run(
-            [*pi, "--list-models"], timeout=core.timeouts.LOCAL,
+            [*pi, "--list-models"], timeout=core.timeouts.LAUNCH,
         )
     except OSError:
         # Not just FileNotFoundError: a `pi` present on disk but not executable

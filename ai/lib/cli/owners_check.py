@@ -56,6 +56,7 @@ class _Parser(argparse.ArgumentParser):
     """Hook-mode usage errors exit CANNOT_RUN so a mis-wired hook cannot block."""
 
     def __init__(self, *args, **kwargs):
+        kwargs["allow_abbrev"] = False
         super().__init__(*args, **kwargs)
         self.hook_mode = False
 

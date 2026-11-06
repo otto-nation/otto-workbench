@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import cli.owners_check
@@ -146,6 +148,15 @@ def test_body_file_content_is_scanned(github_owners, tmp_path, capsys):
     ])
     assert code == cli.owners_check.REFUSED
     assert "me/lib#12" in capsys.readouterr().err
+
+
+def test_an_abbreviated_hook_flag_is_rejected(tmp_path, capsys):
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_text("ok\n")
+    with pytest.raises(SystemExit) as exc:
+        cli.owners_check.main(["--mess", str(path), "--cwd", str(tmp_path)])
+    assert exc.value.code == 2
+    assert capsys.readouterr().err
 
 
 def test_the_cross_ref_override_does_not_reach_check_command(

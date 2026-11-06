@@ -20,6 +20,8 @@ OTHER = "git@github.com:me/lib.git"
 GITLAB = "https://gitlab.com/acme/widget.git"
 GITLAB_SSH = "git@gitlab.com:acme/widget.git"
 GITHUB_ALIAS = "git@github.com-work:otto-nation/svc.git"
+DOTLESS_GITHUB = "git@github-work:otto-nation/svc.git"
+DOTLESS_OTHER = "git@mygitlab:acme/x.git"
 ZERO = "0" * 40
 OFFENCE = "see me/lib#12"
 OWN_REF = "see otto-nation/svc#12"
@@ -368,3 +370,63 @@ def test_push_invalid_local_sha_is_cannot_run(
     assert code == cli.owners_check.CANNOT_RUN
     err = capsys.readouterr().err
     assert "invalid local sha: -evil" in err
+
+
+def test_message_file_checks_a_dotless_github_alias(github_owners, tmp_path, capsys):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", DOTLESS_GITHUB)
+    assert _message(tmp_path, repo, OFFENCE) == cli.owners_check.REFUSED
+    assert "me/lib#12" in capsys.readouterr().err
+    assert _message(tmp_path, repo, OWN_REF) == 0
+
+
+def test_push_checks_a_dotless_github_alias(
+        github_owners, tmp_path, monkeypatch, capsys):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    sha = _commit(repo, OFFENCE)
+    code = _push(monkeypatch, repo, _line(sha) + "\n", url=DOTLESS_GITHUB)
+    assert code == cli.owners_check.REFUSED
+    assert "me/lib#12" in capsys.readouterr().err
+    clean = _repo(tmp_path / "own")
+    sha = _commit(clean, OWN_REF)
+    assert _push(monkeypatch, clean, _line(sha) + "\n", url=DOTLESS_GITHUB) == 0
+
+
+def test_message_file_allows_a_dotless_non_github_alias(github_owners, tmp_path):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", DOTLESS_OTHER)
+    assert _message(tmp_path, repo, OFFENCE) == 0
+
+
+def test_push_allows_a_dotless_non_github_alias(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    sha = _commit(repo, OFFENCE)
+    assert _push(monkeypatch, repo, _line(sha) + "\n", url=DOTLESS_OTHER) == 0
+
+
+def test_push_refusal_names_a_non_tip_offender(
+        github_owners, tmp_path, monkeypatch, capsys):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    offender = _commit(repo, "older offence\n\n" + OFFENCE)
+    tip = _commit(repo, "clean tip")
+    code = _push(monkeypatch, repo, _line(tip) + "\n")
+    assert code == cli.owners_check.REFUSED
+    err = capsys.readouterr().err
+    assert err.splitlines()[0] == f"{offender[:7]} older offence"
+    assert "clean tip" not in err
+
+
+def test_message_file_ignores_scissors_when_comment_char_is_auto(
+        github_owners, tmp_path):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", OWN)
+    git_in(repo, "config", "core.commentChar", "auto")
+    text = (
+        f"ok\n; ------------------------ >8 ------------------------\n"
+        f"diff --git a/x b/x\n+{OFFENCE}\n"
+    )
+    assert _message(tmp_path, repo, text) == 0

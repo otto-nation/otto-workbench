@@ -9,6 +9,7 @@ is ``REFUSE``.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -23,7 +24,7 @@ import git.remote_url
 
 OVERRIDE_WARNING = (
     f"warning: {gh.owners.ALLOW_CROSS_REF_ENV}=1 is set; allowing a cross-group reference")
-_SCISSORS = " ------------------------ >8 ------------------------"
+_SCISSORS_RE = re.compile(r"^\S ------------------------ >8 ------------------------$")
 _LOG_FMT = "%H%x00%B%x00"
 _HEX = frozenset("0123456789abcdefABCDEF")
 
@@ -75,10 +76,9 @@ def _comment_char(cwd: str | Path) -> str:
 
 def _message_body(text: str, cwd: str | Path) -> str:
     comment = _comment_char(cwd)
-    marker = comment + _SCISSORS
     kept: list[str] = []
     for line in text.splitlines():
-        if line.startswith(marker):
+        if _SCISSORS_RE.match(line):
             break
         if not line.startswith(comment):
             kept.append(line)
@@ -93,8 +93,21 @@ def _hex_sha(sha: str) -> bool:
     return bool(sha) and all(c in _HEX for c in sha)
 
 
+def _authority_host(url: str) -> str:
+    matched = git.remote_url.SCHEME_RE.match(url)
+    if matched:
+        authority, _, _ = url[matched.end():].partition("/")
+    else:
+        authority, _, _ = url.partition(":")
+    return git.remote_url.bare_host(authority).lower()
+
+
 def _is_github_remote(url: str, owner_map: gh.owners.OwnerMap) -> bool:
-    host = git.remote_url.parse(url).host.lower()
+    parsed = git.remote_url.parse(url)
+    host = parsed.host.lower()
+    # A dotless scp alias parses as host ""; the github-substring check uses the alias.
+    if not host and parsed.ssh:
+        host = _authority_host(url)
     if not host:
         return False
     known = owner_map.hosts() | {
@@ -165,7 +178,7 @@ def _parse_log(blob: str) -> list[tuple[str, str]]:
     records: list[tuple[str, str]] = []
     index = 0
     while index + 1 < len(parts):
-        sha, body = parts[index], parts[index + 1]
+        sha, body = parts[index].lstrip("\n"), parts[index + 1]
         if sha:
             records.append((sha, body))
         index += 2

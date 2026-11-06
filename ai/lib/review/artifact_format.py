@@ -1,6 +1,7 @@
 """The prompt shows the agent `example()` as `core.serde.to_dict` writes
 it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
-what `review.ingest` accepts are one schema.
+what `review.ingest` accepts are one schema. A test holds the notes to the
+fields.
 """
 
 # doc-group: findings

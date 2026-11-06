@@ -1,6 +1,8 @@
 """What a review agent writes: one JSON document per phase, each a frozen dataclass.
 
-The field guide and output format are `review.artifact_format`'s.
+Scout, holistic, group, single, synthesis and disprove each write one of the
+types here. The field guide and output format are `review.artifact_format`'s.
+A test holds each example to the strict reader and to `problems()`.
 
 The types are narrower than the record on purpose. `ReviewRecord` carries what
 the harness decides — dispositions, stable IDs, failures, static analysis,
@@ -551,4 +553,3 @@ _EXAMPLE_CLAIMS = (
         path="pkg/client.go", snippet="delay *= 2",
     ),
 )
-

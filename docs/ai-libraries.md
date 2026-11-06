@@ -1578,13 +1578,16 @@ What a review produces. Parsing an agent's output into findings, giving them sta
 
 The prompt shows the agent `example()` as `core.serde.to_dict` writes
 it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
-what `review.ingest` accepts are one schema.
+what `review.ingest` accepts are one schema. A test holds the notes to the
+fields.
 
 ### review/artifacts.py
 
 What a review agent writes: one JSON document per phase, each a frozen dataclass.
 
-The field guide and output format are `review.artifact_format`'s.
+Scout, holistic, group, single, synthesis and disprove each write one of the
+types here. The field guide and output format are `review.artifact_format`'s.
+A test holds each example to the strict reader and to `problems()`.
 
 The types are narrower than the record on purpose. `ReviewRecord` carries what
 the harness decides — dispositions, stable IDs, failures, static analysis,

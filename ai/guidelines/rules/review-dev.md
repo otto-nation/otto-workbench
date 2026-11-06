@@ -15,7 +15,8 @@ When adding or modifying a review phase, verify these integration points:
 - `review/merge.py`: iteration over `SEVERITIES` in `merge_records()` and `renumber_record()` — merging the group reviews into one document. Renumbering rewrites every visible finding and every reference together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
 - `review/reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review/reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
 - `review/registry.py`: a builder in its phase table keyed by the new `Phase`, and the `artifact` its agent writes — the template and the output path come off the phase spec, so the builder supplies neither. The builder renders the Output section with `_artifact_format(job, extra, rereview=...)`, `rereview` being whether it built a prior section
-- `review/artifacts.py`: the JSON artifact each phase's agent writes. A new field goes on the dataclass with a value in its `example()` and an entry in `FIELD_NOTES` — `review_artifacts_test` fails until both exist — and the prompt shows it without a template edit. A field only a re-review fills goes in `CARRY_FIELDS` too, so a first-round prompt neither shows nor explains it. `DERIVE_FIELDS` is the second hidden set: title, rationale and paths on a `FocusReport`, shown only when the Focus section asks the writer to add areas
+- `review/artifacts.py`: the JSON artifact each phase's agent writes. A new field goes on the dataclass with a value in its `example()` — `review_artifacts_test` fails until both the example and a `FIELD_NOTES` entry exist — and the prompt shows it without a template edit
+- `review/artifact_format.py`: the field guide and output format. Put the new field's `FIELD_NOTES` entry here, and its `CARRY_FIELDS` / `DERIVE_FIELDS` membership. A field only a re-review fills goes in `CARRY_FIELDS` too, so a first-round prompt neither shows nor explains it. `DERIVE_FIELDS` is the second hidden set: title, rationale and paths on a `FocusReport`, shown only when the Focus section asks the writer to add areas
 - `review/focus.py`: the owner of focus areas. `ReviewJob.focus` is set only by orchestrate, the incremental carry and phase-1 adoption; a change to the merge or scoping rule is a change there
 - `review/claims.py`: the owner of the claims ledger — the check, the fingerprint and `claims_of`. Writers only (single, synthesis); a new phase never grows claim fields.
 - `review/ingest.py`: `load_artifact`/`ingest_artifact` read an artifact strictly (`core.strict`) and give the agent one repair turn. `check=` is run-context validation on the same repair turn. Nothing parses agent markdown; `review.md` is rendered and never read back
@@ -70,7 +71,7 @@ to fix, so the words asked for and the words read are one enum.
 `review.prompt_prior._LEDGER_FIELDS_INSTRUCTION` interpolates the enum's values
 and an example entry serialised from a real `LedgerLine`, and
 `TestLedgerFieldsInstruction` strict-loads that example back. A first-round
-prompt shows none of the carry fields (`review.artifacts.CARRY_FIELDS`): the
+prompt shows none of the carry fields (`review.artifact_format.CARRY_FIELDS`): the
 builder that built — or did not build — the prior section passes `rereview`
 to `output_format`.
 The ledger is merged across groups by `merge_records()` — one line per prior

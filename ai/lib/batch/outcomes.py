@@ -304,6 +304,8 @@ def _evidence(step: Step, stdout: str, item: Item, head_before: str) -> list[dic
             found.append({"kind": EvidenceKind.ONE_SIDED.value,
                           "files": report["files_one_sided"],
                           "regions": report.get("one_sided_regions", [])})
+        if report.get("files_stale"):
+            found.append({"kind": EvidenceKind.STALE.value, "files": report["files_stale"]})
     if step is Step.CI and (unfixed := ci_unfixed(stdout)):
         found.append({"kind": EvidenceKind.CI_UNFIXED.value, **unfixed})
     if step in _FIXING_STEPS:

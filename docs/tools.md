@@ -894,6 +894,7 @@ Takes no flags.
 | `--onto`, `--base` `<ref>` | Ref to rebase onto — overrides the PR's base branch and the repo's default branch. |
 | `--fork-point` `<ref>` | Replay only the commits after REF, onto the target — for a branch whose earlier commits already landed. The partially-landed refusal names the ref to pass. |
 | `--fix` | Autonomous mode — resolve conflicts with AI and rebase (force-pushes unless --no-push). |
+| `--stop-on-conflict` | Pause on conflicts (stash held) instead of aborting; incompatible with --fix. |
 | `--no-push` | Skip the force-push — print the command instead. |
 | `--push-only` | Push HEAD with the lease an earlier --no-push run recorded; do not rebase. |
 | `--expect` `<sha>` | With --push-only: lease against SHA instead of the lease a recorded rebase saved; no recorded rebase is needed. |

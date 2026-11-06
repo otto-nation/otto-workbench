@@ -106,6 +106,10 @@ This sets the *global* `core.hooksPath` to the workbench's [`git/hooks/`](../git
 
 A repo-local `core.hooksPath` shadows that global directory for every git command in the repo — `post-rewrite` (the rewrite record `pr` follows history with, and the drop report), `prepare-commit-msg` (refuses a conflict resolution that silently drops cleanly merged changes), `commit-msg` (refuses a cross-group reference in a commit message), and `pre-push` (gitleaks, push-intents, and cross-group references in commits being pushed) included. Check with `git config --show-origin --get core.hooksPath`. `pr rebase` chains the workbench hooks in front of the repo's for the git children it drives, and warns when it does; a hand-run `git rebase --continue` does not. `core.hooksPath=/dev/null` disables hooks on purpose — `pr rebase` honours it and records nothing.
 
+## `pr rebase` left a paused conflict (or aborted)
+
+Without `--fix`, `pr rebase` classifies the stop and **aborts** (`tree: clean`, exit 3) unless every conflicted file is generated-class and a declared `rebase.regenerate` (or a lockfile regenerator) rebuilt it. `mise run generate` as a conventional fallback does not qualify — that stays `--fix`-only. Pass `--stop-on-conflict` to keep the paused tree and held stash; `--fix` resolves with AI. A resumed rebase never aborts: a further stop pauses, because aborting would discard earlier resolutions. `--fix --stop-on-conflict` is a parser error.
+
 ## `ssh: connect to host github.com port 22: Connection refused`
 
 Some networks — hotel and conference Wi-Fi, corporate egress filters, a few consumer ISPs — block or intermittently reset outbound TCP/22. Push and fetch fail; HTTPS traffic to GitHub keeps working, which is why `gh` commands succeed while git does not.

@@ -10,7 +10,7 @@ is ``REFUSE``.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -41,10 +41,11 @@ class HookVerdict:
 
     outcome: HookOutcome
     reason: str = ""
+    override: bool = False
 
     @classmethod
-    def allow(cls, reason: str = "") -> HookVerdict:
-        return cls(HookOutcome.ALLOW, reason)
+    def allow(cls, reason: str = "", override: bool = False) -> HookVerdict:
+        return cls(HookOutcome.ALLOW, reason, override)
 
     @classmethod
     def refuse(cls, reason: str) -> HookVerdict:
@@ -92,11 +93,7 @@ def _hex_sha(sha: str) -> bool:
 
 
 def _authority_host(url: str) -> str:
-    matched = git.remote_url.SCHEME_RE.match(url)
-    if matched:
-        authority, _, _ = url[matched.end():].partition("/")
-    else:
-        authority, _, _ = url.partition(":")
+    authority, _, _ = url.partition(":")
     return git.remote_url.bare_host(authority).lower()
 
 
@@ -131,6 +128,22 @@ class _Destination:
 
     owner: config.github_owners.Owner | None = None
     scan: bool = True
+
+
+@dataclass(frozen=True)
+class _PushUpdate:
+    """One pre-push ref line's local and remote shas."""
+
+    local_sha: str
+    remote_sha: str
+
+
+@dataclass(frozen=True)
+class _LogRecord:
+    """One commit from ``git log``: sha and message body."""
+
+    sha: str
+    body: str
 
 
 def _push_remote_name(cwd: str | Path) -> str | None:
@@ -192,7 +205,7 @@ def _content_verdict(verdict: gh.owners.Verdict) -> HookVerdict:
         return HookVerdict.allow()
     warning = gh.owners.lift_content_refusal(verdict)
     if warning is not None:
-        return HookVerdict.allow(warning)
+        return HookVerdict.allow(warning, override=True)
     return HookVerdict.refuse(verdict.reason)
 
 
@@ -212,8 +225,8 @@ def check_message(text: str, cwd: str | Path) -> HookVerdict:
     return _content_verdict(gh.owners.check_text(body, cwd, dest.owner))
 
 
-def _push_updates(ref_lines: Sequence[str]) -> list[tuple[str, str]] | HookVerdict:
-    updates: list[tuple[str, str]] = []
+def _push_updates(ref_lines: Sequence[str]) -> list[_PushUpdate] | HookVerdict:
+    updates: list[_PushUpdate] = []
     for line in ref_lines:
         if not line.strip():
             continue
@@ -226,7 +239,7 @@ def _push_updates(ref_lines: Sequence[str]) -> list[tuple[str, str]] | HookVerdi
             continue
         if not _hex_sha(local_sha):
             return HookVerdict.cannot_run(f"invalid local sha: {local_sha}")
-        updates.append((local_sha, remote_sha))
+        updates.append(_PushUpdate(local_sha, remote_sha))
     return updates
 
 
@@ -238,16 +251,27 @@ def _existing_tip(sha: str, cwd: str | Path) -> str | None:
     return None
 
 
-def _parse_log(blob: str) -> list[tuple[str, str]]:
+def _parse_log(blob: str) -> list[_LogRecord]:
     parts = blob.split("\0")
-    records: list[tuple[str, str]] = []
+    records: list[_LogRecord] = []
     index = 0
     while index + 1 < len(parts):
         sha, body = parts[index].lstrip("\n"), parts[index + 1]
         if sha:
-            records.append((sha, body))
+            records.append(_LogRecord(sha, body))
         index += 2
     return records
+
+
+def _combine_hook_items(items: Iterable[HookVerdict]) -> HookVerdict:
+    """Stop on refuse or cannot-run; remember an override without hiding later failures."""
+    warned = ""
+    for item in items:
+        if item.outcome is not HookOutcome.ALLOW:
+            return item
+        if item.override:
+            warned = item.reason
+    return HookVerdict.allow(warned, override=bool(warned))
 
 
 def _commit_verdict(
@@ -277,11 +301,9 @@ def _check_new_commits(
     if not logged.ok:
         return HookVerdict.cannot_run(
             f"git log failed: {logged.stderr.strip() or logged.stdout.strip()}")
-    for sha, body in _parse_log(logged.stdout):
-        item = _commit_verdict(sha, body, group, owner_map)
-        if item.outcome is not HookOutcome.ALLOW or item.reason:
-            return item
-    return HookVerdict.allow()
+    return _combine_hook_items(
+        _commit_verdict(record.sha, record.body, group, owner_map)
+        for record in _parse_log(logged.stdout))
 
 
 def check_push(
@@ -305,9 +327,7 @@ def check_push(
     parsed = _push_updates(ref_lines)
     if isinstance(parsed, HookVerdict):
         return parsed
-    for local_sha, remote_sha in parsed:
-        item = _check_new_commits(
-            remote, local_sha, remote_sha, group, loaded, cwd)
-        if item.outcome is not HookOutcome.ALLOW or item.reason:
-            return item
-    return HookVerdict.allow()
+    return _combine_hook_items(
+        _check_new_commits(
+            remote, update.local_sha, update.remote_sha, group, loaded, cwd)
+        for update in parsed)

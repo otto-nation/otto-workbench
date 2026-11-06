@@ -234,6 +234,32 @@ def test_push_honours_the_override(github_owners, tmp_path, monkeypatch, capsys)
     assert gh.owners.ALLOW_CROSS_REF_ENV in capsys.readouterr().err
 
 
+def test_push_override_does_not_hide_a_later_cannot_run(
+        github_owners, tmp_path, monkeypatch, capsys):
+    _groups(github_owners)
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    repo = _repo(tmp_path)
+    first = _commit(repo, OFFENCE)
+    second = _commit(repo, "clean follow-up")
+    import core.proc
+    import git.client
+    real = git.client.run
+    logs = {"n": 0}
+
+    def fake(*args, **kwargs):
+        if args and args[0] == "log":
+            logs["n"] += 1
+            if logs["n"] > 1:
+                return core.proc.CmdResult(returncode=1, stderr="log boom")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(git.client, "run", fake)
+    lines = _line(first) + "\n" + _line(second, first) + "\n"
+    code = _push(monkeypatch, repo, lines)
+    assert code == cli.owners_check.CANNOT_RUN
+    assert "log boom" in capsys.readouterr().err
+
+
 def test_push_unparseable_stdin_is_cannot_run(
         github_owners, tmp_path, monkeypatch, capsys):
     _groups(github_owners)

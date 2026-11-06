@@ -33,7 +33,7 @@ import core.log
 import core.serde
 from review.claim_types import ClaimEntry
 from review.paths import FILENAME_RECORD
-from review.types import SEVERITIES, Finding, FindingRef, PriorDisposition
+from review.types import SEVERITIES, Finding, FindingOrigin, FindingRef, PriorDisposition
 
 SCHEMA_VERSION = 2
 
@@ -97,9 +97,12 @@ class RecordFinding:
     # The tracker issue `--track` filed it under. PR 3 replaces this with
     # `deferred(IssueRef)`.
     filed: str = ""
+    # Harness-owned, never on an agent artifact.
+    origin: FindingOrigin = FindingOrigin.WRITER
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "disposition", Disposition(self.disposition))
+        object.__setattr__(self, "origin", FindingOrigin(self.origin))
 
     @property
     def seq(self) -> int:
@@ -108,6 +111,10 @@ class RecordFinding:
     @property
     def visible(self) -> bool:
         return self.disposition is not Disposition.FALSIFIED
+
+    @property
+    def derived(self) -> bool:
+        return self.origin is not FindingOrigin.WRITER
 
     @property
     def annotation(self) -> str:
@@ -140,6 +147,7 @@ class RecordFinding:
             declined=self.disposition is Disposition.DECLINED,
             skipped=self.disposition is Disposition.SKIPPED,
             decline_reason=self.reason if self.disposition is Disposition.DECLINED else "",
+            origin=self.origin,
         )
 
 

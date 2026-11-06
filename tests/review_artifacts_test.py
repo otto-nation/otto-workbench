@@ -225,6 +225,13 @@ def test_a_harness_owned_field_is_not_writable(harness_field):
     assert exc.value.violations[0].at == f"$.findings[0].{harness_field}"
 
 
+def test_an_agent_finding_cannot_claim_an_origin():
+    with pytest.raises(SchemaRejected) as exc:
+        load_strict(GroupArtifact, _group(origin="claim"))
+    (v,) = exc.value.violations
+    assert "origin" in v.at
+
+
 def test_a_finding_converts_with_its_severity_and_stable_id():
     f = AgentFinding(id="S2", path="ai/lib/x.py", line=12,
                      body="Missing check on the db.Query error\nmore", evidence="x()\n")

@@ -857,6 +857,49 @@ rejection, too conservative is a shallower review.
 `agent.types.RetryBudget` is a different thing that shares the word — it
 budgets retries, not bytes.
 
+### review/claims.py
+
+The claims ledger: the check, the fingerprint and the record entries.
+
+This module owns whether a run has a claim source, the input fingerprint, the
+run-context check composed with focus coverage, turning a writer's reports
+into record entries after the check, and the degraded-check warning.
+Renderers take claims off the record and never import it.
+
+The record is tri-state. `None` is not assessed — a writer that did not run, a
+check that degraded, or a legacy `review.json`. `()` is assessed with nothing
+checkable, or no claim source. Entries are the assessed ledger.
+
+Writers are the single agent and synthesis only. Scout, holistic and group get
+no claims fields. Agentless paths — clean, settled, `--no-synthesis`,
+low-effort, a budget cut, all-groups-failed, mechanical fallback, `--repair`
+rebuild — record `None`. When a description or ticket existed, that renders
+"*Not assessed this round.*" A multi-phase run that never reaches synthesis
+therefore shows Not assessed; that is the honest result.
+
+The check rides ingest `check=` with one repair turn. Caps (12 claims, 512
+bytes per `text` / `evidence` / `snippet`) live inside the check, so an
+over-cap list degrades rather than rejects. Leftover claims errors after the
+repair set `claims` to `None` and never cost the review. A first load that
+fails `problems()` or schema never runs the claims check, so the repair prompt
+does not mention claims and the second load degrades without that turn having
+named them.
+
+`verify.post_process_record` forces a supported or contradicted claim whose
+snippet is not in its file to unverifiable, with a note, using the same
+evidence matcher findings use.
+
+The fingerprint hashes `pr.body` plus a projection of the issue: title and
+description or body only. Tracker fields that churn (state, labels,
+attachments) do not move it. It is stamped only when claims were assessed,
+so a prior round of `None` cannot no-op past an unassessed ledger. A true
+no-op carries prior claims: the gate now proves the description and ticket
+are the same and that the author committed nothing, so the prior verdicts
+still stand. Focus coverage is not carried on a no-op because areas can
+change on that same round. The GitHub issue fetch is title and body only
+— comments are not the ticket's claims and would move the fingerprint on
+every reply.
+
 ### review/collect.py
 
 What a review collects before a prompt is built, and what it may cost.
@@ -1548,6 +1591,20 @@ shows a merged record back to an agent (synthesis).
 A finding's severity is its ID's first letter, so the two cannot disagree.
 `TriageEntry` and `LedgerLine` are the record's own types: what an agent
 writes there is exactly what the record keeps.
+
+### review/claim_types.py
+
+Claims are what a PR's description or linked ticket asserts about the change.
+
+A writer reports each with a verdict, and the harness numbers them `C1…`.
+`supported` holds; `contradicted` is shown false; `unsupported` is checkable
+but nothing in the code shows it; `unverifiable` is not statically checkable,
+or its cited code did not verify. `evidence` is prose. `path` and `snippet`
+are the code the verdict rests on, and are required for supported and
+contradicted. `finding` is optional: the id of a writer finding, of any
+severity, that covers the claim. This module is a leaf: it imports nothing
+from `review`. `ClaimReport` is what an agent writes; `ClaimEntry` is what
+the record stores, with harness numbering.
 
 ### review/dedup.py
 

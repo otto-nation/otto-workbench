@@ -323,6 +323,19 @@ def test_fetch_issue_context_github(capsys):
     assert "Found GitHub issue: #42" in captured.err
 
 
+def test_a_github_issue_is_fetched_without_comments():
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = '{"title":"t","body":"b"}'
+
+    with patch("subprocess.run", return_value=mock_result) as run:
+        fetch_issue_context("github", "42", repo="owner/repo")
+
+    argv = run.call_args.args[0]
+    assert "title,body" in argv
+    assert not any("comments" in str(part) for part in argv)
+
+
 def test_fetch_issue_context_jira(capsys):
     opts = {"base_url": "https://jira.example.com"}
     result = fetch_issue_context("jira", "PROJ-42", opts=opts)

@@ -30,6 +30,7 @@ from review.types import DeltaAttribution, PreflightData, ReviewJob
 from review.artifacts import DisproveArtifact, DisproveOutcome, DisproveVerdict
 from review.verify import apply_disprove
 
+from review_claims_support import claim
 from review_record_support import (
     FIXTURES, copy_tree, canonical, expected_text, fixture_meta, fixture_record,
     finding, record,
@@ -213,6 +214,26 @@ def test_a_disprove_after_failures_keeps_both(tmp_path, monkeypatch):
     assert [f.id for f in run.record.findings if f.disposition is Disposition.FALSIFIED] == ["S1"]
     assert run.record.finding("S1") is None
     assert run.record.failures, "the failures table must survive the disprove write"
+
+
+def test_disprove_clears_a_claim_link_to_a_falsified_finding(tmp_path, monkeypatch):
+    job = _job(tmp_path)
+    rec = record(
+        finding("M1", "x", path="a.py"),
+        finding("S1", "y", path="a.py"),
+        claims=(
+            claim(id="C1", finding="S1"),
+            claim(id="C2", finding="M1"),
+        ),
+    )
+    from review.phases import PhaseResult
+    monkeypatch.setattr(review.steps, "run_phase", lambda *a, **k: PhaseResult(
+        artifact=DisproveArtifact(verdicts=(
+            DisproveVerdict("S1", DisproveOutcome.FALSIFIED, "no"),)),
+    ))
+    run = _phase_disprove(job, rec)
+    assert run.record.claims[0].finding == ""
+    assert run.record.claims[1].finding == "M1"
 
 
 def test_the_disprove_gate_hides_a_falsified_finding(tmp_path, monkeypatch):

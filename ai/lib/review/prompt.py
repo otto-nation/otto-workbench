@@ -60,6 +60,7 @@ from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt_prior import (
     _build_prior_section, _build_unaccounted_section,
 )
+from review.claims import has_claim_source
 from review.focus import areas_for_group, needs_derived, user_areas
 from review.prompt_sections import (
     _build_delta_section, _build_env_section, _build_focus_section,
@@ -832,7 +833,8 @@ def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False,
     Only then does the example show the fields that carry one forward (D20).
     """
     return output_format(extra["artifact"], job.mode, rereview=rereview,
-                         derive_focus=derive_focus, has_areas=has_areas)
+                         derive_focus=derive_focus, has_areas=has_areas,
+                         has_claim_source=has_claim_source(job))
 
 
 def _prompt_single(job, common, extra, output):

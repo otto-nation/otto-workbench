@@ -20,6 +20,10 @@
 
 4 findings across 3 files in 2 groups. Rebuilt mechanically from group finding files.
 
+## Claims
+
+*Not assessed this round.*
+
 ## Must fix
 
 - **[M1]** `src/cli.py:4` — `--timeout` is compared before it is validated, so a negative timeout is accepted.

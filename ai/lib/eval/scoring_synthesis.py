@@ -113,7 +113,10 @@ def build_prompt(planted: list[Planted], output_path: str, repo_dir: str, max_tu
         execution_claim_guard=agent.templates.build_execution_claim_guard(8),
         output_block=(
             f"{block}\n\n"
-            f"{output_format(ReviewArtifact, Mode.PR, rereview=False, derive_focus=True, has_areas=False)}"
+            + output_format(
+                ReviewArtifact, Mode.PR, rereview=False, derive_focus=True,
+                has_areas=False, has_claim_source=False,
+            )
         ),
         max_turns=str(max_turns),
     )

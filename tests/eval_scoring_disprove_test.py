@@ -148,6 +148,11 @@ class TestPrompt:
         assert findings[0].evidence.splitlines()[0] in prompt
         assert "${" not in prompt
 
+    def test_the_disprove_prompt_omits_claims(self):
+        findings = parse_findings(json.loads((CASES[0] / "manifest.json").read_text()))
+        prompt = build_prompt(findings, "/tmp/out/disprove.json", 15)
+        assert "## Claims" not in prompt
+
 
 class TestTask:
     def test_is_registered_for_the_disprove_phase(self):

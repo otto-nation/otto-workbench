@@ -320,6 +320,9 @@ class ReviewMeta:
     # "nothing beyond head_sha". Never the base of a later delta: that is always
     # `head_sha`.
     covered_sha: str = ""
+    # Stamped only when the record holds assessed claims; compared by
+    # `_is_no_op_rereview`.
+    claims_input_sha: str = ""
     # A fix pass that was stopped before it landed. Its own field rather than a
     # `fix_commit_status` value: that one is `CommitStatus`'s vocabulary, and an
     # interruption is not something `land` reports. Cleared once the leftovers

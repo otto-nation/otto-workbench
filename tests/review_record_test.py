@@ -15,6 +15,7 @@ import core.log
 from pr.domains import ReviewStatus
 from review.document import ReviewHeader
 from review.paths import FILENAME_PRIOR_RECORD, FILENAME_RECORD
+import review.store
 from review.store import read_prior
 from review.record import (
     SCHEMA_VERSION, AgentFailure, Disposition, FocusArea, FocusSource, LedgerLine, ProseSection,
@@ -24,6 +25,7 @@ from review.record import (
 from review.types import (
     FindingRef, PriorDisposition, ReviewMeta, ReviewType, review_meta_from_dict,
 )
+from review_claims_support import claim
 from review_record_support import copy_tree, finding, record
 
 
@@ -181,6 +183,13 @@ class TestMetaHeaderFields:
         meta = ReviewMeta(review_type=ReviewType.FULL, skipped_groups=1, total_groups=4)
         assert "skipped_groups" not in ReviewHeader.from_meta(meta).render()
 
+    def test_the_sidecar_keeps_the_claims_fingerprint(self, tmp_path):
+        review.store.write_review(
+            tmp_path / "review.md", ReviewRecord(), ReviewMeta(claims_input_sha="abc"),
+        )
+        assert review.store.read_review(tmp_path / "review.md").meta.claims_input_sha == "abc"
+        assert review_meta_from_dict({}).claims_input_sha == ""
+
 
 # A record as `save_record` wrote it at schema 1: a finding's location as the
 # agent typed it (`lead`), evidence still in its blockquote and fence, triage as
@@ -321,3 +330,22 @@ def test_focus_round_trips(tmp_path):
     ))
     save_record(tmp_path, rec)
     assert load_record(tmp_path) == rec
+
+
+def test_a_record_without_claims_loads_as_not_assessed(tmp_path, capsys):
+    save_record(tmp_path, ReviewRecord())
+    path = tmp_path / FILENAME_RECORD
+    payload = json.loads(path.read_text())
+    del payload["claims"]
+    path.write_text(json.dumps(payload))
+    loaded = load_record(tmp_path)
+    assert loaded.claims is None
+    assert "dropped" not in capsys.readouterr().err
+
+
+def test_claims_round_trip(tmp_path):
+    rec = ReviewRecord(claims=(claim(),))
+    save_record(tmp_path, rec)
+    assert load_record(tmp_path) == rec
+    save_record(tmp_path, ReviewRecord(claims=()))
+    assert load_record(tmp_path).claims == ()

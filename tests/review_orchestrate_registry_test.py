@@ -470,6 +470,20 @@ def test_a_writer_prompt_with_no_areas_shows_no_covering_example(phase, extra):
     assert '"id": ""' in result
 
 
+@pytest.mark.parametrize("phase, extra", [
+    (Phase.SINGLE, {}),
+    (Phase.SYNTHESIS, {"group_count": 2, "merged_content": "x"}),
+])
+def test_a_writer_prompt_with_no_claim_source_shows_no_example_claim(phase, extra):
+    job = _make_job(_make_preflight())
+    job.pr.body = ""
+    result = review.registry.build_prompt(phase, job, max_turns=15, **extra)
+    assert '"verdict": "supported"' not in result
+    job.pr.body = "B"
+    result = review.registry.build_prompt(phase, job, max_turns=15, **extra)
+    assert '"verdict": "supported"' in result
+
+
 def test_the_scout_sees_only_requested_areas():
     job = _make_job(_make_preflight())
     job.focus = (

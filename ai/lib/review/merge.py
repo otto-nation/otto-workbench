@@ -188,6 +188,14 @@ def _renumbering(
     return _Renumbering(moves, frozenset(prefixes))
 
 
+def _moved_link(record: ReviewRecord, renumbering: _Renumbering, link: str) -> str:
+    """The finding id after this rewrite, or empty when the linked finding is gone."""
+    found = record.finding(link) if link else None
+    if found is None:
+        return ""
+    return str(renumbering.moves.get(FindingId(found.severity, found.seq), found.id))
+
+
 def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRecord:
     """`record` with every visible finding moved and every reference rewritten.
 
@@ -199,6 +207,11 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRe
             return f
         new_id = renumbering.moves.get(FindingId(f.severity, f.seq))
         return replace(f, id=str(new_id) if new_id else f.id, body=renumbering.rewrite(f.body))
+    claims = None if record.claims is None else tuple(
+        replace(c, evidence=renumbering.rewrite(c.evidence),
+                finding=_moved_link(record, renumbering, c.finding))
+        for c in record.claims
+    )
     return replace(
         record,
         findings=tuple(moved(f) for f in record.findings),
@@ -209,6 +222,7 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRe
         ),
         extra=tuple(replace(e, body=renumbering.rewrite(e.body)) for e in record.extra),
         focus=tuple(replace(a, coverage=renumbering.rewrite(a.coverage)) for a in record.focus),
+        claims=claims,
     )
 
 

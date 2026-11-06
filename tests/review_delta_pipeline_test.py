@@ -19,6 +19,7 @@ tests that matter most here are the ones asserting it stays shut.
 import io
 import sys
 from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +35,7 @@ from core.phases import Effort, Mode
 from gh.types import PRContext, PRMetadata
 from pr.domains import ReviewVerdict
 from review.document import ReviewDocument
+import review.claims
 from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
 from review_record_support import finding, record
 
@@ -300,6 +302,33 @@ class TestTheEmptyDeltaFastPath:
 
         assert called == []
         assert pipeline == Pipeline.SINGLE
+
+    def test_a_changed_description_is_not_a_no_op(self, tmp_path, run_phases):
+        job = self._merge_only(tmp_path)
+        job.pr.body = "now does Y"
+        _, called, _ = run_phases(job)
+        assert called == ["single"]
+
+    def test_a_description_edit_is_not_a_no_op(self, tmp_path, run_phases):
+        job = self._merge_only(tmp_path)
+        job.pr.body = "old"
+        job.prior = replace(
+            job.prior,
+            meta=replace(job.prior.meta, claims_input_sha=review.claims.input_sha(job)),
+        )
+        job.pr.body = "new"
+        _, called, _ = run_phases(job)
+        assert called == ["single"]
+
+    def test_an_unchanged_description_is_still_a_no_op(self, tmp_path, run_phases):
+        job = self._merge_only(tmp_path)
+        job.pr.body = "now does Y"
+        job.prior = replace(
+            job.prior,
+            meta=replace(job.prior.meta, claims_input_sha=review.claims.input_sha(job)),
+        )
+        _, called, _ = run_phases(job)
+        assert called == []
 
     def test_the_marker_advances_to_the_new_head(self, tmp_path, run_phases):
         job = self._merge_only(tmp_path)

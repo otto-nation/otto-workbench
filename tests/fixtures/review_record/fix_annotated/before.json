@@ -71,6 +71,7 @@
   "questions": [],
   "verified": [],
   "focus": [],
+  "claims": [],
   "triage": null,
   "static_analysis": "- [ ] **[SA1]** `src/app.py:2` \u2014 nesting depth 5 exceeds 4",
   "failures": [],

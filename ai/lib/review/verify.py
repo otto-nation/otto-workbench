@@ -66,6 +66,7 @@ from pathlib import Path
 import core.log
 import git.client
 from pr.domains import ReviewVerdict
+from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimVerdict
 from review.format import resolve_path
 from review.merge import renumber_record
 from review.artifacts import DisproveArtifact, DisproveOutcome
@@ -251,7 +252,10 @@ class PostProcessed:
     verification: dict | None
 
 
-def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str]) -> PostProcessed:
+def _verify_record(
+    record: ReviewRecord, wt_path: str, changed: Collection[str],
+    tracked: Callable[[], Collection[str]] | None = None,
+) -> PostProcessed:
     """Drop each must-fix and should-fix finding whose evidence is not in its file.
 
     A finding with no path names no file to check, so it is not checked: a
@@ -261,7 +265,8 @@ def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str])
     """
     dropped: list[str] = []
     details: list[dict] = []
-    tracked = functools.cache(lambda: _tracked_files(wt_path))
+    if tracked is None:
+        tracked = functools.cache(lambda: _tracked_files(wt_path))
     for f in record.visible:
         if (
             f.severity not in (SEVERITY_MUST, SEVERITY_SHOULD)
@@ -281,6 +286,39 @@ def _verify_record(record: ReviewRecord, wt_path: str, changed: Collection[str])
         "findings_checked": len(details), "findings_passed": len(details) - len(dropped),
         "findings_dropped": len(dropped), "dropped": dropped, "details": details,
     })
+
+
+def _verified_claim(claim: ClaimEntry, wt_path: str,
+                    tracked: Callable[[], Collection[str]], changed: Collection[str]) -> ClaimEntry:
+    if claim.verdict not in CITE_VERDICTS:
+        return claim
+    if not wt_path:
+        return replace(
+            claim, verdict=ClaimVerdict.UNVERIFIABLE,
+            evidence=f"{claim.evidence} *(no worktree to check the cited code against)*",
+        )
+    detail = _match_evidence(claim.path, claim.snippet, wt_path, tracked, changed)
+    if detail["match_result"] and detail.get("fragments"):
+        return claim
+    reason = (
+        "snippet has no matchable lines"
+        if detail["match_result"] else _drop_reason(detail)
+    )
+    note = f"cited code not found in `{claim.path}`: {reason}"
+    return replace(
+        claim, verdict=ClaimVerdict.UNVERIFIABLE,
+        evidence=f"{claim.evidence} *({note})*",
+    )
+
+
+def _verified_claims(
+    claims: tuple[ClaimEntry, ...] | None, wt_path: str,
+    tracked: Callable[[], Collection[str]], changed: Collection[str],
+) -> tuple[ClaimEntry, ...] | None:
+    """None and () pass through; a supported/contradicted miss becomes unverifiable."""
+    if not claims:
+        return claims
+    return tuple(_verified_claim(c, wt_path, tracked, changed) for c in claims)
 
 
 # ── Reconciling prose against dropped findings ───────────────────────────────
@@ -360,12 +398,16 @@ def post_process_record(
     the finished counts, so it goes after.
     """
     verification = None
+    tracked = functools.cache(lambda: _tracked_files(wt_path))
     if wt_path:
-        verified = _verify_record(record, wt_path, changed_files)
+        verified = _verify_record(record, wt_path, changed_files, tracked)
         record, verification = verified.record, verified.verification
         if verification["dropped"]:
             core.log.info(f"Dropped {len(verification['dropped'])} unverified findings: "
                           f"{', '.join(verification['dropped'])}")
+    record = replace(record, claims=_verified_claims(
+        record.claims, wt_path, tracked, changed_files,
+    ))
     record = replace(record, findings=tuple(replace(f, sid="") for f in record.findings), ledger=())
     record = renumber_record(record)
     if verification:

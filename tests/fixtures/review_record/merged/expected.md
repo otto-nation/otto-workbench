@@ -4,6 +4,10 @@
 - `src/util.py` — reviewed; helper only.
 - `src/cli.py` — reviewed; flag parsing.
 
+## Claims
+
+*Not assessed this round.*
+
 ## Must fix
 
 - **[M1]** `src/cli.py:4` — `--timeout` is compared before it is validated, so a negative timeout is accepted.

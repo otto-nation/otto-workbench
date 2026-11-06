@@ -22,6 +22,7 @@ from review.record import Disposition, load_record
 from review.store import StoredReview
 from review.types import ReviewMeta
 from review.record import FocusSource
+from review_claims_support import CLAIM_DOC
 from review_focus_support import DERIVED_FOCUS, user_area
 from review_prompt_support import _make_job as _prompt_job, _make_preflight
 from review_record_support import finding, record
@@ -496,7 +497,7 @@ def test_the_single_agent_derives_when_nothing_is_derived(tmp_path, monkeypatch)
     def _agent(inv, *_args, **_kwargs) -> int:
         seen["prompt"] = inv.prompt
         Path(inv.output_path).write_text(json.dumps({
-            "summary": "Looks fine.", "focus": DERIVED_FOCUS,
+            "summary": "Looks fine.", "focus": DERIVED_FOCUS, "claims": [],
         }))
         Path(job.session_log).write_text(_result("success") + "\n")
         return 0
@@ -508,6 +509,26 @@ def test_the_single_agent_derives_when_nothing_is_derived(tmp_path, monkeypatch)
     assert rec.focus[0].title == "Retry"
     assert rec.focus[0].source is FocusSource.DERIVED
     assert "## Focus" in Path(job.review_file).read_text()
+
+
+def test_the_single_agent_records_claims(tmp_path, monkeypatch):
+    job = _prompt_job(_make_preflight(prior_head_sha=""))
+    job.review_file = str(tmp_path / "review.md")
+    job.session_log = str(tmp_path / "session.jsonl")
+    job.wt_path = str(tmp_path)
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(json.dumps({
+            "summary": "Looks fine.", "focus": DERIVED_FOCUS, "claims": [CLAIM_DOC],
+        }))
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    rec = load_record(tmp_path)
+    assert rec.claims is not None and rec.claims[0].id == "C1"
+    assert len(rec.claims) == 1
 
 
 def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):

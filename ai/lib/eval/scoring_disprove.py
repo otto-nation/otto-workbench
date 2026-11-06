@@ -98,7 +98,7 @@ def parse_findings(manifest: dict) -> list[CaseFinding]:
 def build_prompt(findings: list[CaseFinding], output_path: str, max_turns: int) -> str:
     """The production disprove prompt over *findings*."""
     review = render_body(
-        ReviewRecord(findings=tuple(f.record() for f in findings)), evidence=True,
+        ReviewRecord(findings=tuple(f.record() for f in findings), claims=()), evidence=True,
     )
     block = agent.templates.build_output_block(output_path)
     return agent.templates.render(

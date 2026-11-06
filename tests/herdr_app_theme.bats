@@ -182,7 +182,9 @@ _run() {
       ["canvas", "chrome", "surface", "popover", "raised", "hover", "selected", "border",
        "input", "foreground", "muted", "dim", "accent", "accent_foreground", "solid",
        "solid_foreground", "ring", "working", "blocked", "done", "idle", "unknown"]
-      | map(. as $k | $c[$k] // "" | test("^#[0-9a-fA-F]{6}$")) | all
+      | . as $want
+      | (($c | keys) == ($want | sort)) and
+        (map(. as $k | $c[$k] // "" | test("^#[0-9a-fA-F]{6}$")) | all)
     ' --argjson c "$(jq '.colors' "$file")" -n > /dev/null
   done
 }

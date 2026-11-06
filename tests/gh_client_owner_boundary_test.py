@@ -34,6 +34,7 @@ from conftest import remote_repo
 @pytest.fixture(autouse=True)
 def _no_inherited_override(monkeypatch):
     monkeypatch.delenv(gh.owners.ALLOW_UPSTREAM_ENV, raising=False)
+    monkeypatch.delenv(gh.owners.ALLOW_CROSS_REF_ENV, raising=False)
     monkeypatch.delenv("GH_HOST", raising=False)
     monkeypatch.delenv("GH_REPO", raising=False)
 
@@ -103,6 +104,45 @@ def test_the_users_override_lets_an_upstream_write_through(stub_gh, github_owner
     err = capsys.readouterr().err
     assert "stranger" in err
     assert f"{gh.owners.ALLOW_UPSTREAM_ENV}=1" in err
+
+
+def test_a_body_referencing_another_group_never_reaches_gh(
+        stub_gh, github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo ok")
+    own = remote_repo(tmp_path / "own", "git@github.com:otto-nation/svc.git")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.run(
+            "issue", "comment", "1", "--body", "see me/lib#12", cwd=own)
+    assert "me/lib#12" in str(exc.value)
+    assert exc.value.verdict.references
+    assert not calls.exists()
+
+
+def test_the_cross_ref_override_lets_a_content_refusal_through(
+        stub_gh, github_owners, tmp_path, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo ok")
+    own = remote_repo(tmp_path / "own", "git@github.com:otto-nation/svc.git")
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    assert gh.client.run(
+        "issue", "comment", "1", "--body", "see me/lib#12", cwd=own).ok
+    assert calls.exists()
+    err = capsys.readouterr().err
+    assert "me/lib#12" in err
+    assert f"{gh.owners.ALLOW_CROSS_REF_ENV}=1" in err
+
+
+def test_the_cross_ref_override_does_not_lift_an_upstream_target(
+        stub_gh, github_owners, monkeypatch):
+    github_owners({"work": ["otto-nation"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.api("repos/stranger/lib/issues", method="POST", input_text="{}")
+    assert "stranger" in str(exc.value)
+    assert not exc.value.verdict.references
+    assert not calls.exists()
 
 
 def test_an_entry_point_reports_a_refusal_as_exit_one(capsys):

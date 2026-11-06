@@ -424,3 +424,15 @@ def test_a_pr_url_is_an_explicit_workbench_target(tmp_path):
         ["pr", "comments", "--pr", "https://github.com/acme/widget/pull/9"], tmp_path)
     assert resolution.ok
     assert resolution.target.owners == (_owner("acme"),)
+
+
+def test_resolve_cwd_reads_the_checkout_remotes(tmp_path):
+    repo = remote_repo(tmp_path / "r", "git@github.com:acme/widget.git")
+    resolution = gh.owner_targets.resolve_cwd(repo, KNOWN)
+    assert resolution.ok
+    assert resolution.target.owners == (_owner("acme"),)
+
+
+def test_resolve_cwd_fails_outside_a_repo(tmp_path):
+    resolution = gh.owner_targets.resolve_cwd(tmp_path, KNOWN)
+    assert not resolution.ok

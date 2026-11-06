@@ -53,6 +53,7 @@ from pathlib import Path
 
 import config.github_owners
 import config.workbench_config
+import gh.owner_content
 import gh.owner_references
 import gh.owner_targets
 import gh.write_shapes
@@ -229,8 +230,10 @@ def _cross_ref_reason(
     named = ", ".join(
         f"{ref.text} ({owner_map.classify(ref.owner).name})" for ref in refs)
     where = f"the {target_group} group" if target_group else "an unknown/upstream target"
+    copula = (
+        "is a cross-group reference" if len(refs) == 1 else "are cross-group references")
     return (
-        f"{named} is a cross-group reference in text for {where} — "
+        f"{named} {copula} in text for {where} — "
         f"general.md § Cross-Group References. Reword to drop the reference, "
         f"or ask the user to publish it, who may set {ALLOW_CROSS_REF_ENV}=1")
 
@@ -324,7 +327,9 @@ def check_command(command: str, cwd: str) -> Verdict:
         verdict = check_target(resolution.target, loaded)
         if not verdict.ok:
             return verdict
-    return verdict
+    content = check_content(
+        gh.owner_content.command_text(command, cwd), verdict.group, loaded)
+    return content if not content.ok else verdict
 
 
 def check_gh_call(args: Sequence[str], *, cwd: str | Path | None = None,
@@ -339,4 +344,32 @@ def check_gh_call(args: Sequence[str], *, cwd: str | Path | None = None,
         args, cwd=str(cwd or os.getcwd()), target_repo=target_repo, known_hosts=loaded.hosts())
     if not resolution.ok:
         return Verdict.refuse(resolution.reason)
-    return check_target(replace(resolution.target, choose=CLIENT_CHOOSE), loaded)
+    verdict = check_target(replace(resolution.target, choose=CLIENT_CHOOSE), loaded)
+    if not verdict.ok:
+        return verdict
+    content = check_content(
+        gh.owner_content.argv_text(args, input_text, cwd or os.getcwd()),
+        verdict.group, loaded)
+    return content if not content.ok else verdict
+
+
+def check_text(text: str, cwd: str | Path) -> Verdict:
+    """Whether published *text* may go out from the checkout at *cwd*.
+
+    Unconfigured ``github.owners`` allows: nothing classifies, so nothing is
+    a reference. A config error refuses. An unresolvable cwd is an unknown
+    group, which refuses any grouped reference.
+    """
+    try:
+        owner_map = OwnerMap.load()
+    except config.workbench_config.ConfigError as exc:
+        return Verdict.refuse(str(exc))
+    if not owner_map.configured:
+        return Verdict.allow()
+    resolution = gh.owner_targets.resolve_cwd(cwd, owner_map.hosts())
+    group = ""
+    if resolution.ok:
+        target = check_target(resolution.target, owner_map)
+        if target.ok:
+            group = target.group
+    return check_content(text, group, owner_map)

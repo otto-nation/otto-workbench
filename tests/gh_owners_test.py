@@ -543,6 +543,24 @@ def test_check_content_refuses_another_group(github_owners):
     assert "general.md § Cross-Group References" in verdict.reason
     assert gh.owners.ALLOW_CROSS_REF_ENV in verdict.reason
     assert verdict.references and verdict.references[0].text == "me/lib#12"
+    assert "is a cross-group reference" in verdict.reason
+
+
+def test_check_content_references_are_only_the_offending_ones(github_owners):
+    github_owners({"work": ["acme"], "personal": ["me"]})
+    owners = gh.owners.OwnerMap.load()
+    verdict = gh.owners.check_content("see acme/lib#12 and me/lib#9", "work", owners)
+    assert not verdict.ok
+    assert tuple(ref.text for ref in verdict.references) == ("me/lib#9",)
+
+
+def test_several_cross_refs_use_plural_grammar(github_owners):
+    github_owners({"work": ["acme"], "personal": ["me"]})
+    owners = gh.owners.OwnerMap.load()
+    verdict = gh.owners.check_content("see me/a#1 and me/b#2", "work", owners)
+    assert not verdict.ok
+    assert "are cross-group references" in verdict.reason
+    assert "is a cross-group reference" not in verdict.reason
 
 
 def test_check_content_allows_an_upstream_reference(github_owners):
@@ -586,3 +604,61 @@ def test_the_cross_ref_override_is_exactly_one(monkeypatch):
         assert not gh.owners.cross_ref_allowed_by_user()
     monkeypatch.delenv(gh.owners.ALLOW_CROSS_REF_ENV)
     assert not gh.owners.cross_ref_allowed_by_user()
+
+
+def test_check_command_refuses_a_body_file_in_another_group(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    body = tmp_path / "body.md"
+    body.write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        f"gh issue comment 1 --body-file {body}", str(repo))
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+    assert verdict.references
+
+
+def test_check_gh_call_refuses_a_body_in_another_group(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    verdict = gh.owners.check_gh_call(
+        ("issue", "comment", "1", "--body", "see me/lib#12"), cwd=repo)
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+    assert verdict.references
+
+
+def test_check_text_allows_own_group(github_owners, tmp_path):
+    github_owners({"work": ["acme"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:acme/svc.git")
+    assert gh.owners.check_text("see acme/lib#1", str(repo)).ok
+
+
+def test_check_text_refuses_another_group(github_owners, tmp_path):
+    github_owners({"work": ["acme"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:acme/svc.git")
+    verdict = gh.owners.check_text("see me/lib#1", str(repo))
+    assert not verdict.ok and "me/lib#1" in verdict.reason
+    assert verdict.references
+
+
+def test_check_text_unresolvable_cwd_refuses_a_grouped_reference(github_owners, tmp_path):
+    github_owners({"work": ["acme"]})
+    verdict = gh.owners.check_text("see acme/lib#1", str(tmp_path))
+    assert not verdict.ok and "acme/lib#1" in verdict.reason
+    assert "unknown/upstream" in verdict.reason
+
+
+def test_check_text_allows_text_with_no_references(github_owners, tmp_path):
+    github_owners({"work": ["acme"]})
+    assert gh.owners.check_text("no refs here", str(tmp_path)).ok
+    repo = remote_repo(tmp_path / "r", "git@github.com:acme/svc.git")
+    assert gh.owners.check_text("no refs here", str(repo)).ok
+
+
+def test_check_text_unconfigured_allows(tmp_path):
+    assert gh.owners.check_text("see acme/lib#1", str(tmp_path)).ok
+
+
+def test_check_text_config_error_refuses(github_owners, tmp_path):
+    github_owners({"work": ["acme"], "personal": ["acme"]})
+    verdict = gh.owners.check_text("hello", str(tmp_path))
+    assert not verdict.ok and "acme" in verdict.reason

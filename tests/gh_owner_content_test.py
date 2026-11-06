@@ -1,0 +1,114 @@
+"""gh.owner_content: the published text of a write, body files included."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
+
+import gh.owner_content
+
+
+def test_command_text_includes_a_body_file(tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("see me/lib#12\n")
+    command = f"gh issue comment 1 --body-file {body}"
+    text = gh.owner_content.command_text(command, tmp_path)
+    assert command in text
+    assert "see me/lib#12" in text
+
+
+def test_command_text_includes_equals_and_field_and_input_files(tmp_path):
+    for name, contents in {
+        "notes.md": "BODY_FILE_EQ",
+        "query.graphql": "FIELD_FILE",
+        "payload.json": "INPUT_FILE",
+        "desc.md": "DESC_FILE",
+    }.items():
+        (tmp_path / name).write_text(contents)
+    command = (
+        "gh issue comment 1 --body-file=notes.md; "
+        "gh api graphql -F query=@query.graphql; "
+        "gh api --input payload.json graphql; "
+        "gh repo create x --description-file desc.md"
+    )
+    text = gh.owner_content.command_text(command, tmp_path)
+    assert "BODY_FILE_EQ" in text
+    assert "FIELD_FILE" in text
+    assert "INPUT_FILE" in text
+    assert "DESC_FILE" in text
+
+
+def test_command_text_does_not_read_a_file_over_the_scan_bound(tmp_path):
+    huge = tmp_path / "huge.md"
+    huge.write_text("UNIQUE_OVERSIZE" + "a" * gh.owner_content.MAX_SCAN_BYTES)
+    command = "gh issue comment 1 --body-file huge.md"
+    text = gh.owner_content.command_text(command, tmp_path)
+    assert "UNIQUE_OVERSIZE" not in text
+
+
+def test_command_text_reads_a_file_at_the_scan_bound(tmp_path):
+    marker = "UNIQUE_AT_BOUND"
+    payload = marker + "b" * (gh.owner_content.MAX_SCAN_BYTES - len(marker))
+    (tmp_path / "exact.md").write_text(payload)
+    text = gh.owner_content.command_text(
+        "gh issue comment 1 --body-file exact.md", tmp_path)
+    assert marker in text
+
+
+def test_command_text_skips_missing_and_stdin(tmp_path):
+    command = "gh issue comment 1 --body-file missing.md --body-file -"
+    text = gh.owner_content.command_text(command, tmp_path)
+    assert text == command
+
+
+def test_command_text_resolves_a_relative_path_against_cwd(tmp_path):
+    (tmp_path / "n.md").write_text("RELATIVE_HIT")
+    other = tmp_path / "other"
+    other.mkdir()
+    command = "gh issue comment 1 --body-file n.md"
+    assert "RELATIVE_HIT" in gh.owner_content.command_text(command, tmp_path)
+    assert "RELATIVE_HIT" not in gh.owner_content.command_text(command, other)
+
+
+def test_command_text_does_not_read_a_non_write_statements_file(tmp_path):
+    (tmp_path / "read.md").write_text("READ_ONLY_MARKER")
+    (tmp_path / "write.md").write_text("WRITE_MARKER")
+    command = (
+        "gh pr view 1 --body-file read.md; "
+        "gh issue comment 1 --body-file write.md"
+    )
+    text = gh.owner_content.command_text(command, tmp_path)
+    assert "READ_ONLY_MARKER" not in text
+    assert "WRITE_MARKER" in text
+
+
+def test_command_text_returns_an_unparseable_command_unchanged(tmp_path):
+    command = "gh issue create --title 'x"
+    assert gh.owner_content.command_text(command, tmp_path) == command
+
+
+def test_argv_text_joins_args_input_and_body_file(tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("FROM_FILE")
+    text = gh.owner_content.argv_text(
+        ("issue", "comment", "1", "--body-file", str(body)),
+        "FROM_INPUT",
+        tmp_path,
+    )
+    assert "issue comment 1" in text
+    assert "FROM_INPUT" in text
+    assert "FROM_FILE" in text
+
+
+def test_argv_text_omits_input_when_none(tmp_path):
+    text = gh.owner_content.argv_text(("issue", "comment", "1", "-b", "x"), None, tmp_path)
+    assert text == "issue comment 1 -b x"
+
+
+def test_argv_text_does_not_scan_stdin_dash(tmp_path):
+    text = gh.owner_content.argv_text(
+        ("pr", "create", "--body-file", "-"), "INLINE", tmp_path)
+    assert "INLINE" in text
+    assert text.count("INLINE") == 1

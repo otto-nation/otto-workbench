@@ -26,10 +26,13 @@ that owns it.
 The owner boundary *is* here, for the opposite reason: it is not a choice any
 call site gets to make. `run` refuses a GitHub write whose target is not one of
 our owners (`gh.owners`) before gh starts, by raising `gh.owners.OwnerBoundaryError`,
-so a write site added tomorrow cannot forget it. Reads are not checked and read
-no config. A GraphQL write names no repository, so `graphql` takes a
-`target_repo` hint and falls back to the cwd's remotes. The user's own
-`WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream write through, with a warning.
+so a write site added tomorrow cannot forget it. Published text is checked the
+same way: a cross-group reference in a body is refused before gh starts. Reads
+are not checked and read no config. A GraphQL write names no repository, so
+`graphql` takes a `target_repo` hint and falls back to the cwd's remotes. The
+user's own `WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream-target write through,
+with a warning. `WORKBENCH_ALLOW_CROSS_REF=1` lets a content refusal through
+the same way; it does not lift an upstream target.
 
 Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
@@ -306,6 +309,12 @@ def _check_owner_boundary(args: tuple[str, ...], cwd: str | Path | None,
     verdict = gh.owners.check_gh_call(args, cwd=cwd, input_text=input_text, target_repo=target_repo)
     if verdict.ok:
         return
+    if verdict.references:
+        if gh.owners.cross_ref_allowed_by_user():
+            core.log.warn(f"{verdict.reason} — publishing anyway because "
+                          f"{gh.owners.ALLOW_CROSS_REF_ENV}=1")
+            return
+        raise gh.owners.OwnerBoundaryError(verdict)
     if gh.owners.upstream_allowed_by_user():
         core.log.warn(f"{verdict.reason} — publishing anyway because "
                       f"{gh.owners.ALLOW_UPSTREAM_ENV}=1")

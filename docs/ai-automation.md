@@ -584,14 +584,10 @@ Three things follow, and the first two were bugs —
 `needs_human` thread is the case that took the most operator judgment, so
 omitting it is the worst row to lose. It renders as open, with its reason, in
 every summary a round posts — an open question a reader has to walk the comment
-chain to find is one they will not find. `--finish` publishes those rows only
-once each handed-back thread has an answer on GitHub (a free-form reply, a
-`--settle`, or `--finish --post --track <id>` for a `needs_human` thread);
-until then it refuses the summary, leaves closeout owed, and names each thread.
-If the operator settled it outside the tool, `--finish` reconciles the snapshot
-against GitHub first and grades what it finds: a reply of ours naming the
-verdict credits a fix, a bare resolution records `settled_elsewhere` — no fixed
-tally, no commit, nothing owed.
+chain to find is one they will not find. If the operator settled it outside the
+tool, `--finish` reconciles the snapshot against GitHub first and grades what
+it finds: a reply of ours naming the verdict credits a fix, a bare resolution
+records `settled_elsewhere` — no fixed tally, no commit, nothing owed.
 
 **A decomposed comment item reconciles through the comment it came from.** An
 item split out of a top-level comment has a synthetic id and no review thread,
@@ -675,10 +671,8 @@ the rounds it does not restate.
 so `pr comments --reply <reviewId | rb-<reviewId> | rb-<reviewId>-<n>>
 --body-file F --post` publishes one marked block per review under
 `### Replies to review comments`. Without `--post` nothing is stored and the
-draft is printed (no body if a push is still pending). The same `--finish` gate
-applies: an unanswered handed-back thread refuses the summary, so `--reply`
-exits 1 and posts nothing until those threads are answered. A block is written
-when no summary holds the review's block, re-rendered on an in-place edit, and
+draft is printed (no body if a push is still pending). A block is written when
+no summary holds the review's block, re-rendered on an in-place edit, and
 restated on a fresh comment only when the block changed; unlike a row, there
 is no activity test. A hand-edited block is kept with a warning unless `--reply`
 for that review replaces it. A dismissal reason (operator, fix pass or triage)

@@ -2,6 +2,11 @@
 it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
 what `review.ingest` accepts are one schema. A test holds the notes to the
 fields.
+
+`output_format` is that rendering. `CARRY_FIELDS` (sid, declined,
+prior_findings) are hidden on a first-round prompt. `DERIVE_FIELDS` (title,
+rationale, paths on a FocusReport) are shown only when the Focus section asks
+the writer to add areas.
 """
 
 # doc-group: findings

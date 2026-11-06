@@ -862,12 +862,13 @@ budgets retries, not bytes.
 
 ### review/claims.py
 
-The claims ledger: the check, the fingerprint and the record entries.
+The claims ledger: the check, the fingerprint, the record entries, and
+the should-fix findings derived from contradicted or unsupported claims.
 
 This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
-into record entries after the check, and the degraded-check warning.
-Renderers take claims off the record and never import it.
+into record entries after the check, the degraded-check warning, and
+`settle`. Renderers take claims off the record and never import it.
 
 The record is tri-state. `None` is not assessed — a writer that did not run, a
 check that degraded, or a legacy `review.json`. `()` is assessed with nothing
@@ -888,14 +889,12 @@ fails `problems()` or schema never runs the claims check, so the repair prompt
 does not mention claims and the second load degrades without that turn having
 named them.
 
-`settle` verifies claims, derives findings from the ones that remain
-contradicted or unsupported, appends them, and links each source claim to
-its derived finding. A linked claim derives nothing, so settle is
-idempotent and a no-op carried round never derives twice. A link that
-names no visible finding is treated as no link, so that claim derives.
-It runs at both writer sites before disprove, so the record disprove
-reads already holds those findings. Disprove clears the link when it
-falsifies the finding.
+`settle` verifies claims, then derives, then appends, then links each source
+claim by position. A dangling link (names no visible finding) is treated as
+no link, so that claim derives. A linked claim derives nothing, so settle is
+idempotent and a no-op carried round never derives twice. It runs at both
+writer sites before disprove, so the record disprove reads already holds
+those findings. Disprove clears the link when it falsifies the finding.
 Verification uses the same evidence matcher findings use: a supported or
 contradicted claim whose snippet is not in its file becomes unverifiable,
 with a note, and derives nothing.
@@ -907,6 +906,13 @@ collapsed claim text under `Claim contradicted:` or `Claim unsupported:`,
 the evidence prose, and `Source: description` or `Source: ticket`. The last
 line is always that `Source:` line so a derived body never ends in a
 non-defect phrase (D11).
+
+A prior round's derived findings (`origin` other than writer) are never
+carried, never shown in the prior prompt, and never accounted for. The
+writer re-judges the claims and settle re-derives. A true no-op round
+carries them with their claims. An open prior derived finding stops a round
+being treated as clean or settled, so the writer re-judges
+(`reconcile.open_derived_findings`, `steps._writer_must_rejudge`).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,
@@ -1596,6 +1602,11 @@ The prompt shows the agent `example()` as `core.serde.to_dict` writes
 it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
 what `review.ingest` accepts are one schema. A test holds the notes to the
 fields.
+
+`output_format` is that rendering. `CARRY_FIELDS` (sid, declined,
+prior_findings) are hidden on a first-round prompt. `DERIVE_FIELDS` (title,
+rationale, paths on a FocusReport) are shown only when the Focus section asks
+the writer to add areas.
 
 ### review/artifacts.py
 

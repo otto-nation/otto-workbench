@@ -231,6 +231,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
             job.focus, outcome.artifact.focus, [f["path"] for f in job.pr.files]),
         claims=review.claims.claims_of(job, outcome),
     )
+    record = review.claims.settle(job, record)
     if _is_incremental(job):
         record = drop_out_of_delta_nits(record, job.preflight.delta_files, prior_ids(job)).record
     if _should_disprove(job, disprove):

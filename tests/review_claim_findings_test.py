@@ -10,9 +10,13 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import review.claims
+import review.verify
 from review.claim_types import ClaimSource, ClaimVerdict
+from review.render import render_body
 from review.types import FindingOrigin
 from review_claims_support import claim
+from review_convergence_support import review_job
+from review_record_support import finding, record
 
 
 @pytest.mark.parametrize(
@@ -93,3 +97,112 @@ def test_checkbox_follows_the_mode():
     claims = (claim(verdict=ClaimVerdict.CONTRADICTED),)
     assert review.claims.derived_findings(claims, checkbox=True)[0].checkbox is True
     assert review.claims.derived_findings(claims, checkbox=False)[0].checkbox is False
+
+
+def _settle_job(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    return review_job(tmp_path, tmp_path / "review", files=("a.py",))
+
+
+def test_a_contradicted_claim_derives_a_should_fix(tmp_path):
+    rec = record(
+        finding("S1", "writer"),
+        claims=(
+            claim(id="C1", verdict=ClaimVerdict.CONTRADICTED),
+            claim(id="C2"),
+        ),
+    )
+    out = review.claims.settle(_settle_job(tmp_path), rec)
+    derived = [f for f in out.findings if f.origin is FindingOrigin.CLAIM]
+    assert len(derived) == 1
+    assert derived[0].id == "S2"
+    assert derived[0].severity == "S"
+
+
+def test_a_claim_whose_code_does_not_verify_derives_nothing(tmp_path):
+    rec = record(claims=(
+        claim(id="C1", verdict=ClaimVerdict.CONTRADICTED, snippet="nope()"),
+    ))
+    out = review.claims.settle(_settle_job(tmp_path), rec)
+    assert out.claims[0].verdict is ClaimVerdict.UNVERIFIABLE
+    assert "cited code not found" in out.claims[0].evidence
+    assert not any(f.origin is FindingOrigin.CLAIM for f in out.findings)
+
+
+def test_settle_links_each_claim_to_its_finding(tmp_path):
+    rec = record(claims=(
+        claim(id="C1", verdict=ClaimVerdict.CONTRADICTED),
+        claim(id="C2", verdict=ClaimVerdict.UNSUPPORTED),
+    ))
+    out = review.claims.settle(_settle_job(tmp_path), rec)
+    assert out.claims[0].finding == "S1"
+    assert out.claims[1].finding == "S2"
+    body = render_body(out)
+    c1 = body[body.index("[C1]"):body.index("[C2]")]
+    assert "Finding: **[S1]**" in c1
+
+
+def test_settle_is_idempotent(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.CONTRADICTED),))
+    job = _settle_job(tmp_path)
+    once = review.claims.settle(job, rec)
+    assert review.claims.settle(job, once) == once
+
+
+def test_unassessed_claims_settle_to_nothing(tmp_path):
+    rec = record(claims=None)
+    assert review.claims.settle(_settle_job(tmp_path), rec) is rec
+
+
+def test_a_claim_whose_snippet_is_missing_becomes_unverifiable(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    claims = (
+        claim(id="C1", snippet="delay *= 2"),
+        claim(id="C2", verdict=ClaimVerdict.CONTRADICTED, snippet="nope()"),
+        claim(id="C3", snippet="nope()"),
+    )
+    c1, c2, c3 = review.verify.verified_claims(claims, str(tmp_path), ["a.py"])
+    assert c1.verdict is ClaimVerdict.SUPPORTED
+    assert c2.verdict is ClaimVerdict.UNVERIFIABLE
+    assert c3.verdict is ClaimVerdict.UNVERIFIABLE
+    assert "cited code not found" in c2.evidence
+    assert "cited code not found" in c3.evidence
+
+
+def test_supported_claims_are_unverifiable_without_a_worktree():
+    got = review.verify.verified_claims((claim(),), "", [])
+    assert got[0].verdict is ClaimVerdict.UNVERIFIABLE
+    assert "no worktree" in got[0].evidence
+
+
+def test_a_blank_or_comment_only_snippet_is_unverifiable(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    claims = (
+        claim(id="C1", snippet="  \n"),
+        claim(id="C2", snippet="# not code"),
+    )
+    got = review.verify.verified_claims(claims, str(tmp_path), ["a.py"])
+    assert {c.verdict for c in got} == {ClaimVerdict.UNVERIFIABLE}
+
+
+def test_a_comment_only_snippet_reason_is_not_evidence_mismatch(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    got = review.verify.verified_claims(
+        (claim(id="C1", snippet="# not code"),), str(tmp_path), ["a.py"],
+    )
+    evidence = got[0].evidence
+    assert "snippet has no matchable lines" in evidence
+    assert "evidence mismatch" not in evidence
+
+
+def test_unsupported_and_unverifiable_claims_are_not_checked(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    claims = (
+        claim(id="C1", verdict=ClaimVerdict.UNSUPPORTED, snippet="nope()"),
+        claim(id="C2", verdict=ClaimVerdict.UNVERIFIABLE, snippet="also()"),
+    )
+    assert review.verify.verified_claims(claims, str(tmp_path), ["a.py"]) == claims
+
+
+def test_unassessed_claims_pass_through(tmp_path):
+    assert review.verify.verified_claims(None, str(tmp_path), ["a.py"]) is None

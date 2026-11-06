@@ -888,9 +888,21 @@ fails `problems()` or schema never runs the claims check, so the repair prompt
 does not mention claims and the second load degrades without that turn having
 named them.
 
-`verify.post_process_record` forces a supported or contradicted claim whose
-snippet is not in its file to unverifiable, with a note, using the same
-evidence matcher findings use.
+`settle` verifies claims, derives findings from the ones that remain
+contradicted or unsupported, appends them, and links each source claim to
+its derived finding. It runs at both writer sites before disprove, so the
+record disprove reads already holds those findings. Verification uses the
+same evidence matcher findings use: a supported or contradicted claim whose
+snippet is not in its file becomes unverifiable, with a note, and derives
+nothing.
+
+Derived findings are should-fix, never must-fix: a false statement about the
+change hits maintainability, reliability, or developer experience, not
+correctness, security, or data integrity (D1). The body is three lines: the
+collapsed claim text under `Claim contradicted:` or `Claim unsupported:`,
+the evidence prose, and `Source: description` or `Source: ticket`. The last
+line is always that `Source:` line so a derived body never ends in a
+non-defect phrase (D11).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,

@@ -24,9 +24,21 @@ fails `problems()` or schema never runs the claims check, so the repair prompt
 does not mention claims and the second load degrades without that turn having
 named them.
 
-`verify.post_process_record` forces a supported or contradicted claim whose
-snippet is not in its file to unverifiable, with a note, using the same
-evidence matcher findings use.
+`settle` verifies claims, derives findings from the ones that remain
+contradicted or unsupported, appends them, and links each source claim to
+its derived finding. It runs at both writer sites before disprove, so the
+record disprove reads already holds those findings. Verification uses the
+same evidence matcher findings use: a supported or contradicted claim whose
+snippet is not in its file becomes unverifiable, with a note, and derives
+nothing.
+
+Derived findings are should-fix, never must-fix: a false statement about the
+change hits maintainability, reliability, or developer experience, not
+correctness, security, or data integrity (D1). The body is three lines: the
+collapsed claim text under `Claim contradicted:` or `Claim unsupported:`,
+the evidence prose, and `Source: description` or `Source: ticket`. The last
+line is always that `Source:` line so a derived body never ends in a
+non-defect phrase (D11).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,
@@ -49,8 +61,11 @@ import json
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 
+from core.phases import Mode
 import review.budget
 import review.focus
+import review.merge
+import review.verify
 from review.artifacts import ReviewArtifact
 from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerdict
 from review.grammar import FindingIdentity, strip_line_suffix
@@ -273,3 +288,39 @@ def derived_findings(
             origin=FindingOrigin.CLAIM,
         ))
     return tuple(out)
+
+
+def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    """Verify claims, derive findings, append them, and link each source claim.
+
+    Runs at both writer sites before disprove. A claim whose cited code did
+    not verify becomes unverifiable and derives nothing.
+    """
+    if record.claims is None:
+        return record
+    claims = review.verify.verified_claims(
+        record.claims, job.wt_path, [f["path"] for f in job.pr.files],
+    )
+    record = replace(record, claims=claims)
+    derived = derived_findings(claims, checkbox=job.mode is Mode.SELF)
+    if not derived:
+        return record
+    record = review.merge.append_findings(record, derived)
+    by_sid = {
+        f.stable_id: f.id
+        for f in record.visible
+        if f.origin is FindingOrigin.CLAIM
+    }
+    return replace(record, claims=tuple(
+        _link_claim(c, by_sid) for c in record.claims
+    ))
+
+
+def _link_claim(claim: ClaimEntry, by_sid: dict[str, str]) -> ClaimEntry:
+    if claim.finding:
+        return claim
+    derived = derived_findings((claim,), checkbox=False)
+    if not derived:
+        return claim
+    fid = by_sid.get(derived[0].stable_id)
+    return replace(claim, finding=fid) if fid else claim

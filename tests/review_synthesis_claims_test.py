@@ -7,11 +7,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import cli.review_orchestrate  # noqa: F401
+import review.steps
 
 from review.budget import CLAIM_TURN_ALLOWANCE, MAX_CLAIMS
-from review.phases import RETRY_MAX_TURNS_GROUP, _synthesis_max_turns
+from review.phases import PhaseResult, RETRY_MAX_TURNS_GROUP, _synthesis_max_turns
 from review.record import load_record
-from review.steps import Merged
+from review.state import PipelineState
+from review.steps import DisproveRun, Merged, _run_disprove_gate
 from review.verify import PostProcessed
 from review_claims_support import CLAIM_DOC, claim
 from review_focus_support import DERIVED_FOCUS
@@ -20,6 +22,9 @@ from review_record_support import finding, record
 
 class TestSynthesisClaims:
     def _make_job(self, ro, tmp_path):
+        wt = tmp_path / "wt"
+        wt.mkdir(exist_ok=True)
+        (wt / "a.py").write_text("delay *= 2\n")
         return ro.ReviewJob(
             repo="org/repo", pr_number="42",
             pr=ro.PRMetadata(title="test PR", body="Retries now back off.",
@@ -27,7 +32,7 @@ class TestSynthesisClaims:
                              head_sha="abc123", additions=100, deletions=50,
                              changed_files=10, files=[{"path": "a.py"}]),
             ctx=ro.PRContext(),
-            wt_path=str(tmp_path / "wt"),
+            wt_path=str(wt),
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             mode=ro.Mode("pr"),
@@ -166,6 +171,36 @@ class TestSynthesisClaims:
         job.pr.body = ""
         ro._phase_synthesis(job, "", 3, one)
         assert seen["max_turns"] == 15
+
+    def test_derived_findings_count_toward_the_disprove_threshold(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        job = self._make_job(ro, tmp_path)
+        seen = []
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.output_path).write_text(json.dumps({
+                "summary": "s", "verdict": "Request changes",
+                "focus": DERIVED_FOCUS,
+                "findings": [
+                    {"id": "S1", "path": "a.py", "line": 1, "body": "one"},
+                    {"id": "S2", "path": "a.py", "line": 2, "body": "two"},
+                ],
+                "claims": [{**CLAIM_DOC, "verdict": "contradicted"}],
+            }))
+            Path(inv.session_log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
+        monkeypatch.setattr(
+            review.steps, "_phase_disprove",
+            lambda _j, rec: seen.append(rec) or DisproveRun(PhaseResult(), rec),
+        )
+        ro._phase_synthesis(job, "", 3, Merged(record()))
+        rec = load_record(tmp_path)
+        assert rec.open_counts["S"] == 3
+        _run_disprove_gate(job, PipelineState(head_sha="abc123"), None, 0.0, 20.0)
+        assert seen
 
 
 def test_synthesis_turns_stay_at_the_group_ceiling():

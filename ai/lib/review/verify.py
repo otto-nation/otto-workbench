@@ -311,13 +311,15 @@ def _verified_claim(claim: ClaimEntry, wt_path: str,
     )
 
 
-def _verified_claims(
+def verified_claims(
     claims: tuple[ClaimEntry, ...] | None, wt_path: str,
-    tracked: Callable[[], Collection[str]], changed: Collection[str],
+    changed: Collection[str], *, tracked: Callable[[], Collection[str]] | None = None,
 ) -> tuple[ClaimEntry, ...] | None:
     """None and () pass through; a supported/contradicted miss becomes unverifiable."""
     if not claims:
         return claims
+    if tracked is None:
+        tracked = functools.cache(lambda: _tracked_files(wt_path))
     return tuple(_verified_claim(c, wt_path, tracked, changed) for c in claims)
 
 
@@ -405,9 +407,6 @@ def post_process_record(
         if verification["dropped"]:
             core.log.info(f"Dropped {len(verification['dropped'])} unverified findings: "
                           f"{', '.join(verification['dropped'])}")
-    record = replace(record, claims=_verified_claims(
-        record.claims, wt_path, tracked, changed_files,
-    ))
     record = replace(record, findings=tuple(replace(f, sid="") for f in record.findings), ledger=())
     record = renumber_record(record)
     if verification:

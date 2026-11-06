@@ -127,6 +127,37 @@ def test_a_failing_trust_listing_ignores_nothing(mise, tmp_path):
     assert agent.machine_env.untrusted_dirs(str(tmp_path)) == ()
 
 
+def test_a_failed_trust_listing_is_not_cached(mise, monkeypatch, tmp_path):
+    proc = agent.machine_env.core.proc
+    replies = [
+        proc.CmdResult(returncode=proc.TIMEOUT_RETURNCODE, stderr="timed out"),
+        proc.CmdResult(stdout="/abs/pkg: untrusted\n"),
+    ]
+
+    def run(*_a, **_k):
+        return replies.pop(0)
+
+    monkeypatch.setattr(proc, "run", run)
+    cwd = str(tmp_path)
+    assert agent.machine_env.untrusted_dirs(cwd) == ()
+    assert agent.machine_env.untrusted_dirs(cwd) == ("/abs/pkg",)
+
+
+def test_a_successful_trust_listing_is_cached(mise, monkeypatch, tmp_path):
+    proc = agent.machine_env.core.proc
+    calls = []
+
+    def run(*_a, **_k):
+        calls.append(1)
+        return proc.CmdResult(stdout="/abs/pkg: untrusted\n")
+
+    monkeypatch.setattr(proc, "run", run)
+    cwd = str(tmp_path)
+    assert agent.machine_env.untrusted_dirs(cwd) == ("/abs/pkg",)
+    assert agent.machine_env.untrusted_dirs(cwd) == ("/abs/pkg",)
+    assert calls == [1]
+
+
 def test_base_env_appends_untrusted_dirs_after_the_operator_ignores(mise, monkeypatch, tmp_path):
     monkeypatch.delenv(MISE_DIFF_ENV, raising=False)
     monkeypatch.setenv(MISE_IGNORED_ENV, "/operator/own")

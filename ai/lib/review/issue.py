@@ -536,7 +536,7 @@ def _fetch_github(issue_id: str, repo: str, opts: dict | None) -> IssueContext:
     context = gh.client.out(
         "issue", "view", issue_id,
         "--repo", target,
-        "--json", "title,body,comments",
+        "--json", "title,body",
     )
     if context:
         core.log.ok(f"Found GitHub issue: #{issue_id}")

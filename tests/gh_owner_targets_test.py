@@ -379,21 +379,22 @@ def test_a_repo_verb_without_a_repository_falls_back_to_the_cwd(tmp_path):
 
 @pytest.mark.parametrize("repo_dir", [
     "$R",
-    "--repo-dir=$R",
     "${R}/x",
     "$(pwd)",
     "`pwd`",
     "~/x",
 ])
 def test_unexpanded_repo_dir_is_refused(tmp_path, repo_dir):
-    if repo_dir.startswith("--repo-dir="):
-        words = ["pr", "comments", repo_dir]
-    else:
-        words = ["pr", "comments", "--repo-dir", repo_dir]
-    resolution = _resolve(words, tmp_path)
+    resolution = _resolve(["pr", "comments", "--repo-dir", repo_dir], tmp_path)
     assert not resolution.ok
     assert "does not expand" in resolution.reason
     assert "not a git repository" not in resolution.reason
+
+
+def test_unexpanded_equals_form_repo_dir_is_refused(tmp_path):
+    resolution = _resolve(["pr", "comments", "--repo-dir=$R"], tmp_path)
+    assert not resolution.ok
+    assert "does not expand" in resolution.reason
 
 
 def test_a_directory_named_dollar_r_does_not_bypass_the_guard(tmp_path):
@@ -417,7 +418,7 @@ def test_workbench_refusal_names_pr_not_repo(tmp_path, monkeypatch):
     assert "--repo OWNER/REPO" not in moved.reason
 
 
-# passes-at-base: pins the remedy the message advertises
+# Pins the --pr remedy the refusal message advertises; it already worked before the message named it.
 def test_a_pr_url_is_an_explicit_workbench_target(tmp_path):
     resolution = _resolve(
         ["pr", "comments", "--pr", "https://github.com/acme/widget/pull/9"], tmp_path)

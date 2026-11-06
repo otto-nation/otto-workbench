@@ -119,7 +119,7 @@ _NOT_EXPANDED = (
     "the owner guard reads the command as text and does not expand shell"
     " variables, `$(…)`/backtick substitutions or `~`")
 _WORKBENCH_REMEDY = (
-    "pass --repo-dir with the checkout's literal path, or --pr with the PR's URL")
+    "pass --repo-dir with the checkout's literal path, or, where the command takes one, --pr with the PR's URL")
 
 
 class TargetSource(StrEnum):

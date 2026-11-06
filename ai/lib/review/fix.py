@@ -80,7 +80,7 @@ from review.static_analysis import (
 )
 from review.store import read_review, update_review
 from review.retry import _has_output
-from review.types import Finding, FixInterruption, ReviewJob, severity_by_key
+from review.types import Finding, FindingOrigin, FixInterruption, ReviewJob, severity_by_key
 from core.trail import Trail
 
 # The two outcomes that leave a finding open. A deferral is a finding the agent
@@ -445,6 +445,14 @@ def _describe_finding(finding: Finding) -> str:
     return finding.path
 
 
+def _item_label(finding: Finding) -> str:
+    section = severity_by_key(finding.severity).section
+    return (
+        section if finding.origin is not FindingOrigin.CLAIM
+        else f"{section} — from a PR claim"
+    )
+
+
 def _annotation(outcome: ItemOutcome) -> str:
     """How the review document spells this outcome, or "" when it spells nothing.
 
@@ -708,7 +716,7 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
         items = [
             fix.types.FixItem(
                 id=f.id, file=f.path, line=f.line or 0,
-                label=severity_by_key(f.severity).section, body=f.body,
+                label=_item_label(f), body=f.body,
             )
             for f in self.findings.values()
         ]

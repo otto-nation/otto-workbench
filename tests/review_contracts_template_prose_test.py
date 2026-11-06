@@ -357,3 +357,16 @@ _CLAIMS_SENTENCE = (
 )
 def test_claims_instruction_is_identical_across_copies(path):
     assert _CLAIMS_SENTENCE in path.read_text()
+
+
+@pytest.mark.parametrize("name", ["single-agent.md", "synthesis.md"])
+def test_pr_writer_templates_say_derived_claims_count_toward_the_verdict(name):
+    text = (TEMPLATE_DIR / name).read_text()
+    assert "filed by the harness as a should-fix" in text
+    assert "toward the verdict" in text
+
+
+def test_the_fix_template_explains_claim_items():
+    text = (TEMPLATE_DIR / "fix-findings.md").read_text()
+    assert "from a PR claim" in text
+    assert "needs a person" in text

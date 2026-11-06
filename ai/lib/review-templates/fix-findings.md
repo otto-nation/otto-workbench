@@ -82,6 +82,16 @@ A decline resting on scope, house convention, a documented `ceiling:` tradeoff,
 or the finding's own text needs none of this. It is specifically the
 "the code already does X" decline that has to rule out having done X yourself.
 
+### Findings from a PR claim
+
+A heading that ends `— from a PR claim` is a finding the harness derived from a
+contradicted or unsupported PR claim, not a reviewer's own defect report.
+
+- Correcting a wrong statement in the PR's own content (a docstring, a log
+  message, help text) or adding a missing test is a fix.
+- Changing behaviour to match the description is not; tick `needs a person`,
+  since the description is the author's call.
+
 ## Machine-checked items
 
 An item whose id begins `SA` is a static analysis violation, not a reviewer's

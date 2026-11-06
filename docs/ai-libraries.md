@@ -5930,15 +5930,16 @@ actually predicts the right answer is **what bounds the cost**:
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
 | `LAUNCH` | Starting a heavyweight local CLI — a Node program that loads its extensions before it answers (`pi --list-models`, `pi --version`) | Flat cost, but the cost is process start-up, which a loaded machine stretches several-fold; a breach still means a hang. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
+| `REFRESH` | A package or self-update that downloads and installs (`pi update`) | Bounded to catch a stall, not to size the work — git fetch and npm install can hang on a dead socket. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add`, `status` | A bound would be wrong, not merely large. |
 
-For the first four tiers the cost is the same whatever the repository holds, so
-a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
-and a timeout is a hang detector. For the last two the cost is whatever the input
-costs, and a breach is indistinguishable from "the repository is large" or "this
-repo's pre-commit hook runs a test suite". A fixed timeout there silently
-converts a large repo into a broken tool, which is why `UNBOUNDED` exists and is
-spelled out rather than omitted.
+For QUICK, LOCAL, NETWORK and LAUNCH the cost is the same whatever the
+repository holds, so a breach means something is genuinely wrong — a hang, a
+dead socket, a deadlock — and a timeout is a hang detector. TRANSFER and
+REFRESH cost whatever the payload costs, and the bound is generous so healthy
+work finishes; a breach is still a stall, not a large input. UNBOUNDED is the
+remaining case, where a fixed timeout silently converts a large repo into a
+broken tool, which is why it exists and is spelled out rather than omitted.
 
 `bin/local/validate-timeouts` holds the table's monopoly: it rejects a numeric
 literal and a bare `None` on any `timeout=` argument under `ai/`, and rejects a

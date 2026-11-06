@@ -95,7 +95,7 @@ contradicted or unsupported PR claim, not a reviewer's own defect report.
 ## Machine-checked items
 
 An item whose id begins `SA` is a static analysis violation, not a reviewer's
-finding. The section above does not apply to it: the measurement was taken from
+finding. `Check the finding before you fix it` does not apply to it: the measurement was taken from
 the code by a checker, so there is no premise to disprove and no reviewer who
 might have been looking at the wrong file.
 

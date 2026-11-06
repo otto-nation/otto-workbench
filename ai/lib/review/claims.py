@@ -52,11 +52,11 @@ from dataclasses import replace
 import review.budget
 import review.focus
 from review.artifacts import ReviewArtifact
-from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport
-from review.grammar import strip_line_suffix
+from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerdict
+from review.grammar import FindingIdentity, strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
-from review.record import ReviewRecord
-from review.types import ReviewJob
+from review.record import RecordFinding, ReviewRecord
+from review.types import FindingOrigin, ReviewJob
 
 CLAIM_KINDS = frozenset({
     IngestErrorKind.MISSING_CLAIMS,
@@ -66,6 +66,11 @@ CLAIM_KINDS = frozenset({
 })
 
 _SIZE_FIELDS = ("text", "evidence", "snippet")
+
+_DERIVED_HEAD = {
+    ClaimVerdict.CONTRADICTED: "Claim contradicted",
+    ClaimVerdict.UNSUPPORTED: "Claim unsupported",
+}
 
 
 def _error(kind: IngestErrorKind, at: str, detail: str) -> IngestError:
@@ -226,3 +231,45 @@ def check_warning(errors: Sequence[IngestError]) -> str:
         if any(e.kind in CLAIM_KINDS for e in errors) else ()
     )
     return review.focus.check_warning(errors, more=more)
+
+
+def derived_findings(
+    claims: tuple[ClaimEntry, ...] | None, *, checkbox: bool,
+) -> tuple[RecordFinding, ...]:
+    """Should-fix findings for contradicted or unsupported claims with no link.
+
+    A false statement about the change is should-fix: it hits maintainability,
+    reliability, or developer experience, not correctness, security, or data
+    integrity (D1). The code defect behind a false claim, if any, is a
+    separate writer finding. A claim the writer already covered (`finding`
+    set) derives nothing.
+
+    Each body is three lines: the collapsed claim text under `Claim
+    contradicted:` or `Claim unsupported:`, the evidence prose, and
+    `Source: description` or `Source: ticket`. The last line is always that
+    `Source:` line so a derived body never ends in a non-defect phrase (D11).
+    """
+    if not claims:
+        return ()
+    out: list[RecordFinding] = []
+    for claim in claims:
+        head = _DERIVED_HEAD.get(claim.verdict)
+        if head is None or claim.finding:
+            continue
+        text = " ".join(claim.text.split())
+        body = f"{head}: {text}\n{claim.evidence}\nSource: {claim.source.value}"
+        contradicted = claim.verdict is ClaimVerdict.CONTRADICTED
+        path = claim.path if contradicted else ""
+        evidence = claim.snippet if contradicted else ""
+        out.append(RecordFinding(
+            id=f"S{len(out) + 1}",
+            severity="S",
+            path=path,
+            line=None,
+            body=body,
+            evidence=evidence,
+            stable_id=FindingIdentity.of_fields(path, None, body).stable_id,
+            checkbox=checkbox,
+            origin=FindingOrigin.CLAIM,
+        ))
+    return tuple(out)

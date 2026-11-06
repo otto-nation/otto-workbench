@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Mode, Phase
-from review.artifacts import DisproveArtifact, GroupArtifact, ReviewArtifact, output_format
+from review.artifact_format import output_format
+from review.artifacts import DisproveArtifact, GroupArtifact, ReviewArtifact
 from review.prompt import build_common_sections
 import review.prompt_stats
 from review.store import StoredReview

@@ -30,7 +30,7 @@ from agent.templates import build_execution_claim_guard, build_output_block
 from agent.types import EFFORT_PRESETS
 from core.phases import Mode, Phase
 from pr.domains import ReviewVerdict
-from review.artifacts import output_format
+from review.artifact_format import output_format
 from review.budget import (
     FileFit, MIN_DIFF_BYTES,
     fit_files, fixed_preflight_bytes,

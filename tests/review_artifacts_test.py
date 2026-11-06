@@ -16,10 +16,13 @@ if LIB_DIR not in sys.path:
 
 from core.phases import Mode
 from core.strict import SchemaRejected, example_json, load_strict
+from review.artifact_format import (
+    EXAMPLE_LEAVES_EMPTY, FIELD_NOTES, _nested_dataclass, output_format,
+)
 from review.artifacts import (
-    EXAMPLE_LEAVES_EMPTY, FIELD_NOTES, AgentFinding, DisproveArtifact, GroupArtifact,
-    HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint, _nested_dataclass,
-    as_group_artifact, declinable_sids, output_format,
+    AgentFinding, DisproveArtifact, GroupArtifact,
+    HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint,
+    as_group_artifact, declinable_sids,
 )
 from review.budget import DERIVED_AREA_RESERVE_BYTES
 from review.ingest import IngestErrorKind

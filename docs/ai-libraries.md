@@ -1574,16 +1574,17 @@ files a review reports and the diff it sends come off one range.
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.
 
+### review/artifact_format.py
+
+The prompt shows the agent `example()` as `core.serde.to_dict` writes
+it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
+what `review.ingest` accepts are one schema.
+
 ### review/artifacts.py
 
 What a review agent writes: one JSON document per phase, each a frozen dataclass.
 
-Scout, holistic, group, single, synthesis and disprove each write one of the
-types here. The prompt shows the agent `example()` as `core.serde.to_dict` writes
-it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
-what `review.ingest` accepts are one schema. A test
-holds each example to the strict reader and to `problems()`, and holds the
-notes to the fields.
+The field guide and output format are `review.artifact_format`'s.
 
 The types are narrower than the record on purpose. `ReviewRecord` carries what
 the harness decides — dispositions, stable IDs, failures, static analysis,

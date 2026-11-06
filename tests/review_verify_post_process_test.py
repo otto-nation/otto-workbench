@@ -16,12 +16,14 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from review.claim_types import ClaimVerdict
 from review.document import SECTION_PRIOR_FINDINGS
 from review.record import LedgerLine, SeveritySection
 from review.render import render_body
 from review.types import PriorDisposition
 from review.verify import post_process_record
 
+from review_claims_support import claim
 from review_record_support import finding, record
 
 
@@ -309,3 +311,43 @@ class TestReconcileDroppedFindings:
         assert "Evidence verification removed 2 findings:" in result
         assert "> - Must fix — `deleted.py`: file not found" in result
         assert "> - Must fix — `also-deleted.py`: file not found" in result
+
+
+# ── claim evidence ──────────────────────────────────────────────────────────
+
+
+def test_a_claim_whose_snippet_is_missing_becomes_unverifiable(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    rec = record(
+        claims=(
+            claim(id="C1", snippet="delay *= 2"),
+            claim(
+                id="C2", verdict=ClaimVerdict.CONTRADICTED, snippet="nope()",
+            ),
+        ),
+    )
+    done = post_process_record(rec, str(tmp_path), ["a.py"])
+    c1, c2 = done.record.claims
+    assert c1.verdict is ClaimVerdict.SUPPORTED
+    assert c2.verdict is ClaimVerdict.UNVERIFIABLE
+    assert "cited code not found" in c2.evidence
+
+
+def test_unsupported_and_unverifiable_claims_are_not_checked(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    rec = record(
+        claims=(
+            claim(id="C1", verdict=ClaimVerdict.UNSUPPORTED, snippet="nope()"),
+            claim(
+                id="C2", verdict=ClaimVerdict.UNVERIFIABLE, snippet="also()",
+            ),
+        ),
+    )
+    done = post_process_record(rec, str(tmp_path), ["a.py"])
+    assert done.record.claims == rec.claims
+
+
+def test_unassessed_claims_pass_through(tmp_path):
+    rec = record(claims=None)
+    done = post_process_record(rec, str(tmp_path), ["a.py"])
+    assert done.record.claims is None

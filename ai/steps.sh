@@ -232,7 +232,7 @@ sync_ai() {
 
   # Gated on the app being installed, not on ai.tools: herdr-app runs without
   # the herdr TUI selection, so the per-tool loop below would miss it.
-  sync_herdr_app
+  if declare -f sync_herdr_app > /dev/null; then sync_herdr_app; fi
 
   while IFS= read -r _tool; do
     [[ -z "$_tool" ]] && continue

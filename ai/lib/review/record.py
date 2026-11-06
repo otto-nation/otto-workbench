@@ -31,6 +31,7 @@ from typing import get_args, get_origin, get_type_hints
 
 import core.log
 import core.serde
+from review.claim_types import ClaimEntry
 from review.paths import FILENAME_RECORD
 from review.types import SEVERITIES, Finding, FindingRef, PriorDisposition
 
@@ -249,6 +250,9 @@ class ReviewRecord:
     questions: tuple[Question, ...] = ()
     verified: tuple[VerifiedNote, ...] = ()
     focus: tuple[FocusArea, ...] = ()
+    # None: not assessed (no writer, a degraded check, or a legacy record).
+    # (): assessed with nothing checkable, or no claim source. entries: assessed.
+    claims: tuple[ClaimEntry, ...] | None = None
     # None: no File Triage section. (): the heading with nothing under it.
     triage: tuple[TriageEntry, ...] | None = None
     static_analysis: str = ""

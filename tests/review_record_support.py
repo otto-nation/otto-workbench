@@ -84,6 +84,7 @@ def finding(fid: str, body: str = "x", *, path: str = "a.py", line: int | None =
 def record(*findings, **fields):
     """A review record holding `findings`, and any other `ReviewRecord` field by keyword."""
     from review.record import ReviewRecord
+    fields.setdefault("claims", ())
     return ReviewRecord(findings=tuple(findings), **fields)
 
 

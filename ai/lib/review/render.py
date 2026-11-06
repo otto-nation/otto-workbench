@@ -7,10 +7,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from core.markdown import escape_cell
+from review.claim_types import ClaimEntry
 from review.document import (
-    SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS, SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewHeader, review_title,
+    SECTION_CLAIMS, SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS,
+    SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
+    SECTION_VERDICT, ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, location_ref, sid_marker
 from review.record import (
@@ -90,6 +91,35 @@ def focus_line(area: FocusArea) -> str:
     return "\n".join([head, *extra])
 
 
+def claim_line(c: ClaimEntry) -> str:
+    """One `## Claims` list item for review.md. The snippet is never rendered."""
+    head = f"- **[{c.id}] {c.verdict.value}** *({c.source.value})* — {_continued(c.text)}"
+    extra: list[str] = ["  " + _continued(c.evidence)]
+    if c.path:
+        extra.append(f"  Code: `{c.path}`")
+    if c.finding:
+        extra.append("  Finding: " + finding_tag(c.finding))
+    return "\n".join([head, *extra])
+
+
+def claims_body(claims: tuple[ClaimEntry, ...] | None) -> str:
+    """The Claims section body: unassessed prose, or one line per entry."""
+    if claims is None:
+        return "*Not assessed this round.*"
+    return "\n".join(claim_line(c) for c in claims)
+
+
+def claims_comment(claims: tuple[ClaimEntry, ...] | None) -> str:
+    """The GitHub-comment Claims lines: verdict, source, text; no C ids."""
+    if claims is None:
+        return "*Not assessed this round.*"
+    lines: list[str] = []
+    for c in claims:
+        lines.append(f"- **{c.verdict.value}** *({c.source.value})* — {_continued(c.text)}")
+        lines.append("  " + _continued(c.evidence))
+    return "\n".join(lines)
+
+
 def focus_comment(areas: Sequence[FocusArea]) -> str:
     """The GitHub-comment Focus lines: title, requested mark, coverage."""
     lines = []
@@ -135,6 +165,8 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSec
         sections.append(ProseSection(
             SECTION_FOCUS, "\n".join(focus_line(a) for a in record.focus),
         ))
+    if record.claims is None or record.claims:
+        sections.append(ProseSection(SECTION_CLAIMS, claims_body(record.claims)))
     sections += _severity_sections(record, sids, evidence)
     if record.ledger:
         sections.append(ProseSection(SECTION_PRIOR_FINDINGS, "\n".join(ledger_line(e) for e in record.ledger)))

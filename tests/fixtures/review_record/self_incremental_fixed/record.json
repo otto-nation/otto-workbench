@@ -71,6 +71,7 @@
   "questions": [],
   "verified": [],
   "focus": [],
+  "claims": [],
   "triage": null,
   "static_analysis": "All checks passed.",
   "failures": [],

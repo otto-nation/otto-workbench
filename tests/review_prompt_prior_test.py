@@ -22,6 +22,7 @@ from review.types import PriorDisposition, ReplyState, ReviewMeta
 from review.prompt_prior import (
     _annotate_with_thread_state, _build_prior_section, _in_group, _prior_text, _scoped,
 )
+from review_claims_support import claim
 from review_focus_support import user_area
 from review_record_support import finding, record
 
@@ -193,6 +194,13 @@ class TestBuildPriorSectionLedger:
 
 
 class TestPriorTextOmitsBookkeeping:
+    def test_the_prior_section_leaves_out_claims(self):
+        for claims in (None, (claim(),)):
+            rec = record(finding("M1", "bug"), summary="s", claims=claims)
+            result = _prior_text(_stored(rec=rec), None)
+            assert "## Claims" not in result
+            assert "**[M1]**" in result
+
     def test_the_prior_section_leaves_out_focus(self):
         rec = record(
             finding("M1", "bug"),

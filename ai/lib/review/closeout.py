@@ -7,7 +7,8 @@ answered — so by the time it returns, four separate things may be owed to a PR
 that looks, from the outside, finished. This is the phase that pays them.
 `--finish` is a second invocation on purpose — the discussion has to happen in
 between. Combining `--fix --finish` works and closes out that run's deferred
-set, but posts a summary nobody has replied to yet.
+set only once each handed-back thread has an answer on GitHub; `--finish`
+refuses the summary until then.
 
 Order is the whole design here, and it is not incidental. The push goes first,
 because every surface below cites a commit and a reviewer cannot follow a SHA
@@ -81,8 +82,9 @@ def finish_deferred_work(
 ) -> bool:
     """Close out what the fix pass held back: replies, tracking issue, summary.
 
-    False once a `--track` id naming no deferred thread has been reported; the
-    caller turns that into the exit status.
+    False once a `--track` id naming no deferred thread has been reported, or
+    the summary was refused because a handed-back thread still has no answer
+    on GitHub; the caller turns that into the exit status.
 
     A phase of its own rather than a tail of `--fix`, because the summary is
     withheld until the needs_human threads have been discussed — which by
@@ -132,11 +134,12 @@ def finish_deferred_work(
         return False
     review.deferred_issue.report_unfiled_deferrals(state, track)
     _log_draft_snapshot_items(state.fix.fix.items)
-    pr.summary_publish.render_deferred_summary(
+    render = pr.summary_publish.render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id, ctx.host,
+        answered_now=review.deferred_issue.filed_this_run(state, track),
     )
     pr.state.save_state(ctx.target_dir, state)
-    return True
+    return not render.refused
 
 
 def _log_draft_snapshot_items(items: list[ItemOutcome]) -> None:

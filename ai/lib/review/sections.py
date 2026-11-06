@@ -13,11 +13,12 @@ from typing import Literal
 
 from core.text import slugify
 from review.document import (
-    SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS, SECTION_SUMMARY, SECTION_VERDICT,
+    SECTION_CLAIMS, SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS,
+    SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
+    SECTION_VERDICT,
 )
 from review.record import ProseSection, ReviewRecord
-from review.render import failures_body, focus_comment
+from review.render import claims_comment, failures_body, focus_comment
 from review.types import SEVERITIES
 
 POSITION_BEFORE = "before_findings"
@@ -57,6 +58,8 @@ KNOWN_SECTIONS: list[SectionConfig] = [
                   heading=f"## {SECTION_SUMMARY}", trailing_separator=True),
     SectionConfig("focus", SECTION_FOCUS, POSITION_BEFORE,
                   heading=f"### {SECTION_FOCUS}", subsection_of="summary"),
+    SectionConfig("claims", SECTION_CLAIMS, POSITION_BEFORE,
+                  heading=f"### {SECTION_CLAIMS}", subsection_of="summary"),
     SectionConfig("verdict", SECTION_VERDICT, POSITION_BEFORE,
                   heading=f"### {SECTION_VERDICT}", strip_action=True, subsection_of="summary"),
     SectionConfig("static_analysis", SECTION_STATIC_ANALYSIS, POSITION_AFTER),
@@ -100,6 +103,9 @@ class ReviewSections:
             ProseSection(SECTION_SUMMARY, record.summary),
             ProseSection(
                 SECTION_FOCUS, focus_comment(record.focus) if record.focus else "",
+            ),
+            ProseSection(
+                SECTION_CLAIMS, claims_comment(record.claims) if record.claims != () else "",
             ),
             ProseSection(
                 SECTION_FAILURES,

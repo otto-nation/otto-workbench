@@ -39,9 +39,9 @@ being wrong is asymmetric — a needless hold costs one extra command, while a
 missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both. Combining them works
-and closes out that run's deferred set, but posts a summary nobody has replied
-to yet — the discussion is supposed to happen in between. `--finish` is a second
-invocation on purpose.
+and closes out that run's deferred set only once each handed-back thread has an
+answer on GitHub — `--finish` refuses the summary until then. The discussion is
+supposed to happen in between. `--finish` is a second invocation on purpose.
 
 `--fix` triages threads, applies mechanical fixes, and resolves the verified
 ones. It withholds the summary comment whenever threads need human input,
@@ -234,6 +234,40 @@ def spoken_since(comments: list[dict], my_login: str, stamp: str) -> bool:
     return any(
         (at := _instant(c.get(key))) is not None and at > since
         for c in theirs for key in ("createdAt", "lastEditedAt")
+    )
+
+
+def answered_since(comments: list[dict], my_login: str, stamp: str) -> bool:
+    """Whether we posted or edited a non-root comment on the thread after *stamp*.
+
+    Needs a non-empty *my_login*: an empty one cannot tell our comment from the
+    reviewer's, so the thread reads as unanswered.
+
+    The question a handed-back thread is published on: a NEEDS_HUMAN or DECLINED
+    outcome is the pass handing the thread to a person, and the summary may name
+    that outcome only once something of ours on the thread backs it. The root is
+    the reviewer's original comment, never our answer, so index 0 does not count
+    even when we authored it (self-review).
+
+    Both of a comment's stamps count, compared as instants, for the same reasons
+    `spoken_since` gives. An empty or unreadable *stamp* treats any non-root
+    comment of ours as an answer — there is no decision time to be after. An
+    empty login cannot tell our comment from the reviewer's, so the thread
+    reads as unanswered.
+    """
+    if not my_login:
+        return False
+    mine = my_login.lower()
+    since = _instant(stamp)
+    ours = [
+        c for c in comments[1:]
+        if ((c.get("author") or {}).get("login") or "").lower() == mine
+    ]
+    if since is None:
+        return bool(ours)
+    return any(
+        (at := _instant(c.get(key))) is not None and at > since
+        for c in ours for key in ("createdAt", "lastEditedAt")
     )
 
 

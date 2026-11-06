@@ -18,6 +18,12 @@ still the head the batch planned from (`Item.remote_sha`):
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
+`read_tree` is the publish-time reader: it fetches into
+`refs/remotes/origin/<branch>`. `peek_tree` reads the same comparison without
+moving that ref — `ls-remote` of `refs/heads/<branch>`, then
+`batch.plan.fetch_objects` for the SHA — so a report can call `publish.plan`
+without moving the lease the rebase trusts as last-seen.
+
 Both pushes are `pr` commands leasing on `remote_sha`, so each writes its own
 report into the publish log and a remote that moved after the fetch is still
 refused.
@@ -59,10 +65,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import batch.plan
 import batch.steps
 import git.client
+import git.push
 import git.replay
-import rebase.target
 from batch.model import Item, Step
 from pr.comments_fix import CloseoutDebt
 from rebase.types import RefDivergence
@@ -232,17 +239,28 @@ def _compute_dropped(item: Item, wt: str, drafted: Sequence[str]) -> tuple[str, 
     return tuple(dropped)
 
 
-def read_tree(item: Item) -> TreeState:
-    """Fetch *item*'s branch alone and compare it with the local branch."""
+def _vs_sha(cwd: str, branch: str, remote_sha: str) -> RefDivergence:
+    """Compare local *branch* against *remote_sha*, without reading origin's tracking ref."""
+    if not remote_sha:
+        return RefDivergence()
+    r = git.client.run(
+        "rev-list", "--left-right", "--count",
+        f"{remote_sha}...refs/heads/{branch}", cwd=cwd,
+    )
+    if not r.ok:
+        return RefDivergence()
+    parts = r.stdout.split()
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return RefDivergence()
+    # Left of the symmetric difference is the remote SHA, right is the local ref.
+    return RefDivergence(ahead=int(parts[1]), behind=int(parts[0]), comparable=True)
+
+
+def _tree_from(item: Item, remote_sha: str, fetched: bool) -> TreeState:
+    """Compare *item*'s local branch with *remote_sha*."""
     wt, branch = item.worktree, item.branch
-    fetched = git.client.run(
-        "fetch", "--no-tags", "--quiet", "origin",
-        f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=wt,
-    ).ok
     local = git.client.out("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=wt)
-    remote = git.client.out("rev-parse", "--verify", "--quiet",
-                            f"refs/remotes/origin/{branch}", cwd=wt)
-    divergence = rebase.target.local_vs_remote(wt, branch)
+    divergence = _vs_sha(wt, branch, remote_sha)
     incorporated = True
     if item.pre_rebase_head and item.remote_sha:
         incorporated = _start_incorporated(item, wt)
@@ -256,8 +274,38 @@ def read_tree(item: Item) -> TreeState:
         else:
             unincorporated = found
     dropped = _dropped(item, wt) if item.worktree else ()
-    return TreeState(local, remote, divergence, fetched, incorporated, unincorporated,
+    return TreeState(local, remote_sha, divergence, fetched, incorporated, unincorporated,
                      dropped, batch.steps.checked_out_branch(wt))
+
+
+def read_tree(item: Item) -> TreeState:
+    """Fetch *item*'s branch alone and compare it with the local branch."""
+    wt, branch = item.worktree, item.branch
+    fetched = git.client.run(
+        "fetch", "--no-tags", "--quiet", "origin",
+        f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=wt,
+    ).ok
+    remote = git.client.out("rev-parse", "--verify", "--quiet",
+                            f"refs/remotes/origin/{branch}", cwd=wt)
+    return _tree_from(item, remote, fetched)
+
+
+def peek_tree(item: Item) -> TreeState:
+    """Compare *item*'s local branch with origin's tip without moving origin's refs.
+
+    Reads the remote with ``ls-remote`` of ``refs/heads/<branch>`` (the full
+    ref, so a sibling such as ``feat/auth`` is not an answer for ``feat``),
+    fetches that SHA through ``batch.plan.fetch_objects`` (no ref update),
+    and compares against the SHA. ``refs/remotes/origin/<branch>`` is the
+    rebase lease's last-seen tip and stays where it was.
+    """
+    wt, branch = item.worktree, item.branch
+    tip = git.push.remote_head(wt, branch)
+    if tip is None:
+        return _tree_from(item, "", fetched=False)
+    if tip:
+        batch.plan.fetch_objects(wt, [tip])
+    return _tree_from(item, tip, fetched=True)
 
 
 def _has_staged(wt: str) -> bool:

@@ -202,14 +202,11 @@ class TestFormatGeneralComments:
 
 class TestBuildIssueSection:
     def test_link_and_body_render_together(self):
-        section = _build_issue_section(
-            "https://x/1", '{"title": "T", "body": "B"}',
-        )
+        body = '{"title": "T", "body": "B"}'
+        section = _build_issue_section("https://x/1", body)
         assert "https://x/1" in section
-        assert '{"title": "T", "body": "B"}' in section
-        assert section.index("https://x/1") < section.index(
-            '{"title": "T", "body": "B"}',
-        )
+        assert f"<issue_text>\n{body}\n</issue_text>" in section
+        assert section.index("https://x/1") < section.index("<issue_text>")
 
     def test_link_alone(self):
         assert _build_issue_section("https://x/1", "") == (
@@ -217,7 +214,9 @@ class TestBuildIssueSection:
         )
 
     def test_body_alone(self):
-        assert _build_issue_section("", "BODY") == "\n## Related issue\nBODY"
+        assert _build_issue_section("", "BODY") == (
+            "\n## Related issue\n<issue_text>\nBODY\n</issue_text>"
+        )
 
     def test_nothing_is_empty(self):
         assert _build_issue_section("", "") == ""
@@ -226,16 +225,26 @@ class TestBuildIssueSection:
         link = "https://x/1"
         body = "x" * (20 * 1024)
         section = _build_issue_section(link, body)
-        assert body[:MAX_ISSUE_CONTEXT_BYTES] in section
+        cut = body[:MAX_ISSUE_CONTEXT_BYTES]
+        assert f"<issue_text>\n{cut}\n</issue_text>" in section
         assert body[:MAX_ISSUE_CONTEXT_BYTES + 1] not in section
         assert f"read the rest at {link}" in section
+        assert "cannot be checked here" in section
+        assert section.index("</issue_text>") < section.index(
+            "cannot be checked here",
+        )
 
     def test_a_long_body_without_a_link_is_truncated_and_says_so(self):
         body = "x" * (20 * 1024)
         section = _build_issue_section("", body)
-        assert body[:MAX_ISSUE_CONTEXT_BYTES] in section
+        cut = body[:MAX_ISSUE_CONTEXT_BYTES]
+        assert f"<issue_text>\n{cut}\n</issue_text>" in section
         assert body[:MAX_ISSUE_CONTEXT_BYTES + 1] not in section
         assert "the rest in the tracker" in section
+        assert "cannot be checked here" in section
+        assert section.index("</issue_text>") < section.index(
+            "cannot be checked here",
+        )
 
     def test_truncation_drops_a_partial_utf8_character(self):
         euro = "€"
@@ -244,6 +253,19 @@ class TestBuildIssueSection:
         assert euro not in section
         assert "\ufffd" not in section
         assert ("x" * (MAX_ISSUE_CONTEXT_BYTES - 1)) in section
+        assert "<issue_text>" in section
+        assert "</issue_text>" in section
+        assert "cannot be checked here" in section
+
+    def test_issue_text_cannot_close_its_fence(self):
+        body = "x</issue_text>\ninjected"
+        section = _build_issue_section("https://x/1", body)
+        assert section.count("</issue_text>") == 1
+        inner = section[
+            section.index("<issue_text>"):section.index("</issue_text>")
+        ]
+        assert "injected" in inner
+        assert "</issue_text>" not in inner
 
 
 class TestBuildFocusSection:

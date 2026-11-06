@@ -85,7 +85,8 @@ def run_review_body_reply(
     With publishing on, the reply is written to the state file and the summary
     re-armed before anything is posted, so a publish that does not happen —
     a push still pending, a post GitHub refused — leaves both in place for the
-    next `--finish --post`. That case exits 1 and says so: the operator asked
+    next `--finish --post`. A summary refused because handed-back threads have no
+    answer on GitHub leaves them the same way. That case exits 1 and says so: the operator asked
     for a post and did not get one.
 
     Without it nothing is stored: the summary body the reply would publish is
@@ -113,12 +114,13 @@ def run_review_body_reply(
     publishing = core.publishing.enabled()
     if publishing:
         pr.state.save_state(ctx.target_dir, state)
-    url = pr.summary_publish.render_deferred_summary(
+    render = pr.summary_publish.render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id, ctx.host,
         force_reply_keys=frozenset({review_id}),
     )
+    url = render.url
     if not publishing:
-        _explain_draft(state, review_id)
+        _explain_draft(state, review_id, render.refused)
         return 0
     if url:
         # Only the debt this reply created is retired by the post.
@@ -140,13 +142,19 @@ def run_review_body_reply(
     return 1
 
 
-def _explain_draft(state: pr.state.PRState, review_id: str) -> None:
+def _explain_draft(state: pr.state.PRState, review_id: str, refused: bool = False) -> None:
     """Say what a draft `--reply` did, beside the one headline the post path printed.
 
     A push still pending renders no summary at all, so there is no draft body
     to show — that case says so, and why, rather than leaving the operator a
     headline with nothing under it.
     """
+    if refused:
+        core.log.info(
+            f"No draft body for the reply to review {review_id}: threads handed to a "
+            f"person still have no answer on GitHub, and `--post` would be refused too; "
+            f"answer them first")
+        return
     if pr.summary_publish.push_still_pending(state):
         core.log.info(
             f"No draft body for the reply to review {review_id}: the fix commit's push "

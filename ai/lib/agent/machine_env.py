@@ -126,9 +126,12 @@ def _restore_delta(base: frozenset[tuple[str, str]]) -> EnvDelta:
             f"{MISE_DIFF_ENV} says mise changed this process's environment, but mise is "
             "not on PATH to undo it",
         )
+    # The restore script starts several interpreters (bash, Python twice,
+    # `mise hook-env`). A loaded machine stretches that several-fold, and a
+    # timeout fails the whole agent call.
     r = core.proc.run(
         ["bash", "-c", _RESTORE_SCRIPT, "bash", sys.executable, _PRINT_ENV],
-        cwd=os.path.expanduser("~"), timeout=core.timeouts.LOCAL, env=dict(base),
+        cwd=os.path.expanduser("~"), timeout=core.timeouts.LAUNCH, env=dict(base),
     )
     if not r.ok:
         raise MachineEnvUnavailable(core.proc.failure_message(
@@ -150,15 +153,12 @@ def machine_env(base: Mapping[str, str]) -> dict[str, str]:
     return _restore_delta(frozenset(base.items())).apply(base)
 
 
-@functools.lru_cache(maxsize=64)
-def untrusted_dirs(cwd: str) -> tuple[str, ...]:
-    """The directories at or above *cwd* whose mise config is untrusted, absolute.
+class _UntrustedListingFailed(Exception):
+    """`mise trust --show` failed; raised so the empty fallback is not cached."""
 
-    Empty when mise is not installed. When ``mise trust --show`` fails the
-    failure is logged and the answer is empty: the agent then runs as it did
-    before this existed, and each refused command reports the untrusted file
-    itself, so nothing is hidden.
-    """
+
+def _read_untrusted_dirs(cwd: str) -> tuple[str, ...]:
+    """The untrusted dirs at or above *cwd*. Raises `_UntrustedListingFailed` on error."""
     if not shutil.which("mise"):
         return ()
     # ceiling: `mise trust --show` reports *cwd* and its parents only, so an
@@ -168,12 +168,35 @@ def untrusted_dirs(cwd: str) -> tuple[str, ...]:
     r = core.proc.run(["mise", "trust", "--show"], cwd=cwd, timeout=core.timeouts.LOCAL)
     if not r.ok:
         core.log.warn(core.proc.failure_message(f"list untrusted mise configs in {cwd}", r))
-        return ()
+        raise _UntrustedListingFailed
     return tuple(
         os.path.expanduser(line[: -len(_UNTRUSTED_SUFFIX)])
         for line in r.stdout.splitlines()
         if line.endswith(_UNTRUSTED_SUFFIX)
     )
+
+
+@functools.lru_cache(maxsize=64)
+def _untrusted_dirs(cwd: str) -> tuple[str, ...]:
+    return _read_untrusted_dirs(cwd)
+
+
+def untrusted_dirs(cwd: str) -> tuple[str, ...]:
+    """The directories at or above *cwd* whose mise config is untrusted, absolute.
+
+    Empty when mise is not installed. When ``mise trust --show`` fails the
+    failure is logged and the answer is empty for this call: the agent then
+    runs as it did before this existed, and each refused command reports the
+    untrusted file itself, so nothing is hidden. A failure is retried on the
+    next call.
+    """
+    try:
+        return _untrusted_dirs(cwd)
+    except _UntrustedListingFailed:
+        return ()
+
+
+untrusted_dirs.cache_clear = _untrusted_dirs.cache_clear
 
 
 def base_env(cwd: str) -> dict[str, str]:

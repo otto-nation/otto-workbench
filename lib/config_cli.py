@@ -7,6 +7,8 @@ Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
        otto-workbench config models
        otto-workbench config phases [--json] [DIR]
        otto-workbench config context [--pi-listing FILE]
+       python3 lib/config_cli.py pi-catalogue
+       python3 lib/config_cli.py run-bounded [--tier NAME] -- CMD...
 
 `get` is the read side for a caller that is not Python.  `ai/lib/
 workbench_config.py` owns which files a key is resolved from; bash has no
@@ -111,9 +113,12 @@ import agent.context_ceiling  # noqa: E402
 import agent.harness_models  # noqa: E402
 import agent.models  # noqa: E402
 import agent.phase_report  # noqa: E402
+import agent.pi_models  # noqa: E402
 import config.workbench_config  # noqa: E402
 import config.workbench_config_report  # noqa: E402
 import config.workbench_config_write  # noqa: E402
+import core.proc  # noqa: E402
+import core.timeouts  # noqa: E402
 from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 import git_layout  # noqa: E402
 
@@ -187,6 +192,28 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="a `pi --list-models` listing (- for stdin) to size Pi's per-model reserves from",
     )
     context.set_defaults(run=_context)
+    catalogue = sub.add_parser(
+        "pi-catalogue",
+        help="print the bounded `pi --list-models` listing",
+    )
+    catalogue.set_defaults(run=_pi_catalogue)
+    bounded = sub.add_parser(
+        "run-bounded",
+        help="run a command under a timeouts tier, discarding its stdout",
+    )
+    bounded.add_argument(
+        "--tier",
+        default="REFRESH",
+        choices=_BOUNDED_TIERS,
+        help="timeouts tier (default: REFRESH)",
+    )
+    bounded.add_argument(
+        "cmd",
+        nargs="+",
+        metavar="CMD",
+        help="command to run, after --",
+    )
+    bounded.set_defaults(run=_run_bounded)
     return parser.parse_args(argv)
 
 
@@ -315,6 +342,49 @@ def _context(args: argparse.Namespace) -> int:
         "pi": {"reserveTokens": reserves},
     }, separators=(",", ":")))
     return 0
+
+
+_BOUNDED_TIERS = tuple(
+    name
+    for name, value in vars(core.timeouts).items()
+    if name.isupper() and isinstance(value, float)
+)
+
+
+def _pi_catalogue(_args: argparse.Namespace) -> int:
+    """Print the bounded ``pi --list-models`` listing, or the reason it cannot be read.
+
+    Stdout is the listing and nothing else; a failure writes ``str(exc)`` to
+    stderr and exits 1, so a shell caller can capture each stream. stdin is
+    not inherited: ``catalogue_text`` runs through ``core.proc.run``, which
+    opens the child on ``DEVNULL``.
+    """
+    try:
+        sys.stdout.write(agent.pi_models.catalogue_text(("pi",)))
+    except agent.pi_models.CatalogueUnreadable as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_bounded(args: argparse.Namespace) -> int:
+    """Run CMD under a timeouts tier, discarding its stdout.
+
+    Success exits 0 with nothing on either stream. A failure, including an
+    expired bound, writes a one-line reason to stderr and exits 1. stdin is
+    not inherited: ``core.proc.run`` opens the child on ``DEVNULL``. The
+    child is its own process group so an expired bound SIGTERMs git/npm and
+    SIGKILLs after ``TERM_GRACE``, which is how git drops its locks.
+    """
+    result = core.proc.run(
+        list(args.cmd),
+        timeout=getattr(core.timeouts, args.tier),
+        kill_process_group=True,
+    )
+    if result.ok:
+        return 0
+    print(core.proc.failure_message(" ".join(args.cmd), result), file=sys.stderr)
+    return 1
 
 
 def _phases(args: argparse.Namespace) -> int:

@@ -14,6 +14,7 @@ from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.render import render_body
 from review.types import PriorDisposition
 
+from review_claims_support import claim
 from review_focus_support import area
 from review_record_support import FIXTURES, canonical, finding, fixture_text, record
 
@@ -120,6 +121,30 @@ def test_renumbering_rewrites_focus_coverage():
     out = renumber_record(rec)
     assert [f.id for f in out.findings] == ["M1", "M2"]
     assert out.focus[0].coverage == "[M2] is the one that drops the error"
+
+
+def test_renumbering_rewrites_claim_links_and_evidence():
+    rec = record(
+        finding("S2", "a"),
+        finding("S5", "b"),
+        claims=(
+            claim(id="C1", finding="S5", evidence="see S5"),
+            claim(id="C2", finding="S2"),
+        ),
+    )
+    out = renumber_record(rec)
+    assert out.claims[0].finding == "S2"
+    assert out.claims[0].evidence == "see S2"
+    assert out.claims[1].finding == "S1"
+
+
+def test_a_link_to_a_finding_that_is_gone_is_cleared():
+    rec = record(
+        finding("S3", "gone", disposition=Disposition.FALSIFIED),
+        claims=(claim(id="C1", finding="S3"),),
+    )
+    out = renumber_record(rec)
+    assert out.claims[0].finding == ""
 
 
 def test_the_stronger_verdict_wins_whichever_path_each_group_copied():

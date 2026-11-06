@@ -459,7 +459,7 @@ def test_a_read_path_fetch_that_fails_outright_warns(monkeypatch):
     warned = []
     monkeypatch.setattr(batch.plan.git.client, "run", lambda *a, **k: R())
     monkeypatch.setattr(batch.plan.core.log, "warn", warned.append)
-    batch.plan._fetch_objects("/repos/a", ["abc", "def"])
+    batch.plan.fetch_objects("/repos/a", ["abc", "def"])
     assert len(warned) == 1
     assert "/repos/a" in warned[0]
     assert "rebase need falls back to GitHub merge state" in warned[0]
@@ -477,7 +477,7 @@ def test_a_partial_object_fetch_does_not_warn(monkeypatch):
     monkeypatch.setattr(batch.plan.git.client, "run",
                         lambda *a, **k: R(next(results)))
     monkeypatch.setattr(batch.plan.core.log, "warn", warned.append)
-    batch.plan._fetch_objects("/repos/a", ["abc", "def"])
+    batch.plan.fetch_objects("/repos/a", ["abc", "def"])
     assert warned == []
 
 

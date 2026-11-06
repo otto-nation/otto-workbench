@@ -21,6 +21,7 @@ from pathlib import Path
 
 import core.log
 import git.client
+import review.claims
 from core.phases import Mode
 from pr.domains import ReviewStatus
 from review.convergence import (
@@ -112,6 +113,8 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
     Every review leaves with the run's areas, covered or not.
     """
     record = with_run_focus(record, job.focus)
+    if record.claims is None and not review.claims.has_claim_source(job):
+        record = replace(record, claims=())
     meta = _review_meta(job, skipped_groups=skipped_groups, total_groups=total_groups,
                         status=status)
     sticky = apply_sticky_skips(record, meta.sticky_skips, job.wt_path)
@@ -119,7 +122,8 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
         meta, sticky_skips=sticky.marks,
         held_nits=held_nits(job, incremental=_is_incremental(job)),
         head_moved_to=_head_moved_to(job),
-        dirty_files=_dirty_files(job)))
+        dirty_files=_dirty_files(job),
+        claims_input_sha=review.claims.input_sha(job) if record.claims is not None else ""))
 
 
 def _pinned_here(job: ReviewJob) -> str:
@@ -236,7 +240,11 @@ def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
 
 
 def _carried_record(prior: StoredReview) -> ReviewRecord:
-    """The prior round's claims about the code, without its claims about its own run."""
+    """The prior round's findings about the code, without its claims about its own run.
+
+    The claims ledger is carried because the no-op gate proved their inputs
+    unchanged.
+    """
     return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
                    static_analysis="", focus=())
 

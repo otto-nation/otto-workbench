@@ -18,7 +18,7 @@ if str(LIB_DIR) not in sys.path:
 
 import core.timeouts  # noqa: E402
 
-TIERS = ["QUICK", "LOCAL", "NETWORK", "TRANSFER"]
+TIERS = ["QUICK", "LOCAL", "NETWORK", "LAUNCH", "TRANSFER", "REFRESH"]
 
 
 def test_the_bounded_tiers_ascend():

@@ -10,9 +10,14 @@ one configured, so this module does not.
 
 A readable catalogue that lacks the id is a configuration error: the message
 names the id, where it came from when that is knowable, the provider, the
-closest listed ids, and how to override. An empty catalogue is not that error
-— pi absent, hung, or unreadable must not block a spawn pi itself might still
-accept; Pi's stderr is the remaining signal on that path.
+closest listed ids, and how to override. A catalogue that cannot be read is not
+that error — pi absent, hung, or unreadable must not block a spawn pi itself
+might still accept; Pi's stderr is the remaining signal on that path.
+`catalogue_text` raises `CatalogueUnreadable` with the reason rather than
+returning an empty listing, so a caller that fails open (`require_listed_model`)
+still does, a caller that must explain itself (the review budget) can, and a
+failure is remembered only for `UNREADABLE_RETRY_SECONDS`: after that the next
+caller lists again.
 
 The same check runs once, up front, for every model a run would use
 (`check_targets`): each reference is judged by the provider it names, so a run
@@ -28,6 +33,7 @@ import difflib
 import functools
 import json
 import os
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -60,6 +66,10 @@ class ModelNotServed(core.errors.OperatorError):
     def __init__(self, model: str, message: str):
         self.model = model
         super().__init__(message)
+
+
+class CatalogueUnreadable(RuntimeError):
+    """``pi --list-models`` produced no listing; the message says why."""
 
 
 def listing_rows(text: str) -> list[tuple[str, str, list[str]]]:
@@ -204,54 +214,99 @@ def effective_provider(explicit: str | None) -> str | None:
     return explicit or default_provider()
 
 
-@functools.cache
+# How long a failed listing is remembered. A failure is never cached for the
+# life of the process: a listing that timed out under load is retried once the
+# machine has had time to recover. It is remembered briefly because each attempt
+# can cost the whole LAUNCH bound, and a review asks for the catalogue once per
+# phase, so a pi that hangs for good would otherwise add that bound to every ask.
+UNREADABLE_RETRY_SECONDS = 30.0
+
+_unreadable: dict[tuple[str, ...], tuple[float, str]] = {}
+
+# The clock the retry window reads; a seam so a test moves time instead of waiting.
+_now = time.monotonic
+
+
+def forget_catalogue() -> None:
+    """Drop every listing and remembered failure, so the next ask lists again."""
+    _listing.cache_clear()
+    _unreadable.clear()
+
+
 def catalogue_text(pi: tuple[str, ...]) -> str:
-    """Stdout of ``<pi> --list-models``, or empty when the catalogue cannot be read.
+    """Stdout of ``<pi> --list-models``. Raises `CatalogueUnreadable` with the reason when there is none.
 
     ``pi`` is the argv `PiBinary.spawn` starts the chosen binary with, so the
     catalogue a model is checked against is the one the spawn will run with —
     two pi versions serve different model sets. This is the one place the workbench
     lists models; the review budget reads its context windows from here too.
 
-    The empty string is a skip, not an empty provider: a missing or unreadable
-    ``pi`` must not refuse a model this process cannot check. The result is
-    cached per argv for the life of the process, so a transient miss skips
-    validation for every later call with that binary too.
+    A listing is cached per argv for the life of the process. A failure is not:
+    it is remembered for `UNREADABLE_RETRY_SECONDS` and then listed again, so a
+    listing that timed out under load must not turn off every later model check,
+    nor fail the budget of a model the catalogue would have named, while a pi that
+    hangs for good costs one bounded wait per window rather than one per ask.
 
     Only the argv is taken, not the spawn's environment: the listing runs in
     this process's environment, and the one variable a direct release spawn
     adds (``PI_MANAGED_INSTALL_ROOT``) governs pi's self-update, not its models.
     """
+    failed = _unreadable.get(pi)
+    if failed is not None and _now() - failed[0] < UNREADABLE_RETRY_SECONDS:
+        raise CatalogueUnreadable(failed[1])
     try:
-        result = core.proc.run(
-            [*pi, "--list-models"], timeout=core.timeouts.LOCAL,
-        )
-    except OSError:
+        return _listing(pi)
+    except CatalogueUnreadable as exc:
+        _unreadable[pi] = (_now(), str(exc))
+        raise
+
+
+@functools.cache
+def _listing(pi: tuple[str, ...]) -> str:
+    """One `pi --list-models` run; raises rather than return anything that is not a listing."""
+    argv = [*pi, "--list-models"]
+    try:
+        result = core.proc.run(argv, timeout=core.timeouts.LAUNCH)
+    except OSError as exc:
         # Not just FileNotFoundError: a `pi` present on disk but not executable
-        # raises PermissionError, and that must skip the same way.
-        return ""
+        # raises PermissionError, and that is unreadable in the same way.
+        raise CatalogueUnreadable(f"cannot run {' '.join(argv)}: {exc}") from exc
     if not result.ok:
-        return ""
+        raise CatalogueUnreadable(
+            core.proc.failure_message(f"{' '.join(argv)} failed", result)
+        )
+    if not any(
+        rest and parse_context_tokens(rest[0]) is not None
+        for _provider, _model, rest in listing_rows(result.stdout)
+    ):
+        raise CatalogueUnreadable(f"{' '.join(argv)} printed no model table")
     return result.stdout
 
 
 def catalogue_for(cwd: str | Path) -> str:
-    """The catalogue of the pi that would run in *cwd*, or empty when none can be chosen.
+    """The catalogue of the pi that would run in *cwd*. Raises `CatalogueUnreadable` when there is none.
 
-    For lookups that are optional, such as the review budget. A pi that cannot
-    be chosen is not reported here: the spawn that needs it raises
-    `PiUnresolvable` with the reason, where a run can record it.
+    For optional lookups, such as the review budget, which fall back and quote
+    the reason. A pi that cannot be chosen is the reason here; the spawn that
+    needs one raises `PiUnresolvable` itself.
     """
     try:
         binary = agent.pi_binary.resolve(cwd)
-    except agent.pi_binary.PiUnresolvable:
-        return ""
+    except agent.pi_binary.PiUnresolvable as exc:
+        raise CatalogueUnreadable(f"no pi could be chosen: {exc}") from exc
     return catalogue_text(binary.spawn(os.environ).argv)
 
 
 def listed_models(provider: str | None, *, pi: tuple[str, ...]) -> frozenset[str]:
-    """Ids *pi* lists under *provider* right now. Empty when the catalogue is unread."""
-    return parse_listed_ids(catalogue_text(pi), effective_provider(provider))
+    """Ids *pi* lists under *provider* right now. Empty when the catalogue cannot be read."""
+    try:
+        text = catalogue_text(pi)
+    except CatalogueUnreadable:
+        # Fail open: an unreadable catalogue is not a provider that serves
+        # nothing. Refusing here would make an optional lookup a hard dependency
+        # on `pi`; the spawn's own stderr is the remaining signal.
+        return frozenset()
+    return parse_listed_ids(text, effective_provider(provider))
 
 
 class ModelNotConfigured(core.errors.OperatorError):
@@ -288,11 +343,24 @@ def check_targets(models: PhaseModels, trail, cwd: str) -> bool:
 
     Fails open — True — when no pi can be chosen or its catalogue cannot be read:
     the spawn that needs it reports the reason, and refusing here would turn an
-    optional lookup into a hard dependency.
+    optional lookup into a hard dependency. Both skipped checks are recorded on
+    *trail* with their reason, so neither is silent.
     """
     try:
         pi = agent.pi_binary.resolve(cwd).spawn(os.environ).argv
-    except agent.pi_binary.PiUnresolvable:
+    except agent.pi_binary.PiUnresolvable as exc:
+        trail.warn(
+            "model_preflight",
+            f"models not checked against pi's catalogue: no pi could be chosen: {exc}",
+        )
+        return True
+    try:
+        catalogue_text(pi)
+    except CatalogueUnreadable as exc:
+        trail.warn(
+            "model_preflight",
+            f"models not checked against pi's catalogue: {exc}",
+        )
         return True
     ok = True
     for ref, phases in sorted(models.items(), key=lambda item: item[0].spec()):

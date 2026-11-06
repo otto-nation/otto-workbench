@@ -250,6 +250,10 @@ HOOK_TAIL = [
 AUTH_TAIL = ["✗ push refused — the remote would not accept your credentials"]
 LOCK_TAIL = ["✗ another pr run already owns this target: pr comments --fix (pid 4, started t)"]
 COLOURED_TAIL = ["\x1b[1;31m✗\x1b[0m ai prompt failed for a.py (exit 1)"]
+UNANSWERED_TAIL = [
+    "✗ The summary was not published — 1 thread(s) handed to a person have no answer on GitHub,",
+    "  PRRT_x  declined",
+]
 STASHED_TAIL = ["▸ Stashing uncommitted changes...", "✗ something nobody anticipated"]
 
 
@@ -261,7 +265,8 @@ STASHED_TAIL = ["▸ Stashing uncommitted changes...", "✗ something nobody ant
     (LOCK_TAIL, "lock_busy", LOCK_TAIL[0].removeprefix("✗ ")),
     (COLOURED_TAIL, "ai_prompt_failed", "ai prompt failed for a.py (exit 1)"),
     (STASHED_TAIL, "error", ""),
-], ids=["review", "comments", "hook", "auth", "lock", "coloured", "unrecognised"])
+    (UNANSWERED_TAIL, "unanswered_handbacks", UNANSWERED_TAIL[0].removeprefix("✗ ")),
+], ids=["review", "comments", "hook", "auth", "lock", "coloured", "unrecognised", "unanswered"])
 def test_a_failure_reason_is_read_from_what_the_step_printed(tail, reason, detail):
     found = batch.outcomes.classify_failure(tail)
     assert (found.reason, found.detail) == (reason, detail)

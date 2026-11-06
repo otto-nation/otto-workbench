@@ -16,6 +16,7 @@ from review.record import Disposition, load_record, save_record  # noqa: E402
 from review.rebuild import rebuild  # noqa: E402
 from review.record import FocusSource  # noqa: E402
 from review_focus_support import area  # noqa: E402
+from review_claims_support import claim  # noqa: E402
 from review_record_support import finding, record, store_record  # noqa: E402
 
 
@@ -61,7 +62,7 @@ def test_rebuild_skips_a_group_file_carrying_the_render_banner(tmp_path, capsys)
     assert not (tmp_path / "review.md").exists()
 
 
-def test_rebuild_preserves_sidecar_fields_other_than_date_and_status(tmp_path):
+def test_rebuild_preserves_sidecar_fields_other_than_date_status_and_claims_input_sha(tmp_path):
     from datetime import date
     from pr.domains import ReviewStatus
 
@@ -75,6 +76,7 @@ def test_rebuild_preserves_sidecar_fields_other_than_date_and_status(tmp_path):
         fix_commit_sha="def456abc", fix_commit_status="unpushed",
         static_declined={"site-hash": "won't fix"},
         date="2020-01-01", status=ReviewStatus.COMPLETED,
+        claims_input_sha="stale",
     )
     write_review_meta(tmp_path, original)
     assert review.rebuild.rebuild(tmp_path, "1", script="review-rebuild") == 0
@@ -88,6 +90,7 @@ def test_rebuild_preserves_sidecar_fields_other_than_date_and_status(tmp_path):
     assert meta.static_declined == original.static_declined
     assert meta.date == date.today().isoformat()
     assert meta.status is None
+    assert meta.claims_input_sha == ""
 
 
 def test_markdown_group_files_are_named_not_read(tmp_path, capsys):
@@ -175,3 +178,22 @@ def test_a_rebuild_honours_only_the_declines_prior_json_allows(tmp_path):
     assert rebuild(tmp_path, "1", script="test") == 0
     by_body = {f.body: f.disposition for f in load_record(tmp_path).findings}
     assert by_body == {"x": Disposition.DECLINED, "y": Disposition.OPEN}
+
+
+def test_a_rebuild_keeps_assessed_empty_claims(tmp_path):
+    path = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
+    path.write_text(json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]}))
+    write_review_meta(tmp_path, ReviewMeta(repo="acme/widget", pr_number=1, claims_input_sha=""))
+    save_record(tmp_path, record(claims=()))
+    assert review.rebuild.rebuild(tmp_path, "1", script="review-rebuild") == 0
+    assert load_record(tmp_path).claims == ()
+
+
+def test_a_rebuild_leaves_claims_unassessed(tmp_path):
+    path = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
+    path.write_text(json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]}))
+    write_review_meta(tmp_path, ReviewMeta(repo="acme/widget", pr_number=1, claims_input_sha="abc"))
+    save_record(tmp_path, record(claims=(claim(),)))
+    assert review.rebuild.rebuild(tmp_path, "1", script="review-rebuild") == 0
+    assert read_review_meta(tmp_path).claims_input_sha == ""
+    assert load_record(tmp_path).claims is None

@@ -276,6 +276,56 @@ class TestRenderDeferredSummary:
         assert fix.fix.commit_status == "push_failed"
         assert fix.summary_deferred is True
 
+    def test_an_unanswered_declined_thread_refuses_the_summary(self, capsys):
+        fix = _fix(
+            items=[ItemOutcome(
+                id="t1", summary="premise is wrong", file="a.py", line=1,
+                outcome=FixOutcome.DECLINED, decided_at="2026-03-01T12:00:00Z",
+            )],
+            commit_status="no_changes", summary_deferred=True,
+        )
+        state = _make_state(fix)
+        threads = {"t1": ReportThread(
+            id="t1", my_login="me",
+            comments=[{"author": {"login": "kgn"}, "body": "x",
+                       "createdAt": "2026-03-01T11:00:00Z"}],
+        )}
+        with patch("pr.comments.post_issue_comment") as mock_post:
+            render = pr.summary_publish.render_deferred_summary(
+                state, PRReport(), "owner/repo", 1, threads)
+        mock_post.assert_not_called()
+        assert render.refused
+        assert fix.summary_deferred is True
+        assert "t1" in capsys.readouterr().err
+
+    # passes-at-base: the gate must let an answered handback through
+    def test_an_answered_declined_thread_is_published(self):
+        fix = _fix(
+            items=[ItemOutcome(
+                id="t1", summary="premise is wrong", file="a.py", line=1,
+                outcome=FixOutcome.DECLINED, decided_at="2026-03-01T12:00:00Z",
+            )],
+            commit_status="no_changes", summary_deferred=True,
+        )
+        state = _make_state(fix)
+        threads = {"t1": ReportThread(
+            id="t1", my_login="me",
+            comments=[
+                {"author": {"login": "kgn"}, "body": "x",
+                 "createdAt": "2026-03-01T11:00:00Z"},
+                {"author": {"login": "me"}, "body": "the premise does not hold",
+                 "createdAt": "2026-03-01T13:00:00Z"},
+            ],
+        )}
+        with patch("pr.comments.post_issue_comment", return_value="https://url") as mock_post:
+            render = pr.summary_publish.render_deferred_summary(
+                state, PRReport(), "owner/repo", 1, threads)
+        mock_post.assert_called_once()
+        assert not render.refused
+        body = mock_post.call_args[0][2]
+        assert "premise is wrong" in body
+        assert "1 need discussion" in body
+
 
 class TestSummaryUsesPerThreadCommit:
     """A thread's row names the commit that fixed it, not the last pass's."""

@@ -76,6 +76,21 @@ def _repo_applied(**extra) -> dict[str, str]:
     }
 
 
+def test_the_restore_script_is_bounded_by_the_launch_tier(mise, monkeypatch):
+    import core.proc
+    import core.timeouts
+
+    bounds = []
+
+    def run(*_a, **kw):
+        bounds.append(kw["timeout"])
+        return core.proc.CmdResult(returncode=0, stdout="A=1\0--workbench-mise-hook-env--\0A=1")
+
+    monkeypatch.setattr(agent.machine_env.core.proc, "run", run)
+    agent.machine_env.machine_env(_repo_applied())
+    assert bounds == [core.timeouts.LAUNCH]
+
+
 def test_without_a_mise_record_the_environment_is_returned_unchanged(mise):
     mise.answer(hook_rc=1)
     base = {k: v for k, v in _repo_applied().items() if k != MISE_DIFF_ENV}
@@ -125,6 +140,37 @@ def test_a_failing_trust_listing_ignores_nothing(mise, tmp_path):
     mise.trust.write_text("/abs/pkg: untrusted\n")
     mise.answer(trust_rc=1)
     assert agent.machine_env.untrusted_dirs(str(tmp_path)) == ()
+
+
+def test_a_failed_trust_listing_is_not_cached(mise, monkeypatch, tmp_path):
+    proc = agent.machine_env.core.proc
+    replies = [
+        proc.CmdResult(returncode=proc.TIMEOUT_RETURNCODE, stderr="timed out"),
+        proc.CmdResult(stdout="/abs/pkg: untrusted\n"),
+    ]
+
+    def run(*_a, **_k):
+        return replies.pop(0)
+
+    monkeypatch.setattr(proc, "run", run)
+    cwd = str(tmp_path)
+    assert agent.machine_env.untrusted_dirs(cwd) == ()
+    assert agent.machine_env.untrusted_dirs(cwd) == ("/abs/pkg",)
+
+
+def test_a_successful_trust_listing_is_cached(mise, monkeypatch, tmp_path):
+    proc = agent.machine_env.core.proc
+    calls = []
+
+    def run(*_a, **_k):
+        calls.append(1)
+        return proc.CmdResult(stdout="/abs/pkg: untrusted\n")
+
+    monkeypatch.setattr(proc, "run", run)
+    cwd = str(tmp_path)
+    assert agent.machine_env.untrusted_dirs(cwd) == ("/abs/pkg",)
+    assert agent.machine_env.untrusted_dirs(cwd) == ("/abs/pkg",)
+    assert calls == [1]
 
 
 def test_base_env_appends_untrusted_dirs_after_the_operator_ignores(mise, monkeypatch, tmp_path):

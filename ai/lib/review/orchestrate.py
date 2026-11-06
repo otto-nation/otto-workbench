@@ -36,6 +36,7 @@ import review.gc
 import review.paths
 import review.phases
 import review.steps
+import review.claims
 import review.outcome
 import review.retry
 import review.state
@@ -176,10 +177,11 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
 def _is_no_op_rereview(job) -> bool:
     """Whether this run has nothing to review and can say so without an agent.
 
-    Three things have to hold, and the middle one is the point: this is a
-    re-review, the delta walk *proved* the author committed nothing, and there
-    is a prior review whose findings can be carried forward in place of the one
-    this run is not going to write.
+    Four things have to hold, and the middle one is the point: this is a
+    re-review, the delta walk *proved* the author committed nothing, there is a
+    prior review whose findings can be carried forward in place of the one this
+    run is not going to write, and the prior sidecar's fingerprint equals this
+    run's so a description or ticket edit still runs the writer.
 
     An *attributed* empty delta rather than an empty file list, because those
     are not the same claim. An unresolvable base ref, a git read that failed,
@@ -190,11 +192,16 @@ def _is_no_op_rereview(job) -> bool:
     never be reviewed. `review.collect` reports `ATTRIBUTED` at one place,
     after every guard it has; everything else leaves it `UNATTRIBUTED`.
     """
-    return bool(
+    if not (
         review.prompt_sections._is_incremental(job)
         and job.preflight.delta_proven_empty
         and job.prior is not None
-    )
+    ):
+        return False
+    if job.prior.meta.claims_input_sha == review.claims.input_sha(job):
+        return True
+    core.log.info("claims fingerprint changed — not a no-op")
+    return False
 
 
 @dataclass(frozen=True)

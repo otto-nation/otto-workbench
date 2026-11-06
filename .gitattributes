@@ -21,6 +21,9 @@ docs/tools.md linguist-generated=true
 # upload. Measured runtimes, so every line changes a little on each refresh.
 tests/weights.tsv linguist-generated=true
 
+# bin/local/generate-herdr-app-themes, from ai/herdr/app/palettes/*.toml
+ai/herdr/app/themes/*.generated.json linguist-generated=true
+
 # release-please
 CHANGELOG.md linguist-generated=true
 .github/.release-please-manifest.json linguist-generated=true

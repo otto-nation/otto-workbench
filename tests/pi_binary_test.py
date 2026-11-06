@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.pi_binary
+import core.timeouts
 import core.trail
 from agent.pi_binary import PiUnresolvable, Source
 
@@ -249,6 +250,23 @@ class TestMiseWhichFails:
         monkeypatch.setattr(agent.pi_binary.core.proc, "run", run)
         with pytest.raises(PiUnresolvable, match="cannot run mise"):
             _resolve(machine)
+
+
+class TestLaunchBound:
+    def test_the_path_pis_version_is_asked_under_the_launch_bound(self, machine, monkeypatch):
+        """pi --version starts the same Node program a listing does, so it takes the same bound."""
+        machine.path_pi("1.1.0")
+        real = agent.pi_binary.core.proc.run
+        bounds = []
+
+        def run(cmd, *a, **k):
+            if cmd[-1:] == ["--version"]:
+                bounds.append(k["timeout"])
+            return real(cmd, *a, **k)
+
+        monkeypatch.setattr(agent.pi_binary.core.proc, "run", run)
+        _resolve(machine)
+        assert bounds == [core.timeouts.LAUNCH]
 
 
 class TestMissingDirectory:

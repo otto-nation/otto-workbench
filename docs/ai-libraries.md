@@ -838,10 +838,13 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model, and capped at
-``context.compact_at`` when that is set. It subtracts
-what the reply and the CLI's own system prompt need, and prices the remainder in
-bytes at a density floor — so it is a property of
+the fallback (read by the id without its `@version`) when the catalogue cannot
+be read or lacks the model. A catalogue that cannot be read is retried after a
+short window, not cached for the process, and when the table cannot answer either
+`UnknownModelWindow` quotes why it could not be read. It is capped at
+``context.compact_at`` when that is set. It subtracts what the reply and the
+CLI's own system prompt need, and prices the remainder in bytes at a density
+floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
 them. `prompt_budget_bytes` is that derivation. A phase with no configured
 model takes the unset-model floor rather than failing, because leaving the
@@ -856,6 +859,49 @@ rejection, too conservative is a shallower review.
 
 `agent.types.RetryBudget` is a different thing that shares the word — it
 budgets retries, not bytes.
+
+### review/claims.py
+
+The claims ledger: the check, the fingerprint and the record entries.
+
+This module owns whether a run has a claim source, the input fingerprint, the
+run-context check composed with focus coverage, turning a writer's reports
+into record entries after the check, and the degraded-check warning.
+Renderers take claims off the record and never import it.
+
+The record is tri-state. `None` is not assessed — a writer that did not run, a
+check that degraded, or a legacy `review.json`. `()` is assessed with nothing
+checkable, or no claim source. Entries are the assessed ledger.
+
+Writers are the single agent and synthesis only. Scout, holistic and group get
+no claims fields. Agentless paths — clean, settled, `--no-synthesis`,
+low-effort, a budget cut, all-groups-failed, mechanical fallback, `--repair`
+rebuild — record `None`. When a description or ticket existed, that renders
+"*Not assessed this round.*" A multi-phase run that never reaches synthesis
+therefore shows Not assessed; that is the honest result.
+
+The check rides ingest `check=` with one repair turn. Caps (12 claims, 512
+bytes per `text` / `evidence` / `snippet`) live inside the check, so an
+over-cap list degrades rather than rejects. Leftover claims errors after the
+repair set `claims` to `None` and never cost the review. A first load that
+fails `problems()` or schema never runs the claims check, so the repair prompt
+does not mention claims and the second load degrades without that turn having
+named them.
+
+`verify.post_process_record` forces a supported or contradicted claim whose
+snippet is not in its file to unverifiable, with a note, using the same
+evidence matcher findings use.
+
+The fingerprint hashes `pr.body` plus a projection of the issue: title and
+description or body only. Tracker fields that churn (state, labels,
+attachments) do not move it. It is stamped only when claims were assessed,
+so a prior round of `None` cannot no-op past an unassessed ledger. A true
+no-op carries prior claims: the gate now proves the description and ticket
+are the same and that the author committed nothing, so the prior verdicts
+still stand. Focus coverage is not carried on a no-op because areas can
+change on that same round. The GitHub issue fetch is title and body only
+— comments are not the ticket's claims and would move the fingerprint on
+every reply.
 
 ### review/collect.py
 
@@ -1548,6 +1594,20 @@ shows a merged record back to an agent (synthesis).
 A finding's severity is its ID's first letter, so the two cannot disagree.
 `TriageEntry` and `LedgerLine` are the record's own types: what an agent
 writes there is exactly what the record keeps.
+
+### review/claim_types.py
+
+Claims are what a PR's description or linked ticket asserts about the change.
+
+A writer reports each with a verdict, and the harness numbers them `C1…`.
+`supported` holds; `contradicted` is shown false; `unsupported` is checkable
+but nothing in the code shows it; `unverifiable` is not statically checkable,
+or its cited code did not verify. `evidence` is prose. `path` and `snippet`
+are the code the verdict rests on, and are required for supported and
+contradicted. `finding` is optional: the id of a writer finding, of any
+severity, that covers the claim. This module is a leaf: it imports nothing
+from `review`. `ClaimReport` is what an agent writes; `ClaimEntry` is what
+the record stores, with harness numbering.
 
 ### review/dedup.py
 
@@ -2252,9 +2312,9 @@ being wrong is asymmetric — a needless hold costs one extra command, while a
 missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both. Combining them works
-and closes out that run's deferred set, but posts a summary nobody has replied
-to yet — the discussion is supposed to happen in between. `--finish` is a second
-invocation on purpose.
+and closes out that run's deferred set only once each handed-back thread has an
+answer on GitHub — `--finish` refuses the summary until then. The discussion is
+supposed to happen in between. `--finish` is a second invocation on purpose.
 
 `--fix` triages threads, applies mechanical fixes, and resolves the verified
 ones. It withholds the summary comment whenever threads need human input,
@@ -2736,7 +2796,8 @@ answered — so by the time it returns, four separate things may be owed to a PR
 that looks, from the outside, finished. This is the phase that pays them.
 `--finish` is a second invocation on purpose — the discussion has to happen in
 between. Combining `--fix --finish` works and closes out that run's deferred
-set, but posts a summary nobody has replied to yet.
+set only once each handed-back thread has an answer on GitHub; `--finish`
+refuses the summary until then.
 
 Order is the whole design here, and it is not incidental. The push goes first,
 because every surface below cites a commit and a reviewer cannot follow a SHA
@@ -3897,6 +3958,8 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
 - `review_orchestration_failed`: the review produced no review file
 - `commit_failed`: a fix commit was refused by a hook
 - `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
+- `unanswered_handbacks`: `--finish --post` refused the summary because a thread handed to a
+  person has no reply or settlement on GitHub; answer it with `pr comments`, then retry
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
 - `github`: GitHub could not be read
@@ -3944,6 +4007,12 @@ still the head the batch planned from (`Item.remote_sha`):
 | diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
+
+`read_tree` is the publish-time reader: it fetches into
+`refs/remotes/origin/<branch>`. `peek_tree` reads the same comparison without
+moving that ref — `ls-remote` of `refs/heads/<branch>`, then
+`batch.plan.fetch_objects` for the SHA — so a report can call `publish.plan`
+without moving the lease the rebase trusts as last-seen.
 
 Both pushes are `pr` commands leasing on `remote_sha`, so each writes its own
 report into the publish log and a remote that moved after the fetch is still
@@ -4333,9 +4402,14 @@ one configured, so this module does not.
 
 A readable catalogue that lacks the id is a configuration error: the message
 names the id, where it came from when that is knowable, the provider, the
-closest listed ids, and how to override. An empty catalogue is not that error
-— pi absent, hung, or unreadable must not block a spawn pi itself might still
-accept; Pi's stderr is the remaining signal on that path.
+closest listed ids, and how to override. A catalogue that cannot be read is not
+that error — pi absent, hung, or unreadable must not block a spawn pi itself
+might still accept; Pi's stderr is the remaining signal on that path.
+`catalogue_text` raises `CatalogueUnreadable` with the reason rather than
+returning an empty listing, so a caller that fails open (`require_listed_model`)
+still does, a caller that must explain itself (the review budget) can, and a
+failure is remembered only for `UNREADABLE_RETRY_SECONDS`: after that the next
+caller lists again.
 
 The same check runs once, up front, for every model a run would use
 (`check_targets`): each reference is judged by the provider it names, so a run
@@ -5860,16 +5934,18 @@ actually predicts the right answer is **what bounds the cost**:
 | `QUICK` | A session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
+| `LAUNCH` | Starting a heavyweight local process — a Node program that loads its extensions before it answers (`pi --list-models`, `pi --version`), or a short script that starts several interpreters (`mise hook-env` restore) | Flat cost, but the cost is process start-up, which a loaded machine stretches several-fold; a breach still means a hang. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
+| `REFRESH` | A package or self-update that downloads and installs (`pi update`) | Bounded to catch a stall, not to size the work — git fetch and npm install can hang on a dead socket. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add`, `status` | A bound would be wrong, not merely large. |
 
-For the first three tiers the cost is the same whatever the repository holds, so
-a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
-and a timeout is a hang detector. For the last two the cost is whatever the input
-costs, and a breach is indistinguishable from "the repository is large" or "this
-repo's pre-commit hook runs a test suite". A fixed timeout there silently
-converts a large repo into a broken tool, which is why `UNBOUNDED` exists and is
-spelled out rather than omitted.
+For QUICK, LOCAL, NETWORK and LAUNCH the cost is the same whatever the
+repository holds, so a breach means something is genuinely wrong — a hang, a
+dead socket, a deadlock — and a timeout is a hang detector. TRANSFER and
+REFRESH cost whatever the payload costs, and the bound is generous so healthy
+work finishes; a breach is still a stall, not a large input. UNBOUNDED is the
+remaining case, where a fixed timeout silently converts a large repo into a
+broken tool, which is why it exists and is spelled out rather than omitted.
 
 `bin/local/validate-timeouts` holds the table's monopoly: it rejects a numeric
 literal and a bare `None` on any `timeout=` argument under `ai/`, and rejects a
@@ -6383,9 +6459,11 @@ In order:
    requires them all in one group.
 4. Unresolvable, and so refused by the caller: a GraphQL write from a shell
    (it names its target by node ID), a REST write outside ``repos/``, a cwd
-   that is no repository or has no GitHub remote, and a cwd-resolved write in a
-   command that changes directory — which directory it runs in is not knowable
-   from the text.
+   that is no repository or has no GitHub remote, a ``--repo-dir`` whose value
+   still holds a shell variable, substitution or ``~`` (the guard reads the
+   command as text and does not expand), and a cwd-resolved write in a command
+   that changes directory — which directory it runs in is not knowable from
+   the text.
 
 A bare ``OWNER/REPO`` is on ``GH_HOST`` when set (prefix, then environment),
 else public GitHub — gh's own default host.

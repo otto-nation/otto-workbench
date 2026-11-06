@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 673 -->
+<!-- doc-budget: 688 -->
 
 # AI Automation
 
@@ -57,7 +57,22 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   `herdr machine add <ssh-host> --label <name>`; the reminder prints during
   setup and `otto-workbench ai sync` while none is registered, not during a
   regular `otto-workbench sync`.
-- `~/.config/herdr/config.toml` is not managed yet (#1660).
+- Sync sets the herdr TUI's theme to Gruvbox, following the terminal's light/dark
+  appearance: in `~/.config/herdr/config.toml` it owns only `[theme]`'s `name`,
+  `auto_switch`, `light_name` and `dark_name` (`gruvbox` / `gruvbox-light`,
+  `auto_switch = true`). Every other line — keybindings, `onboarding`,
+  `[theme.custom]` — is left as it was. Picking a theme in herdr's Settings turns
+  `auto_switch` off; the next `otto-workbench sync` turns it back on. A symlinked or
+  unparseable file is left alone with a warning, and a change herdr's
+  `herdr config check` rejects is rolled back. The rest of the file is not managed
+  yet (#1660).
+- The herdr desktop app (`herdr-app`) gets the workbench's Gruvbox themes wherever it is
+  installed, herdr selected or not: sync links `ai/herdr/app/themes/<name>.generated.json`
+  into `~/.config/herdr-app/themes/` as `<name>.json` and sets only `theme` in
+  `~/.config/herdr-app/settings.json` to `{"light": "gruvbox-light", "dark": "gruvbox-dark"}`,
+  following the system appearance. Every other setting is left alone. A theme file you
+  edited in place is kept with a warning; delete it to get the link back. If the app
+  rejects a change it says why in `~/.config/herdr-app/settings.error`.
 
 ## Configuration
 

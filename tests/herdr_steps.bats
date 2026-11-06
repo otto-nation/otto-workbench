@@ -5,6 +5,7 @@
 # herdr is stubbed: a real `herdr update` would replace the developer's own
 # binary from a test.
 bats_require_minimum_version 1.5.0
+# select-on: ai/herdr/*
 
 setup() {
   load 'test_helper'
@@ -64,6 +65,9 @@ _run() {
     PI_AGENT_DIR="$FAKE_PI_AGENT_DIR"
     CLAUDE_DIR="$FAKE_CLAUDE_DIR"
     . "$1/ai/herdr/steps.sh"
+    step_herdr_tui_theme() { echo "TUI_THEME"; }
+    step_herdr_app_theme() { echo "APP_THEME"; }
+    _herdr_app_present() { [[ -n "${FAKE_APP_PRESENT:-}" ]]; }
     "$2"
   ' _ "$REPO_ROOT" "$1"
 }
@@ -207,10 +211,12 @@ SCRIPT
 @test "sync updates before installing integrations" {
   mkdir -p "$FAKE_PI_AGENT_DIR"
   _stub_herdr 0
+  export FAKE_APP_PRESENT=1
   run _run sync_herdr
   [ "$status" -eq 0 ]
-  run cat "$ARGV"
-  [ "$output" = "$(printf 'update\nintegration install pi\nmachine list --json')" ]
+  [[ "$output" == *"OK herdr pi integration installed"$'\n'"TUI_THEME"* ]]
+  [[ "$output" != *APP_THEME* ]]
+  [ "$(cat "$ARGV")" = "$(printf 'update\nintegration install pi\nmachine list --json')" ]
 }
 
 @test "sync leaves a machine without herdr alone" {
@@ -218,6 +224,24 @@ SCRIPT
   run _run sync_herdr
   [ "$status" -eq 0 ]
   [ ! -e "$ARGV" ]
+  [[ "$output" != *TUI_THEME* ]]
+  [[ "$output" != *APP_THEME* ]]
+}
+
+@test "sync_herdr_app themes herdr-app without the herdr TUI" {
+  _hide_herdr
+  export FAKE_APP_PRESENT=1
+  run _run sync_herdr_app
+  [ "$status" -eq 0 ]
+  [[ "$output" == *APP_THEME* ]]
+  [[ "$output" != *TUI_THEME* ]]
+  [ ! -e "$ARGV" ]
+}
+
+@test "sync_herdr_app is a no-op when herdr-app is absent" {
+  run _run sync_herdr_app
+  [ "$status" -eq 0 ]
+  [[ "$output" != *APP_THEME* ]]
 }
 
 @test "machine note is printed when no machines are registered" {

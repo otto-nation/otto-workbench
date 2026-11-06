@@ -43,13 +43,36 @@ def test_each_form_is_a_reference():
     )
 
 
-def test_a_ghe_owner_is_not_the_github_com_login():
-    owners = _map("ghe.corp/foo")
+def test_a_short_form_resolves_against_every_configured_host():
+    ghe_only = _map("ghe.corp/foo")
     ghe = "https://ghe.corp/foo/bar"
-    assert gh.owner_references.references(ghe, owners) == (
+    assert gh.owner_references.references(ghe, ghe_only) == (
         _ref(Kind.URL, "ghe.corp/foo", ghe),
     )
-    assert gh.owner_references.references("foo/bar#12", owners) == ()
+    assert gh.owner_references.references("foo/bar#12", ghe_only) == (
+        _ref(Kind.REPO_ISSUE, "ghe.corp/foo", "foo/bar#12"),
+    )
+    assert gh.owner_references.references("https://github.com/foo/bar", ghe_only) == ()
+    github_only = _map("otto-nation")
+    assert gh.owner_references.references("otto-nation/lib#12", github_only) == (
+        _ref(Kind.REPO_ISSUE, "otto-nation", "otto-nation/lib#12"),
+    )
+
+
+def test_a_name_on_two_hosts_yields_two_references():
+    owners = _map("foo", "ghe.corp/foo")
+    text = "foo/bar#12"
+    assert gh.owner_references.references(text, owners) == (
+        _ref(Kind.REPO_ISSUE, "foo", text),
+        _ref(Kind.REPO_ISSUE, "ghe.corp/foo", text),
+    )
+
+
+def test_a_dot_named_repo_is_a_reference():
+    text = "otto-nation/.github#1"
+    assert _refs(text, "otto-nation") == (
+        _ref(Kind.REPO_ISSUE, "otto-nation", text),
+    )
 
 
 def test_matching_is_case_insensitive():
@@ -110,3 +133,17 @@ def test_duplicates_keep_the_first_in_text_order():
 def test_a_team_mention_names_the_org():
     refs = _refs("ask @otto-nation/core", "otto-nation")
     assert refs == (_ref(Kind.MENTION, "otto-nation", "@otto-nation/core"),)
+
+
+def test_an_issue_number_does_not_prefix_a_word():
+    assert _refs("otto-nation/lib#12abc", "otto-nation") == ()
+
+
+def test_a_sha_does_not_prefix_a_word():
+    assert _refs("otto-nation/lib@deadbeez", "otto-nation") == ()
+
+
+def test_url_text_strips_trailing_punctuation():
+    url = "https://github.com/otto-nation/lib"
+    assert _refs(url + ".", "otto-nation") == (_ref(Kind.URL, "otto-nation", url),)
+    assert _refs(url + ")", "otto-nation") == (_ref(Kind.URL, "otto-nation", url),)

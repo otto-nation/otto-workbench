@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Generate herdr-app theme files from the palettes that own their colors.
+
+Usage: bin/local/generate-herdr-app-themes [--check] [--palettes DIR] [--out DIR]
+
+Every ai/herdr/app/palettes/*.toml holds a [palette] of named hex colors and
+one [themes.<name>] table per theme, whose values are palette names. Each theme
+is rendered to ai/herdr/app/themes/<name>.json with every name replaced by its
+hex. herdr-app skips a theme file in which a color names another color, so the
+JSON must carry literal hex values and cannot be the source.
+
+Options:
+  --check          Exit 1 if a theme file is stale or missing, without writing
+  --palettes DIR   Read palettes from DIR (default: ai/herdr/app/palettes)
+  --out DIR        Write themes to DIR (default: ai/herdr/app/themes)
+  -h, --help       Show this help
+
+Exit status: 0 up to date (or written), 1 stale under --check, 2 a palette is
+invalid: a value that is not a palette name, a palette entry that is not
+#rrggbb, or two palettes defining the same theme.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+class PaletteError(Exception):
+    """A palette file that cannot be rendered."""
+
+
+def _resolve(value: object, palette: dict[str, str], where: str) -> object:
+    """Replace every palette name in VALUE (a string, list or table) with its hex."""
+    if isinstance(value, dict):
+        return {k: _resolve(v, palette, f"{where}.{k}") for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve(v, palette, f"{where}[{i}]") for i, v in enumerate(value)]
+    if isinstance(value, str) and value in palette:
+        return palette[value]
+    raise PaletteError(f"{where}: {value!r} is not a name in [palette]")
+
+
+def _render_source(source: Path) -> dict[str, str]:
+    """The theme files one palette file defines, each mapped to its text."""
+    data = tomllib.loads(source.read_text())
+    palette = data.get("palette", {})
+    bad = [n for n, v in palette.items() if not isinstance(v, str) or not HEX.match(v)]
+    if bad:
+        raise PaletteError(f"{source.name}: palette.{bad[0]} = {palette[bad[0]]!r} is not #rrggbb")
+    return {
+        f"{theme}.json": json.dumps(_resolve(spec, palette, f"{source.name}: themes.{theme}"), indent=2) + "\n"
+        for theme, spec in data.get("themes", {}).items()
+    }
+
+
+def render(palettes_dir: Path) -> dict[str, str]:
+    """Every theme file name mapped to the text it should hold."""
+    out: dict[str, str] = {}
+    for source in sorted(palettes_dir.glob("*.toml")):
+        files = _render_source(source)
+        clash = sorted(files.keys() & out.keys())
+        if clash:
+            raise PaletteError(f"{source.name}: theme {clash[0].removesuffix('.json')!r} is defined by another palette too")
+        out.update(files)
+    return out
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--palettes", type=Path)
+    parser.add_argument("--out", type=Path)
+    parser.add_argument("-h", "--help", action="store_true")
+    args = parser.parse_args(argv)
+    if args.help:
+        print(__doc__.strip())
+        return 0
+
+    root = Path(subprocess.run(
+        ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip())
+    palettes_dir = args.palettes or root / "ai/herdr/app/palettes"
+    out_dir = args.out or root / "ai/herdr/app/themes"
+
+    try:
+        files = render(palettes_dir)
+    except (PaletteError, tomllib.TOMLDecodeError) as err:
+        print(f"generate-herdr-app-themes: {err}", file=sys.stderr)
+        return 2
+
+    stale = [
+        name for name, text in files.items()
+        if not (out_dir / name).is_file() or (out_dir / name).read_text() != text
+    ]
+    if args.check:
+        for name in stale:
+            print(f"{out_dir / name} is stale — run bin/local/generate-herdr-app-themes", file=sys.stderr)
+        return 1 if stale else 0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name in stale:
+        # A sibling temp file and an atomic replace: sync links these files
+        # into herdr-app's config, so a half-written one would be read live.
+        tmp = out_dir / f".{name}.tmp"
+        tmp.write_text(files[name])
+        os.replace(tmp, out_dir / name)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for step_herdr_app_theme — Gruvbox theme files and settings.json's theme key.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/steps.sh ai/herdr/app/themes/*.json lib/files.sh lib/config.sh lib/constants.sh
+# select-on: ai/herdr/steps.sh ai/herdr/app/themes/*.json ai/herdr/app/palettes/*.toml lib/files.sh lib/config.sh lib/constants.sh
 
 setup() {
   load 'test_helper'

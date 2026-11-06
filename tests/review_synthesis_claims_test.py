@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import cli.review_orchestrate  # noqa: F401
 
-from review.budget import CLAIM_TURN_ALLOWANCE
+from review.budget import CLAIM_TURN_ALLOWANCE, MAX_CLAIMS
+from review.phases import RETRY_MAX_TURNS_GROUP, _synthesis_max_turns
 from review.record import load_record
 from review.steps import Merged
 from review.verify import PostProcessed
@@ -126,7 +127,7 @@ class TestSynthesisClaims:
         job = self._make_job(ro, tmp_path)
         over = {
             "summary": "s", "verdict": "Approve",
-            "focus": DERIVED_FOCUS, "claims": [CLAIM_DOC] * 13,
+            "focus": DERIVED_FOCUS, "claims": [CLAIM_DOC] * (MAX_CLAIMS + 1),
         }
 
         def mock_invoke(inv, **kwargs):
@@ -165,3 +166,8 @@ class TestSynthesisClaims:
         job.pr.body = ""
         ro._phase_synthesis(job, "", 3, one)
         assert seen["max_turns"] == 15
+
+
+def test_synthesis_turns_stay_at_the_group_ceiling():
+    merged = record(*(finding(f"N{i}", "x") for i in range(1, 121)))
+    assert _synthesis_max_turns(merged, claim_turns=CLAIM_TURN_ALLOWANCE) == RETRY_MAX_TURNS_GROUP

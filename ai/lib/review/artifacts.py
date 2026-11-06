@@ -661,16 +661,16 @@ FIELD_NOTES[FocusReport] = {
     **{k: FIELD_NOTES[AgentFocus][k] for k in ("title", "rationale", "paths")},
 }
 FIELD_NOTES[ClaimReport] = {
-    "source": "the Description or the Related issue",
+    "source": '"description" for the Description and "ticket" for the Related issue',
     "text": "the claim, in the author's words",
     "verdict": "supported holds; contradicted is shown false; unsupported is checkable but "
                "nothing in the code shows it; unverifiable cannot be checked statically, or "
                "its cited code did not verify",
     "evidence": "prose that says why the verdict is that",
-    "path": "required for supported and contradicted: the file and a verbatim line from it "
-            "that shows the verdict; checked after you write",
-    "snippet": "required for supported and contradicted: the file and a verbatim line from it "
-               "that shows the verdict; checked after you write",
+    "path": "required for supported and contradicted: the file that shows the verdict; "
+            "checked after you write; otherwise \"\"",
+    "snippet": "required for supported and contradicted: a verbatim snippet from that file "
+               "that shows the verdict; checked after you write; otherwise \"\"",
     "finding": "the id of your finding that covers this claim, if one does; otherwise \"\"",
 }
 

@@ -354,6 +354,13 @@ def test_the_reviewer_protocol_explains_claims():
             assert load_strict(ReviewArtifact, doc).problems() == ()
 
 
+def test_the_reviewer_protocol_gates_claims_on_the_output_shape():
+    """Holistic uses this protocol too; HolisticArtifact has no claims field."""
+    text = (AGENTS / "reviewer.md").read_text()
+    section = text[text.index("### 0b. Claims"):text.index("### 1. Context")]
+    assert "When the prompt's Output section has a `claims` field" in section
+
+
 def test_the_interactive_example_comes_after_the_whole_protocol():
     """reviewer.md is the single, holistic and synthesis system prompt; their own shape must not read as overridden."""
     text = (AGENTS / "reviewer.md").read_text()

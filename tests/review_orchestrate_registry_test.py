@@ -1,4 +1,4 @@
-"""Prompt assembly: `review.registry.build_prompt` preflight and `review.prompt` stats."""
+"""Prompt assembly: `review.registry.build_prompt` preflight and `review.prompt_stats`."""
 
 import json
 import sys

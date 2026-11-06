@@ -159,7 +159,7 @@ common_setup() {
   # this call and wins.
   _shadow_live_backends
 
-  # Leave no Vertex endpoint for a test to reach. `review.prompt` takes an
+  # Leave no Vertex endpoint for a test to reach. `review.prompt_stats` takes an
   # exact token count of every rendered prompt unless WORKBENCH_AI_MEASURE_TOKENS
   # is 0, and it is on by default — right for a real review, since a
   # measurement nobody takes calibrates nothing. Here it makes each

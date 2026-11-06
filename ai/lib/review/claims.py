@@ -26,11 +26,13 @@ named them.
 
 `settle` verifies claims, derives findings from the ones that remain
 contradicted or unsupported, appends them, and links each source claim to
-its derived finding. It runs at both writer sites before disprove, so the
-record disprove reads already holds those findings. Verification uses the
-same evidence matcher findings use: a supported or contradicted claim whose
-snippet is not in its file becomes unverifiable, with a note, and derives
-nothing.
+its derived finding. A linked claim derives nothing, so settle is
+idempotent and a no-op carried round never derives twice. It runs at both
+writer sites before disprove, so the record disprove reads already holds
+those findings. Disprove clears the link when it falsifies the finding.
+Verification uses the same evidence matcher findings use: a supported or
+contradicted claim whose snippet is not in its file becomes unverifiable,
+with a note, and derives nothing.
 
 Derived findings are should-fix, never must-fix: a false statement about the
 change hits maintainability, reliability, or developer experience, not
@@ -58,7 +60,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import replace
 
 from core.phases import Mode
@@ -294,7 +296,11 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     """Verify claims, derive findings, append them, and link each source claim.
 
     Runs at both writer sites before disprove. A claim whose cited code did
-    not verify becomes unverifiable and derives nothing.
+    not verify becomes unverifiable and derives nothing. Linking is by
+    position, not stable_id: append_findings adds newcomers at the end and
+    renumber_record keeps tuple order, so the last len(derived) visible
+    findings are the derived ones, in claim order. stable_id is not unique
+    per claim — two unsupported claims that share a first line hash alike.
     """
     if record.claims is None:
         return record
@@ -306,21 +312,18 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     if not derived:
         return record
     record = review.merge.append_findings(record, derived)
-    by_sid = {
-        f.stable_id: f.id
-        for f in record.visible
-        if f.origin is FindingOrigin.CLAIM
-    }
+    linked = record.visible[-len(derived):]
+    if any(f.origin is not FindingOrigin.CLAIM for f in linked):
+        raise RuntimeError(
+            "derived findings are not the last visible findings",
+        )
+    ids = iter(f.id for f in linked)
     return replace(record, claims=tuple(
-        _link_claim(c, by_sid) for c in record.claims
+        _link_claim(c, ids) for c in record.claims
     ))
 
 
-def _link_claim(claim: ClaimEntry, by_sid: dict[str, str]) -> ClaimEntry:
-    if claim.finding:
+def _link_claim(claim: ClaimEntry, ids: Iterator[str]) -> ClaimEntry:
+    if claim.finding or _DERIVED_HEAD.get(claim.verdict) is None:
         return claim
-    derived = derived_findings((claim,), checkbox=False)
-    if not derived:
-        return claim
-    fid = by_sid.get(derived[0].stable_id)
-    return replace(claim, finding=fid) if fid else claim
+    return replace(claim, finding=next(ids))

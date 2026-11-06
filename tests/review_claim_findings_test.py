@@ -9,6 +9,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+from core.phases import Mode
 import review.claims
 import review.verify
 from review.claim_types import ClaimSource, ClaimVerdict
@@ -99,9 +100,9 @@ def test_checkbox_follows_the_mode():
     assert review.claims.derived_findings(claims, checkbox=False)[0].checkbox is False
 
 
-def _settle_job(tmp_path):
+def _settle_job(tmp_path, *, mode=Mode.SELF):
     (tmp_path / "a.py").write_text("delay *= 2\n")
-    return review_job(tmp_path, tmp_path / "review", files=("a.py",))
+    return review_job(tmp_path, tmp_path / "review", files=("a.py",), mode=mode)
 
 
 def test_a_contradicted_claim_derives_a_should_fix(tmp_path):
@@ -117,6 +118,7 @@ def test_a_contradicted_claim_derives_a_should_fix(tmp_path):
     assert len(derived) == 1
     assert derived[0].id == "S2"
     assert derived[0].severity == "S"
+    assert out.claims[0].finding == "S2"
 
 
 def test_a_claim_whose_code_does_not_verify_derives_nothing(tmp_path):
@@ -127,6 +129,28 @@ def test_a_claim_whose_code_does_not_verify_derives_nothing(tmp_path):
     assert out.claims[0].verdict is ClaimVerdict.UNVERIFIABLE
     assert "cited code not found" in out.claims[0].evidence
     assert not any(f.origin is FindingOrigin.CLAIM for f in out.findings)
+
+
+def test_identical_unsupported_claims_link_to_their_own_findings(tmp_path):
+    rec = record(claims=(
+        claim(id="C1", verdict=ClaimVerdict.UNSUPPORTED),
+        claim(id="C2", verdict=ClaimVerdict.UNSUPPORTED, source=ClaimSource.TICKET),
+    ))
+    out = review.claims.settle(_settle_job(tmp_path), rec)
+    assert out.claims[0].finding == "S1"
+    assert out.claims[1].finding == "S2"
+    assert out.finding("S1").body.splitlines()[-1] == "Source: description"
+    assert out.finding("S2").body.splitlines()[-1] == "Source: ticket"
+
+
+def test_settle_checkbox_follows_the_mode(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.CONTRADICTED),))
+    self_out = review.claims.settle(_settle_job(tmp_path), rec)
+    pr_out = review.claims.settle(_settle_job(tmp_path, mode=Mode.PR), rec)
+    self_derived = [f for f in self_out.findings if f.origin is FindingOrigin.CLAIM]
+    pr_derived = [f for f in pr_out.findings if f.origin is FindingOrigin.CLAIM]
+    assert self_derived[0].checkbox is True
+    assert pr_derived[0].checkbox is False
 
 
 def test_settle_links_each_claim_to_its_finding(tmp_path):

@@ -1549,6 +1549,18 @@ A finding's severity is its ID's first letter, so the two cannot disagree.
 `TriageEntry` and `LedgerLine` are the record's own types: what an agent
 writes there is exactly what the record keeps.
 
+### review/claim_types.py
+
+Claims are what a PR's description or linked ticket asserts about the change.
+
+A writer reports each with a verdict, and the harness numbers them `C1…`.
+`supported` holds; `contradicted` is shown false; `unsupported` is checkable
+but nothing in the code shows it; `unverifiable` is not statically checkable,
+or its cited code did not verify. `evidence` is prose. `path` and `snippet`
+are the code the verdict rests on, and are required for supported and
+contradicted. `finding` is optional: the id of a writer finding, of any
+severity, that covers the claim.
+
 ### review/dedup.py
 
 Deduplication of findings against already-posted PR comments.

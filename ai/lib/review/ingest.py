@@ -43,6 +43,10 @@ class IngestErrorKind(StrEnum):
     FOCUS_SIZE = "focus_size"
     MISSING_COVERAGE = "missing_coverage"
     UNKNOWN_FOCUS = "unknown_focus"
+    MISSING_CLAIMS = "missing_claims"
+    CLAIM_COUNT = "claim_count"
+    CLAIM_SIZE = "claim_size"
+    BAD_CLAIM = "bad_claim"
 
 
 @dataclass(frozen=True)

@@ -83,6 +83,7 @@ _run_dispatch() {
     sync_pi()     { _note; echo sync_pi     >> "$ran"; }
     sync_skills() { _note; echo sync_skills >> "$ran"; }
     sync_serena() { _note; echo sync_serena >> "$ran"; }
+    sync_herdr_app() { [[ -z "${RECORD_APP:-}" ]] || echo sync_herdr_app >> "$ran"; }
     sync_ai
   ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$GENERATED_RULES" "$FAKE_WB"
 }
@@ -105,6 +106,7 @@ _run_dispatch_logged() {
     sync_pi()     { _note; echo sync_pi     >> "$ran"; }
     sync_skills() { _note; echo sync_skills >> "$ran"; }
     sync_serena() { _note; echo sync_serena >> "$ran"; }
+    sync_herdr_app() { [[ -z "${RECORD_APP:-}" ]] || echo sync_herdr_app >> "$ran"; }
     sync_ai
   ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$GENERATED_RULES" "$FAKE_WB"
 }
@@ -129,6 +131,18 @@ _run_dispatch_logged() {
   [ "$status" -eq 0 ]
   [ -f "$GENERATED_RULES/workbench.md" ]
   [ ! -e "$RAN" ]
+}
+
+@test "herdr-app is themed with no tool selected" {
+  # herdr-app is a separate program from the herdr TUI; gating it on the
+  # herdr entry in ai.tools left a machine running only the app unthemed.
+  _selection
+  export RECORD_APP=1
+
+  _run_dispatch
+  [ "$status" -eq 0 ]
+  run cat "$RAN"
+  [ "$output" = "sync_herdr_app" ]
 }
 
 @test "tools dispatch in the order the operator selected them" {

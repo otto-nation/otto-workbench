@@ -237,22 +237,32 @@ step_herdr_tui_theme() {
 # sync_herdr — runs the herdr sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 #
-# A machine without the herdr TUI binary is left alone for the TUI half
-# (install belongs to setup). The herdr-app half runs on its own presence
-# check: binary on PATH or its config dir exists.
+# A machine without herdr is left alone rather than installed onto: the
+# install belongs to setup, where the operator chose the tool. herdr-app is
+# not handled here — see sync_herdr_app.
 sync_herdr() {
-  if command -v herdr > /dev/null 2>&1; then
-    sync_header "herdr host"
-    step_update_herdr
+  command -v herdr > /dev/null 2>&1 || return 0
 
-    sync_header "herdr integrations"
-    step_herdr_integrations
+  sync_header "herdr host"
+  step_update_herdr
 
-    sync_header "herdr theme"
-    step_herdr_tui_theme
+  sync_header "herdr integrations"
+  step_herdr_integrations
 
-    step_herdr_machine_note
-  fi
+  sync_header "herdr theme"
+  step_herdr_tui_theme
+
+  step_herdr_machine_note
+}
+
+# sync_herdr_app — themes herdr-app wherever it is installed.
+#
+# Called by sync_ai ahead of its tool-selection check, not through the
+# sync_<tool> convention: herdr-app is a separate program from the herdr TUI,
+# and gating it on the `herdr` entry in ai.tools would leave a machine that
+# runs the app without that selection unthemed. The app's own presence is
+# the gate.
+sync_herdr_app() {
   _herdr_app_present || return 0
   sync_header "herdr-app theme"
   step_herdr_app_theme
@@ -272,6 +282,7 @@ register_herdr_steps() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   echo -e "${BOLD}${BLUE}Herdr sync${NC}\n"
   sync_herdr
+  sync_herdr_app
   echo
   success "Herdr sync complete!"
 fi

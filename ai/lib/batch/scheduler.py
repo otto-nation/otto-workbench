@@ -281,6 +281,10 @@ class Scheduler:
             code = live.proc.poll()
             if code is None:
                 continue
+            # poll() joins the stderr reader, which flushes the child's last lines into
+            # the queue after the drain above: read them now, or a failure printed just
+            # before exit is missing from the tail its reason is classified from.
+            self._drain(key, live)
             if kill:
                 # The tracked step is gone, so this is the last call that will
                 # ever reach its process group: anything it left running there

@@ -305,11 +305,12 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     not verify becomes unverifiable and derives nothing. A finding link that
     names no visible finding is cleared first, so a dangling link is no link
     and the claim derives. Linking is by position, not stable_id: the claims
-    that consume an id are the same pre-append tuple derived_findings saw,
-    zipped with the last len(derived) visible findings. append_findings adds
-    newcomers at the end and renumber_record keeps tuple order. stable_id is
-    not unique per claim — two unsupported claims that share a first line
-    hash alike.
+    that consume an id are the post-append claims, zipped with the last
+    len(derived) visible findings. append_findings adds newcomers at the end;
+    _rewrite_record keeps claim order and length, so derived_at still lines
+    up, and starting after the append keeps rewritten links and evidence.
+    stable_id is not unique per claim — two unsupported claims that share
+    a first line hash alike.
     """
     if record.claims is None:
         return record
@@ -323,6 +324,11 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
         return record
     derived_at = tuple(i for i, c in enumerate(claims) if _derives_finding(c))
     record = review.merge.append_findings(record, derived)
+    if record.claims is None or len(record.claims) != len(claims):
+        raise RuntimeError(
+            f"append_findings changed claim count from {len(claims)} to "
+            f"{0 if record.claims is None else len(record.claims)}",
+        )
     tail = record.visible[-len(derived):]
     origins = tuple(f.origin.name for f in tail)
     if len(tail) != len(derived) or any(
@@ -333,7 +339,7 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
             f"visible list; found {len(tail)} with origins {origins}",
         )
     ids = iter(f.id for f in tail)
-    linked = list(claims)
+    linked = list(record.claims)
     for i in derived_at:
         linked[i] = replace(linked[i], finding=next(ids))
     extra = next(ids, None)

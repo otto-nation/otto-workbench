@@ -234,6 +234,22 @@ def test_a_dangling_claim_link_is_treated_as_no_link(tmp_path):
     assert out.finding("S3").origin is FindingOrigin.CLAIM
 
 
+def test_settle_keeps_renumbered_claim_links(tmp_path):
+    rec = record(
+        finding("N2", "nit two"),
+        finding("N3", "nit three"),
+        claims=(
+            claim(id="C1", finding="N3", evidence="see N3"),
+            claim(id="C2", verdict=ClaimVerdict.CONTRADICTED),
+        ),
+    )
+    out = review.claims.settle(_settle_job(tmp_path), rec)
+    linked, derived = out.claims
+    assert linked.finding == "N2"
+    assert linked.evidence == "see N2"
+    assert derived.finding == "S1"
+
+
 def test_settle_guard_fires_when_the_tail_is_a_writer_finding(tmp_path, monkeypatch):
     rec = record(
         finding("S1", "writer"),

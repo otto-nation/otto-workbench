@@ -53,7 +53,7 @@ import core.log
 import core.serde
 from review.grammar import SID_MARKER_RE
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
-from review.record import Disposition, LedgerLine, ReviewRecord
+from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.render import finding_line
 from review.store import StoredReview
 from review.types import FindingRef, PriorDisposition, PriorFinding, ReviewMeta
@@ -80,15 +80,30 @@ def _record_ledger(record: ReviewRecord) -> list[LedgerLine]:
     return list(record.ledger)
 
 
+def _held_open(finding: RecordFinding) -> bool:
+    """Whether a visible finding is still held — not Disposition.FIXED."""
+    return finding.disposition is not Disposition.FIXED
+
+
+def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
+    """Derived findings the prior still held open.
+
+    Openness matches `_prior_findings`: `visible` (not FALSIFIED) and not
+    Disposition.FIXED. Derived findings are never a prior finding to account
+    for, but an open one still needs the writer to re-judge claims.
+    """
+    if prior is None:
+        return ()
+    return tuple(f for f in prior.record.visible if f.derived and _held_open(f))
+
+
 def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
     """Every finding the prior round still held open, with the text that reported it."""
     out = []
     for f in record.visible:
         # Derived findings are re-derived from this round's claims and are
         # never a prior finding to account for.
-        if f.derived:
-            continue
-        if f.disposition is Disposition.FIXED:
+        if f.derived or not _held_open(f):
             continue
         line = finding_line(f)
         out.append(PriorFinding(

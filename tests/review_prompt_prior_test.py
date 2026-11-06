@@ -271,6 +271,9 @@ def test_derived_findings_are_left_out_of_the_prior_section():
     result = _prior_text(_stored(rec=rec), None)
     assert "[S1]" in result
     assert "Claim contradicted" not in result
+    scoped = _prior_text(_stored(rec=rec), ["a.py"])
+    assert "[S1]" in scoped
+    assert "Claim contradicted" not in scoped
 
 
 def test_scoping_reads_the_finding_s_own_path_and_line():

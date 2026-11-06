@@ -55,7 +55,7 @@ from review.phases import (
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _prior_view
-from review.reconcile import passed_over
+from review.reconcile import open_derived_findings, passed_over
 from review.record import (
     Disposition, ProseSection, RecordFinding, ReviewRecord, SeveritySection,
 )
@@ -388,10 +388,17 @@ def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailur
 
     An incremental round, every group reported, the groups that ran produced no
     finding, and no prior finding is left for synthesis to account for. A count
-    nobody took (`fresh` None) is not a zero. The disprove gate reads the same
-    answer: with nothing new there is nothing it has not already challenged.
+    nobody took (`fresh` None) is not a zero. An open derived finding on the
+    prior (visible, not Disposition.FIXED — the same openness as
+    `_prior_findings`) is not settled here: those are re-derived from this
+    round's claims, so this returns False and the writer re-judges them. A
+    round that adds nothing does not withdraw what the last one asked for.
+    The disprove gate reads the same answer: with nothing new there is
+    nothing it has not already challenged.
     """
     if not _is_incremental(job) or failed_groups or merged.fresh != 0:
+        return False
+    if open_derived_findings(job.prior):
         return False
     return not _unaccounted(job, merged.record)
 

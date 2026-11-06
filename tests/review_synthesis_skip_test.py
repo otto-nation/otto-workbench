@@ -16,7 +16,7 @@ import review.pipeline  # noqa: E402
 import review.steps  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
 from review.phases import PhaseResult  # noqa: E402
-from review.record import ReviewRecord  # noqa: E402
+from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
 from review.types import FindingOrigin, Group, PreflightData, ReviewMeta  # noqa: E402
@@ -68,13 +68,41 @@ def test_a_skipped_group_does_not_carry_a_derived_finding():
     carried = review.steps._carry_forward_prior_findings(
         prior, [Group("g1", ["a.py"], 1)], {1},
     )
-    assert carried is None or "S2" not in [f.id for f in carried.record.findings]
+    assert carried is not None
+    assert [f.id for f in carried.record.findings] == ["S1"]
 
 
 def test_an_unaccounted_prior_finding_still_needs_synthesis(tmp_path):
     prior = StoredReview(ReviewRecord(findings=(finding("M1", "x", path="b.py", line=1),)),
                          ReviewMeta(head_sha="p" * 40))
     assert not review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
+
+
+def test_an_open_derived_prior_finding_still_needs_synthesis(tmp_path):
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    assert not review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
+
+
+def test_a_fixed_derived_prior_finding_does_not_block_nothing_new(tmp_path):
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+                disposition=Disposition.FIXED,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    assert review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
 
 
 def test_nothing_new_with_everything_settled(tmp_path):

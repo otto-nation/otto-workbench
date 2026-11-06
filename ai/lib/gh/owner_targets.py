@@ -15,9 +15,11 @@ In order:
    requires them all in one group.
 4. Unresolvable, and so refused by the caller: a GraphQL write from a shell
    (it names its target by node ID), a REST write outside ``repos/``, a cwd
-   that is no repository or has no GitHub remote, and a cwd-resolved write in a
-   command that changes directory — which directory it runs in is not knowable
-   from the text.
+   that is no repository or has no GitHub remote, a ``--repo-dir`` whose value
+   still holds a shell variable, substitution or ``~`` (the guard reads the
+   command as text and does not expand), and a cwd-resolved write in a command
+   that changes directory — which directory it runs in is not knowable from
+   the text.
 
 A bare ``OWNER/REPO`` is on ``GH_HOST`` when set (prefix, then environment),
 else public GitHub — gh's own default host.
@@ -113,6 +115,11 @@ _SHIFTED_ENV_REASON = (
 _SHIFTED_HOST_REASON = (
     "the command assigns GH_HOST in another statement, so a bare OWNER/REPO"
     " cannot be checked — pass --repo HOST/OWNER/REPO")
+_NOT_EXPANDED = (
+    "the owner guard reads the command as text and does not expand shell"
+    " variables, `$(…)`/backtick substitutions or `~`")
+_WORKBENCH_REMEDY = (
+    "pass --repo-dir with the checkout's literal path, or, where the command takes one, --pr with the PR's URL")
 
 
 class TargetSource(StrEnum):
@@ -375,24 +382,25 @@ def _extend_gh_resolved(owners: list[Owner], cwd: str, found: Sequence[git.remot
 
 
 def _remotes(cwd: str, after_cd: bool, host: str, known_hosts: frozenset[str],
-             shifted_env: frozenset[str] = frozenset()) -> Resolution:
+             shifted_env: frozenset[str] = frozenset(),
+             remedy: str = "pass --repo OWNER/REPO") -> Resolution:
     if after_cd:
         return Resolution(reason=(
             "the command changes directory before it writes, so which repository it"
-            " targets cannot be checked — run it from the repository, or pass --repo OWNER/REPO"))
+            f" targets cannot be checked — run it from the repository, or {remedy}"))
     if shifted_env:
         return Resolution(reason=_shifted_reason(shifted_env))
     found = git.remote_url.remotes(cwd) if cwd and Path(cwd).is_dir() else None
     if found is None:
         return Resolution(reason=(
             f"{cwd or 'the working directory'} is not a git repository, so the write has"
-            f" no repository to check — pass --repo OWNER/REPO"))
+            f" no repository to check — {remedy}"))
     owners = [o for o in (remote_owner(r.url, host, known_hosts) for r in found) if o is not None]
     refusal = _extend_gh_resolved(owners, cwd, found, host, known_hosts)
     if refusal is not None:
         return refusal
     if not owners:
-        return Resolution(reason=f"no remote at {cwd} names a GitHub repository — pass --repo OWNER/REPO")
+        return Resolution(reason=f"no remote at {cwd} names a GitHub repository — {remedy}")
     return Resolution(Target(tuple(dict.fromkeys(owners)), TargetSource.REMOTES, f"the remotes at {cwd}"))
 
 
@@ -538,6 +546,10 @@ def _scoped(scoped: gh.owner_scopes.Scoped) -> Resolution:
     return Resolution(Target(scoped.owners, TargetSource.EXPLICIT, scoped.detail))
 
 
+def _unexpanded(word: str) -> bool:
+    return "$" in word or "`" in word or word.startswith("~")
+
+
 def _workbench(args: Sequence[str], env: Mapping[str, str], environ: Mapping[str, str],
                cwd: str, after_cd: bool, known_hosts: frozenset[str],
                shifted_env: frozenset[str]) -> Resolution:
@@ -548,10 +560,17 @@ def _workbench(args: Sequence[str], env: Mapping[str, str], environ: Mapping[str
     flags = _parse_args(args)
     if flags.repo_dirs:
         repo_dir = flags.repo_dirs[-1]
+        if _unexpanded(repo_dir):
+            return Resolution(reason=(
+                f"--repo-dir {repo_dir} was read literally: {_NOT_EXPANDED}"
+                " — write the checkout's path out in full"
+                " (--repo-dir /abs/path/to/worktree), or name the PR by URL"
+                " (--pr https://HOST/OWNER/REPO/pull/N) where the command takes one"))
         if Path(repo_dir).is_absolute():
-            return _remotes(repo_dir, False, host, known_hosts, shifted_env)
-        return _remotes(str(Path(cwd) / repo_dir), after_cd, host, known_hosts, shifted_env)
-    return _remotes(cwd, after_cd, host, known_hosts, shifted_env)
+            cwd, after_cd = repo_dir, False
+        else:
+            cwd = str(Path(cwd) / repo_dir)
+    return _remotes(cwd, after_cd, host, known_hosts, shifted_env, _WORKBENCH_REMEDY)
 
 
 def _with_choice(resolution: Resolution, choose: str) -> Resolution:

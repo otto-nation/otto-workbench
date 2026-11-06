@@ -13,6 +13,7 @@ setup() {
   SRC="$REPO_ROOT/ai/herdr/app/themes"
   APP_LIGHT=$(sed -n 's/^HERDR_APP_THEME_LIGHT="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
   APP_DARK=$(sed -n 's/^HERDR_APP_THEME_DARK="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  DESIRED_THEME=$(jq -cn --arg l "$APP_LIGHT" --arg d "$APP_DARK" '{light: $l, dark: $d}')
   unset HERDR_ENV HERDR_PANE_ID
   narrow_path_to bash jq
   BIN="$BATS_TEST_TMPDIR/narrow-bin"
@@ -39,10 +40,6 @@ _run() {
   ' _ "$REPO_ROOT" "$1"
 }
 
-_desired_theme() {
-  jq -cn --arg l "$APP_LIGHT" --arg d "$APP_DARK" '{light: $l, dark: $d}'
-}
-
 @test "absent herdr-app is a no-op" {
   run _run step_herdr_app_theme
   [ "$status" -eq 0 ]
@@ -58,7 +55,7 @@ _desired_theme() {
   [ -L "$APP/themes/${APP_LIGHT}.json" ]
   [ "$(readlink "$APP/themes/${APP_DARK}.json")" = "$SRC/${APP_DARK}.json" ]
   [ "$(readlink "$APP/themes/${APP_LIGHT}.json")" = "$SRC/${APP_LIGHT}.json" ]
-  [ "$(jq -S -c . "$APP/settings.json")" = "$(jq -S -cn --arg l "$APP_LIGHT" --arg d "$APP_DARK" '{theme:{light:$l,dark:$d}}')" ]
+  [ "$(jq -S -c . "$APP/settings.json")" = "$(jq -S -c '{theme: .}' <<< "$DESIRED_THEME")" ]
   [ "$(file_mode "$APP/settings.json")" = "644" ]
 }
 
@@ -78,7 +75,7 @@ _desired_theme() {
   run _run step_herdr_app_theme
   [ "$status" -eq 0 ]
   [ "$(jq -c 'del(.theme)' "$APP/settings.json")" = "$(jq -c 'del(.theme)' <<< "$seed")" ]
-  [ "$(jq -c '.theme' "$APP/settings.json")" = "$(_desired_theme)" ]
+  [ "$(jq -c '.theme' "$APP/settings.json")" = "$DESIRED_THEME" ]
   [ "$(jq -r 'has("appearance")' "$APP/settings.json")" = "false" ]
 }
 
@@ -102,7 +99,7 @@ _desired_theme() {
   [ "$(cat "$APP/themes/${APP_DARK}.json")" = '{"background":"#000000"}' ]
   [[ "$output" == *"differs from the workbench copy"* ]]
   [ -L "$APP/themes/${APP_LIGHT}.json" ]
-  [ "$(jq -c '.theme' "$APP/settings.json")" = "$(_desired_theme)" ]
+  [ "$(jq -c '.theme' "$APP/settings.json")" = "$DESIRED_THEME" ]
 }
 
 @test "re-run under WORKBENCH_SYNC prints nothing and does not rewrite settings" {

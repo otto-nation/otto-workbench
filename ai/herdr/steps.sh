@@ -179,7 +179,11 @@ _herdr_config_swap() {
   fi
   mv "$candidate" "$file" || { rm -f "$candidate" "$backup"; warn "Could not write $file — herdr theme not set"; return 1; }
   if ! check=$(herdr config check 2>&1); then
-    if [[ -n "$backup" ]]; then mv "$backup" "$file"; else rm -f "$file"; fi
+    if [[ -n "$backup" ]]; then
+      mv "$backup" "$file" || { warn "herdr rejected $file and restoring it failed — original is at $backup"; return 1; }
+    else
+      rm -f "$file"
+    fi
     diag=$(printf '%s\n' "$check" | awk '/config: issues found/{p=1; next} p && NF {print; exit}')
     warn "herdr rejected $file after the theme change — restored it${diag:+: $diag}"
     return 1

@@ -273,7 +273,7 @@ HERDR_INSTALL_URL="https://herdr.dev/install.sh"
 # person's until a managed template replaces that step (#1660).
 HERDR_CONFIG_DIR="$HOME/.config/herdr"
 HERDR_CONFIG_FILE="$HERDR_CONFIG_DIR/config.toml"
-# herdr built-in theme names for the TUI's light/dark auto-switch pair.
+# herdr built-in theme names (not the HERDR_APP_THEME_* file stems below) for the TUI's light/dark auto-switch pair.
 HERDR_TUI_THEME_LIGHT="gruvbox-light"
 HERDR_TUI_THEME_DARK="gruvbox"
 

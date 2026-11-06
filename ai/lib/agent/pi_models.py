@@ -307,8 +307,8 @@ def check_targets(models: PhaseModels, trail, cwd: str) -> bool:
 
     Fails open — True — when no pi can be chosen or its catalogue cannot be read:
     the spawn that needs it reports the reason, and refusing here would turn an
-    optional lookup into a hard dependency, and records on *trail* that the check
-    was skipped, and why.
+    optional lookup into a hard dependency. An unreadable catalogue is recorded on
+    *trail*, so the skipped check and its reason are not silent.
     """
     try:
         pi = agent.pi_binary.resolve(cwd).spawn(os.environ).argv

@@ -556,12 +556,10 @@ def _narrow_resume(run: Run, steps: list[Step]) -> None:
     wanted = set(steps)
     excluded = set(run.steps) - wanted
     run.steps = [s for s in run.steps if s in wanted]
-    for item in run.items:
-        if item.terminal:
-            continue
-        for rec in item.steps:
-            if rec.step in excluded and rec.status is StepStatus.PENDING:
-                rec.status = StepStatus.SKIPPED
+    pending = (r for item in run.items if not item.terminal for r in item.steps)
+    for rec in pending:
+        if rec.step in excluded and rec.status is StepStatus.PENDING:
+            rec.status = StepStatus.SKIPPED
 
 
 def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,

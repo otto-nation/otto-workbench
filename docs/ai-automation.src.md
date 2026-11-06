@@ -497,7 +497,7 @@ closed, and every step runs drafted — the batch is the only thing that pushes.
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run_summary
 pr batch run --plan FILE …               # start from a saved plan
-pr batch resume [RUN_ID]                 # continue waiting or interrupted; a cancel is final
+pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
 pr batch next [RUN_ID]                   # only what needs action (JSON)
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state
@@ -507,7 +507,7 @@ pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder ap
 ```
 
 `pr batch run --focus` is forwarded to every review step and replayed by
-`pr batch resume`; it does not make a review step needed.
+`pr batch resume` (`--steps` may only narrow; it does not make a review step needed).
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no

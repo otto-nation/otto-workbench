@@ -61,6 +61,7 @@
     "skill:incident",
     "skill:machine",
     "skill:migrate",
+    "skill:pr-batch",
     "skill:pr-comments",
     "skill:pr-rebase",
     "skill:promote",

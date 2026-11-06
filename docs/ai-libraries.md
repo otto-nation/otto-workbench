@@ -7804,6 +7804,18 @@ Every step runs drafted; the batch alone publishes (see batch.publish). --auto-p
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 
+### cli/pr_batch_requests.py
+
+Inbox-writing `pr batch` commands: resolve, cancel, and release.
+
+Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
+
+### cli/pr_batch_views.py
+
+Read-only `pr batch` views: plan, status, next, and the report they share.
+
+Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
+
 ### cli/pr_commands.py
 
 The three `pr` subcommands that used to be defined inside the binary.

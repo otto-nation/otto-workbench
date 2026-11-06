@@ -918,6 +918,7 @@ Takes no flags.
 | Flag | Description |
 |------|-------------|
 | `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering; refused when several unfinished runs cover this repo). |
+| `--steps` `<steps>` | Narrow the run to these steps (a subset of the run's). Each excluded pending step becomes skipped; a later commit does not re-queue a dropped review. Adding a step is refused. |
 | `--verbose` | Also stream each step's stderr as step_log events. |
 
 **`pr batch resolve`** — Answer one decision

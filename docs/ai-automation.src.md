@@ -440,10 +440,6 @@ When your CWD is not the target repo (e.g., running from a Claude Code session r
 pr create --draft --closes 941 --repo-dir /path/to/worktree
 ```
 
-The owner guard reads the command as text and does not expand shell variables,
-so `--repo-dir "$R"`, `$(…)` or `~/…` is refused — write the checkout's path
-out in full, or, where the command takes a PR, name it with `--pr <URL>`.
-
 `--branch <b>` from a checkout that is not on `<b>` does not switch the current
 tree. What happens instead depends on the command:
 

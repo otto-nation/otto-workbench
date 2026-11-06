@@ -290,6 +290,12 @@ HERDR_APP_THEME_SUFFIX=".generated.json"
 # Theme names for the app's light/dark pair.
 HERDR_APP_THEME_LIGHT="gruvbox-light"
 HERDR_APP_THEME_DARK="gruvbox-dark"
+# Isolated herdr-app home and herdr-core session for agent machines. The session
+# name is a cross-repo contract with homelab's
+# scripts/setup-herdr-untrusted-window.sh --session default; both repos pin
+# the literal `untrusted` in a test rather than reading each other's constants.
+HERDR_UNTRUSTED_APP_DIR="$HOME/.config/herdr-app-untrusted"
+HERDR_UNTRUSTED_SESSION="untrusted"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
@@ -385,6 +391,7 @@ PI_CONTEXT_HEAD_SRC="$PI_SRC_DIR/AGENTS.head.md"
 PI_EXTENSIONS_SRC_DIR="$PI_SRC_DIR/extensions"
 PI_CLI_EXTENSIONS_SRC_DIR="$PI_SRC_DIR/extensions-cli"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
+HERDR_SRC_DIR="$WORKBENCH_DIR/ai/herdr"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
 CLAUDE_SETTINGS_SRC="$WORKBENCH_DIR/ai/claude/settings.json"

@@ -67,6 +67,8 @@ _run() {
     . "$1/ai/herdr/steps.sh"
     step_herdr_tui_theme() { echo "TUI_THEME"; }
     step_herdr_app_theme() { echo "APP_THEME"; }
+    step_herdr_untrusted_window() { echo "UNTRUSTED"; }
+    sync_component_bin() { echo "SYNC_BIN $*"; }
     _herdr_app_present() { [[ -n "${FAKE_APP_PRESENT:-}" ]]; }
     "$2"
   ' _ "$REPO_ROOT" "$1"
@@ -234,6 +236,8 @@ SCRIPT
   run _run sync_herdr_app
   [ "$status" -eq 0 ]
   [[ "$output" == *APP_THEME* ]]
+  [[ "$output" == *UNTRUSTED* ]]
+  [[ "$output" == *SYNC_BIN* ]]
   [[ "$output" != *TUI_THEME* ]]
   [ ! -e "$ARGV" ]
 }
@@ -242,6 +246,8 @@ SCRIPT
   run _run sync_herdr_app
   [ "$status" -eq 0 ]
   [[ "$output" != *APP_THEME* ]]
+  [[ "$output" != *UNTRUSTED* ]]
+  [[ "$output" != *SYNC_BIN* ]]
 }
 
 @test "machine note is printed when no machines are registered" {

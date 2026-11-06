@@ -60,6 +60,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |
 | `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
+| `herdr-app-untrusted` | Launch an isolated Herdr window (HC_SESSION=untrusted) with no local terminals and clipboard write off. Operator tool |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI |
 | `validate-all` | Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI |
@@ -605,6 +606,32 @@ dream-verify
 |------|---------|
 | `0` | All checks pass, or no memory directories found |
 | `1` | One or more checks fail |
+
+### `herdr-app-untrusted`
+
+Launch an isolated Herdr window for agent machines (HC_SESSION=untrusted).
+
+Creates ~/.config/herdr-app-untrusted if missing, copies appearance settings
+from the main window, forces clipboard_write off, and refuses to open when
+the untrusted session holds a local terminal or an afar grant. Never starts
+hc.
+
+```
+herdr-app-untrusted
+```
+
+| Flag | Description |
+|------|-------------|
+| `-h`, `--help` | Show help |
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `HC_SESSION` | Set by the launcher for the window's core | `untrusted` |
+| `HERDR_APP_HOME` | Set by the launcher to the isolated app home | `~/.config/herdr-app-untrusted` |
+
+Agent machines belong in this window only. Adding them is owned by homelab
+(`scripts/setup-herdr-untrusted-window.sh`). Edit appearance in the main
+window; sync copies it here.
 
 ### `otto-log`
 

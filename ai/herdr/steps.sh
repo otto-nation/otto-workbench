@@ -110,17 +110,19 @@ step_herdr_machine_note() {
 # _herdr_app_present — true when herdr-app is on PATH or its config dir exists.
 _herdr_app_present() { command -v herdr-app >/dev/null 2>&1 || [[ -d "$HERDR_APP_DIR" ]]; }
 
-# _herdr_app_link_themes — symlinks every generated
-# ai/herdr/app/themes/<name>.generated.json into HERDR_APP_THEMES_DIR as
-# <name>.json, the name herdr-app reads the theme by. Identical regular file →
-# replaced by the link; differing regular file → warned about and left (it is
-# the person's edit).
+# _herdr_app_link_themes [HOME] — symlinks every generated
+# ai/herdr/app/themes/<name>.generated.json into HOME/themes (default
+# HERDR_APP_DIR) as <name>.json, the name herdr-app reads the theme by.
+# Identical regular file → replaced by the link; differing regular file →
+# warned about and left (it is the person's edit).
 _herdr_app_link_themes() {
-  mkdir -p "$HERDR_APP_THEMES_DIR"
+  local home="${1:-$HERDR_APP_DIR}"
+  local themes_dir="$home/themes"
+  mkdir -p "$themes_dir"
   local src name target
   for src in "$HERDR_APP_THEMES_SRC_DIR"/*"$HERDR_APP_THEME_SUFFIX"; do
     [[ -f "$src" ]] || continue
-    name=$(basename "$src" "$HERDR_APP_THEME_SUFFIX").json; target="$HERDR_APP_THEMES_DIR/$name"
+    name=$(basename "$src" "$HERDR_APP_THEME_SUFFIX").json; target="$themes_dir/$name"
     if [[ -f "$target" && ! -L "$target" ]] && ! cmp -s "$src" "$target"; then
       warn "herdr-app theme $name: $target differs from the workbench copy — left as is; delete it and re-run otto-workbench sync to link it"
       continue
@@ -133,12 +135,13 @@ _herdr_app_link_themes() {
   return 0
 }
 
-# _herdr_app_set_theme — sets settings.json's `theme` to the light/dark pair and
-# nothing else. Never clobbers: a file that is not one JSON object, or a symlink,
-# is warned about and left.
+# _herdr_app_set_theme [HOME] — sets settings.json's `theme` to the light/dark
+# pair and nothing else. Never clobbers: a file that is not one JSON object, or
+# a symlink, is warned about and left. HOME defaults to HERDR_APP_DIR.
 _herdr_app_set_theme() {
+  local home="${1:-$HERDR_APP_DIR}"
   local light="$HERDR_APP_THEME_LIGHT" dark="$HERDR_APP_THEME_DARK" desired current updated
-  local file="$HERDR_APP_SETTINGS_FILE"
+  local file="$home/settings.json"
   desired=$(jq -cn --arg l "$light" --arg d "$dark" '{light: $l, dark: $d}')
   if [[ -L "$file" ]]; then
     warn "$file is a symlink — left as is; set theme there to $desired"
@@ -169,6 +172,9 @@ step_herdr_app_theme() {
   _herdr_app_set_theme
   return 0
 }
+
+# shellcheck source=untrusted_window.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/untrusted_window.sh"
 
 # _herdr_config_swap FILE CANDIDATE — moves CANDIDATE over FILE, then asks
 # `herdr config check`; on failure puts the original back (or removes FILE when
@@ -268,6 +274,9 @@ sync_herdr_app() {
   _herdr_app_present || return 0
   sync_header "herdr-app theme"
   step_herdr_app_theme
+  sync_header "herdr-app untrusted window"
+  step_herdr_untrusted_window
+  sync_component_bin "$HERDR_SRC_DIR"
 }
 
 register_herdr_steps() {
@@ -276,7 +285,8 @@ register_herdr_steps() {
   register_step "Herdr integrations" step_herdr_integrations
   register_step "Herdr theme"        step_herdr_tui_theme
   register_step "Herdr machines"     step_herdr_machine_note
-  register_step "Herdr app theme"    step_herdr_app_theme
+  register_step "Herdr app theme"         step_herdr_app_theme
+  register_step "Herdr untrusted window"  step_herdr_untrusted_window
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

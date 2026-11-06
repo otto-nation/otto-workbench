@@ -7,7 +7,7 @@
 | | `skip-step` | that step → `skipped`; commits it made stay drafted |
 | | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
 | `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
-| `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
+| `rebase_conflict` | `retry` / `abort` | rebase → `pending` (a `tree: clean` payload restarts; a paused one resumes) / `skipped` (`tree: clean` runs no command; paused runs `pr rebase --abort`); a failed abort → `failed` |
 | `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` and its target lock released / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
@@ -214,6 +214,8 @@ def command_for(decision: Decision, item: Item, request: Decide,
         # is no replay left to abort.
         return [["git", "-C", item.worktree, "reset", "--hard", item.pre_rebase_head]]
     if a == "abort":
+        if decision.payload.get("tree") == "clean":
+            return []
         return [[pr_bin, "rebase", "--abort"] + wt]
     if a == "force":
         return [[pr_bin, "rebase", "--fix", "--force", "--no-push"] + wt]

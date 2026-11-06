@@ -53,7 +53,9 @@ def test_rebase_null_pre_rebase_head_is_empty():
 
 def test_rebase_conflicts_carry_the_conflict_report():
     report = {"status": "conflicts", "files": ["a.py"], "rebase_head": "abc",
-              "rebase_head_subject": "s", "remaining_commits": 2}
+              "rebase_head_subject": "s", "remaining_commits": 2,
+              "aborted": True, "tree": "clean",
+              "classes": {"a.py": "ai_merge"}, "files_stale": []}
     r = batch.outcomes.classify(batch.model.Step.REBASE, 3, json.dumps(report), item=ITEM, log_tail=[])
     assert r.status is batch.model.StepStatus.NEEDS_DECISION
     assert r.decisions == [batch.outcomes.DecisionDraft(batch.model.DecisionKind.REBASE_CONFLICT, report)]

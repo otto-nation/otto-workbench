@@ -6428,7 +6428,8 @@ regular file no larger than ``MAX_SCAN_BYTES``; missing, unreadable, stdin
 
 The whole command text is scanned, including non-write statements — a
 deliberate over-refusal, so a reference sitting next to a write cannot slip
-through unread.
+through unread. Every statement also contributes ``cat`` operands, ``<``
+input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
 
 ### gh/owner_hooks.py
 

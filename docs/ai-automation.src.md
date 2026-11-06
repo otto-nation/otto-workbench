@@ -82,7 +82,7 @@ Every GitHub write is checked against `github.owners` and refused elsewhere; uns
 
 The user's overrides for publishing anyway are `WORKBENCH_ALLOW_UPSTREAM=1` (target) and `WORKBENCH_ALLOW_CROSS_REF=1` (text). Both are honoured only on user-run Python paths (`gh.client`, Linear, the git hooks); the agent guards never read them, and an agent command that names either is refused.
 
-The global `commit-msg` hook is advisory (`git commit -n` skips it). The global `pre-push` hook is the gate: it scans commits new to the destination remote against that destination's owner. Non-GitHub destinations and unconfigured owners allow. Both fail open when the check cannot run. See [`git/hooks/commit-msg`](../git/hooks/commit-msg) and [`git/hooks/pre-push`](../git/hooks/pre-push).
+The global `commit-msg` hook is advisory (`git commit --no-verify` / `-n` skips it). The global `pre-push` hook is the gate: it scans commits new to the destination remote against that destination's owner (`git push --no-verify` skips it). Non-GitHub destinations and unconfigured owners allow. A repo-local `core.hooksPath` (husky and similar) bypasses both. Both fail open when the check cannot run. See [`git/hooks/commit-msg`](../git/hooks/commit-msg) and [`git/hooks/pre-push`](../git/hooks/pre-push).
 
 ### Which model each phase runs on
 

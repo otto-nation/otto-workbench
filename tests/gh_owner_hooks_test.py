@@ -552,3 +552,31 @@ def test_message_file_ignores_scissors_when_comment_char_is_auto(
         f"diff --git a/x b/x\n+{OFFENCE}\n"
     )
     assert _message(tmp_path, repo, text) == 0
+
+
+def test_message_and_push_agree_when_the_tracked_ref_is_gone(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _tracking_fork(tmp_path, "fork")
+    git_in(repo, "config", "push.default", "simple")
+    git_in(repo, "config", "branch.main.remote", "fork")
+    git_in(repo, "config", "branch.main.merge", "refs/heads/main")
+    git_in(repo, "update-ref", "-d", "refs/remotes/fork/main")
+    msg_code, push_code = _message_and_push_agree(
+        tmp_path, monkeypatch, repo, "fork", OWN, OWN_REF)
+    assert msg_code == push_code == 0
+
+
+def test_message_and_push_agree_when_a_new_branch_tracks_another_remote(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _tracking_fork(tmp_path, "upstream")
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    git_in(repo, "branch", "--set-upstream-to", "upstream/main")
+    git_in(repo, "config", "push.default", "current")
+    sha = _commit(repo, OWN_REF)
+    msg_code = _message(tmp_path, repo, OWN_REF)
+    push_code = _push(
+        monkeypatch, repo, _line(sha, ref="refs/heads/feat") + "\n",
+        remote="upstream", url=OWN)
+    assert msg_code == push_code == 0

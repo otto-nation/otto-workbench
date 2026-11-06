@@ -169,24 +169,30 @@ def _remote_from_push_ref(full: str, names: Sequence[str]) -> str | None:
 
 
 def _configured_push_remote(cwd: str | Path, names: Sequence[str]) -> str | None:
-    """``branch.<current>.pushRemote``, else ``remote.pushDefault``, if that remote exists."""
+    """The remote git's config sends the current branch to, if it names one in *names*.
+
+    git's order: ``branch.<b>.pushRemote``, ``remote.pushDefault``, then
+    ``branch.<b>.remote`` — the remote the branch tracks, which still decides
+    the push when ``@{push}`` cannot resolve (its tracking ref is gone, or a
+    new branch's ref was never fetched). A detached HEAD has no branch keys.
+    ``branch.<b>.remote`` is ``.`` for a branch tracking a local one, which is
+    not a remote name and falls through.
+    """
     branch = git.client.out(
         "symbolic-ref", "--short", "-q", "HEAD", cwd=cwd, default="")
+    keys = ("remote.pushDefault",)
     if branch:
-        named = git.client.out(
-            "config", "--get", f"branch.{branch}.pushRemote",
-            cwd=cwd, default="")
+        keys = (f"branch.{branch}.pushRemote", "remote.pushDefault",
+                f"branch.{branch}.remote")
+    for key in keys:
+        named = git.client.out("config", "--get", key, cwd=cwd, default="")
         if named and named in names:
             return named
-    default = git.client.out(
-        "config", "--get", "remote.pushDefault", cwd=cwd, default="")
-    if default and default in names:
-        return default
     return None
 
 
 def _push_remote_name(cwd: str | Path) -> str | None:
-    """``@{push}``'s remote, else branch pushRemote, else pushDefault, else origin."""
+    """``@{push}``'s remote, else the configured one, else ``origin``, else None."""
     names = _remote_names(cwd)
     full = git.client.out(
         "rev-parse", "--symbolic-full-name", "@{push}",

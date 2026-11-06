@@ -147,6 +147,23 @@ def test_message_and_push_agree_when_branch_pushremote_is_fork(
     assert msg_code == push_code == 0
 
 
+def test_message_and_push_agree_before_first_push_when_pushremote_is_fork(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = init_repo(tmp_path / "r")
+    git_in(repo, "remote", "add", "origin", OWN)
+    git_in(repo, "remote", "add", "fork", OTHER)
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    git_in(repo, "config", "push.default", "current")
+    git_in(repo, "config", "branch.feat.pushRemote", "fork")
+    sha = _commit(repo, OWN_REF)
+    msg_code = _message(tmp_path, repo, OWN_REF)
+    push_code = _push(
+        monkeypatch, repo, _line(sha, ref="refs/heads/feat") + "\n",
+        remote="fork", url=OTHER)
+    assert msg_code == push_code == cli.owners_check.REFUSED
+
+
 def test_message_and_push_agree_when_branch_tracks_fork(
         github_owners, tmp_path, monkeypatch):
     _groups(github_owners)

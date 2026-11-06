@@ -282,12 +282,13 @@ def coverage_problems(
     return tuple(out)
 
 
-def check_warning(errors: Sequence[IngestError]) -> str:
+def check_warning(errors: Sequence[IngestError], *, more: Sequence[str] = ()) -> str:
     """Warning after a writer's second failed focus check (D14).
 
     Rendered errors, then one clause per kind present: uncovered areas are
     published as not assessed, unknown entries are dropped, and extra areas
-    are kept only when this review asked for them.
+    are kept only when this review asked for them. `more` is clauses a
+    caller adds for kinds it owns.
     """
     listed = "; ".join(e.render() for e in errors)
     kinds = {e.kind for e in errors}
@@ -300,6 +301,7 @@ def check_warning(errors: Sequence[IngestError]) -> str:
         clauses.append(
             "areas the writer added are kept only when this review asked for them",
         )
+    clauses.extend(more)
     if not clauses:
         return listed
     return f"{listed} — {'; '.join(clauses)}"

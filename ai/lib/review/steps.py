@@ -33,7 +33,9 @@ from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
     GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
 )
-from review.focus import check_warning, coverage_problems, covered, needs_derived
+import review.claims
+from review.budget import CLAIM_TURN_ALLOWANCE
+from review.focus import covered
 from review.ingest import (
     ArtifactOutcome, IngestError, IngestRejected, ingest_artifact,
     load_artifact,
@@ -404,7 +406,10 @@ def _phase_synthesis(
     # as this agent having written.
     Path(output).write_text("")
 
-    max_turns = _synthesis_max_turns(merged.record)
+    max_turns = _synthesis_max_turns(
+        merged.record,
+        claim_turns=CLAIM_TURN_ALLOWANCE if review.claims.has_claim_source(job) else 0,
+    )
     runner = PhaseRunner(job, Phase.SYNTHESIS)
     synthesis_log = runner.session_log
     # The same reconciliation the run ends with, asked one phase early, while
@@ -476,13 +481,13 @@ def _phase_synthesis(
         ingest_artifact(
             output, sent, invoke, ReviewArtifact,
             diagnose=lambda: diagnose_missing_output(synthesis_log, output),
-            check=lambda a: coverage_problems(a, job.focus, derive=needs_derived(job.focus)),
+            check=review.claims.writer_check(job),
         )
         if _has_output(output) else ArtifactOutcome(None)
     )
     if outcome.ok:
         if outcome.errors:
-            core.log.warn(check_warning(outcome.errors))
+            core.log.warn(review.claims.check_warning(outcome.errors))
         record = replace(
             outcome.artifact.to_record(
                 checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
@@ -492,6 +497,7 @@ def _phase_synthesis(
             extra=merged.record.extra,
             focus=covered(job.focus, outcome.artifact.focus,
                           [f["path"] for f in job.pr.files]),
+            claims=review.claims.claims_of(job, outcome),
         )
         record = _restore_held_findings(merged.record, record)
         if _is_incremental(job):

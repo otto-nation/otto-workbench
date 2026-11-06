@@ -13,9 +13,9 @@ if LIB_DIR not in sys.path:
 
 from review.budget import MAX_CLAIM_BYTES, MAX_ISSUE_CONTEXT_BYTES
 from review.claim_types import ClaimEntry, ClaimReport, ClaimSource, ClaimVerdict
-from review.claims import claims_problems, input_sha
-from review.ingest import IngestErrorKind
-from review_claims_support import CLAIM_DOC
+from review.claims import check_warning, claims_of, claims_problems, input_sha
+from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
+from review_claims_support import CLAIM_DOC, claim
 
 _OK = ClaimReport(**CLAIM_DOC)
 
@@ -122,3 +122,36 @@ def test_input_sha_ignores_issue_text_past_the_cut():
     right = input_sha(_job(issue_context=head + "bbb"))
     assert left == right
     assert left != ""
+
+
+BAD_CLAIM = IngestError(IngestErrorKind.BAD_CLAIM, 0, "d", at="$.claims")
+MISSING_COVERAGE = IngestError(IngestErrorKind.MISSING_COVERAGE, 0, "d", at="$.focus")
+
+
+def test_check_warning():
+    import review.focus
+    only_claim = (BAD_CLAIM,)
+    assert check_warning(only_claim) == (
+        f"{BAD_CLAIM.render()} — claims are published as not assessed"
+    )
+    mixed = (MISSING_COVERAGE, BAD_CLAIM)
+    warning = check_warning(mixed)
+    assert "published as not assessed; claims are published as not assessed" in warning
+    only_focus = (MISSING_COVERAGE,)
+    assert check_warning(only_focus) == review.focus.check_warning(only_focus)
+
+
+def test_claims_of():
+    present = ArtifactOutcome(SimpleNamespace(claims=(_OK,)))
+    assert claims_of(_job(), present) == ()
+    assert claims_of(_job(body="B"), ArtifactOutcome(
+        SimpleNamespace(claims=(_OK,)), errors=(BAD_CLAIM,),
+    )) is None
+    entries = claims_of(_job(body="B"), ArtifactOutcome(
+        SimpleNamespace(claims=(_OK,)), errors=(MISSING_COVERAGE,),
+    ))
+    assert entries == (claim(),)
+    two = claims_of(_job(body="B"), ArtifactOutcome(
+        SimpleNamespace(claims=(_OK, _OK)),
+    ))
+    assert [c.id for c in two] == ["C1", "C2"]

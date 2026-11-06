@@ -8,11 +8,13 @@ The wiring calls these; Task 10 completes the contract.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 
 import review.budget
+import review.focus
 import review.prompt_sections
-from review.claim_types import ClaimReport, ClaimVerdict
+from review.artifacts import ReviewArtifact
+from review.claim_types import ClaimEntry, ClaimReport, ClaimVerdict
 from review.grammar import strip_line_suffix
 from review.ingest import IngestError, IngestErrorKind
 
@@ -104,3 +106,38 @@ def _claim_problems(
             f"{claim.finding} names no finding",
         ))
     return out
+
+
+def writer_check(job) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:
+    def check(artifact: ReviewArtifact) -> tuple[IngestError, ...]:
+        return review.focus.coverage_problems(
+            artifact, job.focus, derive=review.focus.needs_derived(job.focus),
+        ) + claims_problems(
+            artifact.claims, {f.id for f in artifact.findings},
+            has_claim_source=has_claim_source(job),
+        )
+    return check
+
+
+def claims_of(job, outcome) -> tuple[ClaimEntry, ...] | None:
+    if not has_claim_source(job):
+        return ()
+    if any(e.kind in CLAIM_KINDS for e in outcome.errors):
+        return None
+    if outcome.artifact.claims is None:
+        return None
+    return tuple(
+        ClaimEntry(
+            id=f"C{i}", source=c.source, text=c.text, verdict=c.verdict,
+            evidence=c.evidence, path=c.path, snippet=c.snippet, finding=c.finding,
+        )
+        for i, c in enumerate(outcome.artifact.claims, start=1)
+    )
+
+
+def check_warning(errors) -> str:
+    more = (
+        ("claims are published as not assessed",)
+        if any(e.kind in CLAIM_KINDS for e in errors) else ()
+    )
+    return review.focus.check_warning(errors, more=more)

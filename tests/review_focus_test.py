@@ -357,3 +357,8 @@ def test_check_warning_names_each_kind(kind, clause):
 def test_check_warning_without_a_known_kind_is_the_errors_alone():
     error = IngestError(IngestErrorKind.EMPTY_FIELD, 0, "d", at="$.focus")
     assert check_warning([error]) == error.render()
+
+
+def test_check_warning_appends_a_caller_clause():
+    error = IngestError(IngestErrorKind.EMPTY_FIELD, 0, "d", at="$.x")
+    assert check_warning([error], more=("extra",)) == f"{error.render()} — extra"

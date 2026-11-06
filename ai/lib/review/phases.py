@@ -256,11 +256,11 @@ def _touch(path: str) -> None:
     Path(path).touch(exist_ok=True)
 
 
-def _synthesis_max_turns(merged: ReviewRecord) -> int:
+def _synthesis_max_turns(merged: ReviewRecord, *, claim_turns: int = 0) -> int:
     counts = merged.open_counts
     total = sum(counts.values())
     scaled = PHASES[Phase.SYNTHESIS].max_turns + max(0, total - 20) // 10
-    return min(scaled, RETRY_MAX_TURNS_GROUP)
+    return min(scaled + claim_turns, RETRY_MAX_TURNS_GROUP)
 
 
 # ── One agent phase ──────────────────────────────────────────────────────────

@@ -3962,6 +3962,10 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
   person has no reply or settlement on GitHub; answer it with `pr comments`, then retry
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
+- `worktree_collision`: the PR's worktree path holds a worktree on another branch
+- `quota_exhausted`: the AI provider turned the step away on quota or a spend limit
+- `owners_unconfigured`: `github.owners` is not configured, so every GitHub write was refused
+- `mise_untrusted`: a hook could not run because a mise config in the worktree is not trusted
 - `github`: GitHub could not be read
 - `error`: anything the batch does not recognise
 

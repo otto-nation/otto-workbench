@@ -44,7 +44,6 @@ from __future__ import annotations
 import functools
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep
@@ -56,6 +55,7 @@ import core.timeouts
 from core.proc import CmdResult
 import gh.budget
 import gh.owners
+import git.regenerate
 
 # What `run` reports when `gh` is not installed. `proc.run` lets
 # `FileNotFoundError` escape, and three call sites caught it while forty-two
@@ -85,8 +85,7 @@ _TRANSFER_ENDPOINT_SUFFIX = "/logs"
 # own hooks have not trusted yet is the common case. The refusal is a non-zero
 # exit like any other, so every best-effort read would collapse it to "GitHub
 # had nothing to say" — and a rebase that reads no PR base replays a stacked
-# branch onto the trunk.
-_MISE_UNTRUSTED = re.compile(r"Config files? in (.+?) (?:is|are) not trusted")
+# branch onto the trunk. The regex lives with the other mise facts.
 _MISE_IGNORED_ENV = "MISE_IGNORED_CONFIG_PATHS"
 
 # mise refuses one file per attempt, so a cwd nested under several untrusted
@@ -260,7 +259,7 @@ def _untrusted_mise_config(r: CmdResult) -> str:
     """The config file mise refused to read for *r*, or "" when it refused none."""
     if r.ok:
         return ""
-    m = _MISE_UNTRUSTED.search(r.combined_output)
+    m = git.regenerate.MISE_UNTRUSTED.search(r.combined_output)
     return os.path.expanduser(m.group(1)) if m else ""
 
 

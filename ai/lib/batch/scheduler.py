@@ -376,8 +376,10 @@ class Scheduler:
             return True
         res = self._worktrees(item.repo_dir, item.branch)
         if not res.ok:
+            reason = (batch.outcomes.FailureReason.WORKTREE_COLLISION
+                      if res.collision else batch.outcomes.FailureReason.ERROR).value
             _decide(self.run, item, "worktree", DecisionKind.FAILED,
-                    {"reason": batch.outcomes.FailureReason.ERROR.value, "detail": res.error},
+                    {"reason": reason, "detail": res.error},
                     emit=self._emit)
             return False
         if res.dirty and not self._discard_generated_dirt(res.path, item):

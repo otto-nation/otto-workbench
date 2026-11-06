@@ -40,6 +40,9 @@ from core.workbench_paths import state_dir
 
 LOCK_NAME = "quota-throttle.lock"
 
+# What every quota warning starts with; batch.outcomes matches step output on it.
+QUOTA_EXHAUSTED_PHRASE = "Quota exhausted on"
+
 # Shared by every instance in this process. fcntl.flock is process-granularity,
 # so two threads would both hold LOCK_EX unless they take this first.
 _THREAD_LOCK = threading.Lock()
@@ -107,7 +110,7 @@ class QuotaThrottle:
         with _THREAD_LOCK:
             wait = self._write_exhausted(model, provider)
         where = f" ({provider})" if provider else ""
-        core.log.warn(f"Quota exhausted on {model}{where} — backing off {wait:.0f}s")
+        core.log.warn(f"{QUOTA_EXHAUSTED_PHRASE} {model}{where} — backing off {wait:.0f}s")
         return wait
 
     def wait_if_needed(self, provider: str | None = None) -> None:

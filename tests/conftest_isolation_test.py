@@ -252,7 +252,7 @@ def test_the_hooks_are_registered_with_pytest(pytestconfig):
 def test_no_vertex_endpoint_is_reachable():
     """No test takes an exact token count, because that is a network call.
 
-    `review.prompt` measures every rendered prompt unless
+    `review.prompt_stats` measures every rendered prompt unless
     WORKBENCH_AI_MEASURE_TOKENS is 0, and it is on by default. Unsetting the
     endpoint is the floor for every caller of `count_tokens` rather than just
     that one, and it leaves the measure flag unset as `TestAgentEnvGuard`
@@ -273,11 +273,11 @@ def test_the_measured_path_takes_no_round_trip_when_it_is_patched():
     from unittest.mock import patch
 
     from core.phases import Phase
-    import review.prompt
+    import review.prompt_stats
 
-    with patch.object(review.prompt, "count_tokens", return_value=123) as counter:
+    with patch.object(review.prompt_stats, "count_tokens", return_value=123) as counter:
         with patch.dict(os.environ, {"WORKBENCH_AI_MEASURE_TOKENS": "1"}):
-            measured = review.prompt.measured_tokens(
+            measured = review.prompt_stats.measured_tokens(
                 "prompt", Phase.SCOUT, "claude-sonnet-5",
             )
     assert measured == 123

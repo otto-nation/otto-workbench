@@ -1290,17 +1290,6 @@ builder, which template it renders, and which file the agent is told to write
 are `review.registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
 
-Each rendered prompt's exact input-token count is appended to `prompt-stats.json`
-in the review directory (model it was counted against, bytes-per-token), via
-`agent.token_count.count_tokens`. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out.
-On by default because it shipped opt-in and was never once switched on. The
-round trip is mostly fixed latency — about 0.29s for a 6KB prompt, 0.55s for a
-374KB one — against a phase that then runs for minutes. A machine with no Vertex
-credentials skips it and records nothing rather than recording a guess. The
-count is the rendered prompt alone; the system prompt and tool schemas `claude
--p` assembles internally are charged to the same request and are not visible
-here — see `agent.token_count` for the observed margin.
-
 ### review/prompt_fit.py
 
 Plan → render → verify → re-plan, until the prompt fits or the cap is hit.
@@ -1359,6 +1348,19 @@ Not to be confused with `review.sections`, which is the posting pipeline's
 config-driven registry of sections already written to a review document —
 that module reads what an agent wrote, this one decides what an agent is
 shown before it writes anything.
+
+### review/prompt_stats.py
+
+Each rendered prompt's exact input-token count is appended to `prompt-stats.json`
+in the review directory (model it was counted against, bytes-per-token), via
+`agent.token_count.count_tokens`. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out.
+On by default because it shipped opt-in and was never once switched on. The
+round trip is mostly fixed latency — about 0.29s for a 6KB prompt, 0.55s for a
+374KB one — against a phase that then runs for minutes. A machine with no Vertex
+credentials skips it and records nothing rather than recording a guess. The
+count is the rendered prompt alone; the system prompt and tool schemas `claude
+-p` assembles internally are charged to the same request and are not visible
+here — see `agent.token_count` for the observed margin.
 
 ### review/recover.py
 

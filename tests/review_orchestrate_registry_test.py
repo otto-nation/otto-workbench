@@ -16,6 +16,7 @@ import cli.review_orchestrate  # noqa: F401
 from core.phases import Mode, Phase
 from review.artifacts import DisproveArtifact, GroupArtifact, ReviewArtifact, output_format
 from review.prompt import build_common_sections
+import review.prompt_stats
 from review.store import StoredReview
 from review.types import ReviewMeta
 import review.registry
@@ -46,7 +47,7 @@ class TestPromptStats:
             session_log=str(tmp_path / "s.jsonl"),
         )
 
-        ro.log_prompt_size(
+        review.prompt_stats.log_prompt_size(
             "test", "hello world", {"sec": "data"}, job,
             budget_bytes=_TEST_BUDGET, model=_TEST_MODEL,
         )
@@ -74,8 +75,8 @@ class TestPromptStats:
             session_log=str(tmp_path / "s.jsonl"),
         )
 
-        ro.log_prompt_size("first", "aaa", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
-        ro.log_prompt_size("second", "bbb", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
+        review.prompt_stats.log_prompt_size("first", "aaa", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
+        review.prompt_stats.log_prompt_size("second", "bbb", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
 
         stats = json.loads((tmp_path / ro.FILENAME_PROMPT_STATS).read_text())
         assert len(stats) == 2
@@ -99,7 +100,7 @@ class TestPromptStats:
         stats_file = tmp_path / ro.FILENAME_PROMPT_STATS
         stats_file.write_text("")
 
-        ro.log_prompt_size("test", "hello", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
+        review.prompt_stats.log_prompt_size("test", "hello", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
 
         stats = json.loads(stats_file.read_text())
         assert isinstance(stats, list)

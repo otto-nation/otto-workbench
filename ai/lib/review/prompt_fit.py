@@ -33,8 +33,10 @@ from review.budget import (
 )
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt import (
-    BudgetLever, BuiltPrompt, PromptTooLarge, build_common_sections, log_prompt_size,
-    measured_tokens, prompt_stats_lock, unverified_reason,
+    BudgetLever, BuiltPrompt, PromptTooLarge, build_common_sections,
+)
+from review.prompt_stats import (
+    log_prompt_size, measured_tokens, prompt_stats_lock, unverified_reason,
 )
 from review.types import PromptVerification, ReviewJob
 

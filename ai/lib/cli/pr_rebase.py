@@ -8,7 +8,10 @@ which take a bare branch name, the value here is a ref used verbatim: a bare
 rebase onto the remote.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
-With --fix, automatically resolves merge conflicts using AI.
+Without --fix, generated-class conflicts rebuild via a declared
+rebase.regenerate (or lockfile regenerators); anything else aborts to a
+clean tree. --fix resolves with AI. --stop-on-conflict keeps today's paused
+tree instead of aborting.
 Outputs structured JSON on stdout and status messages on stderr.
 Updates local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.
@@ -20,10 +23,11 @@ Exit codes:
   4  Branch already landed — refused before touching the remote (JSON on stdout)
 
 Usage:
-  pr-rebase                           # rebase and force-push
+  pr-rebase                           # rebase and force-push; abort on unresolved conflicts
   pr-rebase --no-push                 # rebase only, skip force-push
   pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
   pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
+  pr-rebase --stop-on-conflict        # pause on conflicts (tree dirty) instead of aborting
   pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
@@ -88,6 +92,9 @@ def build_parser() -> ToolParser:
     parser.add_argument("--fix", action="store_true",
                         help="Autonomous mode — resolve conflicts with AI and rebase "
                              "(force-pushes unless --no-push)")
+    parser.add_argument("--stop-on-conflict", action="store_true",
+                        help="Pause on conflicts (stash held) instead of aborting; "
+                             "incompatible with --fix")
     parser.add_argument("--push", action="store_true", default=True,
                         help=argparse.SUPPRESS)
     parser.add_argument("--no-push", action="store_false", dest="push",
@@ -122,6 +129,8 @@ def _parse_args(argv: list[str] | None):
         parser.error("--push-only cannot be combined with --fix, --abort or --no-push")
     if args.expect and not args.push_only:
         parser.error("--expect only applies with --push-only")
+    if args.fix and args.stop_on_conflict:
+        parser.error("--fix cannot be combined with --stop-on-conflict")
     return args
 
 

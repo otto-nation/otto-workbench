@@ -43,7 +43,7 @@ def dispatch_regenerate(
 def dispatch_accept_theirs(
     filepath: str, full_path: Path, cwd: str,
     signal: GeneratedSignal, queue: RegenQueue,
-    *, trail: Trail | None = None,
+    *, trail: Trail | None = None, conventional: bool = True,
 ) -> bool:
     """Handle the ACCEPT_THEIRS strategy. Returns False on failure.
 
@@ -60,7 +60,9 @@ def dispatch_accept_theirs(
         )
     if not conflicts.accept_theirs_and_stage(filepath, cwd):
         return False
-    if not repo_regen.queue_repo_regeneration(filepath, cwd, queue):
+    if not repo_regen.queue_repo_regeneration(
+        filepath, cwd, queue, conventional=conventional,
+    ):
         queue.mark_unrebuildable(filepath)
         core.log.warn(f"No regeneration command for {filepath} — staged stale")
         tinfo(

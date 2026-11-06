@@ -22,6 +22,7 @@ import git.topology
 import pr.context
 from pr.domains import RebaseStatus
 
+from . import conflict_stop
 from . import hooks_chain
 from . import inspect as rebase_inspect
 from . import land as rebase_land
@@ -124,6 +125,8 @@ def drive_to_completion(
     verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
+    stop_on_conflict: bool = False,
+    resuming: bool = False,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
 
@@ -154,6 +157,7 @@ def drive_to_completion(
         return _drive_loop(
             cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
             lease=lease, verify=verify, snapshot=snapshot, trail=trail,
+            stop_on_conflict=stop_on_conflict, resuming=resuming,
         )
 
 
@@ -165,6 +169,8 @@ def _drive_loop(
     verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
+    stop_on_conflict: bool = False,
+    resuming: bool = False,
 ) -> int:
     tally = tally if tally is not None else ResolutionTally()
 
@@ -177,6 +183,7 @@ def _drive_loop(
 
         rc, conflict_found = _drive_one_step(
             cwd, ctx, mode, tally, target_ref=target_ref, force=force, trail=trail,
+            stop_on_conflict=stop_on_conflict, resuming=resuming,
         )
         if rc is not None:
             return rc
@@ -206,6 +213,8 @@ def _drive_one_step(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally, *, target_ref: str, force: bool = False,
     trail: Trail | None = None,
+    stop_on_conflict: bool = False,
+    resuming: bool = False,
 ) -> tuple[int | None, bool]:
     conflicts = rebase_inspect.detect_conflicts(cwd)
     if not conflicts:
@@ -215,14 +224,17 @@ def _drive_one_step(
 
     rc = step_conflicts(
         cwd, ctx, mode, conflicts, tally, target_ref=target_ref, force=force,
-        trail=trail,
+        trail=trail, stop_on_conflict=stop_on_conflict, resuming=resuming,
     )
     if rc is not None:
         return rc, False
     return None, True
 
 
-def _stopped_outcome(tally: ResolutionTally, *, target_ref: str) -> RebaseOutcome:
+def _stopped_outcome(
+    tally: ResolutionTally, *, target_ref: str,
+    aborted: bool = False, classes: dict[str, str] | None = None,
+) -> RebaseOutcome:
     """The `conflicts` outcome a stopped run records, one-sided regions included.
 
     The regions are saved at every stop because the resume is a new process:
@@ -237,6 +249,8 @@ def _stopped_outcome(tally: ResolutionTally, *, target_ref: str) -> RebaseOutcom
         files_one_sided=tally.one_sided,
         one_sided_regions=tally.one_sided_regions,
         pre_rebase_head=tally.pre_rebase_head,
+        aborted=aborted,
+        classes=dict(classes or {}),
         target_base=target_ref,
     )
 
@@ -269,8 +283,15 @@ def _report_conflicts_and_stop(
     ``status=conflicts`` would report a run that did nothing.
     """
     tally = tally if tally is not None else ResolutionTally()
-    _stopped_outcome(tally, target_ref=target_ref).save(ctx)
-    ConflictReport.from_repo(cwd).emit()
+    files = rebase_inspect.detect_conflicts(cwd)
+    classes = conflict_stop.classify_stop(cwd, files)
+    _stopped_outcome(
+        tally, target_ref=target_ref, classes=classes,
+    ).save(ctx)
+    ConflictReport.from_repo(
+        cwd, tree="paused", classes=classes,
+        files_stale=list(tally.stale), pre_rebase_head=tally.pre_rebase_head,
+    ).emit()
     return rebase_types.CONFLICTS_EXIT
 
 
@@ -417,7 +438,7 @@ def _halt_unresolved(
 
     So the rebase is left exactly where it is. The resolved files are staged,
     the unresolved ones still carry their markers, and the exit code is the
-    same 3 that `--no-fix` returns for conflicts a human must look at — which
+    same 3 that default mode and `--stop-on-conflict` return for conflicts a human must look at — which
     is what this now is. `cmd_start` resumes from here on the next run, and the
     auto-stash is held rather than popped into the conflicted index.
     """
@@ -440,48 +461,56 @@ def step_conflicts(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     conflicts: list[str], tally: ResolutionTally, *,
     target_ref: str, force: bool = False, trail: Trail | None = None,
+    stop_on_conflict: bool = False, resuming: bool = False,
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not mode.resolves_conflicts:
-        return _report_conflicts_and_stop(
-            cwd, ctx, target_ref=target_ref, tally=tally,
-        )
-
-    if not agent.backend.is_available():
-        terr(trail, "resolve_conflicts", "AI backend unavailable")
-        core.log.error("Cannot resolve conflicts — AI backend unavailable.")
-        return _report_conflicts_and_stop(
-            cwd, ctx, target_ref=target_ref, tally=tally,
-        )
-
-    if not force:
-        over = _over_budget(tally, conflicts)
-        if over is not None:
-            return refusals.refuse_over_budget(
-                cwd, ctx, over, target_ref=target_ref, trail=trail,
+        if stop_on_conflict or resuming:
+            return _report_conflicts_and_stop(
+                cwd, ctx, target_ref=target_ref, tally=tally,
+            )
+        classes = conflict_stop.classify_stop(cwd, conflicts)
+        if not conflict_stop.try_generated(cwd, classes, tally):
+            return conflict_stop.abort_clean(
+                cwd, ctx, target_ref=target_ref, classes=classes, tally=tally,
+            )
+    else:
+        if not agent.backend.is_available():
+            terr(trail, "resolve_conflicts", "AI backend unavailable")
+            core.log.error("Cannot resolve conflicts — AI backend unavailable.")
+            return _report_conflicts_and_stop(
+                cwd, ctx, target_ref=target_ref, tally=tally,
             )
 
-    sha, subject = rebase_inspect.rebase_head_info(cwd)
-    remaining = rebase_inspect.remaining_rebase_commits(cwd)
+        if not force:
+            over = _over_budget(tally, conflicts)
+            if over is not None:
+                return refusals.refuse_over_budget(
+                    cwd, ctx, over, target_ref=target_ref, trail=trail,
+                )
 
-    core.log.info(
-        f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
-        f"({remaining} remaining)..."
-    )
-    tdecision(
-        trail, "step", f"resolving {len(conflicts)} conflict(s)",
-        reason=f"commit {sha} has unmerged files",
-        data={"commit": sha, "files": conflicts, "remaining": remaining},
-    )
+        sha, subject = rebase_inspect.rebase_head_info(cwd)
+        remaining = rebase_inspect.remaining_rebase_commits(cwd)
 
-    resolved = rebase_resolve.resolve_file_conflicts(
-        conflicts, cwd, sha, subject, target_ref=target_ref, trail=trail,
-    )
-    tally.absorb(resolved)
-    if not resolved.ok:
-        return _halt_unresolved(
-            cwd, ctx, resolved.failed, tally, target_ref=target_ref, trail=trail,
+        core.log.info(
+            f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
+            f"({remaining} remaining)..."
         )
+        tdecision(
+            trail, "step", f"resolving {len(conflicts)} conflict(s)",
+            reason=f"commit {sha} has unmerged files",
+            data={"commit": sha, "files": conflicts, "remaining": remaining},
+        )
+
+        resolved = rebase_resolve.resolve_file_conflicts(
+            conflicts, cwd, sha, subject, target_ref=target_ref, trail=trail,
+        )
+        tally.absorb(resolved)
+        tally.resolution = "ai"
+        if not resolved.ok:
+            return _halt_unresolved(
+                cwd, ctx, resolved.failed, tally, target_ref=target_ref, trail=trail,
+            )
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     if git.client.lines("diff", "--name-only", cwd=cwd):
@@ -603,6 +632,7 @@ def fresh(
     verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
+    stop_on_conflict: bool = False,
 ) -> int:
     """Start a fresh rebase onto the target ref.
 
@@ -757,6 +787,7 @@ def fresh(
     return drive_to_completion(
         cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
         lease=lease, verify=verify, snapshot=snapshot, trail=trail,
+        stop_on_conflict=stop_on_conflict,
     )
 
 
@@ -815,6 +846,7 @@ def rebase_success(
             one_sided_regions=tally.one_sided_regions,
             pre_rebase_head=tally.pre_rebase_head,
             force_pushed=False,
+            resolution=tally.resolution,
             target_base=target_ref,
         ).save(ctx)
         return 1
@@ -848,6 +880,7 @@ def rebase_success(
         files_one_sided=tally.one_sided,
         one_sided_regions=tally.one_sided_regions,
         pre_rebase_head=tally.pre_rebase_head,
+        resolution=tally.resolution,
         # None rather than False for a run that never tried: a held landing did
         # exactly what --no-push asked for, and recording it as a failed push
         # would be the summary's own invention.

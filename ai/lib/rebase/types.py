@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 
+import core.log
 import core.report
 import gh.landed
 import git.regenerate
@@ -291,6 +292,9 @@ class ResolutionTally:
     # The branch tip the rebase started from: what an undo resets to, and what
     # a publish checks contains the remote head it is about to overwrite.
     pre_rebase_head: str = ""
+    # How a successful default or --fix run resolved conflicts: none, generated,
+    # or ai. Abort/pause paths never emit this.
+    resolution: str = "none"
 
     def note_one_sided(self, files: list[str], region: str) -> None:
         """Fold one stopped commit's one-sided files and rendered regions in.
@@ -436,10 +440,19 @@ class ConflictReport:
     rebase_head: str
     rebase_head_subject: str
     remaining_commits: int
+    aborted: bool = False
+    tree: str = "paused"
+    classes: dict[str, str] = field(default_factory=dict)
+    files_stale: list[str] = field(default_factory=list)
+    pre_rebase_head: str = ""
 
     @classmethod
     def from_repo(
         cls, cwd: str, status: str = RebaseStatus.CONFLICTS.value,
+        *, aborted: bool = False, tree: str = "paused",
+        classes: dict[str, str] | None = None,
+        files_stale: list[str] | None = None,
+        pre_rebase_head: str = "",
     ) -> "ConflictReport":
         sha, subject = rebase.inspect.rebase_head_info(cwd)
         return cls(
@@ -448,10 +461,20 @@ class ConflictReport:
             rebase_head=sha,
             rebase_head_subject=subject,
             remaining_commits=rebase.inspect.remaining_rebase_commits(cwd),
+            aborted=aborted,
+            tree=tree,
+            classes=dict(classes or {}),
+            files_stale=list(files_stale or []),
+            pre_rebase_head=pre_rebase_head,
         )
 
     def emit(self) -> None:
         core.report.emit_json(asdict(self))
+        if self.files_stale:
+            core.log.warn(
+                "not regenerated: " + ", ".join(self.files_stale)
+                + " — content is the incoming side, unmerged"
+            )
 
 
 @dataclass
@@ -472,6 +495,9 @@ class RebaseOutcome:
     files_one_sided: list[str] = field(default_factory=list)
     one_sided_regions: list[str] = field(default_factory=list)
     pre_rebase_head: str = ""
+    aborted: bool = False
+    classes: dict[str, str] = field(default_factory=dict)
+    resolution: str = "none"
     # Keyword-only and required: the recorded base is what a caller reading
     # state.json uses to tell which branch a run actually replayed onto, so a
     # default here would let an outcome report a base the rebase never used.
@@ -491,6 +517,8 @@ class RebaseOutcome:
             files_one_sided=self.files_one_sided,
             one_sided_regions=self.one_sided_regions,
             pre_rebase_head=self.pre_rebase_head,
+            aborted=self.aborted,
+            classes=self.classes,
             updated_at=pr.state.now_iso(),
         ))
         pr.state.save_state(ctx.target_dir, state)
@@ -505,10 +533,16 @@ class RebaseOutcome:
             "files_one_sided": self.files_one_sided,
             "one_sided_regions": self.one_sided_regions,
             "pre_rebase_head": self.pre_rebase_head,
+            "resolution": self.resolution,
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed
         core.report.emit_json(report)
+        if self.files_stale:
+            core.log.warn(
+                "not regenerated: " + ", ".join(self.files_stale)
+                + " — content is the incoming side, unmerged"
+            )
 
 
 @dataclass(frozen=True)

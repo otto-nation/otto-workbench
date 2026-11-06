@@ -543,7 +543,7 @@ def test_rebase_render_aborted():
     result = pr.domains.RebaseSummary(
         status="aborted", updated_at=_REBASE_RUN,
     ).render_status()
-    assert result == ["**Rebase**: aborted"]
+    assert result == ["**Rebase**: aborted, tree clean"]
 
 
 def test_rebase_render_already_landed():

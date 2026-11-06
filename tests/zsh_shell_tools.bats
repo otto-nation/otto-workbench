@@ -103,7 +103,7 @@ _git_plugins() {
   [ "$(wc -l < "$GIT_LOG")" -eq 3 ]
 }
 
-@test "on macOS with Homebrew the step does nothing; the Brewfile owns those installs" {
+@test "on macOS with Homebrew only oh-my-zsh is cloned; the Brewfile owns the rest" {
   mkdir -p "$TMPDIR/brewbin"
   printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/brewbin/brew"
   printf '#!/bin/sh\necho Darwin\n' > "$TMPDIR/brewbin/uname"
@@ -111,7 +111,8 @@ _git_plugins() {
   run _run_step "$TMPDIR/brewbin"
   [ "$status" -eq 0 ]
   [[ "$output" != *HELPER* ]]
-  [ ! -e "$GIT_LOG" ]
+  [ "$(wc -l < "$GIT_LOG")" -eq 1 ]
+  grep -q -- "clone --quiet --depth 1 https://github.com/ohmyzsh/ohmyzsh.git $HOME/.oh-my-zsh" "$GIT_LOG"
 }
 
 @test "on Linux with Homebrew, starship still goes through install_package and plugins are cloned" {

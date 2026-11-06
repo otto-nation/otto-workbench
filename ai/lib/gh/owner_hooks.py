@@ -22,8 +22,6 @@ import gh.owner_targets
 import git.client
 import git.remote_url
 
-OVERRIDE_WARNING = (
-    f"warning: {gh.owners.ALLOW_CROSS_REF_ENV}=1 is set; allowing a cross-group reference")
 _SCISSORS_RE = re.compile(r"^\S ------------------------ >8 ------------------------$")
 _LOG_FMT = "%H%x00%B%x00"
 _HEX = frozenset("0123456789abcdefABCDEF")
@@ -130,8 +128,9 @@ def _github_owner_remote(cwd: str | Path, owner_map: gh.owners.OwnerMap) -> bool
 def _content_verdict(verdict: gh.owners.Verdict) -> HookVerdict:
     if verdict.ok:
         return HookVerdict.allow()
-    if verdict.references and gh.owners.cross_ref_allowed_by_user():
-        return HookVerdict.allow(OVERRIDE_WARNING)
+    warning = gh.owners.lift_content_refusal(verdict)
+    if warning is not None:
+        return HookVerdict.allow(warning)
     return HookVerdict.refuse(verdict.reason)
 
 

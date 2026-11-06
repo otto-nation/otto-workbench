@@ -606,6 +606,29 @@ def test_the_cross_ref_override_is_exactly_one(monkeypatch):
     assert not gh.owners.cross_ref_allowed_by_user()
 
 
+def test_lift_content_refusal_is_exact_one_and_content_only(github_owners, monkeypatch):
+    github_owners({"work": ["acme"], "personal": ["me"]})
+    owners = gh.owners.OwnerMap.load()
+    content = gh.owners.check_content("see me/lib#12", "work", owners)
+    assert not content.ok and content.references
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    warning = gh.owners.lift_content_refusal(content)
+    assert warning is not None
+    assert "me/lib#12" in warning
+    assert gh.owners.ALLOW_CROSS_REF_ENV in warning
+    for value in ("", "0", "true"):
+        monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, value)
+        assert gh.owners.lift_content_refusal(content) is None
+    monkeypatch.delenv(gh.owners.ALLOW_CROSS_REF_ENV)
+    assert gh.owners.lift_content_refusal(content) is None
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    target = gh.owners.check_target(_target("stranger"), owners)
+    assert not target.ok and not target.references
+    assert gh.owners.lift_content_refusal(target) is None
+    assert gh.owners.lift_content_refusal(gh.owners.Verdict.refuse("config")) is None
+    assert gh.owners.lift_content_refusal(gh.owners.Verdict.allow("work")) is None
+
+
 def test_check_command_refuses_a_body_file_in_another_group(github_owners, tmp_path):
     github_owners({"work": ["otto-nation"], "personal": ["me"]})
     repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")

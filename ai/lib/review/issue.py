@@ -697,10 +697,9 @@ def _check_linear_text(text: str, cwd: str | Path | None) -> None:
     # Before labels or create: a refused body must not mutate the tracker.
     verdict = gh.owners.check_text(text, cwd)
     if not verdict.ok:
-        if gh.owners.cross_ref_allowed_by_user() and verdict.references:
-            core.log.warn(
-                f"{verdict.reason} — publishing anyway because "
-                f"{gh.owners.ALLOW_CROSS_REF_ENV}=1")
+        warning = gh.owners.lift_content_refusal(verdict)
+        if warning is not None:
+            core.log.warn(warning)
         else:
             raise gh.owners.OwnerBoundaryError(verdict)
 

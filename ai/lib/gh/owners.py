@@ -183,6 +183,19 @@ def cross_ref_allowed_by_user() -> bool:
     return os.environ.get(ALLOW_CROSS_REF_ENV) == "1"
 
 
+def lift_content_refusal(verdict: Verdict) -> str | None:
+    """Warning text when the cross-ref override lifts a content refusal.
+
+    A content refusal is one with non-empty ``references``. Returns the
+    warning when the override is exactly ``1``, else None. Target and config
+    refusals (empty references) are never lifted.
+    """
+    if not verdict.references or not cross_ref_allowed_by_user():
+        return None
+    return (
+        f"{verdict.reason} — publishing anyway because {ALLOW_CROSS_REF_ENV}=1")
+
+
 def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdict:
     """Whether every candidate owner of *target* is ours, in one group."""
     if not owner_map.configured:
@@ -367,19 +380,21 @@ def check_gh_call(args: Sequence[str], *, cwd: str | Path | None = None,
     if not verdict.ok:
         return verdict
     content = check_gh_content(
-        args, cwd=cwd, input_text=input_text, group=verdict.group)
+        args, cwd=cwd, input_text=input_text, group=verdict.group,
+        owner_map=loaded)
     return content if not content.ok else verdict
 
 
 def check_gh_content(
         args: Sequence[str], *, cwd: str | Path | None, input_text: str | None,
-        group: str) -> Verdict:
+        group: str, owner_map: OwnerMap | None = None) -> Verdict:
     """Whether the published text of ``gh *args`` may go to *group*.
 
-    The content step ``check_gh_call`` runs on the ok path. Unconfigured or a
-    config error comes back from ``_load`` as a refusal with no references.
+    The content step ``check_gh_call`` runs on the ok path, passing the map
+    it already loaded. Unconfigured or a config error comes back from
+    ``_load`` as a refusal with no references.
     """
-    loaded = _load()
+    loaded: OwnerMap | Verdict = owner_map if owner_map is not None else _load()
     if isinstance(loaded, Verdict):
         return loaded
     return check_content(

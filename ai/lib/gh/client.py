@@ -312,11 +312,11 @@ def _check_owner_boundary(args: tuple[str, ...], cwd: str | Path | None,
     verdict = gh.owners.check_gh_call(args, cwd=cwd, input_text=input_text, target_repo=target_repo)
     if verdict.ok:
         return
+    warning = gh.owners.lift_content_refusal(verdict)
+    if warning is not None:
+        core.log.warn(warning)
+        return
     if verdict.references:
-        if gh.owners.cross_ref_allowed_by_user():
-            core.log.warn(f"{verdict.reason} — publishing anyway because "
-                          f"{gh.owners.ALLOW_CROSS_REF_ENV}=1")
-            return
         raise gh.owners.OwnerBoundaryError(verdict)
     if not gh.owners.upstream_allowed_by_user():
         raise gh.owners.OwnerBoundaryError(verdict)
@@ -324,14 +324,14 @@ def _check_owner_boundary(args: tuple[str, ...], cwd: str | Path | None,
                   f"{gh.owners.ALLOW_UPSTREAM_ENV}=1")
     content = gh.owners.check_gh_content(
         args, cwd=cwd, input_text=input_text, group="")
-    if not content.references:
-        return
-    if gh.owners.cross_ref_allowed_by_user():
+    warning = gh.owners.lift_content_refusal(content)
+    if warning is not None:
         core.log.warn(
             f"{content.reason} — publishing anyway because "
             f"{gh.owners.ALLOW_UPSTREAM_ENV}=1 and {gh.owners.ALLOW_CROSS_REF_ENV}=1")
         return
-    raise gh.owners.OwnerBoundaryError(content)
+    if content.references:
+        raise gh.owners.OwnerBoundaryError(content)
 
 
 def run(

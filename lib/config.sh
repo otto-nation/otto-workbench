@@ -229,6 +229,31 @@ wb_pi_catalogue() {
   "$py" "$WORKBENCH_DIR/lib/config_cli.py" pi-catalogue
 }
 
+# wb_run_bounded [PYTHON] -- CMD... — runs CMD through `config_cli.py
+# run-bounded`. PYTHON is the interpreter that runs `lib/config_cli.py`;
+# omitted, `python3` on PATH is used. Returns 1, printing why on stderr,
+# when the command fails or the bound expires. The child's stdout is
+# discarded. The default tier is REFRESH; pass `--tier NAME` before `--`
+# to pick another bounded tier.
+#
+# Callers that wrap this in `_pi_user_scope` (ai/pi/steps.sh) must pass
+# the interpreter they resolved *before* that wrap. `_pi_user_scope`
+# re-derives mise's environment from $HOME so `pi` is the user's install;
+# the same hook can replace python3 with an interpreter that is not the
+# workbench's. Resolving python3 on the caller's PATH and passing it in
+# keeps the two lookups on the sides that need them. This function does
+# not call `_pi_user_scope` itself: that helper lives in ai/pi/steps.sh.
+wb_run_bounded() {
+  local py
+  if [[ $# -gt 0 && "$1" != -- && "$1" != -* ]]; then
+    py="$1"
+    shift
+  else
+    py=$(command -v python3) || return 1
+  fi
+  "$py" "$WORKBENCH_DIR/lib/config_cli.py" run-bounded "$@"
+}
+
 # wb_compaction_record HALF — prints the object HALF (`claude` or `pi`) of
 # $COMPACTION_RECORD_FILE: what the last sync wrote for context.compact_at into
 # that harness's settings. `{}` when nothing was recorded or the file is

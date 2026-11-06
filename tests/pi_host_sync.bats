@@ -63,7 +63,9 @@ _run_step() {
     info()    { echo "INFO $*"; }
     skip()    { echo "SKIP $*"; }
     LIB_SRC_DIR="$1/lib"
-    . "$1/lib/env.sh"
+    WORKBENCH_DIR="$1"
+    WORKBENCH_CONFIG_HEADER="# test"
+    . "$1/lib/config.sh"
     . "$2"
     step_update_pi
   ' _ "$REPO_ROOT" "$REPO_ROOT/ai/pi/steps.sh"
@@ -97,6 +99,15 @@ _run_step() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARN"* ]]
   [[ "$output" == *"pi update"* ]]
+}
+
+@test "a failed update warns with the reason and the step still returns 0" {
+  _stub_pi 1
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN Could not update Pi"* ]]
+  [[ "$output" == *"(exit 1)"* ]]
+  [[ "$output" == *"run: pi update"* ]]
 }
 
 @test "a machine without pi is skipped rather than installed onto" {
@@ -284,7 +295,9 @@ _run_from() {
     info()    { echo "INFO $*"; }
     skip()    { echo "SKIP $*"; }
     LIB_SRC_DIR="$1/lib"
-    . "$1/lib/env.sh"
+    WORKBENCH_DIR="$1"
+    WORKBENCH_CONFIG_HEADER="# test"
+    . "$1/lib/config.sh"
     . "$2"
     BIN_SRC_DIR="$3/bin"
     cd "$4"

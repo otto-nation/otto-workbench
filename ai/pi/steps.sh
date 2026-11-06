@@ -548,21 +548,35 @@ _pi_user_scope() {
   )
 }
 
-# _pi_user_catalogue — prints the bounded listing on stdout, or a reason
-# on stdout with a non-zero status.
+# _pi_user_via FUNC [ARGS...] — resolve python3 on this PATH, then run
+# FUNC PYTHON ARGS... under `_pi_user_scope`.
 #
-# python3 is resolved here, in this PATH, then passed into `_pi_user_scope`
-# so mise's hook-env can put the user's `pi` on PATH without replacing the
-# workbench interpreter. stderr is merged so a caller that captures stdout
-# still sees why a failed listing failed: success writes only the table,
-# failure writes only the reason.
-_pi_user_catalogue() {
-  local py
+# python3 is resolved here, then passed into `_pi_user_scope` so mise's
+# hook-env can put the user's `pi` on PATH without replacing the workbench
+# interpreter. stderr is merged so a caller that captures stdout still
+# sees why a failure failed.
+_pi_user_via() {
+  local py func
   py=$(command -v python3) || {
     echo "python3 not found"
     return 1
   }
-  _pi_user_scope wb_pi_catalogue "$py" 2>&1
+  func="$1"
+  shift
+  _pi_user_scope "$func" "$py" "$@" 2>&1
+}
+
+# _pi_user_catalogue — prints the bounded listing on stdout, or a reason
+# on stdout with a non-zero status.
+_pi_user_catalogue() {
+  _pi_user_via wb_pi_catalogue
+}
+
+# _pi_user_bounded CMD... — runs CMD under the REFRESH bound in user scope.
+# Prints nothing on success; on failure prints the reason on stdout
+# (stderr merged) and returns non-zero.
+_pi_user_bounded() {
+  _pi_user_via wb_run_bounded -- "$@"
 }
 
 # step_pi_packages — refreshes the git package clones Pi resolves from
@@ -597,10 +611,11 @@ step_pi_packages() {
 
   [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Refreshing Pi packages" || true
 
-  if _pi_user_scope pi update --extensions --no-approve > /dev/null 2>&1; then
+  local reason
+  if reason=$(_pi_user_bounded pi update --extensions --no-approve); then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi packages refreshed" || true
   else
-    warn "Could not refresh Pi packages — run: pi update --extensions"
+    warn "Could not refresh Pi packages — ${reason} — run: pi update --extensions"
   fi
   return 0
 }
@@ -632,10 +647,11 @@ step_update_pi() {
 
   [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Updating Pi" || true
 
-  if _pi_user_scope pi update > /dev/null 2>&1; then
+  local reason
+  if reason=$(_pi_user_bounded pi update); then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi is current" || true
   else
-    warn "Could not update Pi — run: pi update"
+    warn "Could not update Pi — ${reason} — run: pi update"
   fi
   return 0
 }

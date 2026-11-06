@@ -101,6 +101,10 @@ def _url_hits(text: str, owner_map: _OwnerMap) -> list[_Hit]:
 
 
 def _short_form_hosts(owner_map: _OwnerMap) -> tuple[str, ...]:
+    # ceiling: a short form resolves against every configured host, so the
+    # same login on two hosts over-refuses. Upgrade trigger: if one login is
+    # configured on two hosts and a short form is refused for the host it
+    # was not about.
     seen = {config.github_owners.DEFAULT_HOST}
     hosts = [config.github_owners.DEFAULT_HOST]
     for host in sorted(owner_map.hosts()):

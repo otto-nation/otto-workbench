@@ -24,6 +24,10 @@ from pathlib import Path
 
 import gh.write_shapes
 
+# ceiling-permanent: files larger than MAX_SCAN_BYTES are unread. GitHub
+# caps issue and comment bodies at 65,536 characters, well under this bound,
+# so a body GitHub would accept is always scanned. Reading more would not
+# catch a publishable body this misses.
 MAX_SCAN_BYTES = 256 * 1024
 
 _FILE_FLAGS = ("--body-file", "--input", "--description-file", "--notes-file")

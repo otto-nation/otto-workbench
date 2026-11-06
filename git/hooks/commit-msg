@@ -5,6 +5,11 @@
 #
 # When core.hooksPath is set globally, git ignores .git/hooks/ entirely.
 # This hook restores that delegation so per-repo commit-msg checks still run.
+#
+# ceiling: a repo-local core.hooksPath (husky and similar) bypasses both this
+# hook and the global one git would have run. Upgrade trigger: if a registered
+# repo sets core.hooksPath locally and commits start landing without the owner
+# check.
 
 set -euo pipefail
 

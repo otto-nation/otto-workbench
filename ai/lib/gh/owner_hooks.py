@@ -109,6 +109,10 @@ def _is_github_remote(url: str, owner_map: gh.owners.OwnerMap) -> bool:
         config.github_owners.DEFAULT_HOST,
         gh.owner_targets.default_host({}),
     }
+    # ceiling: a host containing "github" is treated as GitHub so an ssh
+    # alias like github-work is checked. A non-GitHub host whose name happens
+    # to contain the substring is over-checked. Upgrade trigger: if a
+    # configured remote is a gitlab ssh alias whose name contains github.
     return host in known or "github" in host
 
 
@@ -216,6 +220,9 @@ def check_message(text: str, cwd: str | Path) -> HookVerdict:
         return loaded
     if not loaded.configured:
         return HookVerdict.allow()
+    # ceiling: a checkout with no GitHub remote is not scanned. A GitHub
+    # cross-reference event cannot be created there. Upgrade trigger: if we
+    # start recording commits that another GitHub remote will fetch later.
     if not _github_owner_remote(cwd, loaded):
         return HookVerdict.allow()
     dest = commit_destination(cwd, loaded)
@@ -321,6 +328,9 @@ def check_push(
     if not loaded.configured:
         return HookVerdict.allow()
     dest = commit_destination(cwd, loaded, url=url)
+    # ceiling: a destination that is not a GitHub remote is not scanned. A
+    # GitHub cross-reference event cannot be created there. Upgrade trigger:
+    # if we push to a forge that creates GitHub-style reference events.
     if not dest.scan or dest.owner is None:
         return HookVerdict.allow()
     group = loaded.classify(dest.owner).name

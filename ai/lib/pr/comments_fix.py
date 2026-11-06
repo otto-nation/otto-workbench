@@ -217,8 +217,9 @@ class FixSummary(Domain):
     summary_deferred: bool = False
     deferred_issue_id: str = ""
     deferred_issue_url: str = ""
-    # A tracking issue was owed for the threads filed this cycle and did not
-    # get created — no tracker configured, a provider that cannot create
+    # True while a tracking issue is owed and NOT filed — not "an issue is
+    # waiting on GitHub". A tracking issue was owed for the threads filed this
+    # cycle and did not get created — no tracker configured, a provider that cannot create
     # issues, or a creation that failed. The deferred comments have no home
     # until one exists, so `closeout_debt` counts it. A draft run
     # is not this: the publishing gate declining the write owes nothing.

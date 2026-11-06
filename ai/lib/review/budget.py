@@ -8,10 +8,13 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model, and capped at
-``context.compact_at`` when that is set. It subtracts
-what the reply and the CLI's own system prompt need, and prices the remainder in
-bytes at a density floor — so it is a property of
+the fallback (read by the id without its `@version`) when the catalogue cannot
+be read or lacks the model. A catalogue that cannot be read is retried after a
+short window, not cached for the process, and when the table cannot answer either
+`UnknownModelWindow` quotes why it could not be read. It is capped at
+``context.compact_at`` when that is set. It subtracts what the reply and the
+CLI's own system prompt need, and prices the remainder in bytes at a density
+floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
 them. `prompt_budget_bytes` is that derivation. A phase with no configured
 model takes the unset-model floor rather than failing, because leaving the
@@ -37,6 +40,7 @@ from pathlib import Path
 
 import agent.pi_models
 from agent.context_ceiling import backend_ceiling, capped_window, machine_ceiling
+from agent.models import unversioned_id
 from agent.phases import collect_phase_models, unset_review_phases
 from agent.pi_models import listed_windows
 from core.phases import Backend
@@ -45,7 +49,8 @@ from review.grouping import classify_tier, format_profiles_section
 # ── The token ceiling, and the bytes it buys ─────────────────────────────────
 
 # Fallback when pi's provider catalogue cannot be read, or does not list the
-# model. Figures originally come from `pi --list-models` (and from
+# model. Keys are undated ids; a dated id (`<id>@<version>`) reads its undated
+# entry. Figures originally come from `pi --list-models` (and from
 # `result.modelUsage[*].contextWindow` in session logs). A model absent from
 # both the catalogue and this table has no entry to guess at:
 # `prompt_budget_bytes` refuses rather than defaulting, because every default
@@ -212,13 +217,10 @@ MIN_DELTA_DIFF_BYTES = 2_048
 def _parse_pi_list_models(text: str) -> dict[str, int]:
     """Model id -> context window, taking the minimum across providers.
 
-    Assumes the model column is a bare id — the same spelling a resolved
-    review model uses (`claude-haiku-4-5`), with no `@version` or
-    `provider/` decoration. A deployment whose provider lists ids that way
-    (`claude-haiku-4-5@20251001`, `xai/grok-4.6`) would never match here and
-    would fall through to `MODEL_CONTEXT_TOKENS` silently rather than loudly
-    — worth re-checking this assumption if the catalogue's own format ever
-    changes.
+    Keyed by the model column exactly as listed, so a dated Vertex id stays
+    dated (`claude-haiku-4-5@20251001`) — the spelling an operator configures
+    and the provider serves. Only the fallback table is read by the undated id
+    (`agent.models.unversioned_id`).
     """
     windows: dict[str, int] = {}
     for (_provider, model), tokens in listed_windows(text).items():
@@ -233,9 +235,10 @@ def _pi_catalogue_windows(cwd: Path | str) -> dict[str, int]:
 
     Read through `agent.pi_models.catalogue_for`, the one place the workbench
     lists models, so the budget and the spawn's model check consult the same
-    binary — two pi versions serve different models. An empty result is a
-    silent fallback, not an error: a review must still budget against the
-    recorded table when no pi can be chosen or its listing is unreadable.
+    binary — two pi versions serve different models. Raises
+    `agent.pi_models.CatalogueUnreadable` when no listing can be read;
+    `model_window_tokens` falls back to the table and, if that cannot answer
+    either, quotes the reason.
     """
     return _parse_pi_list_models(agent.pi_models.catalogue_for(cwd))
 
@@ -251,6 +254,7 @@ class UnknownModelWindow(RuntimeError):
 
     def __init__(
         self, model: str, detail: str = "", *, catalogue: dict[str, int] | None = None,
+        unreadable: str = "",
     ):
         self.model = model
         if not detail:
@@ -260,13 +264,14 @@ class UnknownModelWindow(RuntimeError):
             # full list this process could actually have resolved against.
             catalogue = catalogue or {}
             known = ", ".join(sorted(set(MODEL_CONTEXT_TOKENS) | set(catalogue)))
-            # An empty catalogue means pi was absent, failed, or unparsed — not
-            # that it lacks the model — so the message must not claim it does.
+            # The catalogue's failure is quoted rather than summarised: "could not be
+            # read" alone sends the operator after the model id when the cause was a
+            # listing that timed out on a loaded machine.
             where = (
+                "review.budget.MODEL_CONTEXT_TOKENS, and pi's provider catalogue "
+                f"could not be read: {unreadable}"
+                if unreadable else
                 "pi's provider catalogue or review.budget.MODEL_CONTEXT_TOKENS"
-                if catalogue else
-                "review.budget.MODEL_CONTEXT_TOKENS (pi's provider catalogue "
-                "could not be read)"
             )
             detail = (
                 f"no context window on record for model {model!r} — not in "
@@ -319,10 +324,17 @@ def model_window_tokens(
     compact_at = backend_ceiling(machine_ceiling(), backend)
     if not model:
         return capped_window(UNSET_MODEL_FLOOR_TOKENS, compact_at)
-    catalogue = _pi_catalogue_windows(cwd)
-    window = catalogue.get(model, MODEL_CONTEXT_TOKENS.get(model))
+    unreadable = ""
+    try:
+        catalogue = _pi_catalogue_windows(cwd)
+    except agent.pi_models.CatalogueUnreadable as exc:
+        catalogue = {}
+        unreadable = str(exc)
+    window = catalogue.get(model)
     if window is None:
-        raise UnknownModelWindow(model, catalogue=catalogue)
+        window = MODEL_CONTEXT_TOKENS.get(unversioned_id(model))
+    if window is None:
+        raise UnknownModelWindow(model, catalogue=catalogue, unreadable=unreadable)
     return capped_window(window, compact_at)
 
 

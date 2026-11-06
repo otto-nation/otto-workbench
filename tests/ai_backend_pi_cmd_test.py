@@ -15,7 +15,7 @@ import agent.pi_binary
 import agent.pi_models
 from agent.models import ModelRef
 from ai_backend_test import _recording_popen
-from conftest import TEST_PI_ARGV as PI
+from conftest import TEST_PI_ARGV as PI, unreadable_catalogue
 
 
 class TestBuildFixCmd:
@@ -466,7 +466,7 @@ class TestGuardEnv:
 class TestPreflight:
     def test_vertex_quota_is_not_its_config_surface(self, monkeypatch):
         """Pi resolves models itself, so exported Vertex env must not reach a quota check."""
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", unreadable_catalogue)
         models = {ModelRef("claude-sonnet-5"): ["group"]}
         assert agent.backend_pi.preflight(models, MagicMock(), ".") is True
 
@@ -510,9 +510,14 @@ class TestPreflight:
         assert trail.decision.call_count == 2
 
     def test_an_unreadable_catalogue_does_not_stop_the_run(self, monkeypatch):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", unreadable_catalogue)
+        trail = MagicMock()
         models = {ModelRef("anything", "xai"): ["scout"]}
-        assert agent.backend_pi.preflight(models, MagicMock(), ".") is True
+        assert agent.backend_pi.preflight(models, trail, ".") is True
+        assert trail.warn.call_count == 1
+        assert trail.warn.call_args.args[0] == "model_preflight"
+        assert "no catalogue in tests" in trail.warn.call_args.args[1]
+        assert trail.decision.call_count == 0
 
     def test_no_pi_to_choose_does_not_stop_the_run(self, monkeypatch):
         """The spawn that needs one reports why; preflight is an optional lookup."""

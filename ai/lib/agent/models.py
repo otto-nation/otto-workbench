@@ -124,6 +124,16 @@ def parse_ref(value: str) -> ModelRef:
     return split
 
 
+def unversioned_id(model_id: str) -> str:
+    """*model_id* without its ``@version`` suffix: ``claude-haiku-4-5@20251001`` -> ``claude-haiku-4-5``.
+
+    For lookups keyed by model family — Vertex quota and the review budget's
+    window table. Never for a spawn or a catalogue check: a provider that lists
+    only the dated id refuses the undated one.
+    """
+    return model_id.partition("@")[0]
+
+
 def tier_ref(tier: Tier, models: ModelsConfig) -> ModelRef | None:
     """The model ``models.<tier>`` names, or None when the tier is unset."""
     value = getattr(models, tier.value)

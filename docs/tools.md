@@ -63,6 +63,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI |
 | `validate-all` | Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI |
+| `installed-copy-check` | Exit 0 when a directory is in the installed copy's repository — the fact the guards use to keep sessions out of it |
 | `with-tree-lock` | Declares a tree under validation while a command runs — the lock that tells editors a gate is in flight |
 | `with-session-lock` | Records that an interactive agent session is editing a worktree — the lock that stops an unattended fix pass committing over it |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |

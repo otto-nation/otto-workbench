@@ -513,6 +513,15 @@ if [[ -n "$agent_id" && "$run_in_background" == true ]]; then
   block 'A subagent cannot start background work — ending the turn ends the subagent and abandons the job. Run the command in the foreground bounded by the Bash tool'\''s own timeout and do not end the turn while the work is outstanding. See general.md § Waiting on Background Work.'
 fi
 
+# A worktree made from the installed copy sits outside the container. The
+# command and the session's cwd go to `installed-copy-check`, the one owner of
+# that fact, which ai/pi/extensions/installed-copy-guard asks as well.
+_icc="${BASH_SOURCE[0]}"
+_icc="$(readlink "$_icc" 2>/dev/null || echo "$_icc")"
+if [[ -n "$hook_cwd" ]] && "$(cd "$(dirname "$_icc")/../../.." && pwd)/bin/local/installed-copy-check" --creating "$cmd" "$hook_cwd"; then
+  block "Creating a worktree from the installed copy leaves the branch's checkout beside the install, outside the container every other worktree lives in. Run \`wt switch -c\` from a worktree in the container, ~/git/otto-nation/otto-workbench, instead."
+fi
+
 # ── Normalize the command for scanning ───────────────────────────────────────
 # Every rule below reads one of these instead of $cmd directly.
 #

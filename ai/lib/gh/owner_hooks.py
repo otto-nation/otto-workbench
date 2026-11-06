@@ -150,21 +150,38 @@ class _LogRecord:
     body: str
 
 
+def _remote_names(cwd: str | Path) -> list[str]:
+    return git.client.lines("remote", cwd=cwd)
+
+
+def _remote_from_push_ref(full: str, names: Sequence[str]) -> str | None:
+    """The longest remote name ``refs/remotes/<name>/`` prefixes *full*."""
+    prefix = "refs/remotes/"
+    if not full.startswith(prefix):
+        return None
+    matches = [
+        name for name in names
+        if name and full.startswith(f"{prefix}{name}/")
+    ]
+    if not matches:
+        return None
+    return max(matches, key=len)
+
+
 def _push_remote_name(cwd: str | Path) -> str | None:
     """``@{push}``'s remote, else ``remote.pushDefault``, else origin if it exists."""
+    names = _remote_names(cwd)
     full = git.client.out(
-        "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}",
+        "rev-parse", "--symbolic-full-name", "@{push}",
         cwd=cwd, default="")
-    if full.startswith("refs/remotes/"):
-        name = full[len("refs/remotes/"):].split("/", 1)[0]
-        if name:
-            return name
+    matched = _remote_from_push_ref(full, names)
+    if matched:
+        return matched
     default = git.client.out(
         "config", "--get", "remote.pushDefault", cwd=cwd, default="")
-    if default:
+    if default and default in names:
         return default
-    found = git.remote_url.remotes(cwd)
-    if found and any(remote.name == "origin" for remote in found):
+    if "origin" in names:
         return "origin"
     return None
 

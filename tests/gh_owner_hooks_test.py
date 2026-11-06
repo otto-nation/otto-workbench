@@ -118,6 +118,57 @@ def test_message_and_push_agree_on_a_fork_destination(
     assert "otto-nation" in err
 
 
+def _tracking_fork(tmp_path, remote_name: str) -> Path:
+    repo = init_repo(tmp_path / "fork")
+    git_in(repo, "remote", "add", "origin", OTHER)
+    git_in(repo, "remote", "add", remote_name, OWN)
+    git_in(repo, "commit", "-q", "--allow-empty", "--no-verify", "-m", "base")
+    git_in(repo, "update-ref", f"refs/remotes/{remote_name}/main", "HEAD")
+    git_in(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    return repo
+
+
+def _message_and_push_agree(tmp_path, monkeypatch, repo, remote_name, url, message):
+    sha = _commit(repo, message)
+    msg_code = _message(tmp_path, repo, message)
+    push_code = _push(
+        monkeypatch, repo, _line(sha) + "\n", remote=remote_name, url=url)
+    return msg_code, push_code
+
+
+def test_message_and_push_agree_when_branch_pushremote_is_fork(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _tracking_fork(tmp_path, "fork")
+    git_in(repo, "config", "push.default", "current")
+    git_in(repo, "config", "branch.main.pushRemote", "fork")
+    msg_code, push_code = _message_and_push_agree(
+        tmp_path, monkeypatch, repo, "fork", OWN, OWN_REF)
+    assert msg_code == push_code == 0
+
+
+def test_message_and_push_agree_when_branch_tracks_fork(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _tracking_fork(tmp_path, "fork")
+    git_in(repo, "config", "push.default", "simple")
+    git_in(repo, "branch", "--set-upstream-to", "fork/main")
+    msg_code, push_code = _message_and_push_agree(
+        tmp_path, monkeypatch, repo, "fork", OWN, OWN_REF)
+    assert msg_code == push_code == 0
+
+
+def test_message_and_push_agree_when_push_remote_name_contains_a_slash(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _tracking_fork(tmp_path, "foo/bar")
+    git_in(repo, "config", "push.default", "current")
+    git_in(repo, "config", "branch.main.pushRemote", "foo/bar")
+    msg_code, push_code = _message_and_push_agree(
+        tmp_path, monkeypatch, repo, "foo/bar", OWN, OWN_REF)
+    assert msg_code == push_code == 0
+
+
 def test_message_file_allows_a_non_github_remote(github_owners, tmp_path):
     _groups(github_owners)
     repo = remote_repo(tmp_path / "r", GITLAB)

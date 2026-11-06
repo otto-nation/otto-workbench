@@ -31,8 +31,11 @@ same way: a cross-group reference in a body is refused before gh starts. Reads
 are not checked and read no config. A GraphQL write names no repository, so
 `graphql` takes a `target_repo` hint and falls back to the cwd's remotes. The
 user's own `WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream-target write through,
-with a warning. `WORKBENCH_ALLOW_CROSS_REF=1` lets a content refusal through
-the same way; it does not lift an upstream target.
+with a warning; it does not lift a content refusal. After that lift, published
+text is still judged as for an unknown/upstream group (`check_gh_content` with
+an empty group). `WORKBENCH_ALLOW_CROSS_REF=1` lets a content refusal through
+the same way; it does not lift an upstream target. An upstream target whose
+body names a grouped owner needs both.
 
 Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
@@ -315,11 +318,20 @@ def _check_owner_boundary(args: tuple[str, ...], cwd: str | Path | None,
                           f"{gh.owners.ALLOW_CROSS_REF_ENV}=1")
             return
         raise gh.owners.OwnerBoundaryError(verdict)
-    if gh.owners.upstream_allowed_by_user():
-        core.log.warn(f"{verdict.reason} — publishing anyway because "
-                      f"{gh.owners.ALLOW_UPSTREAM_ENV}=1")
+    if not gh.owners.upstream_allowed_by_user():
+        raise gh.owners.OwnerBoundaryError(verdict)
+    core.log.warn(f"{verdict.reason} — publishing anyway because "
+                  f"{gh.owners.ALLOW_UPSTREAM_ENV}=1")
+    content = gh.owners.check_gh_content(
+        args, cwd=cwd, input_text=input_text, group="")
+    if not content.references:
         return
-    raise gh.owners.OwnerBoundaryError(verdict)
+    if gh.owners.cross_ref_allowed_by_user():
+        core.log.warn(
+            f"{content.reason} — publishing anyway because "
+            f"{gh.owners.ALLOW_UPSTREAM_ENV}=1 and {gh.owners.ALLOW_CROSS_REF_ENV}=1")
+        return
+    raise gh.owners.OwnerBoundaryError(content)
 
 
 def run(

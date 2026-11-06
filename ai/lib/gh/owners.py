@@ -35,11 +35,14 @@ launched with, so honouring it there would make the override reachable from
 inside the session. Both guards also refuse any command that names it.
 
 Published text is checked by ``check_content``: every configured owner it names
-must be in the target's group. Upstream names are not references, so they stay
-allowed. ``WORKBENCH_ALLOW_CROSS_REF=1`` lets user-run Python paths
-(``gh.client``, Linear, the git hooks) past a content refusal
-(``cross_ref_allowed_by_user``). ``check_command`` never reads it, for the same
-reason it never reads the upstream override.
+must be in the target's group. A command with several writes is checked against
+each distinct write group; the first refusal is returned. Upstream names are
+not references, so they stay allowed. ``WORKBENCH_ALLOW_CROSS_REF=1`` lets
+user-run Python paths (``gh.client``, Linear, the git hooks) past a content
+refusal (``cross_ref_allowed_by_user``). ``WORKBENCH_ALLOW_UPSTREAM=1`` lifts
+only a target refusal; the content is then judged as for an unknown/upstream
+group and still needs the cross-ref override. ``check_command`` never reads
+either override.
 """
 
 # doc-group: platform
@@ -301,6 +304,13 @@ def _load() -> OwnerMap | Verdict:
     return owner_map if owner_map.configured else Verdict.refuse(UNCONFIGURED)
 
 
+def _relative_body_after_cd_reason(paths: tuple[str, ...]) -> str:
+    named = ", ".join(paths)
+    return (
+        f"{named} is a relative body-file path after a directory change, so it cannot "
+        f"be resolved — pass an absolute path. general.md § Cross-Group References")
+
+
 def check_command(command: str, cwd: str) -> Verdict:
     """Whether a shell command's GitHub writes may proceed from *cwd*. Reads always may."""
     try:
@@ -316,6 +326,7 @@ def check_command(command: str, cwd: str) -> Verdict:
         return loaded
     after_cd = any(_changes_directory(s) for s in statements)
     assigned = frozenset().union(*(_gh_env_names(s) for s in statements)) if statements else frozenset()
+    groups: list[str] = []
     verdict = Verdict.allow()
     for statement in writes:
         shifted = assigned - _own_gh_env(statement)
@@ -327,9 +338,17 @@ def check_command(command: str, cwd: str) -> Verdict:
         verdict = check_target(resolution.target, loaded)
         if not verdict.ok:
             return verdict
-    content = check_content(
-        gh.owner_content.command_text(command, cwd), verdict.group, loaded)
-    return content if not content.ok else verdict
+        if verdict.group not in groups:
+            groups.append(verdict.group)
+    relative = gh.owner_content.relative_body_paths(command)
+    if after_cd and relative:
+        return Verdict.refuse(_relative_body_after_cd_reason(relative))
+    text = gh.owner_content.command_text(command, cwd)
+    for group in groups:
+        content = check_content(text, group, loaded)
+        if not content.ok:
+            return content
+    return verdict
 
 
 def check_gh_call(args: Sequence[str], *, cwd: str | Path | None = None,
@@ -347,10 +366,25 @@ def check_gh_call(args: Sequence[str], *, cwd: str | Path | None = None,
     verdict = check_target(replace(resolution.target, choose=CLIENT_CHOOSE), loaded)
     if not verdict.ok:
         return verdict
-    content = check_content(
-        gh.owner_content.argv_text(args, input_text, cwd or os.getcwd()),
-        verdict.group, loaded)
+    content = check_gh_content(
+        args, cwd=cwd, input_text=input_text, group=verdict.group)
     return content if not content.ok else verdict
+
+
+def check_gh_content(
+        args: Sequence[str], *, cwd: str | Path | None, input_text: str | None,
+        group: str) -> Verdict:
+    """Whether the published text of ``gh *args`` may go to *group*.
+
+    The content step ``check_gh_call`` runs on the ok path. Unconfigured or a
+    config error comes back from ``_load`` as a refusal with no references.
+    """
+    loaded = _load()
+    if isinstance(loaded, Verdict):
+        return loaded
+    return check_content(
+        gh.owner_content.argv_text(args, input_text, cwd or os.getcwd()),
+        group, loaded)
 
 
 def check_text(text: str, cwd: str | Path) -> Verdict:

@@ -662,3 +662,51 @@ def test_check_text_config_error_refuses(github_owners, tmp_path):
     github_owners({"work": ["acme"], "personal": ["acme"]})
     verdict = gh.owners.check_text("hello", str(tmp_path))
     assert not verdict.ok and "acme" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "gh issue comment 1 -R otto-nation/svc --body 'see me/lib#12'; "
+    "gh issue comment 2 -R me/lib --body x",
+    "gh issue comment 2 -R me/lib --body x; "
+    "gh issue comment 1 -R otto-nation/svc --body 'see me/lib#12'",
+])
+def test_check_command_judges_content_against_every_write_group(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    verdict = gh.owners.check_command(command, str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+    assert verdict.references
+
+
+def test_check_command_refuses_a_relative_body_file_after_cd(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"]})
+    (tmp_path / "sub").mkdir()
+    verdict = gh.owners.check_command(
+        "cd sub && gh issue comment 1 -R otto-nation/svc --body-file b.md",
+        str(tmp_path))
+    assert not verdict.ok
+    assert "b.md" in verdict.reason
+    assert "absolute path" in verdict.reason
+    assert "general.md § Cross-Group References" in verdict.reason
+    assert not verdict.references
+
+
+def test_check_command_scans_an_absolute_body_file_after_cd(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "sub").mkdir()
+    body = tmp_path / "b.md"
+    body.write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        f"cd sub && gh issue comment 1 -R otto-nation/svc --body-file {body}",
+        str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+    assert verdict.references
+
+
+def test_check_command_resolves_a_relative_body_file_without_cd(
+        github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "b.md").write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        "gh issue comment 1 -R otto-nation/svc --body-file b.md", str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason

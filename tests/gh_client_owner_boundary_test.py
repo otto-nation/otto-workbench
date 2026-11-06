@@ -145,6 +145,45 @@ def test_the_cross_ref_override_does_not_lift_an_upstream_target(
     assert not calls.exists()
 
 
+def test_allow_upstream_does_not_lift_a_cross_ref_on_an_upstream_target(
+        stub_gh, github_owners, monkeypatch):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.api(
+            "repos/stranger/lib/issues", method="POST",
+            input_text="see me/lib#12")
+    assert "me/lib#12" in str(exc.value)
+    assert exc.value.verdict.references
+    assert not calls.exists()
+
+
+def test_both_overrides_let_an_upstream_target_with_a_cross_ref_through(
+        stub_gh, github_owners, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    assert gh.client.api(
+        "repos/stranger/lib/issues", method="POST",
+        input_text="see me/lib#12").ok
+    assert calls.exists()
+    err = capsys.readouterr().err
+    assert f"{gh.owners.ALLOW_UPSTREAM_ENV}=1" in err
+    assert f"{gh.owners.ALLOW_CROSS_REF_ENV}=1" in err
+
+
+def test_allow_upstream_alone_lets_an_upstream_write_with_no_references_through(
+        stub_gh, github_owners, monkeypatch):
+    github_owners({"work": ["otto-nation"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    assert gh.client.api(
+        "repos/stranger/lib/issues", method="POST", input_text="{}").ok
+    assert calls.exists()
+
+
 def test_an_entry_point_reports_a_refusal_as_exit_one(capsys):
     verdict = gh.owners.Verdict.refuse("stranger is not one of our GitHub owners")
 

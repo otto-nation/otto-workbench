@@ -112,3 +112,31 @@ def test_argv_text_does_not_scan_stdin_dash(tmp_path):
         ("pr", "create", "--body-file", "-"), "INLINE", tmp_path)
     assert "INLINE" in text
     assert text.count("INLINE") == 1
+
+
+def test_command_text_treats_dash_F_without_equals_as_a_body_file(tmp_path):
+    (tmp_path / "short.md").write_text("SHORT_F")
+    text = gh.owner_content.command_text(
+        "gh issue comment 1 -F short.md", tmp_path)
+    assert "SHORT_F" in text
+
+
+def test_command_text_includes_notes_file(tmp_path):
+    (tmp_path / "notes.md").write_text("NOTES_FILE")
+    spaced = gh.owner_content.command_text(
+        "gh release create v1 --notes-file notes.md", tmp_path)
+    equals = gh.owner_content.command_text(
+        "gh release create v1 --notes-file=notes.md", tmp_path)
+    assert "NOTES_FILE" in spaced
+    assert "NOTES_FILE" in equals
+
+
+def test_command_text_still_reads_api_field_file_and_skips_plain_values(tmp_path):
+    (tmp_path / "body.md").write_text("API_AT_FILE")
+    (tmp_path / "plain.md").write_text("PLAIN_VALUE_FILE")
+    at_file = gh.owner_content.command_text(
+        "gh api repos/x/y -X POST -F body=@body.md", tmp_path)
+    plain = gh.owner_content.command_text(
+        "gh api repos/x/y -X POST -F key=plain.md", tmp_path)
+    assert "API_AT_FILE" in at_file
+    assert "PLAIN_VALUE_FILE" not in plain

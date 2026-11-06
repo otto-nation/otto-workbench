@@ -838,7 +838,10 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model, and capped at
+the fallback when the catalogue cannot be read or lacks the model. A catalogue
+that cannot be read is retried by the next lookup, never cached, and when the
+table cannot answer either `UnknownModelWindow` quotes why it could not be read.
+It is capped at
 ``context.compact_at`` when that is set. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
@@ -4333,9 +4336,13 @@ one configured, so this module does not.
 
 A readable catalogue that lacks the id is a configuration error: the message
 names the id, where it came from when that is knowable, the provider, the
-closest listed ids, and how to override. An empty catalogue is not that error
-— pi absent, hung, or unreadable must not block a spawn pi itself might still
-accept; Pi's stderr is the remaining signal on that path.
+closest listed ids, and how to override. A catalogue that cannot be read is not
+that error — pi absent, hung, or unreadable must not block a spawn pi itself
+might still accept; Pi's stderr is the remaining signal on that path.
+`catalogue_text` raises `CatalogueUnreadable` with the reason rather than
+returning an empty listing, so a caller that fails open (`require_listed_model`)
+still does, a caller that must explain itself (the review budget) can, and no
+failure is ever cached: the next caller lists again.
 
 The same check runs once, up front, for every model a run would use
 (`check_targets`): each reference is judged by the provider it names, so a run
@@ -5860,10 +5867,11 @@ actually predicts the right answer is **what bounds the cost**:
 | `QUICK` | A session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
+| `LAUNCH` | Starting a heavyweight local CLI — a Node program that loads its extensions before it answers (`pi --list-models`, `pi --version`) | Flat cost, but the cost is process start-up, which a loaded machine stretches several-fold; a breach still means a hang. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add`, `status` | A bound would be wrong, not merely large. |
 
-For the first three tiers the cost is the same whatever the repository holds, so
+For the first four tiers the cost is the same whatever the repository holds, so
 a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
 and a timeout is a hang detector. For the last two the cost is whatever the input
 costs, and a breach is indistinguishable from "the repository is large" or "this

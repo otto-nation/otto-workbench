@@ -269,6 +269,12 @@ def _no_live_backend(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", guarded_popen)
 
 
+def unreadable_catalogue(*_args):
+    """A catalogue stub that fails the way an unreadable `pi --list-models` does."""
+    import agent.pi_models
+    raise agent.pi_models.CatalogueUnreadable("no catalogue in tests")
+
+
 # The production functions, captured before tests stub them. A test of the
 # catalogue fallbacks (missing binary, non-zero exit) or of binary resolution
 # rebinds these rather than spawning a real `pi` or `mise`.
@@ -297,7 +303,7 @@ def pytest_configure(config):
     _REAL_CATALOGUE_FOR = agent.pi_models.catalogue_for
     _REAL_CATALOGUE_TEXT = agent.pi_models.catalogue_text
     _REAL_PI_RESOLVE = agent.pi_binary.resolve
-    agent.pi_models.catalogue_for = lambda _cwd: ""
+    agent.pi_models.catalogue_for = unreadable_catalogue
 
 
 @pytest.fixture(autouse=True)
@@ -342,9 +348,10 @@ def _empty_pi_catalogue(monkeypatch):
     """Neither budget lookups nor model checks spawn `pi` or `mise`.
 
     A test that cares about a live listing stubs `catalogue_text` or
-    `catalogue_for` itself; every other test gets the fallback table, which is
-    what they already asserted against. Binary resolution answers a fixed bare
-    `pi`; `tests/pi_binary_test.py` restores the real `resolve`.
+    `catalogue_for` itself; every other test gets an unreadable catalogue, so the
+    fallback table is what they already asserted against. Binary resolution
+    answers a fixed bare `pi`; `tests/pi_binary_test.py` restores the real
+    `resolve`.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
@@ -354,8 +361,8 @@ def _empty_pi_catalogue(monkeypatch):
         TEST_PI_BINARY_PATH, "0.0.0", agent.pi_binary.Source.PATH, "test stub",
     )
     monkeypatch.setattr(agent.pi_binary, "resolve", lambda _cwd: stub)
-    monkeypatch.setattr(agent.pi_models, "catalogue_for", lambda _cwd: "")
-    monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+    monkeypatch.setattr(agent.pi_models, "catalogue_for", unreadable_catalogue)
+    monkeypatch.setattr(agent.pi_models, "catalogue_text", unreadable_catalogue)
     # Clear the real function's cache on both sides, so a failing test cannot
     # leave a listing behind for the next one.
     _REAL_CATALOGUE_TEXT.cache_clear()

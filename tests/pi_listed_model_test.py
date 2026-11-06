@@ -14,7 +14,7 @@ import agent.backend_pi
 import agent.pi_binary
 import agent.pi_models
 from ai_backend_pi_rpc_test import _RefusingProc
-from conftest import TEST_PI_ARGV as PI
+from conftest import TEST_PI_ARGV as PI, unreadable_catalogue
 
 
 LISTING = """\
@@ -78,8 +78,8 @@ class TestRequireListedModel:
         monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: LISTING)
         assert agent.pi_models.require_listed_model(LISTED, PROVIDER, pi=PI) is None
 
-    def test_an_empty_catalogue_skips_validation(self, monkeypatch):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+    def test_an_unreadable_catalogue_skips_validation(self, monkeypatch):
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", unreadable_catalogue)
         assert agent.pi_models.require_listed_model(UNLISTED, PROVIDER, pi=PI) is None
 
 
@@ -220,7 +220,7 @@ class TestInvokeUsesTheConfiguredId:
     ):
         # catalogue is unreadable, so require_listed_model skips the pre-spawn
         # check and pi itself refuses the id over stderr.
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", unreadable_catalogue)
 
         def fake_run(cmd, **_kw):
             return subprocess.CompletedProcess(
@@ -239,7 +239,7 @@ class TestInvokeUsesTheConfiguredId:
     def test_an_empty_catalogue_spawns_the_configured_id(
         self, monkeypatch, tmp_path,
     ):
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", unreadable_catalogue)
         seen = []
 
         def fake_popen(cmd, **_kw):
@@ -326,6 +326,77 @@ class TestOneBinaryForCatalogueAndSpawn:
         assert ran == [[self.CHOSEN, "--list-models"]]
 
 
+class TestTheListing:
+    def test_a_listing_is_bounded_by_the_launch_tier(self, monkeypatch):
+        import core.proc
+        import core.timeouts
+        from conftest import _REAL_CATALOGUE_TEXT
+
+        bounds = []
+
+        def run(*_a, **kw):
+            bounds.append(kw["timeout"])
+            return core.proc.CmdResult(returncode=0, stdout=LISTING)
+
+        monkeypatch.setattr(core.proc, "run", run)
+        _REAL_CATALOGUE_TEXT.cache_clear()
+        try:
+            _REAL_CATALOGUE_TEXT(PI)
+        finally:
+            _REAL_CATALOGUE_TEXT.cache_clear()
+        assert bounds == [core.timeouts.LAUNCH]
+
+    def test_a_timed_out_listing_raises_its_reason_and_is_listed_again(
+        self, monkeypatch,
+    ):
+        import core.proc
+        from conftest import _REAL_CATALOGUE_TEXT
+
+        calls = []
+        listing = False
+
+        def run(*_a, **_k):
+            calls.append(1)
+            if listing:
+                return core.proc.CmdResult(stdout=LISTING)
+            return core.proc.CmdResult(
+                returncode=core.proc.TIMEOUT_RETURNCODE,
+                stderr="timed out after 60s: pi --list-models",
+            )
+
+        monkeypatch.setattr(core.proc, "run", run)
+        _REAL_CATALOGUE_TEXT.cache_clear()
+        try:
+            for _ in range(2):
+                with pytest.raises(agent.pi_models.CatalogueUnreadable) as caught:
+                    _REAL_CATALOGUE_TEXT(PI)
+                assert "timed out after 60s" in str(caught.value)
+            assert len(calls) == 2
+            listing = True
+            assert _REAL_CATALOGUE_TEXT(PI) == LISTING
+            assert _REAL_CATALOGUE_TEXT(PI) == LISTING
+            assert len(calls) == 3
+        finally:
+            _REAL_CATALOGUE_TEXT.cache_clear()
+
+    @pytest.mark.parametrize("stdout", ["", "provider model context\n"])
+    def test_a_listing_with_no_model_rows_is_unreadable(self, monkeypatch, stdout):
+        import core.proc
+        from conftest import _REAL_CATALOGUE_TEXT
+
+        monkeypatch.setattr(
+            core.proc, "run",
+            lambda *_a, **_k: core.proc.CmdResult(stdout=stdout),
+        )
+        _REAL_CATALOGUE_TEXT.cache_clear()
+        try:
+            with pytest.raises(agent.pi_models.CatalogueUnreadable) as caught:
+                _REAL_CATALOGUE_TEXT(PI)
+            assert "printed no model table" in str(caught.value)
+        finally:
+            _REAL_CATALOGUE_TEXT.cache_clear()
+
+
 class TestNoChoosablePi:
     @pytest.fixture(autouse=True)
     def _unresolvable(self, monkeypatch):
@@ -375,7 +446,7 @@ class TestUndeliveredNamesTheModel:
             "to see available models.\n"
         )
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
-        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", unreadable_catalogue)
         monkeypatch.setenv("AI_SONNET_MODEL", UNLISTED)
         log = tmp_path / "s.jsonl"
         agent.backend_pi.invoke_agent(agent.backend_pi.AgentInvocation(

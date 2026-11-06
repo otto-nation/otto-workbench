@@ -8,7 +8,10 @@ same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
-the fallback when the catalogue cannot be read or lacks the model, and capped at
+the fallback when the catalogue cannot be read or lacks the model. A catalogue
+that cannot be read is retried by the next lookup, never cached, and when the
+table cannot answer either `UnknownModelWindow` quotes why it could not be read.
+It is capped at
 ``context.compact_at`` when that is set. It subtracts
 what the reply and the CLI's own system prompt need, and prices the remainder in
 bytes at a density floor — so it is a property of
@@ -227,9 +230,10 @@ def _pi_catalogue_windows(cwd: Path | str) -> dict[str, int]:
 
     Read through `agent.pi_models.catalogue_for`, the one place the workbench
     lists models, so the budget and the spawn's model check consult the same
-    binary — two pi versions serve different models. An empty result is a
-    silent fallback, not an error: a review must still budget against the
-    recorded table when no pi can be chosen or its listing is unreadable.
+    binary — two pi versions serve different models. Raises
+    `agent.pi_models.CatalogueUnreadable` when no listing can be read;
+    `model_window_tokens` falls back to the table and, if that cannot answer
+    either, quotes the reason.
     """
     return _parse_pi_list_models(agent.pi_models.catalogue_for(cwd))
 
@@ -245,6 +249,7 @@ class UnknownModelWindow(RuntimeError):
 
     def __init__(
         self, model: str, detail: str = "", *, catalogue: dict[str, int] | None = None,
+        unreadable: str = "",
     ):
         self.model = model
         if not detail:
@@ -254,13 +259,14 @@ class UnknownModelWindow(RuntimeError):
             # full list this process could actually have resolved against.
             catalogue = catalogue or {}
             known = ", ".join(sorted(set(MODEL_CONTEXT_TOKENS) | set(catalogue)))
-            # An empty catalogue means pi was absent, failed, or unparsed — not
-            # that it lacks the model — so the message must not claim it does.
+            # The catalogue's failure is quoted rather than summarised: "could not be
+            # read" alone sends the operator after the model id when the cause was a
+            # listing that timed out on a loaded machine.
             where = (
+                "review.budget.MODEL_CONTEXT_TOKENS, and pi's provider catalogue "
+                f"could not be read: {unreadable}"
+                if unreadable else
                 "pi's provider catalogue or review.budget.MODEL_CONTEXT_TOKENS"
-                if catalogue else
-                "review.budget.MODEL_CONTEXT_TOKENS (pi's provider catalogue "
-                "could not be read)"
             )
             detail = (
                 f"no context window on record for model {model!r} — not in "
@@ -313,10 +319,15 @@ def model_window_tokens(
     compact_at = backend_ceiling(machine_ceiling(), backend)
     if not model:
         return capped_window(UNSET_MODEL_FLOOR_TOKENS, compact_at)
-    catalogue = _pi_catalogue_windows(cwd)
+    unreadable = ""
+    try:
+        catalogue = _pi_catalogue_windows(cwd)
+    except agent.pi_models.CatalogueUnreadable as exc:
+        catalogue = {}
+        unreadable = str(exc)
     window = catalogue.get(model, MODEL_CONTEXT_TOKENS.get(model))
     if window is None:
-        raise UnknownModelWindow(model, catalogue=catalogue)
+        raise UnknownModelWindow(model, catalogue=catalogue, unreadable=unreadable)
     return capped_window(window, compact_at)
 
 

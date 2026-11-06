@@ -17,7 +17,7 @@ from agent.models import ModelRef
 from review.budget import prompt_budget_bytes
 from core.phases import Phase
 
-from conftest import TEST_MODEL, _REAL_CATALOGUE_FOR, _REAL_CATALOGUE_TEXT
+from conftest import TEST_MODEL, TEST_PI_ARGV, _REAL_CATALOGUE_FOR, _REAL_CATALOGUE_TEXT
 
 from review_prompt_support import _make_preflight, _make_job
 
@@ -315,6 +315,9 @@ class TestTheWindowPrefersPisCatalogue:
             lambda *_a, **_k: CmdResult(returncode=1),
             lambda *_a, **_k: CmdResult(returncode=0, stdout="not a table"),
             lambda *_a, **_k: CmdResult(returncode=0, stdout=""),
+            lambda *_a, **_k: CmdResult(
+                returncode=core.proc.TIMEOUT_RETURNCODE, stderr="timed out",
+            ),
         ):
             monkeypatch.setattr(core.proc, "run", run)
             _REAL_CATALOGUE_TEXT.cache_clear()
@@ -384,6 +387,7 @@ class TestTheWindowPrefersPisCatalogue:
             prompt_budget_bytes("gpt-5", cwd=".")
         message = str(caught.value)
         assert "could not be read" in message
+        assert "no catalogue in tests" in message
         assert "not in pi's provider catalogue" not in message
 
     def test_the_narrowest_window_wins_across_providers(self, monkeypatch):
@@ -397,6 +401,64 @@ class TestTheWindowPrefersPisCatalogue:
             "xai grok-4.6 500K 500K yes yes\n"
         ))
         assert model_window_tokens("grok-4.6", cwd=".") == 120_000
+
+    def test_a_listing_that_timed_out_is_listed_again_by_the_budget(self, monkeypatch):
+        import core.proc
+        from core.proc import CmdResult
+        from review.budget import model_window_tokens
+
+        calls = []
+
+        def run(*_a, **_k):
+            calls.append(1)
+            if len(calls) == 1:
+                return CmdResult(
+                    returncode=core.proc.TIMEOUT_RETURNCODE,
+                    stderr="timed out after 60s",
+                )
+            return CmdResult(
+                stdout=(
+                    "provider model context max-out thinking images\n"
+                    "google-vertex-claude claude-haiku-4-5@20251001 150K 64K yes yes\n"
+                ),
+            )
+
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", _REAL_CATALOGUE_FOR)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", _REAL_CATALOGUE_TEXT)
+        monkeypatch.setattr(core.proc, "run", run)
+        _REAL_CATALOGUE_TEXT.cache_clear()
+        try:
+            assert agent.pi_models.require_listed_model(
+                "claude-haiku-4-5@20251001", pi=TEST_PI_ARGV,
+            ) is None
+            assert model_window_tokens("claude-haiku-4-5@20251001", cwd=".") == 150_000
+        finally:
+            _REAL_CATALOGUE_TEXT.cache_clear()
+
+    def test_the_abort_quotes_why_the_catalogue_could_not_be_read(self, monkeypatch):
+        import core.proc
+        from core.proc import CmdResult
+        from review.budget import UnknownModelWindow, prompt_budget_bytes
+
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", _REAL_CATALOGUE_FOR)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", _REAL_CATALOGUE_TEXT)
+        monkeypatch.setattr(
+            core.proc, "run",
+            lambda *_a, **_k: CmdResult(
+                returncode=core.proc.TIMEOUT_RETURNCODE,
+                stderr="timed out after 60s: pi --list-models",
+            ),
+        )
+        _REAL_CATALOGUE_TEXT.cache_clear()
+        try:
+            with pytest.raises(UnknownModelWindow) as caught:
+                prompt_budget_bytes("gpt-5", cwd=".")
+            message = str(caught.value)
+            assert "could not be read" in message
+            assert "timed out after 60s" in message
+            assert "not in pi's provider catalogue" not in message
+        finally:
+            _REAL_CATALOGUE_TEXT.cache_clear()
 
 
 class TestCollectionBudgetsForEveryPhase:

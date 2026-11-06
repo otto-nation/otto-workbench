@@ -1,6 +1,41 @@
-"""Claims check and input fingerprint.
+"""The claims ledger: the check, the fingerprint and the record entries.
 
-The wiring calls these; Task 10 completes the contract.
+This module owns whether a run has a claim source, the input fingerprint, the
+run-context check composed with focus coverage, turning a writer's reports
+into record entries after the check, and the degraded-check warning.
+Renderers take claims off the record and never import it.
+
+The record is tri-state. `None` is not assessed — a writer that did not run, a
+check that degraded, or a legacy `review.json`. `()` is assessed with nothing
+checkable, or no claim source. Entries are the assessed ledger.
+
+Writers are the single agent and synthesis only. Scout, holistic and group get
+no claims fields. Agentless paths — clean, settled, `--no-synthesis`,
+low-effort, a budget cut, all-groups-failed, mechanical fallback, `--repair`
+rebuild — record `None`. When a description or ticket existed, that renders
+"*Not assessed this round.*" A multi-phase run that never reaches synthesis
+therefore shows Not assessed; that is the honest result.
+
+The check rides ingest `check=` with one repair turn. Caps (12 claims, 512
+bytes per `text` / `evidence` / `snippet`) live inside the check, so an
+over-cap list degrades rather than rejects. Leftover claims errors after the
+repair set `claims` to `None` and never cost the review. A first load that
+fails `problems()` or schema never runs the claims check, so the repair prompt
+does not mention claims and the second load degrades without that turn having
+named them.
+
+`verify.post_process_record` forces a supported or contradicted claim whose
+snippet is not in its file to unverifiable, with a note, using the same
+evidence matcher findings use.
+
+The fingerprint hashes `pr.body` plus the rendered, truncated issue section.
+It is stamped only when claims were assessed, so a prior round of `None`
+cannot no-op past an unassessed ledger. A true no-op carries prior claims:
+the gate now proves description, ticket and code unchanged, so the prior
+verdicts still stand. Focus coverage is not carried on a no-op because areas
+can change on that same round. The GitHub issue fetch is title and body only
+— comments are not the ticket's claims and would move the fingerprint on
+every reply.
 """
 
 # doc-group: pipeline
@@ -8,7 +43,7 @@ The wiring calls these; Task 10 completes the contract.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 
 import review.budget
@@ -17,7 +52,8 @@ import review.prompt_sections
 from review.artifacts import ReviewArtifact
 from review.claim_types import ClaimEntry, ClaimReport, ClaimVerdict
 from review.grammar import strip_line_suffix
-from review.ingest import IngestError, IngestErrorKind
+from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
+from review.types import ReviewJob
 
 CLAIM_KINDS = frozenset({
     IngestErrorKind.MISSING_CLAIMS,
@@ -123,7 +159,15 @@ def without_vanished_links(record):
     ))
 
 
-def writer_check(job) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:
+def writer_check(
+    job: ReviewJob,
+) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:
+    """Focus coverage then claims, as the writer's `check=` callable.
+
+    `job` supplies the requested focus, whether derived areas are required,
+    and whether a claim source exists. Caps and cite rules live in
+    `claims_problems`, so an over-cap list degrades rather than rejects.
+    """
     def check(artifact: ReviewArtifact) -> tuple[IngestError, ...]:
         return review.focus.coverage_problems(
             artifact, job.focus, derive=review.focus.needs_derived(job.focus),
@@ -134,7 +178,14 @@ def writer_check(job) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:
     return check
 
 
-def claims_of(job, outcome) -> tuple[ClaimEntry, ...] | None:
+def claims_of(
+    job: ReviewJob, outcome: ArtifactOutcome,
+) -> tuple[ClaimEntry, ...] | None:
+    """Record claims from `outcome`, or `None` when the check degraded.
+
+    `job` decides whether a source exists (`()` with none). `outcome.errors`
+    of a claims kind, or a missing `outcome.artifact.claims`, yield `None`.
+    """
     if not has_claim_source(job):
         return ()
     if any(e.kind in CLAIM_KINDS for e in outcome.errors):
@@ -150,7 +201,12 @@ def claims_of(job, outcome) -> tuple[ClaimEntry, ...] | None:
     )
 
 
-def check_warning(errors) -> str:
+def check_warning(errors: Sequence[IngestError]) -> str:
+    """Warning after a writer's second failed check, with a claims clause.
+
+    `errors` are the ingest errors left after the repair turn. When any is a
+    claims kind, the warning adds that claims are published as not assessed.
+    """
     more = (
         ("claims are published as not assessed",)
         if any(e.kind in CLAIM_KINDS for e in errors) else ()

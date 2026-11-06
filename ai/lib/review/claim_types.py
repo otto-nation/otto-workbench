@@ -6,7 +6,9 @@ but nothing in the code shows it; `unverifiable` is not statically checkable,
 or its cited code did not verify. `evidence` is prose. `path` and `snippet`
 are the code the verdict rests on, and are required for supported and
 contradicted. `finding` is optional: the id of a writer finding, of any
-severity, that covers the claim.
+severity, that covers the claim. This module is a leaf: it imports nothing
+from `review`. `ClaimReport` is what an agent writes; `ClaimEntry` is what
+the record stores, with harness numbering.
 """
 
 # doc-group: findings

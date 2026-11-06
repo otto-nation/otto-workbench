@@ -9,8 +9,8 @@ same figure rather than two that drifted apart.
 The ceiling is derived, not declared. It starts from the resolved model's
 context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
 the fallback (read by the id without its `@version`) when the catalogue cannot
-be read or lacks the model. A catalogue that cannot be read is retried by the
-next lookup, never cached, and when the table cannot answer either
+be read or lacks the model. A catalogue that cannot be read is retried after a
+short window, not cached for the process, and when the table cannot answer either
 `UnknownModelWindow` quotes why it could not be read. It is capped at
 ``context.compact_at`` when that is set. It subtracts what the reply and the
 CLI's own system prompt need, and prices the remainder in bytes at a density

@@ -320,9 +320,9 @@ class TestTheWindowPrefersPisCatalogue:
             ),
         ):
             monkeypatch.setattr(core.proc, "run", run)
-            _REAL_CATALOGUE_TEXT.cache_clear()
+            agent.pi_models.forget_catalogue()
             assert model_window_tokens(model, cwd=".") == expected
-        _REAL_CATALOGUE_TEXT.cache_clear()
+        agent.pi_models.forget_catalogue()
 
     def test_no_choosable_pi_falls_back_to_the_table(self, monkeypatch):
         """A pi that cannot be chosen is the spawn's error to report, not the budget's."""
@@ -409,12 +409,13 @@ class TestTheWindowPrefersPisCatalogue:
             MODEL_CONTEXT_TOKENS["claude-haiku-4-5"]
         )
 
-    def test_a_listing_that_timed_out_is_listed_again_by_the_budget(self, monkeypatch):
+    def test_a_listing_that_timed_out_does_not_abort_the_budget_and_is_retried_later(self, monkeypatch):
         import core.proc
         from core.proc import CmdResult
-        from review.budget import model_window_tokens
+        from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
 
         calls = []
+        now = [1000.0]
 
         def run(*_a, **_k):
             calls.append(1)
@@ -433,14 +434,20 @@ class TestTheWindowPrefersPisCatalogue:
         monkeypatch.setattr(agent.pi_models, "catalogue_for", _REAL_CATALOGUE_FOR)
         monkeypatch.setattr(agent.pi_models, "catalogue_text", _REAL_CATALOGUE_TEXT)
         monkeypatch.setattr(core.proc, "run", run)
-        _REAL_CATALOGUE_TEXT.cache_clear()
+        monkeypatch.setattr(agent.pi_models, "_now", lambda: now[0])
+        agent.pi_models.forget_catalogue()
         try:
             assert agent.pi_models.require_listed_model(
                 "claude-haiku-4-5@20251001", pi=TEST_PI_ARGV,
             ) is None
+            assert model_window_tokens("claude-haiku-4-5@20251001", cwd=".") == (
+                MODEL_CONTEXT_TOKENS["claude-haiku-4-5"]
+            )
+            assert len(calls) == 1
+            now[0] += agent.pi_models.UNREADABLE_RETRY_SECONDS + 1
             assert model_window_tokens("claude-haiku-4-5@20251001", cwd=".") == 150_000
         finally:
-            _REAL_CATALOGUE_TEXT.cache_clear()
+            agent.pi_models.forget_catalogue()
 
     def test_the_abort_quotes_why_the_catalogue_could_not_be_read(self, monkeypatch):
         import core.proc
@@ -456,7 +463,7 @@ class TestTheWindowPrefersPisCatalogue:
                 stderr="timed out after 60s: pi --list-models",
             ),
         )
-        _REAL_CATALOGUE_TEXT.cache_clear()
+        agent.pi_models.forget_catalogue()
         try:
             with pytest.raises(UnknownModelWindow) as caught:
                 prompt_budget_bytes("gpt-5", cwd=".")
@@ -465,7 +472,7 @@ class TestTheWindowPrefersPisCatalogue:
             assert "timed out after 60s" in message
             assert "not in pi's provider catalogue" not in message
         finally:
-            _REAL_CATALOGUE_TEXT.cache_clear()
+            agent.pi_models.forget_catalogue()
 
 
 class TestCollectionBudgetsForEveryPhase:

@@ -318,11 +318,11 @@ class TestOneBinaryForCatalogueAndSpawn:
         monkeypatch.setattr(core.proc, "run", lambda cmd, **_kw: ran.append(cmd) or core.proc.CmdResult(
             returncode=0, stdout=LISTING,
         ))
-        _REAL_CATALOGUE_TEXT.cache_clear()
+        agent.pi_models.forget_catalogue()
         try:
             assert _REAL_CATALOGUE_TEXT((self.CHOSEN,)) == LISTING
         finally:
-            _REAL_CATALOGUE_TEXT.cache_clear()
+            agent.pi_models.forget_catalogue()
         assert ran == [[self.CHOSEN, "--list-models"]]
 
 
@@ -339,11 +339,11 @@ class TestTheListing:
             return core.proc.CmdResult(returncode=0, stdout=LISTING)
 
         monkeypatch.setattr(core.proc, "run", run)
-        _REAL_CATALOGUE_TEXT.cache_clear()
+        agent.pi_models.forget_catalogue()
         try:
             _REAL_CATALOGUE_TEXT(PI)
         finally:
-            _REAL_CATALOGUE_TEXT.cache_clear()
+            agent.pi_models.forget_catalogue()
         assert bounds == [core.timeouts.LAUNCH]
 
     @staticmethod
@@ -352,7 +352,7 @@ class TestTheListing:
             catalogue_text(PI)
         assert "timed out after 60s" in str(caught.value)
 
-    def test_a_timed_out_listing_raises_its_reason_and_is_listed_again(
+    def test_a_timed_out_listing_raises_its_reason_and_is_listed_again_later(
         self, monkeypatch,
     ):
         import core.proc
@@ -360,6 +360,7 @@ class TestTheListing:
 
         calls = []
         listing = False
+        now = [1000.0]
 
         def run(*_a, **_k):
             calls.append(1)
@@ -371,17 +372,49 @@ class TestTheListing:
             )
 
         monkeypatch.setattr(core.proc, "run", run)
-        _REAL_CATALOGUE_TEXT.cache_clear()
+        monkeypatch.setattr(agent.pi_models, "_now", lambda: now[0])
+        agent.pi_models.forget_catalogue()
         try:
-            for _ in range(2):
-                self._assert_timed_out(_REAL_CATALOGUE_TEXT)
+            self._assert_timed_out(_REAL_CATALOGUE_TEXT)
+            now[0] += agent.pi_models.UNREADABLE_RETRY_SECONDS + 1
+            self._assert_timed_out(_REAL_CATALOGUE_TEXT)
             assert len(calls) == 2
             listing = True
+            now[0] += agent.pi_models.UNREADABLE_RETRY_SECONDS + 1
             assert _REAL_CATALOGUE_TEXT(PI) == LISTING
             assert _REAL_CATALOGUE_TEXT(PI) == LISTING
             assert len(calls) == 3
         finally:
-            _REAL_CATALOGUE_TEXT.cache_clear()
+            agent.pi_models.forget_catalogue()
+
+    def test_a_hung_pi_costs_one_bounded_wait_per_window_not_one_per_ask(
+        self, monkeypatch,
+    ):
+        import core.proc
+        from conftest import _REAL_CATALOGUE_TEXT
+
+        calls = []
+        now = [1000.0]
+
+        def run(*_a, **_k):
+            calls.append(1)
+            return core.proc.CmdResult(
+                returncode=core.proc.TIMEOUT_RETURNCODE,
+                stderr="timed out after 60s: pi --list-models",
+            )
+
+        monkeypatch.setattr(core.proc, "run", run)
+        monkeypatch.setattr(agent.pi_models, "_now", lambda: now[0])
+        agent.pi_models.forget_catalogue()
+        try:
+            for _ in range(5):
+                self._assert_timed_out(_REAL_CATALOGUE_TEXT)
+            assert len(calls) == 1
+            now[0] += agent.pi_models.UNREADABLE_RETRY_SECONDS + 1
+            self._assert_timed_out(_REAL_CATALOGUE_TEXT)
+            assert len(calls) == 2
+        finally:
+            agent.pi_models.forget_catalogue()
 
     @pytest.mark.parametrize("stdout", ["", "provider model context\n", "not a table"])
     def test_a_listing_with_no_model_rows_is_unreadable(self, monkeypatch, stdout):
@@ -392,13 +425,13 @@ class TestTheListing:
             core.proc, "run",
             lambda *_a, **_k: core.proc.CmdResult(stdout=stdout),
         )
-        _REAL_CATALOGUE_TEXT.cache_clear()
+        agent.pi_models.forget_catalogue()
         try:
             with pytest.raises(agent.pi_models.CatalogueUnreadable) as caught:
                 _REAL_CATALOGUE_TEXT(PI)
             assert "printed no model table" in str(caught.value)
         finally:
-            _REAL_CATALOGUE_TEXT.cache_clear()
+            agent.pi_models.forget_catalogue()
 
 
 class TestNoChoosablePi:

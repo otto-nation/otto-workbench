@@ -15,8 +15,9 @@ that error — pi absent, hung, or unreadable must not block a spawn pi itself
 might still accept; Pi's stderr is the remaining signal on that path.
 `catalogue_text` raises `CatalogueUnreadable` with the reason rather than
 returning an empty listing, so a caller that fails open (`require_listed_model`)
-still does, a caller that must explain itself (the review budget) can, and no
-failure is ever cached: the next caller lists again.
+still does, a caller that must explain itself (the review budget) can, and a
+failure is remembered only for `UNREADABLE_RETRY_SECONDS`: after that the next
+caller lists again.
 
 The same check runs once, up front, for every model a run would use
 (`check_targets`): each reference is judged by the provider it names, so a run
@@ -32,6 +33,7 @@ import difflib
 import functools
 import json
 import os
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -212,7 +214,25 @@ def effective_provider(explicit: str | None) -> str | None:
     return explicit or default_provider()
 
 
-@functools.cache
+# How long a failed listing is remembered. A failure is never cached for the
+# life of the process: a listing that timed out under load is retried once the
+# machine has had time to recover. It is remembered briefly because each attempt
+# can cost the whole LAUNCH bound, and a review asks for the catalogue once per
+# phase, so a pi that hangs for good would otherwise add that bound to every ask.
+UNREADABLE_RETRY_SECONDS = 30.0
+
+_unreadable: dict[tuple[str, ...], tuple[float, str]] = {}
+
+# The clock the retry window reads; a seam so a test moves time instead of waiting.
+_now = time.monotonic
+
+
+def forget_catalogue() -> None:
+    """Drop every listing and remembered failure, so the next ask lists again."""
+    _listing.cache_clear()
+    _unreadable.clear()
+
+
 def catalogue_text(pi: tuple[str, ...]) -> str:
     """Stdout of ``<pi> --list-models``. Raises `CatalogueUnreadable` with the reason when there is none.
 
@@ -221,16 +241,29 @@ def catalogue_text(pi: tuple[str, ...]) -> str:
     two pi versions serve different model sets. This is the one place the workbench
     lists models; the review budget reads its context windows from here too.
 
-    Only a listing is cached, per argv, for the life of the process. A failure
-    raises, and `functools.cache` stores nothing for a call that raised, so the
-    next caller lists again — a listing that timed out under load must not turn
-    off every later model check, nor fail the budget of a model the catalogue
-    would have named.
+    A listing is cached per argv for the life of the process. A failure is not:
+    it is remembered for `UNREADABLE_RETRY_SECONDS` and then listed again, so a
+    listing that timed out under load must not turn off every later model check,
+    nor fail the budget of a model the catalogue would have named, while a pi that
+    hangs for good costs one bounded wait per window rather than one per ask.
 
     Only the argv is taken, not the spawn's environment: the listing runs in
     this process's environment, and the one variable a direct release spawn
     adds (``PI_MANAGED_INSTALL_ROOT``) governs pi's self-update, not its models.
     """
+    failed = _unreadable.get(pi)
+    if failed is not None and _now() - failed[0] < UNREADABLE_RETRY_SECONDS:
+        raise CatalogueUnreadable(failed[1])
+    try:
+        return _listing(pi)
+    except CatalogueUnreadable as exc:
+        _unreadable[pi] = (_now(), str(exc))
+        raise
+
+
+@functools.cache
+def _listing(pi: tuple[str, ...]) -> str:
+    """One `pi --list-models` run; raises rather than return anything that is not a listing."""
     argv = [*pi, "--list-models"]
     try:
         result = core.proc.run(argv, timeout=core.timeouts.LAUNCH)

@@ -90,6 +90,34 @@ def test_message_file_allows_with_no_remote(github_owners, tmp_path):
     assert _message(tmp_path, repo, OFFENCE) == 0
 
 
+def _fork(tmp_path) -> Path:
+    repo = init_repo(tmp_path / "fork")
+    git_in(repo, "remote", "add", "origin", OTHER)
+    git_in(repo, "remote", "add", "upstream", OWN)
+    return repo
+
+
+def test_message_file_on_a_fork_uses_the_origin_push_remote(
+        github_owners, tmp_path, capsys):
+    _groups(github_owners)
+    repo = _fork(tmp_path)
+    assert _message(tmp_path, repo, OFFENCE) == 0
+    assert _message(tmp_path, repo, OWN_REF) == cli.owners_check.REFUSED
+    assert "otto-nation" in capsys.readouterr().err
+
+
+def test_message_and_push_agree_on_a_fork_destination(
+        github_owners, tmp_path, monkeypatch, capsys):
+    _groups(github_owners)
+    repo = _fork(tmp_path)
+    sha = _commit(repo, OWN_REF)
+    msg_code = _message(tmp_path, repo, OWN_REF)
+    push_code = _push(monkeypatch, repo, _line(sha) + "\n", url=OTHER)
+    assert msg_code == push_code == cli.owners_check.REFUSED
+    err = capsys.readouterr().err
+    assert "otto-nation" in err
+
+
 def test_message_file_allows_a_non_github_remote(github_owners, tmp_path):
     _groups(github_owners)
     repo = remote_repo(tmp_path / "r", GITLAB)

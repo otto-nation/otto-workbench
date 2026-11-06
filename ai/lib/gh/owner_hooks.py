@@ -125,6 +125,68 @@ def _github_owner_remote(cwd: str | Path, owner_map: gh.owners.OwnerMap) -> bool
     return any(_is_github_remote(remote.url, owner_map) for remote in found)
 
 
+@dataclass(frozen=True)
+class _Destination:
+    """The GitHub owner a commit is going to, or a fallback/allow decision."""
+
+    owner: config.github_owners.Owner | None = None
+    scan: bool = True
+
+
+def _push_remote_name(cwd: str | Path) -> str | None:
+    """``@{push}``'s remote, else ``remote.pushDefault``, else origin if it exists."""
+    full = git.client.out(
+        "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}",
+        cwd=cwd, default="")
+    if full.startswith("refs/remotes/"):
+        name = full[len("refs/remotes/"):].split("/", 1)[0]
+        if name:
+            return name
+    default = git.client.out(
+        "config", "--get", "remote.pushDefault", cwd=cwd, default="")
+    if default:
+        return default
+    found = git.remote_url.remotes(cwd)
+    if found and any(remote.name == "origin" for remote in found):
+        return "origin"
+    return None
+
+
+def _url_for_remote(cwd: str | Path, name: str) -> str | None:
+    found = git.remote_url.remotes(cwd)
+    if not found:
+        return None
+    for remote in found:
+        if remote.name == name:
+            return remote.url
+    return None
+
+
+def commit_destination(
+        cwd: str | Path, owner_map: gh.owners.OwnerMap,
+        url: str | None = None) -> _Destination:
+    """The group a commit goes to: push remote for commit-msg, *url* for pre-push.
+
+    ``scan=False`` is a non-GitHub destination (allow). ``owner=None`` with
+    ``scan=True`` means none of the push remotes exist, so fall back to every
+    GitHub remote on the checkout.
+    """
+    if url is None:
+        name = _push_remote_name(cwd)
+        if name is None:
+            return _Destination()
+        url = _url_for_remote(cwd, name)
+        if url is None:
+            return _Destination()
+    if not _is_github_remote(url, owner_map):
+        return _Destination(scan=False)
+    owner = gh.owner_targets.remote_owner(
+        url, gh.owner_targets.default_host({}), owner_map.hosts())
+    if owner is None:
+        return _Destination(scan=False)
+    return _Destination(owner=owner)
+
+
 def _content_verdict(verdict: gh.owners.Verdict) -> HookVerdict:
     if verdict.ok:
         return HookVerdict.allow()
@@ -143,7 +205,11 @@ def check_message(text: str, cwd: str | Path) -> HookVerdict:
         return HookVerdict.allow()
     if not _github_owner_remote(cwd, loaded):
         return HookVerdict.allow()
-    return _content_verdict(gh.owners.check_text(_message_body(text, cwd), cwd))
+    dest = commit_destination(cwd, loaded)
+    if not dest.scan:
+        return HookVerdict.allow()
+    body = _message_body(text, cwd)
+    return _content_verdict(gh.owners.check_text(body, cwd, dest.owner))
 
 
 def _push_updates(ref_lines: Sequence[str]) -> list[tuple[str, str]] | HookVerdict:
@@ -232,13 +298,10 @@ def check_push(
         return loaded
     if not loaded.configured:
         return HookVerdict.allow()
-    if not _is_github_remote(url, loaded):
+    dest = commit_destination(cwd, loaded, url=url)
+    if not dest.scan or dest.owner is None:
         return HookVerdict.allow()
-    owner = gh.owner_targets.remote_owner(
-        url, gh.owner_targets.default_host({}), loaded.hosts())
-    if owner is None:
-        return HookVerdict.allow()
-    group = loaded.classify(owner).name
+    group = loaded.classify(dest.owner).name
     parsed = _push_updates(ref_lines)
     if isinstance(parsed, HookVerdict):
         return parsed

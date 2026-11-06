@@ -17,7 +17,16 @@ A repository, framework, or library we do not own is never where a bug is assume
 - State, for every way we could be misusing it, what rules that out. "Looks like an upstream bug" with no reproduction and no ruled-out alternatives is a hypothesis about our code, not a finding about theirs
 - When the due diligence finds our misuse — the expected outcome — fix our code and say what the misreading was. Do not file upstream to ask for a clearer error or a doc change unless the user asks for it
 - A workaround for a genuine upstream bug goes in our code with a `ceiling:` comment naming the upstream issue as its trigger, so it is removed when the fix lands
-- Enforced by `claude-bash-guard` under Claude Code and the `upstream-guard` extension under Pi (cheap pre-filter, then `owners-check`), by `gh.client` for the workbench's own publishing, and by `owners-check` itself. Unconfigured `github.owners` refuses every GitHub write. `WORKBENCH_ALLOW_UPSTREAM=1` is honoured by `gh.client` only, never by the guards; an agent command that names it is refused
+- Enforced by `claude-bash-guard` under Claude Code and the `upstream-guard` extension under Pi (cheap pre-filter, then `owners-check`), by `gh.client` for the workbench's own publishing, and by `owners-check` itself. Unconfigured `github.owners` refuses every GitHub write. `WORKBENCH_ALLOW_UPSTREAM=1` is honoured by `gh.client` only, never by the guards; an agent command that names it or `WORKBENCH_ALLOW_CROSS_REF` is refused
+
+## Cross-Group References
+
+Nothing published to GitHub — an agent `gh`/`pr` command, the workbench's own publishing, a Linear issue filed from a repo, a pushed commit message — references an owner in a different `github.owners` group than the one it is published to. GitHub creates a "referenced this" event from that text, which is how one group's work becomes visible from another.
+
+- A reference is `owner/repo#N`, `owner/repo@sha` (7–40 hex), a `https?://HOST/owner[/…]` URL on github.com or a configured host, or `@owner` at a word boundary. A bare `#N` is not a reference. Only configured owners count: an `@handle` that is not ours is ignored. Upstream names stay allowed
+- A refusal names the offending references and groups, cites this section, and says how to proceed: reword to drop the reference, or ask the user to publish it
+- The user's override is `WORKBENCH_ALLOW_CROSS_REF=1` (exactly `1`) for user-run paths only (`gh.client`, Linear, the git hooks), never honoured by the guards; an agent command that names it is refused
+- Enforced by `claude-bash-guard` under Claude Code and the `upstream-guard` extension under Pi via `owners-check` scanning the whole command text plus `--body-file`/`-F`/`--input`/`--notes-file`/`--description-file` contents that exist — a harmless cross-group mention elsewhere in a compound command is refused — by `gh.client`, by Linear create/update in `review.issue`, and by the global `commit-msg` hook (advisory, skippable with `-n`) and `pre-push` hook (the gate; scans commits new to the destination remote against the destination's owner; non-GitHub destinations and unconfigured owners allow). Hooks fail open when the check cannot run
 
 ## Choosing What to Recommend
 

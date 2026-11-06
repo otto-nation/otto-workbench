@@ -6340,10 +6340,16 @@ that owns it.
 The owner boundary *is* here, for the opposite reason: it is not a choice any
 call site gets to make. `run` refuses a GitHub write whose target is not one of
 our owners (`gh.owners`) before gh starts, by raising `gh.owners.OwnerBoundaryError`,
-so a write site added tomorrow cannot forget it. Reads are not checked and read
-no config. A GraphQL write names no repository, so `graphql` takes a
-`target_repo` hint and falls back to the cwd's remotes. The user's own
-`WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream write through, with a warning.
+so a write site added tomorrow cannot forget it. Published text is checked the
+same way: a cross-group reference in a body is refused before gh starts. Reads
+are not checked and read no config. A GraphQL write names no repository, so
+`graphql` takes a `target_repo` hint and falls back to the cwd's remotes. The
+user's own `WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream-target write through,
+with a warning; it does not lift a content refusal. After that lift, published
+text is still judged as for an unknown/upstream group (`check_gh_content` with
+an empty group). `WORKBENCH_ALLOW_CROSS_REF=1` lets a content refusal through
+the same way; it does not lift an upstream target. An upstream target whose
+body names a grouped owner needs both.
 
 Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
@@ -6408,6 +6414,43 @@ before the checkout or it never comes at all.
 `Landed` carries no branch name. Each detail line describes the comparison
 rather than who was compared, so a caller pairs it with whatever it calls the
 branch and renders the two together.
+
+### gh/owner_content.py
+
+The published text of a GitHub write, including files the command names.
+
+``check_content`` needs one string: the command line (or argv) plus the
+contents of body files a write statement points at. This module finds those
+files from already-parsed write statements — ``gh.write_shapes`` — rather
+than parsing the shell again. A file is read only when the path exists as a
+regular file no larger than ``MAX_SCAN_BYTES``; missing, unreadable, stdin
+(``-``), and oversized files are skipped. Arguments are never mutated.
+
+The whole command text is scanned, including non-write statements — a
+deliberate over-refusal, so a reference sitting next to a write cannot slip
+through unread.
+
+### gh/owner_hooks.py
+
+Git hook checks for cross-group references in commit messages.
+
+``owners-check --message-file`` and ``--push`` call here. A check that cannot
+run is ``CANNOT_RUN`` so the hook can warn and allow; only a content refusal
+is ``REFUSE``.
+
+### gh/owner_references.py
+
+Cross-owner references in published text.
+
+GitHub creates a "referenced this" event when published text names another
+repository as ``owner/repo#N``, ``owner/repo@sha``, a github.com (or
+configured-host) URL, or an ``@owner`` mention. A short form or mention is
+resolved against github.com and every configured host. Only configured owners
+count: an ``@handle`` that is not ours is not a reference, and an upstream
+owner is not returned.
+
+``gh.owners`` imports this module, so ``references`` takes the owner map
+structurally — ``classify`` and ``hosts`` — and never imports ``gh.owners``.
 
 ### gh/owner_scopes.py
 
@@ -6524,6 +6567,16 @@ workbench's own publishing past an upstream refusal (``gh.client`` asks
 for agent commands, and an agent session inherits whatever its harness was
 launched with, so honouring it there would make the override reachable from
 inside the session. Both guards also refuse any command that names it.
+
+Published text is checked by ``check_content``: every configured owner it names
+must be in the target's group. A command with several writes is checked against
+each distinct write group; the first refusal is returned. Upstream names are
+not references, so they stay allowed. ``WORKBENCH_ALLOW_CROSS_REF=1`` lets
+user-run Python paths (``gh.client``, Linear, the git hooks) past a content
+refusal (``cross_ref_allowed_by_user``). ``WORKBENCH_ALLOW_UPSTREAM=1`` lifts
+only a target refusal; the content is then judged as for an unknown/upstream
+group and still needs the cross-ref override. ``check_command`` never reads
+either override.
 
 ### gh/shell_wrappers.py
 
@@ -7802,11 +7855,13 @@ answers no question anyone asks of it.
 
 ### cli/owners_check.py
 
-``owners-check`` — the owner boundary, as both agent guards reach it.
+``owners-check`` — the owner boundary, as both agent guards and git hooks reach it.
 
     owners-check --cwd DIR -- COMMAND
     owners-check --configured
     owners-check --classify -- COMMAND
+    owners-check --message-file FILE --cwd DIR
+    owners-check --push REMOTE URL --cwd DIR
 
 The first form is what ``claude-bash-guard`` and Pi's ``upstream-guard`` run
 once their pre-filter says a command might write to GitHub. Exit 0 allows;
@@ -7825,6 +7880,12 @@ one classifier so they do not keep a bash/TS copy of the write shapes. The
 guards take a command as not publishing only on exit 0 with ``read``; any
 other exit or output counts as a write, so a crash (which also exits 1) can
 never read as an answer. An unparseable command is answered ``write``.
+
+``--message-file`` checks a commit message (commit-msg hook). ``--push``
+checks commits about to be pushed (pre-push hook), reading git's ref lines
+from stdin. Both exit 0 to allow, 2 to refuse, and 3 when the check could not
+run. A content refusal is lifted when the user set ``WORKBENCH_ALLOW_CROSS_REF=1``,
+with a warning on stderr.
 
 ``WORKBENCH_ALLOW_UPSTREAM`` is not read here — see ``gh.owners``.
 

@@ -104,7 +104,7 @@ task dev:setup
 
 This sets the *global* `core.hooksPath` to the workbench's [`git/hooks/`](../git/hooks/) directory (via `~/.git-hooks/`).
 
-A repo-local `core.hooksPath` shadows that global directory for every git command in the repo — `post-rewrite` (the rewrite record `pr` follows history with, and the drop report), `prepare-commit-msg` (refuses a conflict resolution that silently drops cleanly merged changes), and `pre-push` (gitleaks and push-intents) included. Check with `git config --show-origin --get core.hooksPath`. `pr rebase` chains the workbench hooks in front of the repo's for the git children it drives, and warns when it does; a hand-run `git rebase --continue` does not. `core.hooksPath=/dev/null` disables hooks on purpose — `pr rebase` honours it and records nothing.
+A repo-local `core.hooksPath` shadows that global directory for every git command in the repo — `post-rewrite` (the rewrite record `pr` follows history with, and the drop report), `prepare-commit-msg` (refuses a conflict resolution that silently drops cleanly merged changes), `commit-msg` (refuses a cross-group reference in a commit message), and `pre-push` (gitleaks, push-intents, and cross-group references in commits being pushed) included. Check with `git config --show-origin --get core.hooksPath`. `pr rebase` chains the workbench hooks in front of the repo's for the git children it drives, and warns when it does; a hand-run `git rebase --continue` does not. `core.hooksPath=/dev/null` disables hooks on purpose — `pr rebase` honours it and records nothing.
 
 ## `ssh: connect to host github.com port 22: Connection refused`
 

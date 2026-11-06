@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 688 -->
+<!-- doc-budget: 692 -->
 
 # AI Automation
 
@@ -324,7 +324,11 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
 
 ### GitHub owners
 
-Every GitHub write is checked against `github.owners` and refused elsewhere; unset refuses all. Record yours with `otto-workbench config set github.owners.work '[your-org]'`. The policy and where it is enforced: [`gh/owners.py`](ai-libraries.md#ghownerspy).
+Every GitHub write is checked against `github.owners` and refused elsewhere; unset refuses all. Record yours with `otto-workbench config set github.owners.work '[your-org]'`. Published text may not name an owner in a different group — see `general.md` § Cross-Group References. The policy and where it is enforced: [`gh/owners.py`](ai-libraries.md#ghownerspy).
+
+The user's overrides for publishing anyway are `WORKBENCH_ALLOW_UPSTREAM=1` (target) and `WORKBENCH_ALLOW_CROSS_REF=1` (text). Both are honoured only on user-run Python paths (`gh.client`, Linear, the git hooks); the agent guards never read them, and an agent command that names either is refused.
+
+The global `commit-msg` hook is advisory (`git commit -n` skips it). The global `pre-push` hook is the gate: it scans commits new to the destination remote against that destination's owner. Non-GitHub destinations and unconfigured owners allow. Both fail open when the check cannot run. See [`git/hooks/commit-msg`](../git/hooks/commit-msg) and [`git/hooks/pre-push`](../git/hooks/pre-push).
 
 ### Which model each phase runs on
 

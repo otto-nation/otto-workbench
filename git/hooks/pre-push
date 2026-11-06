@@ -168,6 +168,17 @@ if command -v validate-nesting >/dev/null 2>&1; then
   run_nesting_check
 fi
 
+# Cross-group references in the commits this push carries. Guarded on the
+# library being there, the same way git_remote.sh is above: a moved checkout
+# must not refuse every push. A refusal is the only non-zero that stops the
+# push — anything else the check cannot run is a warning, not a block.
+# replay_refs is unchanged so the repo-local hook still sees the same lines.
+if [[ -n "$_refs" && -n "$_workbench" && -f "$_workbench/lib/owners_check.sh" ]]; then
+  # shellcheck source=../../lib/owners_check.sh
+  . "$_workbench/lib/owners_check.sh"
+  owners_check_hook "$_workbench" --push "$1" "$2" --cwd "$PWD" < <(replay_refs) || exit 1
+fi
+
 # ── Repo-local delegation ──────────────────────────────────────────────────
 
 # --git-common-dir so delegation works from worktrees, where .git is a file and

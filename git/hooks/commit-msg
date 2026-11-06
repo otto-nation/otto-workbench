@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Global commit-msg hook: refuses a commit message that names an owner in
+# another github.owners group, then delegates to the repo-local hook.
+# Installed via step_global_hooks in git/steps.sh (symlinked to ~/.git-hooks/).
+#
+# When core.hooksPath is set globally, git ignores .git/hooks/ entirely.
+# This hook restores that delegation so per-repo commit-msg checks still run.
+
+set -euo pipefail
+
+# The workbench checkout this hook is a symlink into, resolved the way the
+# global pre-push hook resolves it — and failing open the same way, since a
+# moved checkout must not refuse every commit on the machine.
+_self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=""
+
+if [[ -n "$_workbench" && -f "$_workbench/lib/owners_check.sh" ]]; then
+  # shellcheck source=../../lib/owners_check.sh
+  . "$_workbench/lib/owners_check.sh"
+  owners_check_hook "$_workbench" --message-file "$1" --cwd "$PWD" || exit 1
+fi
+
+# Delegate to the repo-local hook, which a global core.hooksPath otherwise
+# hides — the same delegation, through --git-common-dir, as prepare-commit-msg.
+_local_hook="$(git rev-parse --git-common-dir)/hooks/commit-msg"
+if [[ -x "$_local_hook" ]]; then
+  exec "$_local_hook" "$@"
+fi

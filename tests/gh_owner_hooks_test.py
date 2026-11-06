@@ -6,6 +6,8 @@ import io
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import cli.owners_check
@@ -16,10 +18,13 @@ from conftest import git_in, git_out, init_repo, remote_repo
 OWN = "git@github.com:otto-nation/svc.git"
 OTHER = "git@github.com:me/lib.git"
 GITLAB = "https://gitlab.com/acme/widget.git"
+GITLAB_SSH = "git@gitlab.com:acme/widget.git"
+GITHUB_ALIAS = "git@github.com-work:otto-nation/svc.git"
 ZERO = "0" * 40
 OFFENCE = "see me/lib#12"
 OWN_REF = "see otto-nation/svc#12"
 UPSTREAM_REF = "see stranger/lib#12"
+SCISSORS = "# ------------------------ >8 ------------------------"
 
 
 def _groups(github_owners):
@@ -252,3 +257,114 @@ def test_override_does_not_lift_cannot_run(
     monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
     repo = remote_repo(tmp_path / "r", OWN)
     assert _message(tmp_path, repo, OFFENCE) == cli.owners_check.CANNOT_RUN
+
+
+def test_message_file_allows_an_ssh_gitlab_remote(github_owners, tmp_path):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", GITLAB_SSH)
+    assert _message(tmp_path, repo, OFFENCE) == 0
+
+
+def test_push_to_ssh_gitlab_allows(github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    sha = _commit(repo, OFFENCE)
+    assert _push(monkeypatch, repo, _line(sha) + "\n", url=GITLAB_SSH) == 0
+
+
+def test_message_file_checks_an_ssh_github_alias(github_owners, tmp_path):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", GITHUB_ALIAS)
+    assert _message(tmp_path, repo, OFFENCE) == cli.owners_check.REFUSED
+
+
+def test_push_to_a_url_does_not_rescan_the_remote_sha(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    old = _commit(repo, "old offence\n\n" + OFFENCE)
+    new = _commit(repo, "clean follow-up")
+    url = "https://github.com/otto-nation/svc.git"
+    assert _push(
+        monkeypatch, repo, _line(new, old) + "\n", remote=url, url=url) == 0
+
+
+def test_push_to_a_url_flags_a_new_offence_not_the_old_one(
+        github_owners, tmp_path, monkeypatch, capsys):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    old = _commit(repo, "old offence\n\n" + OFFENCE)
+    new = _commit(repo, "new offence\n\n" + OFFENCE)
+    url = "https://github.com/otto-nation/svc.git"
+    code = _push(monkeypatch, repo, _line(new, old) + "\n", remote=url, url=url)
+    assert code == cli.owners_check.REFUSED
+    err = capsys.readouterr().err
+    assert "new offence" in err
+    assert "old offence" not in err
+    assert new[:7] in err
+
+
+def test_push_allows_own_group_reference_to_own_group_destination(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    sha = _commit(repo, OWN_REF)
+    assert _push(monkeypatch, repo, _line(sha) + "\n", url=OWN) == 0
+
+
+def test_push_allows_an_upstream_reference(
+        github_owners, tmp_path, monkeypatch):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    sha = _commit(repo, UPSTREAM_REF)
+    assert _push(monkeypatch, repo, _line(sha) + "\n") == 0
+
+
+def test_message_file_ignores_diff_below_the_scissors(github_owners, tmp_path):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", OWN)
+    text = f"ok\n{SCISSORS}\ndiff --git a/x b/x\n+{OFFENCE}\n"
+    assert _message(tmp_path, repo, text) == 0
+
+
+def test_message_file_refuses_a_reference_above_the_scissors(
+        github_owners, tmp_path):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", OWN)
+    text = f"{OFFENCE}\n{SCISSORS}\ndiff --git a/x b/x\n"
+    assert _message(tmp_path, repo, text) == cli.owners_check.REFUSED
+
+
+def test_hook_mode_usage_error_is_cannot_run(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.owners_check.main(
+            ["--message-file", str(tmp_path / "COMMIT_EDITMSG")])
+    assert exc.value.code == cli.owners_check.CANNOT_RUN
+    assert capsys.readouterr().err
+
+
+def test_command_mode_usage_error_keeps_exit_two(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.owners_check.main(["--cwd", str(tmp_path)])
+    assert exc.value.code == 2
+    assert capsys.readouterr().err
+
+
+def test_message_file_tolerates_non_utf8(github_owners, tmp_path):
+    _groups(github_owners)
+    repo = remote_repo(tmp_path / "r", OWN)
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_bytes(b"ok \xff\n")
+    assert cli.owners_check.main(
+        ["--message-file", str(path), "--cwd", str(repo)]) == 0
+
+
+def test_push_invalid_local_sha_is_cannot_run(
+        github_owners, tmp_path, monkeypatch, capsys):
+    _groups(github_owners)
+    repo = _repo(tmp_path)
+    _commit(repo, "ok")
+    code = _push(monkeypatch, repo, _line("-evil") + "\n")
+    assert code == cli.owners_check.CANNOT_RUN
+    err = capsys.readouterr().err
+    assert "invalid local sha: -evil" in err

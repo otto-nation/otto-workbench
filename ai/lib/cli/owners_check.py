@@ -52,8 +52,31 @@ NOT_CONFIGURED = 1
 CANNOT_RUN = 3
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+class _Parser(argparse.ArgumentParser):
+    """Hook-mode usage errors exit CANNOT_RUN so a mis-wired hook cannot block."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hook_mode = False
+
+    def error(self, message: str) -> None:
+        if self.hook_mode:
+            self.print_usage(sys.stderr)
+            self.exit(CANNOT_RUN, f"{self.prog}: error: {message}\n")
+        super().error(message)
+
+
+def _hook_mode(argv: list[str]) -> bool:
+    for word in argv:
+        if word in ("--message-file", "--push"):
+            return True
+        if word.startswith("--message-file=") or word.startswith("--push="):
+            return True
+    return False
+
+
+def build_parser() -> _Parser:
+    parser = _Parser(
         prog="owners-check",
         description="Check a GitHub write command or hook payload against github.owners.",
     )
@@ -122,7 +145,7 @@ def _message_file(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     cwd = _require_cwd(parser, args.cwd)
     path = Path(args.message_file)
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         print(f"cannot read {path}: {exc}", file=sys.stderr)
         return CANNOT_RUN
@@ -137,8 +160,10 @@ def _push(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    words = sys.argv[1:] if argv is None else argv
     parser = build_parser()
-    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    parser.hook_mode = _hook_mode(words)
+    args = parser.parse_args(words)
     if args.configured:
         return _configured()
     if args.classify:

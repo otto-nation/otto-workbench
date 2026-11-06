@@ -312,7 +312,8 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   unparseable file is left alone with a warning, and a change herdr's
   `herdr config check` rejects is rolled back. The rest of the file is not managed
   yet (#1660).
-- The herdr desktop app (`herdr-app`) gets the workbench's Gruvbox themes: sync links
+- The herdr desktop app (`herdr-app`) gets the workbench's Gruvbox themes wherever it is
+  installed, whether or not herdr is a selected AI tool: sync links
   `ai/herdr/app/themes/*.json` into `~/.config/herdr-app/themes/` and sets only
   `theme` in `~/.config/herdr-app/settings.json` to
   `{"light": "gruvbox-light", "dark": "gruvbox-dark"}`, following the system

@@ -230,6 +230,10 @@ sync_ai() {
   # Harness-neutral, like the report above: both guards and gh.client read it.
   step_github_owners_notice
 
+  # Gated on the app being installed, not on ai.tools: herdr-app runs without
+  # the herdr TUI selection, so the per-tool loop below would miss it.
+  sync_herdr_app
+
   while IFS= read -r _tool; do
     [[ -z "$_tool" ]] && continue
     _tools+=("$_tool")

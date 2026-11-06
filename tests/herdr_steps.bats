@@ -214,7 +214,8 @@ SCRIPT
   export FAKE_APP_PRESENT=1
   run _run sync_herdr
   [ "$status" -eq 0 ]
-  [[ "$output" == *"OK herdr pi integration installed"$'\n'"TUI_THEME"$'\n'"APP_THEME"* ]]
+  [[ "$output" == *"OK herdr pi integration installed"$'\n'"TUI_THEME"* ]]
+  [[ "$output" != *APP_THEME* ]]
   [ "$(cat "$ARGV")" = "$(printf 'update\nintegration install pi\nmachine list --json')" ]
 }
 
@@ -227,14 +228,20 @@ SCRIPT
   [[ "$output" != *APP_THEME* ]]
 }
 
-@test "sync themes herdr-app even without the herdr TUI" {
+@test "sync_herdr_app themes herdr-app without the herdr TUI" {
   _hide_herdr
   export FAKE_APP_PRESENT=1
-  run _run sync_herdr
+  run _run sync_herdr_app
   [ "$status" -eq 0 ]
   [[ "$output" == *APP_THEME* ]]
   [[ "$output" != *TUI_THEME* ]]
   [ ! -e "$ARGV" ]
+}
+
+@test "sync_herdr_app is a no-op when herdr-app is absent" {
+  run _run sync_herdr_app
+  [ "$status" -eq 0 ]
+  [[ "$output" != *APP_THEME* ]]
 }
 
 @test "machine note is printed when no machines are registered" {

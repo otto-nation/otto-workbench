@@ -1,13 +1,23 @@
-"""Claims as data: types, ingest kinds, and the writer's caps."""
+"""Claims as data: types, ingest kinds, the writer's caps, check, and fingerprint."""
 
 import sys
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review.claim_types import ClaimEntry, ClaimSource, ClaimVerdict
+from review.budget import MAX_CLAIM_BYTES, MAX_ISSUE_CONTEXT_BYTES
+from review.claim_types import ClaimEntry, ClaimReport, ClaimSource, ClaimVerdict
+from review.claims import claims_problems, input_sha
+from review.ingest import IngestErrorKind
+from review_claims_support import CLAIM_DOC
+
+_OK = ClaimReport(**CLAIM_DOC)
 
 
 def test_a_claim_entry_coerces_its_enums():
@@ -20,3 +30,95 @@ def test_the_verdicts_are_the_four_on_disk_values():
     assert [v.value for v in ClaimVerdict] == [
         "supported", "contradicted", "unsupported", "unverifiable",
     ]
+
+
+@pytest.mark.parametrize(
+    "has_source, claims, finding_ids, kind, at",
+    [
+        (False, (_OK,), frozenset(), None, None),
+        (True, None, frozenset(), IngestErrorKind.MISSING_CLAIMS, "$.claims"),
+        (True, (), frozenset(), None, None),
+        (True, (_OK,) * 13, frozenset(), IngestErrorKind.CLAIM_COUNT, None),
+        (
+            True,
+            (replace(_OK, snippet="x" * (MAX_CLAIM_BYTES + 1)),),
+            frozenset(),
+            IngestErrorKind.CLAIM_SIZE,
+            "$.claims[0].snippet",
+        ),
+        (True, (replace(_OK, evidence=""),), frozenset(), IngestErrorKind.BAD_CLAIM, None),
+        (True, (replace(_OK, snippet=""),), frozenset(), IngestErrorKind.BAD_CLAIM, None),
+        (
+            True,
+            (replace(_OK, verdict=ClaimVerdict.CONTRADICTED, path="a.py:3"),),
+            frozenset(),
+            IngestErrorKind.BAD_CLAIM,
+            None,
+        ),
+        (
+            True,
+            (replace(_OK, verdict=ClaimVerdict.UNSUPPORTED, path=""),),
+            frozenset(),
+            None,
+            None,
+        ),
+        (
+            True,
+            (replace(_OK, finding="S9"),),
+            frozenset({"S1"}),
+            IngestErrorKind.BAD_CLAIM,
+            None,
+        ),
+        (True, (replace(_OK, finding="S1"),), frozenset({"S1"}), None, None),
+    ],
+    ids=[
+        "no-source-entries",
+        "source-none",
+        "source-empty",
+        "count-13",
+        "snippet-over-cap",
+        "empty-evidence",
+        "supported-no-snippet",
+        "contradicted-line-in-path",
+        "unsupported-no-path",
+        "finding-absent",
+        "finding-present",
+    ],
+)
+def test_claims_problems(has_source, claims, finding_ids, kind, at):
+    errors = claims_problems(claims, finding_ids, has_claim_source=has_source)
+    if kind is None:
+        assert errors == ()
+        return
+    assert errors[0].kind is kind
+    if at is not None:
+        assert errors[0].at == at
+
+
+def _job(*, body="", issue_link="", issue_context=""):
+    return SimpleNamespace(
+        pr=SimpleNamespace(body=body),
+        issue_link=issue_link,
+        issue_context=issue_context,
+    )
+
+
+def test_input_sha_is_empty_without_a_source():
+    assert input_sha(_job()) == ""
+
+
+def test_input_sha_moves_with_the_body_and_the_issue():
+    empty = input_sha(_job())
+    body = input_sha(_job(body="retries back off"))
+    issue = input_sha(_job(issue_context="the ticket"))
+    assert body != empty
+    assert issue != empty
+    assert body != issue
+
+
+def test_input_sha_ignores_issue_text_past_the_cut():
+    head = "x" * MAX_ISSUE_CONTEXT_BYTES
+    left = input_sha(_job(issue_context=head + "aaa"))
+    right = input_sha(_job(issue_context=head + "bbb"))
+    assert left == right
+    assert left != ""

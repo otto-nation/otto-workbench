@@ -857,6 +857,12 @@ rejection, too conservative is a shallower review.
 `agent.types.RetryBudget` is a different thing that shares the word — it
 budgets retries, not bytes.
 
+### review/claims.py
+
+Claims check and input fingerprint.
+
+The wiring calls these; Task 10 completes the contract.
+
 ### review/collect.py
 
 What a review collects before a prompt is built, and what it may cost.

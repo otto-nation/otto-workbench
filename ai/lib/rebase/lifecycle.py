@@ -457,6 +457,65 @@ def _halt_unresolved(
     )
 
 
+def _default_mode_conflicts(
+    cwd: str, ctx: pr.context.ResolvedContext, conflicts: list[str],
+    tally: ResolutionTally, *, target_ref: str,
+    stop_on_conflict: bool, resuming: bool,
+) -> int | None:
+    """Classify, regenerate-or-abort. None means continue the shared finish."""
+    if stop_on_conflict or resuming:
+        return _report_conflicts_and_stop(
+            cwd, ctx, target_ref=target_ref, tally=tally,
+        )
+    classes = conflict_stop.classify_stop(cwd, conflicts)
+    if conflict_stop.try_generated(cwd, classes, tally):
+        return None
+    return conflict_stop.abort_clean(
+        cwd, ctx, target_ref=target_ref, classes=classes, tally=tally,
+    )
+
+
+def _ai_mode_conflicts(
+    cwd: str, ctx: pr.context.ResolvedContext, conflicts: list[str],
+    tally: ResolutionTally, *, target_ref: str,
+    force: bool, trail: Trail | None,
+) -> int | None:
+    """AI resolve path. None means continue the shared finish."""
+    if not agent.backend.is_available():
+        terr(trail, "resolve_conflicts", "AI backend unavailable")
+        core.log.error("Cannot resolve conflicts — AI backend unavailable.")
+        return _report_conflicts_and_stop(
+            cwd, ctx, target_ref=target_ref, tally=tally,
+        )
+    if not force:
+        over = _over_budget(tally, conflicts)
+        if over is not None:
+            return refusals.refuse_over_budget(
+                cwd, ctx, over, target_ref=target_ref, trail=trail,
+            )
+    sha, subject = rebase_inspect.rebase_head_info(cwd)
+    remaining = rebase_inspect.remaining_rebase_commits(cwd)
+    core.log.info(
+        f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
+        f"({remaining} remaining)..."
+    )
+    tdecision(
+        trail, "step", f"resolving {len(conflicts)} conflict(s)",
+        reason=f"commit {sha} has unmerged files",
+        data={"commit": sha, "files": conflicts, "remaining": remaining},
+    )
+    resolved = rebase_resolve.resolve_file_conflicts(
+        conflicts, cwd, sha, subject, target_ref=target_ref, trail=trail,
+    )
+    tally.absorb(resolved)
+    tally.resolution = "ai"
+    if resolved.ok:
+        return None
+    return _halt_unresolved(
+        cwd, ctx, resolved.failed, tally, target_ref=target_ref, trail=trail,
+    )
+
+
 def step_conflicts(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     conflicts: list[str], tally: ResolutionTally, *,
@@ -465,52 +524,19 @@ def step_conflicts(
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not mode.resolves_conflicts:
-        if stop_on_conflict or resuming:
-            return _report_conflicts_and_stop(
-                cwd, ctx, target_ref=target_ref, tally=tally,
-            )
-        classes = conflict_stop.classify_stop(cwd, conflicts)
-        if not conflict_stop.try_generated(cwd, classes, tally):
-            return conflict_stop.abort_clean(
-                cwd, ctx, target_ref=target_ref, classes=classes, tally=tally,
-            )
+        rc = _default_mode_conflicts(
+            cwd, ctx, conflicts, tally, target_ref=target_ref,
+            stop_on_conflict=stop_on_conflict, resuming=resuming,
+        )
+        if rc is not None:
+            return rc
     else:
-        if not agent.backend.is_available():
-            terr(trail, "resolve_conflicts", "AI backend unavailable")
-            core.log.error("Cannot resolve conflicts — AI backend unavailable.")
-            return _report_conflicts_and_stop(
-                cwd, ctx, target_ref=target_ref, tally=tally,
-            )
-
-        if not force:
-            over = _over_budget(tally, conflicts)
-            if over is not None:
-                return refusals.refuse_over_budget(
-                    cwd, ctx, over, target_ref=target_ref, trail=trail,
-                )
-
-        sha, subject = rebase_inspect.rebase_head_info(cwd)
-        remaining = rebase_inspect.remaining_rebase_commits(cwd)
-
-        core.log.info(
-            f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
-            f"({remaining} remaining)..."
+        rc = _ai_mode_conflicts(
+            cwd, ctx, conflicts, tally, target_ref=target_ref,
+            force=force, trail=trail,
         )
-        tdecision(
-            trail, "step", f"resolving {len(conflicts)} conflict(s)",
-            reason=f"commit {sha} has unmerged files",
-            data={"commit": sha, "files": conflicts, "remaining": remaining},
-        )
-
-        resolved = rebase_resolve.resolve_file_conflicts(
-            conflicts, cwd, sha, subject, target_ref=target_ref, trail=trail,
-        )
-        tally.absorb(resolved)
-        tally.resolution = "ai"
-        if not resolved.ok:
-            return _halt_unresolved(
-                cwd, ctx, resolved.failed, tally, target_ref=target_ref, trail=trail,
-            )
+        if rc is not None:
+            return rc
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     if git.client.lines("diff", "--name-only", cwd=cwd):

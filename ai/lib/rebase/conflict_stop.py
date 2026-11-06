@@ -36,6 +36,23 @@ _GENERATED = frozenset({
 })
 
 
+def _stage_generated(
+    filepath: str, kind: str, cwd: str, queue: RegenQueue,
+) -> bool:
+    full_path = Path(cwd) / filepath
+    plan = conflicts.classify_conflict(filepath, full_path, cwd)
+    if kind == ConflictStrategy.REGENERATE.value and plan.regenerator is None:
+        return False
+    if kind == ConflictStrategy.REGENERATE.value:
+        return regen_dispatch.dispatch_regenerate(
+            filepath, full_path, cwd, plan.regenerator, queue,
+        )
+    signal = plan.signal or GeneratedSignal.HEADER
+    return regen_dispatch.dispatch_accept_theirs(
+        filepath, full_path, cwd, signal, queue, conventional=False,
+    )
+
+
 def classify_stop(cwd: str, files: list[str]) -> dict[str, str]:
     """Map each conflicted path to ``ConflictStrategy.value`` while still paused."""
     return {
@@ -60,20 +77,7 @@ def try_generated(
     queue = RegenQueue()
     resolved: list[str] = []
     for filepath, kind in classes.items():
-        full_path = Path(cwd) / filepath
-        plan = conflicts.classify_conflict(filepath, full_path, cwd)
-        if kind == ConflictStrategy.REGENERATE.value:
-            if plan.regenerator is None:
-                return False
-            ok = regen_dispatch.dispatch_regenerate(
-                filepath, full_path, cwd, plan.regenerator, queue,
-            )
-        else:
-            signal = plan.signal or GeneratedSignal.HEADER
-            ok = regen_dispatch.dispatch_accept_theirs(
-                filepath, full_path, cwd, signal, queue, conventional=False,
-            )
-        if not ok:
+        if not _stage_generated(filepath, kind, cwd, queue):
             return False
         resolved.append(filepath)
     failed = regen_dispatch._run_deferred_regenerations(queue, cwd, trail=None)

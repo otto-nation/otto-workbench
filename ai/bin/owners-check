@@ -4,6 +4,8 @@
 --cwd DIR -- COMMAND checks a write against github.owners: exit 0 allows, 2 refuses.
 --configured exits 0 when github.owners names an owner, 1 otherwise.
 --classify -- COMMAND prints `write` or `read` and exits 0; anything else is an error.
+--message-file FILE --cwd DIR checks a commit message: 0 allows, 2 refuses, 3 cannot run.
+--push REMOTE URL --cwd DIR checks commits about to be pushed (stdin ref lines); same exits.
 """
 
 import os

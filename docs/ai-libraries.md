@@ -889,12 +889,14 @@ named them.
 snippet is not in its file to unverifiable, with a note, using the same
 evidence matcher findings use.
 
-The fingerprint hashes `pr.body` plus the rendered, truncated issue section.
-It is stamped only when claims were assessed, so a prior round of `None`
-cannot no-op past an unassessed ledger. A true no-op carries prior claims:
-the gate now proves description, ticket and code unchanged, so the prior
-verdicts still stand. Focus coverage is not carried on a no-op because areas
-can change on that same round. The GitHub issue fetch is title and body only
+The fingerprint hashes `pr.body` plus a projection of the issue: title and
+description or body only. Tracker fields that churn (state, labels,
+attachments) do not move it. It is stamped only when claims were assessed,
+so a prior round of `None` cannot no-op past an unassessed ledger. A true
+no-op carries prior claims: the gate now proves the description and ticket
+are the same and that the author committed nothing, so the prior verdicts
+still stand. Focus coverage is not carried on a no-op because areas can
+change on that same round. The GitHub issue fetch is title and body only
 — comments are not the ticket's claims and would move the fingerprint on
 every reply.
 

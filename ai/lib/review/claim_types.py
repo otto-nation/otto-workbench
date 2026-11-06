@@ -29,6 +29,10 @@ class ClaimVerdict(StrEnum):
     UNVERIFIABLE = "unverifiable"
 
 
+# Verdicts that must cite the code they rest on.
+CITE_VERDICTS = frozenset({ClaimVerdict.SUPPORTED, ClaimVerdict.CONTRADICTED})
+
+
 @dataclass(frozen=True)
 class ClaimReport:
     """What an agent writes; harness numbering is absent."""

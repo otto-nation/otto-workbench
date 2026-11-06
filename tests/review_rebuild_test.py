@@ -180,6 +180,15 @@ def test_a_rebuild_honours_only_the_declines_prior_json_allows(tmp_path):
     assert by_body == {"x": Disposition.DECLINED, "y": Disposition.OPEN}
 
 
+def test_a_rebuild_keeps_assessed_empty_claims(tmp_path):
+    path = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
+    path.write_text(json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]}))
+    write_review_meta(tmp_path, ReviewMeta(repo="acme/widget", pr_number=1, claims_input_sha=""))
+    save_record(tmp_path, record(claims=()))
+    assert review.rebuild.rebuild(tmp_path, "1", script="review-rebuild") == 0
+    assert load_record(tmp_path).claims == ()
+
+
 def test_a_rebuild_leaves_claims_unassessed(tmp_path):
     path = tmp_path / PHASES[Phase.GROUP].output_filename.format(1)
     path.write_text(json.dumps({"findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}]}))

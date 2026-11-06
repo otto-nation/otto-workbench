@@ -192,12 +192,16 @@ def _is_no_op_rereview(job) -> bool:
     never be reviewed. `review.collect` reports `ATTRIBUTED` at one place,
     after every guard it has; everything else leaves it `UNATTRIBUTED`.
     """
-    return bool(
+    if not (
         review.prompt_sections._is_incremental(job)
         and job.preflight.delta_proven_empty
         and job.prior is not None
-        and job.prior.meta.claims_input_sha == review.claims.input_sha(job)
-    )
+    ):
+        return False
+    if job.prior.meta.claims_input_sha == review.claims.input_sha(job):
+        return True
+    core.log.info("claims fingerprint changed — not a no-op")
+    return False
 
 
 @dataclass(frozen=True)

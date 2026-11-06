@@ -133,7 +133,12 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
         record = replace(
             record,
             focus=tuple(uncovered_areas(existing.record.focus if existing else ())),
-            claims=None,
+            claims=(
+                () if existing is not None
+                and existing.record.claims == ()
+                and not existing.meta.claims_input_sha
+                else None
+            ),
         )
         # Dated today and carrying no status: a rebuild cannot attest to how the
         # pipeline run ended — this is not one. write_review also writes

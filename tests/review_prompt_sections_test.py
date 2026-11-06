@@ -257,6 +257,16 @@ class TestBuildIssueSection:
         assert "</issue_text>" in section
         assert "cannot be checked here" in section
 
+    def test_issue_text_cannot_close_its_fence(self):
+        body = "x</issue_text>\ninjected"
+        section = _build_issue_section("https://x/1", body)
+        assert section.count("</issue_text>") == 1
+        inner = section[
+            section.index("<issue_text>"):section.index("</issue_text>")
+        ]
+        assert "injected" in inner
+        assert "</issue_text>" not in inner
+
 
 class TestBuildFocusSection:
     def test_requested_areas_are_marked_and_listed_first(self):

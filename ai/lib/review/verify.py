@@ -66,7 +66,7 @@ from pathlib import Path
 import core.log
 import git.client
 from pr.domains import ReviewVerdict
-from review.claim_types import ClaimEntry, ClaimVerdict
+from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimVerdict
 from review.format import resolve_path
 from review.merge import renumber_record
 from review.artifacts import DisproveArtifact, DisproveOutcome
@@ -290,7 +290,7 @@ def _verify_record(
 
 def _verified_claim(claim: ClaimEntry, wt_path: str,
                     tracked: Callable[[], Collection[str]], changed: Collection[str]) -> ClaimEntry:
-    if claim.verdict not in (ClaimVerdict.SUPPORTED, ClaimVerdict.CONTRADICTED):
+    if claim.verdict not in CITE_VERDICTS:
         return claim
     if not wt_path:
         return replace(
@@ -300,7 +300,11 @@ def _verified_claim(claim: ClaimEntry, wt_path: str,
     detail = _match_evidence(claim.path, claim.snippet, wt_path, tracked, changed)
     if detail["match_result"] and detail.get("fragments"):
         return claim
-    note = f"cited code not found in `{claim.path}`: {_drop_reason(detail)}"
+    reason = (
+        "snippet has no matchable lines"
+        if detail["match_result"] else _drop_reason(detail)
+    )
+    note = f"cited code not found in `{claim.path}`: {reason}"
     return replace(
         claim, verdict=ClaimVerdict.UNVERIFIABLE,
         evidence=f"{claim.evidence} *({note})*",

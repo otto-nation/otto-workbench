@@ -240,9 +240,10 @@ def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
 
 
 def _carried_record(prior: StoredReview) -> ReviewRecord:
-    """The prior round's claims about the code, without its claims about its own run.
+    """The prior round's findings about the code, without its claims about its own run.
 
-    Claims are carried because the no-op gate proved their inputs unchanged.
+    The claims ledger is carried because the no-op gate proved their inputs
+    unchanged.
     """
     return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
                    static_analysis="", focus=())

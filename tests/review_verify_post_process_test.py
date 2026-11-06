@@ -352,6 +352,15 @@ def test_a_blank_or_comment_only_snippet_is_unverifiable(tmp_path):
     assert {c.verdict for c in done.record.claims} == {ClaimVerdict.UNVERIFIABLE}
 
 
+def test_a_comment_only_snippet_reason_is_not_evidence_mismatch(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    rec = record(claims=(claim(id="C1", snippet="# not code"),))
+    done = post_process_record(rec, str(tmp_path), ["a.py"])
+    evidence = done.record.claims[0].evidence
+    assert "snippet has no matchable lines" in evidence
+    assert "evidence mismatch" not in evidence
+
+
 def test_unsupported_and_unverifiable_claims_are_not_checked(tmp_path):
     (tmp_path / "a.py").write_text("delay *= 2\n")
     rec = record(

@@ -28,12 +28,14 @@ named them.
 snippet is not in its file to unverifiable, with a note, using the same
 evidence matcher findings use.
 
-The fingerprint hashes `pr.body` plus the rendered, truncated issue section.
-It is stamped only when claims were assessed, so a prior round of `None`
-cannot no-op past an unassessed ledger. A true no-op carries prior claims:
-the gate now proves description, ticket and code unchanged, so the prior
-verdicts still stand. Focus coverage is not carried on a no-op because areas
-can change on that same round. The GitHub issue fetch is title and body only
+The fingerprint hashes `pr.body` plus a projection of the issue: title and
+description or body only. Tracker fields that churn (state, labels,
+attachments) do not move it. It is stamped only when claims were assessed,
+so a prior round of `None` cannot no-op past an unassessed ledger. A true
+no-op carries prior claims: the gate now proves the description and ticket
+are the same and that the author committed nothing, so the prior verdicts
+still stand. Focus coverage is not carried on a no-op because areas can
+change on that same round. The GitHub issue fetch is title and body only
 — comments are not the ticket's claims and would move the fingerprint on
 every reply.
 """
@@ -43,16 +45,17 @@ every reply.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 
 import review.budget
 import review.focus
-import review.prompt_sections
 from review.artifacts import ReviewArtifact
-from review.claim_types import ClaimEntry, ClaimReport, ClaimVerdict
+from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport
 from review.grammar import strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
+from review.record import ReviewRecord
 from review.types import ReviewJob
 
 CLAIM_KINDS = frozenset({
@@ -62,7 +65,6 @@ CLAIM_KINDS = frozenset({
     IngestErrorKind.BAD_CLAIM,
 })
 
-_CITE = frozenset({ClaimVerdict.SUPPORTED, ClaimVerdict.CONTRADICTED})
 _SIZE_FIELDS = ("text", "evidence", "snippet")
 
 
@@ -70,18 +72,30 @@ def _error(kind: IngestErrorKind, at: str, detail: str) -> IngestError:
     return IngestError(kind, 0, detail, at=at)
 
 
-def has_claim_source(job) -> bool:
+def has_claim_source(job: ReviewJob) -> bool:
     return bool(job.pr.body.strip() or job.issue_context.strip())
 
 
-def input_sha(job) -> str:
-    section = review.prompt_sections._build_issue_section(
-        job.issue_link, job.issue_context,
-    )
-    if not job.pr.body and not section:
+def _issue_claim_text(issue_context: str) -> str:
+    """Title plus description/body; state, labels and attachments do not count."""
+    try:
+        data = json.loads(issue_context)
+    except json.JSONDecodeError:
+        return issue_context
+    if not isinstance(data, dict):
+        return issue_context
+    title = data.get("title") if isinstance(data.get("title"), str) else ""
+    body = data.get("description")
+    if not isinstance(body, str):
+        body = data.get("body") if isinstance(data.get("body"), str) else ""
+    return f"{title}\0{body}"
+
+
+def input_sha(job: ReviewJob) -> str:
+    issue = _issue_claim_text(job.issue_context)
+    if not job.pr.body and not issue:
         return ""
-    payload = job.pr.body + "\0" + section
-    return hashlib.sha256(payload.encode()).hexdigest()
+    return hashlib.sha256((job.pr.body + "\0" + issue).encode()).hexdigest()
 
 
 def claims_problems(
@@ -127,7 +141,7 @@ def _claim_problems(
         out.append(_error(
             IngestErrorKind.BAD_CLAIM, f"{at}.evidence", "evidence is empty",
         ))
-    if claim.verdict in _CITE and (not claim.path or not claim.snippet.strip()):
+    if claim.verdict in CITE_VERDICTS and (not claim.path or not claim.snippet.strip()):
         out.append(_error(
             IngestErrorKind.BAD_CLAIM, at,
             "cite the path and a verbatim snippet the verdict rests on",
@@ -145,7 +159,7 @@ def _claim_problems(
     return out
 
 
-def without_vanished_links(record):
+def without_vanished_links(record: ReviewRecord) -> ReviewRecord:
     """Clear claim.finding when it names no visible finding.
 
     Disprove writes without renumbering, so a link to a falsified finding

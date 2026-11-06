@@ -1,5 +1,6 @@
 """Claims as data: types, ingest kinds, the writer's caps, check, and fingerprint."""
 
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -11,7 +12,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review.budget import MAX_CLAIM_BYTES, MAX_ISSUE_CONTEXT_BYTES
+from review.budget import MAX_CLAIM_BYTES
 from review.claim_types import ClaimEntry, ClaimReport, ClaimSource, ClaimVerdict
 from review.claims import check_warning, claims_of, claims_problems, input_sha
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
@@ -118,12 +119,33 @@ def test_input_sha_moves_with_the_body_and_the_issue():
     assert body != issue
 
 
-def test_input_sha_ignores_issue_text_past_the_cut():
-    head = "x" * MAX_ISSUE_CONTEXT_BYTES
-    left = input_sha(_job(issue_context=head + "aaa"))
-    right = input_sha(_job(issue_context=head + "bbb"))
-    assert left == right
-    assert left != ""
+def test_input_sha_projects_title_and_body_only():
+    linear = json.dumps({
+        "title": "Retries", "description": "Back off",
+        "state": {"name": "In Progress"}, "labels": [{"name": "bug"}],
+        "attachments": [{"url": "x"}],
+    })
+    churned = json.dumps({
+        "title": "Retries", "description": "Back off",
+        "state": {"name": "Done"}, "labels": [], "attachments": [],
+    })
+    github = json.dumps({
+        "title": "Retries", "body": "Back off", "state": "OPEN",
+    })
+    assert input_sha(_job(issue_context=linear)) == input_sha(
+        _job(issue_context=churned),
+    )
+    assert input_sha(_job(issue_context=linear)) == input_sha(
+        _job(issue_context=github),
+    )
+    titled = json.dumps({"title": "Other", "description": "Back off"})
+    bodied = json.dumps({"title": "Retries", "description": "Changed"})
+    assert input_sha(_job(issue_context=linear)) != input_sha(
+        _job(issue_context=titled),
+    )
+    assert input_sha(_job(issue_context=linear)) != input_sha(
+        _job(issue_context=bodied),
+    )
 
 
 BAD_CLAIM = IngestError(IngestErrorKind.BAD_CLAIM, 0, "d", at="$.claims")

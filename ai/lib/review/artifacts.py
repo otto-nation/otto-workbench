@@ -553,7 +553,15 @@ _EXAMPLE_FOCUS_REPORT = (
     FocusReport("", "Traced both timeouts; they now agree.", title="Timeout units",
                 rationale="`client` and `worker` changed together.", paths=("pkg/client.go",)),
 )
-_EXAMPLE_CLAIMS = (ClaimReport(ClaimSource.DESCRIPTION, "Failed fetches are retried with backoff.", ClaimVerdict.SUPPORTED, "`fetch` doubles the delay on each retry.", path="pkg/client.go", snippet="delay *= 2"),)
+_EXAMPLE_CLAIMS = (
+    ClaimReport(
+        ClaimSource.DESCRIPTION,
+        "Failed fetches are retried with backoff.",
+        ClaimVerdict.SUPPORTED,
+        "`fetch` doubles the delay on each retry.",
+        path="pkg/client.go", snippet="delay *= 2",
+    ),
+)
 _SCAN_FOCUS_NOTE = (
     "1–3 areas this PR most needs reviewed — the risks particular to this "
     "change, each with a title, a rationale, and the paths it concerns"

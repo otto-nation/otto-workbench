@@ -614,7 +614,8 @@ class DeferredRender:
     refusal, a push still pending, a draft, a summary nothing owes, and a post
     GitHub refused all leave `url` None; `refused` is the one that still owes
     an answer on a handed-back thread. Do not widen this to a tuple — a later
-    field has to land here.
+    field has to land here. `unanswered` is a tuple on a frozen dataclass, so
+    it is fixed at construction.
     """
 
     url: str | None

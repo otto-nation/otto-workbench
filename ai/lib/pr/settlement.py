@@ -609,6 +609,8 @@ def unanswered_handbacks(
     """
     owed: list[ItemOutcome] = []
     for outcome in record.items:
+        # Only outcomes handing the thread to a person are published as such, so
+        # only they need a reply on the thread to back the summary.
         if outcome.outcome not in pr.summary_model.NEEDS_A_PERSON:
             continue
         if not outcome.id or outcome.id not in threads_by_id:

@@ -240,6 +240,9 @@ def spoken_since(comments: list[dict], my_login: str, stamp: str) -> bool:
 def answered_since(comments: list[dict], my_login: str, stamp: str) -> bool:
     """Whether we posted or edited a non-root comment on the thread after *stamp*.
 
+    Needs a non-empty *my_login*: an empty one cannot tell our comment from the
+    reviewer's, so the thread reads as unanswered.
+
     The question a handed-back thread is published on: a NEEDS_HUMAN or DECLINED
     outcome is the pass handing the thread to a person, and the summary may name
     that outcome only once something of ours on the thread backs it. The root is
@@ -256,19 +259,16 @@ def answered_since(comments: list[dict], my_login: str, stamp: str) -> bool:
         return False
     mine = my_login.lower()
     since = _instant(stamp)
-    for index, comment in enumerate(comments):
-        if index == 0:
-            continue
-        author = ((comment.get("author") or {}).get("login") or "").lower()
-        if author != mine:
-            continue
-        if since is None:
-            return True
-        for key in ("createdAt", "lastEditedAt"):
-            at = _instant(comment.get(key))
-            if at is not None and at > since:
-                return True
-    return False
+    ours = [
+        c for c in comments[1:]
+        if ((c.get("author") or {}).get("login") or "").lower() == mine
+    ]
+    if since is None:
+        return bool(ours)
+    return any(
+        (at := _instant(c.get(key))) is not None and at > since
+        for c in ours for key in ("createdAt", "lastEditedAt")
+    )
 
 
 def compute_thread_state(

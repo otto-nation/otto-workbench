@@ -31,7 +31,7 @@ import review.closeout
 import review.deferred_issue
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
 
-_SUMMARY_OK = pr.summary_publish.DeferredRender(None)
+_SUMMARY_NOT_REFUSED = pr.summary_publish.DeferredRender(None)
 
 
 # ── _finish_deferred_work ─────────────────────────────────────────────────
@@ -61,7 +61,7 @@ class TestFinishDeferredWork:
                 patch.object(review.deferred_issue, "finalize_deferred",
                              side_effect=lambda *a, **k: order.append("issue") or True), \
                 patch.object(pr.summary_publish, "render_deferred_summary",
-                             side_effect=lambda *a, **k: order.append("summary") or _SUMMARY_OK):
+                             side_effect=lambda *a, **k: order.append("summary") or _SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         assert order == ["replies", "issue", "summary"]
 
@@ -76,7 +76,7 @@ class TestFinishDeferredWork:
                 patch.object(review.deferred_issue, "finalize_deferred",
                              return_value=False), \
                 patch.object(review.deferred_issue, "report_unfiled_deferrals") as unfiled, \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK) as summary:
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED) as summary:
             assert review.closeout.finish_deferred_work(
                 self._ctx(worktree), PRReport()) is False
         unfiled.assert_not_called()
@@ -91,7 +91,7 @@ class TestFinishDeferredWork:
 
         with patch.object(review.closeout, "post_pending_fix_replies", side_effect=mark), \
                 patch.object(review.deferred_issue, "finalize_deferred", return_value=True), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         on_disk = pr.state.load_state(worktree / "target")
         assert on_disk.fix.fix.commit_status == CommitStatus.PUSHED
@@ -105,7 +105,7 @@ class TestFinishDeferredWork:
         with patch.object(review.closeout, "post_pending_fix_replies",
                           side_effect=lambda st, *a, **k: seen.extend(st.fix.fix.items)), \
                 patch.object(review.deferred_issue, "finalize_deferred", return_value=True), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         assert [t.id for t in seen] == ["t9"]
 
@@ -127,7 +127,7 @@ class TestFinishDeferredWork:
         with patch.object(pr.comments, "update_pr_body", return_value=True) as update, \
                 patch.object(review.closeout, "post_pending_fix_replies"), \
                 patch.object(review.deferred_issue, "finalize_deferred", return_value=True), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         update.assert_called_once_with(
             "owner/repo", 42, "A rewritten description.",
@@ -139,7 +139,7 @@ class TestFinishDeferredWork:
         with patch.object(pr.comments, "deliver_pr_body") as deliver, \
                 patch.object(review.closeout, "post_pending_fix_replies"), \
                 patch.object(review.deferred_issue, "finalize_deferred", return_value=True), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         deliver.assert_not_called()
 
@@ -149,7 +149,7 @@ class TestFinishDeferredWork:
         with patch.object(review.closeout, "post_pending_fix_replies"), \
                 patch.object(review.deferred_issue, "finalize_deferred",
                              side_effect=RuntimeError("gh down")), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             with pytest.raises(RuntimeError):
                 review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
 
@@ -167,7 +167,7 @@ class TestFinishDeferredWork:
 
         def note_summary(*_a, **_k):
             order.append("summary")
-            return _SUMMARY_OK
+            return _SUMMARY_NOT_REFUSED
 
         with patch.object(core.log, "info", side_effect=order.append), \
                 patch.object(review.closeout, "post_pending_fix_replies"), \
@@ -195,7 +195,7 @@ class TestFinishDeferredWork:
                 patch.object(review.closeout, "post_pending_fix_replies"), \
                 patch.object(review.deferred_issue, "finalize_deferred",
                              return_value=True), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         # The unfiled-deferral notice names the id too; the listing's line is
         # the item's own `format_item_line`, with its outcome beside the id.
@@ -266,7 +266,7 @@ class TestReconcileRunsBeforeTheWrites:
         with patch.object(git.client, "head_sha", return_value="aaaaaaa"), \
                 patch.object(review.deferred_issue, "create_or_update_deferred_issue") as create, \
                 patch.object(pr.thread_replies, "post_deferred_replies") as reply, \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(ctx, report, track=review.deferred_issue.TRACK_ALL)
         create.assert_not_called()
         reply.assert_not_called()
@@ -287,7 +287,7 @@ class TestReconcileRunsBeforeTheWrites:
             comments=[{"body": "x"}],
         )])
         with patch.object(git.client, "head_sha", return_value="aaaaaaa"), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(ctx, report)
         on_disk = pr.state.load_state(worktree / "target")
         assert on_disk.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
@@ -322,7 +322,7 @@ class TestStaleSnapshotIsAnnounced:
         with patch.object(git.client, "head_sha", return_value=current_sha), \
                 patch.object(core.log, "warn", side_effect=seen.append), \
                 patch.object(review.closeout, "post_pending_fix_replies"), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK), \
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED), \
                 patch.object(review.deferred_issue, "finalize_deferred"):
             review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
         return seen
@@ -371,7 +371,7 @@ class TestFinishReconcilesCommentItems:
     def _run(self, ctx, comments):
         with patch.object(git.client, "head_sha", return_value="aaaaaaa"), \
                 _fetches(comments), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(ctx, PRReport(my_login="me"))
 
     def test_the_answered_item_is_persisted_as_fixed(self, worktree):
@@ -433,7 +433,7 @@ class TestFinishAdoptsThreadsNoRoundSaw:
     def _run(self, ctx, report):
         with patch.object(git.client, "head_sha", return_value="aaaaaaa"), \
                 _fetches([]), \
-                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_OK):
+                patch.object(pr.summary_publish, "render_deferred_summary", return_value=_SUMMARY_NOT_REFUSED):
             review.closeout.finish_deferred_work(ctx, report)
 
     def test_the_answered_thread_is_persisted_rather_than_dropped(self, worktree):

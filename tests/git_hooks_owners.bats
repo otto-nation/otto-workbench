@@ -123,13 +123,15 @@ _msg() {
 @test "repo-local commit-msg still runs after the owner check" {
   _two_groups
   mkdir -p "$W/.git/hooks"
-  printf '#!/usr/bin/env bash\necho LOCAL commit-msg\n' > "$W/.git/hooks/commit-msg"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo LOCAL path="$1"' '[[ -f "$1" ]]' \
+    > "$W/.git/hooks/commit-msg"
   chmod +x "$W/.git/hooks/commit-msg"
 
   cd "$W" || return 1
   run git commit --allow-empty -m "see otto-nation/svc#12"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"LOCAL commit-msg"* ]]
+  [[ "$output" == *"LOCAL path="* ]]
+  [[ "$output" == *"COMMIT_EDITMSG"* ]]
 }
 
 @test "a refusing repo-local commit-msg still fails the commit" {
@@ -196,6 +198,47 @@ _msg() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"LOCAL refs/heads/main refs/heads/main"* ]]
   [ -f "$INTENTS" ]
+}
+
+@test "pre-push run by hand with fewer args still allows" {
+  _two_groups
+  cd "$W" || return 1
+  git commit -n -q --allow-empty -m init
+  local sha zero
+  sha="$(git rev-parse HEAD)"
+  zero="0000000000000000000000000000000000000000"
+  run bash -c 'printf "%s\n" "$1" | "$2"' \
+    _ "refs/heads/main $sha refs/heads/main $zero" \
+    "$REPO_ROOT/git/hooks/pre-push"
+  [ "$status" -eq 0 ]
+}
+
+@test "a plain commit message does not start python" {
+  _two_groups
+  mkdir -p "$TMPDIR/bin"
+  printf '%s\n' '#!/bin/sh' 'echo PYTHON_RAN >&2' 'exit 1' > "$TMPDIR/bin/python3"
+  chmod +x "$TMPDIR/bin/python3"
+
+  cd "$W" || return 1
+  PATH="$TMPDIR/bin:$PATH" run git commit --allow-empty -m "plain message"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"could not run"* ]]
+  [[ "$output" != *"PYTHON_RAN"* ]]
+}
+
+@test "git push refuses an outgoing cross-group commit" {
+  _two_groups
+  git init -q --bare -b main "$TMPDIR/bare.git"
+  printf '%s\n' '#!/usr/bin/env bash' "exec git-receive-pack '$TMPDIR/bare.git'" \
+    > "$TMPDIR/fake-ssh"
+  chmod +x "$TMPDIR/fake-ssh"
+
+  cd "$W" || return 1
+  git remote set-url origin "git@github.com:otto-nation/svc.git"
+  git commit -n -q --allow-empty -m "see me/lib#12"
+  run env GIT_SSH_COMMAND="$TMPDIR/fake-ssh" git push origin main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"me/lib#12"* ]]
 }
 
 @test "a failing python is reported and waved through" {

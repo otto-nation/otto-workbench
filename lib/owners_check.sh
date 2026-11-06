@@ -36,6 +36,13 @@ owners_check_hook() {
   local lib="$workbench/ai/lib"
   [[ -f "$lib/cli/owners_check.py" ]] || return 0
 
+  # A commit message with none of these cannot name a reference; skip Python.
+  if [[ "${1:-}" == "--message-file" && -n "${2:-}" ]]; then
+    if ! grep -qE '#|@|://' "$2" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
   local status=0
   python3 -I -c \
     'import sys; sys.path.insert(0, sys.argv[1]); from cli.owners_check import main; sys.exit(main(sys.argv[2:]))' \

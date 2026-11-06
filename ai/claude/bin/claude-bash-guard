@@ -891,17 +891,15 @@ fi
 # The override variables are the user's, set in their own shell for the
 # workbench's own publishing and for publishing text that references another
 # owner group. owners-check never reads them, and a command that names either
-# is refused outright, so an agent cannot set its way past this. The first
-# array entry keeps the upstream wording; later entries are the cross-group
-# override.
-for _override_var in "${UPSTREAM_OVERRIDE_VARS[@]}"; do
-  if [[ "$cmd" == *"$_override_var"* && "$_override_var" == "${UPSTREAM_OVERRIDE_VARS[0]}" ]]; then
-    block "$_override_var is the user's override for publishing upstream, and an agent command may not name it. Draft the command and the text for the user to run themselves. See general.md § Upstream Repositories."
-  fi
-  if [[ "$cmd" == *"$_override_var"* ]]; then
-    block "$_override_var is the user's override for publishing text that references another owner group, and an agent command may not name it. Reword the text to drop the reference, or ask the user to publish it. See general.md § Cross-Group References."
-  fi
-done
+# is refused outright, so an agent cannot set its way past this. Two top-level
+# checks so both block calls stay at the citation-lint indent; the first array
+# entry is the upstream wording, the second the cross-group override.
+if [[ "$cmd" == *"${UPSTREAM_OVERRIDE_VARS[0]}"* ]]; then
+  block "${UPSTREAM_OVERRIDE_VARS[0]} is the user's override for publishing upstream, and an agent command may not name it. Draft the command and the text for the user to run themselves. See general.md § Upstream Repositories."
+fi
+if [[ "$cmd" == *"${UPSTREAM_OVERRIDE_VARS[1]}"* ]]; then
+  block "${UPSTREAM_OVERRIDE_VARS[1]} is the user's override for publishing text that references another owner group, and an agent command may not name it. Reword the text to drop the reference, or ask the user to publish it. See general.md § Cross-Group References."
+fi
 if _command_might_write_github; then
   _owner_boundary_refusal
   [[ -z "$OWNER_BOUNDARY_REFUSAL" ]] || block "$OWNER_BOUNDARY_REFUSAL"

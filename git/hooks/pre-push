@@ -176,7 +176,7 @@ fi
 if [[ -n "$_refs" && -n "$_workbench" && -f "$_workbench/lib/owners_check.sh" ]]; then
   # shellcheck source=../../lib/owners_check.sh
   . "$_workbench/lib/owners_check.sh"
-  owners_check_hook "$_workbench" --push "$1" "$2" --cwd "$PWD" < <(replay_refs) || exit 1
+  owners_check_hook "$_workbench" --push "${1:-}" "${2:-}" --cwd "$PWD" < <(replay_refs) || exit 1
 fi
 
 # ── Repo-local delegation ──────────────────────────────────────────────────

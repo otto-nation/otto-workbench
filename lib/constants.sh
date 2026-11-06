@@ -268,6 +268,26 @@ PI_INSTALL_URL="https://pi.dev/install.sh"
 # herdr current on sync.
 HERDR_INSTALL_URL="https://herdr.dev/install.sh"
 
+# herdr TUI config. The workbench owns only [theme]'s name, auto_switch,
+# light_name and dark_name (step_herdr_tui_theme); the rest of the file is the
+# person's until a managed template replaces that step (#1660).
+HERDR_CONFIG_DIR="$HOME/.config/herdr"
+HERDR_CONFIG_FILE="$HERDR_CONFIG_DIR/config.toml"
+# herdr built-in theme names (not the HERDR_APP_THEME_* file stems below) for the TUI's light/dark auto-switch pair.
+HERDR_TUI_THEME_LIGHT="gruvbox-light"
+HERDR_TUI_THEME_DARK="gruvbox"
+
+# herdr's desktop app (herdr-app) — a separate binary from the herdr TUI, with its
+# own config dir. The workbench owns its theme files and settings.json's `theme`
+# key only; every other file there is the app's or the person's.
+HERDR_APP_DIR="$HOME/.config/herdr-app"
+HERDR_APP_THEMES_DIR="$HERDR_APP_DIR/themes"
+HERDR_APP_SETTINGS_FILE="$HERDR_APP_DIR/settings.json"
+HERDR_APP_THEMES_SRC_DIR="$WORKBENCH_DIR/ai/herdr/app/themes"
+# Names (= file stems under HERDR_APP_THEMES_SRC_DIR) for the app's light/dark pair.
+HERDR_APP_THEME_LIGHT="gruvbox-light"
+HERDR_APP_THEME_DARK="gruvbox-dark"
+
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
 BIN_REGISTRY_FILE="$WORKBENCH_DIR/bin/registry.yml"

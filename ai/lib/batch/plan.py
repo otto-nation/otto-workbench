@@ -364,7 +364,8 @@ def _fetch_refspecs(repo_dir: str, specs: list[str]) -> bool:
     ).ok
 
 
-def _fetch_objects(repo_dir: str, shas: list[str]) -> None:
+def fetch_objects(repo_dir: str, shas: list[str]) -> None:
+    """Fetch *shas* from origin without updating ``refs/remotes/origin/*``."""
     wanted = sorted({s for s in shas if s})
     if not wanted:
         return
@@ -722,7 +723,7 @@ def _plan_without_refs(
         heads = git.push.remote_heads(repo_dir, needed.get(repo_dir, []))
         tips[repo_dir] = heads
         if heads:
-            _fetch_objects(repo_dir, list(heads.values()))
+            fetch_objects(repo_dir, list(heads.values()))
     rows = rows_from_search(data, by_slug, remote_heads=tips)
     return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows)
 

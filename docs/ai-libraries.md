@@ -4008,6 +4008,12 @@ still the head the batch planned from (`Item.remote_sha`):
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
+`read_tree` is the publish-time reader: it fetches into
+`refs/remotes/origin/<branch>`. `peek_tree` reads the same comparison without
+moving that ref — `ls-remote` of `refs/heads/<branch>`, then
+`batch.plan.fetch_objects` for the SHA — so a report can call `publish.plan`
+without moving the lease the rebase trusts as last-seen.
+
 Both pushes are `pr` commands leasing on `remote_sha`, so each writes its own
 report into the publish log and a remote that moved after the fetch is still
 refused.

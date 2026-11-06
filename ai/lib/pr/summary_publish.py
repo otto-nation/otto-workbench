@@ -53,6 +53,7 @@ import pr.attribution
 import pr.comments
 import pr.history_rewrite
 import pr.published_record
+import pr.settlement
 import pr.state
 import pr.summary_model
 import pr.summary_render
@@ -60,7 +61,7 @@ import pr.summary_replies
 import pr.summary_rounds
 import pr.summary_row
 import pr.summary_scope
-from pr.fix import FixOutcome
+from pr.fix import FixOutcome, ItemOutcome
 from pr.summary_render import SUMMARY_MARKER
 from pr.thread_models import CommentItem, PRReport, ReportThread
 
@@ -605,12 +606,32 @@ def push_still_pending(state: pr.state.PRState) -> bool:
     return pr.attribution.landing_of(record, wt_path) is pr.attribution.FixLanding.UNPUSHED
 
 
+@dataclass(frozen=True)
+class DeferredRender:
+    """What `--finish` (and `--reply rb-...`) did with the deferred summary.
+
+    `url` is where the comment landed, or None when nothing was posted. A
+    refusal, a push still pending, a draft, a summary nothing owes, and a post
+    GitHub refused all leave `url` None; `refused` is the one that still owes
+    an answer on a handed-back thread. Do not widen this to a tuple — a later
+    field has to land here.
+    """
+
+    url: str | None
+    unanswered: tuple[ItemOutcome, ...] = ()
+
+    @property
+    def refused(self) -> bool:
+        return bool(self.unanswered)
+
+
 def render_deferred_summary(
     state: pr.state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread], host: str = "",
     force_reply_keys: frozenset[str] = frozenset(),
-) -> str | None:
-    """Re-render fix summary from state and post it. Returns the url, or None.
+    answered_now: frozenset[str] = frozenset(),
+) -> DeferredRender:
+    """Re-render fix summary from state and post it.
 
     Called during --finish after the deferred tracking issue has been created
     and stored in state.fix.  Rebuilds the summary body from the recorded
@@ -619,14 +640,25 @@ def render_deferred_summary(
 
     Also how `pr comments --reply` publishes a review-body reply: it stores the
     reply, re-arms the summary, and calls this with the review in
-    ``force_reply_keys`` — see `publish_summary`. None covers a summary nothing
-    owes, a push still pending, a draft, and a post GitHub refused; the caller
-    tells them apart by whether `summary_deferred` is still set.
+    ``force_reply_keys`` — see `publish_summary`. `url` is None when a summary
+    nothing owes, a push is still pending, a draft printed, a post GitHub
+    refused, or a handed-back thread still has no answer on GitHub; the caller
+    tells them apart by `refused` and whether `summary_deferred` is still set.
+
+    A NEEDS_HUMAN or DECLINED review thread with no answer on GitHub since it
+    was handed back refuses the post: the summary would report an outcome
+    nothing on the thread backs. `answered_now` is the ids this run answered
+    after `report.threads` was fetched (a tracking-issue reply, for example).
     """
     fix = state.fix
     record = fix.fix
     if not fix.summary_deferred:
-        return None
+        return DeferredRender(None)
+
+    owed = pr.settlement.unanswered_handbacks(record, threads_by_id, answered_now)
+    if owed:
+        pr.settlement.report_unanswered_handbacks(owed)
+        return DeferredRender(None, tuple(owed))
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
 
@@ -639,11 +671,11 @@ def render_deferred_summary(
                else pr.attribution.FixLanding.LANDED)
     if landing is pr.attribution.FixLanding.UNPUSHED:
         core.log.info("Push still pending — keeping summary deferred")
-        return None
+        return DeferredRender(None)
     # An orphaned SHA is not pending a push; `follow_history_rewrite` has
     # already said it is no longer on the branch.
     if landing is not pr.attribution.FixLanding.LANDED:
-        return None
+        return DeferredRender(None)
     if held:
         status = CommitStatus.PUSHED
         # Same reason as the deferred-reply queue: only a run that actually
@@ -701,4 +733,4 @@ def render_deferred_summary(
         fix.summary_posted(url)
     elif core.publishing.enabled():
         core.log.error("failed to post deferred fix summary")
-    return url
+    return DeferredRender(url)

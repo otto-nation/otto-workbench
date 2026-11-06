@@ -194,7 +194,8 @@ class TestFollowHistoryRewrite:
                        head_sha=repo.replay, target_dir=repo.path / "target")
         with patch.object(review.closeout, "post_pending_fix_replies"), \
                 patch.object(review.deferred_issue, "finalize_deferred", return_value=True), \
-                patch.object(pr.summary_publish, "render_deferred_summary"):
+                patch.object(pr.summary_publish, "render_deferred_summary",
+                             return_value=pr.summary_publish.DeferredRender(None)):
             review.closeout.finish_deferred_work(ctx, PRReport())
         saved = pr.state.load_state(repo.path / "target")
         assert saved.fix.fix.commit_sha == repo.replay

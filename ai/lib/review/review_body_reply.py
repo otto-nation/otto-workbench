@@ -116,7 +116,7 @@ def run_review_body_reply(
     url = pr.summary_publish.render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id, ctx.host,
         force_reply_keys=frozenset({review_id}),
-    )
+    ).url
     if not publishing:
         _explain_draft(state, review_id)
         return 0

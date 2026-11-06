@@ -345,6 +345,9 @@ That sends the drafted replies (including those whose commit had not yet been
 pushed), posts the summary, files the tracking issue for the threads named by
 `--track`, and resolves verified threads. The summary is meant to describe
 a finished conversation, so don't publish before the discussion is done. A
+handed-back (`needs_human` / `declined`) thread with no answer on GitHub
+refuses the summary (exit 1, closeout still owed); answer it with
+`--reply`, `--settle`, or `--finish --post --track <id>` and re-run. A
 drafted run recorded nothing as posted, so the queue is intact — never re-run
 `--fix` to get back to it. `--finish` without `--post` logs every snapshot item
 as `<id>  <outcome>` plus `"<finding>"` when the item has a finding (and the

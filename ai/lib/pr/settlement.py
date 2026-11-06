@@ -53,7 +53,7 @@ every other phase flag alongside it (the argparse layer in `cli.review_threads`)
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -591,6 +591,62 @@ def quoted_finding(summary: str) -> str:
     """
     line = finding_line(summary)
     return f'"{line}"' if line else ""
+
+
+def unanswered_handbacks(
+    record: FixRecord,
+    threads_by_id: Mapping[str, ReportThread],
+    answered_now: Collection[str] = frozenset(),
+) -> list[ItemOutcome]:
+    """NEEDS_A_PERSON outcomes that still owe an answer on GitHub.
+
+    A handed-back thread may appear in the summary only once something on the
+    thread backs the outcome: a reply or edit of ours after `decided_at`, a
+    settlement GitHub already shows, or an id this run answered after the
+    report was fetched (`answered_now`). Comment items (`rb-`/`ic-` ids) have
+    no review thread and are not gated. Sorted by id so the error that names
+    them is stable.
+    """
+    owed: list[ItemOutcome] = []
+    for outcome in record.items:
+        if outcome.outcome not in pr.summary_model.NEEDS_A_PERSON:
+            continue
+        if not outcome.id or outcome.id not in threads_by_id:
+            continue
+        if outcome.id in answered_now:
+            continue
+        thread = threads_by_id[outcome.id]
+        if settlement_for(thread) is not None:
+            continue
+        if pr.comments.answered_since(
+                thread.comments, thread.my_login, outcome.decided_at):
+            continue
+        owed.append(outcome)
+    return sorted(owed, key=lambda item: item.id)
+
+
+def report_unanswered_handbacks(owed: list[ItemOutcome]) -> None:
+    """Name each handed-back thread that blocked the summary, and how to answer."""
+    n = len(owed)
+    lines = [
+        f"The summary was not published — {n} thread(s) handed to a person "
+        f"have no answer on GitHub,",
+        "and the summary would report an outcome nothing on the thread backs:",
+    ]
+    for item in owed:
+        lines.append(f"  {format_item_line(item)}")
+    lines.extend([
+        f"Answer each one, then re-run `{pr.comments_fix.CLOSEOUT_COMMAND}`:",
+        "  pr comments --reply <id> --body-file <path> --post         "
+        "answer in your own words",
+        '  pr comments --settle <id> --as dismissed --reason "<why>"  '
+        "the point does not apply",
+        "  pr comments --settle <id> --as fixed|already_addressed     "
+        "the code handles it",
+        "  (a needs_human thread can instead be filed with "
+        "--finish --post --track <id>)",
+    ])
+    core.log.error("\n".join(lines))
 
 
 def format_item_line(item: ItemOutcome) -> str:

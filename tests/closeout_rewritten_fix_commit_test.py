@@ -112,7 +112,8 @@ def _save_closeout(repo, *, status, replies_pending=True):
 def _finish(ctx):
     """`--finish --post` with the GitHub side of closeout stubbed out."""
     with patch.object(review.deferred_issue, "finalize_deferred", return_value=True), \
-            patch.object(pr.summary_publish, "render_deferred_summary"), \
+            patch.object(pr.summary_publish, "render_deferred_summary",
+                         return_value=pr.summary_publish.DeferredRender(None)), \
             patch.object(pr.thread_replies, "reply_to_fixed", return_value=1) as reply:
         review.closeout.finish_deferred_work(ctx, PRReport())
     return reply

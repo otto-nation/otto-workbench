@@ -507,7 +507,7 @@ pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder ap
 ```
 
 `pr batch run --focus` is forwarded to every review step and replayed by
-`pr batch resume` (`--steps` may only narrow; it does not make a review step needed).
+`pr batch resume` (`--steps` may only narrow; it does not make a review step needed; open decisions on excluded steps still stand).
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no

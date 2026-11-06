@@ -52,25 +52,6 @@ from core.trail import TRAIL_ROOT_ENV, Trail
 EXIT_OK = batch.report.EXIT_OK
 
 
-def _load_siblings() -> None:
-    """Import the split CLI modules. Called from dispatch, not at import.
-
-    `pr --help` imports this module for ``cmd_batch`` and must not also load
-    the request/view helpers that used to live here.
-    """
-    global _ambiguous, _cmd_cancel, _cmd_release, _cmd_resolve
-    global _cmd_plan, _cmd_status, _offline, _report
-    global _err, _run_id, _active
-    from cli.pr_batch_common import _active, _err, _run_id
-    from cli.pr_batch_requests import (
-        _ambiguous,
-        _cmd_cancel,
-        _cmd_release,
-        _cmd_resolve,
-    )
-    from cli.pr_batch_views import _cmd_plan, _cmd_status, _offline, _report
-
-
 def _steps(text: str) -> list[Step]:
     try:
         return [Step(s.strip()) for s in text.split(",") if s.strip()]
@@ -124,7 +105,7 @@ _DEFAULT_RUN_REFUSES = (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    _load_siblings()
+    import cli.pr_batch_views
     parser = argparse.ArgumentParser(prog="pr batch", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -192,11 +173,11 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Print the raw run state instead of the report")
     view.add_argument("--decision", default="", metavar="ID",
                       help="Print one decision with its full payload and log tail")
-    _offline(s)
+    cli.pr_batch_views.offline(s)
 
     n = sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)")
     n.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
-    _offline(n)
+    cli.pr_batch_views.offline(n)
     return parser
 
 
@@ -244,8 +225,10 @@ def _emit_summary(run: Run, code: int) -> None:
     Its `exit_hint` is *code*, the process's real exit status. Apply errors
     make it 1, whatever the run's status alone would say.
     """
-    _load_siblings()
-    view = batch.report.next_view(_report(run, _active(run.id)))
+    import cli.pr_batch_common
+    import cli.pr_batch_views
+
+    view = batch.report.next_view(cli.pr_batch_views.report(run, cli.pr_batch_common.is_active(run.id)))
     view["run"]["exit_hint"] = code
     batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
 
@@ -483,12 +466,12 @@ def _emit_started(run: Run) -> None:
 
 
 def _cmd_run(args, bin_dir: Path) -> int:
-    _load_siblings()
+    import cli.pr_batch_common
     try:
         focus = review.focus.operator_texts(args)
         review.focus.operator_areas(focus)
     except review.focus.FocusInputError as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common.err(str(exc))
     plan = _plan(args)
     reporter = _Reporter()
     # The run's own lock goes on `held` first, so it is released last. An
@@ -499,7 +482,7 @@ def _cmd_run(args, bin_dir: Path) -> int:
         try:
             started = _start_run(held, args, plan, _driver_inbox(bin_dir, reporter), focus=focus)
         except _Refused as exc:
-            return _err(str(exc))
+            return cli.pr_batch_common.err(str(exc))
         _emit_started(started.session.run)
         try:
             stopped = _drive(started.session, reporter, started.holds, bin_dir=bin_dir,
@@ -572,49 +555,53 @@ def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool,
 
 
 def _cmd_resume(args, bin_dir: Path) -> int:
-    _load_siblings()
-    if refusal := _ambiguous(args.run_id):
-        return _err(refusal)
-    run_id = _run_id(args.run_id, covering_only=not args.run_id)
+    import cli.pr_batch_common
+    import cli.pr_batch_requests
+    if refusal := cli.pr_batch_requests.ambiguous(args.run_id):
+        return cli.pr_batch_common.err(refusal)
+    run_id = cli.pr_batch_common.resolve_run_id(args.run_id, covering_only=not args.run_id)
     if not run_id:
-        return _err("no batch run covers this repo; pass a run id")
+        return cli.pr_batch_common.err("no batch run covers this repo; pass a run id")
     try:
         _require_batch_locks(batch.targets.run_repo_keys(batch.store.load(run_id)),
                              f"run {run_id} not resumed")
     except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
+        return cli.pr_batch_common.err(f"no run {run_id}")
     except _Refused as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common.err(str(exc))
     reporter = _Reporter()
     try:
         stopped = _resume(run_id, reporter, bin_dir, args.verbose, steps=args.steps)
     except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
+        return cli.pr_batch_common.err(f"no run {run_id}")
     except _Refused as exc:
         print(f"pr batch: {exc}", file=sys.stderr)
         return 2 if isinstance(exc, _NarrowOnly) else 1
     except (batch.store.RunBusy, batch.store.RunUnreachable) as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common.err(str(exc))
     return _conclude(run_id, stopped, reporter)
 
 
 def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None = None,
               **_kw) -> int:
+    import cli.pr_batch_common
+    import cli.pr_batch_requests
+    import cli.pr_batch_views
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
-            return _cmd_plan(args)
+            return cli.pr_batch_views.cmd_plan(args)
         if args.command == "run":
             return _cmd_run(args, bin_dir)
         if args.command == "resume":
             return _cmd_resume(args, bin_dir)
         if args.command == "resolve":
-            return _cmd_resolve(args, bin_dir)
+            return cli.pr_batch_requests.cmd_resolve(args, bin_dir)
         if args.command == "cancel":
-            return _cmd_cancel(args, bin_dir)
+            return cli.pr_batch_requests.cmd_cancel(args, bin_dir)
         if args.command == "release":
-            return _cmd_release(args, bin_dir)
+            return cli.pr_batch_requests.cmd_release(args, bin_dir)
         # status and next
-        return _cmd_status(args)
+        return cli.pr_batch_views.cmd_status(args)
     except batch.plan.PlanError as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common.err(str(exc))

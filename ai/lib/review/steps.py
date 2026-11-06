@@ -289,7 +289,7 @@ def _run_synthesis_or_fallback(
     here.
     *settled* is `_nothing_new`'s answer, decided once by the caller.
     """
-    all_groups_failed = len(failed_groups) == group_count
+    all_groups_failed = bool(failed_groups) and len(failed_groups) == group_count
 
     if (not merged.record.visible and not failed_groups
             and not _writer_must_rejudge(job)):
@@ -399,7 +399,7 @@ def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailur
     `_prior_findings`) is not settled here: those are re-derived from this
     round's claims, so this returns False and the writer re-judges them. A
     round that adds nothing does not withdraw what the last one asked for.
-    The disprove gate runs whenever the writer re-judges (settled False).
+    settled False does not skip the disprove gate on this ground.
     """
     if not _is_incremental(job) or failed_groups or merged.fresh != 0:
         return False

@@ -144,11 +144,47 @@ def test_an_open_derived_prior_finding_does_not_write_a_clean_review(
     ran = []
     monkeypatch.setattr(review.steps, "_phase_synthesis",
                         lambda *a, **k: ran.append(True) or PhaseResult())
+    groups = merged(fresh=0)
     result = review.steps._run_synthesis_or_fallback(
-        job, _state(), "", 2, merged(fresh=0), [], 0,
-        0.0, 20.0, settled=False)
+        job, _state(), "", 2, groups, [], 0,
+        0.0, 20.0, settled=review.steps._nothing_new(job, groups, []))
     assert ran
     assert result.cost == 0.0
+
+
+def test_a_no_group_round_with_an_open_derived_finding_is_not_all_groups_failed(
+    tmp_path, monkeypatch,
+):
+    """Zero groups is not every group failing; the writer re-judges the prior."""
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    job = _job(tmp_path, prior=prior, mode=Mode.PR)
+    state = _state()
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_inject_failures_and_status", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_write_clean_review",
+                        lambda *a, **k: pytest.fail("clean review dropped the derived finding"))
+    monkeypatch.setattr(review.steps, "_write_settled_review",
+                        lambda *a, **k: pytest.fail("settled path dropped the derived finding"))
+    monkeypatch.setattr(review.steps, "_build_mechanical_fallback",
+                        lambda *a, **k: pytest.fail("mechanical fallback for a no-group round"))
+    ran = []
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: ran.append(True) or PhaseResult())
+    groups = merged(fresh=0)
+    result = review.steps._run_synthesis_or_fallback(
+        job, state, "", 0, groups, [], 0,
+        0.0, 20.0, settled=review.steps._nothing_new(job, groups, []))
+    assert ran
+    assert result.cost == 0.0
+    assert Phase.SYNTHESIS not in state.failed
 
 
 def test_a_round_with_no_open_derived_finding_still_writes_a_clean_review(

@@ -171,3 +171,18 @@ _run() {
     ' "$file" > /dev/null
   done
 }
+
+# herdr-app derives panel colors from the terminal palette by desaturating them, so a theme
+# that names only `accent` gets grey chrome around Gruvbox terminals. Every panel color
+# theme() exposes must be set explicitly.
+@test "shipped themes set every panel color" {
+  local file
+  for file in "$SRC/${APP_LIGHT}.json" "$SRC/${APP_DARK}.json"; do
+    jq -e '
+      ["canvas", "chrome", "surface", "popover", "raised", "hover", "selected", "border",
+       "input", "foreground", "muted", "dim", "accent", "accent_foreground", "solid",
+       "solid_foreground", "ring", "working", "blocked", "done", "idle", "unknown"]
+      | map(. as $k | $c[$k] // "" | test("^#[0-9a-fA-F]{6}$")) | all
+    ' --argjson c "$(jq '.colors' "$file")" -n > /dev/null
+  done
+}

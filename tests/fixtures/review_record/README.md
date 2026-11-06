@@ -5,6 +5,7 @@ The record cases are `record.json` (and `evidence_dropped/raw.json`,
 captures by Task 4's script; the markdown is gone.
 
 Parity is `canonical(render(record.json)) == canonical(expected.md)`.
+A `_publish` of an empty PR with no ticket stores `"claims": []`; `rebuild/record.json` omits the key (legacy load, not assessed).
 
 `merged/expected.md` is `merge_records` over `groups/group-N.json`, rendered
 with sids and evidence (Task 8).

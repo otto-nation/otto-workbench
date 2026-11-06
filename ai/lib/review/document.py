@@ -30,6 +30,7 @@ from review.types import SEVERITIES, Finding, ReviewMeta, ReviewType
 # own vocabulary, passed to `section` as a string.
 SECTION_SUMMARY = "Summary"
 SECTION_FOCUS = "Focus"
+SECTION_CLAIMS = "Claims"
 SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"

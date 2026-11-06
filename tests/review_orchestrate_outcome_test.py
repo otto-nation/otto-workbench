@@ -510,3 +510,21 @@ def test_an_unchanged_review_does_not_carry_last_round_s_coverage(ro, tmp_path):
     ro.write_unchanged_review(job)
     rec = load_record(tmp_path)
     assert [(a.title, a.coverage) for a in rec.focus] == [("A", "")]
+
+
+def test_a_review_with_no_claim_source_publishes_no_claims_section(ro, tmp_path):
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.pr.body = ""
+    ro._publish(job, record(claims=None))
+    rec = load_record(tmp_path)
+    assert rec.claims == ()
+    assert "## Claims" not in Path(job.review_file).read_text()
+
+
+def test_a_review_with_a_source_and_no_writer_says_not_assessed(ro, tmp_path):
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.pr.body = "does X"
+    ro._publish(job, record(claims=None))
+    rec = load_record(tmp_path)
+    assert rec.claims is None
+    assert "*Not assessed this round.*" in Path(job.review_file).read_text()

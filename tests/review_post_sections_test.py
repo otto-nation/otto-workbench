@@ -18,6 +18,7 @@ from review.record import LedgerLine, ProseSection, TriageEntry  # noqa: E402
 from review.types import PriorDisposition  # noqa: E402
 
 from review.record import FocusSource  # noqa: E402
+from review_claims_support import claim  # noqa: E402
 from review_focus_support import area, user_area  # noqa: E402
 from review_record_support import finding, record  # noqa: E402
 
@@ -107,6 +108,14 @@ class TestReviewSections:
         rec = record(finding("M1", "bug", path="a.go", line=1))
         sections = _sections(rp, rec)
         assert sections.before_findings() == []
+
+    def test_the_comment_carries_claims_under_the_summary(self, rp):
+        rec = record(summary="looked", claims=(claim(),))
+        body = format_body_text([], False, set(), rp.ReviewSections.from_record(rec))
+        assert body.index("## Summary") < body.index("### Claims")
+        assert "supported" in body
+        assert "[C1]" not in body
+        assert body.index("### Claims") < body.index("---")
 
     def test_the_comment_carries_focus_under_the_summary(self, rp):
         rec = record(summary="looked", focus=(user_area("Locking"),))

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import core.log
 import git.client
+import review.claims
 from core.phases import Mode
 from pr.domains import ReviewStatus
 from review.convergence import (
@@ -112,6 +113,8 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
     Every review leaves with the run's areas, covered or not.
     """
     record = with_run_focus(record, job.focus)
+    if record.claims is None and not review.claims.has_claim_source(job):
+        record = replace(record, claims=())
     meta = _review_meta(job, skipped_groups=skipped_groups, total_groups=total_groups,
                         status=status)
     sticky = apply_sticky_skips(record, meta.sticky_skips, job.wt_path)

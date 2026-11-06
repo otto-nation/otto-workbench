@@ -39,6 +39,7 @@
   "questions": [],
   "verified": [],
   "focus": [],
+  "claims": [],
   "triage": [
     {
       "path": "src/app.py",

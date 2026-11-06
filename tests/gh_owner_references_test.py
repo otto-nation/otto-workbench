@@ -147,3 +147,50 @@ def test_url_text_strips_trailing_punctuation():
     url = "https://github.com/otto-nation/lib"
     assert _refs(url + ".", "otto-nation") == (_ref(Kind.URL, "otto-nation", url),)
     assert _refs(url + ")", "otto-nation") == (_ref(Kind.URL, "otto-nation", url),)
+
+
+def test_url_owner_strips_trailing_punctuation():
+    url = "https://github.com/otto-nation"
+    assert _refs(f"See {url}.", "otto-nation") == (_ref(Kind.URL, "otto-nation", url),)
+    nested = "https://github.com/otto-nation/lib"
+    assert _refs(f"({nested}).", "otto-nation") == (_ref(Kind.URL, "otto-nation", nested),)
+
+
+def test_a_mention_resolves_against_every_configured_host():
+    ghe_only = _map("ghe.corp/platform")
+    assert gh.owner_references.references("@platform", ghe_only) == (
+        _ref(Kind.MENTION, "ghe.corp/platform", "@platform"),
+    )
+    github_only = _map("otto-nation")
+    assert gh.owner_references.references("@otto-nation", github_only) == (
+        _ref(Kind.MENTION, "otto-nation", "@otto-nation"),
+    )
+
+
+def test_a_mention_on_two_hosts_yields_two_references():
+    owners = _map("foo", "ghe.corp/foo")
+    assert gh.owner_references.references("@foo", owners) == (
+        _ref(Kind.MENTION, "foo", "@foo"),
+        _ref(Kind.MENTION, "ghe.corp/foo", "@foo"),
+    )
+
+
+def test_without_overlap_keeps_identical_spans_and_drops_nested():
+    owner = _owner("otto-nation")
+
+    def hit(start: int, end: int, text: str) -> gh.owner_references._Hit:
+        reference = gh.owner_references.Reference(Kind.URL, owner, text)
+        return gh.owner_references._Hit(start, end, reference)
+
+    short = hit(0, 5, "short")
+    long = hit(0, 20, "long")
+    twin = hit(0, 20, "twin")
+    nested = hit(5, 10, "nested")
+    later = hit(25, 30, "later")
+    kept = gh.owner_references._without_overlap(
+        [short, later, nested, long, twin])
+    assert [(h.start, h.end, h.reference.text) for h in kept] == [
+        (0, 20, "long"),
+        (0, 20, "twin"),
+        (25, 30, "later"),
+    ]

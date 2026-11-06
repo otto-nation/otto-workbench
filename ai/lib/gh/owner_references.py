@@ -2,10 +2,10 @@
 
 GitHub creates a "referenced this" event when published text names another
 repository as ``owner/repo#N``, ``owner/repo@sha``, a github.com (or
-configured-host) URL, or an ``@owner`` mention. A short form is resolved
-against github.com and every configured host. Only configured owners count:
-an ``@handle`` that is not ours is not a reference, and an upstream owner
-is not returned.
+configured-host) URL, or an ``@owner`` mention. A short form or mention is
+resolved against github.com and every configured host. Only configured owners
+count: an ``@handle`` that is not ours is not a reference, and an upstream
+owner is not returned.
 
 ``gh.owners`` imports this module, so ``references`` takes the owner map
 structurally — ``classify`` and ``hosts`` — and never imports ``gh.owners``.
@@ -91,7 +91,8 @@ def _url_hits(text: str, owner_map: _OwnerMap) -> list[_Hit]:
     hits: list[_Hit] = []
     for match in _URL_RE.finditer(text):
         url_text = match.group(0).rstrip(_URL_TRAIL)
-        owner = config.github_owners.owner(match.group(1), match.group(2))
+        name = match.group(2).rstrip(_URL_TRAIL)
+        owner = config.github_owners.owner(match.group(1), name)
         reference = _configured(owner_map, ReferenceKind.URL, owner, url_text)
         if reference is not None:
             end = match.start() + len(url_text)
@@ -132,9 +133,19 @@ def _repo_match_hits(
 
 
 def _mention_hits(text: str, owner_map: _OwnerMap) -> list[_Hit]:
+    hosts = _short_form_hosts(owner_map)
     hits: list[_Hit] = []
     for match in _MENTION_RE.finditer(text):
-        owner = config.github_owners.owner(config.github_owners.DEFAULT_HOST, match.group(1))
+        hits.extend(_mention_match_hits(match, hosts, owner_map))
+    return hits
+
+
+def _mention_match_hits(
+    match: re.Match[str], hosts: tuple[str, ...], owner_map: _OwnerMap,
+) -> list[_Hit]:
+    hits: list[_Hit] = []
+    for host in hosts:
+        owner = config.github_owners.owner(host, match.group(1))
         reference = _configured(
             owner_map, ReferenceKind.MENTION, owner, match.group(0))
         if reference is not None:
@@ -152,11 +163,19 @@ def _configured(
 
 def _without_overlap(hits: list[_Hit]) -> list[_Hit]:
     kept: list[_Hit] = []
-    for hit in hits:
-        if kept and kept[-1].start < hit.start < kept[-1].end:
+    for hit in sorted(hits, key=lambda item: (item.start, -item.end)):
+        if any(_subsumes(existing, hit) for existing in kept):
             continue
         kept.append(hit)
     return kept
+
+
+def _subsumes(outer: _Hit, inner: _Hit) -> bool:
+    if outer.start == inner.start and outer.end == inner.end:
+        return False
+    if outer.start == inner.start:
+        return inner.end < outer.end
+    return outer.start < inner.start < outer.end
 
 
 def _unique(hits: list[_Hit]) -> tuple[Reference, ...]:

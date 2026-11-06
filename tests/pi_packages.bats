@@ -54,7 +54,9 @@ _run_step() {
     info()    { echo "INFO $*"; }
     skip()    { echo "SKIP $*"; }
     LIB_SRC_DIR="$1/lib"
-    . "$1/lib/env.sh"
+    WORKBENCH_DIR="$1"
+    WORKBENCH_CONFIG_HEADER="# test"
+    . "$1/lib/config.sh"
     . "$1/ai/pi/steps.sh"
     step_pi_packages
   ' _ "$REPO_ROOT"
@@ -97,6 +99,15 @@ _run_step() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARN"* ]]
   [[ "$output" == *"pi update --extensions"* ]]
+}
+
+@test "a failed refresh warns with the reason and still succeeds" {
+  _stub_pi 1
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN Could not refresh Pi packages"* ]]
+  [[ "$output" == *"(exit 1)"* ]]
+  [[ "$output" == *"run: pi update --extensions"* ]]
 }
 
 @test "the refresh is wired into sync_pi, not only defined" {

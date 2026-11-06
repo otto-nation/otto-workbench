@@ -40,6 +40,7 @@ from core.text import join_or
 from pr.domains import ReviewVerdict
 from review.grammar import SEVERITY_KEY, FindingIdentity, strip_line_suffix
 from review.budget import DERIVED_AREA_RESERVE_BYTES
+from review.claim_types import ClaimReport, ClaimSource, ClaimVerdict
 from review.ingest import IngestError, IngestErrorKind
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord, TriageEntry
 from review.store import StoredReview
@@ -218,6 +219,7 @@ class ReviewArtifact:
     prior_findings: tuple[LedgerLine, ...] = ()
     verdict: str = ""
     focus: tuple[FocusReport, ...] = ()
+    claims: tuple[ClaimReport, ...] | None = None
 
     def problems(self) -> tuple[IngestError, ...]:
         summary = [] if self.summary.strip() else [_empty("$.summary", "the summary")]
@@ -244,7 +246,7 @@ class ReviewArtifact:
         full = cls(
             summary=_EXAMPLE_SUMMARY, findings=_EXAMPLE_FINDINGS, triage=_EXAMPLE_TRIAGE,
             prior_findings=_EXAMPLE_LEDGER, verdict=_EXAMPLE_VERDICT,
-            focus=_EXAMPLE_FOCUS_REPORT,
+            focus=_EXAMPLE_FOCUS_REPORT, claims=_EXAMPLE_CLAIMS,
         )
         return full if mode is Mode.PR else replace(full, triage=(), verdict="")
 
@@ -551,6 +553,7 @@ _EXAMPLE_FOCUS_REPORT = (
     FocusReport("", "Traced both timeouts; they now agree.", title="Timeout units",
                 rationale="`client` and `worker` changed together.", paths=("pkg/client.go",)),
 )
+_EXAMPLE_CLAIMS = (ClaimReport(ClaimSource.DESCRIPTION, "Failed fetches are retried with backoff.", ClaimVerdict.SUPPORTED, "`fetch` doubles the delay on each retry.", path="pkg/client.go", snippet="delay *= 2"),)
 _SCAN_FOCUS_NOTE = (
     "1–3 areas this PR most needs reviewed — the risks particular to this "
     "change, each with a title, a rationale, and the paths it concerns"
@@ -606,6 +609,9 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "verdict": "a PR review: the verdict the task asks for, then why; a self-review: \"\"",
         "focus": "one entry for EVERY area in the prompt's Focus section, by its `id`; "
                   "add your own with id \"\" only where that section asks you to",
+        "claims": "every distinct claim the Description or the Related issue (title, body, "
+                   "acceptance criteria) makes that the code could confirm or refute; [] "
+                   "when nothing there is checkable",
     },
     Lead: {
         "path": "the file the lead is about",
@@ -654,18 +660,34 @@ FIELD_NOTES[FocusReport] = {
     "coverage": "what you checked and what you found, citing finding IDs",
     **{k: FIELD_NOTES[AgentFocus][k] for k in ("title", "rationale", "paths")},
 }
+FIELD_NOTES[ClaimReport] = {
+    "source": "the Description or the Related issue",
+    "text": "the claim, in the author's words",
+    "verdict": "supported holds; contradicted is shown false; unsupported is checkable but "
+               "nothing in the code shows it; unverifiable cannot be checked statically, or "
+               "its cited code did not verify",
+    "evidence": "prose that says why the verdict is that",
+    "path": "required for supported and contradicted: the file and a verbatim line from it "
+            "that shows the verdict; checked after you write",
+    "snippet": "required for supported and contradicted: the file and a verbatim line from it "
+               "that shows the verdict; checked after you write",
+    "finding": "the id of your finding that covers this claim, if one does; otherwise \"\"",
+}
 
 # Fields an example leaves at their default on purpose: showing a filled-in
 # direction concern would invite one on every run.
 EXAMPLE_LEAVES_EMPTY: dict[type, frozenset[str]] = {
     ScoutArtifact: frozenset({"direction_concern"}),
     HolisticArtifact: frozenset({"direction_concern"}),
+    ClaimReport: frozenset({"finding"}),
 }
 
 
 def _nested_dataclass(hint) -> type | None:
     """The dataclass a list or tuple field holds, or None."""
     kind, args = classify(hint)
+    if kind is HintKind.OPTIONAL:
+        kind, args = classify(args[0])
     if kind in (HintKind.TUPLE, HintKind.LIST) and args and dataclasses.is_dataclass(args[0]):
         return args[0]
     return None
@@ -723,19 +745,23 @@ def _field_guide(kind: type, hidden: dict[type, frozenset[str]], prefix: str = "
 
 
 def output_format(kind: type, mode: Mode, *, rereview: bool,
-                  derive_focus: bool = False, has_areas: bool = True) -> str:
+                  derive_focus: bool = False, has_areas: bool = True,
+                  has_claim_source: bool = True) -> str:
     """What a prompt's Output section shows: the example, then every field's meaning.
 
     `rereview` is whether the prompt carries prior findings to account for;
     without it the carry fields (`CARRY_FIELDS`) are neither shown nor explained.
     `has_areas` defaults to true so a format rendered outside a run shows the
-    covering example.
+    covering example. `has_claim_source` defaults to true so the example shows
+    a claim; without a source the example's claims are [].
     """
     hidden = {**(CARRY_FIELDS if not rereview else {}), **({} if derive_focus else DERIVE_FIELDS)}
     example = kind.example(mode)
     if kind is ReviewArtifact:
         example = replace(example, focus=_focus_example(
             example.focus, derive_focus=derive_focus, has_areas=has_areas))
+        if not has_claim_source:
+            example = replace(example, claims=())
     shown = _example_dict(kind, core.serde.to_dict(example), hidden)
     return (
         "The file holds ONE JSON document — nothing before or after it, no code fence, "

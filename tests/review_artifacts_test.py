@@ -332,3 +332,18 @@ def test_a_format_with_no_areas_shows_no_covering_entry():
     )
     doc = _shown_document(text)
     assert all(not e["id"] for e in doc["focus"])
+
+
+def test_a_format_without_a_claim_source_shows_empty_claims():
+    text = output_format(
+        ReviewArtifact, Mode.PR, rereview=False, has_claim_source=False,
+    )
+    assert _shown_document(text)["claims"] == []
+
+
+def test_a_format_with_a_claim_source_shows_a_claim_and_its_notes():
+    text = output_format(ReviewArtifact, Mode.PR, rereview=False)
+    assert len(_shown_document(text)["claims"]) == 1
+    assert "`claims[].verdict`" in text
+    for value in ("supported", "contradicted", "unsupported", "unverifiable"):
+        assert value in text

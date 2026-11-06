@@ -73,6 +73,16 @@ esac
 parent=$(_nearest_dir "$(dirname "$_abs")")
 repo_dir=$(cd "$parent" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
+# ── The installed copy is never edited, nor are worktrees of it ──────────────
+#
+# Its repository is asked through `installed-copy-check`, the one owner of that
+# fact, which the Pi twin ai/pi/extensions/installed-copy-guard asks too. The
+# symlink is followed before the traversal for the reason given at `_SELF` below.
+_ICC_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+if "$(cd "$(dirname "$_ICC_SELF")/../../.." && pwd)/bin/local/installed-copy-check" "$parent"; then
+  block "This is the installed copy of the workbench (or a worktree of it), which \`otto-workbench sync\` runs from and only sync updates. Change the code in the repository's container, ~/git/otto-nation/otto-workbench, in a worktree made there with \`wt switch -c\`, and let sync carry it here. See git-operations.md § The Installed Copy Is Read-Only."
+fi
+
 # The lock is checked before the branch rule, and without the gitignore
 # exemption: a suite reads ignored build output too, and rewriting it under a
 # running gate invalidates the same run. No pid is named — holders() can be

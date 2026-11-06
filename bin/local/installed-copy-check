@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Answer whether a directory belongs to the installed copy's repository.
+#
+# The installed copy (`~/.local/share/otto-workbench`) is what `otto-workbench
+# sync` runs from. It is a plain clone, so git lets anyone add worktrees to it,
+# and a session that starts there and runs `wt switch -c` leaves a branch's
+# worktree beside the install, outside the container every other checkout lives
+# in. Work belongs in the container; the install is only ever updated by sync.
+#
+# ```
+# installed-copy-check [--creating <command>] <dir>
+# ```
+#
+# | Flag | Description |
+# |------|-------------|
+# | `--creating <command>` | Also require that `<command>` creates a worktree (`wt switch -c`/`--create`, `git worktree add`) |
+# | `-h`, `--help` | Show help |
+#
+# | Exit | Meaning |
+# |------|---------|
+# | `0` | `<dir>` is in the installed copy's repository (the checkout or any of its worktrees), and with `--creating`, the command creates a worktree |
+# | `1` | It is not, or the install is absent, or git cannot answer |
+# | `64` | Usage error |
+#
+# The single owner of this fact: `ai/claude/bin/claude-edit-guard`,
+# `ai/claude/bin/claude-bash-guard` and `ai/pi/extensions/installed-copy-guard`
+# all ask it, so the two harnesses cannot disagree about what the install is.
+#
+# `WORKBENCH_INSTALL_DIR` overrides where the install is.
+# ceiling: the default path is the installer's convention, not a recorded
+# setting. Upgrade trigger: the installer writes its location to state, or a
+# machine installs the copy elsewhere without setting the override.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+EXIT_NO=1
+EXIT_USAGE=64
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--creating COMMAND] DIR
+
+Exit 0 when DIR is in the installed copy's repository; with --creating, only
+when COMMAND also creates a worktree. Exit 1 otherwise.
+EOF
+}
+
+# Statements that create a worktree. A word boundary on both ends, so a
+# `wt switch` without `-c` (a plain switch) is not a creation.
+creates_worktree() {
+  local statement
+  while IFS= read -r statement; do
+    [[ "$statement" =~ ^[[:space:]]*wt[[:space:]]+switch([[:space:]]+[^[:space:]]+)*[[:space:]]+(-c|--create)([[:space:]]|$) ]] && return 0
+    [[ "$statement" =~ ^[[:space:]]*git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+worktree[[:space:]]+add([[:space:]]|$) ]] && return 0
+  done < <(printf '%s\n' "$1" | tr ';&|' '\n')
+  return 1
+}
+
+command_text=""
+checking_command=false
+dir=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --creating)
+      [[ -n "${2:-}" ]] || { err "$1 requires an argument"; exit "$EXIT_USAGE"; }
+      command_text="$2"; checking_command=true; shift 2 ;;
+    -*) err "Unknown option: $1"; usage >&2; exit "$EXIT_USAGE" ;;
+    *) dir="$1"; shift ;;
+  esac
+done
+[[ -n "$dir" ]] || { usage >&2; exit "$EXIT_USAGE"; }
+
+# A path that does not exist yet (a Write into a new directory) is resolved from
+# its closest existing ancestor.
+while [[ "$dir" != "/" && ! -d "$dir" ]]; do dir="$(dirname "$dir")"; done
+
+if [[ "$checking_command" == true ]]; then
+  creates_worktree "$command_text" || exit "$EXIT_NO"
+fi
+
+install_dir="${WORKBENCH_INSTALL_DIR:-$HOME/.local/share/otto-workbench}"
+[[ -d "$install_dir" ]] || exit "$EXIT_NO"
+
+git_env_clear
+installed_common="$(git_shared_dir "$install_dir")" || exit "$EXIT_NO"
+dir_common="$(git_shared_dir "$dir")" || exit "$EXIT_NO"
+[[ "$installed_common" == "$dir_common" ]]

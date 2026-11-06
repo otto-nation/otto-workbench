@@ -13,6 +13,13 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 - Read-only operations (searching, reading files, exploring code) do not require a worktree
 - Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never a worktree tool built into the harness you are running in, and never the `superpowers:using-git-worktrees` skill. Only `wt` applies this machine's naming rules and pre-switch hooks; anything else cuts a worktree somewhere the rest of these rules do not describe
 
+## The Installed Copy Is Read-Only
+
+- `~/.local/share/otto-workbench` is what `otto-workbench sync` runs from. It is a plain clone of the repository, not a checkout in the container, so a session that starts there and runs `wt switch -c` leaves the branch's worktree beside the install — outside the container every other worktree is a peer in, and invisible to `wt list` from it
+- Never edit a file there, never make a worktree from it, and never start work in it. Work in the repository's container — `~/git/<owner>/otto-workbench`, via `wt switch -c` from a worktree there — and let sync carry the change to the install
+- A session that finds itself in the installed copy changes directory first; it does not create a branch to work around the guard
+- Enforced by `claude-edit-guard` and `claude-bash-guard` under Claude Code and the `installed-copy-guard` extension under Pi, all asking `bin/local/installed-copy-check` — one owner for what the install is, so the harnesses cannot disagree. `WORKBENCH_INSTALL_DIR` overrides where the install is
+
 ## Worktree Naming
 
 - Bare repos use `{{ repo_path }}/../{{ branch | sanitize }}` — worktrees live as peers of `main/` inside the repo container (e.g., `homelab/main/`, `homelab/isaac-feat-auth/`). The `../` is needed because `repo_path` points to the `.git` bare directory, not the parent

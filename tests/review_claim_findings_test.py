@@ -1,5 +1,6 @@
 """Derived should-fix findings from verified contradicted or unsupported claims."""
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from core.phases import Mode
 import review.claims
 import review.verify
 from review.claim_types import ClaimSource, ClaimVerdict
+from review.grammar import FindingIdentity
 from review.render import render_body
 from review.types import FindingOrigin
 from review_claims_support import claim
@@ -46,6 +48,15 @@ from review_record_support import finding, record
                 ("S2", "S", "", "", "Claim unsupported: retries back off"),
             ),
         ),
+        (
+            (
+                claim(),
+                claim(id="C2", verdict=ClaimVerdict.CONTRADICTED),
+            ),
+            (
+                ("S1", "S", "a.py", "delay *= 2", "Claim contradicted: retries back off"),
+            ),
+        ),
     ],
     ids=[
         "none",
@@ -56,6 +67,7 @@ from review_record_support import finding, record
         "contradicted",
         "unsupported",
         "two-bad",
+        "supported-then-contradicted",
     ],
 )
 def test_derived_findings(claims, want):
@@ -67,6 +79,18 @@ def test_derived_findings(claims, want):
     for finding in got:
         assert finding.line is None
         assert finding.origin is FindingOrigin.CLAIM
+
+
+def test_a_contradicted_derived_body_is_head_evidence_and_source():
+    finding = review.claims.derived_findings(
+        (claim(verdict=ClaimVerdict.CONTRADICTED),),
+        checkbox=False,
+    )[0]
+    assert finding.body == (
+        "Claim contradicted: retries back off\n"
+        "the delay doubles\n"
+        "Source: description"
+    )
 
 
 def test_a_derived_body_ends_with_its_source():
@@ -92,6 +116,21 @@ def test_the_same_claim_derives_the_same_identity():
     second = review.claims.derived_findings(claims, checkbox=False)
     assert first[0].stable_id == second[0].stable_id
     assert first[0].stable_id
+    f = first[0]
+    assert f.stable_id == FindingIdentity.of_fields(f.path, None, f.body).stable_id
+    desc = f.body.split("\n", 1)[0].lstrip()[:80].strip()
+    key = f"{f.path.strip().lower()}:{desc.lower()}"
+    assert f.stable_id == hashlib.sha256(key.encode()).hexdigest()[:8]
+    unsupported = review.claims.derived_findings(
+        (claim(verdict=ClaimVerdict.UNSUPPORTED),), checkbox=False,
+    )[0]
+    assert unsupported.path == ""
+    assert unsupported.stable_id == FindingIdentity.of_fields(
+        "", None, unsupported.body,
+    ).stable_id
+    desc = unsupported.body.split("\n", 1)[0].lstrip()[:80].strip()
+    key = f":{desc.lower()}"
+    assert unsupported.stable_id == hashlib.sha256(key.encode()).hexdigest()[:8]
 
 
 def test_checkbox_follows_the_mode():

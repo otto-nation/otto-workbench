@@ -160,7 +160,7 @@ rather than in this table.
 | `fixed` **(field)** | Threads and items the agent auto-fixed (committed + pushed) |
 | `needs_human` **(field)** | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason, and where a `declined` outcome (below) travels |
 | `dismissed` **(field)** | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
-| `declined` (not a field) | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict. It has no key of its own — it is folded into `needs_human` above, and travels with it at every reviewer-facing surface |
+| `declined` (not a field) | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict. A decline with no reason is recorded as `needs_human` instead. It has no key of its own — it is folded into `needs_human` above, and travels with it at every reviewer-facing surface |
 | `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
 | `deferred` **(field)** | Threads the agent could not auto-fix in the current pass |
 | `skipped` (not a field) | Never attempted — the pass excludes items of this kind on sight before `fix_pass` is built, so no key here records them |

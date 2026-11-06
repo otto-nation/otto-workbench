@@ -165,7 +165,7 @@ def test_the_retry_says_it_is_one(tmp_path, landed, head):
 def test_a_settled_verdict_is_not_retried(tmp_path, landed, head):
     """Declined and needs-a-person are answers; only deferral is an absence."""
     adapter = StubAdapter(tmp_path, count=2)
-    run, inv = _run(adapter, run_fix=_answer(adapter, tick="declined"))
+    run, inv = _run(adapter, run_fix=_answer(adapter, tick="declined", reason="not a defect"))
 
     assert inv.call_count == 1
     assert all(o.outcome is FixOutcome.DECLINED for o in run.outcomes)

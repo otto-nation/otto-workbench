@@ -693,6 +693,11 @@ it — an agent that declined an item or said it needs a person answered the
 question it was asked — and its answers supersede the first pass's rather than
 being reported alongside them.
 
+**A decline owes a reason.** A DECLINED recorded with none is demoted to
+NEEDS_HUMAN when the pass is recorded (`_record_unevidenced`), so no reviewer's
+finding is closed on a rejection nobody can weigh. Records stored earlier are
+left alone.
+
 The gate is not a parameter. Every pass here runs on an operator's behalf, so
 the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would

@@ -24,6 +24,11 @@ it — an agent that declined an item or said it needs a person answered the
 question it was asked — and its answers supersede the first pass's rather than
 being reported alongside them.
 
+**A decline owes a reason.** A DECLINED recorded with none is demoted to
+NEEDS_HUMAN when the pass is recorded (`_record_unevidenced`), so no reviewer's
+finding is closed on a rejection nobody can weigh. Records stored earlier are
+left alone.
+
 The gate is not a parameter. Every pass here runs on an operator's behalf, so
 the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
@@ -103,6 +108,9 @@ _RESUME_HINT = (
 # item on the pass's say-so alone, so a reason is the only thing an operator can
 # weigh them by — see `_record_unevidenced`.
 _OWES_A_REASON = frozenset({FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN})
+
+# The reason an unreasoned decline carries once it is handed to a person.
+_UNREASONED_DECLINE = "declined without giving a reason — handed to a person"
 
 
 @dataclass(frozen=True)
@@ -704,7 +712,22 @@ def _record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> Non
     only FIXED leaves a diff an operator can read instead: an unreasoned decline
     renders as a bare `*(declined)*` against a finding nobody acted on, which is
     the pass rejecting a reviewer's claim and declining to say why.
+
+    A decline that gives no reason is demoted to NEEDS_HUMAN here, whether or
+    not there is a trail: nothing may close a reviewer's thread on a rejection
+    that cannot be weighed, and a person can still weigh it. The demotion is
+    at record time only — a record already stored with a reasonless DECLINED
+    is left as it is and keeps the stand-in wording `pr.thread_models` gives
+    it. The `fix_unreasoned` event still names the demoted items.
     """
+    unreasoned = [
+        o.id for o in outcomes
+        if o.outcome in _OWES_A_REASON and not o.reason
+    ]
+    for o in outcomes:
+        if o.outcome is FixOutcome.DECLINED and not o.reason:
+            o.outcome = FixOutcome.NEEDS_HUMAN
+            o.reason = _UNREASONED_DECLINE
     if not trail:
         return
     unevidenced = [
@@ -717,10 +740,6 @@ def _record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> Non
             f"{len(unevidenced)} fix(es) ticked with no test evidence",
             data={"items": unevidenced},
         )
-    unreasoned = [
-        o.id for o in outcomes
-        if o.outcome in _OWES_A_REASON and not o.reason
-    ]
     if unreasoned:
         trail.warn(
             "fix_unreasoned",

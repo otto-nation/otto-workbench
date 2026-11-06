@@ -41,6 +41,7 @@ TEAM --project`.
 
 from __future__ import annotations
 
+from pathlib import Path
 
 import config.workbench_config
 from config.workbench_config import IssueProvider
@@ -348,14 +349,20 @@ def build_deferred_issue_body(
 
 def update_deferred_issue(
     provider: str, issue_id: str, body: str, repo: str, opts: dict | None,
+    cwd: str | Path | None = None, host: str = "",
 ) -> IssueResult:
     """Refresh the tracking issue that already exists for this cycle.
 
     Filed either way: an update that did not land leaves the issue stale rather
     than missing, so the deferred threads still have the home the closeout debt
     exists to insist on.
+
+    ``cwd`` is the checkout the Linear body is judged against. ``None`` is
+    the process cwd.
     """
-    ok = review.issue.update_issue(provider, issue_id, body, repo=repo, opts=opts)
+    ok = review.issue.update_issue(
+        provider, issue_id, body, repo=repo, opts=opts, cwd=cwd, host=host,
+    )
     if not ok:
         core.log.error(f"Failed to update deferred issue {issue_id}")
         return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id))
@@ -427,6 +434,8 @@ def create_deferred_issue(
     title = f"fix(review): deferred review comments — PR #{pr_number}"
     result = review.issue.create_issue(
         provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
+        cwd=ctx.worktree_root if ctx.worktree_root else None,
+        host=ctx.host,
     )
     if result.filed:
         if trail:
@@ -520,6 +529,7 @@ def create_or_update_deferred_issue(
     if existing_issue_id:
         updated = update_deferred_issue(
             provider, existing_issue_id, body, repo, provider_info.options,
+            cwd=worktree, host=ctx.host,
         )
         return IssueResult(updated.delivery, CreatedIssue(
             id=updated.issue.id, url=updated.issue.url or existing_issue_url,

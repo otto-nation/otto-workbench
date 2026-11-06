@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import cli.owners_check
@@ -116,3 +118,55 @@ def test_the_shim_classifies_with_one_line_on_stdout():
                        env=dict(os.environ), check=False)
     assert (write.returncode, write.stdout) == (0, "write\n")
     assert (read.returncode, read.stdout) == (0, "read\n")
+
+
+def test_a_heredoc_body_referencing_another_group_is_refused(
+        github_owners, tmp_path, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    command = "gh issue comment 1 <<EOF\nsee me/lib#12\nEOF"
+    code = cli.owners_check.main(["--cwd", str(repo), "--", command])
+    assert code == cli.owners_check.REFUSED
+    assert "me/lib#12" in capsys.readouterr().err
+
+
+def test_the_same_heredoc_text_in_own_group_exits_zero(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    command = "gh issue comment 1 <<EOF\nsee otto-nation/svc#12\nEOF"
+    assert cli.owners_check.main(["--cwd", str(repo), "--", command]) == 0
+
+
+def test_body_file_content_is_scanned(github_owners, tmp_path, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    body = tmp_path / "body.md"
+    body.write_text("see me/lib#12\n")
+    code = cli.owners_check.main([
+        "--cwd", str(repo), "--",
+        f"gh issue comment 1 --body-file {body}",
+    ])
+    assert code == cli.owners_check.REFUSED
+    assert "me/lib#12" in capsys.readouterr().err
+
+
+def test_an_abbreviated_hook_flag_is_rejected(tmp_path, capsys):
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_text("ok\n")
+    with pytest.raises(SystemExit) as exc:
+        cli.owners_check.main(["--mess", str(path), "--cwd", str(tmp_path)])
+    assert exc.value.code == 2
+    assert capsys.readouterr().err
+
+
+def test_the_cross_ref_override_does_not_reach_check_command(
+        github_owners, tmp_path, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    code = cli.owners_check.main([
+        "--cwd", str(repo), "--",
+        "gh issue comment 1 --body 'see me/lib#12'",
+    ])
+    assert code == cli.owners_check.REFUSED
+    assert "me/lib#12" in capsys.readouterr().err

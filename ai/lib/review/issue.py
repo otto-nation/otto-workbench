@@ -16,6 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import gh.client
+import gh.owners
 import core.log
 import core.proc
 import core.prompt
@@ -683,13 +684,40 @@ def _linear_label_names(team: str) -> frozenset[str]:
         _run_issue_cli(["linear", "label", "list", "--all", "--json"]), "Linear")
 
 
+def _check_linear_text(
+        text: str, cwd: str | Path | None, repo: str = "", host: str = "") -> None:
+    """Refuse *text* that names a grouped owner the PR repo is not in.
+
+    Create and update share this so a rebuilt deferred body cannot skip the
+    check the create path already runs. The target group is the owner of
+    *repo* on *host*; empty or unparseable *repo* falls back to the checkout
+    at *cwd*. A content refusal is the only kind the cross-ref override
+    lifts; a config error has empty ``verdict.references`` and still raises.
+    """
+    if cwd is None:
+        cwd = os.getcwd()
+    # Before labels or create: a refused body must not mutate the tracker.
+    target = gh.owners.published_target(repo=repo, host=host)
+    verdict = gh.owners.check_text(text, cwd, target)
+    if not verdict.ok:
+        warning = gh.owners.lift_content_refusal(verdict)
+        if warning is not None:
+            core.log.warn(warning)
+        else:
+            raise gh.owners.OwnerBoundaryError(verdict)
+
+
 def _create_linear(
     team: str,
     title: str,
     description: str,
     parent_id: str | None = None,
     labels: list[str] | None = None,
+    cwd: str | Path | None = None,
+    repo: str = "",
+    host: str = "",
 ) -> CreatedIssue | None:
+    _check_linear_text(f"{title}\n{description}", cwd, repo=repo, host=host)
     with _description_file(description) as desc_file:
         cmd = [
             "linear", "issue", "create",
@@ -745,7 +773,11 @@ def _run_issue_cmd(cmd_prefix: list[str], description: str) -> bool:
             return False
 
 
-def _update_linear(issue_id: str, description: str) -> bool:
+def _update_linear(
+    issue_id: str, description: str, cwd: str | Path | None = None,
+    repo: str = "", host: str = "",
+) -> bool:
+    _check_linear_text(description, cwd, repo=repo, host=host)
     ok = _run_issue_cmd(
         ["linear", "issue", "update", issue_id, "--description-file"],
         description,
@@ -905,6 +937,8 @@ def create_issue(
     parent_id: str | None = None,
     repo: str = "",
     opts: dict | None = None,
+    cwd: str | Path | None = None,
+    host: str = "",
 ) -> IssueResult:
     """Create an issue in the configured tracker.
 
@@ -916,6 +950,11 @@ def create_issue(
     Labels come from ``opts`` rather than a parameter: every caller already
     passes the tracker's options, and which labels a repo puts on the issues
     its automation files is a property of the repo, not of the call site.
+
+    ``cwd`` is the checkout the Linear body falls back to when *repo* is
+    empty. ``host`` is the GitHub host of the PR the filing is about.
+    ``None`` cwd is the process cwd. GitHub filing is checked inside
+    ``gh.client`` instead.
     """
     if not core.publishing.enabled():
         core.publishing.draft(f"create {provider} issue: {title}", description)
@@ -923,7 +962,9 @@ def create_issue(
     labels = _configured_labels(opts)
     if provider == "linear":
         return _creation_result(
-            _create_linear(team, title, description, parent_id, labels))
+            _create_linear(
+                team, title, description, parent_id, labels, cwd=cwd,
+                repo=repo, host=host))
     if provider == "github":
         return _creation_result(
             _create_github(repo, title, description, labels, opts))
@@ -944,13 +985,22 @@ def update_issue(
     description: str,
     repo: str = "",
     opts: dict | None = None,
+    cwd: str | Path | None = None,
+    host: str = "",
 ) -> bool:
-    """Update an existing issue's description. Returns True on success."""
+    """Update an existing issue's description. Returns True on success.
+
+    ``cwd`` is the checkout the Linear body falls back to when *repo* is
+    empty. ``host`` is the GitHub host of the PR the filing is about.
+    ``None`` cwd is the process cwd. GitHub filing is checked inside
+    ``gh.client`` instead.
+    """
     if not core.publishing.enabled():
         core.publishing.draft(f"update {provider} issue {issue_id}", description)
         return False
     if provider == "linear":
-        return _update_linear(issue_id, description)
+        return _update_linear(
+            issue_id, description, cwd=cwd, repo=repo, host=host)
     if provider == "github":
         return _update_github(repo, issue_id, description, opts)
     core.log.dim(f"Issue update not supported for provider: {provider}")

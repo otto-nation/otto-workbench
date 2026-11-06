@@ -583,7 +583,7 @@ step_global_gitignore() {
 step_global_hooks() {
   mkdir -p "$GIT_HOOKS_DIR"
   local hook
-  for hook in pre-commit prepare-commit-msg pre-push post-rewrite; do
+  for hook in pre-commit prepare-commit-msg commit-msg pre-push post-rewrite; do
     install_symlink "$GIT_HOOKS_SRC_DIR/$hook" "$GIT_HOOKS_DIR/$hook"
   done
   git config --global core.hooksPath "$GIT_HOOKS_DIR"

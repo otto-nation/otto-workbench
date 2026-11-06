@@ -9,7 +9,7 @@ setup() {
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
   mkdir -p "$HOME" "$WORKBENCH_CONFIG_DIR"
-  unset GH_REPO GH_HOST WORKBENCH_ALLOW_UPSTREAM
+  unset GH_REPO GH_HOST WORKBENCH_ALLOW_UPSTREAM WORKBENCH_ALLOW_CROSS_REF
   export NODE_COMPILE_CACHE="$BATS_FILE_TMPDIR/node-compile-cache"
 }
 
@@ -72,6 +72,15 @@ _refusal() {
 @test "upstream-guard: refuses any command that names the override" {
   _refusal "$TMPDIR" 'echo WORKBENCH_ALLOW_UPSTREAM'
   [[ "$output" == *"override"* ]]
+  [[ "$output" == *"WORKBENCH_ALLOW_UPSTREAM"* ]]
+  [[ "$output" == *"general.md § Upstream Repositories"* ]]
+}
+
+@test "upstream-guard: refuses any command that names the cross-ref override" {
+  _refusal "$TMPDIR" 'echo WORKBENCH_ALLOW_CROSS_REF'
+  [[ "$output" == *"override"* ]]
+  [[ "$output" == *"WORKBENCH_ALLOW_CROSS_REF"* ]]
+  [[ "$output" == *"general.md § Cross-Group References"* ]]
 }
 
 @test "upstream-guard: refuses when the check cannot run" {
@@ -110,20 +119,42 @@ _refusal() {
   [ "$status" -ne 0 ]
 }
 
-@test "upstream-guard: TS, bash and Python spell the override variable the same" {
-  local ts bash_name python_name
-  ts=$(node --input-type=module -e "
+@test "upstream-guard: TS, bash and Python spell the override variables the same" {
+  local ts_up ts_cross python_up python_cross bash_block
+  ts_up=$(node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/pi/extensions/upstream-guard/detect.ts');
     process.stdout.write(m.ALLOW_UPSTREAM_ENV);
   ")
-  bash_name=$(sed -n 's/^UPSTREAM_OVERRIDE_VAR=//p' "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
-  python_name=$(python3 -c '
+  ts_cross=$(node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/pi/extensions/upstream-guard/detect.ts');
+    process.stdout.write(m.ALLOW_CROSS_REF_ENV);
+  ")
+  python_up=$(python3 -c '
 import sys; sys.path.insert(0, sys.argv[1])
 import gh.owners; print(gh.owners.ALLOW_UPSTREAM_ENV)
 ' "$REPO_ROOT/ai/lib")
-  [ -n "$python_name" ]
-  [ "$ts" = "$python_name" ]
-  [ "$bash_name" = "$python_name" ]
+  python_cross=$(python3 -c '
+import sys; sys.path.insert(0, sys.argv[1])
+import gh.owners; print(gh.owners.ALLOW_CROSS_REF_ENV)
+' "$REPO_ROOT/ai/lib")
+  bash_block=$(awk '/^UPSTREAM_OVERRIDE_VARS=\(/{p=1} p{print} p && /^\)/{exit}' \
+    "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
+  [ -n "$python_up" ]
+  [ -n "$python_cross" ]
+  [ "$ts_up" = "$python_up" ]
+  [ "$ts_cross" = "$python_cross" ]
+  [[ "$bash_block" == *"$python_up"* ]]
+  [[ "$bash_block" == *"$python_cross"* ]]
+}
+
+@test "upstream-guard: both harnesses name both override variables" {
+  local claude="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+  local pi="$REPO_ROOT/ai/pi/extensions/upstream-guard/detect.ts"
+  local name
+  for name in WORKBENCH_ALLOW_UPSTREAM WORKBENCH_ALLOW_CROSS_REF; do
+    grep -qF "$name" "$claude"
+    grep -qF "$name" "$pi"
+  done
 }
 
 @test "upstream-guard: Claude and Pi agree end to end on an upstream checkout" {

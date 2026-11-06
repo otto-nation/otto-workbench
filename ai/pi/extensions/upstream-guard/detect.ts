@@ -24,11 +24,22 @@ import {
  */
 
 /**
- * The user's override for the workbench's own publishing. A command naming it
- * is refused. Kept equal to ALLOW_UPSTREAM_ENV in ai/lib/gh/owners.py and
- * UPSTREAM_OVERRIDE_VAR in claude-bash-guard by tests/pi_extensions_upstream.bats.
+ * The user's override for publishing upstream. A command naming it is refused.
+ * Kept equal to ALLOW_UPSTREAM_ENV in ai/lib/gh/owners.py and the first entry of
+ * UPSTREAM_OVERRIDE_VARS in claude-bash-guard by tests/pi_extensions_upstream.bats.
  */
 export const ALLOW_UPSTREAM_ENV = "WORKBENCH_ALLOW_UPSTREAM";
+
+/**
+ * The user's override for publishing text that references another owner group.
+ * A command naming it is refused. Kept equal to ALLOW_CROSS_REF_ENV in
+ * ai/lib/gh/owners.py and the rest of UPSTREAM_OVERRIDE_VARS in claude-bash-guard
+ * by tests/pi_extensions_upstream.bats.
+ */
+export const ALLOW_CROSS_REF_ENV = "WORKBENCH_ALLOW_CROSS_REF";
+
+/** Both override names, in the same order as UPSTREAM_OVERRIDE_VARS in claude-bash-guard. */
+export const OVERRIDE_ENV_VARS = [ALLOW_UPSTREAM_ENV, ALLOW_CROSS_REF_ENV] as const;
 
 /** The owners-check this guard runs by default — the shared locator's answer. */
 export const OWNERS_CHECK: string = SHARED_OWNERS_CHECK;
@@ -40,10 +51,14 @@ export const REFUSED_STATUS = 2;
 export const CHECK_TIMEOUT_MS = CLASSIFY_TIMEOUT_MS;
 
 const CITATION = "See general.md § Upstream Repositories.";
+const CROSS_REF_CITATION = "See general.md § Cross-Group References.";
 
-/** True when COMMAND spells the override variable anywhere. */
-export function namesOverride(command: string): boolean {
-  return command.includes(ALLOW_UPSTREAM_ENV);
+/** The override name COMMAND spells, or false when it names neither. */
+export function namesOverride(command: string): string | false {
+  for (const name of OVERRIDE_ENV_VARS) {
+    if (command.includes(name)) return name;
+  }
+  return false;
 }
 
 /** How a check that gave no verdict ended, for the refusal text. */
@@ -64,9 +79,16 @@ export function upstreamRefusal(
   ownersCheck: string = OWNERS_CHECK,
   timeoutMs: number = CHECK_TIMEOUT_MS,
 ): string | null {
-  if (namesOverride(command)) {
+  const named = namesOverride(command);
+  if (named === ALLOW_CROSS_REF_ENV) {
     return (
-      `${ALLOW_UPSTREAM_ENV} is the user's override for publishing upstream, and an agent ` +
+      `${named} is the user's override for publishing text that references another owner group, and an agent ` +
+      `command may not name it. Reword the text to drop the reference, or ask the user to publish it. ${CROSS_REF_CITATION}`
+    );
+  }
+  if (named) {
+    return (
+      `${named} is the user's override for publishing upstream, and an agent ` +
       `command may not name it. Draft the command and the text for the user to run themselves. ${CITATION}`
     );
   }

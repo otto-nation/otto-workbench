@@ -26,10 +26,16 @@ that owns it.
 The owner boundary *is* here, for the opposite reason: it is not a choice any
 call site gets to make. `run` refuses a GitHub write whose target is not one of
 our owners (`gh.owners`) before gh starts, by raising `gh.owners.OwnerBoundaryError`,
-so a write site added tomorrow cannot forget it. Reads are not checked and read
-no config. A GraphQL write names no repository, so `graphql` takes a
-`target_repo` hint and falls back to the cwd's remotes. The user's own
-`WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream write through, with a warning.
+so a write site added tomorrow cannot forget it. Published text is checked the
+same way: a cross-group reference in a body is refused before gh starts. Reads
+are not checked and read no config. A GraphQL write names no repository, so
+`graphql` takes a `target_repo` hint and falls back to the cwd's remotes. The
+user's own `WORKBENCH_ALLOW_UPSTREAM=1` lets an upstream-target write through,
+with a warning; it does not lift a content refusal. After that lift, published
+text is still judged as for an unknown/upstream group (`check_gh_content` with
+an empty group). `WORKBENCH_ALLOW_CROSS_REF=1` lets a content refusal through
+the same way; it does not lift an upstream target. An upstream target whose
+body names a grouped owner needs both.
 
 Like `git.client`, this depends on `log` as well as `proc`, and for more of its
 surface than that one does: a rate-limit ladder that waits five minutes in
@@ -306,11 +312,25 @@ def _check_owner_boundary(args: tuple[str, ...], cwd: str | Path | None,
     verdict = gh.owners.check_gh_call(args, cwd=cwd, input_text=input_text, target_repo=target_repo)
     if verdict.ok:
         return
-    if gh.owners.upstream_allowed_by_user():
-        core.log.warn(f"{verdict.reason} — publishing anyway because "
-                      f"{gh.owners.ALLOW_UPSTREAM_ENV}=1")
+    warning = gh.owners.lift_content_refusal(verdict)
+    if warning is not None:
+        core.log.warn(warning)
         return
-    raise gh.owners.OwnerBoundaryError(verdict)
+    if verdict.references or not gh.owners.upstream_allowed_by_user():
+        raise gh.owners.OwnerBoundaryError(verdict)
+    content = gh.owners.check_gh_content(
+        args, cwd=cwd, input_text=input_text, group="")
+    if content.references and not gh.owners.cross_ref_allowed_by_user():
+        raise gh.owners.OwnerBoundaryError(content)
+    core.log.warn(_upstream_warning(verdict, content))
+
+
+def _upstream_warning(target: gh.owners.Verdict, content: gh.owners.Verdict) -> str:
+    """The one warning for an upstream write the user's overrides let through."""
+    if not content.references:
+        return f"{target.reason} — publishing anyway because {gh.owners.ALLOW_UPSTREAM_ENV}=1"
+    return (f"{target.reason}; {content.reason} — publishing anyway because "
+            f"{gh.owners.ALLOW_UPSTREAM_ENV}=1 and {gh.owners.ALLOW_CROSS_REF_ENV}=1")
 
 
 def run(

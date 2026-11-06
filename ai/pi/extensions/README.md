@@ -70,8 +70,11 @@ and timeout every owners-check call goes through.
 
 upstream-guard is the owner boundary, in every session mode: for a command the
 pre-filter matches it runs `owners-check --cwd`, which allows reads and decides
-whether a write's target is one of our owners (`github.owners`). A refusal, or a
-check that could not run, blocks the command.
+whether a write's target is one of our owners (`github.owners`) and whether its
+published text names an owner in a different group. A refusal, or a check that
+could not run, blocks the command. The user's overrides for publishing anyway
+are never honoured here; an agent command that names `WORKBENCH_ALLOW_UPSTREAM`
+or `WORKBENCH_ALLOW_CROSS_REF` is refused.
 
 ## Overriding one
 

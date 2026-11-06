@@ -636,6 +636,23 @@ Sourced by `bin/otto-workbench`. Reads path constants (`USER_*`, `CLAUDE_*`,
 `SKILLS_*`, `GUIDELINES_*`) and colour vars from `lib/ui.sh`; nothing from
 CLI-local state.
 
+### owners_check.sh
+
+Runs ai/lib/cli/owners_check.py for the global commit-msg and pre-push hooks.
+
+Sourced on its own, with no dependencies, for the reason lib/git_remote.sh
+gives: a hook that runs in every repository on the machine must not load
+the whole workbench to answer one question.
+
+```bash
+. "$_workbench/lib/owners_check.sh"
+owners_check_hook "$_workbench" --message-file "$1" --cwd "$PWD" || exit 1
+```
+
+| Function | Purpose |
+|----------|---------|
+| `owners_check_hook WORKBENCH ARGS...` | runs owners-check with ARGS; returns 1 only on a refusal. Stdin is passed through to python (pre-push redirects the captured ref lines). |
+
 ### packages.sh
 
 Package manifests — the Brewfiles under packages/ and the install identity

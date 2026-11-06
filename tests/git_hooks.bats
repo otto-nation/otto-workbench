@@ -27,6 +27,10 @@ teardown() {
   [ -f "$GIT_HOOKS_SRC_DIR/pre-push" ]
 }
 
+@test "commit-msg hook source exists" {
+  [ -f "$GIT_HOOKS_SRC_DIR/commit-msg" ]
+}
+
 @test "workbench hooks exist" {
   [ -f "$GIT_HOOKS_SRC_DIR/pre-commit-workbench" ]
   [ -f "$GIT_HOOKS_SRC_DIR/pre-push-workbench" ]
@@ -39,7 +43,7 @@ teardown() {
   WORKBENCH_STABLE_DIR="$WORKBENCH_DIR" run step_global_hooks
   [ "$status" -eq 0 ]
   local hook
-  for hook in pre-commit prepare-commit-msg pre-push post-rewrite; do
+  for hook in pre-commit prepare-commit-msg commit-msg pre-push post-rewrite; do
     [ "$(readlink "$GIT_HOOKS_DIR/$hook")" = "$GIT_HOOKS_SRC_DIR/$hook" ]
     [ -x "$GIT_HOOKS_SRC_DIR/$hook" ]
   done

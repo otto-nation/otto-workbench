@@ -615,3 +615,8 @@ def resolve_gh_call(args: Sequence[str], *, cwd: str, target_repo: str,
                     known_hosts: frozenset[str]) -> Resolution:
     """The target of a ``gh.client`` call. A GraphQL write takes *target_repo*, else the cwd repo."""
     return _gh(tuple(args), {}, os.environ, cwd, False, known_hosts, target_repo, True, frozenset())
+
+
+def resolve_cwd(cwd: str | Path, known_hosts: frozenset[str]) -> Resolution:
+    """The owners of every GitHub remote at *cwd*."""
+    return _remotes(str(cwd), False, default_host({}), known_hosts)

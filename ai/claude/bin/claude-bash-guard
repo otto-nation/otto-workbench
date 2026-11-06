@@ -62,11 +62,16 @@ GITHUB_WRITE_PROGRAMS='gh pr pr-describe review review-post review-threads revie
 # tests/pi_extensions_tokenize.bats holds the two to one value.
 OWNERS_CHECK_TIMEOUT_SECONDS=15
 
-# The user's override for publishing upstream. Spelled once here for the rule
-# refusing any command that names it; ALLOW_UPSTREAM_ENV in ai/lib/gh/owners.py
-# is what gh.client reads, and ai/pi/extensions/upstream-guard/detect.ts spells
-# it for Pi. tests/pi_extensions_upstream.bats holds the three to one value.
-UPSTREAM_OVERRIDE_VAR=WORKBENCH_ALLOW_UPSTREAM
+# The user's overrides for publishing upstream and for publishing text that
+# references another owner group. Spelled once here for the rule refusing any
+# command that names either; ALLOW_UPSTREAM_ENV and ALLOW_CROSS_REF_ENV in
+# ai/lib/gh/owners.py are what user-run Python paths read, and
+# ai/pi/extensions/upstream-guard/detect.ts spells both for Pi.
+# tests/pi_extensions_upstream.bats holds the three to one values.
+UPSTREAM_OVERRIDE_VARS=(
+  WORKBENCH_ALLOW_UPSTREAM
+  WORKBENCH_ALLOW_CROSS_REF
+)
 
 # _branch_review_has_open_findings — true when a self-review for the current
 # branch is sitting on unticked findings.
@@ -892,11 +897,17 @@ fi
 # ai/pi/extensions/upstream-guard is the same rule under Pi, and
 # tests/pi_extensions_upstream.bats holds the two to one set of answers.
 #
-# The override variable is the user's, set in their own shell for the
-# workbench's own publishing. owners-check never reads it, and a command that
-# names it is refused outright, so an agent cannot set its way past this.
-if [[ "$cmd" == *"$UPSTREAM_OVERRIDE_VAR"* ]]; then
-  block "$UPSTREAM_OVERRIDE_VAR is the user's override for publishing upstream, and an agent command may not name it. Draft the command and the text for the user to run themselves. See general.md § Upstream Repositories."
+# The override variables are the user's, set in their own shell for the
+# workbench's own publishing and for publishing text that references another
+# owner group. owners-check never reads them, and a command that names either
+# is refused outright, so an agent cannot set its way past this. Two top-level
+# checks so both block calls stay at the citation-lint indent; the first array
+# entry is the upstream wording, the second the cross-group override.
+if [[ "$cmd" == *"${UPSTREAM_OVERRIDE_VARS[0]}"* ]]; then
+  block "${UPSTREAM_OVERRIDE_VARS[0]} is the user's override for publishing upstream, and an agent command may not name it. Draft the command and the text for the user to run themselves. See general.md § Upstream Repositories."
+fi
+if [[ "$cmd" == *"${UPSTREAM_OVERRIDE_VARS[1]}"* ]]; then
+  block "${UPSTREAM_OVERRIDE_VARS[1]} is the user's override for publishing text that references another owner group, and an agent command may not name it. Reword the text to drop the reference, or ask the user to publish it. See general.md § Cross-Group References."
 fi
 if _command_might_write_github; then
   _owner_boundary_refusal

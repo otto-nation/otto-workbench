@@ -33,6 +33,16 @@ workbench's own publishing past an upstream refusal (``gh.client`` asks
 for agent commands, and an agent session inherits whatever its harness was
 launched with, so honouring it there would make the override reachable from
 inside the session. Both guards also refuse any command that names it.
+
+Published text is checked by ``check_content``: every configured owner it names
+must be in the target's group. A command with several writes is checked against
+each distinct write group; the first refusal is returned. Upstream names are
+not references, so they stay allowed. ``WORKBENCH_ALLOW_CROSS_REF=1`` lets
+user-run Python paths (``gh.client``, Linear, the git hooks) past a content
+refusal (``cross_ref_allowed_by_user``). ``WORKBENCH_ALLOW_UPSTREAM=1`` lifts
+only a target refusal; the content is then judged as for an unknown/upstream
+group and still needs the cross-ref override. ``check_command`` never reads
+either override.
 """
 
 # doc-group: platform
@@ -46,11 +56,16 @@ from pathlib import Path
 
 import config.github_owners
 import config.workbench_config
+import gh.owner_content
+import gh.owner_references
+import gh.owner_scopes
 import gh.owner_targets
 import gh.write_shapes
 from config.github_owners import Owner
+from gh.owner_references import Reference
 
 ALLOW_UPSTREAM_ENV = "WORKBENCH_ALLOW_UPSTREAM"
+ALLOW_CROSS_REF_ENV = "WORKBENCH_ALLOW_CROSS_REF"
 FIX_COMMAND = (
     f"otto-workbench config set {config.workbench_config.GITHUB_OWNERS_KEY}.<group> '[owner, …]'")
 CLIENT_CHOOSE = (
@@ -123,14 +138,16 @@ class Verdict:
     reason: str = ""
     group: str = ""
     target: gh.owner_targets.Target | None = None
+    references: tuple[Reference, ...] = ()
 
     @classmethod
     def allow(cls, group: str = "", target: gh.owner_targets.Target | None = None) -> Verdict:
         return cls(True, "", group, target)
 
     @classmethod
-    def refuse(cls, reason: str, target: gh.owner_targets.Target | None = None) -> Verdict:
-        return cls(False, reason, "", target)
+    def refuse(cls, reason: str, target: gh.owner_targets.Target | None = None,
+               references: tuple[Reference, ...] = ()) -> Verdict:
+        return cls(False, reason, "", target, references)
 
 
 class OwnerBoundaryError(RuntimeError):
@@ -162,6 +179,24 @@ def upstream_allowed_by_user() -> bool:
     return os.environ.get(ALLOW_UPSTREAM_ENV) == "1"
 
 
+def cross_ref_allowed_by_user() -> bool:
+    """Whether the user set ``WORKBENCH_ALLOW_CROSS_REF=1`` — exactly ``1``."""
+    return os.environ.get(ALLOW_CROSS_REF_ENV) == "1"
+
+
+def lift_content_refusal(verdict: Verdict) -> str | None:
+    """Warning text when the cross-ref override lifts a content refusal.
+
+    A content refusal is one with non-empty ``references``. Returns the
+    warning when the override is exactly ``1``, else None. Target and config
+    refusals (empty references) are never lifted.
+    """
+    if not verdict.references or not cross_ref_allowed_by_user():
+        return None
+    return (
+        f"{verdict.reason} — publishing anyway because {ALLOW_CROSS_REF_ENV}=1")
+
+
 def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdict:
     """Whether every candidate owner of *target* is ours, in one group."""
     if not owner_map.configured:
@@ -185,6 +220,39 @@ def check_target(target: gh.owner_targets.Target, owner_map: OwnerMap) -> Verdic
             f"{target.detail} span the {' and '.join(names)} groups, so gh may pick either —"
             f" {target.choose}", target)
     return Verdict.allow(names[0], target)
+
+
+def check_content(text: str, target_group: str, owner_map: OwnerMap) -> Verdict:
+    """Whether published *text* only names owners in *target_group*.
+
+    Configured owners outside that group are refused. Upstream names never
+    appear in ``references()`` output, so they stay allowed. An empty
+    *target_group* (unknown or upstream) refuses any grouped reference.
+    """
+    refs = gh.owner_references.references(text, owner_map)
+    offending = tuple(
+        ref for ref in refs if not _content_group_ok(ref, target_group, owner_map))
+    if not offending:
+        return Verdict.allow(target_group)
+    return Verdict.refuse(
+        _cross_ref_reason(offending, target_group, owner_map), references=offending)
+
+
+def _content_group_ok(ref: Reference, target_group: str, owner_map: OwnerMap) -> bool:
+    return bool(target_group) and owner_map.classify(ref.owner).name == target_group
+
+
+def _cross_ref_reason(
+        refs: tuple[Reference, ...], target_group: str, owner_map: OwnerMap) -> str:
+    named = ", ".join(
+        f"{ref.text} ({owner_map.classify(ref.owner).name})" for ref in refs)
+    where = f"the {target_group} group" if target_group else "an unknown/upstream target"
+    copula = (
+        "is a cross-group reference" if len(refs) == 1 else "are cross-group references")
+    return (
+        f"{named} {copula} in text for {where} — "
+        f"general.md § Cross-Group References. Reword to drop the reference, "
+        f"or ask the user to publish it, who may set {ALLOW_CROSS_REF_ENV}=1")
 
 
 _GH_TARGET_VARS = frozenset({"GH_REPO", "GH_HOST"})
@@ -250,6 +318,13 @@ def _load() -> OwnerMap | Verdict:
     return owner_map if owner_map.configured else Verdict.refuse(UNCONFIGURED)
 
 
+def _relative_body_after_cd_reason(paths: tuple[str, ...]) -> str:
+    named = ", ".join(paths)
+    return (
+        f"{named} is a relative body-file path after a directory change, so it cannot "
+        f"be resolved — pass an absolute path. general.md § Cross-Group References")
+
+
 def check_command(command: str, cwd: str) -> Verdict:
     """Whether a shell command's GitHub writes may proceed from *cwd*. Reads always may."""
     try:
@@ -265,6 +340,7 @@ def check_command(command: str, cwd: str) -> Verdict:
         return loaded
     after_cd = any(_changes_directory(s) for s in statements)
     assigned = frozenset().union(*(_gh_env_names(s) for s in statements)) if statements else frozenset()
+    groups: list[str] = []
     verdict = Verdict.allow()
     for statement in writes:
         shifted = assigned - _own_gh_env(statement)
@@ -276,6 +352,16 @@ def check_command(command: str, cwd: str) -> Verdict:
         verdict = check_target(resolution.target, loaded)
         if not verdict.ok:
             return verdict
+        if verdict.group not in groups:
+            groups.append(verdict.group)
+    relative = gh.owner_content.relative_body_paths(command)
+    if after_cd and relative:
+        return Verdict.refuse(_relative_body_after_cd_reason(relative))
+    text = gh.owner_content.command_text(command, cwd)
+    for group in groups:
+        content = check_content(text, group, loaded)
+        if not content.ok:
+            return content
     return verdict
 
 
@@ -291,4 +377,69 @@ def check_gh_call(args: Sequence[str], *, cwd: str | Path | None = None,
         args, cwd=str(cwd or os.getcwd()), target_repo=target_repo, known_hosts=loaded.hosts())
     if not resolution.ok:
         return Verdict.refuse(resolution.reason)
-    return check_target(replace(resolution.target, choose=CLIENT_CHOOSE), loaded)
+    verdict = check_target(replace(resolution.target, choose=CLIENT_CHOOSE), loaded)
+    if not verdict.ok:
+        return verdict
+    content = check_gh_content(
+        args, cwd=cwd, input_text=input_text, group=verdict.group,
+        owner_map=loaded)
+    return content if not content.ok else verdict
+
+
+def check_gh_content(
+        args: Sequence[str], *, cwd: str | Path | None, input_text: str | None,
+        group: str, owner_map: OwnerMap | None = None) -> Verdict:
+    """Whether the published text of ``gh *args`` may go to *group*.
+
+    The content step ``check_gh_call`` runs on the ok path, passing the map
+    it already loaded. Unconfigured or a config error comes back from
+    ``_load`` as a refusal with no references.
+    """
+    loaded: OwnerMap | Verdict = owner_map if owner_map is not None else _load()
+    if isinstance(loaded, Verdict):
+        return loaded
+    return check_content(
+        gh.owner_content.argv_text(args, input_text, cwd or os.getcwd()),
+        group, loaded)
+
+
+def published_target(
+        owner: Owner | None = None, repo: str = "", host: str = "") -> Owner | None:
+    """An explicit publication target, or None to fall back to cwd remotes.
+
+    *owner* wins when given. Else *repo* is parsed as OWNER/REPO on *host*
+    (github.com when host is empty) or HOST/OWNER/REPO. Empty or unparseable
+    repo returns None, which ``check_text`` treats as the cwd checkout.
+    """
+    if owner is not None:
+        return owner
+    spec = (repo or "").strip()
+    if not spec:
+        return None
+    return gh.owner_scopes.repo_owner(
+        spec, (host or "").strip() or config.github_owners.DEFAULT_HOST)
+
+
+def check_text(text: str, cwd: str | Path, target: Owner | None = None) -> Verdict:
+    """Whether published *text* may go out from *target*, else the checkout at *cwd*.
+
+    Unconfigured ``github.owners`` allows: nothing classifies, so nothing is
+    a reference. A config error refuses. An unresolvable cwd is an unknown
+    group, which refuses any grouped reference. *target* is the owner of the
+    destination (a PR repo, a push remote); None falls back to cwd remotes.
+    """
+    try:
+        owner_map = OwnerMap.load()
+    except config.workbench_config.ConfigError as exc:
+        return Verdict.refuse(str(exc))
+    if not owner_map.configured:
+        return Verdict.allow()
+    if target is not None:
+        return check_content(text, owner_map.classify(target).name, owner_map)
+    resolution = gh.owner_targets.resolve_cwd(cwd, owner_map.hosts())
+    group = ""
+    if resolution.ok:
+        judged = check_target(resolution.target, owner_map)
+        if judged.ok:
+            group = judged.group
+    return check_content(text, group, owner_map)

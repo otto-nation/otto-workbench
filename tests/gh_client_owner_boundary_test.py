@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -34,6 +35,7 @@ from conftest import remote_repo
 @pytest.fixture(autouse=True)
 def _no_inherited_override(monkeypatch):
     monkeypatch.delenv(gh.owners.ALLOW_UPSTREAM_ENV, raising=False)
+    monkeypatch.delenv(gh.owners.ALLOW_CROSS_REF_ENV, raising=False)
     monkeypatch.delenv("GH_HOST", raising=False)
     monkeypatch.delenv("GH_REPO", raising=False)
 
@@ -103,6 +105,96 @@ def test_the_users_override_lets_an_upstream_write_through(stub_gh, github_owner
     err = capsys.readouterr().err
     assert "stranger" in err
     assert f"{gh.owners.ALLOW_UPSTREAM_ENV}=1" in err
+
+
+def test_a_body_referencing_another_group_never_reaches_gh(
+        stub_gh, github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo ok")
+    own = remote_repo(tmp_path / "own", "git@github.com:otto-nation/svc.git")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.run(
+            "issue", "comment", "1", "--body", "see me/lib#12", cwd=own)
+    assert "me/lib#12" in str(exc.value)
+    assert exc.value.verdict.references
+    assert not calls.exists()
+
+
+def test_the_cross_ref_override_lets_a_content_refusal_through(
+        stub_gh, github_owners, tmp_path, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo ok")
+    own = remote_repo(tmp_path / "own", "git@github.com:otto-nation/svc.git")
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    assert gh.client.run(
+        "issue", "comment", "1", "--body", "see me/lib#12", cwd=own).ok
+    assert calls.exists()
+    err = capsys.readouterr().err
+    assert "me/lib#12" in err
+    assert f"{gh.owners.ALLOW_CROSS_REF_ENV}=1" in err
+    assert err.count("publishing anyway") == 1
+
+
+def test_a_refused_upstream_write_does_not_say_it_is_publishing(
+        stub_gh, github_owners, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    with pytest.raises(gh.owners.OwnerBoundaryError):
+        gh.client.api(
+            "repos/stranger/lib/issues", method="POST", input_text="see me/lib#12")
+    assert "publishing anyway" not in capsys.readouterr().err
+
+
+def test_the_cross_ref_override_does_not_lift_an_upstream_target(
+        stub_gh, github_owners, monkeypatch):
+    github_owners({"work": ["otto-nation"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.api("repos/stranger/lib/issues", method="POST", input_text="{}")
+    assert "stranger" in str(exc.value)
+    assert not exc.value.verdict.references
+    assert not calls.exists()
+
+
+def test_allow_upstream_does_not_lift_a_cross_ref_on_an_upstream_target(
+        stub_gh, github_owners, monkeypatch):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.api(
+            "repos/stranger/lib/issues", method="POST",
+            input_text="see me/lib#12")
+    assert "me/lib#12" in str(exc.value)
+    assert exc.value.verdict.references
+    assert not calls.exists()
+
+
+def test_both_overrides_let_an_upstream_target_with_a_cross_ref_through(
+        stub_gh, github_owners, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    assert gh.client.api(
+        "repos/stranger/lib/issues", method="POST",
+        input_text="see me/lib#12").ok
+    assert calls.exists()
+    err = capsys.readouterr().err
+    assert f"{gh.owners.ALLOW_UPSTREAM_ENV}=1" in err
+    assert f"{gh.owners.ALLOW_CROSS_REF_ENV}=1" in err
+
+
+def test_allow_upstream_alone_lets_an_upstream_write_with_no_references_through(
+        stub_gh, github_owners, monkeypatch):
+    github_owners({"work": ["otto-nation"]})
+    calls = stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    assert gh.client.api(
+        "repos/stranger/lib/issues", method="POST", input_text="{}").ok
+    assert calls.exists()
 
 
 def test_an_entry_point_reports_a_refusal_as_exit_one(capsys):
@@ -256,3 +348,16 @@ def test_a_cli_write_refusal_propagates_from_the_client(
     assert "stranger" in err
     written = calls.read_text() if calls.exists() else ""
     assert "pr edit" not in written
+
+
+@pytest.mark.parametrize("body", [
+    "Thanks!\nme/lib#12", "Thanks!\n@me", "see \u201cme/lib#12\u201d"])
+def test_a_reference_behind_a_json_escape_never_reaches_gh(stub_gh, github_owners, body):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    calls = stub_gh("echo '{}'")
+    with pytest.raises(gh.owners.OwnerBoundaryError) as exc:
+        gh.client.api(
+            "repos/otto-nation/svc/issues/1/comments", method="POST",
+            input_text=json.dumps({"body": body}))
+    assert exc.value.verdict.references
+    assert not calls.exists()

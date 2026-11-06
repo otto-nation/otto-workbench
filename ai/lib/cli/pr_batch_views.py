@@ -14,7 +14,7 @@ import batch.live
 import batch.plan
 import batch.report
 import batch.store
-import cli.pr_batch
+import cli.pr_batch_common
 import core.report
 import core.serde
 from batch.model import Run
@@ -40,14 +40,14 @@ def _report(run: Run, active: bool, github: dict | None = None) -> dict:
 
 def _cmd_status(args) -> int:
     """`status` and `next`: the report, a projection of it, or what it summarises."""
-    run_id = cli.pr_batch._run_id(args.run_id)
+    run_id = cli.pr_batch_common._run_id(args.run_id)
     if not run_id:
-        return cli.pr_batch._err("no batch runs yet")
+        return cli.pr_batch_common._err("no batch runs yet")
     try:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
-        return cli.pr_batch._err(f"no run {run_id}")
-    active = cli.pr_batch._active(run_id)
+        return cli.pr_batch_common._err(f"no run {run_id}")
+    active = cli.pr_batch_common._active(run_id)
     if args.command == "next":
         core.report.emit_json(batch.report.next_view(_report(run, active, _github(run, args))))
         return EXIT_OK
@@ -59,7 +59,7 @@ def _cmd_status(args) -> int:
         try:
             core.report.emit_json(batch.report.decision_detail(run, args.decision))
         except KeyError:
-            return cli.pr_batch._err(f"run {run_id} has no decision {args.decision}")
+            return cli.pr_batch_common._err(f"run {run_id} has no decision {args.decision}")
         return EXIT_OK
     core.report.emit_json(_report(run, active, _github(run, args)))
     return EXIT_OK

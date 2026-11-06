@@ -39,11 +39,11 @@ import batch.report
 import batch.scheduler
 import batch.store
 import batch.targets
+import cli.pr_batch_common
 import config.workbench_config
 import core.log
 import core.run_lock
 import core.serde
-import pr.target
 import review.focus
 from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step, StepStatus
 from batch.requests import Outcome
@@ -188,49 +188,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _err(message: str) -> int:
-    print(f"pr batch: {message}", file=sys.stderr)
-    return 1
-
-
-def _cwd_repo() -> batch.store.RepoRef | None:
-    identity = pr.target.repo_identity_from_origin(os.getcwd())
-    if identity is None:
-        return None
-    return batch.store.RepoRef(identity.key, identity.label)
-
-
-def _warn_other_active(chosen: str) -> None:
-    for run_id in batch.store.run_ids():
-        if run_id != chosen and _active(run_id):
-            print(f"pr batch: other active run {run_id} is being driven", file=sys.stderr)
-
-
-def _warn_foreign_run(cwd: batch.store.RepoRef | None, chosen: str) -> None:
-    if cwd is None:
-        print(f"pr batch: showing {chosen}, the newest run on this machine",
-              file=sys.stderr)
-        return
-    print(f"pr batch: no run covers {cwd.label}; showing {chosen}, "
-          f"the newest run on this machine", file=sys.stderr)
-
-
-def _run_id(given: str | None, *, covering_only: bool = False) -> str | None:
-    """*given*, or the covering run for this checkout; names other live drivers on stderr."""
-    if given:
-        return given
-    cwd = _cwd_repo()
-    if covering_only:
-        chosen = batch.store.covering_run_id(cwd)
-    else:
-        chosen = batch.store.default_run_id(cwd)
-        if chosen and batch.store.covering_run_id(cwd) != chosen:
-            _warn_foreign_run(cwd, chosen)
-    if chosen:
-        _warn_other_active(chosen)
-    return chosen
-
-
 def _cfg(dirs: list[str]):
     return config.workbench_config.load_config_or_default(dirs[0] if dirs else None).batch
 
@@ -269,23 +226,13 @@ def _driver_inbox(bin_dir: Path, reporter: _Reporter) -> batch.inbox.Inbox:
                                                       report=reporter))
 
 
-def _active(run_id: str) -> bool:
-    """Whether a scheduler is driving *run_id*: the live holder of its lock is a driver.
-
-    An applier's brief hold is not a scheduler. A record with no role reads as
-    a driver, which is what a held run lock meant before roles existed.
-    """
-    found = batch.store.holder(run_id)
-    return found is not None and found.role in (Role.DRIVER, None)
-
-
 def _emit_summary(run: Run, code: int) -> None:
     """The last line of a settled run: `next`'s document as a `run_summary` event.
 
     Its `exit_hint` is *code*, the process's real exit status. Apply errors
     make it 1, whatever the run's status alone would say.
     """
-    view = batch.report.next_view(_report(run, _active(run.id)))
+    view = batch.report.next_view(_report(run, cli.pr_batch_common._active(run.id)))
     view["run"]["exit_hint"] = code
     batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
 
@@ -527,7 +474,7 @@ def _cmd_run(args, bin_dir: Path) -> int:
         focus = review.focus.operator_texts(args)
         review.focus.operator_areas(focus)
     except review.focus.FocusInputError as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common._err(str(exc))
     plan = _plan(args)
     reporter = _Reporter()
     # The run's own lock goes on `held` first, so it is released last. An
@@ -538,7 +485,7 @@ def _cmd_run(args, bin_dir: Path) -> int:
         try:
             started = _start_run(held, args, plan, _driver_inbox(bin_dir, reporter), focus=focus)
         except _Refused as exc:
-            return _err(str(exc))
+            return cli.pr_batch_common._err(str(exc))
         _emit_started(started.session.run)
         try:
             stopped = _drive(started.session, reporter, started.holds, bin_dir=bin_dir,
@@ -612,27 +559,27 @@ def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool,
 
 def _cmd_resume(args, bin_dir: Path) -> int:
     if refusal := _ambiguous(args.run_id):
-        return _err(refusal)
-    run_id = _run_id(args.run_id, covering_only=not args.run_id)
+        return cli.pr_batch_common._err(refusal)
+    run_id = cli.pr_batch_common._run_id(args.run_id, covering_only=not args.run_id)
     if not run_id:
-        return _err("no batch run covers this repo; pass a run id")
+        return cli.pr_batch_common._err("no batch run covers this repo; pass a run id")
     try:
         _require_batch_locks(batch.targets.run_repo_keys(batch.store.load(run_id)),
                              f"run {run_id} not resumed")
     except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
+        return cli.pr_batch_common._err(f"no run {run_id}")
     except _Refused as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common._err(str(exc))
     reporter = _Reporter()
     try:
         stopped = _resume(run_id, reporter, bin_dir, args.verbose, steps=args.steps)
     except batch.store.RunNotFound:
-        return _err(f"no run {run_id}")
+        return cli.pr_batch_common._err(f"no run {run_id}")
     except _Refused as exc:
         print(f"pr batch: {exc}", file=sys.stderr)
         return 2 if isinstance(exc, _NarrowOnly) else 1
     except (batch.store.RunBusy, batch.store.RunUnreachable) as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common._err(str(exc))
     return _conclude(run_id, stopped, reporter)
 
 
@@ -655,4 +602,4 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
         # status and next
         return _cmd_status(args)
     except batch.plan.PlanError as exc:
-        return _err(str(exc))
+        return cli.pr_batch_common._err(str(exc))

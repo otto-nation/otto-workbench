@@ -10,4 +10,8 @@
 
 [[ -x "$(command -v herdr 2>/dev/null)" ]] || return 0
 
+# The completion script calls compdef; without a framework running compinit
+# it is undefined, so load the completion system first.
+(( $+functions[compdef] )) || { autoload -Uz compinit && compinit; }
+
 source <(herdr completion zsh)

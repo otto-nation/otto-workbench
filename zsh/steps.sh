@@ -119,8 +119,8 @@ _zsh_clone() {
 # step_zsh_shell_tools — when brew bundle does not own the shell stack, installs
 # what the zsh layers expect Homebrew to provide, so the shell is not left bare:
 # starship for prompt/, oh-my-zsh for framework/, and the shell Brewfile's zsh
-# plugins for tools/zsh-plugins.zsh. A no-op on macOS with Homebrew — the
-# Brewfile owns those installs there. Linuxbrew is not that case: bundle is not
+# plugins for tools/zsh-plugins.zsh. With Homebrew only oh-my-zsh is cloned —
+# the Brewfile owns the other installs there. Linuxbrew is not that case: bundle is not
 # used, and git entries would otherwise be skipped as "installed by the zsh
 # component" with nobody cloning them. Non-fatal: each layer already skips what
 # is missing.
@@ -129,9 +129,11 @@ _zsh_clone() {
 # rewrite ~/.zshrc and change the login shell; the framework snippet only
 # needs the checkout.
 step_zsh_shell_tools() {
+  # oh-my-zsh has no Homebrew formula, so no Brewfile installs it: clone it
+  # whether or not brew bundle owns the rest of the shell stack.
+  _zsh_clone "$OH_MY_ZSH_DIR" "https://github.com/ohmyzsh/ohmyzsh.git" oh-my-zsh || true
   packages_use_bundle && return 0
   install_package starship || true
-  _zsh_clone "$OH_MY_ZSH_DIR" "https://github.com/ohmyzsh/ohmyzsh.git" oh-my-zsh || true
 
   if [[ ! -f "$SHELL_MANIFEST" ]]; then
     warn "could not read zsh plugins from $SHELL_MANIFEST"

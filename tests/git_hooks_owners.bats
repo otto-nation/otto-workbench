@@ -120,6 +120,13 @@ _msg() {
   [[ "$output" != *"could not run"* ]]
 }
 
+@test "commit-msg given a missing message file still allows" {
+  _two_groups
+  cd "$W" || return 1
+  run "$REPO_ROOT/git/hooks/commit-msg" "$TMPDIR/no-such-msg"
+  [ "$status" -eq 0 ]
+}
+
 @test "repo-local commit-msg still runs after the owner check" {
   _two_groups
   mkdir -p "$W/.git/hooks"

@@ -186,6 +186,67 @@ def test_message_and_push_agree_when_push_remote_name_contains_a_slash(
     assert msg_code == push_code == 0
 
 
+def _origin_and_fork(tmp_path) -> Path:
+    repo = init_repo(tmp_path / "r")
+    git_in(repo, "remote", "add", "origin", OWN)
+    git_in(repo, "remote", "add", "fork", OTHER)
+    git_in(repo, "commit", "-q", "--allow-empty", "--no-verify", "-m", "base")
+    return repo
+
+
+def _message_group(tmp_path, repo) -> str:
+    own = _message(tmp_path, repo, OWN_REF) == 0
+    other = _message(tmp_path, repo, OFFENCE) == 0
+    return {(True, False): "work", (False, True): "personal",
+            (False, False): "unknown", (True, True): "both"}[(own, other)]
+
+
+def test_message_file_on_a_detached_head_ignores_branch_pushremote(
+        github_owners, tmp_path):
+    _groups(github_owners)
+    repo = _origin_and_fork(tmp_path)
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    git_in(repo, "config", "branch.feat.pushRemote", "fork")
+    git_in(repo, "checkout", "-q", "--detach")
+    assert _message_group(tmp_path, repo) == "work"
+
+
+def test_message_file_on_a_detached_head_honours_remote_pushdefault(
+        github_owners, tmp_path):
+    _groups(github_owners)
+    repo = _origin_and_fork(tmp_path)
+    git_in(repo, "config", "remote.pushDefault", "fork")
+    git_in(repo, "checkout", "-q", "--detach")
+    assert _message_group(tmp_path, repo) == "personal"
+
+
+def test_message_file_falls_back_to_origin_when_pushdefault_names_no_remote(
+        github_owners, tmp_path):
+    _groups(github_owners)
+    repo = _origin_and_fork(tmp_path)
+    git_in(repo, "config", "remote.pushDefault", "nosuch")
+    assert _message_group(tmp_path, repo) == "work"
+
+
+def test_message_file_falls_back_to_origin_when_pushremote_names_no_remote(
+        github_owners, tmp_path):
+    _groups(github_owners)
+    repo = _origin_and_fork(tmp_path)
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    git_in(repo, "config", "branch.feat.pushRemote", "nosuch")
+    assert _message_group(tmp_path, repo) == "work"
+
+
+def test_message_file_without_origin_or_push_config_is_an_unknown_destination(
+        github_owners, tmp_path, capsys):
+    _groups(github_owners)
+    repo = init_repo(tmp_path / "r")
+    git_in(repo, "remote", "add", "fork", OTHER)
+    git_in(repo, "remote", "add", "upstream", OWN)
+    assert _message_group(tmp_path, repo) == "unknown"
+    assert "unknown/upstream target" in capsys.readouterr().err
+
+
 def test_message_file_allows_a_non_github_remote(github_owners, tmp_path):
     _groups(github_owners)
     repo = remote_repo(tmp_path / "r", GITLAB)

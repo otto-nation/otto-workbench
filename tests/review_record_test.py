@@ -345,11 +345,12 @@ def test_a_finding_without_an_origin_loads_as_the_writer_s(tmp_path, capsys):
 
 
 def test_an_origin_round_trips(tmp_path):
-    rec = record(finding("S1", origin=FindingOrigin.CLAIM))
+    rec = record(finding("S1", origin=FindingOrigin.CLAIM), finding("S2"))
     save_record(tmp_path, rec)
     loaded = load_record(tmp_path)
     assert loaded == rec
     assert loaded.findings[0].derived
+    assert not loaded.findings[1].derived
     assert loaded.findings[0].view().origin is FindingOrigin.CLAIM
     assert RecordFinding(id="S1", severity="S", origin="claim").origin is FindingOrigin.CLAIM
 

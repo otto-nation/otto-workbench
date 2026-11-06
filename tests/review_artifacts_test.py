@@ -218,18 +218,11 @@ def test_a_ledger_disposition_outside_the_enum_is_rejected():
     assert v.at == "$.prior_findings[0].disposition" and '"Fixed"' in v.detail
 
 
-@pytest.mark.parametrize("harness_field", ["disposition", "stable_id", "checkbox", "skipped"])
+@pytest.mark.parametrize("harness_field", ["disposition", "stable_id", "checkbox", "skipped", "origin"])
 def test_a_harness_owned_field_is_not_writable(harness_field):
     with pytest.raises(SchemaRejected) as exc:
         load_strict(GroupArtifact, _group(**{harness_field: "x"}))
     assert exc.value.violations[0].at == f"$.findings[0].{harness_field}"
-
-
-def test_an_agent_finding_cannot_claim_an_origin():
-    with pytest.raises(SchemaRejected) as exc:
-        load_strict(GroupArtifact, _group(origin="claim"))
-    (v,) = exc.value.violations
-    assert "origin" in v.at
 
 
 def test_a_finding_converts_with_its_severity_and_stable_id():

@@ -132,6 +132,18 @@ def test_the_cross_ref_override_lets_a_content_refusal_through(
     err = capsys.readouterr().err
     assert "me/lib#12" in err
     assert f"{gh.owners.ALLOW_CROSS_REF_ENV}=1" in err
+    assert err.count("publishing anyway") == 1
+
+
+def test_a_refused_upstream_write_does_not_say_it_is_publishing(
+        stub_gh, github_owners, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    stub_gh("echo '{}'")
+    monkeypatch.setenv(gh.owners.ALLOW_UPSTREAM_ENV, "1")
+    with pytest.raises(gh.owners.OwnerBoundaryError):
+        gh.client.api(
+            "repos/stranger/lib/issues", method="POST", input_text="see me/lib#12")
+    assert "publishing anyway" not in capsys.readouterr().err
 
 
 def test_the_cross_ref_override_does_not_lift_an_upstream_target(

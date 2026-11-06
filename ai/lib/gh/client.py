@@ -316,22 +316,21 @@ def _check_owner_boundary(args: tuple[str, ...], cwd: str | Path | None,
     if warning is not None:
         core.log.warn(warning)
         return
-    if verdict.references:
+    if verdict.references or not gh.owners.upstream_allowed_by_user():
         raise gh.owners.OwnerBoundaryError(verdict)
-    if not gh.owners.upstream_allowed_by_user():
-        raise gh.owners.OwnerBoundaryError(verdict)
-    core.log.warn(f"{verdict.reason} — publishing anyway because "
-                  f"{gh.owners.ALLOW_UPSTREAM_ENV}=1")
     content = gh.owners.check_gh_content(
         args, cwd=cwd, input_text=input_text, group="")
-    warning = gh.owners.lift_content_refusal(content)
-    if warning is not None:
-        core.log.warn(
-            f"{content.reason} — publishing anyway because "
-            f"{gh.owners.ALLOW_UPSTREAM_ENV}=1 and {gh.owners.ALLOW_CROSS_REF_ENV}=1")
-        return
-    if content.references:
+    if content.references and not gh.owners.cross_ref_allowed_by_user():
         raise gh.owners.OwnerBoundaryError(content)
+    core.log.warn(_upstream_warning(verdict, content))
+
+
+def _upstream_warning(target: gh.owners.Verdict, content: gh.owners.Verdict) -> str:
+    """The one warning for an upstream write the user's overrides let through."""
+    if not content.references:
+        return f"{target.reason} — publishing anyway because {gh.owners.ALLOW_UPSTREAM_ENV}=1"
+    return (f"{target.reason}; {content.reason} — publishing anyway because "
+            f"{gh.owners.ALLOW_UPSTREAM_ENV}=1 and {gh.owners.ALLOW_CROSS_REF_ENV}=1")
 
 
 def run(

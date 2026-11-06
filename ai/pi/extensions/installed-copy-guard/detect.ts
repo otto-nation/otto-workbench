@@ -24,13 +24,13 @@ export const EDIT_REFUSAL =
   "This is the installed copy of the workbench (or a worktree of it), which " +
   "`otto-workbench sync` runs from and only sync updates. Change the code in " +
   "the repository's container, ~/git/otto-nation/otto-workbench, in a " +
-  "worktree made there with `wt switch -c`, and let sync carry it here.";
+  "worktree made there with `wt switch -c`, and let sync carry it here. See git-operations.md § The Installed Copy Is Read-Only.";
 
 export const WORKTREE_REFUSAL =
   "Creating a worktree from the installed copy leaves the branch's checkout " +
   "beside the install, outside the container every other worktree lives in. " +
   "Run `wt switch -c` from a worktree in the container, " +
-  "~/git/otto-nation/otto-workbench, instead.";
+  "~/git/otto-nation/otto-workbench, instead. See git-operations.md § The Installed Copy Is Read-Only.";
 
 /** Exit 0 from the checker is "yes"; anything else, including a crash, is "no". */
 function asks(args: string[]): boolean {

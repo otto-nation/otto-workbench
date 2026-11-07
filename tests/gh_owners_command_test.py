@@ -104,12 +104,71 @@ def test_check_command_allows_shell_borne_bodies_without_cross_refs(
         assert gh.owners.check_command(command, str(tmp_path)).ok, command
 
 
-def test_check_command_allows_a_generator_pipe(github_owners, tmp_path):
+def test_check_command_refuses_a_generator_pipe(github_owners, tmp_path):
     github_owners({"work": ["otto-nation"], "personal": ["me"]})
-    (tmp_path / "notes.md").write_text("see me/lib#12\n")
     verdict = gh.owners.check_command(
         f"generate-body | {_WRITE} --body-file -", str(tmp_path))
-    assert verdict.ok
+    assert not verdict.ok
+    assert "generate-body" in verdict.reason
+    assert "absolute path" in verdict.reason
+
+
+_EDIT = "gh pr edit 1 -R otto-nation/svc --body-file -"
+
+
+@pytest.mark.parametrize("command", [
+    f"sed 1d n.md | {_EDIT}",
+    f"git show HEAD:n.md | {_EDIT}",
+    f"gh pr view 1 --json body -q .body | {_EDIT}",
+    f"python3 - <<'EOF' | {_EDIT}\nprint(1)\nEOF",
+    "gh pr view 1 --json body -q .body | gh api -X POST repos/otto-nation/svc/issues/1/comments -F body=@-",
+    "sed 1d n.md | gh api -X POST repos/otto-nation/svc/issues/1/comments --input -",
+])
+def test_check_command_refuses_a_stdin_body_from_any_generator(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    verdict = gh.owners.check_command(command, str(tmp_path))
+    assert not verdict.ok
+    assert "absolute path" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    f"cat <<'EOF' | {_EDIT}\nhello\nEOF",
+    f"cat n.md | {_EDIT}",
+    f"echo hi | {_EDIT}",
+    f"printf hi | {_EDIT}",
+    f"{_EDIT} <<<hi",
+])
+def test_check_command_allows_a_stdin_body_from_plain_text(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    assert gh.owners.check_command(command, str(tmp_path)).ok, command
+
+
+def test_a_generator_inside_bash_c_is_refused(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    verdict = gh.owners.check_command(
+        f"bash -c 'sed 1d n.md | {_EDIT}'", str(tmp_path))
+    assert not verdict.ok
+    assert "absolute path" in verdict.reason
+
+
+_JQ_COMMENT = (
+    "jq -n --rawfile b {notes} '{{body:$b}}' | "
+    "gh api -X POST repos/otto-nation/svc/issues/1/comments --input -"
+)
+
+
+def test_jq_with_named_files_is_scanned_not_refused(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    notes = tmp_path / "notes.md"
+    notes.write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        _JQ_COMMENT.format(notes=notes), str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+    notes.write_text("plain\n")
+    assert gh.owners.check_command(
+        _JQ_COMMENT.format(notes=notes), str(tmp_path)).ok
 
 
 _HEREDOC_CREATE = (
@@ -242,3 +301,44 @@ def test_check_command_refuses_a_pwd_body_path_after_cd(github_owners, tmp_path,
     without_cd = gh.owners.check_command(
         f"{_WRITE} --body-file $PWD/sub/notes.md", str(tmp_path))
     assert not without_cd.ok and "me/lib#12" in without_cd.reason
+
+
+@pytest.mark.parametrize("prefix", [
+    "</dev/null ", ">x ", "2>/dev/null ", "FOO=1 2>&1 ", "sudo 2>/dev/null ",
+])
+def test_check_command_refuses_a_write_behind_a_leading_redirect(
+        github_owners, tmp_path, prefix):
+    github_owners({"work": ["otto-nation"]})
+    verdict = gh.owners.check_command(
+        f"{prefix}gh issue comment 1 -R stranger/lib --body hi", str(tmp_path))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+def test_check_command_refuses_a_cross_ref_cat_after_fd_dup(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "notes.md").write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        f"cat 2>&1 notes.md | {_WRITE} --body-file -", str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+
+
+@pytest.mark.parametrize("body", [
+    "--body-file <(echo hi)", "--body $(echo hi)", '--body "$(echo hi)"',
+])
+def test_check_command_refuses_a_repo_flag_after_a_substitution(github_owners, tmp_path, body):
+    github_owners({"work": ["otto-nation"]})
+    verdict = gh.owners.check_command(
+        f"gh issue comment 1 {body} -R stranger/lib", str(tmp_path))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    'echo "$(gh issue comment 1 -R stranger/lib --body x)"',
+    'x="$(gh issue comment 1 -R stranger/lib --body x)"',
+    "echo `gh issue comment 1 -R stranger/lib --body x`",
+])
+def test_check_command_refuses_a_write_inside_a_quoted_substitution(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"]})
+    verdict = gh.owners.check_command(command, str(tmp_path))
+    assert not verdict.ok and "stranger" in verdict.reason

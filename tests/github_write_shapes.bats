@@ -119,6 +119,14 @@ _guard_copy() {
   [ "$output" = false ]
 }
 
+@test "github write shapes: a write on the line after a here-string is a write in both harnesses" {
+  local cmd=$'cat <<<x >/dev/null\ngh issue comment 1 --body hi'
+  [ "$(_claude_subagent "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$cmd")" = publish ]
+  _pi_publishes "$cmd"
+  [ "$status" -eq 0 ]
+  [ "$output" = true ]
+}
+
 @test "github write shapes: a heredoc body with an apostrophe does not hide the write, in both harnesses" {
   local cmd=$'gh pr comment 1 --body-file - <<\'EOF\'\nIt\'s done\nEOF'
   [ "$(_claude_subagent "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$cmd")" = publish ]

@@ -47,6 +47,14 @@ _checkerless_guard() {
   [[ "$rest" != *draft* ]]
 }
 
+@test "upstream guard: a write after a here-string is still checked" {
+  _owners_config otto-nation
+  _upstream_repo git@github.com:otto-nation/svc.git
+  run _guard_at "$TMPDIR/repo" $'cat <<<x >/dev/null\ngh issue comment 1 -R stranger/lib --body hi'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *stranger* ]]
+}
+
 @test "upstream guard: allows a filing in our own repo" {
   _owners_config otto-nation
   _upstream_repo git@github.com:otto-nation/svc.git

@@ -27,7 +27,7 @@
 import { hasUnparsed, span, tokenize, type Token } from "./tokenize.ts";
 
 /** Opens a heredoc, capturing the `-` that allows an indented terminator and the marker. */
-const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
+export const HEREDOC_OPEN = /(?<!<)<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
 
 /**
  * The operators that end a statement, as the tokenizer spells them.

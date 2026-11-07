@@ -16,6 +16,7 @@ scope, and ``workbench_config_types_test.py`` how a written value is typed.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -126,6 +127,45 @@ def test_the_yq_fallback_rejects_malformed_yaml(roots, monkeypatch):
     _write(config_root / "config.yml", "models:\n  deep: [unclosed\n")
     with pytest.raises(config.workbench_config.ConfigError):
         config.workbench_config.load_config(project)
+
+
+def _stub_yq(tmp_path, monkeypatch, home):
+    """A ``yq`` that refuses to run unless HOME is *home*, as a version-manager shim does."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "yq"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'[[ "$HOME" == "{home}" ]] || {{ echo "config.toml not trusted" >&2; exit 1; }}\n'
+        "case $1 in\n"
+        "  -o=json) echo '{\"a\": 1}';;\n"
+        "  -P) echo 'a: 1';;\n"
+        "  -i) printf 'a: 2\\n' > \"$3\";;\n"
+        "esac\n"
+    )
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config.workbench_config, "yaml", None)
+
+
+def test_the_yq_fallback_reads_under_the_account_home_when_home_is_faked(tmp_path, monkeypatch):
+    _stub_yq(tmp_path, monkeypatch, config.workbench_config._account_home())
+    target = tmp_path / "c.yml"
+    target.write_text("a: 1\n")
+    assert config.workbench_config.read_yaml(target) == {"a": 1}
+
+
+def test_yaml_dump_runs_yq_under_the_account_home(tmp_path, monkeypatch):
+    _stub_yq(tmp_path, monkeypatch, config.workbench_config._account_home())
+    assert config.workbench_config.yaml_dump({"a": 1}).strip() == "a: 1"
+
+
+def test_set_value_runs_yq_under_the_account_home(roots, tmp_path, monkeypatch):
+    _stub_yq(tmp_path, monkeypatch, config.workbench_config._account_home())
+    config_root, _ = roots
+    config.workbench_config_write.set_value("reuse.level", "ultra")
+    assert "a: 2" in (config_root / "config.yml").read_text()
 
 
 # ── Error handling ──────────────────────────────────────────────────────────

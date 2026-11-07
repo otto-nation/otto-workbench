@@ -30,6 +30,8 @@
  */
 const BACKGROUND = /(^|[^&>|;])&([^&>]|$)/;
 
+import { HEREDOC_OPEN } from "../_shared/statements.ts";
+
 export {
   jobStartIsActive,
   shouldAdviseJobStart,
@@ -38,9 +40,6 @@ export {
 
 /** `nohup` as the command being run, rather than the word appearing in an argument. */
 const NOHUP = /(^|[;&|]\s*)nohup\s/;
-
-/** Opens a heredoc, capturing the `-` that allows an indented terminator and the marker. */
-const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
 
 /**
  * `command` with heredoc bodies dropped and quoted spans blanked.

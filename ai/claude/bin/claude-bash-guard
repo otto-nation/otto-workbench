@@ -799,7 +799,8 @@ _scan_line() {
 # _scan COMMAND — set stripped / sq_stripped / placeheld / SCAN_STATEMENTS.
 _scan() {
   local line marker="" marker_re="" first=1
-  local re_heredoc="<<(-?)[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
+  # ERE has no lookbehind: a leading group excludes `<<<` (here-string), moving the captures to 2 and 3.
+  local re_heredoc="(^|[^<])<<(-?)[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
   _scan_st=""
   _scan_sq=""
   _scan_ph=""
@@ -827,8 +828,8 @@ _scan() {
       # Only `<<-` lets the terminator be indented. Accepting indentation for a
       # plain `<<` would end the heredoc early on a body line that happens to be
       # the marker word, and scan the rest of the body as commands.
-      marker="${BASH_REMATCH[2]}"
-      marker_re="^${BASH_REMATCH[1]:+[[:space:]]*}${marker}[[:space:]]*$"
+      marker="${BASH_REMATCH[3]}"
+      marker_re="^${BASH_REMATCH[2]:+[[:space:]]*}${marker}[[:space:]]*$"
     fi
   done < <(printf '%s\n' "$1")
 

@@ -175,6 +175,14 @@ import gh.owners; print(gh.owners.ALLOW_CROSS_REF_ENV)
   done
 }
 
+@test "upstream-guard: a write after a here-string is still checked" {
+  _owners_config otto-nation
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _refusal "$TMPDIR/repo" $'cat <<<x >/dev/null\ngh issue comment 1 -R stranger/lib --body hi'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *stranger* ]]
+}
+
 @test "upstream-guard: Claude and Pi agree end to end on an upstream checkout" {
   _owners_config otto-nation
   _upstream_repo git@github.com:stranger/lib.git

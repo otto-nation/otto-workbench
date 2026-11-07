@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -31,8 +30,8 @@ from enum import StrEnum
 from pathlib import Path
 
 import core.serde
-import core.timeouts
 import config.github_owners
+import config.workbench_config
 from config.workbench_config import (
     CONFIG_HEADER,
     CONTAINER_SCOPE,
@@ -417,14 +416,15 @@ def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBA
         path.write_text(CONFIG_HEADER + "\n")
     if shutil.which("yq"):
         written = json.dumps(typed) if isinstance(typed, list) else value
-        env = dict(os.environ, WB_CONFIG_VALUE=written)
         try:
-            subprocess.run(
-                ["yq", "-i", _yq_assignment(key, typed), str(path)],
-                check=True, timeout=core.timeouts.LOCAL, env=env,
+            result = config.workbench_config.run_yq(
+                ["-i", _yq_assignment(key, typed), str(path)],
+                extra_env={"WB_CONFIG_VALUE": written},
             )
         except subprocess.SubprocessError as exc:
             raise ConfigError(f"could not write {key} to {path}: {exc}") from exc
+        if result.returncode != 0:
+            raise ConfigError(f"could not write {key} to {path}: {result.stderr.strip()}")
         return
     _set_value_with_pyyaml(path, key, typed)
 

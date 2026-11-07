@@ -340,3 +340,18 @@ def test_relative_body_paths_names_a_path_spelled_through_the_shell_directory():
     for path in ("$PWD/n.md", "${PWD}/n.md", "${PWD:-.}/n.md", "$OLDPWD/n.md"):
         command = f"cd sub && gh pr create --body-file {path}"
         assert gh.owner_content.relative_body_paths(command) == (path,), path
+
+
+def test_a_cat_operand_after_an_fd_duplication_is_scanned(tmp_path):
+    (tmp_path / "notes.md").write_text("FROM_CAT")
+    for operator in ("2>&1", ">&2", "&>/dev/null"):
+        text = gh.owner_content.command_text(
+            f"cat {operator} notes.md | gh pr create --body-file -", tmp_path)
+        assert "FROM_CAT" in text, operator
+
+
+def test_a_leading_input_redirect_is_scanned(tmp_path):
+    (tmp_path / "notes.md").write_text("FROM_REDIRECT")
+    text = gh.owner_content.command_text(
+        "< notes.md gh pr create -R otto-nation/svc --body-file -", tmp_path)
+    assert "FROM_REDIRECT" in text

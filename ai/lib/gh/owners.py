@@ -357,6 +357,13 @@ def check_command(command: str, cwd: str) -> Verdict:
     relative = gh.owner_content.relative_body_paths(command)
     if after_cd and relative:
         return Verdict.refuse(_relative_body_after_cd_reason(relative))
+    generated = gh.owner_content.generated_stdin_body(command)
+    if generated:
+        return Verdict.refuse(
+            f"the body of this GitHub write is piped from `{generated}`, which the owner check "
+            "cannot read — write the text to a file and pass it by absolute path "
+            "(--body-file /abs/path, or -F body=@/abs/path for gh api). "
+            "general.md § Cross-Group References")
     text = gh.owner_content.command_text(command, cwd)
     for group in groups:
         content = check_content(text, group, loaded)

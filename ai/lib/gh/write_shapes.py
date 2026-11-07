@@ -67,6 +67,7 @@ import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
+import gh.shell_lex
 import gh.shell_wrappers
 
 GH_WRITES: Mapping[str, frozenset[str]] = {
@@ -117,8 +118,6 @@ _GITHUB_COMMANDS = frozenset({
     "gh", "pr", "review", "pr-describe", "review-post", "review-threads",
 })
 _TOKEN_SPLIT = re.compile(r"[\s='\"]+")
-_OPERATOR_CHARS = ";&|()\n"
-_HEREDOC_OPEN = re.compile(r"<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
 
 
 @dataclass(frozen=True)
@@ -137,57 +136,9 @@ class Invocation:
         return self.words[1:]
 
 
-def _heredoc_terminator(dash: str, marker: str) -> re.Pattern[str]:
-    indentable = r"\s*" if dash else ""
-    return re.compile(rf"^{indentable}{re.escape(marker)}\s*$")
-
-
-def _after_heredoc_line(line: str, terminator: re.Pattern[str]) -> re.Pattern[str] | None:
-    """None once *line* is the terminator; otherwise keep skipping."""
-    if terminator.match(line):
-        return None
-    return terminator
-
-
-def _drop_heredoc_bodies(command: str) -> str:
-    """Drop heredoc bodies the same way the agent guards do.
-
-    Only ``<<-`` allows an indented terminator. Accepting indentation for a
-    plain ``<<`` would end the heredoc early on a body line that happens to be
-    the marker word, and scan the rest of the body as commands.
-    """
-    kept: list[str] = []
-    terminator: re.Pattern[str] | None = None
-    for line in command.split("\n"):
-        if terminator is not None:
-            terminator = _after_heredoc_line(line, terminator)
-            continue
-        kept.append(line)
-        opened = _HEREDOC_OPEN.search(line)
-        if opened is not None:
-            terminator = _heredoc_terminator(opened.group(1), opened.group(2))
-    return "\n".join(kept)
-
-
 def split_statements(command: str) -> list[list[str]]:
-    """*command* as statements of words, split on shell operators and newlines.
-
-    POSIX quoting applies, so an operator inside quotes is an argument. Heredoc
-    bodies are dropped first — they are content, not commands, and an
-    unbalanced quote in one must not make the shape unknown. Raises
-    ``ValueError`` on an unbalanced quote — a command whose shape is unknown.
-    """
-    lexer = shlex.shlex(_drop_heredoc_bodies(command), posix=True, punctuation_chars=_OPERATOR_CHARS)
-    lexer.whitespace = " \t\r"
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    statements: list[list[str]] = [[]]
-    for token in lexer:
-        if token and set(token) <= set(_OPERATOR_CHARS):
-            statements.append([])
-            continue
-        statements[-1].append(token)
-    return [statement for statement in statements if statement]
+    """*command* as statements of words; see ``gh.shell_lex.split_statements``."""
+    return gh.shell_lex.split_statements(command)
 
 
 def invocation(statement: Sequence[str]) -> Invocation:
@@ -462,18 +413,29 @@ def _split_string_statement(words: Sequence[str]) -> list[str] | None:
     return [words[0], *_env_option_words(others), *inner, *options.rest]
 
 
-def _reparsed_statements(peeled: gh.shell_wrappers.Peeled) -> list[list[str]] | None:
-    """The statements a re-parsing wrapper runs, or None when they cannot be read exactly."""
+def reparsed_text(statement: Sequence[str]) -> str | None:
+    """The shell text a re-parsing wrapper in *statement* runs (``bash -c``, ``eval``, ``env -S``), else None."""
+    peeled = peeled_statement(statement)
+    if peeled.lookup or not peeled.words:
+        return None
+    return _reparsed_text(peeled)
+
+
+def _reparsed_text(peeled: gh.shell_wrappers.Peeled) -> str | None:
     program = gh.shell_wrappers.basename(peeled.words[0])
     if peeled.opaque:
         statement = _split_string_statement(peeled.words) if program == "env" else None
-        return None if statement is None else [statement]
+        return None if statement is None else shlex.join(statement)
     if program == "eval":
-        text: str | None = " ".join(peeled.words[1:])
-    elif program in _SHELLS:
-        text = _shell_command_string(peeled.words[1:])
-    else:
-        return None
+        return " ".join(peeled.words[1:])
+    if program in _SHELLS:
+        return _shell_command_string(peeled.words[1:])
+    return None
+
+
+def _reparsed_statements(peeled: gh.shell_wrappers.Peeled) -> list[list[str]] | None:
+    """The statements a re-parsing wrapper runs, or None when they cannot be read exactly."""
+    text = _reparsed_text(peeled)
     if text is None:
         return None
     try:

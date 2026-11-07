@@ -592,3 +592,54 @@ def test_the_schema_contracts_are_read_off_the_mode_table():
     assert cli.schema.served_schema_versions("review", ["--summary"]) == ()
     assert cli.schema.served_schema_versions("status", []) == (1,)
     assert cli.schema.served_schema_versions("stack", []) == (1,)
+
+
+# ── cmd_review --dismiss ────────────────────────────────
+
+
+def _tracking(review_dir):
+    from core.serde import load_file
+    from pr.state import PostTracking
+    return load_file(PostTracking, review_dir / "post.jsonl")
+
+
+def test_dismiss_records_the_run_as_dismissed(reviews_dir):
+    review_dir = seed_record(reviews_dir, name="repo-42", repo="owner/repo",
+                             pr_number=42, head_sha="abc123")
+    rc = cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    assert rc == 0
+    tracking = _tracking(review_dir)
+    assert (tracking.status, tracking.posted_as, tracking.review_sha) == (
+        "dismissed", "nothing", "abc123")
+
+
+@patch("gh.client.api")
+def test_dismiss_never_calls_github(mock_api, reviews_dir):
+    seed_record(reviews_dir, name="repo-42", repo="owner/repo", pr_number=42)
+    cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    mock_api.assert_not_called()
+
+
+def test_dismiss_refuses_a_run_already_posted(reviews_dir, capsys):
+    review_dir = seed_record(reviews_dir, name="repo-42", repo="owner/repo", pr_number=42)
+    (review_dir / "post.jsonl").write_text(json.dumps(
+        {"posted_as": "review", "status": "approve", "review_id": 9}) + "\n")
+    rc = cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    assert rc == 1
+    assert "already posted" in capsys.readouterr().err
+    assert _tracking(review_dir).status == "approve"
+
+
+def test_dismiss_twice_is_a_no_op(reviews_dir):
+    seed_record(reviews_dir, name="repo-42", repo="owner/repo", pr_number=42)
+    assert cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR) == 0
+    assert cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR) == 0
+
+
+def test_dismiss_fails_without_a_review(reviews_dir):
+    assert cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR) == 1
+
+
+def test_dismiss_is_exclusive_with_post():
+    assert cli.pr.cmd_review(["--dismiss", "--post"], make_ctx(pr_number=42),
+                             bin_dir=BIN_DIR) == 1

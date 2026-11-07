@@ -2,7 +2,7 @@
 # Tests for the untrusted herdr-app window — settings derivation, keys/themes/
 # shared seed, preflight, and herdr-app-untrusted.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/steps.sh ai/herdr/untrusted_window.sh ai/herdr/bin/herdr-app-untrusted lib/files.sh lib/config.sh lib/constants.sh
+# select-on: ai/herdr/steps.sh ai/herdr/untrusted_window.sh ai/herdr/bin/herdr-app-untrusted lib/files.sh lib/config.sh lib/constants.sh ai/herdr/app/themes/*.generated.json
 
 setup() {
   load 'test_helper'
@@ -184,7 +184,7 @@ _write_json() {
   run _run_step step_herdr_untrusted_window
   [ "$status" -eq 0 ]
   [ -L "$UNTRUSTED/themes/${APP_DARK}.json" ]
-  [ "$(readlink "$UNTRUSTED/themes/${APP_DARK}.json")" = "$SRC/${APP_DARK}.json" ]
+  [ "$(readlink "$UNTRUSTED/themes/${APP_DARK}.json")" = "$SRC/${APP_DARK}.generated.json" ]
 }
 
 @test "re-run under WORKBENCH_SYNC prints nothing and does not rewrite settings" {

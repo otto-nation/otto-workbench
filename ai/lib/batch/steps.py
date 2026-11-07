@@ -74,6 +74,7 @@ class WorktreeResult:
     path: str
     dirty: bool
     error: str
+    collision: bool = False
 
     @property
     def ok(self) -> bool:
@@ -240,6 +241,12 @@ def checked_out_branch(worktree: str) -> str:
 
 
 def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:
+    """The worktree for *branch* under *repo_dir*, created if needed.
+
+    A directory named after the branch that already holds a worktree on another
+    branch is a collision: the caller names it rather than treating it as a
+    generic create failure.
+    """
     # git.client raises on a cwd that does not exist; a checkout removed since
     # the plan is a decision for the operator, not a traceback out of the driver.
     if not Path(repo_dir).is_dir():
@@ -247,6 +254,14 @@ def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:
     found = git.topology.find_worktree_for_branch(branch, cwd=repo_dir)
     path = str(found) if found else git.topology.wt_switch(branch, cwd=repo_dir)
     if not path:
+        occupied = git.topology.find_worktree_dir_named(branch, cwd=repo_dir)
+        if occupied:
+            held = checked_out_branch(str(occupied)) or "a detached HEAD"
+            return WorktreeResult(
+                "", False,
+                f"{occupied} is a worktree on {held}, not {branch}: move it with "
+                f"`git -C {repo_dir} worktree move {occupied} <new-path>`, then retry",
+                collision=True)
         return WorktreeResult("", False, f"could not create a worktree for {branch}")
     trust_mise_config(path)
     return WorktreeResult(path, git.client.is_dirty(cwd=path), "")

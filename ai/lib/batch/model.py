@@ -78,14 +78,16 @@ class EvidenceKind(StrEnum):
 
     open_findings — review.md's open findings; checks_unverified — a Fix-Checks
     trailer of red/timed_out/error on the step's commits; ci_unfixed — ci-check's
-    stdout tally; one_sided — `pr rebase`'s stdout report; stacked_on — another
-    item in the run whose publish goes first.
+    stdout tally; one_sided — `pr rebase`'s stdout report; stale — `pr rebase`'s
+    stdout `files_stale` (generated files taken from the base and not rebuilt);
+    stacked_on — another item in the run whose publish goes first.
     """
 
     OPEN_FINDINGS = "open_findings"
     CHECKS_UNVERIFIED = "checks_unverified"
     CI_UNFIXED = "ci_unfixed"
     ONE_SIDED = "one_sided"
+    STALE = "stale"
     STACKED_ON = "stacked_on"
 
 

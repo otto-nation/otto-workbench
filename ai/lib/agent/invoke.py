@@ -31,7 +31,7 @@ import agent.phases
 import agent.retry
 import agent.backend
 import core.log
-from core.quota_throttle import QuotaThrottle
+from core.quota_throttle import QUOTA_EXHAUSTED_PHRASE, QuotaThrottle
 import agent.session
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
@@ -182,7 +182,7 @@ def run_agent(
             time.sleep(wait)
         else:
             where = f" ({inv.provider})" if inv.provider else ""
-            core.log.warn(f"Quota exhausted on {model}{where} — retrying once after 30s backoff")
+            core.log.warn(f"{QUOTA_EXHAUSTED_PHRASE} {model}{where} — retrying once after 30s backoff")
             time.sleep(30)
         rc = _invoke_once(inv)
     return rc

@@ -146,6 +146,10 @@ def prep(decision: Decision, item: Item) -> str | None:
         return (f"read {path}; finding counts "
                 f"{counts['must']}/{counts['should']}/{counts['nit']} (must/should/nit), "
                 f"{counts['declined']} declined")
+    if kind is DecisionKind.STEP_REVIEW and (stale := _evidence(decision, EvidenceKind.STALE)):
+        files = ", ".join(f for e in stale for f in e.get("files", []))
+        return (f"the rebase left {files} stale in {item.worktree}: regenerate them with the "
+                "repo's generators and commit, or `undo`; never `accept` the rebase as it stands")
     if kind is DecisionKind.STEP_REVIEW and (bases := stacked_on_items(decision)):
         return f"wait for {', '.join(bases)} to finish; `pr batch resume` retries this step"
     if kind is DecisionKind.FAILED and \

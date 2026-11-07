@@ -562,10 +562,10 @@ step is listed and `done`; an owed closeout counts as `comments`.
 A step that needs a person opens one `step_review` whose `evidence` is
 `open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,
 or `unreadable` when the step's commit-range `git log` failed; a commit with
-no trailer is not evidence), `ci_unfixed`, `one_sided`, or `stacked_on`.
-Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
-`git reset --hard` to the pre-rebase head). Kinds and actions are tabled in
-[`batch/resolve.py`](ai-libraries.md#batchresolvepy).
+no trailer is not evidence), `ci_unfixed`, `one_sided`, `stale` (`files_stale`), or `stacked_on`.
+Actions: `accept`, `retry`, `skip-step`, `undo` (rebase: `git reset --hard` to the
+pre-rebase head; the answer to `one_sided` and `stale`, never `accept`). Kinds
+and actions are tabled in [`batch/resolve.py`](ai-libraries.md#batchresolvepy).
 
 `pr batch status` prints one compact report:
 

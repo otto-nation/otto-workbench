@@ -16,6 +16,7 @@ this module without pulling in ``config`` or ``pr``.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -120,6 +121,10 @@ MISE_CONFIG_NAMES = (
     "mise/config.toml",
     ".tool-versions",
 )
+
+# What mise prints when a config in the cwd is not trusted. gh.client retries
+# past the file; batch.outcomes names the failure.
+MISE_UNTRUSTED = re.compile(r"Config files? in (.+?) (?:is|are) not trusted")
 
 
 def detect_mise(target_dir: str, repo_root: str) -> bool:

@@ -281,6 +281,10 @@ class Scheduler:
             code = live.proc.poll()
             if code is None:
                 continue
+            # poll() joins the stderr reader, which flushes the child's last lines into
+            # the queue after the drain above: read them now, or a failure printed just
+            # before exit is missing from the tail its reason is classified from.
+            self._drain(key, live)
             if kill:
                 # The tracked step is gone, so this is the last call that will
                 # ever reach its process group: anything it left running there
@@ -373,8 +377,10 @@ class Scheduler:
             return True
         res = self._worktrees(item.repo_dir, item.branch)
         if not res.ok:
+            reason = (batch.outcomes.FailureReason.WORKTREE_COLLISION
+                      if res.collision else batch.outcomes.FailureReason.ERROR).value
             _decide(self.run, item, "worktree", DecisionKind.FAILED,
-                    {"reason": batch.outcomes.FailureReason.ERROR.value, "detail": res.error},
+                    {"reason": reason, "detail": res.error},
                     emit=self._emit)
             return False
         if res.dirty and not self._discard_generated_dirt(res.path, item):

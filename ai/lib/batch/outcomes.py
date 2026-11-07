@@ -11,6 +11,10 @@ A `failed` decision's `reason` is one of these, or a publish refusal from
   person has no reply or settlement on GitHub; answer it with `pr comments`, then retry
 - `lock_busy`: another `pr` run already owns the target
 - `push_rejected`: the remote refused the push
+- `worktree_collision`: the PR's worktree path holds a worktree on another branch
+- `quota_exhausted`: the AI provider turned the step away on quota or a spend limit
+- `owners_unconfigured`: `github.owners` is not configured, so every GitHub write was refused
+- `mise_untrusted`: a hook could not run because a mise config in the worktree is not trusted
 - `github`: GitHub could not be read
 - `error`: anything the batch does not recognise
 """
@@ -26,7 +30,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 import batch.publish
+import core.quota_throttle
+import gh.owners
 import git.client
+import git.regenerate
 import pr.ci_report
 import pr.fix
 import pr.settlement
@@ -40,6 +47,17 @@ from review.types import severity_by_key
 
 # The phrase core.run_lock.LockBusy prints (core/run_lock.py).
 LOCK_BUSY_MARKER = "another pr run already owns this"
+# Emitted at git/land.py.
+COMMIT_FAILED_MARKER = "commit failed:"
+# Claude Code 2.1.292's limit-prefix list (You've hit your / You're out of …);
+# no module of ours emits these — they reach a step's stderr only through
+# agent.backend_claude._failure_detail → core.log.dim, or invoke_fix's echo.
+_PROVIDER_LIMIT_PHRASES = (
+    "you've hit your", "you're out of usage credits", "you're out of extra usage",
+    "your org is out of usage", "usage limit reached",
+)
+# The steps that run a fix engine: they commit, and they leave Fix-Checks trailers.
+_FIXING_STEPS = (Step.REVIEW, Step.CI, Step.COMMENTS)
 _OWED = (pr.fix.FixOutcome.NEEDS_HUMAN, pr.fix.FixOutcome.DEFERRED)
 _SYNTHETIC_ID = re.compile(r"^(ic|rb)-\d+-\d+$")
 
@@ -62,6 +80,10 @@ class FailureReason(StrEnum):
     LOCK_BUSY = "lock_busy"
     UNANSWERED_HANDBACKS = "unanswered_handbacks"
     PUSH_REJECTED = "push_rejected"
+    WORKTREE_COLLISION = "worktree_collision"
+    QUOTA_EXHAUSTED = "quota_exhausted"
+    OWNERS_UNCONFIGURED = "owners_unconfigured"
+    MISE_UNTRUSTED = "mise_untrusted"
     GITHUB = "github"
     ERROR = "error"
 
@@ -78,7 +100,14 @@ class Failure:
 @dataclass(frozen=True)
 class _Marker:
     reason: FailureReason
-    phrases: tuple[str, ...]
+    phrases: tuple[str, ...] = ()
+    # Emitter text owned as a regex elsewhere, matched against the line as printed.
+    pattern: re.Pattern[str] | None = None
+
+    def hits(self, line: str) -> bool:
+        lowered = line.lower()
+        return any(p in lowered for p in self.phrases) or bool(
+            self.pattern and self.pattern.search(line))
 
 
 # Most specific outcome first, and the first marker with any matching line
@@ -86,8 +115,10 @@ class _Marker:
 # mentions the review. Phrases are lowercase; lines are compared lowercased.
 # Text matching no marker is `error` — never a guess at a nearer reason.
 _MARKERS = (
-    _Marker(FailureReason.COMMIT_FAILED, ("commit failed:",)),
+    _Marker(FailureReason.MISE_UNTRUSTED, pattern=git.regenerate.MISE_UNTRUSTED),
+    _Marker(FailureReason.COMMIT_FAILED, (COMMIT_FAILED_MARKER,)),
     _Marker(FailureReason.LOCK_BUSY, (LOCK_BUSY_MARKER,)),
+    _Marker(FailureReason.OWNERS_UNCONFIGURED, (gh.owners.UNCONFIGURED.lower(),)),
     _Marker(FailureReason.UNANSWERED_HANDBACKS, (pr.settlement.UNANSWERED_HANDBACKS_MARKER.lower(),)),
     _Marker(FailureReason.PRE_PUSH_REJECTED, (
         "push refused (hook)", "pre-push checks failed",
@@ -97,6 +128,8 @@ _MARKERS = (
         "remote does not hold the commit")),
     _Marker(FailureReason.REVIEW_ORCHESTRATION_FAILED, (
         "produced no review file", "review orchestration failed")),
+    _Marker(FailureReason.QUOTA_EXHAUSTED, (
+        core.quota_throttle.QUOTA_EXHAUSTED_PHRASE.lower(), *_PROVIDER_LIMIT_PHRASES)),
     _Marker(FailureReason.AI_PROMPT_FAILED, ("ai prompt failed",)),
 )
 
@@ -113,6 +146,18 @@ FAILURE_WHY: dict[str, str] = {
         "(the push, if any, landed; answer the thread with `pr comments`, then retry)",
     FailureReason.LOCK_BUSY.value: "another pr run held this branch's lock",
     FailureReason.PUSH_REJECTED.value: "git refused the push, or the remote did not keep it",
+    FailureReason.WORKTREE_COLLISION.value:
+        "the PR's worktree path already holds a worktree on another branch "
+        "(move it with `git worktree move`, then retry)",
+    FailureReason.QUOTA_EXHAUSTED.value:
+        "the AI provider's quota or spend limit ran out; stop and wait for it to reset "
+        "rather than retrying",
+    FailureReason.OWNERS_UNCONFIGURED.value:
+        f"github.owners is not configured, so every GitHub write was refused; "
+        f"record our owners with: {gh.owners.FIX_COMMAND}",
+    FailureReason.MISE_UNTRUSTED.value:
+        "a mise config in the worktree is not trusted, so a hook could not run "
+        "(read it, `mise trust` it, then retry)",
     FailureReason.GITHUB.value: "GitHub could not be asked about the PR",
     FailureReason.ERROR.value: "the step failed for a reason the batch does not recognise",
     batch.publish.Refusal.REMOTE_MOVED.value: "someone pushed to the PR branch since the batch planned it",
@@ -153,8 +198,7 @@ def classify_failure(lines: Sequence[str]) -> Failure:
     session = next((m.group(1) for line in reversed(cleaned)
                     if (m := _SESSION_LOG.search(line))), "")
     for marker in _MARKERS:
-        hit = next((line for line in cleaned
-                    if any(p in line.lower() for p in marker.phrases)), "")
+        hit = next((line for line in cleaned if marker.hits(line)), "")
         if hit:
             return Failure(marker.reason, hit, session)
     return Failure(FailureReason.ERROR, "", session)
@@ -260,9 +304,11 @@ def _evidence(step: Step, stdout: str, item: Item, head_before: str) -> list[dic
             found.append({"kind": EvidenceKind.ONE_SIDED.value,
                           "files": report["files_one_sided"],
                           "regions": report.get("one_sided_regions", [])})
+        if report.get("files_stale"):
+            found.append({"kind": EvidenceKind.STALE.value, "files": report["files_stale"]})
     if step is Step.CI and (unfixed := ci_unfixed(stdout)):
         found.append({"kind": EvidenceKind.CI_UNFIXED.value, **unfixed})
-    if step in (Step.REVIEW, Step.CI, Step.COMMENTS):
+    if step in _FIXING_STEPS:
         found.extend({"kind": EvidenceKind.CHECKS_UNVERIFIED.value, **check}
                      for check in fix_checks(item.worktree, head_before))
     return found
@@ -321,6 +367,10 @@ def _needs(kind: DecisionKind, payloads: list[dict]) -> StepResult:
     return StepResult(StepStatus.NEEDS_DECISION, [DecisionDraft(kind, p) for p in payloads])
 
 
+def _commit_refused(lines: Sequence[str]) -> bool:
+    return any(COMMIT_FAILED_MARKER in _clean(l).lower() for l in lines)
+
+
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
              log_tail: list[str], head_before: str = "", log_path: str = "") -> StepResult:
     """The status and decisions a finished step leaves, read from its stdout and the tree.
@@ -337,10 +387,8 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
         return _needs(DecisionKind.REBASE_REFUSED, [_rebase_payload(stdout, log_tail)])
     if exit_code != 0:
         return _failed(exit_code, log_tail, log_path)
-    if step in (Step.REVIEW, Step.COMMENTS):
-        found = classify_failure(log_tail)
-        if found.reason is FailureReason.COMMIT_FAILED:
-            return _failed(exit_code, log_tail, log_path)
+    if step in _FIXING_STEPS and _commit_refused(log_tail):
+        return _failed(exit_code, log_tail, log_path)
     drafts: list[DecisionDraft] = []
     if step is Step.COMMENTS:
         drafts.extend(DecisionDraft(DecisionKind.COMMENT_ITEM, p) for p in comment_items(item))

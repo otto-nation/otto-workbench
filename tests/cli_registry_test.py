@@ -356,7 +356,7 @@ def test_create_takes_the_run_lock_only_when_it_may_publish():
         REMOTE, update=False, locks=NO_LOCK)
 
 
-@pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])
+@pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--dismiss", "--recover"])
 def test_a_mode_acting_on_an_existing_review_does_not_fetch(mode):
     """A mode flag's subject is a review already on disk, at the commit that
     review describes. Fast-forwarding under it leaves `--summary` and `--post`

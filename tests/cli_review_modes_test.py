@@ -65,9 +65,9 @@ def test_every_mode_declares_the_need_it_was_given():
     trail for an invocation that touches no repo.
     """
     assert set(cli.review_modes.MODES) == {
-        "--post", "--repair", "--summary", "--recover", "--list",
+        "--post", "--repair", "--summary", "--dismiss", "--recover", "--list",
     }
-    for flag in ("--post", "--repair", "--summary", "--recover"):
+    for flag in ("--post", "--repair", "--summary", "--dismiss", "--recover"):
         assert cli.review_modes.MODES[flag].need == REVIEW_MODE_NEED, flag
     listing_need = cli.review_modes.MODES["--list"].need
     assert listing_need == Need(NONE, update=False, locks=NO_LOCK)

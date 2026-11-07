@@ -443,6 +443,7 @@ _DECLARED_LOCKS = {
     ("review", ("--post",)): _T,
     ("review", ("--repair",)): _T,
     ("review", ("--summary",)): _T,
+    ("review", ("--dismiss",)): _T,
     ("review", ("--recover",)): _T,
     ("review", ("--self", "--recover")): _TC,
     ("review", ("--list",)): _NO,

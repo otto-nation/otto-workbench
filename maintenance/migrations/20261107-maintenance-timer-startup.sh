@@ -30,7 +30,7 @@ migration_20261107_maintenance_timer_startup() {
   fi
 
   local interval=""
-  interval="$(sed -n 's/^OnUnitActiveSec=\([0-9][0-9]*\)sec$/\1/p' "$timer" | head -1)"
+  interval="$(sed -n '/^OnUnitActiveSec=/{s/^OnUnitActiveSec=\([0-9][0-9]*\)sec$/\1/p;q;}' "$timer")"
 
   info "Re-installing maintenance timer with OnStartupSec"
   if [[ -n "$interval" ]]; then

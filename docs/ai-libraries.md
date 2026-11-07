@@ -4521,6 +4521,21 @@ sending commands, reading replies, classifying a fatal response, and
 starting/stopping the process group. The event loop that consumes the
 stream lives in ``agent.backend_pi``.
 
+### agent/git_guard.py
+
+PATH shim that refuses mutating git subcommands in the fix worktree.
+
+Every ``agent.backend.invoke_fix`` call — every FIX-shaped phase, verify
+gates included, both backends, eval callers included — runs with a temporary
+directory first on ``PATH`` holding ``git`` → ``git-guard.sh``. The shim
+refuses a guarded subcommand only when the target repo's absolute git dir
+equals the fix worktree's. Everything else is exec'd to the real git
+unchanged. The engine's own git calls, ``land``, and the verify-command
+suite never see the shim: they use ``os.environ``, not the agent env.
+
+Not a sandbox: an absolute git path, a ``PATH=`` override, or a ``!`` shell
+alias bypasses it.
+
 ### agent/machine_env.py
 
 The machine's environment for an agent, without the mise config of the repo it runs in.

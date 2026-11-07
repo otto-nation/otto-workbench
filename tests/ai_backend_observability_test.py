@@ -141,7 +141,7 @@ class TestBuildFixCmd:
 
         One direction only: Pi's GIT_WRITE_SUBCOMMANDS is deliberately a
         superset of Claude's FIX_DENIED_TOOLS (it also lists `add`, `rm`, `mv`,
-        `branch`, `tag`, `config`, `worktree`, `fetch`, `pull`, none of which
+        `branch`, `tag`, `config`, `worktree`, `fetch`, none of which
         Claude denies), so this only checks that nothing Claude denies slips
         past Pi, not that the two sets are equal."""
         claude_denied = {

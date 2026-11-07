@@ -59,7 +59,8 @@ asked about) cannot ride into the commit. Clobbered bytes are saved under the pa
 `containment/` artifacts. Tool denials on the verify agent are extra; process writes
 bypass them, which is why the restore is the control. A pass whose agent switched
 branch or rewrote history is refused at landing rather than committed onto the wrong base;
-a commit made on top is tolerated and recorded.
+a commit made on top is tolerated and recorded. The agent's `git` refuses commits and
+pushes in the fix worktree; this is not a sandbox.
 
 So `Skipped: [M1] no auto-fix` could sit on top of a commit containing the edit for M1,
 by three routes. Two now report themselves; the third cannot:

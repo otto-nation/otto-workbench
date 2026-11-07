@@ -35,9 +35,10 @@ import os
 import shutil
 import types
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import agent.git_guard
 import agent.machine_env
 import agent.pi_binary
 import agent.usage
@@ -442,10 +443,19 @@ def invoke_agent(inv: AgentInvocation) -> int:
 
 
 def invoke_fix(inv: AgentInvocation) -> int:
-    """Agent with workspace write access, raw output echoed. Returns exit code."""
+    """Agent with workspace write access, raw output echoed. Returns exit code.
+
+    Every FIX-shaped invocation, verify gates included, runs with a ``git``
+    shim first on ``PATH`` (``agent.git_guard``) that refuses mutating
+    subcommands in the fix worktree. A caller-supplied ``inv.env`` is still
+    the whole environment that caller chose, then guarded: only ``agent_env``
+    reads the field, so editor pinning stays as documented there.
+    """
     _require_cwd(inv.cwd, "invoke_fix")
     try:
-        code = _get_module().invoke_fix(inv)
+        base = agent.machine_env.base_env(inv.cwd) if inv.env is None else inv.env
+        with agent.git_guard.guarded(base, inv.cwd) as env:
+            code = _get_module().invoke_fix(replace(inv, env=env))
     except agent.machine_env.MachineEnvUnavailable as err:
         core.log.error(f"invoke_fix: {err}")
         return 1

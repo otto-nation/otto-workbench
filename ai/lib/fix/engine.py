@@ -53,6 +53,7 @@ import agent.retry
 import agent.templates
 import fix.baseline
 import fix.blame
+import fix.containment
 import fix.scope
 import fix.suite
 import fix.tracking
@@ -1104,16 +1105,29 @@ def _run_pass(
     # Before the scope is read and before anything is committed: a fix the gate
     # falsifies must not reach `landing` as a fix, or the commit and the record
     # would disagree about what the pass did.
-    fix.gate.verify_claims(
-        settled.outcomes, verify, adapter, by_id, trail,
-        scope_for=settled.scope_for,
-    )
+    #
+    # Content-snapshot containment, not a path-set diff: a verify rewrite of a
+    # file the fix agent (or the operator) already had dirty must still revert
+    # to the pre-verify bytes. Tool denials on the verify agent are bypassed by
+    # process writes, which is why the restore is the real control.
+    with fix.containment.around(
+        adapter.workdir, adapter.artifacts, "verify", trail,
+    ):
+        fix.gate.verify_claims(
+            settled.outcomes, verify, adapter, by_id, trail,
+            scope_for=settled.scope_for,
+        )
 
     # After the agent and before the commit — the one moment the difference is
-    # the agent's work and nothing else's.
+    # the agent's work and nothing else's. Verify writes have been restored, so
+    # they are not folded into the scope.
     changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
     committed = adapter.commit_scope(changed)
     left_out = (changed or set()) - (committed or set())
+    if left_out:
+        twarn(trail, "fix_commit_left_out",
+              f"{len(left_out)} file(s) left out of the fix commit",
+              data={"paths": sorted(left_out), "workdir": str(adapter.workdir)})
 
     # Between the agent's edits and everything that reports on them. The two
     # agents above check the pass's claims; this is the only thing that asks
@@ -1124,10 +1138,16 @@ def _run_pass(
     # ordering is necessary and is not what stops a red tree being reported
     # as fixed: no per-item hook can see a suite demotion, because the item
     # stays FIXED. `_verify_suite` holds publishing itself for that.
-    adapter.suite = _verify_suite(
-        adapter, settled.outcomes, changed, trail, by_id,
-        base=head_before, left_out=left_out,
-        baseline_ref=baseline_ref, dirty_before=frozenset(dirty_before))
+    #
+    # The suite runs in the real tree; containment restores anything it wrote
+    # so `land` below stages pre-suite content for the names in `committed`.
+    with fix.containment.around(
+        adapter.workdir, adapter.artifacts, "suite", trail,
+    ):
+        adapter.suite = _verify_suite(
+            adapter, settled.outcomes, changed, trail, by_id,
+            base=head_before, left_out=left_out,
+            baseline_ref=baseline_ref, dirty_before=frozenset(dirty_before))
 
     # Between the verdicts and the push, which is the only window that works:
     # both gates have spoken here — the per-item one above and the batch suite
@@ -1143,19 +1163,7 @@ def _run_pass(
         fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
     spec = adapter.landing(settled.outcomes, committed)
-    # The trailer is appended here, once, for every domain: the commit is what
-    # a batch reads the checks verdict back from.
-    landed = git.land.land(
-        adapter.workdir,
-        message=fix.suite.with_trailer(spec.message, adapter.suite),
-        gated=True,
-        owner_check=gh.owner_hooks.refuse_outgoing,
-        trail=trail,
-        regen=spec.regen,
-        recover_from=head_before if spec.recover else None,
-        paths=spec.paths,
-        args=spec.args,
-    )
+    landed = _land(adapter, spec, head_before, trail)
     _stamp(settled.outcomes, head_before, landed.sha)
 
     exit_code = settled.exit_code
@@ -1174,6 +1182,49 @@ def _run_pass(
     )
     adapter.record(finished)
     return finished
+
+
+def _land(
+    adapter: FixAdapter, spec: LandSpec, head_before: str, trail: Trail | None,
+) -> git.land.LandResult:
+    """Commit the pre-suite scope, or refuse if an agent committed on its own.
+
+    ``spec.paths`` is the commit scope computed before the suite ran.
+    Containment restored any suite writes, so land stages those names at
+    pre-suite content. land itself is unchanged: it still adds by pathspec.
+
+    ``git -C . commit`` evades Claude's ``Bash(git commit:*)`` prefix deny.
+    When HEAD has moved and the domain did not ask to recover that commit,
+    landing on top of it would attribute the agent's commit to the pass.
+    ``recover=True`` still goes through ``recover_from`` unchanged.
+    """
+    moved = None if spec.recover else fix.containment.head_moved(
+        adapter.workdir, head_before,
+    )
+    if moved is not None:
+        detail = (
+            f"HEAD moved during the fix pass "
+            f"({git.client.abbrev(head_before)} -> {git.client.abbrev(moved)}); "
+            "refusing to land. An agent committed on its own."
+        )
+        core.log.error(detail)
+        twarn(trail, "fix_head_moved", detail,
+              data={"head_before": head_before, "head_now": moved,
+                    "workdir": str(adapter.workdir)})
+        return git.land.LandResult(
+            git.land.CommitStatus.COMMIT_FAILED, error=detail,
+        )
+    return git.land.land(
+        adapter.workdir,
+        message=fix.suite.with_trailer(spec.message, adapter.suite),
+        gated=True,
+        owner_check=gh.owner_hooks.refuse_outgoing,
+        trail=trail,
+        regen=spec.regen,
+        recover_from=head_before if spec.recover else None,
+        paths=spec.paths,
+        args=spec.args,
+    )
 
 
 def _interrupted(

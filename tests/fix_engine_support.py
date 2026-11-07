@@ -18,6 +18,7 @@ import git.land  # noqa: E402
 from core.phases import Phase  # noqa: E402
 from fix.types import FixItem  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
+import fix.containment
 import fix.scope
 import git.client
 
@@ -115,10 +116,15 @@ def snapshots():
     Autouse because every run now reads the dirty set on both sides of the
     agent, and `tmp_path` is not a repo — an unstubbed read fails, which the
     engine correctly treats as a reason not to run the pass at all.
+
+    Containment is stubbed to a successful empty snapshot so these suites do
+    not warn on every pass; `fix_containment_test.py` drives the real thing.
     """
+    empty = fix.containment.Snapshot(ok=True)
     with patch.object(fix.scope, "changed_files",
                       return_value=set()) as m:
-        yield m
+        with patch.object(fix.containment, "take", return_value=empty):
+            yield m
 
 
 # How many times a one-batch pass reads the worktree: the shared baseline, the

@@ -112,6 +112,21 @@ def test_unreadable_refs_are_unknown(tmp_path):
     assert pr.stack.health(str(repo), "child", "parent") is Health.UNKNOWN
 
 
+def test_a_merge_tree_error_is_unknown(monkeypatch, tmp_path):
+    repo = _repo(tmp_path)
+    git_in(repo, "checkout", "-q", "parent")
+    (repo / "h").write_text("parent moved\n")
+    commit_all(repo, "parent work")
+    _publish(repo, "parent", "child")
+
+    class _Result:
+        returncode = 128
+        ok = False
+
+    monkeypatch.setattr(pr.stack.git.client, "run", lambda *a, **k: _Result())
+    assert pr.stack.health(str(repo), "child", "parent") is Health.UNKNOWN
+
+
 # ── load_graph's GitHub reads ───────────────────────────────────────────────
 
 

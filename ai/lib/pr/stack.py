@@ -165,7 +165,11 @@ def health(cwd: str, branch: str, parent_branch: str) -> Health:
     if behind == "0":
         return Health.UP_TO_DATE
     merged = git.client.run("merge-tree", "--write-tree", base, head, cwd=cwd)
-    return Health.NEEDS_REBASE if merged.ok else Health.HAS_CONFLICTS
+    if merged.returncode == 0:
+        return Health.NEEDS_REBASE
+    if merged.returncode == 1:
+        return Health.HAS_CONFLICTS
+    return Health.UNKNOWN
 
 
 def _open_prs(repo: str) -> list[OpenPr]:

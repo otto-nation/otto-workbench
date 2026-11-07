@@ -44,11 +44,15 @@ line is always that `Source:` line so a derived body never ends in a
 non-defect phrase (D11).
 
 A prior round's derived findings (`origin` other than writer) are never
-carried, never shown in the prior prompt, and never accounted for. The
-writer re-judges the claims and settle re-derives. A true no-op round
-carries them with their claims. An open prior derived finding stops a round
-being treated as clean or settled, so the writer re-judges
-(`reconcile.open_derived_findings`, `steps._writer_must_rejudge`).
+shown in the prior prompt and never accounted for. The writer re-judges
+the claims and settle re-derives. When the new finding's stable_id matches
+a prior derived finding that was DECLINED or SKIPPED, it carries that
+disposition and reason. A prior derived finding that was FALSIFIED is not
+re-derived for that stable_id: the claim stays contradicted or unsupported
+with no finding. A true no-op round carries them with their claims. An
+OPEN prior derived finding stops a round being treated as clean or settled,
+so the writer re-judges (`reconcile.open_derived_findings`,
+`steps._writer_must_rejudge`).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,
@@ -80,7 +84,7 @@ from review.artifacts import ReviewArtifact
 from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerdict
 from review.grammar import FindingIdentity, strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
-from review.record import RecordFinding, ReviewRecord
+from review.record import Disposition, RecordFinding, ReviewRecord
 from review.types import FindingOrigin, ReviewJob
 
 CLAIM_KINDS = frozenset({
@@ -304,6 +308,35 @@ def derived_findings(
     return tuple(out)
 
 
+def _prior_derived(job: ReviewJob) -> dict[str, RecordFinding]:
+    if job.prior is None:
+        return {}
+    return {
+        f.stable_id: f
+        for f in job.prior.record.findings
+        if f.derived and f.stable_id
+    }
+
+
+def _carry_derived(
+    finding: RecordFinding, prior: dict[str, RecordFinding],
+) -> RecordFinding | None:
+    """Copy a prior DECLINED/SKIPPED, or drop a FALSIFIED same stable_id.
+
+    Empty *prior* (job.prior None) leaves the finding OPEN. A prior derived
+    finding that was FALSIFIED is in findings but not visible; it is not
+    re-derived.
+    """
+    old = prior.get(finding.stable_id)
+    if old is None:
+        return finding
+    if old.disposition is Disposition.FALSIFIED:
+        return None
+    if old.disposition in (Disposition.DECLINED, Disposition.SKIPPED):
+        return replace(finding, disposition=old.disposition, reason=old.reason)
+    return finding
+
+
 def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     """Verify claims, derive findings, append them, and link each source claim.
 
@@ -317,6 +350,13 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     up, and starting after the append keeps rewritten links and evidence.
     stable_id is not unique per claim — two unsupported claims that share
     a first line hash alike.
+
+    A derived finding whose stable_id matches a prior derived finding that
+    was DECLINED or SKIPPED carries that disposition and reason. A prior
+    derived finding that was FALSIFIED (in prior.record.findings, not
+    visible) is not re-derived for that stable_id: the claim stays
+    contradicted or unsupported with no finding. job.prior None leaves
+    every derived finding OPEN.
     """
     if record.claims is None:
         return record
@@ -328,7 +368,23 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     derived = derived_findings(claims, checkbox=job.mode is Mode.SELF)
     if not derived:
         return record
-    derived_at = tuple(i for i, c in enumerate(claims) if _derives_finding(c))
+    prior = _prior_derived(job)
+    kept: list[RecordFinding] = []
+    kept_at: list[int] = []
+    for index, finding in zip(
+        (i for i, c in enumerate(claims) if _derives_finding(c)),
+        derived,
+        strict=True,
+    ):
+        carried = _carry_derived(finding, prior)
+        if carried is None:
+            continue
+        kept.append(carried)
+        kept_at.append(index)
+    derived = tuple(kept)
+    if not derived:
+        return record
+    derived_at = tuple(kept_at)
     record = review.merge.append_findings(record, derived)
     if record.claims is None or len(record.claims) != len(claims):
         raise RuntimeError(

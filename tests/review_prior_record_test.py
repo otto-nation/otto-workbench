@@ -10,8 +10,11 @@ if LIB_DIR not in sys.path:
 from core.phases import Phase
 from review.phases import PhaseResult
 from review.prompt_prior import _build_prior_section, _scoped
-from review.reconcile import _prior_findings, passed_over, reconcile, record_prior_findings
-from review.record import LedgerLine, SeveritySection
+from review.reconcile import (
+    _prior_findings, open_derived_findings, passed_over, reconcile,
+    record_prior_findings,
+)
+from review.record import Disposition, LedgerLine, SeveritySection
 from review.render import BANNER
 from review.steps import _carry_forward_prior_findings
 from review.store import StoredReview
@@ -33,6 +36,23 @@ def test_a_fixed_prior_finding_is_not_reconciled():
     prior = StoredReview(fixture_record("self_incremental_fixed"),
                          fixture_meta("self_incremental_fixed"))
     assert "N1" not in [p.ref.finding_id for p in _prior_findings(prior.record)]
+
+
+def test_open_derived_findings_ignores_declined_and_skipped():
+    declined = finding(
+        "S1", "Claim contradicted: x", origin=FindingOrigin.CLAIM,
+        disposition=Disposition.DECLINED,
+    )
+    skipped = finding(
+        "S2", "Claim unsupported: y", origin=FindingOrigin.CLAIM,
+        disposition=Disposition.SKIPPED, path="",
+    )
+    opened = finding(
+        "S3", "Claim contradicted: z", origin=FindingOrigin.CLAIM,
+    )
+    prior = StoredReview(record(declined, skipped, opened), ReviewMeta())
+    assert [f.id for f in open_derived_findings(prior)] == ["S3"]
+    assert open_derived_findings(None) == ()
 
 
 def test_reconcile_dates_the_prior_from_its_sidecar():

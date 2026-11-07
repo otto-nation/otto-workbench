@@ -17,8 +17,10 @@ import review.merge
 import review.verify
 from review.claim_types import ClaimSource, ClaimVerdict
 from review.grammar import FindingIdentity
+from review.record import Disposition
 from review.render import render_body
-from review.types import FindingOrigin
+from review.store import StoredReview
+from review.types import FindingOrigin, ReviewMeta
 from review_claims_support import claim
 from review_convergence_support import review_job
 from review_record_support import finding, record
@@ -320,3 +322,61 @@ def test_unsupported_and_unverifiable_claims_are_not_checked(tmp_path):
 
 def test_unassessed_claims_pass_through(tmp_path):
     assert review.verify.verified_claims(None, str(tmp_path), ["a.py"]) is None
+
+
+def _prior_answered(tmp_path, rec, disposition, reason=""):
+    job = _settle_job(tmp_path)
+    first = review.claims.settle(job, rec)
+    derived = next(f for f in first.findings if f.origin is FindingOrigin.CLAIM)
+    answered = replace(derived, disposition=disposition, reason=reason)
+    job.prior = StoredReview(replace(first, findings=(answered,)), ReviewMeta())
+    return job, derived
+
+
+def test_a_declined_prior_derived_finding_keeps_its_disposition(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.CONTRADICTED),))
+    job, prior = _prior_answered(
+        tmp_path, rec, Disposition.DECLINED, "author's call",
+    )
+    out = review.claims.settle(job, rec)
+    got = next(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
+    assert got.disposition is Disposition.DECLINED
+    assert got.reason == "author's call"
+    assert got.stable_id == prior.stable_id
+
+
+def test_a_skipped_unsupported_derived_finding_keeps_its_disposition(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.UNSUPPORTED),))
+    job, prior = _prior_answered(
+        tmp_path, rec, Disposition.SKIPPED, "needs a person",
+    )
+    out = review.claims.settle(job, rec)
+    got = next(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
+    assert prior.path == ""
+    assert got.disposition is Disposition.SKIPPED
+    assert got.reason == "needs a person"
+    assert got.path == ""
+
+
+def test_a_falsified_prior_derived_finding_is_not_rederived(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.CONTRADICTED),))
+    job, _prior = _prior_answered(tmp_path, rec, Disposition.FALSIFIED)
+    out = review.claims.settle(job, rec)
+    assert not any(f.origin is FindingOrigin.CLAIM for f in out.findings)
+    assert out.claims[0].finding == ""
+    assert out.claims[0].verdict is ClaimVerdict.CONTRADICTED
+
+
+def test_a_changed_claim_derives_open(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.CONTRADICTED),))
+    job, prior = _prior_answered(
+        tmp_path, rec, Disposition.DECLINED, "author's call",
+    )
+    changed = record(claims=(
+        claim(verdict=ClaimVerdict.CONTRADICTED, text="timeouts are gone"),
+    ))
+    out = review.claims.settle(job, changed)
+    got = next(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
+    assert got.disposition is Disposition.OPEN
+    assert got.reason == ""
+    assert got.stable_id != prior.stable_id

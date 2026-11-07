@@ -908,11 +908,15 @@ line is always that `Source:` line so a derived body never ends in a
 non-defect phrase (D11).
 
 A prior round's derived findings (`origin` other than writer) are never
-carried, never shown in the prior prompt, and never accounted for. The
-writer re-judges the claims and settle re-derives. A true no-op round
-carries them with their claims. An open prior derived finding stops a round
-being treated as clean or settled, so the writer re-judges
-(`reconcile.open_derived_findings`, `steps._writer_must_rejudge`).
+shown in the prior prompt and never accounted for. The writer re-judges
+the claims and settle re-derives. When the new finding's stable_id matches
+a prior derived finding that was DECLINED or SKIPPED, it carries that
+disposition and reason. A prior derived finding that was FALSIFIED is not
+re-derived for that stable_id: the claim stays contradicted or unsupported
+with no finding. A true no-op round carries them with their claims. An
+OPEN prior derived finding stops a round being treated as clean or settled,
+so the writer re-judges (`reconcile.open_derived_findings`,
+`steps._writer_must_rejudge`).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,

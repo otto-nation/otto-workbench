@@ -394,11 +394,11 @@ def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailur
 
     An incremental round, every group reported, the groups that ran produced no
     finding, and no prior finding is left for synthesis to account for. A count
-    nobody took (`fresh` None) is not a zero. An open derived finding on the
-    prior (visible, not Disposition.FIXED — the same openness as
-    `_prior_findings`) is not settled here: those are re-derived from this
-    round's claims, so this returns False and the writer re-judges them. A
-    round that adds nothing does not withdraw what the last one asked for.
+    nobody took (`fresh` None) is not a zero. An OPEN derived finding on the
+    prior is not settled here: those are re-derived from this round's claims,
+    so this returns False and the writer re-judges them. DECLINED and SKIPPED
+    were answered last round and do not force the writer. A round that adds
+    nothing does not withdraw what the last one asked for.
     settled False does not skip the disprove gate on this ground.
     """
     if not _is_incremental(job) or failed_groups or merged.fresh != 0:

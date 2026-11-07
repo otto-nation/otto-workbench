@@ -88,13 +88,17 @@ def _held_open(finding: RecordFinding) -> bool:
 def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
     """Derived findings the prior still held open.
 
-    Openness matches `_prior_findings`: `visible` (not FALSIFIED) and not
-    Disposition.FIXED. Derived findings are never a prior finding to account
-    for, but an open one still needs the writer to re-judge claims.
+    Openness is Disposition.OPEN on a visible finding. DECLINED and SKIPPED
+    were answered last round; FALSIFIED is not visible. Derived findings are
+    never a prior finding to account for, but an OPEN one still needs the
+    writer to re-judge claims.
     """
     if prior is None:
         return ()
-    return tuple(f for f in prior.record.visible if f.derived and _held_open(f))
+    return tuple(
+        f for f in prior.record.visible
+        if f.derived and f.disposition is Disposition.OPEN
+    )
 
 
 def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:

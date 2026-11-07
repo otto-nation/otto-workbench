@@ -108,6 +108,23 @@ def test_a_fixed_derived_prior_finding_does_not_block_nothing_new(tmp_path):
     assert review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
 
 
+@pytest.mark.parametrize("disposition", [Disposition.DECLINED, Disposition.SKIPPED])
+def test_an_answered_derived_prior_finding_does_not_block_nothing_new(
+    tmp_path, disposition,
+):
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+                disposition=disposition,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    assert review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
+
+
 def test_nothing_new_with_everything_settled(tmp_path):
     assert review.steps._nothing_new(_job(tmp_path), merged(fresh=0), [])
 

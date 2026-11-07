@@ -64,7 +64,7 @@ from review.dedup import (
 from review.posting import (
     DEFAULT_CHUNK_SIZE, _CHUNK_PATTERN,
     ReviewEvent, event_of,
-    _post_and_track, _print_dry_run,
+    _post_and_track, _post_as_comment, _print_dry_run,
     _chunk_comments, _post_chunked_review, post_review,
     _submit_review, write_post_tracking, _format_submit_command,
     _reclassify_and_retry,

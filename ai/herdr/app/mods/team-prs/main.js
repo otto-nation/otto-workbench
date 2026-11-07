@@ -4,6 +4,7 @@ import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme,
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
+import { friendlyError, mergeStates, spaceTargets } from "./_lib/scope.js";
 import {
   assemble, checkTools, loadBusy, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
@@ -11,6 +12,20 @@ import { renderBoard, renderChips } from "./board.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
+}
+
+function scopeOf() {
+  return shared("team-prs.scope") === "all" ? "all" : "this";
+}
+
+// The checkouts the board reads: the pinned or focused one, or every open space's.
+function targetsOf() {
+  if (scopeOf() === "all") {
+    const all = spaceTargets(spaces());
+    if (all.length) return all;
+  }
+  const c = ctxOf();
+  return [{ on: c.on, cwd: c.cwd }];
 }
 
 function ctxKey(ctx) {
@@ -27,10 +42,7 @@ function tabOf() {
 }
 
 function errorText(err, ctx) {
-  if (!err) return "";
-  if (err.kind === "auth") return `run gh auth login on ${ctx?.on != null ? ctx.on : "this Mac"}`;
-  if (err.kind === "unreachable") return "the machine is unreachable";
-  return err.message ?? "";
+  return friendlyError(err, ctx?.on);
 }
 
 
@@ -45,8 +57,7 @@ export default class TeamPrs extends View {
     if (isUntrustedHome(appHome())) return;
     cx.timer.every(180000, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => {
-      const c = ctxOf();
-      if (c.on != null || this.pollListing) this.refresh(cx, { listingOnly: true });
+      if (targetsOf().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
     });
     this.refresh(cx);
   }
@@ -75,7 +86,7 @@ export default class TeamPrs extends View {
     });
   }
 
-  same(key) { return ctxKey(ctxOf()) === key; }
+  same(key) { return targetsOf().some((c) => ctxKey(c) === key); }
 
   fail(key, error) {
     this.cache.set(key, { ...(this.cache.get(key) ?? {}), error, stale: true });
@@ -83,7 +94,9 @@ export default class TeamPrs extends View {
 
   commit(key, data, ctx, cx) {
     this.cache.set(key, { ...data, error: null, stale: false, updatedAt: Date.now() });
-    if (ctx.on == null) this.startWatch(cx, key, data.reviewsRoot);
+    // One folder watch follows one checkout; All spaces polls the listing instead.
+    if (scopeOf() === "all") this.pollListing = true;
+    else if (ctx.on == null) this.startWatch(cx, key, data.reviewsRoot);
   }
 
   async ensureTools(ctx, key) {
@@ -115,14 +128,16 @@ export default class TeamPrs extends View {
   }
 
   async pull(cx, listingOnly) {
-    const ctx = ctxOf();
-    const key = ctxKey(ctx);
-    if (!ctx.cwd) {
-      this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
-      return;
+    for (const ctx of targetsOf()) {
+      const key = ctxKey(ctx);
+      if (!ctx.cwd) {
+        this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
+        continue;
+      }
+      if (listingOnly) await this.pullListing(ctx, key, cx);
+      else await this.pullFull(ctx, key, cx);
+      cx.notify();
     }
-    if (listingOnly) await this.pullListing(ctx, key, cx);
-    else await this.pullFull(ctx, key, cx);
   }
 
   async pullFull(ctx, key, cx) {
@@ -219,16 +234,29 @@ export default class TeamPrs extends View {
       return v_flex().id("prs").size_full().items_center().justify_center().bg(t.background)
         .child(div().text_color(t.dim).child("PR board is disabled in the untrusted window"));
     }
-    const ctx = ctxOf(), key = ctxKey(ctx);
-    if (this.key !== key) {
-      this.key = key; this.watchKey = null; this.pollListing = false; this.refresh(cx);
+    const targets = targetsOf();
+    const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
+    if (this.key !== scopeKey) {
+      this.key = scopeKey; this.watchKey = null; this.pollListing = false; this.refresh(cx);
     }
-    const state = this.cache.get(key) ?? {};
-    if (state.error && state.prs == null) {
-      return v_flex().id("prs").size_full().items_center().justify_center().bg(t.background)
-        .child(div().text_color(t.dim).child(errorText(state.error, ctx)));
+    const states = targets.map((c) => this.cache.get(ctxKey(c)) ?? {});
+    const merged = mergeStates(states);
+    const failed = states.find((s) => s.error);
+    if (!merged.prs.length && failed && states.every((s) => s.prs == null)) {
+      return v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background)
+        .child(div().text_color(t.dim).child(errorText(failed.error, targets[0])))
+        .child(this.scopeToggle(t));
     }
-    return this.boardView(cx, ctx, state, t);
+    return this.boardView(cx, targets[0], { ...merged, stale: failed?.stale, error: failed?.error }, t);
+  }
+
+  scopeToggle(t) {
+    const scope = scopeOf();
+    const btn = (name, label) => div().id(`scope-${name}`).px(8).py(4).rounded(6).text_size(11)
+      .cursor_pointer().when(scope === name, (e) => e.bg(t.selected).text_color(t.foreground))
+      .when(scope !== name, (e) => e.text_color(t.muted))
+      .on_click(() => setShared("team-prs.scope", name)).child(label);
+    return h_flex().gap(4).child(btn("this", "This space")).child(btn("all", "All spaces"));
   }
 
   boardView(cx, ctx, state, t) {
@@ -241,7 +269,7 @@ export default class TeamPrs extends View {
         tab, prs: state.prs ?? [], filters, me: state.me ?? "",
         // Detail window lands in PR 4.
         onOpen: (_pr) => {},
-        spinner: "⠋",
+        spinner: "⠋", showRepo: scopeOf() === "all",
       }));
   }
 
@@ -251,8 +279,11 @@ export default class TeamPrs extends View {
       .when(tab !== name, (e) => e.text_color(t.muted))
       .on_click(() => setShared("team-prs.tab", name)).child(label);
     return h_flex().id("prs-header").h(42).flex_none().px(14).gap(8).items_center()
-      .child(div().font_semibold().child(state.repo?.slug ?? "no repo"))
-      .when(ctx.on != null, (e) => e.child(div().text_size(11).text_color(t.dim).child(String(ctx.on))))
+      .child(this.scopeToggle(t))
+      .when(scopeOf() === "all", (e) => e.child(div().text_size(11).text_color(t.dim)
+        .child(`${state.repos} repos`)))
+      .when(scopeOf() !== "all", (e) => e.child(div().font_semibold().child(state.slug ?? "no repo")))
+      .when(scopeOf() !== "all" && ctx?.on != null, (e) => e.child(div().text_size(11).text_color(t.dim).child(String(ctx.on))))
       .child(h_flex().gap(4).child(btn("team", "Team")).child(btn("mine", "Mine")))
       .child(div().id("pin").px(8).py(4).rounded(6).text_size(11).cursor_pointer()
         .border_1().border_color(t.border)

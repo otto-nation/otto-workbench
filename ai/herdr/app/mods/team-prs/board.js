@@ -30,7 +30,7 @@ function grouped(prs, colOf, columns) {
 
 function column(col, opts) {
   const t = theme();
-  return v_flex().id(`col-${col.key}`).flex_1().min_w(0).min_h(0)
+  return v_flex().id(`col-${col.key}`).flex_1().h_full().min_w(0).min_h(0)
     .child(h_flex().h(28).flex_none().px(8).gap(8).items_center()
       .child(div().font_semibold().child(col.label))
       .child(div().text_size(11).text_color(t.dim).child(String(col.items.length))))
@@ -39,7 +39,7 @@ function column(col, opts) {
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
-export function renderBoard({ tab, prs, filters, me, onOpen, spinner }) {
+export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo }) {
   const t = theme();
   const mine = tab === "mine";
   const list = mine
@@ -47,9 +47,9 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner }) {
     : filterPrs(prs, filters, me);
   const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
   const cols = grouped(list, mine ? mineColumn : teamColumn, spec);
-  return h_flex().id("prs-board").size_full().min_h(0).gap(8).p(8).bg(t.background)
+  return h_flex().id("prs-board").flex_1().h_full().min_h(0).gap(8).p(8).bg(t.background)
     .text_color(t.foreground).text_size(13)
-    .children(cols.map((c) => column(c, { onOpen, spinner })));
+    .children(cols.map((c) => column(c, { onOpen, spinner, showRepo })));
 }
 
 function badges(pr) {
@@ -65,14 +65,14 @@ function badges(pr) {
   return out;
 }
 
-export function renderCard(pr, { onOpen, spinner }) {
+export function renderCard(pr, { onOpen, spinner, showRepo }) {
   const t = theme();
   const mark = CI[pr.ciStatus] ?? "";
   return v_flex().id(`pr-${pr.number}`).p(8).gap(4).rounded(8).border_1().border_color(t.border)
     .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => onOpen(pr))
     .child(div().truncate().font_semibold().child(pr.title ?? ""))
     .child(h_flex().gap(8).items_center().text_size(11).text_color(t.dim)
-      .child(div().child(`#${pr.number}`))
+      .child(div().child(showRepo && pr.repoSlug ? `${pr.repoSlug}#${pr.number}` : `#${pr.number}`))
       .child(div().child(pr.author ?? ""))
       .child(div().flex_1().min_w(0).truncate().child(pr.branch ?? "")))
     .child(h_flex().gap(8).items_center().text_size(11)

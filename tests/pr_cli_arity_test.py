@@ -39,22 +39,22 @@ _TEST_REPLY_BODY_FILE = "/tmp/reply.md"
 def _record_arity_reads():
     """Record which commands `pr` read flag arity for, letting the read happen.
 
-    The point of these tests is that the wrapper reads arity off the delegate's
-    own parser, so the real parser has to be the one answering — this spies on
-    the read rather than replacing it.
+    The point of these tests is that the wrapper reads arity off the command's
+    reference parser, so the real parser has to be the one answering — this spies
+    on the read rather than replacing it.
 
     Not nestable: the inner block would capture the outer spy as `real` and
     double-count every read. Nothing nests it, and a second recorder in one
     test would be asking two questions of one run anyway.
     """
     read: list[str] = []
-    real = cli.dispatch.delegate_value_flags
+    real = cli.pr._accepted_value_flags
 
     def spy(spec):
         read.append(spec.name)
         return real(spec)
 
-    with patch("cli.dispatch.delegate_value_flags", side_effect=spy):
+    with patch("cli.pr._accepted_value_flags", side_effect=spy):
         yield read
 
 
@@ -298,7 +298,7 @@ def test_an_empty_arity_answer_still_dispatches_the_command(mock_resolve, mock_c
     """A command whose delegate names no value-taking flag still runs."""
     mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))
     mock_call.return_value = 0
-    with patch("cli.dispatch.delegate_value_flags", return_value=frozenset()):
+    with patch("cli.pr._accepted_value_flags", return_value=frozenset()):
         assert _run_main("comments", "--triage", _TEST_PR) == 0
     cmd = mock_call.call_args[0][1]
     assert mock_call.call_args[0][0] == "cli.review_threads:main"

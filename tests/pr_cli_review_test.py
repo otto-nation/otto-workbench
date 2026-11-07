@@ -183,6 +183,27 @@ def test_cmd_review_post_forwards_the_event(mock_call, reviews_dir):
     assert cmd[cmd.index("--event") + 1] == "approve"
 
 
+def test_accepted_value_flags_includes_review_event():
+    assert "--event" in cli.pr._accepted_value_flags(cli.registry.COMMANDS["review"])
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
+@patch("pr.context.resolve")
+def test_review_post_event_is_not_eaten_as_the_positional_target(
+        mock_resolve, mock_call, reviews_dir):
+    """`pr review --post --event approve` must not classify `approve` as a target."""
+    mock_resolve.return_value = make_ctx(pr_number=42)
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("# Review")
+    assert _run_main("review", "--post", "--event", "approve") == 0
+    assert mock_call.call_args[0][0] == "cli.review_post:main"
+    cmd = mock_call.call_args[0][1]
+    assert cmd[cmd.index("--event") + 1] == "approve"
+    assert mock_resolve.call_args[1]["branch"] is None
+    assert mock_resolve.call_args[1]["pr_ref"] is None
+
+
 def test_review_post_main_refuses_an_unknown_event(rp, capsys):
     with pytest.raises(SystemExit) as exc:
         rp.main(["--pr", "1", "--review-file", "/nope/review.md", "--event", "merge"])

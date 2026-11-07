@@ -913,13 +913,17 @@ non-defect phrase (D11).
 
 A prior round's derived findings (`origin` other than writer) are never
 shown in the prior prompt and never accounted for. The writer re-judges
-the claims and settle re-derives. When the new finding's stable_id matches
-a prior derived finding that was DECLINED or SKIPPED, it carries that
-disposition and reason. A prior derived finding that was FALSIFIED is not
-re-derived for that stable_id: the claim stays contradicted or unsupported
-with no finding. A true no-op round carries them with their claims. An
-OPEN prior derived finding stops a round being treated as clean or settled,
-so the writer re-judges (`reconcile.open_derived_findings`,
+the claims and settle re-derives. A DECLINED or SKIPPED derived finding
+keeps its disposition from one writer round to the next, matched by
+stable_id (path plus the first 80 characters of the first line;
+description and ticket claims with the same wording collide). After a
+round that settles or ends clean without the writer — the merged record
+never holds derived findings — that answer is lost, and the next writer
+round re-derives the finding OPEN. A FALSIFIED derived finding is not
+re-derived the round after it was falsified, but a later round re-derives
+it. A true no-op round carries them with their claims. An OPEN or
+UNREACHED prior derived finding stops a round being treated as clean or
+settled, so the writer re-judges (`reconcile.open_derived_findings`,
 `steps._writer_must_rejudge`).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and

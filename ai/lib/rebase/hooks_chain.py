@@ -49,6 +49,8 @@ CHAIN_HOOK = Path(__file__).with_name("chain_hook.sh")
 
 # Rebase children run these. pre-commit is included for parity with the
 # installed global dir; `rebase --continue` uses `-n` and skips it.
+# commit-msg is not chained: a rebase replays recorded messages, and every
+# workbench push checks them (gh.owner_hooks.refuse_outgoing).
 CHAINED_HOOKS = ("post-rewrite", "prepare-commit-msg", "pre-commit")
 
 

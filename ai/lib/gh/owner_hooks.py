@@ -17,9 +17,11 @@ from pathlib import Path
 
 import config.github_owners
 import config.workbench_config
+import core.log
 import gh.owners
 import gh.owner_targets
 import git.client
+import git.push
 import git.remote_url
 
 _SCISSORS_RE = re.compile(r"^\S ------------------------ >8 ------------------------$")
@@ -378,3 +380,20 @@ def check_push(
         _check_new_commits(
             remote, update.local_sha, update.remote_sha, group, loaded, cwd)
         for update in parsed)
+
+
+def refuse_outgoing(cwd: str | Path, outgoing: git.push.Outgoing) -> None:
+    """The `git.push.OwnerCheck` every workbench push passes: raise when its commits may not go.
+
+    Runs the same scan the global pre-push hook does, so a push made through
+    the workbench is checked where a repo's own ``core.hooksPath`` keeps that
+    hook from running, and with ``--no-verify``. A refusal raises
+    ``gh.owners.OwnerBoundaryError``; a check that cannot run warns and allows,
+    as the hook does, and the user's cross-ref override is honoured inside
+    ``check_push`` with its own warning.
+    """
+    verdict = check_push(outgoing.remote, outgoing.url, outgoing.ref_lines, cwd)
+    if verdict.outcome is HookOutcome.REFUSE:
+        raise gh.owners.OwnerBoundaryError(gh.owners.Verdict.refuse(verdict.reason))
+    if verdict.reason:
+        core.log.warn(verdict.reason)

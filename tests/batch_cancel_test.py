@@ -41,8 +41,7 @@ def _run():
     `drop-pr` answers `d1` without running any command.
     """
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {Step.REVIEW: StepNeed(True, "x")})
-    run = batch.scheduler.new_run([row], steps=[Step.REVIEW], selected=None, pool=1,
-                                  auto_publish=[])
+    run = batch.scheduler.new_run([row], steps=[Step.REVIEW], selected=None, pool=1)
     item = run.items[0]
     item.worktree = "/wt"
     item.step(Step.REVIEW).status = StepStatus.NEEDS_DECISION
@@ -66,8 +65,7 @@ def _events(out):
 
 def test_resume_drives_only_a_run_it_loaded_under_the_run_lock(monkeypatch):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {Step.REVIEW: StepNeed(True, "x")})
-    run = batch.scheduler.new_run([row], steps=[Step.REVIEW], selected=None, pool=1,
-                                  auto_publish=[], schema_version=2)
+    run = batch.scheduler.new_run([row], steps=[Step.REVIEW], selected=None, pool=1)
     run.items[0].worktree = "/wt"
     run.status = RunStatus.WAITING
     seed(run)
@@ -132,7 +130,7 @@ def test_a_busy_resume_emits_nothing_and_deletes_nothing(monkeypatch, capsys):
     assert emitted == []
     assert _requests(run.id) == queued
     assert batch.store.load(run.id).status is RunStatus.INTERRUPTED
-    assert (f"run {run.id} is busy: applying a decision (pr batch resolve, "
+    assert (f"run {run.id} is busy: applying a request (pr batch cancel, "
             f"pid {os.getppid()}, started t0)") in capsys.readouterr().err
 
 
@@ -223,29 +221,3 @@ def test_an_applier_hold_is_not_a_live_scheduler_and_its_queue_is_reported(capsy
     assert report["run"]["active"] is False
     assert report["run"]["pending_requests"] == 1
     assert [e["decision"] for e in report["next"]] == ["d1"]
-
-
-def test_a_rejected_request_is_listed_by_next(capsys):
-    run = seed(_run())
-    assert _main(["batch", "resolve", run.id, "nope", "--action", "drop-pr"]) == 1
-    capsys.readouterr()
-    assert _main(["batch", "next", run.id]) == 0
-    view = json.loads(capsys.readouterr().out)
-    [failed] = view["run"]["failed_requests"]
-    assert "nope" in failed["error"]
-    assert view["run"]["pending_requests"] == 0
-
-
-def test_a_resolve_that_cannot_reach_the_run_says_where_the_request_is(monkeypatch, capsys):
-    run = seed(_run())
-    monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0]))
-    record = {"pid": os.getppid(), "command": "pr batch resolve", "started": "t0",
-              "released": "t1"}
-    with held_elsewhere(batch.store.run_lock(run.id).path, record):
-        code = _main(["batch", "resolve", run.id, "d1", "--action", "drop-pr"])
-    assert code == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert (f"the request is in its inbox and will be applied by the next "
-            f"session to open it") in captured.err
-    assert batch.store.pending_requests(run.id) == 1

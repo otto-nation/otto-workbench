@@ -22,7 +22,6 @@ if str(LIB_DIR) not in sys.path:
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.requests  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.steps  # noqa: E402
 import gh.landed  # noqa: E402
 import rebase.refusals  # noqa: E402
@@ -170,31 +169,6 @@ def test_parent_grew_after_fork_so_old_tip_is_not_the_fork_point(tmp_path):
     assert partial.fork_subject == "feat: parent two"
 
 
-def test_rebase_refused_naming_a_fork_point_offers_rebase_from_fork_point(tmp_path):
-    decision, item, _repo = _refused_child(tmp_path)
-    assert batch.resolve._named_fork_point(decision.payload)
-
-    actions = batch.resolve.available_actions(decision, item)
-
-    assert "rebase-from-fork-point" in actions
-
-
-def test_command_for_rebase_from_fork_point_passes_fork_point_not_force(tmp_path):
-    decision, item, _repo = _refused_child(tmp_path)
-    sha = batch.resolve._named_fork_point(decision.payload)
-    assert sha
-
-    commands = batch.resolve.command_for(
-        decision, item, batch.requests.Decide("d1", "rebase-from-fork-point"), "pr",
-    )
-
-    assert commands
-    argv = commands[0]
-    assert "--fork-point" in argv
-    assert argv[argv.index("--fork-point") + 1] == sha
-    assert "--force" not in argv
-
-
 def test_batch_rebase_argv_uses_merge_base_of_parent_pre_rebase_head(tmp_path):
     """When the parent grew after the child forked, the fork point is earlier.
 
@@ -263,7 +237,3 @@ def test_scheduler_omits_fork_point_when_parent_rebase_was_skipped(tmp_path):
     argv, _, _ = _child_rebase_argv(
         tmp_path, extra_parent=True, pre_rebase_head=None, parent_rebased=False)
     assert "--fork-point" not in argv
-
-
-def test_named_fork_point_tolerates_bare_remedy_prefix():
-    assert batch.resolve._named_fork_point({"remedy": "--fork-point "}) == ""

@@ -16,31 +16,12 @@ import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import batch.targets  # noqa: E402
-from batch.requests import Cancel, Decide, Envelope, Malformed, Release  # noqa: E402
+from batch.requests import Cancel, Envelope, Malformed, Release  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
                                      _close_open_sessions, _even, _quiet_outcomes, row)
 from pr.comments_fix import CloseoutDebt  # noqa: E402
-
-
-def test_draft_run_ends_waiting_with_one_publish_decision_per_pr():
-    h = Harness([row(1), row(2)])
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    assert [a[1] for a in h.spawned if a[-1] == "/wt/b1"] == ["rebase", "comments", "review"]
-    assert "--no-push" in h.spawned[0]
-    pubs = [d for d in h.run.decisions if d.kind is batch.model.DecisionKind.PUBLISH]
-    assert sorted(d.item for d in pubs) == ["o/r#1", "o/r#2"]
-    assert all(i.status is batch.model.ItemStatus.READY_TO_PUBLISH for i in h.run.items)
-    log = h.run.item("o/r#1").step(batch.model.Step.REBASE).log_path
-    assert "o__r-1-rebase-" in log
-
-
-def test_auto_publish_run_finishes_done():
-    h = Harness([row(1)], auto_publish=batch.model.STEP_ORDER)
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
-    assert h.run.items[0].status is batch.model.ItemStatus.DONE
-    assert "run_finished" in h.kinds()
 
 
 def test_pool_limit_is_never_exceeded():
@@ -51,8 +32,8 @@ def test_pool_limit_is_never_exceeded():
 
 def test_blocked_pr_frees_its_slot_for_the_others():
     h = Harness([row(1), row(2), row(3)], pool=1, codes={("rebase", "/wt/b1"): 3})
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    assert h.run.item("o/r#1").status is batch.model.ItemStatus.AWAITING_DECISION
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
+    assert h.run.item("o/r#1").status is batch.model.ItemStatus.NEEDS_SESSION
     assert any(a[1] == "review" and a[-1] == "/wt/b3" for a in h.spawned)
 
 
@@ -115,8 +96,9 @@ def test_closed_pr_is_skipped_without_running_anything():
 
 def test_dirty_worktree_becomes_a_decision():
     h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    assert h.run.decisions[0].kind is batch.model.DecisionKind.DIRTY_WORKTREE
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
+    assert h.run.items[0].status is batch.model.ItemStatus.NEEDS_SESSION
+    assert h.run.items[0].findings[0].reason is batch.model.FindingReason.DIRTY_WORKTREE
     assert h.spawned == []
 
 
@@ -130,7 +112,7 @@ def test_cancel_before_start_runs_nothing():
 def test_unrealised_headroom_blocks_a_second_admit_in_the_same_tick():
     estimate = batch.admission.DEFAULT_ESTIMATES[batch.model.Step.REBASE]
     host = batch.admission.HostSample(2 * GiB + estimate, 1.0, 0.0)
-    h = Harness([row(1), row(2)], host=host, pool=2, auto_publish=batch.model.STEP_ORDER)
+    h = Harness([row(1), row(2)], host=host, pool=2)
     h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
     with pytest.raises(KeyboardInterrupt):
         h.sched.run_until_blocked()
@@ -140,8 +122,7 @@ def test_unrealised_headroom_blocks_a_second_admit_in_the_same_tick():
 def test_admission_wait_is_reported_and_the_floor_still_progresses():
     short = batch.admission.HostSample(2 * GiB, 1.0, 0.0)
     # Two repos, so the one-fetcher-per-repo rule cannot be what holds row 2 back.
-    h = Harness([row(1), row(2, repo="o/s", repo_dir="/s")], host=short,
-                auto_publish=batch.model.STEP_ORDER)
+    h = Harness([row(1), row(2, repo="o/s", repo_dir="/s")], host=short)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
     waits = [f for k, f in h.events if k == "admission_wait"]
     assert waits and waits[0]["reason"].startswith("waiting for memory")
@@ -153,21 +134,20 @@ def test_mid_loop_drains_a_queued_request_written_to_disk():
     # objects across both run_until_blocked() calls below. What this checks is
     # that a request written to the store mid-run gets picked up and applied
     # without a fresh Scheduler being constructed.
-    h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO})],
-                codes={("rebase", "/wt/b1"): 3})
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    d = h.run.open_decisions()[0]
-    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
-    h.codes.clear()
-    h.sched.run_until_blocked()
-    assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
-    assert ("decision_resolved" in h.kinds())
+    h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO,
+                         batch.model.Step.REVIEW: NO})])
+    h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        h.sched.run_until_blocked()
+    batch.store.write_request(h.run.id, Cancel())
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.CANCELLED
+    assert "cancel_requested" in h.kinds()
 
 
 def test_new_run_selects_needed_steps_and_drops_rows_with_none():
     rows = [row(1, {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NEED, batch.model.Step.REVIEW: NO}),
             row(2, {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO})]
-    run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=None, pool=2, auto_publish=[])
+    run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=None, pool=2)
     assert [i.key for i in run.items] == ["o/r#1"]
     assert [(s.step, s.status) for s in run.items[0].steps] == [
         (batch.model.Step.REBASE, batch.model.StepStatus.SKIPPED),
@@ -178,33 +158,19 @@ def test_new_run_selects_needed_steps_and_drops_rows_with_none():
 
 def test_new_run_honours_explicit_selection():
     run = batch.scheduler.new_run([row(1, {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO})],
-                      steps=list(batch.model.STEP_ORDER), selected={"o/r#1": [batch.model.Step.REVIEW]}, pool=1,
-                      auto_publish=[])
+                      steps=list(batch.model.STEP_ORDER), selected={"o/r#1": [batch.model.Step.REVIEW]}, pool=1)
     assert run.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
 
 
 def test_new_run_marks_only_selected_steps_explicit():
     run = batch.scheduler.new_run([row(1)], steps=list(batch.model.STEP_ORDER),
-                                  selected={"o/r#1": [batch.model.Step.REVIEW]}, pool=1,
-                                  auto_publish=[])
+                                  selected={"o/r#1": [batch.model.Step.REVIEW]}, pool=1)
     assert [(s.step, s.explicit) for s in run.items[0].steps] == [
         (batch.model.Step.REBASE, False), (batch.model.Step.CI, False),
         (batch.model.Step.COMMENTS, False), (batch.model.Step.REVIEW, True)]
     planned = batch.scheduler.new_run([row(1)], steps=list(batch.model.STEP_ORDER),
-                                      selected=None, pool=1, auto_publish=[])
+                                      selected=None, pool=1)
     assert not any(s.explicit for s in planned.items[0].steps)
-
-
-def test_mark_interrupted_turns_running_steps_into_decisions():
-    run = batch.scheduler.new_run([row(1)], steps=list(batch.model.STEP_ORDER), selected=None, pool=1, auto_publish=[])
-    run.items[0].step(batch.model.Step.REBASE).status = batch.model.StepStatus.RUNNING
-    events = []
-    assert batch.scheduler.mark_interrupted(
-        run, emit=lambda kind, **fields: events.append((kind, fields))) is True
-    assert events and events[0][0] == "decision_created"
-    assert events[0][1]["decision_kind"] == "interrupted"
-    assert run.items[0].step(batch.model.Step.REBASE).status is batch.model.StepStatus.INTERRUPTED
-    assert run.decisions[0].kind is batch.model.DecisionKind.INTERRUPTED
 
 
 def test_events_are_ndjson_with_schema_version(capsys):
@@ -241,57 +207,43 @@ def test_plan_error_fails_one_item_and_others_progress():
         return r
 
     h = Harness([row(1), row(2)], replan=replan)
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    failed = [d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED]
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
+    failed = [f for f in h.run.item("o/r#1").findings
+              if f.reason is batch.model.FindingReason.FAILED_UNKNOWN]
     assert len(failed) == 1
-    assert failed[0].payload["reason"] == "github"
-    assert failed[0].payload["detail"] == "graphql 502"
-    assert h.run.item("o/r#1").status is batch.model.ItemStatus.AWAITING_DECISION
+    assert failed[0].data.get("reason") == "github"
+    assert "graphql 502" in failed[0].detail
+    assert h.run.item("o/r#1").status is batch.model.ItemStatus.NEEDS_SESSION
     assert any(a[-1] == "/wt/b2" for a in h.spawned)
     assert not any(a[-1] == "/wt/b1" for a in h.spawned)
 
 
 def test_unreadable_request_file_does_not_crash_the_run():
-    # The retried rebase moves HEAD, so review re-runs and the run waits on its publish.
-    h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO})],
-                codes={("rebase", "/wt/b1"): 3}, moves={("rebase", "/wt/b1")})
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    d = h.run.open_decisions()[0]
+    h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO,
+                         batch.model.Step.REVIEW: NO})])
     reqs = batch.store.run_dir(h.run.id) / "requests"
     reqs.mkdir(parents=True, exist_ok=True)
     (reqs / "20261001T000000000000-bad.json").write_text("not json")
-    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
-    h.codes.clear()
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    assert [a[1] for a in h.spawned] == ["rebase", "rebase", "review"]
-    errors = [f for k, f in h.events if k == "decision_resolved" and "error" in f]
-    assert errors
+    batch.store.write_request(h.run.id, Cancel())
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.CANCELLED
+    failed = batch.store.failed_requests(h.run.id)
+    assert failed and "not an object" in failed[0].error
 
 
 def test_malformed_request_is_reported_and_the_rest_apply():
-    h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO})],
-                codes={("rebase", "/wt/b1"): 3})
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    d = h.run.open_decisions()[0]
+    # Revert: emit decision_resolved again.
+    h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO,
+                         batch.model.Step.REVIEW: NO})])
     reqs = batch.store.run_dir(h.run.id) / "requests"
     reqs.mkdir(parents=True, exist_ok=True)
-    (reqs / "20261001T000000000000-noaction.json").write_text(json.dumps({"decision": d.id}))
-    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
-    h.codes.clear()
-    h.sched.run_until_blocked()
-    assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
-    errors = [f for k, f in h.events if k == "decision_resolved" and "error" in f]
-    assert errors
-
-
-def test_decision_created_carries_only_what_an_agent_acts_on():
-    h = Harness([row(1)], codes={("rebase", "/wt/b1"): 3})
-    h.sched.run_until_blocked()
-    f = next(f for k, f in h.events if k == "decision_created")
-    assert set(f) == {"run", "item", "decision", "decision_kind", "why", "commands"}
-    assert f["decision_kind"] == "rebase_conflict"
-    assert f["commands"] == [f"pr batch resolve {h.run.id} {f['decision']} --action abort",
-                             f"pr batch resolve {h.run.id} {f['decision']} --action retry"]
+    (reqs / "20261001T000000000000-decide.json").write_text(
+        json.dumps({"kind": "decide", "decision": "d1", "action": "retry"}))
+    batch.store.write_request(h.run.id, Cancel())
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.CANCELLED
+    failed = batch.store.failed_requests(h.run.id)
+    assert any("pr batch resolve was removed" in f.error for f in failed)
+    assert "decision_resolved" not in h.kinds()
+    assert "cancel_requested" in h.kinds()
 
 
 def _chatty(h):
@@ -312,37 +264,14 @@ def test_step_log_lines_stay_off_the_event_stream_unless_verbose():
     _chatty(quiet)
     quiet.sched.run_until_blocked()
     assert "step_log" not in quiet.kinds()
-    failed = next(d for d in quiet.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
-    assert failed.payload["log_tail"] == ["working"]
+    failed = next(f for f in quiet.run.items[0].findings
+                  if f.reason is batch.model.FindingReason.FAILED_UNKNOWN)
+    assert failed.log_path.endswith("/logs/o__r-1-rebase-0.log")
 
     loud = Harness([row(1, {batch.model.Step.REBASE: NEED})], verbose=True)
     _chatty(loud)
     loud.sched.run_until_blocked()
     assert [f["line"] for k, f in loud.events if k == "step_log"] == ["working"]
-
-
-def test_publish_and_dirty_worktree_emit_decision_created():
-    dirty = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
-    dirty.sched.run_until_blocked()
-    kinds = [f["decision_kind"] for k, f in dirty.events if k == "decision_created"]
-    assert "dirty_worktree" in kinds
-
-    h = Harness([row(1)])
-    h.sched.run_until_blocked()
-    kinds = [f["decision_kind"] for k, f in h.events if k == "decision_created"]
-    assert "publish" in kinds
-
-
-def test_failed_publish_via_request_emits_decision_created():
-    h = Harness([row(1)])
-    h.sched.run_until_blocked()
-    d = next(x for x in h.run.open_decisions() if x.kind is batch.model.DecisionKind.PUBLISH)
-    batch.store.write_request(h.run.id, Decide(d.id, "publish"))
-    h.publish_code = 1
-    h.sched.run_until_blocked()
-    created = [f for k, f in h.events if k == "decision_created"]
-    failed = next(f for f in created if f["decision_kind"] == "failed")
-    assert h.run.decision(failed["decision"]).step == "publish"
 
 
 def test_cancel_kill_force_kills_what_the_tracked_step_already_outlived():
@@ -427,7 +356,7 @@ def test_release_kill_of_a_live_step_does_not_requeue_the_item():
     rec = next(r for r in item.steps if r.status is not batch.model.StepStatus.PENDING
                and r.status is not batch.model.StepStatus.SKIPPED)
     assert rec.status is batch.model.StepStatus.INTERRUPTED
-    assert not h.run.open_decisions(item.key)
+    assert item.findings == []
 
 
 def test_interrupt_kills_live_children_and_marks_the_run():
@@ -456,18 +385,8 @@ def test_interrupt_kills_live_children_and_marks_the_run():
     assert saved.status is batch.model.RunStatus.INTERRUPTED
     finished = [f for k, f in h.events if k == "run_finished"]
     assert finished and finished[-1]["status"] == "interrupted"
-    assert any(d.kind is batch.model.DecisionKind.INTERRUPTED for d in h.run.decisions)
-
-
-def test_drop_via_resolve_emits_item_finished():
-    h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
-    h.sched.run_until_blocked()
-    d = h.run.open_decisions()[0]
-    batch.store.write_request(h.run.id, Decide(d.id, "drop-pr"))
-    h.sched.run_until_blocked()
-    finished = [f for k, f in h.events if k == "item_finished"]
-    assert any(f["item"] == "o/r#1" and f["status"] == "dropped" for f in finished)
-    assert h.run.items[0].status is batch.model.ItemStatus.DROPPED
+    assert h.run.items[0].status is batch.model.ItemStatus.QUEUED
+    assert all(r.status is not batch.model.StepStatus.RUNNING for r in h.run.items[0].steps)
 
 
 def test_interrupt_emit_failure_still_saves_and_reraises_original():
@@ -485,7 +404,7 @@ def test_interrupt_emit_failure_still_saves_and_reraises_original():
         h.sched.run_until_blocked()
     saved = batch.store.load(h.run.id)
     assert saved.status is batch.model.RunStatus.INTERRUPTED
-    assert any(d.kind is batch.model.DecisionKind.INTERRUPTED for d in saved.decisions)
+    assert saved.items[0].status is batch.model.ItemStatus.QUEUED
 
 
 def test_settle_emit_failure_does_not_mark_interrupted():
@@ -493,17 +412,16 @@ def test_settle_emit_failure_does_not_mark_interrupted():
     real = h.sched._emit
 
     def boom(kind, **fields):
-        if kind == "run_waiting":
+        if kind == "run_finished":
             raise RuntimeError("emit failed")
         real(kind, **fields)
 
     h.sched._emit = boom
     with pytest.raises(RuntimeError, match="emit failed"):
         h.sched.run_until_blocked()
-    assert h.run.status is batch.model.RunStatus.WAITING
     saved = batch.store.load(h.run.id)
-    assert saved.status is batch.model.RunStatus.WAITING
-    assert not any(d.kind is batch.model.DecisionKind.INTERRUPTED for d in saved.decisions)
+    assert saved.status is batch.model.RunStatus.DONE
+    assert saved.items[0].status is batch.model.ItemStatus.NEEDS_SESSION
 
 
 def test_non_dict_request_is_reported_and_does_not_crash(monkeypatch):
@@ -512,9 +430,8 @@ def test_non_dict_request_is_reported_and_does_not_crash(monkeypatch):
     monkeypatch.setattr(batch.store, "peek_requests", lambda run_id: [
         Envelope("x.json", Malformed("not an object"))])
     monkeypatch.setattr(batch.store, "pending_requests", lambda run_id: 0)
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    errors = [f for k, f in h.events if k == "decision_resolved" and "error" in f]
-    assert errors
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
+    assert "decision_resolved" not in h.kinds()
 
 
 def test_does_not_settle_while_requests_are_pending(monkeypatch):
@@ -526,7 +443,7 @@ def test_does_not_settle_while_requests_are_pending(monkeypatch):
         return 1 if checks["n"] == 1 else 0
 
     monkeypatch.setattr(batch.store, "pending_requests", pending)
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
     assert checks["n"] >= 2
 
 
@@ -548,9 +465,10 @@ def test_resume_replays_the_run_s_focus():
 def test_a_failed_step_records_the_log_it_wrote():
     h = Harness([row(1)], codes={("rebase", "/wt/b1"): 1})
     h.sched.run_until_blocked()
-    failed = next(d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
-    assert failed.payload["reason"] == "error"
-    assert failed.payload["log"].endswith("/logs/o__r-1-rebase-0.log")
+    failed = next(f for f in h.run.items[0].findings
+                  if f.reason is batch.model.FindingReason.FAILED_UNKNOWN)
+    assert failed.data.get("reason") == "error"
+    assert failed.log_path.endswith("/logs/o__r-1-rebase-0.log")
 
 
 NONE_NEEDED = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NO,
@@ -559,23 +477,20 @@ NONE_NEEDED = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NO,
 
 def test_new_run_keeps_a_row_whose_only_work_is_an_owed_closeout():
     run = batch.scheduler.new_run([row(1, NONE_NEEDED, closeout="summary"), row(2, NONE_NEEDED)],
-                                  steps=list(batch.model.STEP_ORDER), selected=None, pool=1,
-                                  auto_publish=[])
+                                  steps=list(batch.model.STEP_ORDER), selected=None, pool=1)
     assert [i.key for i in run.items] == ["o/r#1"]
     assert all(r.status is batch.model.StepStatus.SKIPPED for r in run.items[0].steps)
 
 
 def test_new_run_leaves_out_a_closeout_when_comments_is_not_a_chosen_step():
     run = batch.scheduler.new_run([row(1, NONE_NEEDED, closeout="summary")],
-                                  steps=[batch.model.Step.REBASE], selected=None, pool=1,
-                                  auto_publish=[])
+                                  steps=[batch.model.Step.REBASE], selected=None, pool=1)
     assert run.items == []
 
 
 def test_new_run_leaves_out_a_closeout_when_selection_is_explicit():
     run = batch.scheduler.new_run([row(1, NONE_NEEDED, closeout="summary")],
-                                  steps=list(batch.model.STEP_ORDER), selected={}, pool=1,
-                                  auto_publish=[])
+                                  steps=list(batch.model.STEP_ORDER), selected={}, pool=1)
     assert run.items == []
 
 
@@ -587,44 +502,7 @@ def _closeout_row():
     return row(1, NONE_NEEDED, closeout="summary")
 
 
-def test_a_closeout_alone_opens_a_publish_decision():
-    h = Harness([_closeout_row()], closeout=_owes_summary, tree=_even)
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    [d] = h.run.decisions
-    assert d.kind is batch.model.DecisionKind.PUBLISH
-    assert d.payload == {"drafted": [], "track": [], "closeout": "summary"}
-    assert h.run.items[0].status is batch.model.ItemStatus.READY_TO_PUBLISH
-
-
 def test_no_drafted_work_and_no_debt_finishes_done_without_asking():
     h = Harness([row(1, NONE_NEEDED, closeout="")], tree=_even)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
     assert h.run.decisions == []
-
-
-def test_auto_publish_comments_answers_a_closeout_alone():
-    h = Harness([_closeout_row()], closeout=_owes_summary, tree=_even,
-                auto_publish=[batch.model.Step.COMMENTS])
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
-    assert h.published == [["pr", "comments", "--finish", "--post", "--repo-dir", "/wt/b1"]]
-
-
-def test_auto_publish_without_comments_leaves_a_closeout_to_the_operator():
-    h = Harness([_closeout_row()], closeout=_owes_summary, tree=_even,
-                auto_publish=[batch.model.Step.REVIEW])
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    assert h.published == []
-
-
-def test_a_skipped_failed_comments_step_does_not_auto_publish_owed_closeout():
-    needs = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NEED,
-             batch.model.Step.REVIEW: NO}
-    h = Harness([row(1, needs)], codes={("comments", "/wt/b1"): 1},
-                closeout=_owes_summary, tree=_even, auto_publish=[batch.model.Step.COMMENTS])
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    failed = next(d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
-    h.session.apply(Decide(failed.id, "skip-step"))
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    pubs = [d for d in h.run.open_decisions() if d.kind is batch.model.DecisionKind.PUBLISH]
-    assert len(pubs) == 1
-    assert h.published == []

@@ -16,7 +16,7 @@ import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.model import CancelState, DecisionKind, RunStatus, Step  # noqa: E402
-from batch.requests import Cancel, Decide, Malformed, Outcome, Release  # noqa: E402
+from batch.requests import Cancel, Malformed, Outcome, Release  # noqa: E402
 from batch_scheduler_support import (  # noqa: E402,F401
     NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row,
 )
@@ -27,7 +27,7 @@ ONLY_REBASE = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO}
 
 def _new_run(*rows):
     return batch.scheduler.new_run(list(rows), steps=list(batch.model.STEP_ORDER),
-                                   selected=None, pool=1, auto_publish=[])
+                                   selected=None, pool=1)
 
 
 def _recorded(run, outcome):
@@ -75,42 +75,8 @@ def test_settle_does_not_drop_refs_itself_and_each_terminal_commit_drops_once(
     assert terminal and all(n == 1 for n in terminal)
 
 
-def test_auto_publish_via_session_apply_emits_decision_resolved_and_item_finished():
-    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW])
-    assert h.sched.run_until_blocked() is RunStatus.DONE
-    kinds = h.kinds()
-    assert "decision_resolved" in kinds
-    assert "item_finished" in kinds
-    finished = [f for k, f in h.events if k == "item_finished"]
-    assert any(f["status"] == "done" for f in finished)
-
-
-def test_stacked_retry_via_session_apply_emits_decision_resolved_with_retry():
-    # Base review moves HEAD so it closes with a publish; stacked rebase waits
-    # as STEP_REVIEW. Discarding the publish makes the base terminal, and
-    # `_release_stacked` retries through session.apply / emit_outcome.
-    h = Harness(
-        [row(1, ONLY_REVIEW), row(2, ONLY_REBASE, base_ref="b1")],
-        pool=2, moves={("review", "/wt/b1")})
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    waiting = h.run.open_decisions("o/r#2")
-    assert waiting and waiting[0].kind is DecisionKind.STEP_REVIEW
-    stacked_id = waiting[0].id
-    publish = h.run.open_decisions("o/r#1")[0]
-    batch.store.write_request(h.run.id, Decide(decision=publish.id, action="discard"))
-    assert h.sched.run_until_blocked() is RunStatus.DONE
-    retried = [f for k, f in h.events
-               if k == "decision_resolved" and f.get("action") == "retry"]
-    assert retried and retried[0]["decision"] == stacked_id
-    assert retried[0]["run"] == h.run.id
-    assert any(a[1] == "rebase" and a[-1] == "/wt/b2" for a in h.spawned)
-
-
 def test_a_cancel_drained_mid_loop_emits_cancel_requested():
-    h = Harness([row(1, {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO})],
-                codes={("rebase", "/wt/b1"): 3})
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    h = Harness([row(1, {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO})])
     batch.store.write_request(h.run.id, Cancel())
     assert h.sched.run_until_blocked() is RunStatus.CANCELLED
     requested = [f for k, f in h.events if k == "cancel_requested"]
@@ -134,13 +100,6 @@ def test_cancel_requested_is_a_known_event_kind(capsys):
     batch.events.emit("cancel_requested", run="r1", kill=True)
     line = capsys.readouterr().out
     assert "cancel_requested" in line
-
-
-def test_emit_outcome_maps_a_malformed_request_to_an_empty_decision_resolved():
-    run = _new_run(row(1))
-    outcome = Outcome(name="x.json", request=Malformed("not an object"), error="not an object")
-    assert _recorded(run, outcome) == [("decision_resolved", {
-        "run": run.id, "decision": "", "action": "", "error": "not an object"})]
 
 
 def test_emit_outcome_reports_a_cancel_with_its_kill_flag():

@@ -38,7 +38,7 @@ import core.run_lock  # noqa: E402
 from batch.model import (Decision, DecisionKind, Item, ItemStatus, Run,  # noqa: E402
                          RunStatus, Step, StepRecord)
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from batch.requests import Cancel, Decide  # noqa: E402
+from batch.requests import Cancel  # noqa: E402
 from batch.store import Role  # noqa: E402
 from batch_session_support import NullInbox, open_session, seed  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
@@ -64,7 +64,7 @@ def _no_command(*args, **kwargs) -> int:
     return 0
 
 
-_CTX = batch.inbox.ApplyContext(pr_bin="pr", runner=_no_command)
+_CTX = batch.inbox.ApplyContext()
 
 
 class _Stop(Exception):
@@ -143,18 +143,18 @@ def _probe_for(seconds):
 
 def test_a_request_landing_after_a_sessions_last_drain_is_applied_on_release():
     seed(_run())
-    inbox = _LateArrival(Decide("d1", "drop-pr"))
+    inbox = _LateArrival(Cancel())
     with open_session(RID, Role.APPLIER, inbox=inbox):
         inbox.armed = True
     saved = batch.store.load(RID)
     assert saved.decision("d1").resolution == "drop-pr"
     assert saved.status is RunStatus.DONE
     assert batch.store.pending_requests(RID) == 0
-    assert [o.request for o in inbox.outcomes] == [Decide("d1", "drop-pr")]
+    assert [o.request for o in inbox.outcomes] == [Cancel()]
 
 
 def test_a_request_landing_after_creates_last_drain_is_applied_on_release():
-    inbox = _LateArrival(Decide("d1", "drop-pr"))
+    inbox = _LateArrival(Cancel())
     with batch.store.create(_run(), inbox=inbox, command="pr batch run") as opened:
         opened.commit()
         inbox.armed = True
@@ -167,7 +167,7 @@ def test_an_exceptional_exit_hands_nothing_off(monkeypatch):
     calls = []
     monkeypatch.setattr(batch.store, "_hand_off", lambda *args: calls.append(args))
     with pytest.raises(_Stop), open_session(RID):
-        batch.store.write_request(RID, Decide("d1", "drop-pr"))
+        batch.store.write_request(RID, Cancel())
         raise _Stop()
     assert calls == []
     assert batch.store.pending_requests(RID) == 1
@@ -183,7 +183,7 @@ def test_an_exceptional_exit_of_create_hands_nothing_off(monkeypatch):
     with pytest.raises(_Stop), batch.store.create(_run(), inbox=NullInbox(),
                                                  command="pr batch run") as opened:
         opened.commit()
-        batch.store.write_request(RID, Decide("d1", "drop-pr"))
+        batch.store.write_request(RID, Cancel())
         raise _Stop()
     assert calls == []
     assert batch.store.pending_requests(RID) == 1
@@ -191,11 +191,11 @@ def test_an_exceptional_exit_of_create_hands_nothing_off(monkeypatch):
 
 def test_a_live_draining_holder_carries_the_duty(other_pid, monkeypatch, capsys):
     seed(_run())
-    batch.store.write_request(RID, Decide("d1", "drop-pr"))
+    batch.store.write_request(RID, Cancel())
     slept = []
     monkeypatch.setattr(batch.store.time, "sleep", slept.append)
     with held_elsewhere(_lock_file(), _holder_record(other_pid, "driver")):
-        batch.store._hand_off(RID, NullInbox(), "pr batch resolve")
+        batch.store._hand_off(RID, NullInbox(), "pr batch cancel")
     assert slept == []
     assert batch.store.pending_requests(RID) == 1
     assert capsys.readouterr().err == ""
@@ -203,14 +203,14 @@ def test_a_live_draining_holder_carries_the_duty(other_pid, monkeypatch, capsys)
 
 def test_a_gc_holder_is_waited_out(other_pid, monkeypatch):
     seed(_run())
-    batch.store.write_request(RID, Decide("d1", "drop-pr"))
+    batch.store.write_request(RID, Cancel())
     monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0]))
     gc = contextlib.ExitStack()
     gc.enter_context(held_elsewhere(_lock_file(), _holder_record(other_pid, "gc")))
     # The first pause is where the GC holder finishes its reap and lets go.
     monkeypatch.setattr(batch.store.time, "sleep", lambda seconds: gc.close())
     try:
-        batch.store._hand_off(RID, NullInbox(), "pr batch resolve")
+        batch.store._hand_off(RID, NullInbox(), "pr batch cancel")
     finally:
         gc.close()
     assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
@@ -221,7 +221,7 @@ def test_a_gc_holder_is_waited_out(other_pid, monkeypatch):
 def test_a_hand_off_that_cannot_get_in_warns_and_leaves_the_request(holder, other_pid,
                                                                       monkeypatch, capsys):
     seed(_run())
-    batch.store.write_request(RID, Decide("d1", "drop-pr"))
+    batch.store.write_request(RID, Cancel())
     # `_hand_off` looks up retry_delays() first; core looks it up inside a pass.
     # Tracking next() on that first iterator pins that a vacated record does not
     # spend a second budget in `_hand_off` itself.
@@ -246,7 +246,7 @@ def test_a_hand_off_that_cannot_get_in_warns_and_leaves_the_request(holder, othe
     monkeypatch.setattr(batch.store.time, "sleep", slept.append)
     record = _holder_record(other_pid, "gc") if holder == "gc" else _VACATED
     with held_elsewhere(_lock_file(), record):
-        batch.store._hand_off(RID, NullInbox(), "pr batch resolve")
+        batch.store._hand_off(RID, NullInbox(), "pr batch cancel")
     assert _STRANDED.format(rid=RID, n=1) in capsys.readouterr().err
     if holder == "vacated":
         assert hand_off_pauses == []
@@ -272,7 +272,7 @@ _PARKED_HARNESS = textwrap.dedent("""\
     lib, tests, signals, run_id, mode = sys.argv[1:6]
     sys.path[:0] = [lib, tests]
     import batch.store
-    from batch.requests import Decide, Outcome
+    from batch.requests import Cancel, Outcome
     from batch.store import Role
     from batch_session_support import NullInbox
     signals = pathlib.Path(signals)
@@ -294,7 +294,7 @@ _PARKED_HARNESS = textwrap.dedent("""\
     with batch.store.session(run_id, role, inbox=ParkingInbox(),
                              command=f"test {mode}") as opened:
         if mode == "applier":
-            batch.store.write_request(run_id, Decide("park", "accept"))
+            batch.store.write_request(run_id, Cancel())
         else:
             opened.finish()
             park()
@@ -336,29 +336,6 @@ def test_a_cancel_queued_against_a_parked_applier_is_applied_by_its_hand_off(tmp
     assert batch.store.pending_requests(RID) == 0
 
 
-def test_a_resolve_queued_after_a_drivers_finish_is_applied_by_its_hand_off(tmp_path, capsys):
-    seed(_run())
-    child = _parked(tmp_path, "driver")
-    try:
-        _wait_for(tmp_path / "parked", child)
-        code = _main(["batch", "resolve", RID, "d1", "--action", "drop-pr"])
-        parked = batch.store.load(RID)
-    finally:
-        (tmp_path / "release").touch()
-        _, err = child.communicate(timeout=_PROC_TIMEOUT)
-    assert code == 0
-    assert json.loads(capsys.readouterr().out) == {
-        "applied": False, "queued": True, "decision": "d1",
-        "holder": {"role": "driver", "pid": child.pid, "command": "test driver"},
-    }
-    assert parked.decision("d1").open
-    assert child.returncode == 0, err
-    saved = batch.store.load(RID)
-    assert saved.decision("d1").resolution == "drop-pr"
-    assert saved.status is RunStatus.DONE
-    assert batch.store.pending_requests(RID) == 0
-
-
 # ── probers never yield `queued` ──────────────────────────────────────────────
 
 def test_deliver_waits_out_a_prober_and_applies_the_request():
@@ -366,8 +343,8 @@ def test_deliver_waits_out_a_prober_and_applies_the_request():
     started = time.monotonic()
     timer = _probe_for(_PROBE_S)
     try:
-        delivery = batch.inbox.deliver(RID, Decide("d1", "drop-pr"), _CTX,
-                                       command="pr batch resolve")
+        delivery = batch.inbox.deliver(RID, Cancel(), _CTX,
+                                       command="pr batch cancel")
         waited = time.monotonic() - started
     finally:
         timer.join()
@@ -382,17 +359,17 @@ def test_deliver_against_a_prober_that_never_lets_go_is_unreachable_not_queued(m
     seed(_run())
     monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.001]))
     with held_elsewhere(_lock_file(), _VACATED), pytest.raises(batch.store.RunUnreachable):
-        batch.inbox.deliver(RID, Decide("d1", "drop-pr"), _CTX, command="pr batch resolve")
+        batch.inbox.deliver(RID, Cancel(), _CTX, command="pr batch cancel")
     assert batch.store.pending_requests(RID) == 1
     assert batch.store.load(RID).decision("d1").open
 
 
 def test_a_hand_off_waits_out_a_prober_and_applies_the_request():
     seed(_run())
-    batch.store.write_request(RID, Decide("d1", "drop-pr"))
+    batch.store.write_request(RID, Cancel())
     timer = _probe_for(_PROBE_S)
     try:
-        batch.store._hand_off(RID, NullInbox(), "pr batch resolve")
+        batch.store._hand_off(RID, NullInbox(), "pr batch cancel")
     finally:
         timer.join()
     assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
@@ -413,7 +390,7 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
     item = Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="aaa",
                 status=ItemStatus.QUEUED, steps=[StepRecord(Step.REBASE)])
     seed(Run(id=RID, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
-             status=RunStatus.WAITING, items=[item], schema_version=2))
+             status=RunStatus.WAITING, items=[item]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: RunStatus.WAITING)
     real_flock = fcntl.flock

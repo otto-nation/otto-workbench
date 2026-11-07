@@ -23,7 +23,7 @@ from batch_scheduler_support import (  # noqa: F401,E402
 
 
 def _v2(**kw):
-    return Harness([row(1)], schema_version=2, with_ai=[], **kw)
+    return Harness([row(1)], with_ai=[], **kw)
 
 
 def test_conflict_records_a_finding_and_run_is_done():
@@ -51,7 +51,7 @@ def test_default_rebase_argv_has_no_fix():
 
 def test_comments_without_ai_spawns_nothing():
     # Revert: delete the _note_comments call.
-    h = Harness([row(1, {Step.COMMENTS: NEED})], schema_version=2, with_ai=[])
+    h = Harness([row(1, {Step.COMMENTS: NEED})], with_ai=[])
     h.sched.run_until_blocked()
     assert not any(a[1] == "comments" for a in h.spawned)
     item = h.run.items[0]
@@ -61,7 +61,7 @@ def test_comments_without_ai_spawns_nothing():
 
 def test_drafted_rebase_closes_done_with_ready_to_push():
     # Revert: delete the `d is None` branch in _close.
-    h = Harness([row(1, {Step.REBASE: NEED})], schema_version=2, with_ai=[],
+    h = Harness([row(1, {Step.REBASE: NEED})], with_ai=[],
                 moves={("rebase", "/wt/b1")})
     h.sched.run_until_blocked()
     item = h.run.items[0]
@@ -72,7 +72,7 @@ def test_drafted_rebase_closes_done_with_ready_to_push():
 
 def test_stacked_child_waits_after_base_finishes():
     # Revert: drop the schema check in _stacked_wait.
-    h = Harness([row(1), row(2, base_ref="b1")], schema_version=2, with_ai=[])
+    h = Harness([row(1), row(2, base_ref="b1")], with_ai=[])
     h.sched.run_until_blocked()
     assert h.run.item("o/r#1").status is ItemStatus.DONE
     child = h.run.item("o/r#2")
@@ -90,10 +90,3 @@ def test_interrupt_requeues_the_step():
     assert rec.status is StepStatus.PENDING
     assert h.run.items[0].status is ItemStatus.QUEUED
     assert h.run.decisions == []
-
-
-# passes-at-base: asserts the v1 path this change must not break
-def test_v1_run_still_decides():
-    h = Harness([row(1)])
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
-    assert any(d.kind is batch.model.DecisionKind.PUBLISH for d in h.run.decisions)

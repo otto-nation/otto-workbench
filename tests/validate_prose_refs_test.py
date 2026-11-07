@@ -66,7 +66,7 @@ def test_nested_commands_aliases_and_global_flags_resolve(tmp_path, tools, names
 
 def test_synopsis_notation_is_read_as_notation(tmp_path, tools, names):
     text = ("`pr [global flags] <command> [flags]`\n"
-            "`pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]`\n")
+            "`pr batch release RUN_ID PR [--kill]`\n")
     assert _reasons(tmp_path, text, tools, names) == []
 
 

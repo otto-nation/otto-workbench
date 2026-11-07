@@ -101,8 +101,7 @@ def test_resume_converts_before_driving(monkeypatch):
     # Revert: delete the upgrade_v1 call in _try_resume.
     rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                     {Step.REBASE: StepNeed(True, "x")})]
-    run = batch.scheduler.new_run(rows, steps=[Step.REBASE], selected=None, pool=1,
-                                  auto_publish=[])
+    run = batch.scheduler.new_run(rows, steps=[Step.REBASE], selected=None, pool=1)
     run.status = RunStatus.WAITING
     item = run.items[0]
     item.status = ItemStatus.AWAITING_DECISION

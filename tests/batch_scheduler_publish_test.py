@@ -13,7 +13,6 @@ if str(LIB_DIR) not in sys.path:
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.store  # noqa: E402
-from batch.requests import Decide  # noqa: E402
 from batch.model import STEP_ORDER, DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
 # `_close_open_sessions` and `_quiet_outcomes` are autouse fixtures, imported only so
 # pytest registers them (the `noqa: F401` covers them); the other names are used directly.
@@ -26,7 +25,7 @@ REBASE_AND_REVIEW = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NEED}
 
 
 def test_no_step_pushes_or_posts_even_under_auto_publish():
-    h = Harness([row(1)], auto_publish=STEP_ORDER)
+    h = Harness([row(1)])
     h.sched.run_until_blocked()
     flat = [arg for argv in h.spawned for arg in argv]
     assert "--push" not in flat and "--post" not in flat and "--finish" not in flat
@@ -44,98 +43,7 @@ def test_a_step_that_moved_head_is_drafted_and_one_that_did_not_is_not():
 def test_a_run_that_made_no_commits_needs_no_publish():
     h = Harness([row(1, ONLY_REVIEW)])
     assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert not any(d.kind is DecisionKind.PUBLISH for d in h.run.decisions)
-
-
-def test_auto_publish_publishes_when_every_drafted_step_is_listed():
-    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW])
-    assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert h.published == [["pr", "push", "--expect", "h", "--repo-dir", "/wt/b1"]]
-    assert h.run.items[0].status is ItemStatus.DONE
-
-
-def test_auto_publish_honors_no_verify_on_the_run():
-    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW])
-    h.run.no_verify = True
-    h.sched.run_until_blocked()
-    assert h.published == [["pr", "push", "--expect", "h", "--no-verify", "--repo-dir", "/wt/b1"]]
-
-
-def test_an_auto_published_item_finishes_once():
-    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
-                auto_publish=[Step.REVIEW])
-    h.sched.run_until_blocked()
-    assert [f["status"] for k, f in h.events if k == "item_finished"] == ["done"]
-
-
-def test_auto_publish_waits_when_a_drafted_step_is_not_listed():
-    h = Harness([row(1, REBASE_AND_REVIEW)],
-                moves={("rebase", "/wt/b1"), ("review", "/wt/b1")}, auto_publish=[Step.REVIEW])
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    assert h.published == []
-    assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
-
-
-def test_a_retry_that_commits_nothing_keeps_what_the_failed_attempt_drafted():
-    h = Harness([row(1, ONLY_REVIEW)], codes={("review", "/wt/b1"): 1},
-                moves={("review", "/wt/b1")})
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    d = h.run.open_decisions()[0]
-    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
-    h.codes.clear()
-    h.moves.clear()
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    assert [x[1] for x in h.spawned] == ["review", "review"]
-    assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
-
-
-def test_a_retry_that_commits_nothing_still_sees_the_first_attempts_red_trailer(monkeypatch):
-    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")})
-    # The first attempt's commit, `review-1`, carries `Fix-Checks: red`; it is in
-    # the range only when the read starts from before the first attempt.
-    monkeypatch.setattr(batch.outcomes, "fix_checks", lambda wt, hb: (
-        [{"commit": "review-1", "status": "red"}]
-        if hb == "h0" and h.heads.get(wt) == "review-1" else []))
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    d = h.run.open_decisions()[0]
-    assert d.kind is DecisionKind.STEP_REVIEW
-    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
-    h.moves.clear()
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    assert [x[1] for x in h.spawned] == ["review", "review"]
-    again = h.run.open_decisions()
-    assert [x.kind for x in again] == [DecisionKind.STEP_REVIEW]
-    assert again[0].payload["evidence"][0]["kind"] == "checks_unverified"
-
-
-def test_a_retry_keeps_the_draft_in_state_written_before_start_head_existed():
-    h = Harness([row(1, ONLY_REVIEW)], codes={("review", "/wt/b1"): 1},
-                moves={("review", "/wt/b1")})
-    h.sched.run_until_blocked()
-    h.run.items[0].step(Step.REVIEW).start_head = ""
-    d = h.run.open_decisions()[0]
-    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
-    h.codes.clear()
-    h.moves.clear()
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
-
-
-def test_a_retry_after_an_interrupt_keeps_what_the_interrupted_attempt_committed():
-    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")})
-    h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
-    with pytest.raises(KeyboardInterrupt):
-        h.sched.run_until_blocked()
-    d = h.run.open_decisions()[0]
-    assert d.kind is DecisionKind.INTERRUPTED
-    h.resume()
-    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
-    h.moves.clear()
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
-    assert [x[1] for x in h.spawned] == ["review", "review"]
-    assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
+    assert not any(f.reason.value == "ready_to_push" for f in h.run.items[0].findings)
 
 
 def test_the_lease_follows_github_while_nothing_is_drafted():
@@ -175,13 +83,12 @@ def test_a_rebase_that_moved_nothing_records_no_start_tip():
 
 
 def test_a_local_branch_the_remote_lacks_needs_a_publish_with_nothing_drafted():
-    h = Harness([row(1, {Step.REBASE: NEED})], auto_publish=STEP_ORDER,
+    h = Harness([row(1, {Step.REBASE: NEED})],
                 unpublished=lambda wt, sha: (wt, sha) == ("/wt/b1", "h"))
-    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    assert h.sched.run_until_blocked() is RunStatus.DONE
     item = h.run.items[0]
-    assert item.status is ItemStatus.READY_TO_PUBLISH
-    (publish,) = [d for d in h.run.decisions if d.kind is DecisionKind.PUBLISH]
-    assert publish.payload["unpublished"] is True and publish.payload["drafted"] == []
+    assert item.status is ItemStatus.DONE
+    assert any(f.reason.value == "ready_to_push" for f in item.findings)
     assert h.published == []
 
 

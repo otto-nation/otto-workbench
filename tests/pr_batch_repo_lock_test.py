@@ -69,7 +69,7 @@ def _saved(repo="o/r", repo_key="", run_id="20261001T120000-aaaa"):
     row = PlanRow(repo, "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")}, repo_key=repo_key)
     run = batch.scheduler.new_run([row], steps=[batch.model.Step.REVIEW], selected=None,
-                                  pool=1, auto_publish=[])
+                                  pool=1)
     run.id = run_id
     run.status = batch.model.RunStatus.WAITING
     return seed(run)

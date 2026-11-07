@@ -22,7 +22,7 @@ import core.run_lock  # noqa: E402
 import core.serde  # noqa: E402
 from batch.model import (CancelState, Decision, DecisionKind, Item, ItemStatus, Run,  # noqa: E402
                          RunStatus, Step, StepRecord)
-from batch.requests import Cancel, Decide, Malformed  # noqa: E402
+from batch.requests import Cancel, Malformed  # noqa: E402
 from batch.store import FailedRequest, Holder, Role  # noqa: E402
 from batch_session_support import NullInbox, open_session, seed  # noqa: E402
 from run_lock_support import held_elsewhere, live_pid  # noqa: E402
@@ -112,7 +112,7 @@ def test_a_session_on_a_run_with_no_saved_state_is_not_found():
 def test_a_live_holder_refuses_the_session_naming_the_run_and_its_role():
     seed(_run())
     with live_pid() as pid, \
-         held_elsewhere(_lock_file(), {"pid": pid, "command": "pr batch resolve",
+         held_elsewhere(_lock_file(), {"pid": pid, "command": "pr batch cancel",
                                        "started": "t0", "released": None,
                                        "role": "applier", "run": RID}), \
          pytest.raises(batch.store.RunBusy) as exc:
@@ -121,9 +121,9 @@ def test_a_live_holder_refuses_the_session_naming_the_run_and_its_role():
             pytest.fail("a live holder must refuse the session")
     assert exc.value.run_id == RID
     assert exc.value.holder == Holder(role=Role.APPLIER, pid=seen,
-                                      command="pr batch resolve", started="t0")
-    assert str(exc.value) == (f"run {RID} is busy: applying a decision "
-                              f"(pr batch resolve, pid {seen}, started t0)")
+                                      command="pr batch cancel", started="t0")
+    assert str(exc.value) == (f"run {RID} is busy: applying a request "
+                              f"(pr batch cancel, pid {seen}, started t0)")
 
 
 def test_a_second_session_on_one_run_in_one_process_is_a_programming_error():
@@ -186,7 +186,7 @@ def test_a_live_record_without_a_known_role_reads_as_a_draining_holder(record_ro
 
 @pytest.mark.parametrize(("role", "drains", "doing"), [
     (Role.DRIVER, True, "driving it"),
-    (Role.APPLIER, True, "applying a decision"),
+    (Role.APPLIER, True, "applying a request"),
     (Role.GC, False, "removing it"),
     (None, True, "holding it"),
 ])
@@ -309,7 +309,7 @@ def test_a_normal_exit_commits_what_the_block_changed():
 def test_a_normal_exit_drains_a_request_written_during_the_block():
     seed(_run())
     with open_session(RID):
-        batch.store.write_request(RID, Decide("d1", "drop-pr"))
+        batch.store.write_request(RID, Cancel())
     saved = batch.store.load(RID)
     assert saved.decision("d1").resolution == "drop-pr"
     assert saved.status is RunStatus.DONE
@@ -330,7 +330,7 @@ def test_an_exceptional_exit_leaves_requests_written_during_the_block_queued():
     seed(_run())
     with pytest.raises(_Stop):
         with open_session(RID):
-            batch.store.write_request(RID, Decide("d1", "drop-pr"))
+            batch.store.write_request(RID, Cancel())
             raise _Stop()
     assert batch.store.pending_requests(RID) == 1
     assert batch.store.load(RID).decision("d1").open
@@ -451,28 +451,16 @@ def test_write_request_racing_a_removal_is_not_found_and_leaves_no_orphan(monkey
     assert not batch.store.run_dir(RID).exists()
 
 
-def test_apply_reports_a_synthesized_request_and_leaves_the_commit_to_the_caller():
-    seed(_run())
-    inbox = NullInbox()
-    with open_session(RID, inbox=inbox) as session:
-        outcome = session.apply(Decide("d1", "drop-pr"))
-        still_open_on_disk = batch.store.load(RID).decision("d1").open
-    assert outcome.ok and outcome.name == ""
-    assert inbox.outcomes == [outcome]
-    assert still_open_on_disk
-    assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
-
-
 def test_peek_reads_without_taking_and_marks_unreadable_files_malformed():
     seed(_run())
-    name = batch.store.write_request(RID, Decide("d1", "drop-pr"))
+    name = batch.store.write_request(RID, Cancel())
     (_requests() / f"{EARLY}-dir.json").mkdir()
     (_requests() / f"{EARLY}-list.json").write_text("[]")
     envelopes = batch.store.peek_requests(RID)
     assert [e.name for e in envelopes] == [f"{EARLY}-dir.json", f"{EARLY}-list.json", name]
     assert isinstance(envelopes[0].request, Malformed)
     assert isinstance(envelopes[1].request, Malformed)
-    assert envelopes[2].request == Decide("d1", "drop-pr")
+    assert envelopes[2].request == Cancel()
     assert batch.store.pending_requests(RID) == 3
 
 
@@ -487,7 +475,7 @@ def test_a_half_written_request_is_invisible_to_the_inbox():
 
 def test_a_drain_applies_every_cancel_before_any_decision():
     seed(_run())
-    decide = batch.store.write_request(RID, Decide("d1", "drop-pr"))
+    decide = batch.store.write_request(RID, Cancel())
     cancel = batch.store.write_request(RID, Cancel(kill=True))
     assert decide < cancel
     inbox = NullInbox()
@@ -504,7 +492,7 @@ def test_a_drain_applies_every_cancel_before_any_decision():
 def test_a_drain_commits_each_request_before_it_unlinks_it(monkeypatch):
     """A crash between the commit and the unlink replays the request; it never loses it."""
     seed(_run())
-    batch.store.write_request(RID, Decide("d1", "drop-pr"))
+    batch.store.write_request(RID, Cancel())
     real_unlink = Path.unlink
     crashed = []
 
@@ -532,7 +520,7 @@ def test_a_rejected_request_moves_to_rejected_with_its_error():
     seed(_run())
     _requests().mkdir()
     (_requests() / f"{EARLY}-bad.json").write_text("not json")
-    unknown = batch.store.write_request(RID, Decide("nope", "accept"))
+    unknown = batch.store.write_request(RID, Cancel())
     inbox = NullInbox()
     with open_session(RID, inbox=inbox):
         pass
@@ -543,7 +531,7 @@ def test_a_rejected_request_moves_to_rejected_with_its_error():
     assert bad["request"] is None
     assert bad["error"].startswith(f"malformed request {EARLY}-bad.json")
     body = json.loads((rejected / unknown).read_text())
-    assert body == {"request": batch.requests.to_dict(Decide("nope", "accept")),
+    assert body == {"request": batch.requests.to_dict(Cancel()),
                     "error": "'nope'"}
 
 
@@ -552,7 +540,7 @@ def test_failed_requests_lists_rejections_and_reads_older_ones_as_malformed():
     assert batch.store.failed_requests(RID) == []
     _requests().mkdir()
     (_requests() / f"{EARLY}-bad.json").write_text("not json")
-    unknown = batch.store.write_request(RID, Decide("nope", "accept"))
+    unknown = batch.store.write_request(RID, Cancel())
     with open_session(RID):
         pass
     old = _requests() / "rejected" / "19691231T000000000000-old.json"

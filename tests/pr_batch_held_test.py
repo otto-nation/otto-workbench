@@ -37,7 +37,7 @@ def _row(pr, *, repo="o/r", repo_key="hold-key-aaaaaaaa", repo_dir="/r"):
 def _seed_holder(row, *, status=RunStatus.WAITING, item_status=ItemStatus.QUEUED,
                  run_id="20261020T164736-afec", started_at=""):
     run = batch.scheduler.new_run(
-        [row], steps=[Step.REVIEW], selected=None, pool=1, auto_publish=[])
+        [row], steps=[Step.REVIEW], selected=None, pool=1)
     run.id = run_id
     run.status = status
     run.items[0].status = item_status

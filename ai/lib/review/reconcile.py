@@ -85,19 +85,24 @@ def _held_open(finding: RecordFinding) -> bool:
     return finding.disposition is not Disposition.FIXED
 
 
+# Answered last round: the writer does not have to re-judge these derived findings.
+_ANSWERED_DERIVED = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPED)
+
+
 def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
     """Derived findings the prior still held open.
 
-    Openness is Disposition.OPEN on a visible finding. DECLINED and SKIPPED
-    were answered last round; FALSIFIED is not visible. Derived findings are
-    never a prior finding to account for, but an OPEN one still needs the
-    writer to re-judge claims.
+    Openness is a visible derived finding whose disposition is not FIXED,
+    DECLINED or SKIPPED. UNREACHED is still open (the fix pass never reached
+    it). DECLINED and SKIPPED were answered last round; FALSIFIED is not
+    visible. Derived findings are never a prior finding to account for, but
+    an open one still needs the writer to re-judge claims.
     """
     if prior is None:
         return ()
     return tuple(
         f for f in prior.record.visible
-        if f.derived and f.disposition is Disposition.OPEN
+        if f.derived and f.disposition not in _ANSWERED_DERIVED
     )
 
 

@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
@@ -53,6 +55,24 @@ def test_open_derived_findings_ignores_declined_and_skipped():
     prior = StoredReview(record(declined, skipped, opened), ReviewMeta())
     assert [f.id for f in open_derived_findings(prior)] == ["S3"]
     assert open_derived_findings(None) == ()
+
+
+@pytest.mark.parametrize(
+    "disposition, counts_as_open",
+    [
+        (Disposition.UNREACHED, True),
+        (Disposition.DECLINED, False),
+        (Disposition.SKIPPED, False),
+    ],
+)
+def test_open_derived_findings_counts_unreached_as_open(disposition, counts_as_open):
+    derived = finding(
+        "S1", "Claim contradicted: x", origin=FindingOrigin.CLAIM,
+        disposition=disposition,
+    )
+    prior = StoredReview(record(derived), ReviewMeta())
+    ids = [f.id for f in open_derived_findings(prior)]
+    assert ids == (["S1"] if counts_as_open else [])
 
 
 def test_reconcile_dates_the_prior_from_its_sidecar():

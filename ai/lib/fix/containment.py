@@ -31,9 +31,11 @@ in the worktree with a warning.
 # over 5 seconds, seed from a copy of the real index instead.
 #
 # ceiling: the fix agent still runs in the real tree, so it can overwrite an
-# operator's uncommitted edit (never committed — path attribution — but
-# clobbered). Upgrade trigger: once a `fix_pass_left_dirty` trail event
-# carries `already_dirty` paths the operator did not ask the pass to touch.
+# operator's uncommitted edit. `fix.dirty_backup` copies those bytes under
+# artifacts/dirty-backup before the agent runs, but the overwrite still
+# happens. Upgrade trigger: once a `fix_pass_left_dirty` trail event carries
+# `already_dirty` paths the operator did not ask the pass to touch, run the
+# agent in a copy of the worktree.
 
 # doc-group: pipeline
 

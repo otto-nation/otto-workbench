@@ -689,6 +689,21 @@ The review adapter's commit scope is the other half: it keeps only finding
 anchors and the tests named for them, so a PR file that is not an anchor stays
 in the worktree with a warning.
 
+### fix/dirty_backup.py
+
+Pre-pass copies of files already dirty in the operator's worktree.
+
+The fix agent runs in the real worktree and can overwrite an uncommitted edit.
+Containment snapshots verify and suite phases and restores those writes, but
+nothing on disk held the operator's bytes from before the agent ran. This
+module copies already-dirty files under ``artifacts/dirty-backup/`` so a
+``fix_pass_left_dirty`` warning can name a restorable copy.
+
+It reuses ``fix.containment._save_clobber`` (bytes-exact, binary-safe, symlinks
+recorded not followed). Backup failure never aborts the pass: a trail warning
+is recorded and the pass continues. The copies live under the pass's artifacts,
+which are already excluded from the commit and from leftovers.
+
 ### fix/engine.py
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.
@@ -778,7 +793,10 @@ that was already dirty, or to a PR file that is not a finding anchor, stays in
 the worktree while the pass reports a clean landing. This module compares the
 worktree before the pass with the worktree after landing, by content, and says
 what the commit left behind — on the console and as a ``fix_pass_left_dirty``
-trail event. It reports and never changes the tree.
+trail event. When any of those files were already dirty before the pass, the
+warning names ``artifacts/dirty-backup/``, which holds a bytes-exact copy of
+each such file as it was before the agent ran. It reports and never changes
+the tree.
 
 ### fix/reconcile.py
 

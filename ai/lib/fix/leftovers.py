@@ -5,7 +5,10 @@ that was already dirty, or to a PR file that is not a finding anchor, stays in
 the worktree while the pass reports a clean landing. This module compares the
 worktree before the pass with the worktree after landing, by content, and says
 what the commit left behind — on the console and as a ``fix_pass_left_dirty``
-trail event. It reports and never changes the tree.
+trail event. When any of those files were already dirty before the pass, the
+warning names ``artifacts/dirty-backup/``, which holds a bytes-exact copy of
+each such file as it was before the agent ran. It reports and never changes
+the tree.
 """
 
 # doc-group: pipeline
@@ -73,8 +76,13 @@ def find(
 
 def report(
     workdir: str | Path, found: Leftovers, landed: LandResult, trail: Trail | None,
+    backup_dir: str | Path | None = None,
 ) -> None:
-    """Warn on the console and record ``fix_pass_left_dirty`` when *found* has paths."""
+    """Warn on the console and record ``fix_pass_left_dirty`` when *found* has paths.
+
+    *backup_dir* is named only when an already-dirty path was changed, so the
+    operator can restore the pre-pass bytes ``fix.dirty_backup`` copied there.
+    """
     if not found.known:
         tinfo(trail, "fix_leftovers_unread",
               "could not read the worktree to find what the pass left uncommitted",
@@ -91,11 +99,16 @@ def report(
             "; already dirty before the pass, so never credited: "
             f"{', '.join(found.already_dirty)}"
         )
+        if backup_dir is not None:
+            message += f"; pre-pass copies under {backup_dir}"
     message += "."
     core.log.warn(message)
-    twarn(trail, "fix_pass_left_dirty", message, data={
+    data = {
         "paths": list(found.paths),
         "already_dirty": list(found.already_dirty),
         "land_status": str(landed.status),
         "workdir": str(workdir),
-    })
+    }
+    if found.already_dirty and backup_dir is not None:
+        data["backup"] = str(backup_dir)
+    twarn(trail, "fix_pass_left_dirty", message, data=data)

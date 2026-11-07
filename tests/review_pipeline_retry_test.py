@@ -557,6 +557,34 @@ def test_the_single_agent_derives_claim_findings_before_disprove(tmp_path, monke
     assert any(f.origin is FindingOrigin.CLAIM for f in seen["record"].findings)
 
 
+def test_the_single_agent_derives_after_dropping_an_out_of_delta_nit(
+    tmp_path, monkeypatch,
+):
+    """A contradicted claim linked to a dropped out-of-delta nit still derives."""
+    job = _prompt_job(_make_preflight(delta_files=["a.py"]))
+    job.review_file = str(tmp_path / "review.md")
+    job.session_log = str(tmp_path / "session.jsonl")
+    job.wt_path = str(tmp_path)
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(json.dumps({
+            "summary": "Looks fine.", "focus": DERIVED_FOCUS,
+            "findings": [{"id": "N1", "path": "c.py", "line": 1, "body": "rename me"}],
+            "claims": [{**CLAIM_DOC, "verdict": "contradicted", "finding": "N1"}],
+        }))
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    rec = load_record(tmp_path)
+    derived = [f for f in rec.findings if f.origin is FindingOrigin.CLAIM]
+    assert len(derived) == 1
+    assert rec.claims[0].finding == derived[0].id
+    assert not any(f.severity == "N" for f in rec.findings)
+
+
 def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):
     job = _make_job(tmp_path)
     (tmp_path / "single.json").write_text(json.dumps({

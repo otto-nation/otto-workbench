@@ -51,6 +51,20 @@ def _run_pass(wt, *git_args, spec=None):
 
 
 class TestDrift:
+    def test_a_failed_rev_list_is_unreadable_not_zero_commits(self, tmp_path):
+        wt = _two_commit_repo(tmp_path)
+        start = fix.head_guard.read(wt)
+        git_out(wt, "commit", "-q", "--allow-empty", "-m", "third")
+        real = fix.head_guard.git.client.run
+
+        def run(*args, **kw):
+            if args and args[0] == "rev-list":
+                return real("rev-list", "--bogus-flag", **kw)
+            return real(*args, **kw)
+
+        with patch.object(fix.head_guard.git.client, "run", run):
+            assert fix.head_guard.drift(wt, start).kind is Drift.UNREADABLE
+
     def test_each_drift_kind(self, tmp_path):
         wt = _two_commit_repo(tmp_path)
         start = fix.head_guard.read(wt)

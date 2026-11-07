@@ -23,3 +23,12 @@ def _repo(tmp_path, files):
     git_out(wt, "add", "-A")
     git_out(wt, "commit", "-qm", "initial")
     return wt
+
+
+def _tracked_ignored_repo(tmp_path):
+    wt = _repo(tmp_path, {".gitignore": "build/\n", "a.py": "x\n"})
+    (wt / "build").mkdir()
+    (wt / "build" / "tracked.txt").write_text("v1\n")
+    git_out(wt, "add", "-f", "build/tracked.txt")
+    git_out(wt, "commit", "-qm", "tracked under an ignored path")
+    return wt

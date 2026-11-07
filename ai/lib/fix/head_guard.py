@@ -100,8 +100,9 @@ def drift(workdir: str | Path, before: HeadState) -> HeadDrift:
     if ancestor.returncode != 0:
         return HeadDrift(Drift.UNREADABLE, before, now)
     listed = git.client.run("rev-list", f"{before.sha}..{now.sha}", cwd=workdir)
-    commits = tuple(listed.stdout.split()) if listed.ok else ()
-    return HeadDrift(Drift.ADVANCED, before, now, commits)
+    if not listed.ok:
+        return HeadDrift(Drift.UNREADABLE, before, now)
+    return HeadDrift(Drift.ADVANCED, before, now, tuple(listed.stdout.split()))
 
 
 def report(found: HeadDrift, trail: Trail | None) -> None:

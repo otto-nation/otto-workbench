@@ -24,7 +24,7 @@ import review.fix
 from config.workbench_config import FixConfig, WorkbenchConfig
 from git.land import CommitStatus
 
-from fix_containment_support import _repo
+from fix_containment_support import _repo, _tracked_ignored_repo
 from fix_engine_support import StubAdapter, _answer
 from review_fix_pass_support import (
     _PUSHED, _committed_paths, _make_job, git_wt, _answer as _review_answer,
@@ -41,15 +41,6 @@ def _script(tmp_path, body):
     path.write_text(f"#!/usr/bin/env bash\n{body}\n")
     path.chmod(0o755)
     return str(path)
-
-
-def _tracked_ignored_repo(tmp_path):
-    wt = _repo(tmp_path, {".gitignore": "build/\n", "a.py": "x\n"})
-    (wt / "build").mkdir()
-    (wt / "build" / "tracked.txt").write_text("v1\n")
-    git_out(wt, "add", "-f", "build/tracked.txt")
-    git_out(wt, "commit", "-qm", "tracked under an ignored path")
-    return wt
 
 
 class TestSnapshot:

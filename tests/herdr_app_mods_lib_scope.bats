@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/scope.js');
-    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId, representatives } = m;
+    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId, representatives, staleKeys, cardId } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -133,4 +133,22 @@ _js() {
   _js 'representatives([{n:1},{n:2},{n:3},{n:4}], (t) => t.n===1||t.n===2 ? "id" : (t.n===3 ? "other" : null))'
   [ "$status" -eq 0 ]
   jq -e 'length==3 and .[0].n==1 and .[1].n==3 and .[2].n==4' <<<"$output"
+}
+
+@test "staleKeys: keys not in keep" {
+  _js 'staleKeys(["a","b","c"],["b"])'
+  [ "$status" -eq 0 ]
+  jq -e 'length==2 and .[0]=="a" and .[1]=="c"' <<<"$output"
+}
+
+@test "cardId: same number in two repos differs" {
+  _js '({a:cardId({repoSlug:"a/b",number:12}),b:cardId({repoSlug:"c/d",number:12})})'
+  [ "$status" -eq 0 ]
+  jq -e '.a!=.b and (.a|test("#12$")) and (.b|test("#12$"))' <<<"$output"
+}
+
+@test "mergeStates: tags viewer from state me" {
+  _js 'mergeStates([{repo:{slug:"a/b"},prs:[{number:1}],me:"bob"}])'
+  [ "$status" -eq 0 ]
+  jq -e '.prs[0].viewer=="bob"' <<<"$output"
 }

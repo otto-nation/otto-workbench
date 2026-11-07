@@ -4,7 +4,7 @@ import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme,
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
-import { boardState, friendlyError, repoId, representatives, spaceTargets } from "./_lib/scope.js";
+import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
@@ -158,6 +158,11 @@ export default class TeamPrs extends View {
       else await this.pullFull(ctx, key, cx, cycle);
       cx.notify();
     }));
+    const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces()).map(ctxKey)];
+    for (const k of staleKeys(this.cache.keys(), keep)) {
+      this.cache.delete(k);
+      this.repoByKey.delete(k);
+    }
   }
 
   async pullFull(ctx, key, cx, cycle) {

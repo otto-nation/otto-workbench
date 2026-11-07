@@ -1,7 +1,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs } from "./_lib/columns.js";
+import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine } from "./_lib/columns.js";
+import { cardId } from "./_lib/scope.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 
@@ -43,7 +44,7 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo }
   const t = theme();
   const mine = tab === "mine";
   const list = mine
-    ? prs.filter((p) => p.author.toLowerCase() === me.toLowerCase())
+    ? prs.filter((p) => isMine(p, me))
     : filterPrs(prs, filters, me);
   const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
   const cols = grouped(list, mine ? mineColumn : teamColumn, spec);
@@ -68,7 +69,7 @@ function badges(pr) {
 export function renderCard(pr, { onOpen, spinner, showRepo }) {
   const t = theme();
   const mark = CI[pr.ciStatus] ?? "";
-  return v_flex().id(`pr-${pr.number}`).p(8).gap(4).rounded(8).border_1().border_color(t.border)
+  return v_flex().id(cardId(pr)).p(8).gap(4).rounded(8).border_1().border_color(t.border)
     .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => onOpen(pr))
     .child(div().truncate().font_semibold().child(pr.title ?? ""))
     .child(h_flex().gap(8).items_center().text_size(11).text_color(t.dim)

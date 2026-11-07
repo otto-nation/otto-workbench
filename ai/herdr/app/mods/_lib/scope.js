@@ -64,13 +64,24 @@ export function mergeStates(states) {
     seen.add(id);
     slug = slug ?? st.repo.slug;
     me = me || st.me || '';
-    for (const pr of st.prs) prs.push({ ...pr, repoSlug: st.repo.slug });
+    for (const pr of st.prs) prs.push({ ...pr, repoSlug: st.repo.slug, viewer: st.me });
   }
   return { prs, me, repos: seen.size, slug };
 }
 
 export function repoId(repo) {
   return `${repo.host ?? ''}/${repo.slug}`;
+}
+
+// Cache keys no longer in the keep set.
+export function staleKeys(keys, keep) {
+  const hold = new Set(keep);
+  return [...keys].filter((k) => !hold.has(k));
+}
+
+// Unique per repo so two repos' #12 never share an element id.
+export function cardId(pr) {
+  return `pr-${pr.repoSlug ?? ""}#${pr.number}`;
 }
 
 // First target per known repo; unknown-repo targets all stay so they get resolved.

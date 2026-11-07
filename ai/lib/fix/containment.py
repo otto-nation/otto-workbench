@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import subprocess
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -235,20 +236,25 @@ def _put_back(workdir: Path, record: FileRecord | None, rel: str) -> None:
         _prune_empty(path.parent, workdir)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    blob = git.client.run("cat-file", "blob", record.sha, cwd=workdir)
-    if not blob.ok:
-        core.log.warn(core.proc.failure_message(
-            f"Could not restore {rel} from snapshot", blob,
-        ))
+    # Bytes, not text: `git.client.run` decodes, which corrupts a binary blob.
+    blob = subprocess.run(
+        ["git", "cat-file", "blob", record.sha], cwd=workdir,
+        capture_output=True, check=False,
+    )
+    if blob.returncode != 0:
+        core.log.warn(
+            f"Could not restore {rel} from snapshot: "
+            f"{blob.stderr.decode(errors='replace').strip()}"
+        )
         return
     if path.is_symlink() or path.is_file():
         path.unlink()
     elif path.exists():
         shutil.rmtree(path)
     if record.mode == _SYMLINK:
-        path.symlink_to(blob.stdout.rstrip("\n"))
+        path.symlink_to(os.fsdecode(blob.stdout))
         return
-    path.write_bytes(blob.stdout.encode())
+    path.write_bytes(blob.stdout)
     path.chmod(stat.S_IMODE(int(record.mode, 8)))
 
 

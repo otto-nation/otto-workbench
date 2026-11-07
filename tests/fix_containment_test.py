@@ -109,6 +109,19 @@ class TestRestore:
         assert (result.saved_to / "a.py").read_text() == CLOBBER
 
 
+    def test_restore_returns_binary_content_byte_for_byte(self, tmp_path):
+        wt = _repo(tmp_path, {"a.py": "one\n"})
+        blob = bytes(range(256)) + b"\xff\xfe"
+        (wt / "img.bin").write_bytes(blob)
+        before = fix.containment.take(wt)
+        (wt / "img.bin").write_bytes(b"clobbered")
+        after = fix.containment.take(wt)
+        fix.containment.restore(
+            wt, before, after, artifacts=tmp_path / "art", phase="verify", trail=None,
+        )
+        assert (wt / "img.bin").read_bytes() == blob
+
+
 class TestVerifyOverwrite:
     """The incident: verify overwrote a tracked PR file with a two-line fixture."""
 

@@ -162,6 +162,13 @@ def test_status_full_prints_the_raw_run_and_whether_it_is_active(capsys):
     assert out["run"]["decisions"][0]["id"] == "d1"
 
 
+def test_status_full_names_the_run_directory(capsys):
+    run = _saved_run_with_decision()
+    assert _main(["batch", "status", run.id, "--full"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["run_dir"] == str(batch.store.run_dir(run.id))
+
+
 def test_status_prints_the_compact_report_by_default(capsys):
     run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
     assert _main(["batch", "status", run.id, "--offline"]) == 0

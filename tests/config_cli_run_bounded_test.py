@@ -132,6 +132,21 @@ def test_run_bounded_relay_streams_output_to_stderr():
     assert "err-line" in proc.stderr
 
 
+def _wait_for(condition, what):
+    deadline = time.monotonic() + 20
+    while not condition():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.05)
+
+
+def _is_gone(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
 def test_run_bounded_sigterm_stops_the_child_it_started(tmp_path):
     """An outer bound's SIGTERM must reach the child, which is in its own session."""
     pidfile = tmp_path / "child.pid"
@@ -141,22 +156,12 @@ def test_run_bounded_sigterm_stops_the_child_it_started(tmp_path):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
-        deadline = time.monotonic() + 20
-        while not (pidfile.exists() and pidfile.read_text().strip()):
-            assert time.monotonic() < deadline, "the child never started"
-            time.sleep(0.05)
+        _wait_for(lambda: pidfile.exists() and pidfile.read_text().strip(),
+                  "the child never started")
         child = int(pidfile.read_text())
         runner.send_signal(signal.SIGTERM)
         runner.wait(timeout=20)
-
-        deadline = time.monotonic() + 20
-        while True:
-            try:
-                os.kill(child, 0)
-            except ProcessLookupError:
-                break
-            assert time.monotonic() < deadline, "the child outlived the runner"
-            time.sleep(0.05)
+        _wait_for(lambda: _is_gone(child), "the child outlived the runner")
     finally:
         runner.kill()
         runner.wait()

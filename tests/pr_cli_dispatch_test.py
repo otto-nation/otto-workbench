@@ -437,6 +437,8 @@ _DECLARED_LOCKS = {
     ("review", ()): _T,
     ("review", ("--self",)): _TC,
     ("review", ("--self", "--fix")): _TC,
+    ("review", ("--self", "--track", "M1")): _T,
+    ("review", ("--self", "--track", "M1", "--post")): _T,
     ("review", ("--fix", "--post")): _T,
     ("review", ("--post",)): _T,
     ("review", ("--repair",)): _T,

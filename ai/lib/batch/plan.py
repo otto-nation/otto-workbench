@@ -519,9 +519,6 @@ def pr_state(repo_dir: str, branch: str) -> pr.state.PRState | None:
     return pr.state.load_state(pr.target.target_dir(key, branch)) if key else None
 
 
-_pr_state = pr_state
-
-
 def _settled_from(
     state: pr.state.PRState | None, threads: list[dict], viewer: str,
 ) -> set[str]:
@@ -541,7 +538,7 @@ def closeout_debt(repo_dir: str, branch: str) -> CloseoutDebt:
     Read from saved state only: no fetch. Publish pays it
     with `CloseoutDebt.command`; a finished run's report prints that command.
     """
-    return _closeout_from(_pr_state(repo_dir, branch))
+    return _closeout_from(pr_state(repo_dir, branch))
 
 
 def _closeout_from(state: pr.state.PRState | None) -> CloseoutDebt:
@@ -582,7 +579,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     ci_state = rollup_state(node)
     merge_state = node.get("mergeStateStatus") or "UNKNOWN"
     # One state load (one git call) per row, shared by the comments need and the closeout.
-    state = _pr_state(repo_dir, branch)
+    state = pr_state(repo_dir, branch)
     return PlanRow(
         repo=repo, repo_dir=repo_dir, pr=int(node["number"]), title=node.get("title", ""),
         branch=branch, head_sha=head, is_draft=bool(node.get("isDraft")),

@@ -213,7 +213,7 @@ class TestTriageLeavesSettledThreadsAlone:
 def _planned_need(monkeypatch, tmp_path, thread_comments):
     state = pr.state.new_state("o/a", "b", 7, "h", str(tmp_path))
     state.fix = FixSummary(fix=FixRecord(items=[_outcome("T1")], updated_at=SETTLED_AT))
-    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: state)
+    monkeypatch.setattr(batch.plan, "pr_state", lambda repo_dir, branch: state)
     monkeypatch.setattr(batch.plan, "_review_file",
                         lambda repo, branch: tmp_path / "missing.md")
     node = {"number": 7, "title": "t", "isDraft": False, "headRefName": "b",

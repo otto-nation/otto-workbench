@@ -41,13 +41,14 @@ done
 rest_start=$((i + 1))
 
 # A non-shell alias rewrites sub to its first word. A ! alias is a residual.
-if [[ " ${WORKBENCH_GUARDED_GIT_SUBCOMMANDS} " != *" $sub "* ]]; then
+# Follow alias chains to a fixed depth.
+for _ in 1 2 3 4 5; do
+  [[ " ${WORKBENCH_GUARDED_GIT_SUBCOMMANDS} " != *" $sub "* ]] || break
   alias_val=""
   alias_val=$("$real" "${@:1:i-1}" config --get "alias.$sub" 2>/dev/null) || true
-  if [[ -n "$alias_val" && "$alias_val" != '!'* ]]; then
-    read -r sub _ <<<"$alias_val" || true
-  fi
-fi
+  { [[ -n "$alias_val" && "$alias_val" != '!'* ]] || break; }
+  read -r sub _ <<<"$alias_val" || true
+done
 [[ " ${WORKBENCH_GUARDED_GIT_SUBCOMMANDS} " == *" $sub "* ]] || pass "$@"
 
 next=""
@@ -57,6 +58,11 @@ next=""
 j=$rest_start
 while [[ "$j" -le "$#" ]]; do
   case "${!j}" in
+    --) break ;;
+    -m|-F|--message|--file|-C|-c|--reuse-message|--reedit-message)
+      j=$((j + 2))
+      continue
+      ;;
     --dry-run|--help|-h) pass "$@" ;;
     -n) [[ "$sub" != push ]] || pass "$@" ;;
   esac

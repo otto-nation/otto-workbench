@@ -128,6 +128,35 @@ class TestShim:
         assert "git-guard: refusing" in result.stderr
         assert _head(wt) == before
 
+    def test_a_help_looking_message_value_does_not_disarm(self, tmp_path):
+        wt = _repo(tmp_path, {"a.py": "one\n"})
+        before = _head(wt)
+        with agent.git_guard.guarded(dict(os.environ), str(wt)) as env:
+            for args in (("commit", "--allow-empty", "-m", "-h"),
+                         ("commit", "--allow-empty", "-m", "--help"),
+                         ("commit", "--allow-empty", "--", "-h")):
+                result = _git(env, ("-C", str(wt), *args), cwd=tmp_path)
+                assert result.returncode != 0, args
+                assert "git-guard: refusing" in result.stderr, args
+        assert _head(wt) == before
+
+    def test_an_alias_chain_to_commit_is_refused(self, tmp_path):
+        wt = _repo(tmp_path, {"a.py": "one\n"})
+        before = _head(wt)
+        with agent.git_guard.guarded(dict(os.environ), str(wt)) as env:
+            result = _git(
+                env,
+                ("-C", str(wt), "-c", "alias.a=b", "-c", "alias.b=commit",
+                 "a", "--allow-empty", "-m", "x"),
+                cwd=tmp_path,
+            )
+        assert result.returncode != 0
+        assert "git-guard: refusing" in result.stderr
+        assert _head(wt) == before
+
+    def test_the_shim_is_executable(self):
+        assert os.access(agent.git_guard.SHIM, os.X_OK)
+
     def test_a_hand_commit_outside_the_agent_env_is_unaffected(self, tmp_path):
         wt = _repo(tmp_path, {"a.py": "one\n"})
         before = _head(wt)

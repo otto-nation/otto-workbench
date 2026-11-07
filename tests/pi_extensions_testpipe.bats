@@ -339,6 +339,9 @@ _agree() {
   # answer is this rule's rather than whichever one the hook reaches first.
   _agree background 'ls |& tail'
 
+  # A here-string is not a heredoc: it must not swallow the lines after it.
+  _agree background $'cat <<<x\nsleep 60 &'
+
   # gh pr create, the sixth shared rule. Claude matched the raw substring, so
   # these two were refused by one harness and ignored by the other.
   _agree pr-create 'gh pr create --draft'

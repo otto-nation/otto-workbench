@@ -59,6 +59,18 @@ def test_a_heredoc_body_with_an_unbalanced_quote_is_dropped():
     assert gh.write_shapes.command_is_write(command)
 
 
+@pytest.mark.parametrize("hs", ["<<<x", "<<< x", "0<<<x", '<<<"x"'])
+def test_a_here_string_does_not_open_a_heredoc(hs):
+    command = f"cat {hs} >/dev/null\ngh issue comment 1"
+    assert gh.write_shapes.split_statements(command)[-1] == ["gh", "issue", "comment", "1"]
+
+
+def test_a_heredoc_after_a_here_string_on_one_line_still_drops_its_body():
+    statements = gh.write_shapes.split_statements("cat <<<x; cat <<EOF\ngh pr close 1\nEOF\nls")
+    assert not any("gh" in statement for statement in statements)
+    assert statements[-1] == ["ls"]
+
+
 def test_an_env_prefix_is_carried_apart_from_the_words():
     inv = gh.write_shapes.invocation(["GH_REPO=o/r", "GH_HOST=ghe.corp", "/opt/bin/gh", "issue", "create"])
     assert dict(inv.env) == {"GH_REPO": "o/r", "GH_HOST": "ghe.corp"}

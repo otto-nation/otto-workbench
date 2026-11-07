@@ -118,7 +118,7 @@ _GITHUB_COMMANDS = frozenset({
 })
 _TOKEN_SPLIT = re.compile(r"[\s='\"]+")
 _OPERATOR_CHARS = ";&|()\n"
-_HEREDOC_OPEN = re.compile(r"<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
+_HEREDOC_OPEN = re.compile(r"(?<!<)<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
 
 
 @dataclass(frozen=True)

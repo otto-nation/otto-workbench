@@ -50,25 +50,20 @@ def test_push_argv_has_full_sha_and_absolute_repo_dir(tmp_path):
     assert SHA_RE.match(expect)
     repo_dir = push.argv[push.argv.index("--repo-dir") + 1]
     assert Path(repo_dir).is_absolute()
-    joined = " ".join(push.argv)
-    assert all(tok not in push.argv for tok in ("cd",))
-    assert "&&" not in joined and ";" not in joined
+    assert all(tok not in c.argv for c in entries[0].commands for tok in _JOIN_CHARS)
     assert push.argv[0] == "pr"
 
 
-def test_missing_worktree_falls_back_to_absolute_repo_dir_and_branch():
-    # Revert: drop the Path.is_absolute() check in _repo_args, or use repo_dir raw.
+def test_relative_repo_dir_yields_no_checkout():
+    # Revert: os.path.abspath(repo_dir) in _checkout / _repo_args.
     item = make_item(1, worktree="/no/such/worktree", repo_dir="rel-repo", branch="feat")
     debt = CloseoutDebt(summary=True)
     run = make_run([item])
     entries = batch.session_report.sessions(
         run, closeout=lambda d, b: debt, tree=None)
     assert entries
-    argv = entries[0].commands[0].argv
-    repo_dir = argv[argv.index("--repo-dir") + 1]
-    assert Path(repo_dir).is_absolute()
-    assert argv[argv.index("--branch") + 1] == "feat"
-    assert repo_dir != "rel-repo"
+    assert batch.session_report.NO_CHECKOUT in entries[0].notes
+    assert entries[0].commands == []
 
 
 def test_stack_order_emits_base_before_child():

@@ -32,7 +32,6 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 
 from __future__ import annotations
 
-import os
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -136,8 +135,9 @@ def _session(run: Run, item: Item, closeout: CloseoutFn, tree: TreeFn | None) ->
         _apply_plan(findings, planned)
     after = _after(run, item)
     severity = _severity(findings)
-    commands = _commands(item, findings, planned)
-    notes = _notes(item, commands)
+    checkout = _checkout(item)
+    commands = _commands(item, findings, planned, checkout)
+    notes = _notes(item, commands, checkout)
     local = planned.tree.local if planned is not None else ""
     return SessionEntry(
         pr=item.key, url=f"https://github.com/{item.repo}/pull/{item.pr}",
@@ -286,14 +286,14 @@ def _finding(reason: FindingReason, decision: Decision, *, detail: str = "",
 
 
 def _commands(item: Item, findings: list[Finding],
-              planned: _Planned | None) -> list[SessionCommand]:
+              planned: _Planned | None, checkout: str | None) -> list[SessionCommand]:
     seen: set[FindingReason] = set()
     commands: list[SessionCommand] = []
     for finding in findings:
         if finding.reason in seen:
             continue
         seen.add(finding.reason)
-        if cmd := _command_for(item, finding):
+        if cmd := _command_for(item, finding, checkout):
             commands.append(cmd)
     if planned is not None and planned.plan.ok and planned.plan.pushes:
         commands.append(SessionCommand(
@@ -301,35 +301,32 @@ def _commands(item: Item, findings: list[Finding],
             "push under the planned lease",
             push=True,
         ))
-    if filing := _filing_command(item):
+    if filing := _filing_command(item, checkout):
         commands.append(filing)
     return commands
 
 
-def _command_for(item: Item, finding: Finding) -> SessionCommand | None:
-    repo = _repo_args(item)
+def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionCommand | None:
+    repo = _repo_args(item, checkout)
     if finding.reason is FindingReason.CONFLICT_HANDWRITTEN and repo:
         return SessionCommand(("pr", "rebase", "--fix", "--no-push", *repo),
                               "resolve hand-written conflicts")
     if finding.reason is FindingReason.STALE_GENERATED and item.pre_rebase_head:
-        if git_cmd := _git(item, "reset", "--hard", item.pre_rebase_head):
+        if git_cmd := _git(item, checkout, "reset", "--hard", item.pre_rebase_head):
             return SessionCommand(git_cmd, "undo the rebase, then regenerate")
     if finding.reason is FindingReason.THREADS_NEED_HUMAN and repo:
         return SessionCommand(("pr", "comments", "--fix", *repo), "address review comments")
     if finding.reason is FindingReason.CLOSEOUT_OWED and repo:
         return SessionCommand((*_CLOSEOUT_ARGV, *repo), CLOSEOUT_WHY)
     if finding.reason is FindingReason.WRONG_BRANCH:
-        if git_cmd := _git(item, "switch", item.branch):
+        if git_cmd := _git(item, checkout, "switch", item.branch):
             return SessionCommand(git_cmd, f"check out {item.branch}")
     return None
 
 
-def _filing_command(item: Item) -> SessionCommand | None:
-    repo = _repo_args(item)
-    if repo is None:
-        return None
-    where = item.worktree if item.worktree and Path(item.worktree).is_dir() else item.repo_dir
-    if not where or not Path(where).is_dir():
+def _filing_command(item: Item, checkout: str | None) -> SessionCommand | None:
+    repo = _repo_args(item, checkout)
+    if repo is None or checkout is None or not Path(checkout).is_dir():
         return None
     state = batch.plan.pr_state(item.repo_dir, item.branch)
     if state is None:
@@ -349,16 +346,15 @@ def _filing_command(item: Item) -> SessionCommand | None:
     )
 
 
-def _notes(item: Item, commands: list[SessionCommand]) -> list[str]:
+def _notes(item: Item, commands: list[SessionCommand], checkout: str | None) -> list[str]:
     notes: list[str] = []
     if any(c.push for c in commands) and not item.is_draft:
         notes.append(COMMENT_BEFORE_PUSH)
-    if not _repo_args(item):
+    if checkout is None:
         notes.append(NO_CHECKOUT)
     if not any(c.files_issue for c in commands):
         return notes
-    where = item.worktree if item.worktree and Path(item.worktree).is_dir() else item.repo_dir
-    info = review.issue.load_issue_provider(where or None, adopt=False)
+    info = review.issue.load_issue_provider(checkout, adopt=False)
     if not info.resolved:
         notes.append(PROVIDER_NOTE)
         if review.issue.needs_team_key(info.name):
@@ -366,28 +362,28 @@ def _notes(item: Item, commands: list[SessionCommand]) -> list[str]:
     return notes
 
 
-def _repo_args(item: Item) -> tuple[str, ...] | None:
+def _checkout(item: Item) -> str | None:
     wt = item.worktree
     if wt and Path(wt).is_dir():
-        path = os.path.abspath(wt)
-        return ("--repo-dir", path) if Path(path).is_absolute() else None
+        return wt if Path(wt).is_absolute() else None
     repo = item.repo_dir
-    if repo:
-        path = os.path.abspath(repo)
-        if not Path(path).is_absolute():
-            return None
-        return ("--repo-dir", path, "--branch", item.branch)
+    if repo and Path(repo).is_absolute():
+        return repo
     return None
 
 
-def _git(item: Item, *args: str) -> tuple[str, ...] | None:
-    wt = item.worktree
-    if not (wt and Path(wt).is_dir()):
+def _repo_args(item: Item, checkout: str | None) -> tuple[str, ...] | None:
+    if checkout is None:
         return None
-    path = os.path.abspath(wt)
-    if not Path(path).is_absolute():
+    if checkout == item.worktree:
+        return ("--repo-dir", checkout)
+    return ("--repo-dir", checkout, "--branch", item.branch)
+
+
+def _git(item: Item, checkout: str | None, *args: str) -> tuple[str, ...] | None:
+    if checkout is None or checkout != item.worktree:
         return None
-    return ("git", "-C", path, *args)
+    return ("git", "-C", checkout, *args)
 
 
 def _order(entries: list[SessionEntry]) -> list[SessionEntry]:

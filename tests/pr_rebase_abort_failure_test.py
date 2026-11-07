@@ -48,7 +48,8 @@ def test_failed_abort_reports_paused_and_does_not_mark_aborted(tmp_path, capsys)
     repo, pre = _conflicted(tmp_path)
     ctx = make_ctx(worktree_root=repo, branch="feat", current_branch="feat")
     files = rebase.inspect.detect_conflicts(str(repo))
-    classes = rebase.conflict_stop.classify_stop(str(repo), files)
+    plans = rebase.conflict_stop.classify_stop(str(repo), files)
+    classes = {path: plan.strategy.value for path, plan in plans.items()}
     tally = rebase.types.ResolutionTally(pre_rebase_head=pre)
     real_run = git.client.run
 

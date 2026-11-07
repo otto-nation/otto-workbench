@@ -197,7 +197,8 @@ def test_step_conflicts_no_fix_saves_state():
     with mock.patch.object(rebase.types.RebaseOutcome, "save", fake_save), \
          mock.patch.object(rebase.inspect, "detect_conflicts", return_value=["a.py"]), \
          mock.patch.object(rebase.lifecycle.conflict_stop, "classify_stop",
-                           return_value={"a.py": "ai_merge"}), \
+                           return_value={"a.py": rebase.types.ConflictPlan(
+                               rebase.types.ConflictStrategy.AI_MERGE)}), \
          mock.patch.object(rebase.types.ConflictReport, "from_repo") as mock_report:
         rebase.lifecycle.step_conflicts(
             "/fake", ctx, rebase.types.RunMode.PUSH, ["a.py"],

@@ -281,7 +281,10 @@ def _report_conflicts_and_stop(
     """
     tally = tally if tally is not None else ResolutionTally()
     files = rebase_inspect.detect_conflicts(cwd)
-    classes = conflict_stop.classify_stop(cwd, files)
+    classes = {
+        path: plan.strategy.value
+        for path, plan in conflict_stop.classify_stop(cwd, files).items()
+    }
     _stopped_outcome(
         tally, target_ref=target_ref, classes=classes,
     ).save(ctx)
@@ -464,11 +467,13 @@ def _default_mode_conflicts(
         return _report_conflicts_and_stop(
             cwd, ctx, target_ref=target_ref, tally=tally,
         )
-    classes = conflict_stop.classify_stop(cwd, conflicts)
-    if conflict_stop.try_generated(cwd, classes, tally):
+    plans = conflict_stop.classify_stop(cwd, conflicts)
+    if conflict_stop.try_generated(cwd, plans, tally):
         return None
     return conflict_stop.abort_clean(
-        cwd, ctx, target_ref=target_ref, classes=classes, tally=tally,
+        cwd, ctx, target_ref=target_ref,
+        classes={path: plan.strategy.value for path, plan in plans.items()},
+        tally=tally,
     )
 
 

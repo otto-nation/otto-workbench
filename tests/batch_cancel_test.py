@@ -106,7 +106,7 @@ def test_a_cancel_queued_during_an_applier_hold_is_applied_by_the_next_session(c
                                                     "queued": True}
     assert batch.store.load(run.id).status is RunStatus.WAITING
     assert batch.store.pending_requests(run.id) == 1
-    assert _main(["batch", "resolve", run.id, "d1", "--action", "drop-pr"]) == 0
+    assert _main(["batch", "release", run.id, run.items[0].key]) == 0
     saved = batch.store.load(run.id)
     assert saved.status is RunStatus.CANCELLED
     assert saved.cancel is not None
@@ -214,10 +214,9 @@ def test_a_cancel_queued_during_the_drive_ends_the_run_cancelled(monkeypatch, ca
 def test_an_applier_hold_is_not_a_live_scheduler_and_its_queue_is_reported(capsys):
     run = seed(_run())
     with holding(run.id, "applier"):
-        assert _main(["batch", "resolve", run.id, "d1", "--action", "drop-pr"]) == 0
+        assert _main(["batch", "release", run.id, run.items[0].key]) == 0
         capsys.readouterr()
         assert _main(["batch", "status", run.id]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["run"]["active"] is False
     assert report["run"]["pending_requests"] == 1
-    assert [e["decision"] for e in report["next"]] == ["d1"]

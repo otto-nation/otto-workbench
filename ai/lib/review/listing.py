@@ -65,6 +65,10 @@ about that review, and dropping it would hide one the consumer can still open.
 
 A missing reviews root is not an error; it is `{"reviews": []}` with exit 0.
 
+Rows carry `post` (the latest run's post outcome, including dismissed) and
+`history` (archived runs, newest first, structured where the run archived its
+record). The document carries `reviews_root`.
+
 **Version policy.** A new *optional* field does not bump `schema_version`. A
 removed field, a renamed field, or a changed type adds a new version.
 Enforcement comes from the supported set being allowed to *shrink* —
@@ -78,15 +82,24 @@ declared and this build agreed to serve, so it cannot go stale on its own.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import core.serde
+import core.workbench_paths
+from core.serde import load_file as serde_load_file
+from pr.state import PostTracking
 from pr.target import display_repo
 from review.paths import (
-    ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
+    ARCHIVE_META_EXT, ARCHIVE_POST_EXT, ARCHIVE_RECORD_EXT, ARCHIVE_REVIEW_EXT,
+    FILENAME_POST_SESSION, ReviewEntry, ReviewEntryKind, aggregate_session_usage,
+    archived_file, archived_session_usage, archived_stamps, archives_dir,
+    iter_review_entries, read_review_meta,
 )
 from review.document import ReviewDocument
+from review.record import load_record
 from review.state import build_failure_detail, read_pipeline_status
+from review.store import StoredReview
 from review.types import SEVERITIES
 from review.verdict import open_counts, resolve_review_verdict
 
@@ -97,6 +110,46 @@ from review.verdict import open_counts, resolve_review_verdict
 # the caller declares which it speaks and gets an error if we no longer serve
 # it, so the field cannot go stale the way a producer-stamped one does.
 SCHEMA_VERSIONS = (1,)
+
+
+@dataclass(frozen=True)
+class RunPost:
+    """What a run's `post.jsonl` says happened to it on GitHub, or that it was dismissed.
+
+    `event` is a `PostEvent` value. A dismissed run posted nothing, and says so
+    here so a consumer can tell "answered" from "not yet looked at".
+    """
+
+    event: str
+    posted_at: str
+    review_id: int
+    sha_drifted: bool
+
+
+@dataclass(frozen=True)
+class ReviewRun:
+    """One earlier run of a review, from its `archives/` files.
+
+    `structured` is False for a run archived before records were: only its
+    rendered markdown and logs survive, so its verdict, findings and SHA are
+    empty rather than scraped back out of the markdown.
+    """
+
+    stamp: str
+    review_file: str
+    structured: bool
+    head_sha: str
+    reviewed_at: str
+    verdict: str
+    findings: dict[str, int]
+    status: str
+    cost_usd: float
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    duration_ms: int
+    post: RunPost | None
 
 
 @dataclass(frozen=True)
@@ -153,6 +206,52 @@ class ReviewRow:
     # wants to *show* which instance a row came from, and `display_repo` is
     # what turns the pair into that string.
     host: str = ""
+    # What the latest run's post.jsonl records, None when it was never posted
+    # or dismissed. Optional, so the schema does not bump.
+    post: RunPost | None = None
+    # The runs `archives/` keeps for this review, newest first
+    # (`review.archive_keep`). Optional, so the schema does not bump.
+    history: list[ReviewRun] = field(default_factory=list)
+
+
+def _findings(doc: ReviewDocument | None) -> dict[str, int]:
+    by_key = open_counts(doc)
+    return {**{s.json_key: by_key[s.key] for s in SEVERITIES}, "total": sum(by_key.values())}
+
+
+def _post_from(path: Path) -> RunPost | None:
+    tracking = serde_load_file(PostTracking, path)
+    if tracking is None:
+        return None
+    return RunPost(event=tracking.status, posted_at=tracking.posted_at,
+                   review_id=tracking.review_id, sha_drifted=tracking.sha_drifted)
+
+
+def _run_for(review_dir: Path, stamp: str) -> ReviewRun:
+    """One archived run, read the way `row_for` reads the live one."""
+    archive = archives_dir(review_dir)
+    record = load_record(archive, f"{stamp}{ARCHIVE_RECORD_EXT}")
+    meta = read_review_meta(archive, f"{stamp}{ARCHIVE_META_EXT}")
+    doc = ReviewDocument.from_stored(StoredReview(record, meta)) if record else None
+    verdict = resolve_review_verdict(doc, mode=meta.mode) if doc else None
+    usage = archived_session_usage(review_dir, stamp)
+    return ReviewRun(
+        stamp=stamp,
+        review_file=str(archived_file(review_dir, stamp, ARCHIVE_REVIEW_EXT)),
+        structured=record is not None,
+        head_sha=meta.head_sha,
+        reviewed_at=meta.reviewed_at,
+        verdict=verdict.value if verdict else "",
+        findings=_findings(doc),
+        status=meta.status.value if meta.status else "",
+        cost_usd=usage.cost,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        duration_ms=usage.duration_ms,
+        post=_post_from(archived_file(review_dir, stamp, ARCHIVE_POST_EXT)),
+    )
 
 
 def row_for(entry: ReviewEntry) -> ReviewRow:
@@ -168,7 +267,6 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
     meta = entry.meta
 
     doc = ReviewDocument.read(review_file)
-    by_key = open_counts(doc)
     verdict = resolve_review_verdict(doc, mode=meta.mode)
     usage = aggregate_session_usage(entry.path)
 
@@ -185,10 +283,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
         mode=meta.mode.value if meta.mode else "",
         reviewed_at=entry.reviewed_at,
         started_at=meta.started_at,
-        findings={
-            **{s.json_key: by_key[s.key] for s in SEVERITIES},
-            "total": sum(by_key.values()),
-        },
+        findings=_findings(doc),
         verdict=verdict.value if verdict else "",
         status=read_pipeline_status(entry.path),
         failure_detail=build_failure_detail(entry.path),
@@ -199,9 +294,15 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
         cache_read_tokens=usage.cache_read_tokens,
         cache_write_tokens=usage.cache_write_tokens,
         duration_ms=usage.duration_ms,
+        post=_post_from(entry.path / FILENAME_POST_SESSION),
+        history=[_run_for(entry.path, stamp) for stamp in archived_stamps(entry.path)],
     )
 
 
+# ceiling: every row reads each archived run's session log for usage, which is
+# the listing's main cost. Upgrade trigger: if `pr review --list` takes over 3 s
+# on a real reviews root, add a `--repo OWNER/NAME` filter so a consumer reads
+# only the rows it shows.
 def rows() -> list[ReviewRow]:
     """Every review at the reviews root, in the walk's order.
 
@@ -227,6 +328,9 @@ def document(schema_version: int) -> dict:
     """
     return {
         "schema_version": schema_version,
+        # Where the walk ran, so a consumer can watch it without deriving the
+        # path. Optional, so the schema does not bump.
+        "reviews_root": str(core.workbench_paths.reviews_dir()),
         "reviews": [core.serde.to_dict(row) for row in rows()],
     }
 

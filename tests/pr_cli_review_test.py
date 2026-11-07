@@ -539,7 +539,9 @@ def test_review_list_reports_a_missing_root_as_no_reviews(tmp_path, monkeypatch,
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "never-written"))
     assert _run_main("review", "--list", "--schema-version", "1") in (None, 0)
     assert json.loads(capsys.readouterr().out) == {
-        "schema_version": 1, "reviews": [],
+        "schema_version": 1,
+        "reviews_root": str(tmp_path / "never-written" / "reviews"),
+        "reviews": [],
     }
 
 

@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 720 -->
+<!-- doc-budget: 722 -->
 
 # AI Automation
 
@@ -73,10 +73,12 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   following the system appearance. Every other setting is left alone. A theme file you
   edited in place is kept with a warning; delete it to get the link back. If the app
   rejects a change it says why in `~/.config/herdr-app/settings.error`.
+- Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/` as a real
+  copy with `_lib/` inside (the app refuses symlinks and `../` imports), keeps edited files, and prints the `keys.json` binding.
 - An isolated untrusted window holds agent machines: launch with `herdr-app-untrusted`
   (`HC_SESSION=untrusted`, `~/.config/herdr-app-untrusted`). It refuses a local
   terminal or `afar` grant. Sync copies appearance keys from the main window, forces
-  `clipboard_write` false, links keys/themes, and seeds `shared.json` once. Edit
+  `clipboard_write` false, links keys/themes, seeds `shared.json` once. Edit
   appearance in the main window; machines are owned by homelab (`docs/herdr-agents.md`).
 
 ## Configuration

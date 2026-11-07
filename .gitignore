@@ -35,6 +35,10 @@ Thumbs.db
 
 ai/memory/
 
+# herdr-app writes these into a loaded mod folder; they are never source.
+ai/herdr/app/mods/**/gpui-kit.d.ts
+ai/herdr/app/mods/**/jsconfig.json
+
 # Editor files
 .vscode/
 .idea/

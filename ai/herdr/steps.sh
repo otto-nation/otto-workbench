@@ -18,6 +18,8 @@ fi
 
 # shellcheck source=untrusted_window.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/untrusted_window.sh"
+# shellcheck source=mods_install.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mods_install.sh"
 
 # step_install_herdr — installs herdr via its vendor installer when not on PATH.
 # Keeping an installed herdr current is step_update_herdr's job.
@@ -176,6 +178,22 @@ step_herdr_app_theme() {
   return 0
 }
 
+# step_herdr_app_mods — copies workbench herdr-app mods into HERDR_APP_DIR/mods.
+# No-op when herdr-app is not installed. Never writes HERDR_UNTRUSTED_APP_DIR.
+# Prints a keys.json binding suggestion the first time team-prs is installed;
+# never edits keys.json. Non-fatal: always returns 0.
+step_herdr_app_mods() {
+  _herdr_app_present || return 0
+  _herdr_app_install_mods
+  local name
+  for name in "${HERDR_APP_MODS_NEWLY_INSTALLED[@]}"; do
+    [[ "$name" == team-prs ]] || continue
+    info 'herdr-app: bind a key to open the PR board by adding to keys.json: "<key>": {"command": "tab.new", "args": {"name": "PRs", "mod": "team-prs"}}'
+    break
+  done
+  return 0
+}
+
 # _herdr_config_swap FILE CANDIDATE — moves CANDIDATE over FILE, then asks
 # `herdr config check`; on failure puts the original back (or removes FILE when
 # there was none) and warns with herdr's diagnostic. Returns 1 when rolled back.
@@ -274,6 +292,8 @@ sync_herdr_app() {
   _herdr_app_present || return 0
   sync_header "herdr-app theme"
   step_herdr_app_theme
+  sync_header "herdr-app mods"
+  step_herdr_app_mods
   sync_header "herdr-app untrusted window"
   step_herdr_untrusted_window
   sync_component_bin "$HERDR_SRC_DIR"
@@ -286,6 +306,7 @@ register_herdr_steps() {
   register_step "Herdr theme"        step_herdr_tui_theme
   register_step "Herdr machines"     step_herdr_machine_note
   register_step "Herdr app theme"         step_herdr_app_theme
+  register_step "Herdr app mods"          step_herdr_app_mods
   register_step "Herdr untrusted window"  step_herdr_untrusted_window
 }
 

@@ -432,6 +432,15 @@ RERERE_CONFIG = {"rerere.enabled": "false"}
 # ── Report payloads ─────────────────────────────────────────────────────────
 
 
+def warn_files_stale(files: list[str]) -> None:
+    """Warn that generated files were staged from the incoming side, unmerged."""
+    if files:
+        core.log.warn(
+            "not regenerated: " + ", ".join(files)
+            + " — content is the incoming side, unmerged"
+        )
+
+
 @dataclass(frozen=True)
 class ConflictReport:
     """Unresolved-conflict snapshot — the exit-code-3 payload on stdout."""
@@ -470,11 +479,7 @@ class ConflictReport:
 
     def emit(self) -> None:
         core.report.emit_json(asdict(self))
-        if self.files_stale:
-            core.log.warn(
-                "not regenerated: " + ", ".join(self.files_stale)
-                + " — content is the incoming side, unmerged"
-            )
+        warn_files_stale(self.files_stale)
 
 
 @dataclass
@@ -538,11 +543,7 @@ class RebaseOutcome:
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed
         core.report.emit_json(report)
-        if self.files_stale:
-            core.log.warn(
-                "not regenerated: " + ", ".join(self.files_stale)
-                + " — content is the incoming side, unmerged"
-            )
+        warn_files_stale(self.files_stale)
 
 
 @dataclass(frozen=True)

@@ -72,7 +72,7 @@ def dispatch_accept_theirs(
     return True
 
 
-def _run_deferred_regenerations(
+def run_deferred_regenerations(
     queue: RegenQueue, cwd: str, *, trail: Trail | None,
 ) -> list[str]:
     """Run deferred regeneration jobs and return files that failed."""

@@ -154,9 +154,4 @@ deferred threads exist.
 
 ## Rules
 
-- `one_sided` → `undo`, never `accept`.
-- Comment on a non-draft PR before a hand push.
-- Force pushes are printed for the user with the full SHA and `--expect`.
-- Never file an issue unless the user asks.
-- `pr batch resume --steps` may only narrow; start a new run to add a step.
 - Never kill a live batch driver; `pr batch status RUN_ID` / `pr batch cancel`.

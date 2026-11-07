@@ -125,8 +125,7 @@ def drive_to_completion(
     verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
-    stop_on_conflict: bool = False,
-    resuming: bool = False,
+    pause_on_conflict: bool = False,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
 
@@ -157,7 +156,7 @@ def drive_to_completion(
         return _drive_loop(
             cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
             lease=lease, verify=verify, snapshot=snapshot, trail=trail,
-            stop_on_conflict=stop_on_conflict, resuming=resuming,
+            pause_on_conflict=pause_on_conflict,
         )
 
 
@@ -169,8 +168,7 @@ def _drive_loop(
     verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
-    stop_on_conflict: bool = False,
-    resuming: bool = False,
+    pause_on_conflict: bool = False,
 ) -> int:
     tally = tally if tally is not None else ResolutionTally()
 
@@ -183,7 +181,7 @@ def _drive_loop(
 
         rc, conflict_found = _drive_one_step(
             cwd, ctx, mode, tally, target_ref=target_ref, force=force, trail=trail,
-            stop_on_conflict=stop_on_conflict, resuming=resuming,
+            pause_on_conflict=pause_on_conflict,
         )
         if rc is not None:
             return rc
@@ -213,8 +211,7 @@ def _drive_one_step(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally, *, target_ref: str, force: bool = False,
     trail: Trail | None = None,
-    stop_on_conflict: bool = False,
-    resuming: bool = False,
+    pause_on_conflict: bool = False,
 ) -> tuple[int | None, bool]:
     conflicts = rebase_inspect.detect_conflicts(cwd)
     if not conflicts:
@@ -224,7 +221,7 @@ def _drive_one_step(
 
     rc = step_conflicts(
         cwd, ctx, mode, conflicts, tally, target_ref=target_ref, force=force,
-        trail=trail, stop_on_conflict=stop_on_conflict, resuming=resuming,
+        trail=trail, pause_on_conflict=pause_on_conflict,
     )
     if rc is not None:
         return rc, False
@@ -284,7 +281,10 @@ def _report_conflicts_and_stop(
     """
     tally = tally if tally is not None else ResolutionTally()
     files = rebase_inspect.detect_conflicts(cwd)
-    classes = conflict_stop.classify_stop(cwd, files)
+    classes = {
+        path: plan.strategy.value
+        for path, plan in conflict_stop.classify_stop(cwd, files).items()
+    }
     _stopped_outcome(
         tally, target_ref=target_ref, classes=classes,
     ).save(ctx)
@@ -460,18 +460,20 @@ def _halt_unresolved(
 def _default_mode_conflicts(
     cwd: str, ctx: pr.context.ResolvedContext, conflicts: list[str],
     tally: ResolutionTally, *, target_ref: str,
-    stop_on_conflict: bool, resuming: bool,
+    pause_on_conflict: bool,
 ) -> int | None:
     """Classify, regenerate-or-abort. None means continue the shared finish."""
-    if stop_on_conflict or resuming:
+    if pause_on_conflict:
         return _report_conflicts_and_stop(
             cwd, ctx, target_ref=target_ref, tally=tally,
         )
-    classes = conflict_stop.classify_stop(cwd, conflicts)
-    if conflict_stop.try_generated(cwd, classes, tally):
+    plans = conflict_stop.classify_stop(cwd, conflicts)
+    if conflict_stop.try_generated(cwd, plans, tally):
         return None
     return conflict_stop.abort_clean(
-        cwd, ctx, target_ref=target_ref, classes=classes, tally=tally,
+        cwd, ctx, target_ref=target_ref,
+        classes={path: plan.strategy.value for path, plan in plans.items()},
+        tally=tally,
     )
 
 
@@ -520,23 +522,21 @@ def step_conflicts(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     conflicts: list[str], tally: ResolutionTally, *,
     target_ref: str, force: bool = False, trail: Trail | None = None,
-    stop_on_conflict: bool = False, resuming: bool = False,
+    pause_on_conflict: bool = False,
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not mode.resolves_conflicts:
         rc = _default_mode_conflicts(
             cwd, ctx, conflicts, tally, target_ref=target_ref,
-            stop_on_conflict=stop_on_conflict, resuming=resuming,
+            pause_on_conflict=pause_on_conflict,
         )
-        if rc is not None:
-            return rc
     else:
         rc = _ai_mode_conflicts(
             cwd, ctx, conflicts, tally, target_ref=target_ref,
             force=force, trail=trail,
         )
-        if rc is not None:
-            return rc
+    if rc is not None:
+        return rc
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     if git.client.lines("diff", "--name-only", cwd=cwd):
@@ -658,7 +658,7 @@ def fresh(
     verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
-    stop_on_conflict: bool = False,
+    pause_on_conflict: bool = False,
 ) -> int:
     """Start a fresh rebase onto the target ref.
 
@@ -813,7 +813,7 @@ def fresh(
     return drive_to_completion(
         cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
         lease=lease, verify=verify, snapshot=snapshot, trail=trail,
-        stop_on_conflict=stop_on_conflict,
+        pause_on_conflict=pause_on_conflict,
     )
 
 

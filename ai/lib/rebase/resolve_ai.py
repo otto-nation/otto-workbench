@@ -34,7 +34,6 @@ RegenQueue = git.regenerate.RegenQueue
 Resolution = rebase_types.Resolution
 dispatch_accept_theirs = regen_dispatch.dispatch_accept_theirs
 dispatch_regenerate = regen_dispatch.dispatch_regenerate
-_run_deferred_regenerations = regen_dispatch._run_deferred_regenerations
 
 
 # ── Prompt construction ──────────────────────────────────────────────────
@@ -602,7 +601,7 @@ def resolve_file_conflicts(
             )
         (resolved if ok else unresolved).append(filepath)
 
-    failed = _run_deferred_regenerations(queue, cwd, trail=trail)
+    failed = regen_dispatch.run_deferred_regenerations(queue, cwd, trail=trail)
 
     if failed:
         terr(trail, "regenerate", "regeneration failed", data={"files": failed})

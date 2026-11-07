@@ -496,9 +496,6 @@ class _NarrowOnly(_Refused):
     """Resume asked to add a step; a usage error (exit 2) rather than a refusal."""
 
 
-_NARROW_ONLY = "resume can only narrow steps; start a new run to add one"
-
-
 def _narrow_resume(run: Run, steps: list[Step]) -> None:
     """Keep only *steps* on *run*; skip each non-terminal item's pending excluded step."""
     wanted = set(steps)
@@ -518,7 +515,8 @@ def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
     if run.status in FINISHED_RUN:
         return _Refused(f"run {run.id} is {run.status.value}")
     if steps is not None and not set(steps) <= set(run.steps):
-        return _NarrowOnly(_NARROW_ONLY)
+        return _NarrowOnly(
+            "resume can only narrow steps; start a new run to add one")
     try:
         _note_batch_locks(run)
         holds = _hold_items(held, run, "resume")

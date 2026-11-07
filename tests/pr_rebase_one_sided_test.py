@@ -83,7 +83,8 @@ def test_a_one_sided_resolution_holds_the_push_even_when_posting(capsys):
 
 def test_a_one_sided_rebase_in_push_mode_skips_the_push():
     args = SimpleNamespace(push_only=False, abort=False, onto=None, fix=False, push=True,
-                           force=False, no_verify=False, fork_point=None)
+                           force=False, no_verify=False, fork_point=None,
+                          stop_on_conflict=False)
 
     def start(*a, **k):
         core.publishing.hold("x")

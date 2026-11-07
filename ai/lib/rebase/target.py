@@ -110,16 +110,18 @@ def resume_target_ref(
     return recorded
 
 
-def local_vs_remote(cwd: str, branch: str) -> RefDivergence:
-    """Compare the local *branch* ref against origin's, without moving HEAD.
+def local_vs_remote(cwd: str, branch: str, remote: str = "") -> RefDivergence:
+    """Compare the local *branch* ref against *remote*, without moving HEAD.
 
-    Deliberately ref-to-ref rather than the ``origin/<branch>..HEAD`` that
-    pr.context._unpushed_count asks: this runs while the worktree is still on
-    some other branch, so HEAD is not the thing being measured.
+    *remote* defaults to ``origin/{branch}``. Deliberately ref-to-ref rather
+    than the ``origin/<branch>..HEAD`` that pr.context._unpushed_count asks:
+    this runs while the worktree is still on some other branch, so HEAD is
+    not the thing being measured.
     """
+    left = remote or f"origin/{branch}"
     r = git.client.run(
         "rev-list", "--left-right", "--count",
-        f"origin/{branch}...refs/heads/{branch}", cwd=cwd,
+        f"{left}...refs/heads/{branch}", cwd=cwd,
     )
     if not r.ok:
         return RefDivergence()

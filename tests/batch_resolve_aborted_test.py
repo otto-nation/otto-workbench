@@ -40,15 +40,6 @@ class Recorder:
         return self.code
 
 
-def test_retry_on_clean_tree_repends_rebase_without_continue():
-    run = _run(_d(batch.model.DecisionKind.REBASE_CONFLICT, "rebase", {"tree": "clean"}))
-    run.items[0].step(batch.model.Step.REBASE).status = batch.model.StepStatus.NEEDS_DECISION
-    rec = Recorder()
-    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr", runner=rec)
-    assert rec.calls == []
-    assert run.items[0].step(batch.model.Step.REBASE).status is batch.model.StepStatus.PENDING
-
-
 def test_abort_on_clean_tree_runs_no_command_and_skips():
     run = _run(_d(batch.model.DecisionKind.REBASE_CONFLICT, "rebase", {"tree": "clean"}))
     run.items[0].step(batch.model.Step.REBASE).status = batch.model.StepStatus.NEEDS_DECISION

@@ -194,7 +194,7 @@ def test_stop_on_conflict_keeps_paused_tree(tmp_path, capsys):
     rc = rebase.lifecycle.step_conflicts(
         str(repo), _ctx(repo), rebase.types.RunMode.PUSH,
         rebase.inspect.detect_conflicts(str(repo)), _tally(pre),
-        target_ref="main", stop_on_conflict=True,
+        target_ref="main", pause_on_conflict=True,
     )
     rebase.stash.restore(str(repo), rebase.types.RunMode.PUSH)
     report = _report(capsys)
@@ -212,7 +212,7 @@ def test_resumed_rebase_never_aborts(tmp_path, capsys):
     rc = rebase.lifecycle.step_conflicts(
         str(repo), _ctx(repo), rebase.types.RunMode.PUSH,
         rebase.inspect.detect_conflicts(str(repo)), _tally(pre),
-        target_ref="main", resuming=True,
+        target_ref="main", pause_on_conflict=True,
     )
     report = _report(capsys)
     assert rc == rebase.types.CONFLICTS_EXIT

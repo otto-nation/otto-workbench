@@ -72,6 +72,7 @@ import git.push
 import git.replay
 from batch.model import Item, Step
 from pr.comments_fix import CloseoutDebt
+from rebase.target import local_vs_remote
 from rebase.types import RefDivergence
 
 
@@ -239,28 +240,13 @@ def _compute_dropped(item: Item, wt: str, drafted: Sequence[str]) -> tuple[str, 
     return tuple(dropped)
 
 
-def _vs_sha(cwd: str, branch: str, remote_sha: str) -> RefDivergence:
-    """Compare local *branch* against *remote_sha*, without reading origin's tracking ref."""
-    if not remote_sha:
-        return RefDivergence()
-    r = git.client.run(
-        "rev-list", "--left-right", "--count",
-        f"{remote_sha}...refs/heads/{branch}", cwd=cwd,
-    )
-    if not r.ok:
-        return RefDivergence()
-    parts = r.stdout.split()
-    if len(parts) != 2 or not all(p.isdigit() for p in parts):
-        return RefDivergence()
-    # Left of the symmetric difference is the remote SHA, right is the local ref.
-    return RefDivergence(ahead=int(parts[1]), behind=int(parts[0]), comparable=True)
-
-
 def _tree_from(item: Item, remote_sha: str, fetched: bool) -> TreeState:
     """Compare *item*'s local branch with *remote_sha*."""
     wt, branch = item.worktree, item.branch
     local = git.client.out("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=wt)
-    divergence = _vs_sha(wt, branch, remote_sha)
+    divergence = (
+        local_vs_remote(wt, branch, remote=remote_sha) if remote_sha else RefDivergence()
+    )
     incorporated = True
     if item.pre_rebase_head and item.remote_sha:
         incorporated = _start_incorporated(item, wt)

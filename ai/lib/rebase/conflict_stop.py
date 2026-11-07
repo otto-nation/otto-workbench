@@ -26,24 +26,19 @@ from . import inspect as rebase_inspect
 from . import regen_dispatch
 from . import types as rebase_types
 
+ConflictPlan = rebase_types.ConflictPlan
 ConflictStrategy = rebase_types.ConflictStrategy
 GeneratedSignal = rebase_types.GeneratedSignal
 RegenQueue = git.regenerate.RegenQueue
 
-_GENERATED = frozenset({
-    ConflictStrategy.ACCEPT_THEIRS.value,
-    ConflictStrategy.REGENERATE.value,
-})
-
 
 def _stage_generated(
-    filepath: str, kind: str, cwd: str, queue: RegenQueue,
+    filepath: str, plan: ConflictPlan, cwd: str, queue: RegenQueue,
 ) -> bool:
     full_path = Path(cwd) / filepath
-    plan = conflicts.classify_conflict(filepath, full_path, cwd)
-    if kind == ConflictStrategy.REGENERATE.value and plan.regenerator is None:
-        return False
-    if kind == ConflictStrategy.REGENERATE.value:
+    if plan.strategy is ConflictStrategy.REGENERATE:
+        if plan.regenerator is None:
+            return False
         return regen_dispatch.dispatch_regenerate(
             filepath, full_path, cwd, plan.regenerator, queue,
         )
@@ -53,18 +48,18 @@ def _stage_generated(
     )
 
 
-def classify_stop(cwd: str, files: list[str]) -> dict[str, str]:
-    """Map each conflicted path to ``ConflictStrategy.value`` while still paused."""
+def classify_stop(cwd: str, files: list[str]) -> dict[str, ConflictPlan]:
+    """Map each conflicted path to a ConflictPlan while still paused."""
     return {
         filepath: conflicts.classify_conflict(
             filepath, Path(cwd) / filepath, cwd,
-        ).strategy.value
+        )
         for filepath in files
     }
 
 
 def try_generated(
-    cwd: str, classes: dict[str, str], tally: rebase_types.ResolutionTally,
+    cwd: str, plans: dict[str, ConflictPlan], tally: rebase_types.ResolutionTally,
 ) -> bool:
     """Stage and rebuild generated-class conflicts. True only when none are stale.
 
@@ -72,22 +67,34 @@ def try_generated(
     or a failed rebuild all return False. Staging that already happened is
     undone by the caller's abort.
     """
-    if not classes or any(kind not in _GENERATED for kind in classes.values()):
+    generated = (ConflictStrategy.ACCEPT_THEIRS, ConflictStrategy.REGENERATE)
+    if not plans or any(plan.strategy not in generated for plan in plans.values()):
         return False
     queue = RegenQueue()
-    resolved: list[str] = []
-    for filepath, kind in classes.items():
-        if not _stage_generated(filepath, kind, cwd, queue):
+    for filepath, plan in plans.items():
+        if not _stage_generated(filepath, plan, cwd, queue):
             return False
-        resolved.append(filepath)
-    failed = regen_dispatch._run_deferred_regenerations(queue, cwd, trail=None)
+    failed = regen_dispatch.run_deferred_regenerations(queue, cwd, trail=None)
     stale = list(queue.unrebuildable) + failed
-    tally.files.extend(path for path in resolved if path not in tally.files)
+    tally.files.extend(path for path in plans if path not in tally.files)
     tally.stale.extend(path for path in stale if path not in tally.stale)
     if stale:
         return False
     tally.resolution = "generated"
     return True
+
+
+def abort_in_progress(cwd: str):
+    """``git rebase --abort`` plus the log lines both abort paths share.
+
+    Lives here rather than in ``rebase.commands``: that module imports
+    ``lifecycle``, which imports this one. ``cmd_abort`` calls this.
+    """
+    core.log.info("Aborting rebase...")
+    r = git.client.run("rebase", "--abort", cwd=cwd)
+    if r.ok:
+        core.log.ok("Rebase aborted.")
+    return r
 
 
 def abort_clean(
@@ -97,18 +104,30 @@ def abort_clean(
     """Abort the in-progress rebase, emit the exit-3 report, return CONFLICTS_EXIT.
 
     Captures the conflict snapshot before ``git rebase --abort``, which drops
-    rebase state. Does not import ``rebase.commands``: that module imports
-    ``lifecycle``, which imports this one.
+    rebase state. A failed abort leaves the replay paused: status stays
+    conflicts, the report's ``tree`` is ``paused``, and nothing is marked
+    ABORTED.
     """
     pre = tally.pre_rebase_head or rebase_inspect.rebase_orig_head(cwd)
-    report = rebase_types.ConflictReport.from_repo(
+    clean = rebase_types.ConflictReport.from_repo(
         cwd, aborted=True, tree="clean", classes=classes,
         files_stale=list(tally.stale), pre_rebase_head=pre,
     )
-    core.log.info("Aborting rebase...")
-    r = git.client.run("rebase", "--abort", cwd=cwd)
-    if r.ok:
-        core.log.ok("Rebase aborted.")
+    r = abort_in_progress(cwd)
+    if not r.ok:
+        rebase_types.RebaseOutcome(
+            status=RebaseStatus.CONFLICTS,
+            files_stale=list(tally.stale),
+            aborted=False,
+            classes=dict(classes),
+            pre_rebase_head=pre,
+            target_base=target_ref,
+        ).save(ctx)
+        rebase_types.ConflictReport.from_repo(
+            cwd, aborted=False, tree="paused", classes=classes,
+            files_stale=list(tally.stale), pre_rebase_head=pre,
+        ).emit()
+        return rebase_types.CONFLICTS_EXIT
     rebase_types.RebaseOutcome(
         status=RebaseStatus.ABORTED,
         files_stale=list(tally.stale),
@@ -117,5 +136,5 @@ def abort_clean(
         pre_rebase_head=pre,
         target_base=target_ref,
     ).save(ctx)
-    report.emit()
+    clean.emit()
     return rebase_types.CONFLICTS_EXIT

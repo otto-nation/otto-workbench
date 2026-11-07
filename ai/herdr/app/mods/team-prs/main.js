@@ -1,3 +1,6 @@
+// team-prs board. Scope key `team-prs.scope`: "this" reads the pinned or focused checkout, "all" reads every
+// open space's start folder. One fetch per repo (repoId), one listing per machine, one watch per reviews
+// root; spaces outside a repo are skipped in All spaces.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {

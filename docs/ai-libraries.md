@@ -665,6 +665,25 @@ outcomes. `run_pass` calls `record` itself in that case rather than keeping a
 second copy of the tail, which is what the two copies that used to exist here
 kept drifting apart over.
 
+### fix/containment.py
+
+Content snapshots that restore a verify or suite phase's writes.
+
+A fix pass's verify agent and the repo's suite both run in the operator's real
+worktree with write access. Their writes used to fold into the commit scope —
+including a tracked file the verify agent overwrote with a fixture. This module
+snapshots *content* (not path sets) around those phases and restores anything
+they changed, so the fix agent's pre-phase edits survive and a rewrite of an
+already-dirty file is undone.
+
+The snapshot uses a temporary ``GIT_INDEX_FILE`` so it never touches the
+operator's real index or stash. Blobs it writes live in the object database
+and are otherwise unreachable.
+
+Tool denials on the verify agent (Claude Edit/Write, Pi review-guard) are
+ergonomics. Process writes — ``python3 -c``, a suite, ``sed`` — bypass both,
+which is why this restore is the real control.
+
 ### fix/engine.py
 
 The pipeline every fix pass runs: batch, invoke, retry, land, record.
@@ -4469,6 +4488,16 @@ The same check runs once, up front, for every model a run would use
 (`check_targets`): each reference is judged by the provider it names, so a run
 mixing providers fails before it pays for anything, not at the first phase that
 reaches the wrong catalogue.
+
+### agent/review_guard_env.py
+
+Environment the Pi review-guard extension reads.
+
+Split from ``backend_pi`` so the verify-phase flag can live next to the
+worktree bounds without growing that module past the code-line cap.
+
+Process writes (bash) bypass the guard, which is why ``fix.containment`` is
+the real control on a verify agent.
 
 ### agent/rule_prefix.py
 

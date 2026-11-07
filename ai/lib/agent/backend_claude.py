@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import agent.machine_env
+import agent.registry
 import agent.usage
 import core.children
 import core.log
@@ -223,7 +224,9 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # global flags, and one that cannot be closed here because the matcher grammar
 # has no way to express "any flags, then this subcommand". What holds on this
 # backend is the fix templates' prose, the engine committing for the agent,
-# and the engine recording a commit that moved HEAD under the pass.
+# and `review.convergence.fix_coverage` declining to cover a fix commit whose
+# parent is not the reviewed commit — which records an out-of-band commit in
+# the review domain but does not prevent one.
 # Upgrade if Claude Code grows a regex or argv-aware permission matcher.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",
@@ -243,13 +246,13 @@ FIX_DENIED_TOOLS = ",".join((
     "Bash(git am:*)",
 ))
 
-# Edit/Write on the verify phase only. The fix agent needs both. Process writes
+# Edit/Write on the verify gates only. The fix agent needs both. Process writes
 # (Bash, a suite) bypass this, which is why fix.containment is the real control.
 _VERIFY_DENIED_TOOLS = ",".join((FIX_DENIED_TOOLS, "Edit", "Write"))
 
 
 def _fix_denied_tools(inv: AgentInvocation) -> str:
-    if inv.phase == str(Phase.FIX_VERIFY):
+    if agent.registry.is_verify_phase(inv.phase):
         return _VERIFY_DENIED_TOOLS
     return FIX_DENIED_TOOLS
 

@@ -381,6 +381,20 @@ _unscoped() {
   [ "$status" -eq 0 ]
 }
 
+@test "review-guard: verify mode routes writes through verifyWriteAllowed" {
+  # Same reason as above: the SDK import keeps review-guard.ts unloadable, so
+  # the wiring from the env flag to the predicate is asserted textually.
+  run grep -qF 'verifyWriteAllowed(event.input.path, worktreeDir, allowedDirs)' \
+    "$REPO_ROOT/ai/pi/extensions-cli/review-guard.ts"
+  [ "$status" -eq 0 ]
+  run grep -qF 'process.env.REVIEW_VERIFY_PHASE === "1"' \
+    "$REPO_ROOT/ai/pi/extensions-cli/review-guard.ts"
+  [ "$status" -eq 0 ]
+  run grep -qF 'ENV_REVIEW_VERIFY_PHASE = "REVIEW_VERIFY_PHASE"' \
+    "$REPO_ROOT/ai/lib/agent/review_guard_env.py"
+  [ "$status" -eq 0 ]
+}
+
 # _scratch PATH — prints "true" when write and edit may target PATH.
 _scratch() {
   run node --input-type=module -e "

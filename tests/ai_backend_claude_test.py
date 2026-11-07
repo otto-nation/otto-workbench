@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_claude
+import agent.registry
 from agent.models import ModelRef
 from core.phases import Phase
 from ai_backend_test import _recording_popen
@@ -413,6 +414,12 @@ class TestVerifyPhaseDeniesWrites:
         denied = self._denied(phase=str(Phase.FIX_VERIFY))
         assert "Edit" in denied.split(",")
         assert "Write" in denied.split(",")
+
+    @pytest.mark.parametrize("phase", sorted(agent.registry.VERIFY_PHASES))
+    def test_every_gate_phase_denies_edit_and_write(self, phase):
+        denied = self._denied(phase=str(phase)).split(",")
+        assert "Edit" in denied
+        assert "Write" in denied
 
     def test_fix_still_allows_edit_and_write(self):
         denied = self._denied(phase=str(Phase.FIX))

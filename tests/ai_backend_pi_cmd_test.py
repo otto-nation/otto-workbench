@@ -472,6 +472,17 @@ class TestGuardEnv:
         ))
         assert seen["env"]["REVIEW_VERIFY_PHASE"] == "1"
 
+    @pytest.mark.parametrize("phase", ["comments_verify", "ci_verify"])
+    def test_every_gate_phase_sets_the_verify_flag(self, monkeypatch, tmp_path, phase):
+        monkeypatch.delenv("REVIEW_VERIFY_PHASE", raising=False)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        agent.backend_pi.invoke_fix(agent.backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+            phase=phase,
+        ))
+        assert seen["env"]["REVIEW_VERIFY_PHASE"] == "1"
+
     def test_fix_phase_does_not_set_the_verify_flag(self, monkeypatch, tmp_path):
         monkeypatch.delenv("REVIEW_VERIFY_PHASE", raising=False)
         seen = {}

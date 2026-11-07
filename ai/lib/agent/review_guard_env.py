@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import os
 
+import agent.registry
 from agent.backend import AgentInvocation, agent_env
-from core.phases import Phase
 
 ENV_REVIEW_WORKTREE_DIR = "REVIEW_WORKTREE_DIR"
 ENV_REVIEW_ALLOWED_DIRS = "REVIEW_ALLOWED_DIRS"
@@ -24,15 +24,16 @@ ENV_REVIEW_VERIFY_PHASE = "REVIEW_VERIFY_PHASE"
 def apply_guard_env(inv: AgentInvocation) -> dict[str, str]:
     """The subprocess environment, with the review guard's roots added.
 
-    ``REVIEW_VERIFY_PHASE`` is set only for the verify gate, so review-guard
-    permits writes to the tracking file and other add_dirs outside the
-    worktree, not to the worktree itself.
+    ``REVIEW_VERIFY_PHASE`` is set for every verify gate
+    (``agent.registry.VERIFY_PHASES``), so review-guard permits
+    writes to the tracking file and other add_dirs outside the worktree, not
+    to the worktree itself.
     """
     env = agent_env(inv)
     env[ENV_REVIEW_WORKTREE_DIR] = inv.cwd
     extra = [d for d in inv.add_dirs if d]
     if extra:
         env[ENV_REVIEW_ALLOWED_DIRS] = os.pathsep.join(extra)
-    if inv.phase == str(Phase.FIX_VERIFY):
+    if agent.registry.is_verify_phase(inv.phase):
         env[ENV_REVIEW_VERIFY_PHASE] = "1"
     return env

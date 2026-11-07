@@ -134,7 +134,11 @@ class TestShim:
         with agent.git_guard.guarded(dict(os.environ), str(wt)) as env:
             for args in (("commit", "--allow-empty", "-m", "-h"),
                          ("commit", "--allow-empty", "-m", "--help"),
-                         ("commit", "--allow-empty", "--", "-h")):
+                         ("commit", "--allow-empty", "--", "-h"),
+                         ("commit", "--allow-empty", "-am", "-h"),
+                         ("commit", "--allow-empty", "-am", "--help"),
+                         ("commit", "--allow-empty", "-m", "--dry-run"),
+                         ("commit", "--allow-empty", "-am", "--dry-run")):
                 result = _git(env, ("-C", str(wt), *args), cwd=tmp_path)
                 assert result.returncode != 0, args
                 assert "git-guard: refusing" in result.stderr, args

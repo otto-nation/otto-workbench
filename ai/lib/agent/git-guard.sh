@@ -55,15 +55,21 @@ next=""
 [[ "$rest_start" -le "$#" ]] && next="${!rest_start}"
 [[ "$sub" == stash && ( "$next" == list || "$next" == show ) ]] && pass "$@"
 
+# git honours -h and --help only as the first word after the subcommand;
+# anywhere else they are an option value such as a commit message.
+[[ "$next" == -h || "$next" == --help ]] && pass "$@"
+
+# A dry run is only a dry run as an option, never as the value of -m/-F/-C/-c
+# or of a short cluster ending in one of them (-am, -nm).
 j=$rest_start
 while [[ "$j" -le "$#" ]]; do
   case "${!j}" in
     --) break ;;
-    -m|-F|--message|--file|-C|-c|--reuse-message|--reedit-message)
+    --message|--file|--reuse-message|--reedit-message|-[mFCc]|-[!-]*[mFCc])
       j=$((j + 2))
       continue
       ;;
-    --dry-run|--help|-h) pass "$@" ;;
+    --dry-run) pass "$@" ;;
     -n) [[ "$sub" != push ]] || pass "$@" ;;
   esac
   j=$((j + 1))

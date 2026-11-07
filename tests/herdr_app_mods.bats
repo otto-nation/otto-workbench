@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for _herdr_app_install_mods — copy herdr-app mods with a per-file manifest.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/team-prs/* lib/constants.sh lib/files.sh
+# select-on: ai/herdr/mods_install.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/team-prs/* lib/constants.sh lib/files.sh
 
 setup() {
   load 'test_helper'

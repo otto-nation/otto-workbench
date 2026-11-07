@@ -170,3 +170,50 @@ def test_the_cross_ref_override_does_not_reach_check_command(
     ])
     assert code == cli.owners_check.REFUSED
     assert "me/lib#12" in capsys.readouterr().err
+
+
+def _text_file(tmp_path, text):
+    path = tmp_path / "text.md"
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_text_refuses_a_cross_group_reference(github_owners, tmp_path, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    code = cli.owners_check.main(
+        ["--text", _text_file(tmp_path, "see me/lib#12"), "--cwd", str(repo)])
+    assert code == cli.owners_check.REFUSED
+    assert "me/lib#12" in capsys.readouterr().err
+
+
+def test_text_allows_a_reference_in_the_checkouts_own_group(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    assert cli.owners_check.main(
+        ["--text", _text_file(tmp_path, "see otto-nation/svc#12"), "--cwd", str(repo)]) == 0
+
+
+def test_text_exits_three_when_the_file_cannot_be_read(github_owners, tmp_path, capsys):
+    github_owners({"work": ["otto-nation"]})
+    code = cli.owners_check.main(
+        ["--text", str(tmp_path / "missing.md"), "--cwd", str(tmp_path)])
+    assert code == cli.owners_check.CANNOT_RUN
+    assert "missing.md" in capsys.readouterr().err
+
+
+def test_text_without_cwd_is_a_usage_error_that_cannot_block(github_owners, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.owners_check.main(["--text", _text_file(tmp_path, "x")])
+    assert exc.value.code == cli.owners_check.CANNOT_RUN
+
+
+def test_text_honours_the_cross_ref_override_with_a_warning(
+        github_owners, tmp_path, monkeypatch, capsys):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    repo = remote_repo(tmp_path / "r", "git@github.com:otto-nation/svc.git")
+    monkeypatch.setenv(gh.owners.ALLOW_CROSS_REF_ENV, "1")
+    code = cli.owners_check.main(
+        ["--text", _text_file(tmp_path, "see me/lib#12"), "--cwd", str(repo)])
+    assert code == 0
+    assert capsys.readouterr().err

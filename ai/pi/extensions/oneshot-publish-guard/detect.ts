@@ -1,5 +1,5 @@
 import { isGithubWrite, OWNERS_CHECK } from "../_shared/github-writes.ts";
-import { PUBLISHING_TOOLS } from "../upstream-guard/tool-calls.ts";
+import { LINEAR_TEXT_TOOLS, PUBLISHING_TOOLS } from "../upstream-guard/tool-calls.ts";
 import { statements } from "../_shared/statements.ts";
 import { tokenize } from "../_shared/tokenize.ts";
 
@@ -52,12 +52,13 @@ export function isPublishing(command: string, ownersCheck: string = OWNERS_CHECK
 /**
  * True when the Pi tool NAME publishes without going through bash.
  *
- * The list is upstream-guard's own (PUBLISHING_TOOLS), so the owner boundary and
+ * The lists are upstream-guard's own (PUBLISHING_TOOLS and the Linear text
+ * writes), so the owner boundary and
  * this rule cannot disagree about which tools post. Own-property lookup:
  * `toString` is not a tool.
  */
 export function isPublishingTool(name: string): boolean {
-  return Object.hasOwn(PUBLISHING_TOOLS, name);
+  return Object.hasOwn(PUBLISHING_TOOLS, name) || Object.hasOwn(LINEAR_TEXT_TOOLS, name);
 }
 
 /**

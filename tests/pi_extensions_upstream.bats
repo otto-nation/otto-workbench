@@ -262,3 +262,53 @@ import gh.owners; print(gh.owners.ALLOW_CROSS_REF_ENV)
   [ "$status" -ne 0 ]
   [ -f "$REPO_ROOT/ai/pi/extensions/upstream-guard/tool-calls.ts" ]
 }
+
+@test "upstream-guard: a Linear issue naming another owner group is refused" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _tool_refusal "$TMPDIR/repo" linear_create_issue '{"team":"ENG","title":"fix","description":"see me/lib#12"}'
+  [[ "$output" == *"me/lib#12"* ]]
+}
+
+@test "upstream-guard: every text field of a Linear write is scanned" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  local call
+  for call in \
+    'linear_create_issue {"team":"E","title":"see me/lib#12"}' \
+    'linear_update_issue {"id":"E-1","description":"see me/lib#12"}' \
+    'linear_add_comment {"id":"E-1","body":"see me/lib#12"}' \
+    'linear_create_project {"name":"p","teams":["E"],"content":"see me/lib#12"}' \
+    'linear_update_initiative {"id":"i","description":"see me/lib#12"}' \
+    'linear_create_release {"pipeline":"p","name":"r","description":"see me/lib#12"}'; do
+    _tool_refusal "$TMPDIR/repo" "${call%% *}" "${call#* }"
+    [[ "$output" == *"me/lib#12"* ]] || { echo "not scanned: $call -> $output"; return 1; }
+  done
+}
+
+@test "upstream-guard: a Linear write in our own group is allowed" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _tool_refusal "$TMPDIR/repo" linear_add_comment '{"id":"E-1","body":"see otto-nation/svc#12"}'
+  [ "$output" = ALLOWED ]
+}
+
+@test "upstream-guard: a Linear write with no working check is refused" {
+  _tool_refusal "$TMPDIR" linear_create_issue '{"team":"E","title":"x"}' /nonexistent
+  [[ "$output" == *"Linear write"*"could not run"* ]]
+}
+
+@test "upstream-guard: a Linear read never reaches the check" {
+  _tool_refusal "$TMPDIR" linear_get_issue '{"id":"E-1"}' /nonexistent
+  [ "$output" = ALLOWED ]
+}
+
+@test "upstream-guard: a refused Linear call leaves no temp directory behind" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  mkdir -p "$TMPDIR/scratch"
+  TMPDIR="$TMPDIR/scratch" _tool_refusal "$TMPDIR/repo" linear_add_comment '{"id":"E-1","body":"see me/lib#12"}'
+  [[ "$output" == *"me/lib#12"* ]]
+  run find "$TMPDIR/scratch" -name 'upstream-guard-*'
+  [ -z "$output" ]
+}

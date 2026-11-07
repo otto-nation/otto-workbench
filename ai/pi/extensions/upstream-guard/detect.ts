@@ -98,6 +98,7 @@ export function upstreamRefusal(
 
 /**
  * The refusal an owners-check RUN amounts to, or null when it allowed.
+ * WHAT names the write in the refusal text.
  *
  * Exit 0 allows; exit 2 refuses with the checker's own reason; anything else
  * is a check that could not run, which refuses. Shared by the bash path above
@@ -107,15 +108,16 @@ export function checkRefusal(
   run: ReturnType<typeof runOwnersCheck>,
   timeoutMs: number,
   said: string = String(run.stderr ?? "").trim().replace(/\s*\n\s*/g, " "),
+  what: string = "GitHub write",
 ): string | null {
   if (!run.error && run.status === 0) return null;
   if (!run.error && run.status === REFUSED_STATUS) {
     return (
-      `This GitHub write is refused at the owner boundary: ${said}. ${CITATION}`
+      `This ${what} is refused at the owner boundary: ${said}. ${CITATION}`
     );
   }
   return (
-    `This command might be a GitHub write, and the owner-boundary check could not run ` +
+    `This command might be a ${what}, and the owner-boundary check could not run ` +
     `(${howItFailed(run, said, timeoutMs)}), so it is refused. ${CITATION}`
   );
 }

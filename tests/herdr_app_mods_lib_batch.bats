@@ -100,7 +100,9 @@ _busy() {
   [ "$status" -eq 0 ]
   enum_vals=$(sed -n '/^class ItemStatus(StrEnum):/,/^class /p' "$REPO_ROOT/ai/lib/batch/model.py" | sed -n 's/^.*= "\([^"]*\)"$/\1/p')
   [ -n "$enum_vals" ]
+  busy_vals=$(jq -r '.[]' <<<"$output")
+  [ -n "$busy_vals" ]
   while IFS= read -r s || [[ -n "$s" ]]; do
     echo "$enum_vals" | grep -Fxq "$s"
-  done < <(jq -r '.[]' <<<"$output")
+  done <<<"$busy_vals"
 }

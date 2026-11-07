@@ -3,13 +3,11 @@ import { v_flex, h_flex } from "gpui-base";
 import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme,
 } from "herdr";
-import { locate, isUntrustedHome, addr } from "./_lib/location.js";
+import { locate, isUntrustedHome } from "./_lib/location.js";
 import {
   assemble, checkTools, loadBusy, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
 import { renderBoard, renderChips } from "./board.js";
-
-void addr;
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -97,7 +95,7 @@ export default class TeamPrs extends View {
       if (!tools.ok) { this.fail(key, tools.error); return null; }
       this.toolsByOn.set(onKey, have = tools.have);
     }
-    const missing = ["pr", "gh", "wt"].filter((n) => !have[n]);
+    const missing = ["pr", "gh"].filter((n) => !have[n]);
     if (missing.length) {
       this.fail(key, { kind: "missing-tool", message: missing.join(", ") });
       return null;
@@ -136,7 +134,7 @@ export default class TeamPrs extends View {
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
     const [open, listing, busy] = await Promise.all([
-      loadOpenPrs(exec, ctx, repo.slug, login),
+      loadOpenPrs(exec, ctx, repo.slug),
       loadListing(exec, ctx),
       loadBusy(exec, ctx, repo.slug),
     ]);

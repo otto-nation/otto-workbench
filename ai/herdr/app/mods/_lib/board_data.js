@@ -147,8 +147,7 @@ export async function loadUser(exec, ctx) {
   return { ok: true, login: ran.stdout.trim() };
 }
 
-export async function loadOpenPrs(exec, ctx, slug, login) {
-  void login;
+export async function loadOpenPrs(exec, ctx, slug) {
   let ran;
   try {
     ran = await exec('gh', pullsArgv(slug), { cwd: ctx.cwd, on: ctx.on });

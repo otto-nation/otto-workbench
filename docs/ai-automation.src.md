@@ -67,17 +67,19 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   `herdr config check` rejects is rolled back. The rest of the file is not managed
   yet (#1660).
 - The herdr desktop app (`herdr-app`) gets the workbench's Gruvbox themes wherever it is
-  installed: sync links `ai/herdr/app/themes/<name>.generated.json` into
-  `~/.config/herdr-app/themes/` and sets only `theme` in `settings.json` to
-  `{"light": "gruvbox-light", "dark": "gruvbox-dark"}`. A theme file you edited in place
-  is kept with a warning; if the app rejects a change it says why in `settings.error`.
+  installed, herdr selected or not: sync links `ai/herdr/app/themes/<name>.generated.json`
+  into `~/.config/herdr-app/themes/` as `<name>.json` and sets only `theme` in
+  `~/.config/herdr-app/settings.json` to `{"light": "gruvbox-light", "dark": "gruvbox-dark"}`,
+  following the system appearance. Every other setting is left alone. A theme file you
+  edited in place is kept with a warning; delete it to get the link back. If the app
+  rejects a change it says why in `~/.config/herdr-app/settings.error`.
 - Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/` as a real
   copy with `_lib/` inside (the app refuses symlinks and `../` imports), keeps edited files, and prints the `keys.json` binding.
 - An isolated untrusted window holds agent machines: launch with `herdr-app-untrusted`
   (`HC_SESSION=untrusted`, `~/.config/herdr-app-untrusted`). It refuses a local
   terminal or `afar` grant. Sync copies appearance keys from the main window, forces
-  `clipboard_write` false, links keys/themes, seeds `shared.json` once; machines are owned
-  by homelab (`docs/herdr-agents.md`).
+  `clipboard_write` false, links keys/themes, seeds `shared.json` once. Edit
+  appearance in the main window; machines are owned by homelab (`docs/herdr-agents.md`).
 
 ## Configuration
 

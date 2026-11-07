@@ -36,6 +36,7 @@ function intNums(numbers) {
   return (numbers ?? []).filter((n) => Number.isInteger(n));
 }
 
+// Precondition: repo is "owner/name" (as remoteSlug returns); no-slash input yields an empty owner.
 function ownerName(repo) {
   const i = String(repo).indexOf('/');
   if (i <= 0) return { owner: '', name: String(repo) };

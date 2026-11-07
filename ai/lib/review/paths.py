@@ -48,6 +48,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import agent.usage
+import config.workbench_config
 import core.log
 import core.serde
 import core.workbench_paths
@@ -76,7 +77,18 @@ FILENAME_PRIOR_RECORD = "prior.json"
 FILENAME_PRIOR_META = "prior-meta.json"
 
 ARCHIVES_DIRNAME = "archives"
-ARCHIVE_KEEP_COUNT = 3
+# What each archived file of one run is called after its stamp. Every pair must
+# differ before the stamp too: `_prune_archives` globs `2*<suffix>`, so a bare
+# ".json" here would match ".meta.json" as well and prune one kind as the other.
+ARCHIVE_REVIEW_EXT = REVIEW_EXT
+ARCHIVE_SESSION_EXT = ".session.jsonl"
+ARCHIVE_POST_EXT = ".post.jsonl"
+ARCHIVE_RECORD_EXT = ".record.json"
+ARCHIVE_META_EXT = ".meta.json"
+_ARCHIVE_SUFFIXES = (
+    ARCHIVE_REVIEW_EXT, ARCHIVE_SESSION_EXT, ARCHIVE_POST_EXT,
+    ARCHIVE_RECORD_EXT, ARCHIVE_META_EXT,
+)
 
 _ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
@@ -380,8 +392,13 @@ def find_review_file(repo: str, pr_number: str) -> Path | None:
 # ── Archiving what a re-review replaces ──────────────────────────────────────
 
 
-def _prune_archives(archive_dir: Path, suffix: str) -> None:
-    """Drop all but the newest ARCHIVE_KEEP_COUNT archives of one kind.
+def archive_keep() -> int:
+    """How many archived runs of one review to keep: `review.archive_keep`."""
+    return config.workbench_config.load_config_or_default().review.archive_keep
+
+
+def _prune_archives(archive_dir: Path, suffix: str, keep: int) -> None:
+    """Drop all but the newest *keep* archives of one kind.
 
     Newest is decided by name rather than by mtime: the stamp sorts
     lexicographically, and it records when the file was archived, which a copy
@@ -389,46 +406,85 @@ def _prune_archives(archive_dir: Path, suffix: str) -> None:
     """
     if not archive_dir.is_dir():
         return
-    for old in sorted(archive_dir.glob(f"2*{suffix}"), reverse=True)[ARCHIVE_KEEP_COUNT:]:
+    for old in sorted(archive_dir.glob(f"2*{suffix}"), reverse=True)[keep:]:
         old.unlink(missing_ok=True)
 
 
 def archive_review(review_file: Path, session_log: str) -> str:
-    """Rotate the review at `review_file` and its logs into `archives/`.
+    """Rotate the review at `review_file`, its logs, record and sidecar into `archives/`.
 
     Returns the path of the copy left beside the review as `prior.md`, which is
     what a re-review reconciles its findings against — or "" when there was no
     review to archive, which is a first run.
 
-    All three files take one timestamp, so a run's archives sort together and a
-    reader can tell which log belongs to which review. Pruning runs whether or
-    not this call archived anything: a keep count lowered since the last run has
-    to take effect on the run that reads it, not the next one to write.
+    Every file of one run takes one timestamp, so a run's archives sort together
+    and a reader can tell which log belongs to which review. Pruning runs whether
+    or not this call archived anything: a keep count lowered since the last run
+    has to take effect on the run that reads it, not the next one to write.
     """
     review_dir = review_file.parent
     archive_dir = archives_dir(review_dir)
     stamp = datetime.now().strftime(_ARCHIVE_TIMESTAMP_FMT)
     prior_path = ""
 
+    moves = [
+        (Path(session_log), ARCHIVE_SESSION_EXT),
+        (review_dir / FILENAME_POST_SESSION, ARCHIVE_POST_EXT),
+    ]
+    copies = []
     if review_file.is_file():
         prior_path = str(review_dir / FILENAME_PRIOR)
         shutil.copy2(str(review_file), prior_path)
-        core.log.info(f"Archived prior review to {ARCHIVES_DIRNAME}/{stamp}{REVIEW_EXT}")
+        core.log.info(f"Archived prior review to {ARCHIVES_DIRNAME}/{stamp}{ARCHIVE_REVIEW_EXT}")
+        moves.insert(0, (review_file, ARCHIVE_REVIEW_EXT))
+        # Copied rather than moved: `archive_prior` runs next and moves the
+        # record to prior.json and copies the sidecar to prior-meta.json, which
+        # the re-review reads. Only archived beside a deliverable, so a stale
+        # directory's leftover sidecar never becomes a run with no review.
+        copies = [
+            (review_dir / FILENAME_RECORD, ARCHIVE_RECORD_EXT),
+            (review_dir / FILENAME_META, ARCHIVE_META_EXT),
+        ]
 
-    rotations = (
-        (review_file, REVIEW_EXT),
-        (Path(session_log), ".session.jsonl"),
-        (review_dir / FILENAME_POST_SESSION, ".post.jsonl"),
-    )
-    for source, suffix in rotations:
+    for source, suffix in moves + copies:
         if not source.is_file():
             continue
         archive_dir.mkdir(exist_ok=True)
-        shutil.move(str(source), str(archive_dir / f"{stamp}{suffix}"))
+        target = str(archive_dir / f"{stamp}{suffix}")
+        if (source, suffix) in copies:
+            shutil.copy2(str(source), target)
+        else:
+            shutil.move(str(source), target)
 
-    for _, suffix in rotations:
-        _prune_archives(archive_dir, suffix)
+    keep = archive_keep()
+    for suffix in _ARCHIVE_SUFFIXES:
+        _prune_archives(archive_dir, suffix, keep)
     return prior_path
+
+
+def archived_stamps(review_dir: Path) -> list[str]:
+    """The stamps of the runs archived for `review_dir`, newest first.
+
+    A run is archived when its deliverable is: a log or sidecar with no `.md`
+    under the same stamp names no run, and is left to pruning.
+    """
+    archive_dir = archives_dir(review_dir)
+    if not archive_dir.is_dir():
+        return []
+    stamps = (p.name[: -len(ARCHIVE_REVIEW_EXT)]
+              for p in archive_dir.glob(f"2*{ARCHIVE_REVIEW_EXT}"))
+    return sorted(stamps, reverse=True)
+
+
+def archived_file(review_dir: Path, stamp: str, suffix: str) -> Path:
+    """Where the archived file of kind *suffix* for run *stamp* sits, whether or not it exists."""
+    return archives_dir(review_dir) / f"{stamp}{suffix}"
+
+
+def archived_session_usage(review_dir: Path, stamp: str) -> SessionUsage:
+    """Usage from one archived run's session and post logs, as `aggregate_session_usage` reads the live run's."""
+    logs = [archived_file(review_dir, stamp, s) for s in (ARCHIVE_SESSION_EXT, ARCHIVE_POST_EXT)]
+    return agent.usage.merge([parse_session_log(str(p)) for p in logs if p.is_file()])
 
 
 def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:

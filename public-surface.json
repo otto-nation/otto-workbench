@@ -104,6 +104,7 @@
     "config:reuse.level=lite",
     "config:reuse.level=ultra",
     "config:review",
+    "config:review.archive_keep",
     "config:review.effort",
     "config:review.effort=high",
     "config:review.effort=low",

@@ -94,7 +94,7 @@ per decision; do not invent flags.
 |---|---|---|
 | `step_review` | `accept`, `retry`, `skip-step`, `undo`, `open-chat` | `undo` is rebase only (`git reset --hard` to the pre-rebase head). **`one_sided` → `undo`, never `accept`.** |
 | `comment_item` | `settle-fixed`, `settle-addressed`, `settle-dismissed`, `reply`, `track`, `open-chat` | `settle-dismissed` needs `--reason`; `reply` needs `--body-file`. |
-| `rebase_conflict` | `retry`, `abort`, `open-chat` | `retry` resumes the paused replay; `abort` skips the rebase. |
+| `rebase_conflict` | `retry`, `abort`, `open-chat` | `retry` resumes a paused replay, or restarts the rebase when the tree was aborted clean (`tree: clean`); `abort` drops a paused replay, or just skips the rebase when the tree is already clean. |
 | `rebase_refused` | `drop-pr`, `force`, `rebase-from-fork-point` | `force` needs payload `override`; `rebase-from-fork-point` needs a named fork point. |
 | `dirty_worktree` | `retry`, `drop-pr`, `open-chat` | Payload names a stash command. |
 | `failed` / `interrupted` | `retry`, `skip-step`, `drop-pr` | `failed` also has `force-publish` for `not_incorporated_remote` or `drafted_dropped`. |

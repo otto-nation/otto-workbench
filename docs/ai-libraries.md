@@ -4152,7 +4152,7 @@ Apply an operator's answer to one decision, then move the item on.
 | | `skip-step` | that step → `skipped`; commits it made stay drafted |
 | | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
 | `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
-| `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
+| `rebase_conflict` | `retry` / `abort` | rebase → `pending` (a `tree: clean` payload restarts; a paused one resumes) / `skipped` (`tree: clean` runs no command; paused runs `pr rebase --abort`); a failed abort → `failed` |
 | `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` and its target lock released / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
@@ -7289,6 +7289,20 @@ rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
 `push_head` is the one leased push. `cmd_push` (the rebase's force-push) records
 the rebase after it; `cmd_push_head` (`pr push`) records `PushDomain` and no rebase.
 
+### rebase/conflict_stop.py
+
+Default-mode conflict stop: classify, regenerate if declared, else abort.
+
+``pr rebase`` without ``--fix`` never calls the AI backend. A stop where every
+conflicted file is generated-class continues only when each rebuild succeeds
+with ``files_stale`` empty; otherwise ``git rebase --abort`` leaves a clean
+tree and exit 3. ``--stop-on-conflict`` and a resumed rebase keep the paused
+tree instead — those paths stay in ``lifecycle._report_conflicts_and_stop``.
+
+``rebase.regenerate`` must be declared for ACCEPT_THEIRS files; the conventional
+``mise run generate`` fallback is ``--fix``-only. REGENERATE files still use
+``git.regenerate.LOCKFILE_REGENERATORS``.
+
 ### rebase/conflicts.py
 
 Conflict classification, parsing, and git-level resolution.
@@ -7466,6 +7480,14 @@ Preflight refusals — the four questions asked before a branch is replayed.
 Each check answers with a ``RefusalReport`` or None, and ``refuse`` is what
 turns one into the shared exit code. A refusal leaves the worktree untouched
 and nothing pushed, which is the guarantee the whole module exists to keep.
+
+### rebase/regen_dispatch.py
+
+AI-free regeneration dispatch used by both ``--fix`` and the default stop.
+
+``resolve_ai`` imports ``agent.invoke`` at module level, so the three helpers
+that only stage generated files and run regenerators live here: default-mode
+conflict handling can reuse them without importing the AI backend.
 
 ### rebase/replay_audit.py
 
@@ -8157,7 +8179,10 @@ which take a bare branch name, the value here is a ref used verbatim: a bare
 rebase onto the remote.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
-With --fix, automatically resolves merge conflicts using AI.
+Without --fix, generated-class conflicts rebuild via a declared
+rebase.regenerate (or lockfile regenerators); anything else aborts to a
+clean tree. --fix resolves with AI. --stop-on-conflict keeps today's paused
+tree instead of aborting.
 Outputs structured JSON on stdout and status messages on stderr.
 Updates local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.
@@ -8169,10 +8194,11 @@ Exit codes:
   4  Branch already landed — refused before touching the remote (JSON on stdout)
 
 Usage:
-  pr-rebase                           # rebase and force-push
+  pr-rebase                           # rebase and force-push; abort on unresolved conflicts
   pr-rebase --no-push                 # rebase only, skip force-push
   pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
   pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
+  pr-rebase --stop-on-conflict        # pause on conflicts (tree dirty) instead of aborting
   pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)

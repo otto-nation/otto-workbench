@@ -706,14 +706,18 @@ class RebaseSummary(Domain):
     files_one_sided: list[str] = field(default_factory=list)
     one_sided_regions: list[str] = field(default_factory=list)
     pre_rebase_head: str = ""
+    # Defaulted so older state files load. Distinguishes a default-mode abort
+    # (tree clean) from a paused --stop-on-conflict / --fix stop.
+    aborted: bool = False
+    classes: dict[str, str] = field(default_factory=dict)
 
     def render_status(self) -> list[str]:
         if not self.updated_at:
             return ["**Rebase**: not run yet"]
+        if self.aborted or self.status == RebaseStatus.ABORTED.value:
+            return ["**Rebase**: aborted, tree clean"]
         if self.status == RebaseStatus.CONFLICTS.value:
-            return ["**Rebase**: conflicts — resolve manually or run `pr rebase --fix`"]
-        if self.status == RebaseStatus.ABORTED.value:
-            return ["**Rebase**: aborted"]
+            return ["**Rebase**: conflicts — paused; resolve manually or run `pr rebase --fix`"]
         if self.status in _REFUSAL_REASONS:
             return [f"**Rebase**: refused — {_REFUSAL_REASONS[self.status]} "
                     "(rerun with `pr rebase --force` to override)"]

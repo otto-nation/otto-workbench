@@ -174,12 +174,13 @@ def test_drive_to_completion_safety_valve():
 
 
 def test_step_conflicts_no_fix_reports():
-    """Without --fix, reports conflicts and returns 3."""
+    """--stop-on-conflict without --fix reports conflicts and returns 3."""
     ctx = mock.MagicMock()
     with mock.patch.object(rebase.lifecycle, "_report_conflicts_and_stop", return_value=3):
         rc = rebase.lifecycle.step_conflicts(
             "/fake", ctx, rebase.types.RunMode.PUSH, ["a.py"],
             rebase.types.ResolutionTally(), target_ref=_TARGET,
+            stop_on_conflict=True,
         )
 
     assert rc == 3
@@ -194,10 +195,14 @@ def test_step_conflicts_no_fix_saves_state():
         saved.append((self.status, saved_ctx))
 
     with mock.patch.object(rebase.types.RebaseOutcome, "save", fake_save), \
+         mock.patch.object(rebase.inspect, "detect_conflicts", return_value=["a.py"]), \
+         mock.patch.object(rebase.lifecycle.conflict_stop, "classify_stop",
+                           return_value={"a.py": "ai_merge"}), \
          mock.patch.object(rebase.types.ConflictReport, "from_repo") as mock_report:
         rebase.lifecycle.step_conflicts(
             "/fake", ctx, rebase.types.RunMode.PUSH, ["a.py"],
             rebase.types.ResolutionTally(), target_ref=_TARGET,
+            stop_on_conflict=True,
         )
 
     assert saved == [(pr.domains.RebaseStatus.CONFLICTS, ctx)]

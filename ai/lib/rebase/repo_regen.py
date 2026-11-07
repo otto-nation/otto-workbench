@@ -59,13 +59,15 @@ def repo_root(cwd: str) -> str:
 
 
 @cache
-def repo_regenerators(cwd: str) -> tuple[Regenerator, ...]:
+def repo_regenerators(cwd: str, *, conventional: bool = True) -> tuple[Regenerator, ...]:
     """The commands that rebuild this repo's generated files, in order.
 
     A declared `rebase.regenerate` wins outright — a repo whose generators are
     not all reachable from one task is the case the key exists for, and a
     convention cannot know that. Otherwise fall back to the conventional
-    `generate` task when the repo actually has one.
+    `generate` task when the repo actually has one, unless ``conventional`` is
+    false: default-mode conflict handling requires an explicit declaration so
+    ``mise run generate`` stays ``--fix``-only.
 
     Empty means this repo has told us nothing and has no conventional task, so
     a generated file's rebuild is unknown. The caller reports it stale rather
@@ -78,20 +80,22 @@ def repo_regenerators(cwd: str) -> tuple[Regenerator, ...]:
     if declared:
         return tuple(Regenerator(tuple(shlex.split(cmd))) for cmd in declared)
 
-    if mise_has_task(root, CONVENTIONAL_REGEN_TASK):
+    if conventional and mise_has_task(root, CONVENTIONAL_REGEN_TASK):
         return (Regenerator(("mise", "run", CONVENTIONAL_REGEN_TASK)),)
 
     return ()
 
 
-def queue_repo_regeneration(filepath: str, cwd: str, queue: RegenQueue) -> bool:
+def queue_repo_regeneration(
+    filepath: str, cwd: str, queue: RegenQueue, *, conventional: bool = True,
+) -> bool:
     """Queue this repo's regeneration for a generated file. False if unknown.
 
     Keyed on the repo root rather than the file's directory, so the dozen
     generated files one rebase touches collapse into a single run of each
     command — RegenQueue dedupes on (directory, command).
     """
-    regenerators = repo_regenerators(cwd)
+    regenerators = repo_regenerators(cwd, conventional=conventional)
     if not regenerators:
         return False
     for regenerator in regenerators:

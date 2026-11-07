@@ -22,18 +22,19 @@ from core.trail import Trail, billed_to, terr, tfail, tinfo, tspan
 import git.regenerate
 
 from . import conflicts
-from . import repo_regen
+from . import regen_dispatch
 from . import survival
 from . import types as rebase_types
 
 ConflictBlock = rebase_types.ConflictBlock
 ConflictPlan = rebase_types.ConflictPlan
 ConflictStrategy = rebase_types.ConflictStrategy
-GeneratedSignal = rebase_types.GeneratedSignal
 ParseFailure = rebase_types.ParseFailure
-Regenerator = git.regenerate.Regenerator
 RegenQueue = git.regenerate.RegenQueue
 Resolution = rebase_types.Resolution
+dispatch_accept_theirs = regen_dispatch.dispatch_accept_theirs
+dispatch_regenerate = regen_dispatch.dispatch_regenerate
+_run_deferred_regenerations = regen_dispatch._run_deferred_regenerations
 
 
 # ── Prompt construction ──────────────────────────────────────────────────
@@ -528,53 +529,6 @@ def resolve_single_file(
 
 # ── Dispatch ─────────────────────────────────────────────────────────────
 
-def dispatch_regenerate(
-    filepath: str, full_path: Path, cwd: str,
-    regenerator: Regenerator, queue: RegenQueue,
-    *, trail: Trail | None = None,
-) -> bool:
-    """Handle the REGENERATE strategy. Returns False on failure."""
-    if trail:
-        trail.decision(
-            "regenerate", f"accepting theirs for {filepath}",
-            reason=f"lockfile with known regenerator: {' '.join(regenerator.cmd)}",
-        )
-    if not conflicts.accept_theirs_and_stage(filepath, cwd):
-        return False
-    queue.add(full_path.parent, filepath, regenerator.cmd, regenerator.stage_dir)
-    return True
-
-
-def dispatch_accept_theirs(
-    filepath: str, full_path: Path, cwd: str,
-    signal: GeneratedSignal, queue: RegenQueue,
-    *, trail: Trail | None = None,
-) -> bool:
-    """Handle the ACCEPT_THEIRS strategy. Returns False on failure.
-
-    Taking theirs is a placeholder, not the resolution: the incoming side was
-    generated from the branch's sources before the base moved, so it is stale
-    the moment it is staged. The queued regeneration is what actually resolves
-    the file, and a repo that declares no way to rebuild leaves it stale — the
-    honest report, and what the caller surfaces as ``files_stale``.
-    """
-    if trail:
-        trail.decision(
-            "generated_file", f"accepting theirs for {filepath}",
-            reason=f"generated file detected via {signal}",
-        )
-    if not conflicts.accept_theirs_and_stage(filepath, cwd):
-        return False
-    if not repo_regen.queue_repo_regeneration(filepath, cwd, queue):
-        queue.mark_unrebuildable(filepath)
-        core.log.warn(f"No regeneration command for {filepath} — staged stale")
-        tinfo(
-            trail, "generated_file", f"no regeneration command for {filepath}",
-            data={"filepath": filepath, "signal": str(signal)},
-        )
-    return True
-
-
 def dispatch_conflict(
     filepath: str, full_path: Path, cwd: str,
     plan: ConflictPlan, sha: str, subject: str, queue: RegenQueue,
@@ -610,17 +564,6 @@ def dispatch_conflict(
     tinfo(trail, "resolve_conflict", f"resolved {filepath}",
            data={"commit": sha, "method": "ai"})
     return True
-
-
-def _run_deferred_regenerations(
-    queue: RegenQueue, cwd: str, *, trail: Trail | None,
-) -> list[str]:
-    """Run deferred regeneration jobs and return files that failed."""
-    failed: list[str] = []
-    for job in queue:
-        if not git.regenerate.run_regeneration(job, cwd=cwd, trail=trail):
-            failed.extend(job.files)
-    return failed
 
 
 def resolve_file_conflicts(

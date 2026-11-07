@@ -1,8 +1,8 @@
 ---
 name: pr-rebase
-description: "AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording."
+description: "Rebase onto the branch's base with generated-only conflict rebuild or abort; --fix for AI resolution. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording."
 source: otto-workbench/ai/skills/pr-rebase/SKILL.md
-invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]"
+invocation: "/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]"
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording."
 output_schema:
@@ -12,8 +12,11 @@ output_schema:
 # PR Rebase
 
 Rebases a feature branch onto its base. The `pr rebase` script handles
-everything: fetch, rebase, AI-assisted conflict resolution (via `claude -p`),
-and force-push.
+fetch, rebase, conflict handling, and force-push. Default mode rebuilds
+declared generated files and lockfiles, then **aborts to a clean tree**
+(exit 3) on any other conflict. Pass `--fix` for AI resolution. Pass
+`--stop-on-conflict` to keep today's paused tree instead of aborting.
+There is no `--no-fix` flag.
 
 The base is resolved per run, most authoritative source first: `--onto` (or
 `--base`) when given, then the branch's PR base branch as GitHub reports it,
@@ -38,11 +41,16 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
   to make it first. `--abort` and `--push-only` never create a worktree: they
   continue work that must already be in a checkout. When omitted, the current
   branch is used.
-- `--no-fix` (optional): Report conflicts without resolving them. By default,
-  conflicts are resolved with AI and force-pushed automatically.
-- `--no-push` (optional): Do everything except push. Composes with `--no-fix`
-  independently — under the default auto-fix mode the AI still resolves conflicts,
-  and the force-push command is printed for the user to run.
+- `--fix` (optional): Resolve conflicts with AI and rebase (force-pushes
+  unless `--no-push`). Do not pass it unless the user asked for AI resolution
+  or a previous exit 3 named files that need it. Incompatible with
+  `--stop-on-conflict`.
+- `--stop-on-conflict` (optional): Pause on conflicts (stash held, tree
+  dirty, exit 3) instead of aborting. Use when the user wants to inspect or
+  finish the replay by hand. Default without `--fix` is abort, not pause.
+- `--no-push` (optional): Do everything except push. Composes with `--fix`
+  independently — under `--fix` the AI still resolves conflicts, and the
+  force-push command is printed for the user to run.
 - `--force` (optional): Rebase a branch the preflight refuses — one whose work
   already landed on its base, one sharing no history with it, or one conflicting
   past the file budget. Only pass it when the user has seen the exit-4 refusal
@@ -79,7 +87,20 @@ no bearing on what the run then decides.
 
 ### 1. Run pr rebase
 
-- **Default mode** (auto-fix):
+- **Default mode** (generated rebuild or abort; no AI):
+
+  ```bash
+  pr rebase --branch <branch>
+  ```
+
+  Generated-class files (`accept_theirs` with a declared `rebase.regenerate`,
+  or lockfiles in `LOCKFILE_REGENERATORS`) rebuild and the rebase continues.
+  The conventional `mise run generate` fallback does **not** qualify here — it
+  stays `--fix`-only. Any other class, a missing declaration, a failed rebuild,
+  or `files_stale` aborts (`tree: clean`, exit 3). Foreground is fine: there is
+  no AI call.
+
+- **`--fix` mode** (AI resolution):
 
   ```bash
   pr rebase --fix --branch <branch>
@@ -110,15 +131,13 @@ no bearing on what the run then decides.
   mid-flight: step 2 parses the JSON the completed job returns, and the script
   owns its own locking and state.
 
-- **`--no-fix` mode** (report only):
+- **`--stop-on-conflict`**: same as default but **pauses** (`tree: paused`, stash
+  held) instead of aborting. Resume never aborts either: a further stop pauses,
+  because aborting would discard resolutions already made.
 
-  ```bash
-  pr rebase --branch <branch>
-  ```
-
-`--no-push` composes with either: the rebase runs (and the AI still resolves
-conflicts under `--fix`), but nothing reaches the remote — the force-push command
-is printed for the user to run instead.
+`--no-push` composes with any of the above: the rebase runs (and the AI still
+resolves conflicts under `--fix`), but nothing reaches the remote — the
+force-push command is printed for the user to run instead.
 
 When no branch argument is provided, omit `--branch` (uses CWD's branch).
 
@@ -183,8 +202,9 @@ conventional `generate` task. Say so and tell the user to regenerate them
 manually; a repo that keeps landing in the second case wants a
 `rebase.regenerate` entry in its `.workbench.yml`. Done.
 
-**Exit 3 — the rebase is paused with conflicts a human must look at.** Parse the
-JSON:
+**Exit 3 — conflicts a human must look at.** Parse the JSON. `aborted` and
+`tree` say whether the replay was thrown away (`tree: clean`) or left paused
+(`tree: paused`):
 
 ```json
 {
@@ -192,15 +212,25 @@ JSON:
   "files": ["src/auth.py", "tests/test_auth.py"],
   "rebase_head": "abc1234",
   "rebase_head_subject": "fix: auth token refresh",
-  "remaining_commits": 3
+  "remaining_commits": 3,
+  "aborted": true,
+  "tree": "clean",
+  "classes": {"src/auth.py": "ai_merge", "tests/test_auth.py": "ai_merge"},
+  "files_stale": [],
+  "pre_rebase_head": "def5678"
 }
 ```
 
-Four runs reach this, and the difference is what the console said, not the JSON:
+Runs that reach this, and the difference is `tree` plus what the console said:
 
-- **`--no-fix` mode.** Nothing was attempted. Report what was found and ask the
-  user whether they want AI resolution. If yes, `pr rebase --fix --branch
-  <branch>` resumes the in-progress rebase with AI resolution and force-pushes.
+- **Default mode.** The rebase was **aborted** (`aborted: true`, `tree: clean`,
+  HEAD back at `pre_rebase_head`). Report `files` and `classes`. Ask the user
+  whether they want AI resolution. If yes, `pr rebase --fix --branch <branch>`
+  starts a **fresh** rebase (there is nothing to resume).
+- **`--stop-on-conflict`.** The tree is **paused** (`aborted: false`,
+  `tree: paused`, stash held). Report `files` and `classes`. Resume with
+  `pr rebase --fix --branch <branch>` if the user wants AI, or resolve by hand
+  and `pr rebase --branch <branch>` (a resume never aborts).
 - **`--fix` mode, where a file could not be resolved.** The AI's answer for that
   file would not parse twice over (missing resolution markers, surviving git
   conflict markers, or a merged file that no longer parses as its language —
@@ -228,9 +258,11 @@ Four runs reach this, and the difference is what the console said, not the JSON:
   — resume with `WORKBENCH_ALLOW_DROPPED_CHANGES=1 pr rebase --fix --branch
   <branch>`.
 
-Never answer an exit 3 with `pr rebase --abort`. The rebase holds real work by
-this point; aborting throws away every resolution the run made and every commit
-it replayed. Abort only when the user asks for it having been told that.
+Never answer a **paused** exit 3 (`tree: paused`) with `pr rebase --abort`.
+The rebase holds real work by this point; aborting throws away every resolution
+the run made and every commit it replayed. Abort only when the user asks for it
+having been told that. A default-mode abort already left the tree clean — do
+not abort again.
 
 While a rebase is paused this way, an auto-stash from the run that started it is
 *held* rather than popped — popping into a conflicted index cannot work. The run
@@ -337,12 +369,11 @@ through the owner, once whatever blocked the push is committed:
 pr rebase --branch <branch>
 ```
 
-This is the same command step 1 calls `--no-fix` mode, and it is not report-only
-here: the flag governs conflict resolution, not the push. A replay with nothing
-to resolve force-pushes either way, and there is nothing left to resolve once the
-rebase has completed. So the run re-fetches, replays nothing unless the base
-moved again, and pushes — which puts the pre-push hooks on the HEAD that is
-actually going out. This is how the skill ends. Never run `git push --force-with-lease` yourself,
+This is the same command as default mode, and it is not report-only here:
+conflict handling is already done. A replay with nothing to resolve force-pushes
+either way. So the run re-fetches, replays nothing unless the base moved again,
+and pushes — which puts the pre-push hooks on the HEAD that is actually going
+out. This is how the skill ends. Never run `git push --force-with-lease` yourself,
 and never hand it to the user as the remaining step: `pr rebase` prints a
 `Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,
 and that hint is for a human at a terminal, not an instruction to you.

@@ -42,7 +42,7 @@ function tabOf() {
 }
 
 function errorText(err, ctx) {
-  return friendlyError(err, ctx?.on);
+  return friendlyError(err, ctx?.on, scopeOf());
 }
 
 
@@ -110,7 +110,7 @@ export default class TeamPrs extends View {
     }
     const missing = ["pr", "gh"].filter((n) => !have[n]);
     if (missing.length) {
-      this.fail(key, { kind: "missing-tool", message: missing.join(", ") });
+      this.fail(key, { kind: "missing-tool", tools: missing, message: missing.join(", ") });
       return null;
     }
     return have;

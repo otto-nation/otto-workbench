@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/scope.js');
-    const { friendlyError, spaceTargets, mergeStates } = m;
+    const { friendlyError, spaceTargets, mergeStates, skippable } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -79,4 +79,22 @@ _js() {
   _js '(() => { const s={repo:{slug:"o/r"},prs:[{number:1}]}; mergeStates([s]); return s.prs[0].repoSlug === undefined; })()'
   [ "$status" -eq 0 ]
   jq -e '.' <<<"$output"
+}
+
+@test "friendlyError: missing-tool uses tools array, else not install" {
+  _js '({a:friendlyError({kind:"missing-tool",tools:["pr","gh"],message:"pr, gh"}),b:friendlyError({kind:"missing-tool",message:"spawn ENOENT"})})'
+  [ "$status" -eq 0 ]
+  jq -e '.a=="install pr, gh on this Mac" and (.b|startswith("install")|not)' <<<"$output"
+}
+
+@test "friendlyError: not-a-repo hint only when scope is this" {
+  _js '({a:friendlyError({kind:"failed",message:"fatal: not a git repository"},null,"all"),b:friendlyError({kind:"failed",message:"fatal: not a git repository"},null,"this")})'
+  [ "$status" -eq 0 ]
+  jq -e '(.a|test("All spaces")|not) and (.b|test("All spaces"))' <<<"$output"
+}
+
+@test "skippable: three skip messages, not auth/unreachable/missing-tool/exit 1" {
+  _js '({a:skippable({kind:"failed",message:"fatal: not a git repository"}),b:skippable({kind:"failed",message:"Not in a repository"}),c:skippable({kind:"failed",message:"origin is not a GitHub remote"}),d:skippable({kind:"auth"}),e:skippable({kind:"unreachable"}),f:skippable({kind:"missing-tool"}),g:skippable({kind:"failed",message:"exit 1"})})'
+  [ "$status" -eq 0 ]
+  jq -e '.a and .b and .c and (.d|not) and (.e|not) and (.f|not) and (.g|not)' <<<"$output"
 }

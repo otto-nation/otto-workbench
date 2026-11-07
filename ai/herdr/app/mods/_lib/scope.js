@@ -4,20 +4,35 @@
  * values; no imports.
  */
 
+const SKIPPABLE_RE = /not a git repository|not in a repository|origin is not a GitHub remote/i;
+
+export function skippable(err) {
+  return err?.kind === 'failed' && SKIPPABLE_RE.test(err.message ?? '');
+}
+
 // Operator-facing text for a failed target; raw git/gh stderr never reaches the board.
-export function friendlyError(err, on) {
+export function friendlyError(err, on, scope = 'this') {
   if (!err) return '';
   const where = on != null ? String(on) : 'this Mac';
   if (err.kind === 'auth') return `run gh auth login on ${where}`;
   if (err.kind === 'unreachable') return `${where} is unreachable`;
-  if (err.kind === 'missing-tool') return `install ${err.message} on ${where}`;
-  if (/not a git repository/i.test(err.message ?? '')) {
-    return 'this space is not in a git repository; open a space in a repo or use All spaces';
+  if (err.kind === 'missing-tool') {
+    if (Array.isArray(err.tools) && err.tools.length) {
+      return `install ${err.tools.join(', ')} on ${where}`;
+    }
+    return `a program could not start on ${where}: ${err.message}`;
   }
-  if (/Not in a repository/i.test(err.message ?? '')) {
-    return 'this space has no folder; open a space in a repo or use All spaces';
+  const msg = err.message ?? '';
+  if (SKIPPABLE_RE.test(msg)) {
+    const hint = scope !== 'all' ? '; open a space in a repo or use All spaces' : '';
+    if (/not a git repository/i.test(msg)) {
+      return `this space is not in a git repository${hint}`;
+    }
+    if (/not in a repository/i.test(msg)) {
+      return `this space has no folder${hint}`;
+    }
   }
-  return err.message ?? '';
+  return msg;
 }
 
 // Every distinct (machine, folder) among the open spaces, in space order.

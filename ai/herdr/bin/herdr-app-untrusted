@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Launch an isolated Herdr window for agent machines (HC_SESSION=untrusted).
+#
+# Creates ~/.config/herdr-app-untrusted if missing, copies appearance settings
+# from the main window, forces clipboard_write off, and refuses to open when
+# the untrusted session holds a local terminal or an afar grant. Never starts
+# hc.
+#
+# ```
+# herdr-app-untrusted
+# ```
+#
+# | Flag | Description |
+# |------|-------------|
+# | `-h`, `--help` | Show help |
+#
+# | Environment Variable | Description | Default |
+# |---------------------|-------------|---------|
+# | `HC_SESSION` | Set by the launcher for the window's core | `untrusted` |
+# | `HERDR_APP_HOME` | Set by the launcher to the isolated app home | `~/.config/herdr-app-untrusted` |
+#
+# Agent machines belong in this window only. Adding them is owned by homelab
+# (`scripts/setup-herdr-untrusted-window.sh`). Edit appearance in the main
+# window; sync copies it here.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../../../lib/ui.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../steps.sh"
+
+usage() {
+  cat <<'EOF'
+Launch an isolated Herdr window for agent machines (HC_SESSION=untrusted).
+
+Usage: herdr-app-untrusted
+
+  -h, --help   Show this help
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+if [[ $# -gt 0 ]]; then
+  err "herdr-app-untrusted: unexpected argument: $1"
+  usage >&2
+  exit 2
+fi
+
+mkdir -p "$HERDR_UNTRUSTED_APP_DIR"
+_herdr_untrusted_reconcile
+if ! _herdr_untrusted_preflight; then
+  err "herdr-app-untrusted: refusing to open — fix the warnings above first"
+  exit 1
+fi
+
+# man open documents --env VAR as adding NAME=VALUE to the launched
+# application's environment (example: TextEdit). Not verified without
+# launching herdr-app: whether those vars reach the GUI process via Launch
+# Services, how the Dock shows two Herdr instances, or self-update with two
+# instances. Fallback if `open` is missing: exec the bundle binary with env.
+_herdr_untrusted_open() {
+  if command -v open >/dev/null 2>&1; then
+    open -n -a Herdr \
+      --env "HC_SESSION=$HERDR_UNTRUSTED_SESSION" \
+      --env "HERDR_APP_HOME=$HERDR_UNTRUSTED_APP_DIR"
+    return 0
+  fi
+  local bin="${HERDR_APP_BUNDLE:-$HOME/Applications/Herdr.app}/Contents/MacOS/Herdr"
+  if [[ -x "$bin" ]]; then
+    exec env \
+      HC_SESSION="$HERDR_UNTRUSTED_SESSION" \
+      HERDR_APP_HOME="$HERDR_UNTRUSTED_APP_DIR" \
+      "$bin"
+  fi
+  err "herdr-app-untrusted: Herdr is not installed (no open, no $bin)"
+  return 1
+}
+
+_herdr_untrusted_open

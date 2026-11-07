@@ -585,8 +585,10 @@ def test_the_schema_contracts_are_read_off_the_mode_table():
         "pr batch next",
         "pr batch resolve --dry-run",
         "pr status",
+        "pr stack",
     ]
     assert cli.schema.served_schema_versions("review", ["--list"]) == \
         review.listing.SCHEMA_VERSIONS
     assert cli.schema.served_schema_versions("review", ["--summary"]) == ()
     assert cli.schema.served_schema_versions("status", []) == (1,)
+    assert cli.schema.served_schema_versions("stack", []) == (1,)

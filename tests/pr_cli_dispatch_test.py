@@ -416,7 +416,7 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
 _RESOLVES_LOCALLY = {
     "create": False, "status": True, "ci": False, "review": False,
     "comments": False, "fix": False, "rebase": False, "push": True, "describe": False,
-    "batch": False, "gc": False,
+    "stack": True, "batch": False, "gc": False,
 }
 
 # Which commands fetch and fast-forward the worktree first. The old
@@ -425,7 +425,7 @@ _RESOLVES_LOCALLY = {
 _FETCHES = {
     "create": False, "status": False, "ci": True, "review": True,
     "comments": True, "fix": True, "rebase": False, "push": False, "describe": True,
-    "batch": False, "gc": False,
+    "stack": False, "batch": False, "gc": False,
 }
 
 # Which bare invocations may create a worktree. Flag variants that flip this
@@ -434,7 +434,7 @@ _FETCHES = {
 _CREATES_WORKTREE = {
     "create": False, "status": False, "ci": False, "review": False,
     "comments": False, "fix": True, "rebase": True, "push": False, "describe": False,
-    "batch": False, "gc": False,
+    "stack": False, "batch": False, "gc": False,
 }
 
 
@@ -505,6 +505,7 @@ _DECLARED_LOCKS = {
     ("rebase", ("--push-only",)): _TC,
     ("push", ("--expect", "abc")): _TC,
     ("describe", ()): _TC,
+    ("stack", ()): _NO,
     ("batch", ()): _NO,
     ("batch", ("run", "--checkout", "/r")): _NO,
     ("batch", ("resume",)): _NO,
@@ -643,6 +644,7 @@ def test_command_creates_a_worktree_only_if_declared(command, tmp_path):
     (["status"], FIND),
     (["push"], FIND),
     (["describe"], FIND),
+    (["stack"], FIND),
     (["gc"], FIND),
 ])
 def test_flag_variants_pass_their_worktree_need(argv, expected, tmp_path):

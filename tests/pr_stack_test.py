@@ -1,5 +1,6 @@
 """Tests for pr.stack — the repo's PR stack graph and `pr stack`."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -145,3 +146,25 @@ def test_load_graph_reads_open_prs_and_tolerates_no_stacks_api(monkeypatch, tmp_
     monkeypatch.setattr(pr.stack.git.topology, "default_branch", lambda cwd=None: "main")
     g = pr.stack.load_graph("o/r", str(tmp_path))
     assert [(n.pr, n.branch) for n in g.nodes] == [(1, "a")]
+
+
+# ── the command ─────────────────────────────────────────────────────────────
+
+
+def test_pr_stack_prints_the_versioned_graph(monkeypatch, capsys):
+    import cli.pr_stack
+    graph = _graph([_pr(1, "a"), _pr(2, "b", base="a")])
+    monkeypatch.setattr(cli.pr_stack.pr.stack, "load_graph", lambda repo, cwd: graph)
+    rc = cli.pr_stack.run(repo="o/r", cwd="/wt", pr_number=None, schema_version=1)
+    doc = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert (doc["schema_version"], doc["trunk"]) == (1, "main")
+    assert [n["pr"] for n in doc["nodes"]] == [1, 2]
+
+
+def test_pr_stack_with_a_pr_prints_its_ladder(monkeypatch, capsys):
+    import cli.pr_stack
+    graph = _graph([_pr(1, "a"), _pr(2, "b", base="a"), _pr(3, "c")])
+    monkeypatch.setattr(cli.pr_stack.pr.stack, "load_graph", lambda repo, cwd: graph)
+    cli.pr_stack.run(repo="o/r", cwd="/wt", pr_number=2, schema_version=1)
+    assert [n["pr"] for n in json.loads(capsys.readouterr().out)["nodes"]] == [1, 2]

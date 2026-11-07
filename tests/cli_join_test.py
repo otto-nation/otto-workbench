@@ -60,12 +60,12 @@ DELEGATES = {
 # `fix` the state field: the command runs ci + review + comments, the field
 # is comments-fix. `push` owns a state field without owning a phase.
 COMMANDS_WITHOUT_PHASE_DOMAIN = frozenset({
-    "create", "status", "fix", "gc", "batch", "push",
+    "create", "status", "fix", "gc", "batch", "push", "stack",
 })
 
 ALL_COMMANDS = frozenset({
     "create", "status", "ci", "review", "comments",
-    "fix", "rebase", "push", "describe", "batch", "gc",
+    "fix", "rebase", "push", "describe", "stack", "batch", "gc",
 })
 
 # Ten PRState domain fields. COMMENTS owns three of them; follow_ups and

@@ -187,6 +187,14 @@ class _NativeStacks:
     number: dict[int, int]
 
 
+def _ingest_stack(stack: dict, parent: dict[int, int], number: dict[int, int]) -> None:
+    members = [m["number"] for m in stack.get("pull_requests", [])]
+    for below, above in zip(members, members[1:]):
+        parent[above] = below
+    for member in members:
+        number[member] = stack.get("number")
+
+
 def _native(repo: str) -> _NativeStacks | None:
     stacks = gh.client.api_json(f"repos/{repo}/stacks?per_page=100",
                                 paginate=True, slurp=True, default=None)
@@ -194,12 +202,8 @@ def _native(repo: str) -> _NativeStacks | None:
         return None
     parent, number = {}, {}
     for page in stacks:
-        for s in page:
-            members = [m["number"] for m in s.get("pull_requests", [])]
-            for below, above in zip(members, members[1:]):
-                parent[above] = below
-            for m in members:
-                number[m] = s.get("number")
+        for stack in page:
+            _ingest_stack(stack, parent, number)
     return _NativeStacks(parent, number)
 
 

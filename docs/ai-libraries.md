@@ -3602,6 +3602,21 @@ persist paths, and a PR review wrote the domain twice. This module is the
 one writer: it derives the domain fields from the typed report and persists
 them on the target the context names.
 
+### pr/stack.py
+
+The repo's open PRs as a stack graph: who is stacked on whom, and how healthy each link is.
+
+Parent authority, in order: GitHub's native stacks where the API exists (a
+404 means the feature is off for this repo and is not an error); the PR's base
+branch when another open PR owns that branch; `git.topology.stack_parent` for a
+PR based on the trunk whose history says otherwise; else the trunk.
+
+Health is read from git against `origin/<branch>` refs, never from GitHub:
+`up-to-date` when the child contains its parent, `needs-rebase` when the
+parent moved and `git merge-tree` merges it cleanly, `has-conflicts` when it
+does not, `base-closed` when the PR's base is neither the trunk nor an open
+PR's branch (its parent landed or was abandoned), `unknown` when git cannot say.
+
 ### pr/state.py
 
 Unified PR state framework.
@@ -8334,6 +8349,14 @@ Usage:
   pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --push-only --expect <sha> # push HEAD leasing on <sha>; no recorded rebase needed
   pr-rebase --repo-dir <path>         # specify worktree directory
+
+### cli/pr_stack.py
+
+`pr stack`: the repo's open PRs as a stack graph, as versioned JSON.
+
+Usage:
+  pr --schema-version 1 stack            # the whole repo's graph
+  pr --schema-version 1 stack --pr 42    # PR 42's ladder, bottom first
 
 ### cli/promote_scan.py
 

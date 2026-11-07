@@ -20,6 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import agent.git_guard
 import agent.machine_env
 import agent.registry
 import agent.usage
@@ -224,29 +225,18 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # global flags, and one that cannot be closed here because the matcher grammar
 # has no way to express "any flags, then this subcommand". What holds on this
 # backend is the fix templates' prose, the engine committing for the agent,
-# and `review.convergence.fix_coverage` declining to cover a fix commit whose
+# `review.convergence.fix_coverage` declining to cover a fix commit whose
 # parent is not the reviewed commit — which records an out-of-band commit in
-# the review domain but does not prevent one — and the engine refusing to land
-# on a branch switch or history rewrite during the pass (`fix.head_guard`). A
+# the review domain but does not prevent one — the engine refusing to land
+# on a branch switch or history rewrite during the pass (`fix.head_guard`; a
 # commit on top is recorded, not refused, because a hand commit made while the
-# agent runs is tolerated by contract.
+# agent runs is tolerated by contract), and a `git` shim on the agent's PATH
+# (`agent.git_guard`) that refuses these subcommands in the fix worktree under
+# any global-flag spelling. Not a sandbox: an absolute git path bypasses it.
 # Upgrade if Claude Code grows a regex or argv-aware permission matcher.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",
-    "Bash(git commit:*)",
-    "Bash(git push:*)",
-    "Bash(git rebase:*)",
-    "Bash(git reset:*)",
-    "Bash(git checkout:*)",
-    "Bash(git switch:*)",
-    "Bash(git restore:*)",
-    "Bash(git stash:*)",
-    "Bash(git clean:*)",
-    "Bash(git merge:*)",
-    "Bash(git cherry-pick:*)",
-    "Bash(git revert:*)",
-    "Bash(git apply:*)",
-    "Bash(git am:*)",
+    *(f"Bash(git {s}:*)" for s in agent.git_guard.GUARDED_SUBCOMMANDS),
 ))
 
 # Edit/Write on the verify gates only. The fix agent needs both. Process writes

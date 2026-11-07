@@ -21,6 +21,9 @@
  *   - `fix.containment` restores anything the verify agent or the suite still
  *     wrote, because process writes (python, a suite, sed) bypass this file
  *   - the push consults the publishing gate (`land.land(gated=True)`)
+ *   - a `git` shim on the agent's PATH (`agent.git_guard`) refuses mutating
+ *     subcommands in the fix worktree, for both backends, under any global-flag
+ *     spelling. Process-level, not a sandbox: an absolute git path bypasses it.
  *
  * So this is left with two jobs those three cannot do. The first is narrow:
  * keep the engine's scoped commit the *only* commit. An agent that runs

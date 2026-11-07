@@ -328,11 +328,10 @@ def _evidence(step: Step, stdout: str, item: Item, head_before: str,
         if report.get("files_stale"):
             found.append({"kind": EvidenceKind.STALE.value, "files": report["files_stale"]})
     if step is Step.CI:
-        if fixing:
-            if unfixed := ci_unfixed(stdout):
-                found.append({"kind": EvidenceKind.CI_UNFIXED.value, **unfixed})
-        elif failing := ci_failing(stdout):
-            found.append({"kind": EvidenceKind.CI_FAILING.value, **failing})
+        extra = ci_unfixed(stdout) if fixing else ci_failing(stdout)
+        kind = EvidenceKind.CI_UNFIXED if fixing else EvidenceKind.CI_FAILING
+        if extra:
+            found.append({"kind": kind.value, **extra})
     if step in _FIXING_STEPS:
         found.extend({"kind": EvidenceKind.CHECKS_UNVERIFIED.value, **check}
                      for check in fix_checks(item.worktree, head_before))

@@ -54,7 +54,7 @@ export default class TeamPrs extends View {
     this.loginByOn = new Map();
     this.repoByKey = new Map();
     this.inflight = this.again = this.againListing = false;
-    this.watchKey = this.key = null;
+    this.watchRoot = this.key = null;
     this.pollListing = false;
     if (isUntrustedHome(appHome())) return;
     cx.timer.every(180000, (cx) => this.refresh(cx));
@@ -102,9 +102,8 @@ export default class TeamPrs extends View {
 
   commit(key, data, ctx, cx) {
     this.cache.set(key, { ...data, error: null, stale: false, updatedAt: Date.now() });
-    // One folder watch follows one checkout; All spaces polls the listing instead.
-    if (scopeOf() === "all") this.pollListing = true;
-    else if (ctx.on == null) this.startWatch(cx, key, data.reviewsRoot);
+    // The watch follows the machine's reviews root, not a checkout.
+    if (ctx.on == null) this.startWatch(cx, data.reviewsRoot);
   }
 
   async ensureTools(ctx, key) {
@@ -149,16 +148,16 @@ export default class TeamPrs extends View {
 
   async pull(cx, listingOnly) {
     const cycle = new Map();
-    for (const ctx of this.activeTargets()) {
+    await Promise.all(this.activeTargets().map(async (ctx) => {
       const key = ctxKey(ctx);
       if (!ctx.cwd) {
         this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
-        continue;
+        return;
       }
       if (listingOnly) await this.pullListing(ctx, key, cx, cycle);
       else await this.pullFull(ctx, key, cx, cycle);
       cx.notify();
-    }
+    }));
   }
 
   async pullFull(ctx, key, cx, cycle) {
@@ -225,17 +224,19 @@ export default class TeamPrs extends View {
     }, ctx, cx);
   }
 
-  startWatch(cx, key, root) {
-    if (!root || this.watchKey === key) return;
-    this.watchKey = key;
+  startWatch(cx, root) {
+    if (!root || this.watchRoot === root) return;
+    this.watchRoot = root;
     this.pollListing = false;
     cx.spawn(async (cx) => {
       try {
-        while (this.watchKey === key && this.same(key)) {
+        while (this.watchRoot === root && this.activeTargets().some((c) => c.on == null)) {
           await watchFolder(root);
-          if (this.watchKey === key && this.same(key)) this.refresh(cx, { listingOnly: true });
+          if (this.watchRoot === root && this.activeTargets().some((c) => c.on == null)) {
+            this.refresh(cx, { listingOnly: true });
+          }
         }
-      } catch { if (this.watchKey === key) this.pollListing = true; }
+      } catch { if (this.watchRoot === root) this.pollListing = true; }
     });
   }
 
@@ -265,7 +266,7 @@ export default class TeamPrs extends View {
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
     if (this.key !== scopeKey) {
-      this.key = scopeKey; this.watchKey = null; this.pollListing = false; this.refresh(cx);
+      this.key = scopeKey; this.refresh(cx, { listingOnly: true });
     }
     const states = targets.map((c) => this.cache.get(ctxKey(c)) ?? {});
     const scope = scopeOf();

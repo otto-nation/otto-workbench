@@ -686,8 +686,7 @@ which is why this restore is the real control.
 
 The review adapter's commit scope is the other half: it keeps only finding
 anchors and the tests named for them, so a PR file that is not an anchor stays
-in the worktree with a warning. The engine also refuses to land when HEAD moved
-during the pass and the domain did not ask to recover an agent's own commit.
+in the worktree with a warning.
 
 ### fix/engine.py
 

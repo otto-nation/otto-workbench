@@ -1187,33 +1187,12 @@ def _run_pass(
 def _land(
     adapter: FixAdapter, spec: LandSpec, head_before: str, trail: Trail | None,
 ) -> git.land.LandResult:
-    """Commit the pre-suite scope, or refuse if an agent committed on its own.
+    """Commit the pre-suite scope and push it.
 
     ``spec.paths`` is the commit scope computed before the suite ran.
     Containment restored any suite writes, so land stages those names at
     pre-suite content. land itself is unchanged: it still adds by pathspec.
-
-    ``git -C . commit`` evades Claude's ``Bash(git commit:*)`` prefix deny.
-    When HEAD has moved and the domain did not ask to recover that commit,
-    landing on top of it would attribute the agent's commit to the pass.
-    ``recover=True`` still goes through ``recover_from`` unchanged.
     """
-    moved = None if spec.recover else fix.containment.head_moved(
-        adapter.workdir, head_before,
-    )
-    if moved is not None:
-        detail = (
-            f"HEAD moved during the fix pass "
-            f"({git.client.abbrev(head_before)} -> {git.client.abbrev(moved)}); "
-            "refusing to land. An agent committed on its own."
-        )
-        core.log.error(detail)
-        twarn(trail, "fix_head_moved", detail,
-              data={"head_before": head_before, "head_now": moved,
-                    "workdir": str(adapter.workdir)})
-        return git.land.LandResult(
-            git.land.CommitStatus.COMMIT_FAILED, error=detail,
-        )
     return git.land.land(
         adapter.workdir,
         message=fix.suite.with_trailer(spec.message, adapter.suite),

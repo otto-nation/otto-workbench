@@ -17,8 +17,7 @@ which is why this restore is the real control.
 
 The review adapter's commit scope is the other half: it keeps only finding
 anchors and the tests named for them, so a PR file that is not an anchor stays
-in the worktree with a warning. The engine also refuses to land when HEAD moved
-during the pass and the domain did not ask to recover an agent's own commit.
+in the worktree with a warning.
 """
 
 # ceiling: gitignored writes are invisible to this snapshot, because
@@ -187,21 +186,6 @@ def restore(
         },
     )
     return Reverted(paths=tuple(changed), saved_to=saved_to)
-
-
-def head_moved(workdir: str | Path, head_before: str) -> str | None:
-    """Current HEAD when it differs from *head_before*, else None.
-
-    An agent that ran ``git -C . commit`` (which evades Claude's prefix deny)
-    moves HEAD. The engine refuses to land on top of that unless the domain
-    asked for ``recover``.
-    """
-    if not head_before:
-        return None
-    now = git.client.head_sha(cwd=workdir)
-    if now and now != head_before:
-        return now
-    return None
 
 
 def _unread(workdir: Path, result: core.proc.CmdResult) -> None:

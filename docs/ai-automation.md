@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 693 -->
+<!-- doc-budget: 697 -->
 
 # AI Automation
 
@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -153,6 +153,16 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 **Auto-trigger:** 24h (via Stop hook)
 **Trigger:** Run after upgrading runtimes, installing new tools, or when machine.md last-updated is more than 7 days old. Auto-triggers every 24h.
 **Skip:** Do not use for project-specific architecture (use architecture instead) or memory consolidation (use dream instead).
+
+### `/pr-batch`
+
+Sweep many open PRs with pr batch and turn the result into focused per-PR sessions. TRIGGER when: updating, rebasing, triaging or sweeping several open PRs, or running pr batch. SKIP: a single PR (use pr-rebase, pr-comments, ci-failures).
+
+```
+/pr-batch
+```
+**Trigger:** Use when updating, rebasing, triaging or sweeping several open PRs, or running pr batch.
+**Skip:** Do not use for a single PR (use pr-rebase, pr-comments, or ci-failures instead).
 
 ### `/pr-comments [<pr_number_or_branch>]`
 
@@ -313,12 +323,12 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   `herdr config check` rejects is rolled back. The rest of the file is not managed
   yet (#1660).
 - The herdr desktop app (`herdr-app`) gets the workbench's Gruvbox themes wherever it is
-  installed, herdr selected or not: sync links `ai/herdr/app/themes/*.json` into
-  `~/.config/herdr-app/themes/` and sets only `theme` in `~/.config/herdr-app/settings.json`
-  to `{"light": "gruvbox-light", "dark": "gruvbox-dark"}`, following the system appearance.
-  Every other setting is left alone. A theme file you edited in place is kept with a
-  warning; delete it to get the link back. If the app rejects a change it says why in
-  `~/.config/herdr-app/settings.error`.
+  installed, herdr selected or not: sync links `ai/herdr/app/themes/<name>.generated.json`
+  into `~/.config/herdr-app/themes/` as `<name>.json` and sets only `theme` in
+  `~/.config/herdr-app/settings.json` to `{"light": "gruvbox-light", "dark": "gruvbox-dark"}`,
+  following the system appearance. Every other setting is left alone. A theme file you
+  edited in place is kept with a warning; delete it to get the link back. If the app
+  rejects a change it says why in `~/.config/herdr-app/settings.error`.
 - An isolated untrusted window holds agent machines: launch with `herdr-app-untrusted`
   (`HC_SESSION=untrusted`, `~/.config/herdr-app-untrusted`). It refuses a local
   terminal or `afar` grant. Sync copies appearance keys from the main window, forces
@@ -329,7 +339,11 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
 
 ### GitHub owners
 
-Every GitHub write is checked against `github.owners` and refused elsewhere; unset refuses all. Record yours with `otto-workbench config set github.owners.work '[your-org]'`. The policy and where it is enforced: [`gh/owners.py`](ai-libraries.md#ghownerspy).
+Every GitHub write is checked against `github.owners` and refused elsewhere; unset refuses all. Record yours with `otto-workbench config set github.owners.work '[your-org]'`. Published text may not name an owner in a different group — see `general.md` § Cross-Group References. A login listed in a group is an owner like any organisation, so `@login` is a reference — including the `@reviewer` attributions `pr comments` writes. The policy and where it is enforced: [`gh/owners.py`](ai-libraries.md#ghownerspy).
+
+The user's overrides for publishing anyway are `WORKBENCH_ALLOW_UPSTREAM=1` (target) and `WORKBENCH_ALLOW_CROSS_REF=1` (text). Both are honoured only on user-run Python paths (`gh.client`, Linear, the git hooks); the agent guards never read them, and an agent command that names either is refused.
+
+The global `commit-msg` hook is advisory (`git commit --no-verify` / `-n` skips it). The global `pre-push` hook is the gate: it scans commits new to the destination remote against that destination's owner (`git push --no-verify` skips it). Non-GitHub destinations and unconfigured owners allow. A repo-local `core.hooksPath` (husky and similar) bypasses both. Both fail open when the check cannot run. See [`git/hooks/commit-msg`](../git/hooks/commit-msg) and [`git/hooks/pre-push`](../git/hooks/pre-push). Annotated tag messages are not scanned.
 
 ### Which model each phase runs on
 
@@ -763,7 +777,7 @@ closed, and every step runs drafted — the batch is the only thing that pushes.
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run_summary
 pr batch run --plan FILE …               # start from a saved plan
-pr batch resume [RUN_ID]                 # continue waiting or interrupted; a cancel is final
+pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
 pr batch next [RUN_ID]                   # only what needs action (JSON)
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state
@@ -773,7 +787,7 @@ pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder ap
 ```
 
 `pr batch run --focus` is forwarded to every review step and replayed by
-`pr batch resume`; it does not make a review step needed.
+`pr batch resume` (`--steps` may only narrow; it does not make a review step needed; open decisions on excluded steps still stand).
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no

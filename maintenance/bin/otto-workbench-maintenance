@@ -73,7 +73,7 @@ log "Running sync"
 if wb_run_bounded --tier SYNC --relay -- "$MAIN_WORKTREE/bin/otto-workbench" sync 2>&1; then
   log "Sync complete"
 else
-  log "ERROR: sync failed or exceeded its bound (exit $?)"
+  log "ERROR: sync failed or exceeded its bound (see the relayed reason above)"
   exit 1
 fi
 

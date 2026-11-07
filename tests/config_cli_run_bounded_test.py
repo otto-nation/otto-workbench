@@ -9,6 +9,7 @@ stderr and nothing on stdout.
 from __future__ import annotations
 
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -152,7 +153,7 @@ def test_run_bounded_sigterm_stops_the_child_it_started(tmp_path):
     pidfile = tmp_path / "child.pid"
     runner = subprocess.Popen(
         [sys.executable, str(CONFIG_CLI), "run-bounded", "--tier", "REFRESH", "--",
-         "sh", "-c", f"echo $$ > {pidfile}; exec sleep 300"],
+         "sh", "-c", f"echo $$ > {shlex.quote(str(pidfile))}; exec sleep 300"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:

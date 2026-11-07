@@ -53,6 +53,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -667,6 +669,29 @@ def read_yaml(path: Path) -> dict:
     return raw
 
 
+def _account_home() -> str:
+    """The user's home from the password database; $HOME only when there is no entry."""
+    try:
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except KeyError:
+        return os.environ.get("HOME", "")
+
+
+def run_yq(args, *, input_text=None, extra_env=None) -> subprocess.CompletedProcess:
+    """``yq ARGS``, bounded by ``core.timeouts.LOCAL``, with HOME pinned to the account home.
+
+    A yq installed as a version-manager shim resolves itself from HOME and the
+    directories above cwd; a caller that points HOME elsewhere — every test
+    isolating ``~`` — would turn the shim's global config into an untrusted
+    project config.
+    """
+    env = {**os.environ, **(extra_env or {}), "HOME": _account_home()}
+    return subprocess.run(
+        ["yq", *args], input=input_text, capture_output=True, text=True,
+        timeout=core.timeouts.LOCAL, env=env,
+    )
+
+
 def _parse_yaml(path: Path):
     if yaml is not None:
         try:
@@ -675,10 +700,7 @@ def _parse_yaml(path: Path):
             raise ValueError(str(exc)) from exc
     if not shutil.which("yq"):
         raise ValueError("neither PyYAML nor yq is available to read YAML")
-    result = subprocess.run(
-        ["yq", "-o=json", ".", str(path)],
-        capture_output=True, text=True, timeout=core.timeouts.LOCAL,
-    )
+    result = run_yq(["-o=json", ".", str(path)])
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "yq failed")
     return json.loads(result.stdout or "null")
@@ -691,10 +713,7 @@ def yaml_dump(data: dict) -> str:
     if not shutil.which("yq"):
         raise ConfigError("neither PyYAML nor yq is available to write YAML")
     try:
-        result = subprocess.run(
-            ["yq", "-P", "."], input=json.dumps(data),
-            capture_output=True, text=True, timeout=core.timeouts.LOCAL,
-        )
+        result = run_yq(["-P", "."], input_text=json.dumps(data))
     except subprocess.SubprocessError as exc:
         raise ConfigError(f"could not render YAML: {exc}") from exc
     if result.returncode != 0:

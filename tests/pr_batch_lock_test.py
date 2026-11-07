@@ -280,10 +280,10 @@ def test_resume_does_not_take_back_a_dropped_or_done_items_target(monkeypatch, t
     repo = repo_with_origin(tmp_path / "repo")
     run = batch.scheduler.new_run(
         [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b"), _row(repo, 3, "feat/c")],
-        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[])
+        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[],
+        schema_version=2)
     run.items[0].status = batch.model.ItemStatus.DROPPED
     run.items[1].status = batch.model.ItemStatus.DONE
-    _awaiting(run, run.items[2], "d3")
     run.status = batch.model.RunStatus.WAITING
     seed(run)
     seen = {}

@@ -118,6 +118,17 @@ def _saved_run_with_decision():
     return _saved_run_with_decisions(1)
 
 
+def _saved_v2_waiting():
+    """A schema-2 WAITING run with one queued item and no decisions."""
+    rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                    {batch.model.Step.REVIEW: StepNeed(True, "x")})]
+    run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
+                                  pool=1, auto_publish=[], schema_version=2)
+    run.items[0].worktree = "/wt"
+    run.status = batch.model.RunStatus.WAITING
+    return seed(run)
+
+
 def _origin(monkeypatch, label):
     monkeypatch.setattr(
         pr.target, "repo_identity_from_origin",
@@ -421,18 +432,23 @@ def test_resume_reports_an_unknown_run(capsys):
 
 
 def test_resume_emits_interrupted_for_a_running_step(monkeypatch, capsys):
-    run = _run_with_decisions(1)
+    rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                    {batch.model.Step.REVIEW: StepNeed(True, "x")})]
+    run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
+                                  pool=1, auto_publish=[], schema_version=2)
     rec = run.items[0].step(batch.model.Step.REVIEW)
     rec.status = batch.model.StepStatus.RUNNING
     rec.log_path = "/tmp/x.log"
+    run.items[0].worktree = "/wt"
     run.status = batch.model.RunStatus.INTERRUPTED
     seed(run)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(batch.model.RunStatus.WAITING))
     assert _main(["batch", "resume", run.id]) == 10
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    created = [e for e in lines if e.get("kind") == "decision_created"]
-    assert any(e.get("decision_kind") == "interrupted" for e in created)
+    assert all(e.get("kind") != "decision_created" for e in lines)
+    loaded = batch.store.load(run.id)
+    assert loaded.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
 
 
 def test_idle_resolve_drains_other_pending_requests():
@@ -681,7 +697,7 @@ def test_verbose_reaches_the_scheduler(monkeypatch):
 
 
 def test_resume_verbose_reaches_the_scheduler(monkeypatch):
-    run = _saved_run_with_decision()
+    run = _saved_v2_waiting()
     seen = {}
 
     def fake_run(self):
@@ -694,7 +710,7 @@ def test_resume_verbose_reaches_the_scheduler(monkeypatch):
 
 
 def test_resume_ends_with_a_run_summary(monkeypatch, capsys):
-    run = _saved_run_with_decision()
+    run = _saved_v2_waiting()
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: batch.model.RunStatus.WAITING)
     assert _main(["batch", "resume", run.id]) == 10

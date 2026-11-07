@@ -71,14 +71,13 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   `~/.config/herdr-app/themes/` and sets only `theme` in `settings.json` to
   `{"light": "gruvbox-light", "dark": "gruvbox-dark"}`. A theme file you edited in place
   is kept with a warning; if the app rejects a change it says why in `settings.error`.
-- Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/`
-  as a real copy with `_lib/` inside (the app refuses symlinked and `../` imports); a
-  manifest keeps edited files and prints the `keys.json` binding. The untrusted window gets none.
+- Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/` as a real
+  copy with `_lib/` inside (the app refuses symlinks and `../` imports), keeps edited files, and prints the `keys.json` binding.
 - An isolated untrusted window holds agent machines: launch with `herdr-app-untrusted`
   (`HC_SESSION=untrusted`, `~/.config/herdr-app-untrusted`). It refuses a local
   terminal or `afar` grant. Sync copies appearance keys from the main window, forces
-  `clipboard_write` false, links keys/themes, and seeds `shared.json` once. Edit
-  appearance in the main window; machines are owned by homelab (`docs/herdr-agents.md`).
+  `clipboard_write` false, links keys/themes, seeds `shared.json` once; machines are owned
+  by homelab (`docs/herdr-agents.md`).
 
 ## Configuration
 

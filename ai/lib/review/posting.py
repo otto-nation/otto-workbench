@@ -14,6 +14,7 @@ import json
 import re
 import sys
 import time
+from enum import StrEnum
 from pathlib import Path
 
 import gh.client
@@ -31,6 +32,33 @@ from gh.pr_data import PRData
 from review.types import Finding
 from core.text import plural
 from core.serde import to_dict as serde_to_dict
+
+
+class ReviewEvent(StrEnum):
+    """What a posted review says on GitHub, as `pr review --post --event` spells it."""
+
+    COMMENT = "comment"
+    APPROVE = "approve"
+    REQUEST_CHANGES = "request_changes"
+
+    @property
+    def github(self) -> str:
+        """The `event` GitHub's review API takes."""
+        return self.value.upper()
+
+    @property
+    def post_event(self) -> PostEvent:
+        """The outcome `post.jsonl` records for it."""
+        return {
+            ReviewEvent.COMMENT: PostEvent.COMMENT,
+            ReviewEvent.APPROVE: PostEvent.APPROVE,
+            ReviewEvent.REQUEST_CHANGES: PostEvent.REQUESTED_CHANGES,
+        }[self]
+
+
+def event_of(args) -> ReviewEvent:
+    """The event a `review-post` invocation asked for; a namespace built without one comments."""
+    return ReviewEvent(getattr(args, "event", ReviewEvent.COMMENT.value))
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -73,11 +101,13 @@ def _post_chunked_review(
     body_text: str, inline_comments: list[dict],
     chunk_size: int, submit: bool,
     pr_data: PRData | None = None,
+    event: ReviewEvent = ReviewEvent.COMMENT,
 ) -> list[dict]:
     """Post a review, chunking if the comment count exceeds chunk_size.
 
-    Chunked reviews are submitted immediately (event=COMMENT) because
-    GitHub only allows one PENDING review per user at a time.
+    Chunked reviews are submitted immediately because GitHub only allows one
+    PENDING review per user at a time. Every chunk but the last is a comment;
+    the last carries *event*.
     """
     chunks = _chunk_comments(inline_comments, chunk_size)
     is_chunked = len(chunks) > 1
@@ -111,7 +141,10 @@ def _post_chunked_review(
             payload["comments"] = chunk
 
         if is_chunked or submit:
-            payload["event"] = "COMMENT"
+            # GitHub reports a reviewer's latest review as their state, so only
+            # the chunk posted last carries the event; the rest are comments.
+            last = i == len(chunks) - 1
+            payload["event"] = event.github if last else ReviewEvent.COMMENT.github
 
         if is_chunked:
             core.log.info(f"Posting chunk {chunk_num}/{total_chunks} ({len(chunk)} comments)...")
@@ -139,7 +172,8 @@ def _post_chunked_review(
     return results
 
 
-def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict | None:
+def post_review(repo: str, pr: str, payload: dict, submit: bool = False,
+                event: ReviewEvent = ReviewEvent.COMMENT) -> dict | None:
     """Post a review to GitHub, optionally submitting it.
 
     Legacy single-review interface. Delegates to _post_chunked_review
@@ -153,6 +187,7 @@ def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict
         repo, pr, commit_id, body_text, comments,
         chunk_size=len(comments) + 1,
         submit=submit,
+        event=event,
     )
     return results[0] if results else None
 
@@ -293,6 +328,7 @@ def _reclassify_and_retry(
     submit: bool,
     pr_data: PRData | None = None,
     sections: ReviewSections | None = None,
+    event: ReviewEvent = ReviewEvent.COMMENT,
 ) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
     """Re-fetch diff and reclassify findings after a LineResolutionError.
 
@@ -327,6 +363,7 @@ def _reclassify_and_retry(
                 args.repo, args.pr, commit_id,
                 new_body_text, new_inline_comments,
                 chunk_size, submit,
+                event=event,
             )
             return new_inline_comments, new_inline, new_body, new_body_text, results
         except LineResolutionError:
@@ -341,6 +378,7 @@ def _reclassify_and_retry(
         args.repo, args.pr, commit_id,
         new_body_text, [],
         chunk_size, submit,
+        event=event,
     )
     return [], [], new_body, new_body_text, results
 
@@ -418,6 +456,7 @@ def _post_and_track(
 ):
     verdict = sections.get("verdict") if sections else ""
     submit = getattr(args, "submit", False)
+    event = event_of(args)
 
     # Fetch bot reviews once for both dedup and orphan detection
     bot_reviews = review.dedup.fetch_bot_reviews(args.repo, args.pr, pr_data)
@@ -433,6 +472,8 @@ def _post_and_track(
         bot_reviews.reviews, body_text)
     if existing_ids:
         core.log.warn(f"Review already posted (review IDs: {existing_ids})")
+        if event is not ReviewEvent.COMMENT:
+            core.log.warn(f"Not applying --event {event.value}: the review was already posted")
         write_post_tracking(args.review_file, PostTracking(
             posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=list(existing_ids), commit_id=commit_id,
@@ -450,12 +491,13 @@ def _post_and_track(
             args.repo, args.pr, commit_id,
             body_text, inline_comments,
             chunk_size, submit, pr_data,
+            event=event,
         )
     except LineResolutionError:
         inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
             args, inline, body_findings,
             commit_id, chunk_size, severity_filter, submit, pr_data,
-            sections=sections,
+            sections=sections, event=event,
         )
 
     if not results:
@@ -474,7 +516,7 @@ def _post_and_track(
         print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
 
     write_post_tracking(args.review_file, PostTracking(
-        posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
+        posted_as=PostedAs.REVIEW.value, status=event.post_event.value,
         review_ids=review_ids, commit_id=commit_id,
         inline_count=len(inline_comments),
         body_count=len(body_findings), skipped_count=len(duplicates),

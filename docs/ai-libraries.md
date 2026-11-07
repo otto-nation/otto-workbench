@@ -3024,6 +3024,10 @@ about that review, and dropping it would hide one the consumer can still open.
 
 A missing reviews root is not an error; it is `{"reviews": []}` with exit 0.
 
+Rows carry `post` (the latest run's post outcome, including dismissed) and
+`history` (archived runs, newest first, structured where the run archived its
+record). The document carries `reviews_root`.
+
 **Version policy.** A new *optional* field does not bump `schema_version`. A
 removed field, a renamed field, or a changed type adds a new version.
 Enforcement comes from the supported set being allowed to *shrink* —
@@ -8420,7 +8424,7 @@ Usage:
 
 `pr review`'s mutually-exclusive mode flags, and what each one does.
 
-The table and the four handlers it names, in one importable module. They were
+The table and the handlers it names, in one importable module. They were
 written inside `ai/bin/pr`, where `review`'s need — the one command declaration
 an argv resolves rather than a constant — could not be stated anywhere a
 library module could read it. `cli.registry` imports `need_for` from here for
@@ -8432,13 +8436,12 @@ than `cli.dispatch`, which wraps it. These two build their own argv and want
 only the call, and reaching for the dispatcher would close a cycle:
 `cli.registry` imports this module for the one need an argv resolves.
 
-Both used to be spawns; `--repair` also used to capture the rebuild's stdout
-and grep it for a `REVIEW_SUMMARY:` marker, which `cli.review_rebuild` has
-never written — the domain is synced from the file the rebuild produced
-instead.
+Both are direct `core.publishing.call_entry_point` calls. `--repair` does not
+read the rebuild's stdout; the domain is synced from the file the rebuild
+produced.
 
 Handlers still take `bin_dir`. Nothing in this module spawns any more, but the
-four share one signature and `summary` never needed it either; the parameter
+handlers share one signature and `summary` never needed it either; the parameter
 is the mode-handler contract rather than a path any of them uses today.
 
 ### cli/review_orchestrate.py
@@ -8492,7 +8495,7 @@ the GitHub API. Pass --submit to submit the review immediately.
 
 Usage:
   review-post --pr NUMBER --review-file PATH
-              [--severity M,S,N] [--dry-run]
+              [--severity M,S,N] [--dry-run] [--submit] [--event EVENT]
 
 ### cli/review_rebuild.py
 

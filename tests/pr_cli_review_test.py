@@ -172,6 +172,61 @@ def test_cmd_review_post_passes_submit(mock_call, reviews_dir):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
+def test_cmd_review_post_forwards_the_event(mock_call, reviews_dir):
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("# Review")
+    rc = cli.pr.cmd_review(["--post", "--event", "approve"], make_ctx(pr_number=42),
+                           bin_dir=BIN_DIR)
+    assert rc == 0
+    cmd = mock_call.call_args[0][1]
+    assert cmd[cmd.index("--event") + 1] == "approve"
+
+
+def test_accepted_value_flags_includes_review_event():
+    assert "--event" in cli.pr._accepted_value_flags(cli.registry.COMMANDS["review"])
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
+@patch("pr.context.resolve")
+def test_review_post_event_is_not_eaten_as_the_positional_target(
+        mock_resolve, mock_call, reviews_dir):
+    """`pr review --post --event approve` must not classify `approve` as a target."""
+    mock_resolve.return_value = make_ctx(pr_number=42)
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("# Review")
+    assert _run_main("review", "--post", "--event", "approve") == 0
+    assert mock_call.call_args[0][0] == "cli.review_post:main"
+    cmd = mock_call.call_args[0][1]
+    assert cmd[cmd.index("--event") + 1] == "approve"
+    assert mock_resolve.call_args[1]["branch"] is None
+    assert mock_resolve.call_args[1]["pr_ref"] is None
+
+
+def test_review_post_main_refuses_an_unknown_event(rp, capsys):
+    with pytest.raises(SystemExit) as exc:
+        rp.main(["--pr", "1", "--review-file", "/nope/review.md", "--event", "merge"])
+    assert exc.value.code == 2
+
+
+def test_the_pr_review_reference_parser_documents_event():
+    import cli.review_modes
+    import cli.review_entry
+    parser = cli.review_modes.reference_parser(cli.review_entry.build_parser())
+    assert "--event" in parser.format_help()
+
+
+def test_the_reference_parsers_event_choices_match_review_event():
+    import cli.review_entry
+    import cli.review_modes
+    from review.posting import ReviewEvent
+    parser = cli.review_modes.reference_parser(cli.review_entry.build_parser())
+    action = next(a for a in parser._actions if "--event" in a.option_strings)
+    assert list(action.choices) == [e.value for e in ReviewEvent]
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
 def test_cmd_review_post_names_the_branch_it_publishes_for(mock_call, reviews_dir):
     """The review is found by PR number; the run lock keys on the branch.
 
@@ -355,7 +410,7 @@ def test_review_delegating_still_resolves_updates_and_locks(tmp_path):
     assert _lock_file(target).is_file()
 
 
-@pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])
+@pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--dismiss", "--recover"])
 def test_a_mode_reaches_dispatch_without_the_worktree_moving(mode, tmp_path):
     """The declaration read end to end: `update_to_remote` is what fetches and
     resets, and no mode may reach its handler having called it."""
@@ -484,7 +539,9 @@ def test_review_list_reports_a_missing_root_as_no_reviews(tmp_path, monkeypatch,
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "never-written"))
     assert _run_main("review", "--list", "--schema-version", "1") in (None, 0)
     assert json.loads(capsys.readouterr().out) == {
-        "schema_version": 1, "reviews": [],
+        "schema_version": 1,
+        "reviews_root": str(tmp_path / "never-written" / "reviews"),
+        "reviews": [],
     }
 
 
@@ -526,3 +583,54 @@ def test_the_schema_contracts_are_read_off_the_mode_table():
         review.listing.SCHEMA_VERSIONS
     assert cli.schema.served_schema_versions("review", ["--summary"]) == ()
     assert cli.schema.served_schema_versions("status", []) == ()
+
+
+# ── cmd_review --dismiss ────────────────────────────────
+
+
+def _tracking(review_dir):
+    from core.serde import load_file
+    from pr.state import PostTracking
+    return load_file(PostTracking, review_dir / "post.jsonl")
+
+
+def test_dismiss_records_the_run_as_dismissed(reviews_dir):
+    review_dir = seed_record(reviews_dir, name="repo-42", repo="owner/repo",
+                             pr_number=42, head_sha="abc123")
+    rc = cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    assert rc == 0
+    tracking = _tracking(review_dir)
+    assert (tracking.status, tracking.posted_as, tracking.review_sha) == (
+        "dismissed", "nothing", "abc123")
+
+
+@patch("gh.client.api")
+def test_dismiss_never_calls_github(mock_api, reviews_dir):
+    seed_record(reviews_dir, name="repo-42", repo="owner/repo", pr_number=42)
+    cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    mock_api.assert_not_called()
+
+
+def test_dismiss_refuses_a_run_already_posted(reviews_dir, capsys):
+    review_dir = seed_record(reviews_dir, name="repo-42", repo="owner/repo", pr_number=42)
+    (review_dir / "post.jsonl").write_text(json.dumps(
+        {"posted_as": "review", "status": "approve", "review_id": 9}) + "\n")
+    rc = cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    assert rc == 1
+    assert "already posted" in capsys.readouterr().err
+    assert _tracking(review_dir).status == "approve"
+
+
+def test_dismiss_twice_is_a_no_op(reviews_dir):
+    seed_record(reviews_dir, name="repo-42", repo="owner/repo", pr_number=42)
+    assert cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR) == 0
+    assert cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR) == 0
+
+
+def test_dismiss_fails_without_a_review(reviews_dir):
+    assert cli.pr.cmd_review(["--dismiss"], make_ctx(pr_number=42), bin_dir=BIN_DIR) == 1
+
+
+def test_dismiss_is_exclusive_with_post():
+    assert cli.pr.cmd_review(["--dismiss", "--post"], make_ctx(pr_number=42),
+                             bin_dir=BIN_DIR) == 1

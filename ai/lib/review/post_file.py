@@ -32,7 +32,7 @@ from gh.pr_reads import (
     _get_diff,
 )
 from review.posting import (
-    _post_and_track, _print_dry_run,
+    ReviewEvent, _post_and_track, _print_dry_run, event_of,
 )
 from review.sections import ReviewSections
 from review.store import read_review
@@ -114,6 +114,18 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
             f"!= HEAD {git.client.abbrev(head_sha) or '?'}",
             data={"review_sha": review_sha, "head_sha": head_sha},
         )
+
+    # Approving or requesting changes speaks for commits the review never read.
+    # A comment still posts on drift, re-placed against the current diff.
+    event = event_of(args)
+    if sha_drifted and event is not ReviewEvent.COMMENT and not args.dry_run:
+        core.log.error(
+            f"Refusing --event {event.value}: the review was written against "
+            f"{git.client.abbrev(review_sha)} and the PR is now at "
+            f"{git.client.abbrev(head_sha)}. Re-run the review, or post it as a comment.")
+        trail.decision("post_mode", "refused", reason="event on a drifted review",
+                       data={"event": event.value})
+        return 1
 
     if args.dry_run:
         core.log.info("Fetching diff for classification...")

@@ -102,6 +102,9 @@ class PRIdentity:
 class PostedAs(Enum):
     REVIEW = "review"
     COMMENT = "comment"
+    # A dismissed run: recorded so every reader sees the run was answered, and
+    # posted nothing.
+    NOTHING = "nothing"
 
 
 class PostEvent(Enum):

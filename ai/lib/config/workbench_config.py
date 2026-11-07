@@ -394,10 +394,21 @@ class ReviewConfig:
     enum but only for a self-review's single-vs-multi thresholds — phase skips
     still follow ``effort``, so disprove stays on. Unset, a self-review uses
     low's thresholds without taking low's skips.
+
+    ``archive_keep`` is how many earlier runs of one review its ``archives/``
+    directory keeps; `pr review --list` reports each kept run as that review's
+    history.
     """
 
     effort: Effort | None = None
     self_effort: Effort | None = None
+    archive_keep: int = 3
+
+    def __post_init__(self):
+        # Checked where the file is read: zero would delete every archived run
+        # on the next re-review, and a negative slice keeps a surprising subset.
+        if self.archive_keep < 1:
+            raise ValueError(f"review.archive_keep must be at least 1, not {self.archive_keep}")
 
 
 @dataclass(frozen=True)

@@ -51,7 +51,7 @@ from cli.pr_commands import (
     cmd_gc,
     cmd_status,
 )
-from cli.registry import COMMANDS, need_for
+from cli.registry import COMMANDS, CommandSpec, need_for
 from cli.schema import (
     EXIT_USAGE,
     checked_schema_version,
@@ -121,10 +121,11 @@ def _review_argv(argv: list[str], ctx: pr.context.ResolvedContext,
         return list(argv)
     if _is_pr_target(original_pr) or ctx.pr_number is not None:
         return list(argv)
-    # Any positional is a target, PR or branch. Read with the delegate's arity,
-    # so the value of `--focus "retry handling"` is not one; asked only here,
-    # after the context has had its say, so a named PR costs no parser build.
-    value_flags = cli.dispatch.delegate_value_flags(COMMANDS["review"])
+    # Any positional is a target, PR or branch. Read with the same value-taking
+    # options `pr review` itself accepts, so the value of `--focus "retry
+    # handling"` (or `--event approve`) is not one; asked only here, after the
+    # context has had its say, so a named PR costs no parser build.
+    value_flags = _accepted_value_flags(COMMANDS["review"])
     if cli.dispatch.positionals(argv, value_flags):
         return list(argv)
     return ["--self"] + list(argv)
@@ -318,6 +319,18 @@ def _factory_reference_parser(name: str) -> argparse.ArgumentParser:
     if name == "review":
         return cli.review_modes.reference_parser(parser)
     return parser
+
+
+def _accepted_value_flags(spec: CommandSpec) -> frozenset[str]:
+    """Which options `pr <command>` reads a following value for.
+
+    Its reference parser's, not the delegate's: `pr review` routes flags of its
+    own (`--post --event approve`), and reading the delegate alone would take
+    the value of one of those for a PR or branch target.
+    """
+    if not cli.dispatch.has_parser_factory(spec.name):
+        return cli.dispatch.delegate_value_flags(spec)
+    return frozenset(core.tool_parser.value_taking_options(_factory_reference_parser(spec.name)))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -653,13 +666,13 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
 
     # Classify the first positional (if any) as PR or branch when no explicit
     # --pr/--branch flag was given and the command takes a target at all. The
-    # delegate is only asked for its flag arity once a bare token exists to be
-    # ambiguous about, so the common case (`pr review`, `pr comments --triage`)
-    # spawns nothing.
+    # command's accepted value flags are only asked once a bare token exists to
+    # be ambiguous about, so the common case (`pr review`, `pr comments --triage`)
+    # builds no parser.
     ambiguous = (original_pr is None and original_branch is None
                  and spec.takes_target)
     if ambiguous and any(not a.startswith("-") for a in extra):
-        idx = cli.dispatch.positional_index(extra, cli.dispatch.delegate_value_flags(spec))
+        idx = cli.dispatch.positional_index(extra, _accepted_value_flags(spec))
         if idx >= 0:
             original_pr, original_branch = pr.context.classify_target(extra[idx])
             extra.pop(idx)

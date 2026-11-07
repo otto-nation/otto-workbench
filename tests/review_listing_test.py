@@ -268,3 +268,93 @@ class TestTheTableNamesTheInstance:
         _, row = review.listing.render_table(review.listing.rows())
 
         assert row.startswith("(unattributed)")
+
+
+# ── post outcome and history ─────────────────────────────────────────────────
+
+import shutil  # noqa: E402
+
+import review.paths  # noqa: E402
+
+
+def _post(review_dir, name="post.jsonl", **fields):
+    tracking = {"posted_as": "review", "status": "comment", "review_id": 5,
+                "posted_at": "2026-08-18T15:00:00Z", **fields}
+    (review_dir / name).write_text(json.dumps(tracking) + "\n")
+
+
+def _archive_current(review_dir, stamp):
+    """What `archive_review` leaves for a run, written directly so the test
+    controls the stamp."""
+    archive = review.paths.archives_dir(review_dir)
+    archive.mkdir(exist_ok=True)
+    shutil.copy2(review_dir / "review.md", archive / f"{stamp}.md")
+    shutil.copy2(review_dir / "review.json", archive / f"{stamp}.record.json")
+    shutil.copy2(review_dir / "meta.json", archive / f"{stamp}.meta.json")
+    return archive
+
+
+def test_an_unposted_review_reports_no_post(reviews_dir):
+    _review(reviews_dir, repo="acme/widget", pr_number=42)
+    row, = review.listing.rows()
+    assert row.post is None
+
+
+def test_a_posted_review_reports_its_event(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    _post(d, status="approve", review_id=77)
+    row, = review.listing.rows()
+    assert (row.post.event, row.post.review_id) == ("approve", 77)
+
+
+def test_history_lists_archived_runs_newest_first(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42, head_sha="old1")
+    _archive_current(d, "20260101-120000")
+    # Replace the live sidecar in place: rmtree(d) would delete archives/.
+    meta = json.loads((d / "meta.json").read_text())
+    meta["head_sha"] = "old2"
+    (d / "meta.json").write_text(json.dumps(meta))
+    archive = _archive_current(d, "20260102-120000")
+    _post(archive, name="20260102-120000.post.jsonl", status="dismissed", review_id=0)
+
+    row, = review.listing.rows()
+
+    assert [r.stamp for r in row.history] == ["20260102-120000", "20260101-120000"]
+    newest = row.history[0]
+    assert newest.structured is True
+    assert newest.head_sha == "old2"
+    assert newest.findings["total"] == 3
+    assert newest.review_file.endswith("archives/20260102-120000.md")
+    assert newest.post.event == "dismissed"
+    assert row.history[1].post is None
+
+
+def test_a_run_archived_before_records_is_listed_unstructured(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    archive = review.paths.archives_dir(d)
+    archive.mkdir()
+    (archive / "20250101-120000.md").write_text("# an old rendered review")
+
+    row, = review.listing.rows()
+
+    old, = row.history
+    assert old.structured is False
+    assert (old.head_sha, old.verdict) == ("", "")
+    assert old.findings["total"] == 0
+
+
+def test_a_review_never_rerun_has_no_history(reviews_dir):
+    _review(reviews_dir, repo="acme/widget", pr_number=42)
+    row, = review.listing.rows()
+    assert row.history == []
+
+
+def test_the_document_names_the_reviews_root(reviews_dir):
+    assert review.listing.document(1)["reviews_root"] == str(reviews_dir)
+
+
+def test_history_serialises_nested(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    _archive_current(d, "20260101-120000")
+    run, = review.listing.document(1)["reviews"][0]["history"]
+    assert set(run) == set(review.listing.ReviewRun.__dataclass_fields__)

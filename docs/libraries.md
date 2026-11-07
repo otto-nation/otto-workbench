@@ -191,6 +191,7 @@ Every key any of them accepts:
 | `context.compact_at` | integer | — |
 | `review.effort` | `low`, `medium`, `high` | — |
 | `review.self_effort` | `low`, `medium`, `high` | — |
+| `review.archive_keep` | integer | `3` |
 | `issues.provider` | `linear`, `github`, `jira` | — |
 | `issues.team` | string | — |
 | `issues.base_url` | string | — |

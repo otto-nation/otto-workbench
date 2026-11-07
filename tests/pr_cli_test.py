@@ -124,7 +124,7 @@ def test_review_help_describes_the_mode_flags_pr_routes(_resolve, capsys):
     out = capsys.readouterr().out
     assert "usage: pr review" in out
     assert "Post an existing review to GitHub" in out
-    for flag in ("--repair", "--summary", "--list"):
+    for flag in ("--repair", "--summary", "--dismiss", "--list"):
         assert flag in out
 
 

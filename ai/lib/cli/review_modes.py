@@ -1,6 +1,6 @@
 """`pr review`'s mutually-exclusive mode flags, and what each one does.
 
-The table and the four handlers it names, in one importable module. They were
+The table and the handlers it names, in one importable module. They were
 written inside `ai/bin/pr`, where `review`'s need — the one command declaration
 an argv resolves rather than a constant — could not be stated anywhere a
 library module could read it. `cli.registry` imports `need_for` from here for
@@ -12,13 +12,12 @@ than `cli.dispatch`, which wraps it. These two build their own argv and want
 only the call, and reaching for the dispatcher would close a cycle:
 `cli.registry` imports this module for the one need an argv resolves.
 
-Both used to be spawns; `--repair` also used to capture the rebuild's stdout
-and grep it for a `REVIEW_SUMMARY:` marker, which `cli.review_rebuild` has
-never written — the domain is synced from the file the rebuild produced
-instead.
+Both are direct `core.publishing.call_entry_point` calls. `--repair` does not
+read the rebuild's stdout; the domain is synced from the file the rebuild
+produced.
 
 Handlers still take `bin_dir`. Nothing in this module spawns any more, but the
-four share one signature and `summary` never needed it either; the parameter
+handlers share one signature and `summary` never needed it either; the parameter
 is the mode-handler contract rather than a path any of them uses today.
 """
 
@@ -36,11 +35,14 @@ from cli.needs import NONE as _NONE
 from cli.needs import NO_LOCK, Need, ReviewMode
 import core.log
 import core.publishing
+from core.serde import load_file as serde_load_file
 import pr.context
 from pr.review_sync import sync_review_domain
+from pr.state import PostedAs, PostEvent, PostTracking
 from pr.target import display_repo
 import review.listing
-from review.paths import find_review_file, review_file_path
+from review.paths import FILENAME_POST_SESSION, find_review_file, read_review_meta, review_file_path
+from review.posting import ReviewEvent, write_post_tracking
 from review.store import read_review
 from review.summary import build_review_summary, json_summary
 
@@ -148,6 +150,39 @@ def summary(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     return 0
 
 
+def dismiss(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
+    """Record the PR's latest review run as dismissed: answered, and not posted.
+
+    Local only. Dismissing is the operator deciding this run will not be
+    published; GitHub has nothing to hear about it. Refused for a run already
+    posted, since dismiss means "not posting this run", not "undo a post".
+    """
+    pr_num = str(ctx.pr_number) if ctx.pr_number else None
+    if not pr_num:
+        core.log.error("Cannot determine PR number")
+        return 1
+    review_path = find_review_file(ctx.repo, pr_num)
+    if not review_path:
+        core.log.error(
+            f"No review file found for {display_repo(ctx.repo, ctx.host)}#{pr_num}")
+        return 1
+    existing = serde_load_file(PostTracking, review_path.parent / FILENAME_POST_SESSION)
+    if existing and existing.status == PostEvent.DISMISSED.value:
+        core.log.info("This review run is already dismissed")
+        return 0
+    if existing:
+        core.log.error(f"This review run was already posted ({existing.status}); "
+                       "dismiss applies to an unposted run")
+        return 1
+    meta = read_review_meta(review_path.parent)
+    write_post_tracking(str(review_path), PostTracking(
+        posted_as=PostedAs.NOTHING.value, status=PostEvent.DISMISSED.value,
+        review_sha=meta.head_sha,
+    ))
+    core.log.info(f"Dismissed the review of {display_repo(ctx.repo, ctx.host)}#{pr_num}")
+    return 0
+
+
 def listing(argv: list[str], _ctx: pr.context.ResolvedContext, *,
             schema_version: int | None = None, **_kw) -> int:
     """List every review in the user's state root.
@@ -182,6 +217,7 @@ MODES: dict[str, ReviewMode] = {
     "--post":    ReviewMode(post, help="Post an existing review to GitHub"),
     "--repair":  ReviewMode(repair, help="Repair broken review artifacts via summary or rebuild"),
     "--summary": ReviewMode(summary, help="Print a JSON summary of an existing review"),
+    "--dismiss": ReviewMode(dismiss, help="Record the latest review as dismissed, posting nothing"),
     "--recover": ReviewMode(
         help="Finish a review whose agents failed, at the commit it started from"),
     "--list":    ReviewMode(listing,
@@ -217,6 +253,12 @@ def reference_parser(base: argparse.ArgumentParser) -> argparse.ArgumentParser:
             action="store_true",
             help=f"{mode.help} — a mode; excludes the other mode flags",
         )
+    # Read by `--post` alone, which forwards it to review-post; declared here
+    # so `pr review --help` and the prose checks know the spelling.
+    parser.add_argument(
+        "--event", choices=[e.value for e in ReviewEvent],
+        help="With --post: what the review says on GitHub (default: comment)",
+    )
     return parser
 
 

@@ -538,3 +538,22 @@ issues:
   provider: github
 """)
     assert config.workbench_config.load_config(project).issues.provider is config.workbench_config.IssueProvider.GITHUB
+
+
+def test_review_archive_keep_defaults_to_three(roots):
+    _, project = roots
+    assert config.workbench_config.load_config(project).review.archive_keep == 3
+
+
+def test_review_archive_keep_is_read(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "review:\n  archive_keep: 8\n")
+    assert config.workbench_config.load_config(project).review.archive_keep == 8
+
+
+def test_review_archive_keep_below_one_is_refused(roots):
+    """Zero would delete every archived run on the next re-review."""
+    config_root, project = roots
+    _write(config_root / "config.yml", "review:\n  archive_keep: 0\n")
+    with pytest.raises(config.workbench_config.ConfigError, match="archive_keep"):
+        config.workbench_config.load_config(project)

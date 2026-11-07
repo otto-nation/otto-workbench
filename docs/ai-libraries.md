@@ -6593,10 +6593,10 @@ an ``~/.ssh/config`` alias (``github.com-work``) and is read as the default
 host; an unrecognised ``https`` host is a forge gh does not treat as GitHub, and
 that remote is not a candidate.
 
-ceiling: an ssh alias for an Enterprise host (``ghebox:platform/svc``) reads as
-public GitHub, so an Enterprise owner reached through one is refused as not
-ours. Upgrade trigger: the first such refusal; resolve the alias with
-``ssh -G`` then, as ``git.remote_url``'s ceiling says.
+An unrecognised ssh authority is resolved with ``ssh -G``
+(``git.remote_url.ssh_hostname``): an alias for a known host (``ghebox`` for an
+Enterprise host ``github.owners`` names) is that host, so its owner is judged
+there. An alias ssh cannot resolve reads as the default host, which fails closed.
 
 ### gh/owners.py
 
@@ -7065,13 +7065,10 @@ one repo, while a rendered link and ``gh.owners`` need the host.
   unrecognised authority there as an alias for the default host rather than as
   a forge it has never heard of.
 
-  # ceiling: a dotless scp authority is read as an ~/.ssh/config alias and
-  # yields no host, so a single-label intranet host (ghe:acme/widget) falls
-  # back to public GitHub rather than being honoured. An alias and a
-  # single-label host are the same string here, and only ssh config tells
-  # them apart. Upgrade trigger: anyone whose forge is reachable only by a
-  # single-label name, at which point resolve it with `ssh -G <alias>` and
-  # cache the answer per identity.
+  An ssh authority nobody recognises is resolved with ``ssh -G`` by the callers
+  that judge hosts (``gh.owner_targets``, ``gh.owner_hooks``) through
+  ``ssh_hostname``. A recognised host is never resolved: a ``Host github.com`` /
+  ``HostName ssh.github.com`` entry would otherwise make github.com unknown.
 
 Lifted out of ``pr.target`` so a layer below ``pr`` — ``gh.owners`` — reads the
 same answer rather than a second parser; ``pr.target`` delegates to it.

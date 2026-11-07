@@ -16,13 +16,10 @@ one repo, while a rendered link and ``gh.owners`` need the host.
   unrecognised authority there as an alias for the default host rather than as
   a forge it has never heard of.
 
-  # ceiling: a dotless scp authority is read as an ~/.ssh/config alias and
-  # yields no host, so a single-label intranet host (ghe:acme/widget) falls
-  # back to public GitHub rather than being honoured. An alias and a
-  # single-label host are the same string here, and only ssh config tells
-  # them apart. Upgrade trigger: anyone whose forge is reachable only by a
-  # single-label name, at which point resolve it with `ssh -G <alias>` and
-  # cache the answer per identity.
+  An ssh authority nobody recognises is resolved with ``ssh -G`` by the callers
+  that judge hosts (``gh.owner_targets``, ``gh.owner_hooks``) through
+  ``ssh_hostname``. A recognised host is never resolved: a ``Host github.com`` /
+  ``HostName ssh.github.com`` entry would otherwise make github.com unknown.
 
 Lifted out of ``pr.target`` so a layer below ``pr`` — ``gh.owners`` — reads the
 same answer rather than a second parser; ``pr.target`` delegates to it.
@@ -36,10 +33,13 @@ reading the owner boundary has to share with the tool it guards.
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.proc
+import core.timeouts
 import git.client
 
 SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.-]*)://", re.IGNORECASE)
@@ -100,6 +100,37 @@ def parse(url: str) -> RemoteUrl:
         # A dotted name is a domain; a bare word is an ssh alias. See the ceiling.
         return RemoteUrl(path=path, hosted=True, host=host if "." in host else "", ssh=True)
     return RemoteUrl(path=url, hosted=False, host="", ssh=False)
+
+
+def ssh_alias(url: str) -> str:
+    """The authority host of an ssh-spelled *url* before ssh config applies; ``""`` otherwise."""
+    if not parse(url).ssh:
+        return ""
+    if SCHEME_RE.match(url):
+        return parse(url).host
+    return bare_host(url.partition(":")[0])
+
+
+@functools.lru_cache(maxsize=None)
+def ssh_hostname(alias: str) -> str:
+    """The host ``ssh -G`` says *alias* connects to, lowercased; ``""`` when it cannot say.
+
+    Cached per alias for the process. An empty or option-shaped alias is never
+    handed to ssh, so a crafted remote cannot inject an ssh option.
+    """
+    if not alias or alias.startswith("-"):
+        return ""
+    try:
+        result = core.proc.run(["ssh", "-G", alias], timeout=core.timeouts.QUICK)
+    except OSError:
+        return ""
+    if not result.ok:
+        return ""
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition(" ")
+        if key == "hostname":
+            return value.strip().lower()
+    return ""
 
 
 def remotes(cwd: str | Path) -> list[Remote] | None:

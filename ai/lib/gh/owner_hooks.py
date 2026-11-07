@@ -92,28 +92,26 @@ def _hex_sha(sha: str) -> bool:
     return bool(sha) and all(c in _HEX for c in sha)
 
 
-def _authority_host(url: str) -> str:
-    authority, _, _ = url.partition(":")
-    return git.remote_url.bare_host(authority).lower()
-
-
 def _is_github_remote(url: str, owner_map: gh.owners.OwnerMap) -> bool:
     parsed = git.remote_url.parse(url)
-    host = parsed.host.lower()
     # A dotless scp alias parses as host ""; the github-substring check uses the alias.
-    if not host and parsed.ssh:
-        host = _authority_host(url)
+    host = (parsed.host or git.remote_url.ssh_alias(url)).lower()
     if not host:
         return False
     known = owner_map.hosts() | {
         config.github_owners.DEFAULT_HOST,
         gh.owner_targets.default_host({}),
     }
-    # ceiling: a host containing "github" is treated as GitHub so an ssh
-    # alias like github-work is checked. A non-GitHub host whose name happens
-    # to contain the substring is over-checked. Upgrade trigger: if a
-    # configured remote is a gitlab ssh alias whose name contains github.
-    return host in known or "github" in host
+    if host in known:
+        return True
+    if parsed.ssh and git.remote_url.ssh_hostname(git.remote_url.ssh_alias(url)) in known:
+        return True
+    # ceiling: a host containing "github" is treated as GitHub so an alias ssh
+    # cannot resolve to a known host (github-work) is still checked. A
+    # non-GitHub host whose name contains the substring is over-checked.
+    # Upgrade trigger: if a configured remote is a gitlab ssh alias whose name
+    # contains github.
+    return "github" in host
 
 
 def _github_owner_remote(cwd: str | Path, owner_map: gh.owners.OwnerMap) -> bool:

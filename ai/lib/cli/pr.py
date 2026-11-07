@@ -142,6 +142,11 @@ def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
     if len(given) > 1:
         core.log.error(f"{SCRIPT}: {cli.review_modes.flags_prose()} are mutually exclusive")
         return 1
+    if cli.needs.has_flag(argv, "--track") and given:
+        core.log.error(
+            f"--track files an existing self-review and cannot run with {given[0]}"
+        )
+        return 1
 
     if given:
         flag = given[0]

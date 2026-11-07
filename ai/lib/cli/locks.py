@@ -22,6 +22,7 @@ This module is the one place they are taken for a command:
 | `create` | target + checkout; `--dry-run` nothing |
 | `ci` | target; `--fix` adds the checkout |
 | `review --self` / `--self --fix` | target + checkout |
+| `review --self --track` | target (writes the review record's `filed=` stamps; no checkout) |
 | `review` of a PR, `--branch` | target; the checkout once the run knows its tree (`core.run_lock.lock_checkout`) |
 | `review --post`, `--repair`, `--summary` | target (also with `--self`) |
 | `review --recover` | target (`--self --recover` adds the checkout) |
@@ -38,6 +39,9 @@ REMOTE, no fetch, TARGET only. Under `pr` those flags are handler modes that
 publish a review already on disk. On the `review` binary `--post` means publish;
 without `--fix` there is no tree write, and a run that later switches trees
 takes the checkout then through `lock_checkout`.
+
+`--self --track` is REVIEW_SELF_TRACK_NEED — LOCAL, no fetch, TARGET only.
+`--post` beside it is the publishing gate, not the post mode.
 
 The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
 and `bin/local/validate-run-locks` refuses a lock taken anywhere this module

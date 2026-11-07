@@ -16,6 +16,7 @@ Usage:
   review <pr_url_or_number>
   review --no-post <pr_url_or_number>
   review --self [<pr_url_or_number>]
+  review --self --track ID [--track ID ...] [--post]
   review [--self] --recover [<pr_url_or_number>]
   review [--self] [--focus TEXT]... [--focus-file PATH]... [<pr_url_or_number>]
 """
@@ -35,6 +36,7 @@ import cli.boundary
 import cli.locks
 import core.log
 import core.proc
+import core.publishing
 import core.run_lock
 import core.version
 import core.workbench_paths
@@ -42,10 +44,11 @@ from core.trail import Trail, add_trail_args
 import pr.context
 import pr.state
 import review.completion
+import review.file_tracked
 import review.focus
+import review.paths
 import review.run
 import review.worktree
-import review.paths
 from review.paths import review_file_path
 from review.pipeline import DEFAULT_MAX_PARALLEL
 from review.summary import json_summary
@@ -83,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "the branch or PR ref given")
     parser.add_argument("--fix", action="store_true",
                         help="Apply findings after the review (requires --self)")
+    parser.add_argument("--track", action="append", default=[], metavar="FINDING_ID",
+                        help="File this open finding from the branch's existing "
+                             "self-review (repeatable). Requires --self; does not "
+                             "run a review. Cannot combine with --fix, --force, "
+                             "or --recover")
     parser.add_argument("--push", action="store_true",
                         help="Push the --fix commit (requires --fix)")
     parser.add_argument("--skip-user-verification", action="store_true",
@@ -184,6 +192,38 @@ def _emit_json_summary(fd: int | None, outcome: review.run.ReviewOutcome) -> Non
         return
     summary = json_summary(outcome.repo, outcome.pr_number, str(outcome.review_file))
     os.write(fd, (summary + "\n").encode())
+
+
+def _track_error(parsed) -> str:
+    """Why `--track` cannot run as parsed, or empty."""
+    if not parsed.self_review:
+        return "--track requires --self"
+    conflicts = [
+        name for name, on in (
+            ("--fix", parsed.fix),
+            ("--force", parsed.force),
+            ("--recover", parsed.recover),
+        ) if on
+    ]
+    if not conflicts:
+        return ""
+    return (
+        "--track files an existing self-review and cannot run with "
+        + ", ".join(conflicts)
+    )
+
+
+def _run_file_tracked(parsed, argv: list[str]) -> int:
+    """File `--track` ids from the branch's current self-review. No agent."""
+    ctx = pr.context.resolve_at(
+        pr.context.ContextDepth.LOCAL,
+        repo_dir=parsed.repo_dir or None,
+    )
+    cli.locks.claim_declared(
+        "review", argv, ctx, command=" ".join([SCRIPT] + argv),
+    )
+    with core.publishing.run(post=parsed.post):
+        return review.file_tracked.run(ctx, frozenset(parsed.track))
 
 
 def _exit_status(outcome: review.run.ReviewOutcome) -> int:
@@ -473,6 +513,13 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     if parsed.no_post and parsed.post:
         core.log.error("--no-post and --post are mutually exclusive")
         return 1
+
+    if parsed.track:
+        err = _track_error(parsed)
+        if err:
+            core.log.error(err)
+            return 1
+        return _run_file_tracked(parsed, argv)
 
     # Every --focus / --focus-file is read and checked here, before either
     # flow spends anything: oversized, unreadable, or untitled text is refused,

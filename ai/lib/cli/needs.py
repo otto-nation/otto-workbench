@@ -127,6 +127,12 @@ REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, locks=TARGET_ONLY)
 # pass commits to it.
 REVIEW_SELF_NEED = Need(LOCAL, update=True, locks=TARGET_AND_CHECKOUT)
 
+# What `pr review --self --track` needs: file open findings from the branch's
+# existing self-review record. It writes that record's `filed=` stamps, not
+# the working tree, and must not fetch — a fast-forward would move HEAD off
+# the SHA the ids were read from.
+REVIEW_SELF_TRACK_NEED = Need(LOCAL, update=False, locks=TARGET_ONLY)
+
 # What a mode flag needs unless it declares otherwise. Every mode acts on a
 # review that already exists on disk, at the commit that review describes, so
 # none of them may fast-forward the worktree out from under it: `--summary` and
@@ -169,15 +175,14 @@ def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[s
     all agree about what was asked for.
 
     `--post` is a mode on its own — publish the review already on disk — and a
-    modifier beside `--fix`, where it means publish what this run produces:
-    post the findings, and push the commit the fix pass makes. Those are
-    different requests, and only the first is a mode. Reading `--fix --post` as
-    one would route to the poster, silently drop the fix pass, and publish a
-    review nobody asked to publish.
+    modifier beside `--fix` or `--track`, where it opens the publishing gate
+    for what this run produces. Those are different requests, and only the
+    first is a mode. Reading `--track --post` as one would route to the poster
+    and never file the findings.
     """
     given = set(argv)
     found = [flag for flag in modes if flag in given]
-    if has_flag(argv, "--fix"):
+    if has_flag(argv, "--fix") or has_flag(argv, "--track"):
         return [flag for flag in found if flag != "--post"]
     return found
 
@@ -263,11 +268,13 @@ def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:
     an exemption someone has to remember.
 
     `--self` is not in that table: it selects the subject rather than acting on
-    an existing review, and it composes with `--fix` and `--post`, which a mode
-    may not. It still lowers the depth, because a branch with no PR is the one
-    subject `gh` cannot name.
-    A mode `review` performs itself (one with no local handler — `--recover`)
-    under `--self` writes the working tree, so it holds the checkout too.
+    an existing review, and it composes with `--fix`, `--track` and `--post`,
+    which a mode may not. It still lowers the depth, because a branch with no
+    PR is the one subject `gh` cannot name.
+    `--self --track` files from a record already on disk, so it does not fetch
+    and does not hold the checkout. A mode `review` performs itself (one with
+    no local handler — `--recover`) under `--self` writes the working tree, so
+    it holds the checkout too.
     """
     found = review_modes(argv, modes)
     self_review = has_flag(argv, "--self")
@@ -277,6 +284,8 @@ def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:
             return dataclasses.replace(
                 mode.need, locks=mode.need.locks | {core.run_lock.CHECKOUT})
         return mode.need
+    if self_review and has_flag(argv, "--track") and not has_flag(argv, "--fix"):
+        return REVIEW_SELF_TRACK_NEED
     if self_review:
         return REVIEW_SELF_NEED
     return REVIEW_DEFAULT_NEED

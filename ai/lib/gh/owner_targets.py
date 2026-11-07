@@ -45,10 +45,10 @@ an ``~/.ssh/config`` alias (``github.com-work``) and is read as the default
 host; an unrecognised ``https`` host is a forge gh does not treat as GitHub, and
 that remote is not a candidate.
 
-ceiling: an ssh alias for an Enterprise host (``ghebox:platform/svc``) reads as
-public GitHub, so an Enterprise owner reached through one is refused as not
-ours. Upgrade trigger: the first such refusal; resolve the alias with
-``ssh -G`` then, as ``git.remote_url``'s ceiling says.
+An unrecognised ssh authority is resolved with ``ssh -G``
+(``git.remote_url.ssh_hostname``): an alias for a known host (``ghebox`` for an
+Enterprise host ``github.owners`` names) is that host, so its owner is judged
+there. An alias ssh cannot resolve reads as the default host, which fails closed.
 """
 
 # doc-group: platform
@@ -198,6 +198,9 @@ def remote_owner(url: str, host: str, known_hosts: frozenset[str]) -> Owner | No
     if remote_host in known_hosts | {config.github_owners.DEFAULT_HOST, host}:
         return config.github_owners.owner(remote_host, name)
     if loc.ssh:
+        resolved = git.remote_url.ssh_hostname(git.remote_url.ssh_alias(url))
+        if resolved in known_hosts | {config.github_owners.DEFAULT_HOST}:
+            return config.github_owners.owner(resolved, name)
         return config.github_owners.owner(host, name)
     return None
 

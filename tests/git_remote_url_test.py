@@ -52,3 +52,41 @@ def test_remotes_is_none_outside_a_repository(tmp_path, monkeypatch):
     plain = tmp_path / "plain"
     plain.mkdir()
     assert git.remote_url.remotes(plain) is None
+
+
+@pytest.mark.parametrize("url,alias", [
+    ("git@ghebox:a/b", "ghebox"),
+    ("ssh://git@ghebox:2222/a/b", "ghebox"),
+    ("git@ghe.x:a/b", "ghe.x"),
+    ("https://github.com/a/b", ""),
+])
+def test_ssh_alias_names_both_ssh_spellings(url, alias):
+    assert git.remote_url.ssh_alias(url) == alias
+
+
+def test_ssh_hostname_reads_ssh_dash_g(ssh_hosts):
+    log = ssh_hosts({"ghebox": "GHE.Corp.Example"})
+    assert git.remote_url.ssh_hostname("ghebox") == "ghe.corp.example"
+    assert log.read_text().strip() == "-G ghebox"
+
+
+def test_ssh_hostname_is_empty_when_ssh_fails_or_is_missing(ssh_hosts, monkeypatch, tmp_path):
+    ssh_hosts({}, fail=True)
+    assert git.remote_url.ssh_hostname("ghebox") == ""
+    git.remote_url.ssh_hostname.cache_clear()
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    assert git.remote_url.ssh_hostname("ghebox") == ""
+
+
+def test_ssh_hostname_never_passes_an_option_shaped_alias(ssh_hosts, tmp_path):
+    log = ssh_hosts({})
+    assert git.remote_url.ssh_hostname("-oProxyCommand=x") == ""
+    assert git.remote_url.ssh_hostname("") == ""
+    assert not log.exists()
+
+
+def test_ssh_hostname_asks_once_per_alias(ssh_hosts):
+    log = ssh_hosts({"ghebox": "ghe.corp.example"})
+    git.remote_url.ssh_hostname("ghebox")
+    git.remote_url.ssh_hostname("ghebox")
+    assert len(log.read_text().splitlines()) == 1

@@ -22,7 +22,7 @@ Usage:
 
 from __future__ import annotations
 
-import core.errors
+import cli.boundary
 import core.publishing
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
@@ -73,6 +73,6 @@ def main(argv: list[str] | None = None) -> int:
             return rebase.commands.cmd_push_head(cwd, ctx, expect=args.expect,
                                                  verify=not args.no_verify, trail=trail)
     except Exception as exc:
-        core.errors.reraise(trail, exc)
+        cli.boundary.reraise(trail, exc)
     finally:
         trail.finish()

@@ -1,5 +1,6 @@
 """Tests for `pr push --expect`: HEAD pushed with a lease, PushDomain recorded, no rebase."""
 
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -17,6 +18,7 @@ import pytest  # noqa: E402
 import cli.pr  # noqa: E402
 import cli.pr_push  # noqa: E402
 import core.publishing  # noqa: E402
+import gh.owners  # noqa: E402
 import pr.context  # noqa: E402
 import pr.state  # noqa: E402
 import rebase.commands  # noqa: E402
@@ -171,3 +173,24 @@ def test_a_regenerating_hook_is_committed_with_the_plain_push_subject(
     assert remote_tip(pair.origin, "feat") == git_out(
         pair.work, "rev-parse", "HEAD",
     ).strip()
+
+
+def _events():
+    import core.workbench_paths
+
+    root = core.workbench_paths.trail_dir()
+    return [json.loads(line) for p in sorted(root.glob("*.jsonl"))
+            for line in p.read_text().splitlines() if line.strip()]
+
+
+def test_pr_push_trails_an_owner_boundary_refusal(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    pair = remote_and_clone(tmp_path)
+    tip = remote_tip(pair.origin, "feat")
+    refusal = gh.owners.OwnerBoundaryError(gh.owners.Verdict.refuse("commit names me/lib#12"))
+    with mock.patch.object(rebase.commands, "cmd_push_head", side_effect=refusal):
+        with pytest.raises(gh.owners.OwnerBoundaryError):
+            cli.pr_push.main(["--repo-dir", str(pair.work), "--expect", tip])
+    events = [e for e in _events() if e.get("script") == "pr push"]
+    assert any("owner_boundary" in json.dumps(e) and "me/lib#12" in json.dumps(e)
+               for e in events)

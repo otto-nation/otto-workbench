@@ -29,6 +29,11 @@ UPSTREAM_REF = "see stranger/lib#12"
 SCISSORS = "# ------------------------ >8 ------------------------"
 
 
+@pytest.fixture(autouse=True)
+def _identity_ssh(ssh_hosts):
+    ssh_hosts({})
+
+
 def _groups(github_owners):
     github_owners({"work": ["otto-nation"], "personal": ["me"]})
 

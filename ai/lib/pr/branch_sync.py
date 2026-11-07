@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+import gh.owner_hooks
 import git.client
 import git.push
 from core.proc import CmdResult
@@ -137,7 +138,8 @@ def _push(
     if message:
         log(message)
     result = git.push.push(
-        wt, gated=False, branch=branch, remote=remote, args=args, trail=trail,
+        wt, gated=False, owner_check=gh.owner_hooks.refuse_outgoing,
+        branch=branch, remote=remote, args=args, trail=trail,
     )
     if result.status in _FAILED:
         return SyncResult(SyncOutcome.FAILED, result.output or message, result)

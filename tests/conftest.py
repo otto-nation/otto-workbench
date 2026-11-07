@@ -22,6 +22,7 @@ from repo_config_guard_support import _REPO_CONFIG, _assert_config_unchanged, _c
 # Environment-variable isolation fixtures, split out for the same reason.
 pytest_plugins = [
     "suite_status_support", "env_isolation_support", "github_owners_support", "stub_gh_support",
+    "ssh_stub_support",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

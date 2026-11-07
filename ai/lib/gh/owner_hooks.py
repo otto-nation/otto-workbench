@@ -17,9 +17,11 @@ from pathlib import Path
 
 import config.github_owners
 import config.workbench_config
+import core.log
 import gh.owners
 import gh.owner_targets
 import git.client
+import git.push
 import git.remote_url
 
 _SCISSORS_RE = re.compile(r"^\S ------------------------ >8 ------------------------$")
@@ -92,28 +94,26 @@ def _hex_sha(sha: str) -> bool:
     return bool(sha) and all(c in _HEX for c in sha)
 
 
-def _authority_host(url: str) -> str:
-    authority, _, _ = url.partition(":")
-    return git.remote_url.bare_host(authority).lower()
-
-
 def _is_github_remote(url: str, owner_map: gh.owners.OwnerMap) -> bool:
     parsed = git.remote_url.parse(url)
-    host = parsed.host.lower()
     # A dotless scp alias parses as host ""; the github-substring check uses the alias.
-    if not host and parsed.ssh:
-        host = _authority_host(url)
+    host = (parsed.host or git.remote_url.ssh_alias(url)).lower()
     if not host:
         return False
     known = owner_map.hosts() | {
         config.github_owners.DEFAULT_HOST,
         gh.owner_targets.default_host({}),
     }
-    # ceiling: a host containing "github" is treated as GitHub so an ssh
-    # alias like github-work is checked. A non-GitHub host whose name happens
-    # to contain the substring is over-checked. Upgrade trigger: if a
-    # configured remote is a gitlab ssh alias whose name contains github.
-    return host in known or "github" in host
+    if host in known:
+        return True
+    if parsed.ssh and git.remote_url.ssh_hostname(git.remote_url.ssh_alias(url)) in known:
+        return True
+    # ceiling: a host containing "github" is treated as GitHub so an alias ssh
+    # cannot resolve to a known host (github-work) is still checked. A
+    # non-GitHub host whose name contains the substring is over-checked.
+    # Upgrade trigger: if a configured remote is a gitlab ssh alias whose name
+    # contains github.
+    return "github" in host
 
 
 def _github_owner_remote(cwd: str | Path, owner_map: gh.owners.OwnerMap) -> bool:
@@ -380,3 +380,20 @@ def check_push(
         _check_new_commits(
             remote, update.local_sha, update.remote_sha, group, loaded, cwd)
         for update in parsed)
+
+
+def refuse_outgoing(cwd: str | Path, outgoing: git.push.Outgoing) -> None:
+    """The `git.push.OwnerCheck` every workbench push passes: raise when its commits may not go.
+
+    Runs the same scan the global pre-push hook does, so a push made through
+    the workbench is checked where a repo's own ``core.hooksPath`` keeps that
+    hook from running, and with ``--no-verify``. A refusal raises
+    ``gh.owners.OwnerBoundaryError``; a check that cannot run warns and allows,
+    as the hook does, and the user's cross-ref override is honoured inside
+    ``check_push`` with its own warning.
+    """
+    verdict = check_push(outgoing.remote, outgoing.url, outgoing.ref_lines, cwd)
+    if verdict.outcome is HookOutcome.REFUSE:
+        raise gh.owners.OwnerBoundaryError(gh.owners.Verdict.refuse(verdict.reason))
+    if verdict.reason:
+        core.log.warn(verdict.reason)

@@ -56,6 +56,7 @@ import fix.blame
 import fix.scope
 import fix.suite
 import fix.tracking
+import gh.owner_hooks
 import git.client
 import git.land
 import core.log
@@ -1148,6 +1149,7 @@ def _run_pass(
         adapter.workdir,
         message=fix.suite.with_trailer(spec.message, adapter.suite),
         gated=True,
+        owner_check=gh.owner_hooks.refuse_outgoing,
         trail=trail,
         regen=spec.regen,
         recover_from=head_before if spec.recover else None,

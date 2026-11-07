@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import config.github_owners
 import gh.owner_targets
+import gh.owners
 
 from conftest import git_in, remote_repo
 
@@ -23,6 +24,11 @@ def _owner(spec):
 
 def _resolve(words, cwd, after_cd=False):
     return gh.owner_targets.resolve_statement(words, str(cwd), after_cd=after_cd, known_hosts=KNOWN)
+
+
+@pytest.fixture(autouse=True)
+def _identity_ssh(ssh_hosts):
+    ssh_hosts({})
 
 
 @pytest.fixture(autouse=True)
@@ -147,6 +153,20 @@ def test_without_one_every_remote_is_a_candidate(tmp_path):
 def test_an_ssh_alias_is_read_as_the_default_host(tmp_path):
     repo = remote_repo(tmp_path / "r", "git@github.com-work:otto-nation/svc.git")
     assert _resolve(["gh", "issue", "create"], repo).target.owners == (_owner("otto-nation"),)
+
+
+def test_an_ssh_alias_for_an_enterprise_host_is_that_host(github_owners, ssh_hosts, tmp_path):
+    github_owners({"work": ["ghe.corp.example/platform"]})
+    ssh_hosts({"ghebox": "ghe.corp.example"})
+    repo = remote_repo(tmp_path / "r", "git@ghebox:platform/svc.git")
+    assert gh.owners.check_command("gh issue comment 1 --body hi", str(repo)).ok
+
+
+def test_an_unresolvable_alias_still_reads_as_the_default_host(github_owners, ssh_hosts, tmp_path):
+    github_owners({"work": ["ghe.corp.example/platform"]})
+    ssh_hosts({}, fail=True)
+    repo = remote_repo(tmp_path / "r", "git@ghebox:platform/svc.git")
+    assert not gh.owners.check_command("gh issue comment 1 --body hi", str(repo)).ok
 
 
 def test_a_non_github_remote_is_not_a_candidate(tmp_path):

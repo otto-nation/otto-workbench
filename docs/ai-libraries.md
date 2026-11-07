@@ -3024,6 +3024,10 @@ about that review, and dropping it would hide one the consumer can still open.
 
 A missing reviews root is not an error; it is `{"reviews": []}` with exit 0.
 
+Rows carry `post` (the latest run's post outcome, including dismissed) and
+`history` (archived runs, newest first, structured where the run archived its
+record). The document carries `reviews_root`.
+
 **Version policy.** A new *optional* field does not bump `schema_version`. A
 removed field, a renamed field, or a changed type adds a new version.
 Enforcement comes from the supported set being allowed to *shrink* —
@@ -8491,7 +8495,7 @@ the GitHub API. Pass --submit to submit the review immediately.
 
 Usage:
   review-post --pr NUMBER --review-file PATH
-              [--severity M,S,N] [--dry-run]
+              [--severity M,S,N] [--dry-run] [--submit] [--event EVENT]
 
 ### cli/review_rebuild.py
 

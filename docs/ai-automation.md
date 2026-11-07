@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 697 -->
+<!-- doc-budget: 705 -->
 
 # AI Automation
 
@@ -450,6 +450,14 @@ next write overwrites the edit; nothing reads it back.
 - **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
 - **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
 - `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
+- `pr review --post --event approve` / `request_changes` submits the review as
+  an approval or a change request (implies `--submit`). Refused when the PR
+  head moved since the review was written; post as a comment, or re-run.
+- `pr review --dismiss` records the latest run as dismissed, with no GitHub
+  call. Refused for a run already posted.
+- `pr review --list --schema-version 1` rows carry `post` and `history`, and
+  the document carries `reviews_root`. `review.archive_keep` (default 3) is
+  how many earlier runs `history` keeps.
 
 ### How self-review rounds converge
 

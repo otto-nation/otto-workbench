@@ -859,8 +859,10 @@ Takes no flags.
 | `--post` | Post an existing review to GitHub — a mode; excludes the other mode flags. |
 | `--repair` | Repair broken review artifacts via summary or rebuild — a mode; excludes the other mode flags. |
 | `--summary` | Print a JSON summary of an existing review — a mode; excludes the other mode flags. |
+| `--dismiss` | Record the latest review as dismissed, posting nothing — a mode; excludes the other mode flags. |
 | `--recover` | Finish a review whose agents failed, at the commit it started from — a mode; excludes the other mode flags. |
 | `--list` | List every review in the user's state root — a mode; excludes the other mode flags. |
+| `--event` `<comment\|approve\|request_changes>` | With --post: what the review says on GitHub (default: comment). |
 
 **`pr comments`** — Fetch and manage PR review threads
 

@@ -17,6 +17,8 @@ WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 # interactive framework.
 # shellcheck source=../../lib/constants.sh
 . "$WORKBENCH_DIR/lib/constants.sh"
+# shellcheck source=../../lib/config.sh
+. "$WORKBENCH_DIR/lib/config.sh"
 
 # launchd and systemd both hand this script a PATH without ~/.local/bin, where
 # every workbench symlink lives. What this script calls, it calls by absolute
@@ -41,7 +43,10 @@ if [[ -d "$WORKBENCH_DIR/main/.git" || -f "$WORKBENCH_DIR/main/.git" ]]; then
 fi
 
 log "Fetching origin/main"
-if ! git -C "$MAIN_WORKTREE" fetch origin main 2>&1; then
+# Bounded by tier, not by a unit timeout: the bound has to SIGTERM the fetch
+# itself so git drops its lockfiles; the systemd unit runs with KillMode=process,
+# which signals only this script and would leave a hung child running.
+if ! wb_run_bounded --tier TRANSFER --relay -- git -C "$MAIN_WORKTREE" fetch origin main 2>&1; then
   log "ERROR: git fetch failed"
   exit 1
 fi
@@ -63,13 +68,18 @@ else
 fi
 
 log "Running sync"
-if "$MAIN_WORKTREE/bin/otto-workbench" sync 2>&1; then
+# The warnings sync prints are the only record of why a run degraded, so its
+# output is relayed to this log rather than discarded.
+if wb_run_bounded --tier SYNC --relay -- "$MAIN_WORKTREE/bin/otto-workbench" sync 2>&1; then
   log "Sync complete"
 else
-  log "ERROR: sync failed (exit $?)"
+  log "ERROR: sync failed or exceeded its bound (exit $?)"
   exit 1
 fi
 
+# The steps below stay unbounded here on purpose. `pr gc` must keep its exit
+# code 75, which run-bounded would collapse to 1, and run-due-auto-tasks spawns
+# detached agents that a process-group kill would take down with it.
 log "Cleaning stale worktrees"
 if "$MAIN_WORKTREE/bin/wt-cleanup" --quiet 2>&1; then
   log "Worktree cleanup complete"

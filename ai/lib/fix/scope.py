@@ -32,7 +32,9 @@ committing everything is how unreviewed content reaches a branch.
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -255,16 +257,15 @@ def rename_partners(
 
     Asks git rather than guessing from names: `-M` is the similarity index,
     which is what distinguishes a rename from a coincidental delete-and-add.
-    A failed read readmits nothing — the pass then commits the half it was
-    always going to and reports the rest, which is the existing outcome rather
-    than a new one.
+    The diff is taken against a temporary index filled from the worktree so an
+    unstaged destination (``Path.rename``, not ``git mv``) still shows as a
+    rename. A failed read readmits nothing — the pass then commits the half it
+    was always going to and reports the rest, which is the existing outcome
+    rather than a new one.
     """
     if not dropped:
         return set()
-    r = git.client.run(
-        "diff", "HEAD", "-M", "--name-status", "--diff-filter=R",
-        cwd=wt_path,
-    )
+    r = _rename_diff(wt_path)
     if not r.ok:
         core.log.warn(core.proc.failure_message(
             f"Could not check {wt_path} for renames; a renamed file may be "
@@ -281,6 +282,20 @@ def rename_partners(
         if pair & kept:
             partners |= pair & dropped
     return partners
+
+
+def _rename_diff(wt_path: str | Path) -> core.proc.CmdResult:
+    """`git diff HEAD -M` against a temp index of the current worktree."""
+    fallback = ("diff", "HEAD", "-M", "--name-status", "--diff-filter=R")
+    with tempfile.TemporaryDirectory(prefix="fix-renames-") as tmp:
+        env = os.environ | {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        added = git.client.run("add", "-A", "--", ".", cwd=wt_path, env=env)
+        if not added.ok:
+            return git.client.run(*fallback, cwd=wt_path)
+        listed = git.client.run(*fallback, cwd=wt_path, env=env)
+        if listed.ok:
+            return listed
+    return git.client.run(*fallback, cwd=wt_path)
 
 
 @dataclass(frozen=True)

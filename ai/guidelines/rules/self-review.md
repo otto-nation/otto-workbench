@@ -45,10 +45,19 @@ Skip if the user explicitly requests it ("skip the review", "just create the PR"
 
 A fix pass's commit message and terminal summary are rendered from the agent's own boxes
 on the tracking file. The commit is not: staging takes every path the pass touched that
-belongs on the branch, with the outcomes unread. "Belongs" means a branch file, a finding
-anchor, or a test or `_support` module named for one; anything else stays in the worktree
-with a warning. Attribution between the two is by path, and an agent that answers a
-finding by editing its caller or its test moves a file no check can tie back to it.
+belongs on the branch, with the outcomes unread. "Belongs" means a finding anchor or a
+test or `_support` module named for one — not every file on the PR. A PR file that is
+not an anchor stays in the worktree with a warning, for the operator (for example an inventory file
+a verify agent used as a fixture). Attribution between
+the two is by path, and an agent that answers a finding by editing its caller or its test
+moves a file no check can tie back to it.
+
+The verify agent and the repo's `fix.verify_command` also run in the real worktree.
+Containment snapshots content around each of those phases and restores anything they
+wrote, so a verify rewrite of a file already dirty (or of a PR file the pass never
+asked about) cannot ride into the commit. Clobbered bytes are saved under the pass's
+`containment/` artifacts. Tool denials on the verify agent are extra; process writes
+bypass them, which is why the restore is the control.
 
 So `Skipped: [M1] no auto-fix` could sit on top of a commit containing the edit for M1,
 by three routes. Two now report themselves; the third cannot:

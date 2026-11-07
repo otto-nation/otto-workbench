@@ -398,3 +398,23 @@ class TestRulesHome:
             cmd = builder(inv)
             assert cmd.count("--add-dir") == 1
             assert cmd[cmd.index("/tmp/wt") - 1] == "--add-dir"
+
+
+class TestVerifyPhaseDeniesWrites:
+    """The verify gate must not Edit/Write the worktree; the fix agent still may."""
+
+    def _denied(self, **kwargs):
+        cmd = agent.backend_claude._build_fix_cmd(
+            agent.backend_claude.AgentInvocation(prompt="p", **kwargs),
+        )
+        return cmd[cmd.index("--disallowedTools") + 1]
+
+    def test_verify_denies_edit_and_write(self):
+        denied = self._denied(phase=str(Phase.FIX_VERIFY))
+        assert "Edit" in denied.split(",")
+        assert "Write" in denied.split(",")
+
+    def test_fix_still_allows_edit_and_write(self):
+        denied = self._denied(phase=str(Phase.FIX))
+        assert "Edit" not in denied.split(",")
+        assert "Write" not in denied.split(",")

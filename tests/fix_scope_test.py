@@ -325,7 +325,7 @@ class TestRenamePartners:
 
     @patch("git.client.run")
     def test_a_failed_read_readmits_nothing(self, mock_run, git_wt):
-        mock_run.side_effect = [CmdResult(returncode=1, stdout="", stderr="boom")]
+        mock_run.return_value = CmdResult(returncode=1, stdout="", stderr="boom")
         partners = fix.scope.rename_partners(
             {"renamed.py"}, {"src.py"}, git_wt,
         )

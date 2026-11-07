@@ -14,9 +14,12 @@
  * this file:
  *
  *   - `write` and `edit` are gated on their path, in review-guard.ts, which a
- *     command spelling cannot route around
+ *     command spelling cannot route around. Verify phase (`REVIEW_VERIFY_PHASE`)
+ *     refuses worktree writes and keeps the tracking file / add_dirs.
  *   - the engine commits only the paths it watched the agent touch
  *     (`fix.scope.agent_changed`), so stray writes are never staged
+ *   - `fix.containment` restores anything the verify agent or the suite still
+ *     wrote, because process writes (python, a suite, sed) bypass this file
  *   - the push consults the publishing gate (`land.land(gated=True)`)
  *
  * So this is left with two jobs those three cannot do. The first is narrow:
@@ -527,4 +530,22 @@ export function unscopedTestRun(command: string, depth = 0): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Whether a write/edit path is allowed in the verify phase.
+ *
+ * The worktree is not writable: that is the tree the pass is about to commit.
+ * Scratch paths and add_dirs outside the worktree (the tracking file) stay
+ * writable. Process writes bypass this, which is why fix.containment restores
+ * the tree after the phase.
+ */
+export function verifyWriteAllowed(
+  path: string,
+  worktreeDir: string,
+  allowedDirs: string[],
+): boolean {
+  if (within(worktreeDir, path)) return false;
+  if (isScratchPath(path)) return true;
+  return allowedDirs.some((dir) => within(dir, path));
 }

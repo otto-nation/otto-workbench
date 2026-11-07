@@ -413,18 +413,29 @@ def _split_string_statement(words: Sequence[str]) -> list[str] | None:
     return [words[0], *_env_option_words(others), *inner, *options.rest]
 
 
-def _reparsed_statements(peeled: gh.shell_wrappers.Peeled) -> list[list[str]] | None:
-    """The statements a re-parsing wrapper runs, or None when they cannot be read exactly."""
+def reparsed_text(statement: Sequence[str]) -> str | None:
+    """The shell text a re-parsing wrapper in *statement* runs (``bash -c``, ``eval``, ``env -S``), else None."""
+    peeled = peeled_statement(statement)
+    if peeled.lookup or not peeled.words:
+        return None
+    return _reparsed_text(peeled)
+
+
+def _reparsed_text(peeled: gh.shell_wrappers.Peeled) -> str | None:
     program = gh.shell_wrappers.basename(peeled.words[0])
     if peeled.opaque:
         statement = _split_string_statement(peeled.words) if program == "env" else None
-        return None if statement is None else [statement]
+        return None if statement is None else shlex.join(statement)
     if program == "eval":
-        text: str | None = " ".join(peeled.words[1:])
-    elif program in _SHELLS:
-        text = _shell_command_string(peeled.words[1:])
-    else:
-        return None
+        return " ".join(peeled.words[1:])
+    if program in _SHELLS:
+        return _shell_command_string(peeled.words[1:])
+    return None
+
+
+def _reparsed_statements(peeled: gh.shell_wrappers.Peeled) -> list[list[str]] | None:
+    """The statements a re-parsing wrapper runs, or None when they cannot be read exactly."""
+    text = _reparsed_text(peeled)
     if text is None:
         return None
     try:

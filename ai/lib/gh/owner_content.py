@@ -16,6 +16,11 @@ Redirections are read with one grammar, ``gh.shell_wrappers.REDIRECT``: an
 fd-prefixed heredoc or here-string names no file, ``--body-file <(cmd)`` names
 none either, and ``<`` inputs are read from the raw statement so a redirect
 before the program (``< notes.md gh …``) is scanned too.
+
+A write whose body is read from stdin (``--body-file -``) is only readable
+when the producer's text is in the command: ``cat``, ``echo`` and ``printf``
+are judged by their words, ``jq -n`` by the ``--rawfile``/``--slurpfile``
+files it names. ``generated_stdin_body`` names any other producer.
 """
 
 # doc-group: platform
@@ -28,6 +33,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import gh.shell_lex
 import gh.shell_wrappers
 import gh.write_shapes
 
@@ -46,6 +52,10 @@ _FIELD_PREFIX = "--field="
 # substitution whole and makes `cmd` its own statement, whose operands are
 # scanned there.
 _PROCESS_SUBSTITUTION = ("<(", ">(")
+
+_PLAIN_PRODUCERS = frozenset({"cat", "echo", "printf"})
+_JQ_FILE_FLAGS = frozenset({"--rawfile", "--slurpfile"})
+_NESTING_DEPTH = gh.write_shapes.REPARSE_DEPTH
 
 
 @dataclass(frozen=True)
@@ -69,6 +79,82 @@ def command_text(command: str, cwd: str | Path) -> str:
             chunks.extend(_file_texts(words, cwd))
         chunks.extend(_file_texts_from(_shell_file_paths(statement, words), cwd))
     return "\n".join(chunks)
+
+
+def generated_stdin_body(command: str, depth: int = _NESTING_DEPTH) -> str:
+    """The producer of a write's stdin body whose text the command does not hold, else empty.
+
+    A statement that pipes into a GitHub write reading ``-`` qualifies unless
+    the producer is ``cat``/``echo``/``printf`` or ``jq -n`` (whose named files
+    are scanned). Text that ``bash -c``, ``eval`` or ``env -S`` re-parses is
+    searched *depth* levels deep.
+    """
+    try:
+        segments = gh.shell_lex.segments(command)
+    except ValueError:
+        return ""
+    for first, second in zip(segments, segments[1:]):
+        found = _unreadable_producer(first, second)
+        if found:
+            return found
+    return _generator_in_reparsed(segments, depth)
+
+
+def _unreadable_producer(first: gh.shell_lex.Segment, second: gh.shell_lex.Segment) -> str:
+    """*first*'s program when it pipes a body into *second* without its text being in the command."""
+    if not (first.pipes_out and _reads_stdin_body(second.words)):
+        return ""
+    producer = _producer(first.words)
+    return "" if _plain_producer(producer, first.words) else producer
+
+
+def _generator_in_reparsed(segments: Sequence[gh.shell_lex.Segment], depth: int) -> str:
+    if depth <= 0:
+        return ""
+    for segment in segments:
+        text = gh.write_shapes.reparsed_text(list(segment.words))
+        found = generated_stdin_body(text, depth - 1) if text else ""
+        if found:
+            return found
+    return ""
+
+
+def _reads_stdin_body(words: Sequence[str]) -> bool:
+    for statement in gh.write_shapes.expand_statement(list(words)):
+        if gh.write_shapes.statement_is_write(statement) \
+                and "-" in _named_files(_write_words(statement)):
+            return True
+    return False
+
+
+def _producer(words: Sequence[str]) -> str:
+    """The program a pipeline segment runs, as written; empty when there is none."""
+    peeled = gh.write_shapes.peeled_statement(words)
+    return peeled.words[0] if peeled.words else ""
+
+
+def _plain_producer(producer: str, words: Sequence[str]) -> bool:
+    if not producer:
+        return True
+    name = Path(producer).name
+    if name in _PLAIN_PRODUCERS:
+        return True
+    return name == "jq" and _jq_is_null_input(_write_words(words))
+
+
+def _jq_is_null_input(words: Sequence[str]) -> bool:
+    return any(
+        word == "--null-input" or (word.startswith("-") and not word.startswith("--") and "n" in word[1:])
+        for word in words[1:]
+    )
+
+
+def _jq_files(words: Sequence[str]) -> tuple[str, ...]:
+    """The FILE of every ``--rawfile NAME FILE`` / ``--slurpfile NAME FILE`` in *words* (peeled ``jq -n``)."""
+    if not words or Path(words[0]).name != "jq" or not _jq_is_null_input(words):
+        return ()
+    return tuple(
+        words[i + 2] for i, word in enumerate(words[:-2]) if word in _JQ_FILE_FLAGS)
 
 
 def relative_body_paths(command: str) -> tuple[str, ...]:
@@ -195,8 +281,8 @@ def _field_file(value: str) -> str:
 
 
 def _shell_file_paths(statement: Sequence[str], words: Sequence[str]) -> tuple[str, ...]:
-    """Paths ``cat`` (in the peeled *words*) and ``<`` redirects (anywhere in *statement*) name."""
-    return (*_cat_operands(words), *_redirected(statement).inputs)
+    """Paths ``cat``/``jq -n`` (in the peeled *words*) and ``<`` redirects (anywhere in *statement*) name."""
+    return (*_cat_operands(words), *_jq_files(words), *_redirected(statement).inputs)
 
 
 @dataclass(frozen=True)
@@ -235,10 +321,10 @@ def _cat_operands(words: Sequence[str]) -> list[str]:
 
 def _read_if_scannable(path: str, cwd: str | Path) -> str:
     if path == "-":
-        # ceiling: stdin (--body-file -) is unread here. A pipe from `cat file`
-        # is covered by scanning cat's operand; a pipe from a generator is not.
-        # Upgrade trigger: if generated bodies start reaching gh through stdin
-        # instead of a path.
+        # ceiling: a body piped from cat/echo/printf is judged by their words,
+        # so `echo "$BODY" | gh … --body-file -` passes with $BODY's text unread.
+        # Upgrade trigger: if a cross-group reference reaches GitHub through a
+        # variable echoed into stdin.
         return ""
     # ceiling: a body path spelled through a variable the command assigns
     # (`F=$(mktemp); … --body-file "$F"`) is expanded in the guard's

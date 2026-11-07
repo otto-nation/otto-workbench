@@ -6497,6 +6497,11 @@ fd-prefixed heredoc or here-string names no file, ``--body-file <(cmd)`` names
 none either, and ``<`` inputs are read from the raw statement so a redirect
 before the program (``< notes.md gh …``) is scanned too.
 
+A write whose body is read from stdin (``--body-file -``) is only readable
+when the producer's text is in the command: ``cat``, ``echo`` and ``printf``
+are judged by their words, ``jq -n`` by the ``--rawfile``/``--slurpfile``
+files it names. ``generated_stdin_body`` names any other producer.
+
 ### gh/owner_hooks.py
 
 Git hook checks for cross-group references in commit messages.

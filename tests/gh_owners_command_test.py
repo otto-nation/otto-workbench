@@ -104,12 +104,71 @@ def test_check_command_allows_shell_borne_bodies_without_cross_refs(
         assert gh.owners.check_command(command, str(tmp_path)).ok, command
 
 
-def test_check_command_allows_a_generator_pipe(github_owners, tmp_path):
+def test_check_command_refuses_a_generator_pipe(github_owners, tmp_path):
     github_owners({"work": ["otto-nation"], "personal": ["me"]})
-    (tmp_path / "notes.md").write_text("see me/lib#12\n")
     verdict = gh.owners.check_command(
         f"generate-body | {_WRITE} --body-file -", str(tmp_path))
-    assert verdict.ok
+    assert not verdict.ok
+    assert "generate-body" in verdict.reason
+    assert "absolute path" in verdict.reason
+
+
+_EDIT = "gh pr edit 1 -R otto-nation/svc --body-file -"
+
+
+@pytest.mark.parametrize("command", [
+    f"sed 1d n.md | {_EDIT}",
+    f"git show HEAD:n.md | {_EDIT}",
+    f"gh pr view 1 --json body -q .body | {_EDIT}",
+    f"python3 - <<'EOF' | {_EDIT}\nprint(1)\nEOF",
+    "gh pr view 1 --json body -q .body | gh api -X POST repos/otto-nation/svc/issues/1/comments -F body=@-",
+    "sed 1d n.md | gh api -X POST repos/otto-nation/svc/issues/1/comments --input -",
+])
+def test_check_command_refuses_a_stdin_body_from_any_generator(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    verdict = gh.owners.check_command(command, str(tmp_path))
+    assert not verdict.ok
+    assert "absolute path" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    f"cat <<'EOF' | {_EDIT}\nhello\nEOF",
+    f"cat n.md | {_EDIT}",
+    f"echo hi | {_EDIT}",
+    f"printf hi | {_EDIT}",
+    f"{_EDIT} <<<hi",
+])
+def test_check_command_allows_a_stdin_body_from_plain_text(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    assert gh.owners.check_command(command, str(tmp_path)).ok, command
+
+
+def test_a_generator_inside_bash_c_is_refused(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    verdict = gh.owners.check_command(
+        f"bash -c 'sed 1d n.md | {_EDIT}'", str(tmp_path))
+    assert not verdict.ok
+    assert "absolute path" in verdict.reason
+
+
+_JQ_COMMENT = (
+    "jq -n --rawfile b {notes} '{{body:$b}}' | "
+    "gh api -X POST repos/otto-nation/svc/issues/1/comments --input -"
+)
+
+
+def test_jq_with_named_files_is_scanned_not_refused(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    notes = tmp_path / "notes.md"
+    notes.write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        _JQ_COMMENT.format(notes=notes), str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason
+    notes.write_text("plain\n")
+    assert gh.owners.check_command(
+        _JQ_COMMENT.format(notes=notes), str(tmp_path)).ok
 
 
 _HEREDOC_CREATE = (

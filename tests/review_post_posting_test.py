@@ -19,6 +19,7 @@ from pr.state import PostedAs, PostEvent, PostTracking
 from core.proc import CmdResult
 from core.serde import from_dict as serde_from_dict
 import review.posting
+from review.posting import ReviewEvent
 
 # A GitHub outage as gh reports it: nothing on stdout, the status line on
 # stderr. Shared so a failure-path test never has to restate the shape.
@@ -186,6 +187,48 @@ class TestPostReview:
         assert result == {"id": 42}
         sent = json.loads(mock_api.call_args.kwargs["input_text"])
         assert sent["event"] == "COMMENT"
+
+    def test_an_event_is_the_payloads_event(self, rp):
+        with (
+            patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
+            patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
+        ):
+            rp.post_review("org/repo", "1", self.PAYLOAD, submit=True, event=ReviewEvent.APPROVE)
+        sent = json.loads(mock_api.call_args.kwargs["input_text"])
+        assert sent["event"] == "APPROVE"
+
+
+class TestChunkedEvent:
+    """GitHub shows each reviewer's latest review as their state, so the event
+    goes on the chunk posted last; earlier chunks are comments."""
+
+    def test_only_the_last_chunk_carries_the_event(self, rp):
+        comments = [{"path": "f", "line": i, "body": "x"} for i in range(3)]
+        sent = []
+
+        def capture(endpoint, **kw):
+            sent.append(json.loads(kw["input_text"]))
+            return {"id": len(sent)}
+
+        with (
+            patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
+            patch("gh.client.api_json", side_effect=capture),
+            patch("time.sleep"),
+        ):
+            rp._post_chunked_review("org/repo", "1", "abc", "body", comments,
+                                    chunk_size=1, submit=True,
+                                    event=ReviewEvent.REQUEST_CHANGES)
+
+        assert [p["event"] for p in sent] == ["COMMENT", "COMMENT", "REQUEST_CHANGES"]
+
+
+class TestReviewEvent:
+    def test_each_event_maps_to_github_and_post_tracking(self):
+        assert [(e.github, e.post_event) for e in ReviewEvent] == [
+            ("COMMENT", PostEvent.COMMENT),
+            ("APPROVE", PostEvent.APPROVE),
+            ("REQUEST_CHANGES", PostEvent.REQUESTED_CHANGES),
+        ]
 
 
 class TestSubmitReview:

@@ -7,7 +7,7 @@ the GitHub API. Pass --submit to submit the review immediately.
 
 Usage:
   review-post --pr NUMBER --review-file PATH
-              [--severity M,S,N] [--dry-run]
+              [--severity M,S,N] [--dry-run] [--submit] [--event EVENT]
 """
 
 # doc-group: cli
@@ -63,6 +63,7 @@ from review.dedup import (
 )
 from review.posting import (
     DEFAULT_CHUNK_SIZE, _CHUNK_PATTERN,
+    ReviewEvent, event_of,
     _post_and_track, _post_as_comment, _print_dry_run,
     _chunk_comments, _post_chunked_review, post_review,
     _submit_review, write_post_tracking, _format_submit_command,
@@ -97,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Parse and classify without posting")
     parser.add_argument("--submit", action="store_true",
                         help="Submit the review after posting (default: leave PENDING)")
+    parser.add_argument("--event", choices=[e.value for e in review.posting.ReviewEvent],
+                        default=review.posting.ReviewEvent.COMMENT.value,
+                        help="What the review says on GitHub (default: comment). "
+                             "approve and request_changes submit the review")
     parser.add_argument("--expect-ref",
                         help="Refuse the review unless its sidecar names this "
                              "branch as the one it was written for. Opt-in: "
@@ -106,6 +111,11 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Max inline comments per review chunk (default: {DEFAULT_CHUNK_SIZE})")
     add_trail_args(parser)
     args = parser.parse_args(argv)
+
+    # A pending review has no event yet; approving or requesting changes is
+    # submitting, so either one implies --submit.
+    if args.event != review.posting.ReviewEvent.COMMENT.value:
+        args.submit = True
 
     review_path = Path(args.review_file)
     if not review_path.exists():

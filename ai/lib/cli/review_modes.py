@@ -41,6 +41,7 @@ from pr.review_sync import sync_review_domain
 from pr.target import display_repo
 import review.listing
 from review.paths import find_review_file, review_file_path
+from review.posting import ReviewEvent
 from review.store import read_review
 from review.summary import build_review_summary, json_summary
 
@@ -217,6 +218,12 @@ def reference_parser(base: argparse.ArgumentParser) -> argparse.ArgumentParser:
             action="store_true",
             help=f"{mode.help} — a mode; excludes the other mode flags",
         )
+    # Read by `--post` alone, which forwards it to review-post; declared here
+    # so `pr review --help` and the prose checks know the spelling.
+    parser.add_argument(
+        "--event", choices=[e.value for e in ReviewEvent],
+        help="With --post: what the review says on GitHub (default: comment)",
+    )
     return parser
 
 

@@ -172,6 +172,40 @@ def test_cmd_review_post_passes_submit(mock_call, reviews_dir):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
+def test_cmd_review_post_forwards_the_event(mock_call, reviews_dir):
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("# Review")
+    rc = cli.pr.cmd_review(["--post", "--event", "approve"], make_ctx(pr_number=42),
+                           bin_dir=BIN_DIR)
+    assert rc == 0
+    cmd = mock_call.call_args[0][1]
+    assert cmd[cmd.index("--event") + 1] == "approve"
+
+
+def test_review_post_main_refuses_an_unknown_event(rp, capsys):
+    with pytest.raises(SystemExit) as exc:
+        rp.main(["--pr", "1", "--review-file", "/nope/review.md", "--event", "merge"])
+    assert exc.value.code == 2
+
+
+def test_the_pr_review_reference_parser_documents_event():
+    import cli.review_modes
+    import cli.review_entry
+    parser = cli.review_modes.reference_parser(cli.review_entry.build_parser())
+    assert "--event" in parser.format_help()
+
+
+def test_the_reference_parsers_event_choices_match_review_event():
+    import cli.review_entry
+    import cli.review_modes
+    from review.posting import ReviewEvent
+    parser = cli.review_modes.reference_parser(cli.review_entry.build_parser())
+    action = next(a for a in parser._actions if "--event" in a.option_strings)
+    assert list(action.choices) == [e.value for e in ReviewEvent]
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
 def test_cmd_review_post_names_the_branch_it_publishes_for(mock_call, reviews_dir):
     """The review is found by PR number; the run lock keys on the branch.
 

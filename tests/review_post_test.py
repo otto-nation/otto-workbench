@@ -14,7 +14,7 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr.state import PostedAs, PostTracking
+from pr.state import PostedAs, PostEvent, PostTracking
 from core.serde import from_dict as serde_from_dict
 import review.dedup
 from review.record import Disposition, LedgerLine, ProseSection, TriageEntry
@@ -160,6 +160,27 @@ class TestShaDriftReverify:
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
         return tracking
 
+    def _run_with_args(self, rp, args, review_file, head_sha):
+        pr_data = rp.PRData(viewer_login="bot", head_sha=head_sha,
+                            head_ref="feat", base_ref="main", reviews=[])
+        finding = rp.Finding(id="M1", severity="M", seq=1, path="file.go",
+                             line=5, end_line=None, body="Fix",
+                             posted_id="M1", classification="inline",
+                             full_path="file.go")
+        with (
+            patch.object(rp, "fetch_pr_data", return_value=pr_data),
+            patch.object(rp, "_get_diff", return_value=self.DIFF),
+            patch.object(rp, "dedup_against_posted", return_value=([finding], [])),
+            patch.object(rp, "fetch_bot_reviews", return_value=review.dedup.BotReviews()),
+            patch.object(rp, "check_review_already_posted", return_value=set()),
+            patch.object(rp, "_check_existing_pending", return_value=rp.PendingReview()),
+            patch("gh.client.api_json", return_value={"id": 42}),
+            patch.object(rp, "resolve_permalinks"),
+        ):
+            rp.run_post(MagicMock(), args, "org/repo", rp.ReviewMeta(repo="org/repo"), review_file)
+        post_file = review_file.parent / "post.jsonl"
+        return serde_from_dict(PostTracking, json.loads(post_file.read_text()))
+
     def test_drift_records_sha_in_tracking(self, rp, tmp_path):
         new_head = "ccc3333ddd4444"
         tracking = self._run_with_finding(rp, tmp_path, new_head)
@@ -181,6 +202,31 @@ class TestShaDriftReverify:
         assert tracking.review_sha == "aaa1111"
         assert tracking.sha_drifted is False
         assert not [c for c in trail.info.call_args_list if c.args[0] == "sha_drift"]
+
+    def test_an_approval_is_refused_when_the_head_moved(self, rp, tmp_path):
+        """Approving commits the review never read is the one post that must
+        not go out on drift; a comment still can, as it does today."""
+        args, review_file = self._make_args(tmp_path)
+        args.event = "approve"
+        args.submit = True
+        pr_data = rp.PRData(viewer_login="bot", head_sha="ccc3333ddd4444",
+                            head_ref="feat", base_ref="main", reviews=[])
+        with (
+            patch.object(rp, "fetch_pr_data", return_value=pr_data),
+            patch("gh.client.api_json") as mock_post,
+        ):
+            rc = rp.run_post(MagicMock(), args, "org/repo", rp.ReviewMeta(repo="org/repo"), review_file)
+
+        assert rc == 1
+        mock_post.assert_not_called()
+        assert not (review_file.parent / "post.jsonl").exists()
+
+    def test_an_approval_records_its_event_in_post_tracking(self, rp, tmp_path):
+        args, review_file = self._make_args(tmp_path)
+        args.event = "approve"
+        args.submit = True
+        tracking = self._run_with_args(rp, args, review_file, head_sha="aaa1111bbb2222")
+        assert tracking.status == PostEvent.APPROVE.value
 
 
 class TestDryRunIntegration:

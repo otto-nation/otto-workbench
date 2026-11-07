@@ -226,17 +226,20 @@ def _driver_inbox(bin_dir: Path, reporter: _Reporter) -> batch.inbox.Inbox:
                                                       report=reporter))
 
 
-def _emit_summary(run: Run, code: int, report_path: Path | None = None) -> None:
+def _emit_summary(run: Run, code: int, report_path: Path | None,
+                  doc: dict | None = None) -> None:
     """The last line of a settled run: `next`'s document as a `run_summary` event.
 
     Its `exit_hint` is *code*, the process's real exit status. Apply errors
     make it 1, whatever the run's status alone would say. *report_path* is the
     `report.md` `_conclude` wrote; omitted when nothing was written.
+    *doc* is that report when the write succeeded; None rebuilds the view.
     """
-    import cli.pr_batch_common
-    import cli.pr_batch_views
-
-    view = batch.report.next_view(cli.pr_batch_views.report(run, cli.pr_batch_common.is_active(run.id)))
+    if doc is None:
+        import cli.pr_batch_common
+        import cli.pr_batch_views
+        doc = cli.pr_batch_views.report(run, cli.pr_batch_common.is_active(run.id))
+    view = batch.report.next_view(doc)
     view["run"]["exit_hint"] = code
     extra = {"report_path": str(report_path)} if report_path is not None else {}
     batch.events.emit("run_summary", run=view["run"], counts=view["counts"],
@@ -279,8 +282,13 @@ def _conclude(run_id: str, stopped: RunStatus, reporter: _Reporter) -> int:
                           open_decisions=len(run.open_decisions()))
     code = 1 if reporter.failed else batch.report.exit_code(run.status)
     import cli.pr_batch_views
-    path = cli.pr_batch_views.write_report(run, offline=True)
-    _emit_summary(run, code, report_path=path)
+    path: Path | None = None
+    doc = None
+    try:
+        path, doc = cli.pr_batch_views.write_report(run, offline=True)
+    except Exception as exc:
+        core.log.warn(f"could not write report: {exc}")
+    _emit_summary(run, code, path, doc)
     return code
 
 

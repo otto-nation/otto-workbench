@@ -1,4 +1,4 @@
-"""Read-only `pr batch` views: plan, status, next, and the report they share.
+"""Read-only `pr batch` views: plan, status, next, report, and the report they share.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 """
@@ -8,16 +8,21 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+from pathlib import Path
 
 import batch.live
 import batch.plan
+import batch.publish
 import batch.report
+import batch.report_md
+import batch.session_report
 import batch.store
 import cli.pr_batch_common
 import core.report
 import core.serde
-from batch.model import Run
+from batch.model import Item, Run
 
 EXIT_OK = batch.report.EXIT_OK
 
@@ -75,3 +80,58 @@ def cmd_plan(args) -> int:
     # from a saved file reads mergeStateStatus instead of namespaced refs.
     core.report.emit_json(core.serde.to_dict(batch.plan.build_plan(args.checkout)))
     return EXIT_OK
+
+
+def write_report(run: Run, *, offline: bool) -> Path:
+    """Write `report.json` and `report.md` under the run dir; return the markdown path.
+
+    Offline skips GitHub and `peek_tree`. A missing worktree is never probed.
+    """
+    github = batch.live.skipped() if offline else batch.live.view(run, cwd=os.getcwd())
+    entries = batch.session_report.sessions(
+        run, closeout=batch.plan.closeout_debt,
+        tree=None if offline else _peek,
+    )
+    doc = report(run, cli.pr_batch_common.is_active(run.id), github)
+    doc["sessions"] = [e.to_dict() for e in entries]
+    directory = batch.store.run_dir(run.id)
+    directory.mkdir(parents=True, exist_ok=True)
+    core.serde.write_json(directory / "report.json", doc)
+    markdown = batch.report_md.render_markdown(doc)
+    tmp = directory / "report.md.tmp"
+    tmp.write_text(markdown)
+    dest = directory / "report.md"
+    core.serde.replace_file(tmp, dest)
+    return dest
+
+
+def cmd_report(args) -> int:
+    """`report`: write the files, then print stdout lines, JSON, or markdown."""
+    run_id = cli.pr_batch_common.resolve_run_id(args.run_id)
+    if not run_id:
+        return cli.pr_batch_common.fail("no batch runs yet")
+    try:
+        run = batch.store.load(run_id)
+    except batch.store.RunNotFound:
+        return cli.pr_batch_common.fail(f"no run {run_id}")
+    path = write_report(run, offline=args.offline)
+    doc = json.loads((path.parent / "report.json").read_text())
+    if args.format == "json":
+        core.report.emit_json(doc)
+        return EXIT_OK
+    if args.format == "md":
+        print(path.read_text(), end="")
+        return EXIT_OK
+    lines = batch.report_md.stdout_lines(doc)
+    if lines:
+        print(lines)
+    print(f"report: {path}")
+    return EXIT_OK
+
+
+def _peek(item: Item):
+    """`peek_tree` only when the worktree is a directory; never a relative probe."""
+    wt = item.worktree
+    if not (wt and Path(wt).is_dir()):
+        return None
+    return batch.publish.peek_tree(item)

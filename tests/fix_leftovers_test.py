@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from conftest import git_out
 
@@ -58,7 +58,13 @@ class TestLeftoversReported:
         assert "a.py" in err
         assert WARNING in err
         assert "already dirty" in err
+        backup = adapter.artifacts / "dirty-backup"
+        assert str(backup) in err
+        assert (backup / "a.py").read_text() == "dirty\n"
         assert "a.py" not in git_out(wt, "show", "--name-only", "--format=", "HEAD")
+        assert "dirty-backup" not in git_out(
+            wt, "show", "--name-only", "--format=", "HEAD",
+        )
 
     @patch("git.push.push", return_value=_PUSHED)
     def test_a_non_anchor_pr_file_left_out_is_reported(
@@ -82,6 +88,7 @@ class TestLeftoversReported:
         err = capsys.readouterr().err
         leftovers_line = next(line for line in err.splitlines() if WARNING in line)
         assert SERVICES in leftovers_line
+        assert "pre-pass copies" not in leftovers_line
 
     @patch("git.push.push", return_value=_PUSHED)
     def test_artifacts_inside_the_worktree_are_not_leftovers(
@@ -132,3 +139,42 @@ class TestFind:
             tmp_path, fix.containment.Snapshot(ok=False), set(),
         )
         assert found.known is False
+
+
+def _landed():
+    return git.land.LandResult(git.land.CommitStatus.PUSHED, "abc1234")
+
+
+class TestReportBackup:
+    def test_names_backup_when_already_dirty_changed(self, tmp_path, capsys):
+        backup = tmp_path / "dirty-backup"
+        found = fix.leftovers.Leftovers(
+            paths=("a.py",), already_dirty=("a.py",),
+        )
+        trail = Mock()
+
+        fix.leftovers.report(
+            tmp_path, found, _landed(), trail, backup_dir=backup,
+        )
+
+        err = capsys.readouterr().err
+        assert str(backup) in err
+        assert "pre-pass copies" in err
+        trail.warn.assert_called_once()
+        assert trail.warn.call_args.args[0] == "fix_pass_left_dirty"
+        assert trail.warn.call_args.kwargs["data"]["backup"] == str(backup)
+
+    def test_omits_backup_when_not_already_dirty(self, tmp_path, capsys):
+        backup = tmp_path / "dirty-backup"
+        found = fix.leftovers.Leftovers(paths=("a.py",), already_dirty=())
+        trail = Mock()
+
+        fix.leftovers.report(
+            tmp_path, found, _landed(), trail, backup_dir=backup,
+        )
+
+        err = capsys.readouterr().err
+        assert "pre-pass copies" not in err
+        assert str(backup) not in err
+        trail.warn.assert_called_once()
+        assert "backup" not in trail.warn.call_args.kwargs["data"]

@@ -77,10 +77,11 @@ def _request(args) -> Decide:
                   body_file=args.body_file, commit=args.commit)
 
 
-def _dry_run(run_id: str, request: Decide, bin_dir: Path) -> int:
+def _dry_run(run_id: str, run: batch.store.Run, request: Decide, bin_dir: Path) -> int:
     """`resolve --dry-run`: the publish plan as JSON, the run untouched, no inbox write."""
-    run = batch.store.load(run_id)
     try:
+        # preview() checks the action first (ResolveError -> usage exit), then
+        # looks up the decision (KeyError -> exit 1); the handlers rely on that order.
         seen = batch.resolve.preview(run, request, pr_bin=str(bin_dir / "pr"))
     except KeyError:
         return cli.pr_batch_common.fail(
@@ -107,12 +108,12 @@ def _dry_run(run_id: str, request: Decide, bin_dir: Path) -> int:
 def cmd_resolve(args, bin_dir: Path) -> int:
     run_id = args.run_id
     try:
-        batch.store.load(run_id)
+        run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return cli.pr_batch_common.fail(f"no run {run_id}")
     request = _request(args)
     if args.dry_run:
-        return _dry_run(run_id, request, bin_dir)
+        return _dry_run(run_id, run, request, bin_dir)
     try:
         delivery = _deliver(run_id, request, bin_dir, "resolve")
     except batch.store.RunNotFound:

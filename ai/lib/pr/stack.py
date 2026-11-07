@@ -170,6 +170,8 @@ def health(cwd: str, branch: str, parent_branch: str) -> Health:
         return Health.NEEDS_REBASE
     if merged.returncode == 1:
         return Health.HAS_CONFLICTS
+    # Exit >1 is git failing (bad ref, old git without --write-tree), not a
+    # merge verdict, so the state is unknown rather than conflicted.
     return Health.UNKNOWN
 
 

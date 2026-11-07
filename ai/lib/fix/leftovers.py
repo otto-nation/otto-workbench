@@ -74,6 +74,23 @@ def find(
     )
 
 
+def _backup_note(
+    already_dirty: tuple[str, ...], backed_up: tuple[str, ...], backup_dir: str | Path,
+) -> str:
+    """Name the pre-pass copies that exist and flag the files that have none."""
+    copied = [p for p in already_dirty if p in backed_up]
+    missing = [p for p in already_dirty if p not in backed_up]
+    note = ""
+    if copied:
+        note += f"; pre-pass copies of {', '.join(copied)} under {backup_dir}"
+    if missing:
+        note += (
+            f"; no pre-pass copy of {', '.join(missing)} "
+            "(see dirty-backup.skipped.json)"
+        )
+    return note
+
+
 def report(
     workdir: str | Path, found: Leftovers, landed: LandResult, trail: Trail | None,
     backup_dir: str | Path | None = None, backed_up: tuple[str, ...] = (),
@@ -102,17 +119,7 @@ def report(
             f"{', '.join(found.already_dirty)}"
         )
         if backup_dir is not None:
-            copied = [p for p in found.already_dirty if p in backed_up]
-            missing = [p for p in found.already_dirty if p not in backed_up]
-            if copied:
-                message += (
-                    f"; pre-pass copies of {', '.join(copied)} under {backup_dir}"
-                )
-            if missing:
-                message += (
-                    f"; no pre-pass copy of {', '.join(missing)} "
-                    "(see dirty-backup.skipped.json)"
-                )
+            message += _backup_note(found.already_dirty, backed_up, backup_dir)
     message += "."
     core.log.warn(message)
     data = {

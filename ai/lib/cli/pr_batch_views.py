@@ -82,8 +82,8 @@ def cmd_plan(args) -> int:
     return EXIT_OK
 
 
-def write_report(run: Run, *, offline: bool) -> Path:
-    """Write `report.json` and `report.md` under the run dir; return the markdown path.
+def write_report(run: Run, *, offline: bool) -> tuple[Path, dict]:
+    """Write `report.json` and `report.md` under the run dir; return the path and document.
 
     Offline skips GitHub and `peek_tree`. A missing worktree is never probed.
     """
@@ -102,7 +102,7 @@ def write_report(run: Run, *, offline: bool) -> Path:
     tmp.write_text(markdown)
     dest = directory / "report.md"
     core.serde.replace_file(tmp, dest)
-    return dest
+    return dest, doc
 
 
 def cmd_report(args) -> int:
@@ -114,7 +114,7 @@ def cmd_report(args) -> int:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return cli.pr_batch_common.fail(f"no run {run_id}")
-    path = write_report(run, offline=args.offline)
+    path, _ = write_report(run, offline=args.offline)
     doc = json.loads((path.parent / "report.json").read_text())
     if args.format == "json":
         core.report.emit_json(doc)

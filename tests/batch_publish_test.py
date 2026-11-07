@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from batch_git_support import advance, remote_and_clone, remote_tip
-from conftest import commit_all, git_in, git_out, run_checked
+from conftest import commit_all, git_in, git_out, init_repo, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PR_BIN = str(REPO_ROOT / "ai" / "bin" / "pr")
@@ -489,3 +489,38 @@ def test_owed_closeout_is_still_refused_when_somebody_pushed():
 
 def test_no_debt_and_nothing_drafted_plans_nothing():
     assert batch.publish.plan(_item(), "pr", _tree(0, 0), closeout=CloseoutDebt()).commands == []
+
+
+def test_carried_lists_the_commits_and_diff_the_push_would_carry(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    (repo / "f").write_text("a\n")
+    commit_all(repo, "base")
+    base = git_out(repo, "rev-parse", "HEAD").strip()
+    (repo / "f").write_text("a\nb\n")
+    commit_all(repo, "add b")
+    local = git_out(repo, "rev-parse", "HEAD").strip()
+    item = batch.model.Item(key="o/r#1", repo="o/r", repo_dir=str(repo), pr=1, branch="main",
+                            head_sha=base, worktree=str(repo), remote_sha=base)
+    tree = TreeState(local=local, remote=base,
+                     divergence=RefDivergence(ahead=1, behind=0, comparable=True))
+
+    got = batch.publish.carried(item, tree)
+
+    assert [(c.sha, c.subject) for c in got.commits] == [(local, "add b")]
+    assert "+b" in got.diff
+    assert (got.truncated, got.remote_ahead) == (False, 0)
+
+
+def test_carried_counts_remote_commits_since_the_planned_head(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    (repo / "f").write_text("a\n")
+    commit_all(repo, "planned")
+    planned = git_out(repo, "rev-parse", "HEAD").strip()
+    (repo / "f").write_text("a\nc\n")
+    commit_all(repo, "someone else")
+    remote = git_out(repo, "rev-parse", "HEAD").strip()
+    item = batch.model.Item(key="o/r#1", repo="o/r", repo_dir=str(repo), pr=1, branch="main",
+                            head_sha=planned, worktree=str(repo), remote_sha=planned)
+    tree = TreeState(local=planned, remote=remote,
+                     divergence=RefDivergence(ahead=0, behind=1, comparable=True))
+    assert batch.publish.carried(item, tree).remote_ahead == 1

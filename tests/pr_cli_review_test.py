@@ -578,7 +578,13 @@ def test_a_command_serving_no_document_refuses_the_handshake(capsys):
 def test_the_schema_contracts_are_read_off_the_mode_table():
     """An error naming an invocation that no longer serves a document is worse
     than no error at all."""
-    assert cli.schema.schema_contracts() == ["pr review --list"]
+    assert cli.schema.schema_contracts() == [
+        "pr review --list",
+        "pr batch plan",
+        "pr batch status",
+        "pr batch next",
+        "pr batch resolve --dry-run",
+    ]
     assert cli.schema.served_schema_versions("review", ["--list"]) == \
         review.listing.SCHEMA_VERSIONS
     assert cli.schema.served_schema_versions("review", ["--summary"]) == ()

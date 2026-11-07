@@ -14,8 +14,10 @@ from pathlib import Path
 import batch.inbox
 import batch.plan
 import batch.report
+import batch.resolve
 import batch.store
 import cli.pr_batch_common
+import cli.schema
 import core.report
 from batch.model import FINISHED_RUN, Item, Run
 from batch.requests import Cancel, Decide, Release
@@ -70,14 +72,44 @@ def _holder_view(holder: batch.store.Holder | None) -> dict | None:
                               holder.pid, holder.command))
 
 
+def _request(args) -> Decide:
+    return Decide(decision=args.decision_id, action=args.action, reason=args.reason,
+                  body_file=args.body_file, commit=args.commit)
+
+
+def _dry_run(run_id: str, request: Decide, bin_dir: Path) -> int:
+    """`resolve --dry-run`: the publish plan as JSON, the run untouched, no inbox write."""
+    run = batch.store.load(run_id)
+    try:
+        seen = batch.resolve.preview(run, request, pr_bin=str(bin_dir / "pr"))
+    except batch.resolve.ResolveError as exc:
+        print(f"pr batch: {exc}", file=sys.stderr)
+        return (cli.schema.EXIT_USAGE
+                if request.action not in ("publish", "force-publish") else 1)
+    plan, debt, carried = seen.plan, seen.closeout, seen.carried
+    core.report.emit_json({
+        "schema_version": batch.report.SCHEMA_VERSION,
+        "decision": request.decision, "action": request.action,
+        "ok": plan.ok, "refusal": plan.refusal.value if plan.refusal else None,
+        "detail": plan.detail, "pushes": plan.pushes, "commands": plan.commands,
+        "refused_commits": plan.commits,
+        "commits": [asdict(c) for c in carried.commits],
+        "diff": carried.diff, "truncated": carried.truncated,
+        "remote_ahead": carried.remote_ahead,
+        "closeout": {**asdict(debt), "owed": debt.owed, "describe": debt.describe()},
+    })
+    return EXIT_OK
+
+
 def cmd_resolve(args, bin_dir: Path) -> int:
     run_id = args.run_id
     try:
         batch.store.load(run_id)
     except batch.store.RunNotFound:
         return cli.pr_batch_common.fail(f"no run {run_id}")
-    request = Decide(decision=args.decision_id, action=args.action, reason=args.reason,
-                     body_file=args.body_file, commit=args.commit)
+    request = _request(args)
+    if args.dry_run:
+        return _dry_run(run_id, request, bin_dir)
     try:
         delivery = _deliver(run_id, request, bin_dir, "resolve")
     except batch.store.RunNotFound:

@@ -227,17 +227,23 @@ _herdr_mod_sync_dir() {
 
 # _herdr_mod_install_one SRC_MOD DEST NAME — installs one mod directory.
 # A symlink DEST is left alone; a dir with no manifest is adopted or skipped.
+# Appends NAME to HERDR_APP_MODS_NEWLY_INSTALLED when this run writes the
+# dest's .workbench-install and none was there before (fresh copy or adopt).
 _herdr_mod_install_one() {
-  local src_mod="$1" dest="$2" name="$3"
+  local src_mod="$1" dest="$2" name="$3" had_manifest=0
+  [[ -f "$dest/.workbench-install" ]] && had_manifest=1
   if [[ -L "$dest" ]]; then
     warn "herdr-app mod $name: $dest is a symlink — left as is"
     return 0
   fi
   if [[ -d "$dest" && ! -f "$dest/.workbench-install" ]]; then
     _herdr_mod_adopt_or_skip "$src_mod" "$dest" "$name"
-    return 0
+  else
+    _herdr_mod_sync_dir "$src_mod" "$dest" "$name"
   fi
-  _herdr_mod_sync_dir "$src_mod" "$dest" "$name"
+  if [[ "$had_manifest" -eq 0 && -f "$dest/.workbench-install" ]]; then
+    HERDR_APP_MODS_NEWLY_INSTALLED+=("$name")
+  fi
   return 0
 }
 
@@ -245,9 +251,15 @@ _herdr_mod_install_one() {
 # HOME/mods/<name>/ (default HERDR_APP_DIR) with a per-file checksum manifest.
 # Directories under HERDR_APP_MODS_SRC_DIR whose names start with `_` are shared
 # libraries, not mods. Non-fatal: always returns 0.
+#
+# HERDR_APP_MODS_NEWLY_INSTALLED is a global array this function resets, then
+# fills with mod names that received a .workbench-install this run. Callers
+# (step_herdr_app_mods) read it to print one-time hints; they must not treat
+# it as set until after this function returns.
 _herdr_app_install_mods() {
   local home="${1:-$HERDR_APP_DIR}" src_root="$HERDR_APP_MODS_SRC_DIR"
   local mods_home="$home/mods" src_mod name
+  HERDR_APP_MODS_NEWLY_INSTALLED=()
   [[ -d "$src_root" ]] || return 0
   mkdir -p "$mods_home" || { warn "Could not create $mods_home"; return 0; }
   for src_mod in "$src_root"/*; do

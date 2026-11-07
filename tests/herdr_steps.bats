@@ -67,6 +67,7 @@ _run() {
     . "$1/ai/herdr/steps.sh"
     step_herdr_tui_theme() { echo "TUI_THEME"; }
     step_herdr_app_theme() { echo "APP_THEME"; }
+    step_herdr_app_mods() { echo "APP_MODS"; }
     step_herdr_untrusted_window() { echo "UNTRUSTED"; }
     sync_component_bin() { echo "SYNC_BIN $*"; }
     _herdr_app_present() { [[ -n "${FAKE_APP_PRESENT:-}" ]]; }
@@ -218,6 +219,7 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK herdr pi integration installed"$'\n'"TUI_THEME"* ]]
   [[ "$output" != *APP_THEME* ]]
+  [[ "$output" != *APP_MODS* ]]
   [ "$(cat "$ARGV")" = "$(printf 'update\nintegration install pi\nmachine list --json')" ]
 }
 
@@ -228,6 +230,7 @@ SCRIPT
   [ ! -e "$ARGV" ]
   [[ "$output" != *TUI_THEME* ]]
   [[ "$output" != *APP_THEME* ]]
+  [[ "$output" != *APP_MODS* ]]
 }
 
 @test "sync_herdr_app themes herdr-app without the herdr TUI" {
@@ -236,6 +239,7 @@ SCRIPT
   run _run sync_herdr_app
   [ "$status" -eq 0 ]
   [[ "$output" == *APP_THEME* ]]
+  [[ "$output" == *APP_MODS* ]]
   [[ "$output" == *UNTRUSTED* ]]
   [[ "$output" == *SYNC_BIN* ]]
   [[ "$output" != *TUI_THEME* ]]
@@ -246,6 +250,7 @@ SCRIPT
   run _run sync_herdr_app
   [ "$status" -eq 0 ]
   [[ "$output" != *APP_THEME* ]]
+  [[ "$output" != *APP_MODS* ]]
   [[ "$output" != *UNTRUSTED* ]]
   [[ "$output" != *SYNC_BIN* ]]
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for _herdr_app_install_mods — copy herdr-app mods with a per-file manifest.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/mods_install.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/team-prs/* lib/constants.sh lib/files.sh
+# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/team-prs/* lib/constants.sh lib/files.sh
 
 setup() {
   load 'test_helper'
@@ -14,6 +14,8 @@ setup() {
   cp -R "$REPO_ROOT/ai/herdr/app/mods" "$SRC"
   unset HERDR_ENV HERDR_PANE_ID
   narrow_path_to bash
+  BIN="$BATS_TEST_TMPDIR/narrow-bin"
+  UNTRUSTED="$BATS_TEST_TMPDIR/untrusted-app"
 }
 
 teardown() {
@@ -31,6 +33,25 @@ _run() {
     HERDR_APP_MODS_SRC_DIR="$3"
     _herdr_app_install_mods "$2"
   ' _ "$REPO_ROOT" "$APP" "$SRC"
+}
+
+_stub_app() {
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/herdr-app"
+  chmod +x "$BIN/herdr-app"
+}
+
+_run_step() {
+  bash -c '
+    set -e
+    export NO_COLOR=1
+    WORKBENCH_DIR="$1"
+    export WORKBENCH_STABLE_DIR="$1"
+    . "$1/lib/ui.sh"
+    . "$1/ai/herdr/steps.sh"
+    HERDR_APP_MODS_SRC_DIR="$2"
+    HERDR_UNTRUSTED_APP_DIR="$3"
+    step_herdr_app_mods
+  ' _ "$REPO_ROOT" "$SRC" "$UNTRUSTED"
 }
 
 _cksum() {
@@ -101,4 +122,102 @@ _cksum() {
   run _run
   [ "$status" -eq 0 ]
   [ ! -e "$APP/mods/_lib" ]
+}
+
+@test "source file deleted upstream is removed from the target" {
+  run _run
+  [ "$status" -eq 0 ]
+  rm -f "$SRC/team-prs/mod.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [ ! -e "$APP/mods/team-prs/mod.json" ]
+  [ -f "$APP/mods/team-prs/main.js" ]
+  run grep $'^mod.json\t' "$APP/mods/team-prs/.workbench-install"
+  [ "$status" -ne 0 ]
+}
+
+@test "manifest-less identical target is adopted without rewrite" {
+  mkdir -p "$APP/mods/team-prs/_lib"
+  cp "$SRC/team-prs/main.js" "$APP/mods/team-prs/main.js"
+  cp "$SRC/team-prs/mod.json" "$APP/mods/team-prs/mod.json"
+  cp "$SRC/_lib/location.js" "$APP/mods/team-prs/_lib/location.js"
+  before_main=$(_cksum "$APP/mods/team-prs/main.js")
+  run _run
+  [ "$status" -eq 0 ]
+  [ -f "$APP/mods/team-prs/.workbench-install" ]
+  [ "$(_cksum "$APP/mods/team-prs/main.js")" = "$before_main" ]
+  grep -qx $'main.js\t'"$before_main" "$APP/mods/team-prs/.workbench-install"
+  [[ "$output" == *"herdr-app mod team-prs"* ]]
+  [[ "$output" != *"left as is"* ]]
+}
+
+@test "manifest-less different target is left alone with a warning" {
+  mkdir -p "$APP/mods/team-prs"
+  printf '%s\n' 'mine' > "$APP/mods/team-prs/main.js"
+  run _run
+  [ "$status" -eq 0 ]
+  [ "$(cat "$APP/mods/team-prs/main.js")" = "mine" ]
+  [ ! -e "$APP/mods/team-prs/.workbench-install" ]
+  [[ "$output" == *"left as is"* ]]
+}
+
+@test "symlinked target is left alone with a warning" {
+  mkdir -p "$BATS_TEST_TMPDIR/elsewhere" "$APP/mods"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$APP/mods/team-prs"
+  run _run
+  [ "$status" -eq 0 ]
+  [ -L "$APP/mods/team-prs" ]
+  [ "$(readlink "$APP/mods/team-prs")" = "$BATS_TEST_TMPDIR/elsewhere" ]
+  [[ "$output" == *"symlink"* ]]
+  [[ "$output" == *"left as is"* ]]
+}
+
+@test "installer never copies gpui-kit.d.ts or jsconfig.json from source" {
+  printf '%s\n' 'declare const kit: unknown;' > "$SRC/team-prs/gpui-kit.d.ts"
+  printf '%s\n' '{"compilerOptions":{}}' > "$SRC/team-prs/jsconfig.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [ ! -e "$APP/mods/team-prs/gpui-kit.d.ts" ]
+  [ ! -e "$APP/mods/team-prs/jsconfig.json" ]
+  run grep 'gpui-kit.d.ts' "$APP/mods/team-prs/.workbench-install"
+  [ "$status" -ne 0 ]
+  run grep 'jsconfig.json' "$APP/mods/team-prs/.workbench-install"
+  [ "$status" -ne 0 ]
+}
+
+@test "step is a no-op when herdr-app is absent" {
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$APP" ]
+}
+
+@test "untrusted app dir is left untouched" {
+  _stub_app
+  mkdir -p "$UNTRUSTED/mods"
+  printf '%s\n' keep > "$UNTRUSTED/mods/KEEP"
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$UNTRUSTED/mods/KEEP")" = keep ]
+  [ ! -e "$UNTRUSTED/mods/team-prs" ]
+  [ -f "$APP/mods/team-prs/.workbench-install" ]
+}
+
+@test "step prints the key-binding suggestion on first install only" {
+  _stub_app
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'herdr-app: bind a key to open the PR board by adding to keys.json: "<key>": {"command": "tab.new", "args": {"name": "PRs", "mod": "team-prs"}}'* ]]
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'bind a key to open the PR board'* ]]
+}
+
+@test "WORKBENCH_SYNC=true re-run of the step prints nothing" {
+  _stub_app
+  run _run_step
+  [ "$status" -eq 0 ]
+  WORKBENCH_SYNC=true run _run_step
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }

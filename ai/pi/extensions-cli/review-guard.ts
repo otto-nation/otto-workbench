@@ -31,7 +31,13 @@ import {
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { delimiter } from "node:path";
-import { bypassesTheCommitScope, isScratchPath, unscopedTestRun, within } from "./detect.ts";
+import {
+  bypassesTheCommitScope,
+  isScratchPath,
+  unscopedTestRun,
+  verifyWriteAllowed,
+  within,
+} from "./detect.ts";
 
 // No `context` hook prunes the superpowers bootstrap here, though the shape of
 // this extension invites one. The package injects it through its own `context`
@@ -48,6 +54,7 @@ import { bypassesTheCommitScope, isScratchPath, unscopedTestRun, within } from "
 
 export default function (pi: ExtensionAPI) {
   const worktreeDir = process.env.REVIEW_WORKTREE_DIR;
+  const verifyPhase = process.env.REVIEW_VERIFY_PHASE === "1";
   const allowedDirs = [
     ...(worktreeDir ? [worktreeDir] : []),
     ...(process.env.REVIEW_ALLOWED_DIRS ?? "").split(delimiter).filter(Boolean),
@@ -74,9 +81,12 @@ export default function (pi: ExtensionAPI) {
 
     if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
       summary = event.input.path;
-      const permitted =
-        allowedDirs.some((dir) => within(dir, event.input.path)) ||
-        isScratchPath(event.input.path);
+      // Process writes (bash) bypass this path gate, which is why
+      // fix.containment is the real control on the verify phase.
+      const permitted = verifyPhase && worktreeDir
+        ? verifyWriteAllowed(event.input.path, worktreeDir, allowedDirs)
+        : allowedDirs.some((dir) => within(dir, event.input.path)) ||
+          isScratchPath(event.input.path);
       if (!permitted) {
         // Every allowed root, not just the worktree: a refusal that names one
         // of two permitted directories reads as a bug in the guard.

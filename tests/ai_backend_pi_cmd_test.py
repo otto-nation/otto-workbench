@@ -462,6 +462,26 @@ class TestGuardEnv:
         ))
         assert "REVIEW_ALLOWED_DIRS" not in seen["env"]
 
+    def test_verify_phase_sets_the_verify_flag(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("REVIEW_VERIFY_PHASE", raising=False)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        agent.backend_pi.invoke_fix(agent.backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+            phase="fix_verify",
+        ))
+        assert seen["env"]["REVIEW_VERIFY_PHASE"] == "1"
+
+    def test_fix_phase_does_not_set_the_verify_flag(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("REVIEW_VERIFY_PHASE", raising=False)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        agent.backend_pi.invoke_fix(agent.backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+            phase="fix",
+        ))
+        assert "REVIEW_VERIFY_PHASE" not in seen["env"]
+
 
 class TestPreflight:
     def test_vertex_quota_is_not_its_config_surface(self, monkeypatch):

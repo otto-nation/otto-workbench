@@ -447,3 +447,34 @@ _scratch() {
     "$REPO_ROOT/ai/lib/agent/backend_pi.py"
   [ "$status" -eq 0 ]
 }
+
+# _verify_write PATH WORKTREE [ALLOWED...] — prints yes/no.
+_verify_write() {
+  local path="$1" worktree="$2"
+  shift 2
+  run node --input-type=module -e "
+    const { verifyWriteAllowed } = await import('$REPO_ROOT/ai/pi/extensions-cli/detect.ts');
+    const path = process.argv[1];
+    const worktree = process.argv[2];
+    const allowed = process.argv.slice(3);
+    process.stdout.write(verifyWriteAllowed(path, worktree, allowed) ? 'yes' : 'no');
+  " -- "$path" "$worktree" "$@"
+}
+
+@test "review-guard: verify mode refuses a worktree write" {
+  _verify_write /tmp/wt/src.py /tmp/wt /tmp/wt /tmp/reviews
+  [ "$status" -eq 0 ]
+  [ "$output" = no ]
+}
+
+@test "review-guard: verify mode allows the tracking file outside the worktree" {
+  _verify_write /tmp/reviews/verify-tracking-1.md /tmp/wt /tmp/wt /tmp/reviews
+  [ "$status" -eq 0 ]
+  [ "$output" = yes ]
+}
+
+@test "review-guard: verify mode allows a scratch path" {
+  _verify_write /tmp/out.txt /tmp/wt /tmp/wt
+  [ "$status" -eq 0 ]
+  [ "$output" = yes ]
+}

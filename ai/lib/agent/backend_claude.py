@@ -222,7 +222,8 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # same hole the Pi pattern had until GIT_WRITE_SUBCOMMANDS started reaching past
 # global flags, and one that cannot be closed here because the matcher grammar
 # has no way to express "any flags, then this subcommand". What holds on this
-# backend is the fix templates' prose and the engine committing for the agent.
+# backend is the fix templates' prose, the engine committing for the agent,
+# and — for ``git -C . commit`` — the HEAD-moved refusal in fix.engine._land.
 # Upgrade if Claude Code grows a regex or argv-aware permission matcher.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",
@@ -242,13 +243,23 @@ FIX_DENIED_TOOLS = ",".join((
     "Bash(git am:*)",
 ))
 
+# Edit/Write on the verify phase only. The fix agent needs both. Process writes
+# (Bash, a suite) bypass this, which is why fix.containment is the real control.
+_VERIFY_DENIED_TOOLS = ",".join((FIX_DENIED_TOOLS, "Edit", "Write"))
+
+
+def _fix_denied_tools(inv: AgentInvocation) -> str:
+    if inv.phase == str(Phase.FIX_VERIFY):
+        return _VERIFY_DENIED_TOOLS
+    return FIX_DENIED_TOOLS
+
 
 def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
     add_dir_args = []
     for d in inv.add_dirs:
         add_dir_args += ["--add-dir", d]
     cmd = [
-        *_base_cmd(), "--disallowedTools", FIX_DENIED_TOOLS,
+        *_base_cmd(), "--disallowedTools", _fix_denied_tools(inv),
         "--output-format", "stream-json", *add_dir_args,
     ]
     if inv.max_turns is not None:

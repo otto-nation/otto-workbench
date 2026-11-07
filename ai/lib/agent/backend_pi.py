@@ -66,6 +66,7 @@ import agent.usage
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
+from agent.review_guard_env import apply_guard_env as _guard_env
 from agent.models import PhaseModels
 from agent.pi_binary import PiSpawn, PiUnresolvable
 from agent.pi_models import ModelNotConfigured, ModelNotServed, not_served_message
@@ -152,32 +153,8 @@ REVIEW_EXTENSION = (
     Path(__file__).resolve().parent.parent.parent
     / "pi" / "extensions-cli" / "review-guard.ts"
 )
-# The names review-guard.ts gates on. It fail-opens when the first is absent, so
-# an invocation that forgets them is an ungated session rather than an error.
-ENV_REVIEW_WORKTREE_DIR = "REVIEW_WORKTREE_DIR"
-ENV_REVIEW_ALLOWED_DIRS = "REVIEW_ALLOWED_DIRS"
-
-
-def _guard_env(inv: AgentInvocation) -> dict[str, str]:
-    """The subprocess environment, with the review guard's roots added.
-
-    Set here rather than in the review pipeline because this is where the
-    extension is attached: every caller that gets the guard gets its bounds with
-    it, including the fix pass and the eval harness.
-
-    ``inv.env`` is a complete mapping when set, so it is extended rather than
-    merged over os.environ — the eval fixtures put recording shims on PATH and
-    inheriting the real environment behind them would defeat that.
-    """
-    env = agent_env(inv)
-    env[ENV_REVIEW_WORKTREE_DIR] = inv.cwd
-    # The review document lives under ~/.local/state/workbench/reviews/, which is
-    # outside the worktree by design. Gating on the worktree alone would refuse
-    # the one write every phase is dispatched to make.
-    extra = [d for d in inv.add_dirs if d]
-    if extra:
-        env[ENV_REVIEW_ALLOWED_DIRS] = os.pathsep.join(extra)
-    return env
+# review-guard.ts fail-opens when REVIEW_WORKTREE_DIR is absent; apply_guard_env
+# is what sets it, plus REVIEW_VERIFY_PHASE for the verify gate only.
 
 
 def _spawn_env(inv: AgentInvocation) -> dict[str, str]:

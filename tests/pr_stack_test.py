@@ -131,21 +131,35 @@ def test_a_merge_tree_error_is_unknown(monkeypatch, tmp_path):
 # ── load_graph's GitHub reads ───────────────────────────────────────────────
 
 
-def test_load_graph_reads_open_prs_and_tolerates_no_stacks_api(monkeypatch, tmp_path):
-    pages = [[{"number": 1, "title": "t", "html_url": "u", "draft": False,
-               "head": {"ref": "a"}, "base": {"ref": "main"}}]]
+def _load_graph(monkeypatch, tmp_path, stacks):
+    prs = [[{"number": n, "title": "t", "html_url": "u", "draft": False,
+             "head": {"ref": f"b{n}"}, "base": {"ref": "main"}} for n in (1, 2)]]
 
     def fake(endpoint, **kw):
-        if endpoint.endswith("/stacks"):
-            return None
-        return pages
+        return stacks if "/stacks" in endpoint else prs
 
     monkeypatch.setattr(pr.stack.gh.client, "api_json", fake)
     monkeypatch.setattr(pr.stack, "health", lambda cwd, b, p: Health.UP_TO_DATE)
     monkeypatch.setattr(pr.stack.git.topology, "stack_parent", lambda **kw: "")
     monkeypatch.setattr(pr.stack.git.topology, "default_branch", lambda cwd=None: "main")
-    g = pr.stack.load_graph("o/r", str(tmp_path))
-    assert [(n.pr, n.branch) for n in g.nodes] == [(1, "a")]
+    return pr.stack.load_graph("o/r", str(tmp_path))
+
+
+def test_load_graph_reads_open_prs_and_tolerates_no_stacks_api(monkeypatch, tmp_path):
+    g = _load_graph(monkeypatch, tmp_path, None)
+    assert [(n.pr, n.branch) for n in g.nodes] == [(1, "b1"), (2, "b2")]
+
+
+def test_load_graph_ignores_closed_native_stacks(monkeypatch, tmp_path):
+    members = [{"number": 1}, {"number": 2}]
+    closed = [{"open": False, "number": 9, "pull_requests": members}]
+    n2 = _node(_load_graph(monkeypatch, tmp_path, [closed]), 2)
+    assert n2.parent_source is not ParentSource.NATIVE
+    assert n2.stack_number is None
+
+    opened = [{"open": True, "number": 9, "pull_requests": members}]
+    n2 = _node(_load_graph(monkeypatch, tmp_path, [opened]), 2)
+    assert (n2.parent, n2.parent_source, n2.stack_number) == (1, ParentSource.NATIVE, 9)
 
 
 # ── the command ─────────────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
 """The repo's open PRs as a stack graph: who is stacked on whom, and how healthy each link is.
 
-Parent authority, in order: GitHub's native stacks where the API exists (a
-404 means the feature is off for this repo and is not an error); the PR's base
-branch when another open PR owns that branch; `git.topology.stack_parent` for a
-PR based on the trunk whose history says otherwise; else the trunk.
+Parent authority, in order: GitHub's open native stacks where the API exists (a
+404 means the feature is off for this repo and is not an error; only open stacks
+count); the PR's base branch when another open PR owns that branch;
+`git.topology.stack_parent` for a PR based on the trunk whose history says
+otherwise; else the trunk.
 
 Health is read from git against `origin/<branch>` refs, never from GitHub:
 `up-to-date` when the child contains its parent, `needs-rebase` when the
@@ -188,6 +189,8 @@ class _NativeStacks:
 
 
 def _ingest_stack(stack: dict, parent: dict[int, int], number: dict[int, int]) -> None:
+    if not stack.get("open"):
+        return
     members = [m["number"] for m in stack.get("pull_requests", [])]
     for below, above in zip(members, members[1:]):
         parent[above] = below

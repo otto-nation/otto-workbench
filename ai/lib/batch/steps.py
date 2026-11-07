@@ -33,7 +33,7 @@ from batch.model import Step
 
 def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
               wait: bool = False, fork_point: str = "",
-              focus: Sequence[str] = ()) -> list[str]:
+              focus: Sequence[str] = (), ai: bool = True) -> list[str]:
     """The child process for one step. Every step runs drafted — nothing here pushes
     or posts — because publishing is the batch's own decision, made once per item
     against the tree.
@@ -45,9 +45,15 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
     A stacked child's rebase whose parent was rewritten in this run passes
     `--fork-point` so only the child's unique commits replay; never `--force`.
     Only the review step takes *focus*.
+
+    *ai* defaults True (v1, until PR 7). False drops `--fix` from rebase and CI;
+    the CLI's default run passes False. Comments and review argv stay as they are
+    (the scheduler never spawns a non-AI comments step; review is AI).
     """
     if step is Step.REBASE:
-        argv = [pr_bin, "rebase", "--fix", "--no-push"]
+        argv = [pr_bin, "rebase", "--no-push"]
+        if ai:
+            argv.insert(2, "--fix")
         if fork_point:
             argv += ["--fork-point", fork_point]
     elif step is Step.CI:
@@ -56,7 +62,9 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
         # (and with it ci-check fetches nothing), and --head-sha because after
         # a drafted rebase local HEAD is a commit GitHub has no runs for.
         ci_bin = str(Path(pr_bin).with_name("ci-check"))
-        argv = [ci_bin, "--fix", "--no-rebase"]
+        argv = [ci_bin, "--no-rebase"]
+        if ai:
+            argv.insert(1, "--fix")
         if remote_sha:
             argv += ["--head-sha", remote_sha]
         if wait:

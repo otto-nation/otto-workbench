@@ -1,0 +1,119 @@
+"""pr batch run --with-ai / --with-review / default schema.
+
+Revert: drop each parser check; drop the schema flip in _start_run.
+"""
+
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = REPO_ROOT / "ai" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+import batch.model  # noqa: E402
+import batch.plan  # noqa: E402
+import batch.scheduler  # noqa: E402
+import cli.pr  # noqa: E402
+import cli.pr_batch  # noqa: E402
+from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
+from batch_session_support import stops_at  # noqa: E402
+
+BIN_DIR = REPO_ROOT / "ai" / "bin"
+
+
+def _main(argv):
+    try:
+        return cli.pr.main(list(argv), bin_dir=BIN_DIR)
+    except SystemExit as exc:
+        return exc.code
+
+
+def _plan_all(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER}),
+            PlanRow("o/r", "/r", 2, "t", "b2", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    return rows
+
+
+def test_default_run_is_schema_2_without_ai_or_review(monkeypatch):
+    _plan_all(monkeypatch)
+    seen = {}
+
+    def fake_run(self):
+        seen["steps"] = [s.value for s in self.run.steps]
+        seen["with_ai"] = self.run.with_ai
+        seen["schema"] = self.run.schema_version
+        return stops_at(batch.model.RunStatus.DONE)(self)
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert seen["steps"] == ["rebase", "ci", "comments"]
+    assert seen["with_ai"] == []
+    assert seen["schema"] == 2
+
+
+def test_steps_review_without_with_review_is_exit_2(monkeypatch, capsys):
+    _plan_all(monkeypatch)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "rebase,review"]) == 2
+    assert "--with-review" in capsys.readouterr().err
+
+
+def test_with_review_adds_review(monkeypatch):
+    _plan_all(monkeypatch)
+    seen = {}
+
+    def fake_run(self):
+        seen["steps"] = [s.value for s in self.run.steps]
+        return stops_at(batch.model.RunStatus.DONE)(self)
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
+    assert seen["steps"] == ["rebase", "ci", "comments", "review"]
+
+
+def test_select_review_adds_review(monkeypatch):
+    _plan_all(monkeypatch)
+    seen = {}
+
+    def fake_run(self):
+        seen["steps"] = [s.value for s in self.run.steps]
+        seen["items"] = [(i.key, [s.step.value for s in i.steps
+                                  if s.status is batch.model.StepStatus.PENDING])
+                         for i in self.run.items]
+        return stops_at(batch.model.RunStatus.DONE)(self)
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--select", "o/r#2=review"]) == 0
+    assert "review" in seen["steps"]
+    assert seen["items"] == [("o/r#2", ["review"])]
+
+
+def test_with_ai_review_is_exit_2(monkeypatch, capsys):
+    _plan_all(monkeypatch)
+    assert _main(["batch", "run", "--checkout", "/r", "--with-ai=review"]) == 2
+    assert "--with-review" in capsys.readouterr().err
+
+
+def test_auto_publish_keeps_schema_1(monkeypatch):
+    _plan_all(monkeypatch)
+    seen = {}
+
+    def fake_run(self):
+        seen["schema"] = self.run.schema_version
+        seen["with_ai"] = self.run.with_ai
+        return stops_at(batch.model.RunStatus.DONE)(self)
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--auto-publish", "rebase"]) == 0
+    assert seen["schema"] == 1
+    assert seen["with_ai"] is None
+
+
+def test_auto_publish_with_ai_is_exit_2(monkeypatch, capsys):
+    _plan_all(monkeypatch)
+    assert _main(["batch", "run", "--checkout", "/r",
+                  "--auto-publish", "rebase", "--with-ai=ci"]) == 2
+    assert "--with-ai" in capsys.readouterr().err

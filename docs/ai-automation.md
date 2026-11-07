@@ -777,13 +777,13 @@ command as taking no target, or give it a delegate to read.
 
 ### pr batch
 
-`pr batch` rebases, CI-fixes, addresses comments on and self-reviews your open
-PRs. Every step is a child `pr` (CI: `ci-check`) in a new session with stdin
-closed, and every step runs drafted — the batch is the only thing that pushes.
+`pr batch` rebases, checks CI and notes comments on your open PRs. AI and
+review are opt-in. Every step is a child `pr` (CI: `ci-check`) in a new
+session with stdin closed, and runs drafted — the batch is the only publisher.
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
-pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run_summary
+pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review]
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
 pr batch next [RUN_ID]                   # only what needs action (JSON)
@@ -796,25 +796,25 @@ pr batch resolve RUN_ID DECISION_ID --action publish|force-publish --dry-run  # 
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
 
-`pr batch run --focus` is forwarded to every review step and replayed by `pr batch resume` (`--steps` may only narrow; it does not make a review step needed; open decisions on excluded steps still stand).
+`--focus` is forwarded to every review step and replayed by `resume` (`--steps` only narrows).
 
-Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
-needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
+Default steps are `rebase`, `ci`, `comments` (`review` needs `--with-review`),
+each only where needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
 step is still planned into the run when its saved `pr` state owes a closeout,
-but only when `comments` is one of the run's steps and there is no `--select`.
-It is queued and gets a worktree like any other item. `rebase` is needed
+but only when `comments` is one of the run's steps and there is no `--select`. It is queued and gets a worktree like any other item. `rebase` is needed
 when the branch is behind its PR's base, from fetched objects (a run keeps them
 in `refs/pr-batch/`; GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed). `comments` is needed when `pr comments` would find something to answer (`pr.owed_feedback`): threads, review bodies or PR comments.
-`ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
-`pr ci`) when the rollup failed, with `--wait` if it was still running; rate-limit-only infra is rerun once (`gh run rerun --failed`) and re-waited. Fork
-heads skip both. A stacked PR waits for its base's publish; `resume` retries `stacked_on` once that base is terminal,
-rebasing from `--fork-point` merge-base(parent pre-rebase head, child); `rebase_refused` offers `rebase-from-fork-point`. One fetching rebase or CI step per
-repo at a time (a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
-its own paused replay or restoring unstaged generated files. A mise toml is trusted on assign only when its bytes match the default branch.
+`ci` runs `ci-check --no-rebase --head-sha <planned remote head>` (not `pr ci`)
+when the rollup failed, with `--wait` if still running; `--fix` and the rate-limit
+rerun only under `--with-ai=ci`. Fork heads skip both. A stacked PR waits for
+its base; `resume` retries `stacked_on` once that base is terminal, rebasing from
+`--fork-point`. One fetching rebase or CI step per repo at a time. No start in a
+dirty worktree except a rebase resuming its paused replay or restoring generated files.
 
-An item that closes with drafted work, an owed closeout (`pr status`'s `⚠ closeout owed`),
-or local commits the planned head lacks (`unpublished`, never auto-published) opens one
-`publish` decision. Publish fetches the branch and refuses (`failed`) with `wrong_branch`,
+A default run never opens a decision; items end `done` or `needs_session` with
+`findings` (`batch/findings.py`), shown by `pr batch report`. `--auto-publish`
+runs keep the decision lifecycle below. An item that closes with drafted work,
+an owed closeout, or unpublished local commits opens one `publish` decision. Publish fetches the branch and refuses (`failed`) with `wrong_branch`,
 `fetch_failed`, `remote_moved`, `not_comparable`, `not_incorporated`, `not_incorporated_remote`,
 or `drafted_dropped` (see `batch.publish`). Otherwise it fast-forwards with
 `pr push --expect <planned head>`, or force-pushes with
@@ -868,7 +868,7 @@ A `failed` decision's `reason` is one of the classified reasons listed in
 
 A failed step names its `log`, plus `session_log` when a review left one. A failed publish command names its `logs/<owner>__<repo>-<pr>-publish-<n>.log` and keeps the line that showed the reason as `detail` (absent for `error`). A publish refusal runs no command, so it has no log; its `detail` says why.
 
-Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` that settles is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`, plus report_path.
+Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`; `finding_created` carries `run`, `item`, `reason`, `step`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` that settles is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`, plus report_path.
 
 A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues a waiting or interrupted run; a recorded cancel is final and resume refuses it. `open-chat` is UI-only.
 

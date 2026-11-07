@@ -88,7 +88,7 @@ def test_run_skips_a_pr_held_by_repo_key(monkeypatch, capsys):
         return RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
     captured = capsys.readouterr()
     assert seen["items"] == ["o/r#2"]
     err = captured.err
@@ -118,7 +118,7 @@ def test_run_skips_a_pr_held_by_label_when_the_seeded_item_has_no_key(
         return RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
     assert seen["items"] == []
     assert "skipping O/R#1" in capsys.readouterr().err
 
@@ -136,7 +136,7 @@ def test_run_does_not_skip_a_pr_held_only_by_a_finished_run(monkeypatch):
         return RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
     assert seen["items"] == ["o/r#1"]
 
 
@@ -153,5 +153,5 @@ def test_run_does_not_skip_a_pr_whose_item_is_already_terminal(monkeypatch):
         return RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
     assert seen["items"] == ["o/r#1"]

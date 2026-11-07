@@ -131,7 +131,7 @@ def test_a_run_names_itself_on_the_batch_lock(monkeypatch, tmp_path):
         return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", str(repo)]) == 0
+    assert _main(["batch", "run", "--checkout", str(repo), "--with-review"]) == 0
     assert seen["record"]["run"] == batch.store.latest_run_id()
 
 
@@ -173,7 +173,7 @@ _HARNESS = textwrap.dedent("""\
         return batch.plan.Plan("me", [])
 
     batch.plan.build_run_plan = build_run_plan
-    sys.exit(cli.pr.main(["batch", "run", "--checkout", repo],
+    sys.exit(cli.pr.main(["batch", "run", "--checkout", repo, "--with-review"],
                          bin_dir=pathlib.Path(bin_dir)))
 """)
 
@@ -232,7 +232,7 @@ def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
         return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", str(repo)]) == 0
+    assert _main(["batch", "run", "--checkout", str(repo), "--with-review"]) == 0
     assert seen["held"] == [True, True]
     assert not core.run_lock.is_held(_target(repo, "feat/a"))
 
@@ -267,7 +267,8 @@ def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
         return status
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", drop_one_then_drive)
-    assert _main(["batch", "run", "--checkout", str(repo)]) == 10
+    assert _main(["batch", "run", "--checkout", str(repo),
+                  "--with-review", "--auto-publish", "rebase"]) == 10
     assert seen["before"] == [True, True]
     assert seen["status"] is batch.model.ItemStatus.DROPPED
     assert seen["after"] == [False, True]
@@ -311,7 +312,7 @@ def test_run_is_refused_whole_when_one_item_is_being_worked_on(monkeypatch, tmp_
     with live_pid() as pid, held_elsewhere(
             _target(repo, "feat/b") / core.run_lock.LOCK_FILE,
             {"pid": pid, "command": "pr fix", "started": "t0"}):
-        code = _main(["batch", "run", "--checkout", str(repo)])
+        code = _main(["batch", "run", "--checkout", str(repo), "--with-review"])
     assert code == 1
     assert driven == []
     assert batch.store.latest_run_id() is None
@@ -402,7 +403,7 @@ def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", [row]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(batch.model.RunStatus.DONE))
-    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
     assert "cannot name the pr target of o/r#1" in capsys.readouterr().err
 
 
@@ -428,7 +429,8 @@ _HOLDING_HARNESS = textwrap.dedent("""\
         return batch.model.RunStatus.DONE
 
     batch.scheduler.Scheduler.run_until_blocked = run_until_blocked
-    sys.exit(cli.pr.main(["batch", "run", "--checkout", repo], bin_dir=pathlib.Path(bin_dir)))
+    sys.exit(cli.pr.main(["batch", "run", "--checkout", repo, "--with-review"],
+                         bin_dir=pathlib.Path(bin_dir)))
 """)
 
 

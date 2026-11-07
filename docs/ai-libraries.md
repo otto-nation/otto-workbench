@@ -6491,8 +6491,10 @@ The whole command text is scanned, including non-write statements — a
 deliberate over-refusal, so a reference sitting next to a write cannot slip
 through unread. Every statement also contributes ``cat`` operands, ``<``
 input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
-Redirections are read with one grammar: an fd-prefixed heredoc or here-string
-names no file, and ``--body-file <(cmd)`` names none either.
+Redirections are read with one grammar, ``gh.shell_wrappers.REDIRECT``: an
+fd-prefixed heredoc or here-string names no file, ``--body-file <(cmd)`` names
+none either, and ``<`` inputs are read from the raw statement so a redirect
+before the program (``< notes.md gh …``) is scanned too.
 
 ### gh/owner_hooks.py
 
@@ -6651,10 +6653,11 @@ either override.
 How a command line splits into statements the way bash reads it.
 
 Heredoc bodies are dropped, quoting is honoured, and the operators ``;``,
-``&``, ``|``, ``(``, ``)`` and a newline end a statement. ``segments`` keeps
-which statements pipe into the next one; ``split_statements`` is the same
-split as plain words. Imports nothing from ``gh``: the shape classifier and
-the content scanner both build on it.
+``&``, ``|``, ``(``, ``)`` and a newline end a statement. An ``&`` or ``|``
+that belongs to a redirect operator (``2>&1``, ``&>x``, ``>|``) stays part of
+its word. ``segments`` keeps which statements pipe into the next one;
+``split_statements`` is the same split as plain words. Imports nothing from
+``gh``: the shape classifier and the content scanner both build on it.
 
 Only ``<<-`` lets a heredoc terminator be indented. Accepting indentation for
 a plain ``<<`` would end the body early on a line that happens to be the

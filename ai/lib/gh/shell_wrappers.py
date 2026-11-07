@@ -217,10 +217,37 @@ def basename(word: str) -> str:
     return word.rsplit("/", 1)[-1]
 
 
-def lift_assignments(words: Sequence[str], env: dict[str, str]) -> int:
-    """Move leading ``NAME=value``/``NAME+=value`` words into *env*; return the first other index."""
+# One redirection word: an fd number or `&`, bash's operator (longest first),
+# then the operand when it is glued on. A `<(`/`>(` is a process substitution.
+REDIRECT = re.compile(r"(?:\d+|&)?(<<<|<<-|<<|<&|<>|<|>>|>\||>&|>)(?!\()(.*)", re.DOTALL)
+
+
+def redirect_span(words: Sequence[str], i: int) -> int:
+    """How many words the redirection at *words[i]* takes: 0, 1 (operand glued on), or 2."""
+    found = REDIRECT.fullmatch(words[i])
+    if found is None:
+        return 0
+    return 1 if found.group(2) or i + 1 >= len(words) else 2
+
+
+def skip_redirects(words: Sequence[str]) -> int:
+    """Index of the first word of *words* that is not a leading redirection or its operand."""
     i = 0
-    while i < len(words) and ASSIGNMENT.match(words[i]):
+    while i < len(words) and (span := redirect_span(words, i)):
+        i += span
+    return i
+
+
+def lift_assignments(words: Sequence[str], env: dict[str, str]) -> int:
+    """Move leading ``NAME=value``/``NAME+=value`` words into *env*, skipping leading redirections; return the first other index."""
+    i = 0
+    while i < len(words):
+        span = redirect_span(words, i)
+        if span:
+            i += span
+            continue
+        if not ASSIGNMENT.match(words[i]):
+            break
         name, _, value = words[i].partition("=")
         env[name.removesuffix("+")] = value
         i += 1
@@ -357,6 +384,7 @@ def peel(env: Mapping[str, str], words: Sequence[str]) -> Peeled:
     unset: set[str] = set()
     words = tuple(words)
     while words and basename(words[0]) in WRAPPERS:
+        words = (words[0], *words[1:][skip_redirects(words[1:]):])
         spec = WRAPPERS[basename(words[0])]
         options = parse_options(spec, words[1:])
         if options is None or options.names() & spec.opaque:

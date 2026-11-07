@@ -24,3 +24,12 @@ def test_split_statements_is_segments_without_the_links():
     assert gh.shell_lex.split_statements(command) == [
         ["cd", "x"], ["gh", "pr", "comment", "1", "--body", "a; b"], ["cat"], ["ls"],
     ]
+
+
+def test_a_redirect_operator_holding_amp_or_bar_stays_one_word():
+    assert gh.shell_lex.split_statements("cat 2>&1 a.md | gh x") == [
+        ["cat", "2>&1", "a.md"], ["gh", "x"]]
+    for operator in (">&2", "<&3", "&>/dev/null", "&>>log", ">| o"):
+        words = gh.shell_lex.split_statements(f"cat {operator} a.md | gh x")
+        assert words == [["cat", *operator.split(), "a.md"], ["gh", "x"]], operator
+    assert gh.shell_lex.split_statements("a |& b") == [["a"], ["b"]]

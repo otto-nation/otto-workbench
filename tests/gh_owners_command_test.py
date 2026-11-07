@@ -242,3 +242,22 @@ def test_check_command_refuses_a_pwd_body_path_after_cd(github_owners, tmp_path,
     without_cd = gh.owners.check_command(
         f"{_WRITE} --body-file $PWD/sub/notes.md", str(tmp_path))
     assert not without_cd.ok and "me/lib#12" in without_cd.reason
+
+
+@pytest.mark.parametrize("prefix", [
+    "</dev/null ", ">x ", "2>/dev/null ", "FOO=1 2>&1 ", "sudo 2>/dev/null ",
+])
+def test_check_command_refuses_a_write_behind_a_leading_redirect(
+        github_owners, tmp_path, prefix):
+    github_owners({"work": ["otto-nation"]})
+    verdict = gh.owners.check_command(
+        f"{prefix}gh issue comment 1 -R stranger/lib --body hi", str(tmp_path))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+def test_check_command_refuses_a_cross_ref_cat_after_fd_dup(github_owners, tmp_path):
+    github_owners({"work": ["otto-nation"], "personal": ["me"]})
+    (tmp_path / "notes.md").write_text("see me/lib#12\n")
+    verdict = gh.owners.check_command(
+        f"cat 2>&1 notes.md | {_WRITE} --body-file -", str(tmp_path))
+    assert not verdict.ok and "me/lib#12" in verdict.reason

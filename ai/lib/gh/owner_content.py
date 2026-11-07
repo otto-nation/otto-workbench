@@ -11,8 +11,10 @@ The whole command text is scanned, including non-write statements — a
 deliberate over-refusal, so a reference sitting next to a write cannot slip
 through unread. Every statement also contributes ``cat`` operands, ``<``
 input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
-Redirections are read with one grammar: an fd-prefixed heredoc or here-string
-names no file, and ``--body-file <(cmd)`` names none either.
+Redirections are read with one grammar, ``gh.shell_wrappers.REDIRECT``: an
+fd-prefixed heredoc or here-string names no file, ``--body-file <(cmd)`` names
+none either, and ``<`` inputs are read from the raw statement so a redirect
+before the program (``< notes.md gh …``) is scanned too.
 """
 
 # doc-group: platform
@@ -25,6 +27,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import gh.shell_wrappers
 import gh.write_shapes
 
 # ceiling-permanent: files larger than MAX_SCAN_BYTES are unread. GitHub
@@ -62,7 +65,7 @@ def command_text(command: str, cwd: str | Path) -> str:
         words = _write_words(statement)
         if gh.write_shapes.statement_is_write(statement):
             chunks.extend(_file_texts(words, cwd))
-        chunks.extend(_file_texts_from(_shell_file_paths(words), cwd))
+        chunks.extend(_file_texts_from(_shell_file_paths(statement, words), cwd))
     return "\n".join(chunks)
 
 
@@ -77,7 +80,7 @@ def relative_body_paths(command: str) -> tuple[str, ...]:
         words = _write_words(statement)
         if gh.write_shapes.statement_is_write(statement):
             paths.extend(_relative_named(words))
-        paths.extend(path for path in _shell_file_paths(words) if _is_relative(path))
+        paths.extend(path for path in _shell_file_paths(statement, words) if _is_relative(path))
     return tuple(paths)
 
 
@@ -189,11 +192,11 @@ def _field_file(value: str) -> str:
     return rest[1:]
 
 
-def _shell_file_paths(words: Sequence[str]) -> tuple[str, ...]:
-    """Paths ``cat``, ``<`` redirects, and ``$(< f)`` / ``$(cat f)`` name."""
+def _shell_file_paths(statement: Sequence[str], words: Sequence[str]) -> tuple[str, ...]:
+    """Paths ``cat`` (in the peeled *words*) and ``<`` redirects (anywhere in *statement*) name, and ``$(< f)`` / ``$(cat f)`` substitutions."""
     paths: list[str] = []
     paths.extend(_cat_operands(words))
-    paths.extend(_redirect_operands(words))
+    paths.extend(_redirected(statement).inputs)
     paths.extend(_subst_operands(words))
     return tuple(paths)
 
@@ -206,20 +209,13 @@ class _Redirected:
     inputs: tuple[str, ...]
 
 
-# One redirection word: an fd number or `&`, bash's operator (longest first),
-# then the operand when it is glued on — `2>/dev/null`, `<notes.md`, `0<<EOF`.
-# `<(` never reaches here whole: the tokenizer splits at the paren, leaving a
-# bare `<` that ends its statement.
-_REDIRECT_RE = re.compile(r"(?:\d+|&)?(<<<|<<-|<<|<|>>|>\||>&|>)(.*)", re.DOTALL)
-
-
 def _redirected(words: Sequence[str]) -> _Redirected:
     """*words* with every redirection and its operand taken out; ``<`` operands kept as inputs."""
     operands: list[str] = []
     inputs: list[str] = []
     i = 0
     while i < len(words):
-        found = _REDIRECT_RE.fullmatch(words[i])
+        found = gh.shell_wrappers.REDIRECT.fullmatch(words[i])
         i += 1
         if found is None:
             operands.append(words[i - 1])
@@ -237,10 +233,6 @@ def _cat_operands(words: Sequence[str]) -> list[str]:
     if not words or Path(words[0]).name != "cat":
         return []
     return [word for word in _redirected(words[1:]).operands if not word.startswith("-")]
-
-
-def _redirect_operands(words: Sequence[str]) -> list[str]:
-    return list(_redirected(words).inputs)
 
 
 def _subst_operands(words: Sequence[str]) -> list[str]:

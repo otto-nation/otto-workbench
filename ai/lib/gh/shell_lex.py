@@ -1,10 +1,11 @@
 """How a command line splits into statements the way bash reads it.
 
 Heredoc bodies are dropped, quoting is honoured, and the operators ``;``,
-``&``, ``|``, ``(``, ``)`` and a newline end a statement. ``segments`` keeps
-which statements pipe into the next one; ``split_statements`` is the same
-split as plain words. Imports nothing from ``gh``: the shape classifier and
-the content scanner both build on it.
+``&``, ``|``, ``(``, ``)`` and a newline end a statement. An ``&`` or ``|``
+that belongs to a redirect operator (``2>&1``, ``&>x``, ``>|``) stays part of
+its word. ``segments`` keeps which statements pipe into the next one;
+``split_statements`` is the same split as plain words. Imports nothing from
+``gh``: the shape classifier and the content scanner both build on it.
 
 Only ``<<-`` lets a heredoc terminator be indented. Accepting indentation for
 a plain ``<<`` would end the body early on a line that happens to be the
@@ -23,6 +24,9 @@ from dataclasses import dataclass
 _OPERATOR_CHARS = ";&|()\n"
 _PIPES = frozenset({"|", "|&"})
 _HEREDOC_OPEN = re.compile(r"(?<!<)<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
+# Private-use stand-ins the masking pass writes so shlex keeps a redirect
+# operator whole; `_unmask` restores them after lexing.
+_AMP, _BAR = "\ue000", "\ue001"
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,39 @@ def _drop_heredoc_bodies(command: str) -> str:
     return "\n".join(kept)
 
 
+def _redirect_char(command: str, i: int) -> str | None:
+    """The stand-in for an unquoted ``&``/``|`` at *i* that belongs to a redirect operator."""
+    before = command[i - 1] if i else ""
+    after = command[i + 1] if i + 1 < len(command) else ""
+    if command[i] == "&" and (before in ("<", ">") or after == ">"):
+        return _AMP
+    if command[i] == "|" and before == ">":
+        return _BAR
+    return None
+
+
+def _mask(command: str) -> str:
+    """*command* with redirect-operator ``&``/``|`` outside quotes made opaque to shlex."""
+    out: list[str] = []
+    quote, i = "", 0
+    while i < len(command):
+        ch = command[i]
+        if ch == "\\" and quote != "'":
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if ch in "'\"" and quote in ("", ch):
+            quote = "" if quote else ch
+        stand_in = _redirect_char(command, i) if ch in "&|" and not quote else None
+        out.append(stand_in or ch)
+        i += 1
+    return "".join(out)
+
+
+def _unmask(token: str) -> str:
+    return token.replace(_AMP, "&").replace(_BAR, "|")
+
+
 def _flush(segments: list[Segment], words: list[str], separator: str) -> None:
     if words:
         segments.append(Segment(tuple(words), separator in _PIPES))
@@ -73,7 +110,7 @@ def segments(command: str) -> list[Segment]:
     unbalanced quote in one must not make the shape unknown. Raises
     ``ValueError`` on an unbalanced quote — a command whose shape is unknown.
     """
-    lexer = shlex.shlex(_drop_heredoc_bodies(command), posix=True, punctuation_chars=_OPERATOR_CHARS)
+    lexer = shlex.shlex(_mask(_drop_heredoc_bodies(command)), posix=True, punctuation_chars=_OPERATOR_CHARS)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
@@ -84,7 +121,7 @@ def segments(command: str) -> list[Segment]:
             _flush(found, words, token)
             words = []
             continue
-        words.append(token)
+        words.append(_unmask(token))
     _flush(found, words, "")
     return found
 

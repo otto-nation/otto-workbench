@@ -18,7 +18,7 @@ if str(LIB_DIR) not in sys.path:
 
 import core.timeouts  # noqa: E402
 
-TIERS = ["QUICK", "LOCAL", "NETWORK", "LAUNCH", "TRANSFER", "REFRESH"]
+TIERS = ["QUICK", "LOCAL", "NETWORK", "LAUNCH", "TRANSFER", "REFRESH", "SYNC"]
 
 
 def test_the_bounded_tiers_ascend():
@@ -50,3 +50,13 @@ def test_the_table_imports_nothing():
     imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
     names = [getattr(n, "module", None) or "" for n in imports]
     assert names == ["__future__"], f"timeouts.py imports {names}"
+
+
+def test_sync_outlasts_every_bounded_step_it_contains():
+    """A sync tier below its parts would cut a healthy run short.
+
+    One run holds two `pi update` refreshes, two catalogue listings, and a
+    git fetch of the extension clones.
+    """
+    parts = 2 * core.timeouts.REFRESH + 2 * core.timeouts.LAUNCH + core.timeouts.TRANSFER
+    assert core.timeouts.SYNC >= parts

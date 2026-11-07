@@ -8,7 +8,7 @@ Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
        otto-workbench config phases [--json] [DIR]
        otto-workbench config context [--pi-listing FILE]
        python3 lib/config_cli.py pi-catalogue
-       python3 lib/config_cli.py run-bounded [--tier NAME] -- CMD...
+       python3 lib/config_cli.py run-bounded [--tier NAME] [--relay] -- CMD...
 
 `get` is the read side for a caller that is not Python.  `ai/lib/
 workbench_config.py` owns which files a key is resolved from; bash has no
@@ -199,13 +199,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     catalogue.set_defaults(run=_pi_catalogue)
     bounded = sub.add_parser(
         "run-bounded",
-        help="run a command under a timeouts tier, discarding its stdout",
+        help="run a command under a timeouts tier; stdout is discarded unless --relay",
     )
     bounded.add_argument(
         "--tier",
         default="REFRESH",
         choices=_BOUNDED_TIERS,
         help="timeouts tier (default: REFRESH)",
+    )
+    bounded.add_argument(
+        "--relay",
+        action="store_true",
+        help="stream the command's output to stderr as it is written",
     )
     bounded.add_argument(
         "cmd",
@@ -368,18 +373,30 @@ def _pi_catalogue(_args: argparse.Namespace) -> int:
 
 
 def _run_bounded(args: argparse.Namespace) -> int:
-    """Run CMD under a timeouts tier, discarding its stdout.
+    """Run CMD under a timeouts tier, discarding its stdout unless ``--relay``.
 
     Success exits 0 with nothing on either stream. A failure, including an
     expired bound, writes a one-line reason to stderr and exits 1. stdin is
     not inherited: ``core.proc.run`` opens the child on ``DEVNULL``. The
     child is its own process group so an expired bound SIGTERMs git/npm and
     SIGKILLs after ``TERM_GRACE``, which is how git drops its locks.
+
+    ``--relay`` copies each line the command writes, from either stream, to
+    stderr as it arrives, so a caller whose log is the only record of a long
+    command sees its warnings instead of a 200-character failure summary.
+
+    A stop signal is answered here, not left to its default: the child is in
+    a session of its own, so an outer bound that SIGTERMs this process would
+    otherwise end it and leave the child running with nothing watching it.
+    The handler's ``SystemExit`` unwinds through ``core.proc.run``, which
+    kills the child's group on the way out.
     """
+    core.proc.install_stop_handler(lambda: None)
     result = core.proc.run(
         list(args.cmd),
         timeout=getattr(core.timeouts, args.tier),
         kill_process_group=True,
+        relay=sys.stderr if args.relay else None,
     )
     if result.ok:
         return 0

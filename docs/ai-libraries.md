@@ -6042,6 +6042,7 @@ actually predicts the right answer is **what bounds the cost**:
 | `LAUNCH` | Starting a heavyweight local process — a Node program that loads its extensions before it answers (`pi --list-models`, `pi --version`), or a short script that starts several interpreters (`mise hook-env` restore) | Flat cost, but the cost is process start-up, which a loaded machine stretches several-fold; a breach still means a hang. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
 | `REFRESH` | A package or self-update that downloads and installs (`pi update`) | Bounded to catch a stall, not to size the work — git fetch and npm install can hang on a dead socket. |
+| `SYNC` | A whole `otto-workbench sync` run by an unattended scheduler | The sum of the bounded refreshes it contains, so a healthy sync is never cut short and a hung one still ends. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add`, `status` | A bound would be wrong, not merely large. |
 
 For QUICK, LOCAL, NETWORK and LAUNCH the cost is the same whatever the

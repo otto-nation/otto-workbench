@@ -24,6 +24,7 @@ actually predicts the right answer is **what bounds the cost**:
 | `LAUNCH` | Starting a heavyweight local process — a Node program that loads its extensions before it answers (`pi --list-models`, `pi --version`), or a short script that starts several interpreters (`mise hook-env` restore) | Flat cost, but the cost is process start-up, which a loaded machine stretches several-fold; a breach still means a hang. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
 | `REFRESH` | A package or self-update that downloads and installs (`pi update`) | Bounded to catch a stall, not to size the work — git fetch and npm install can hang on a dead socket. |
+| `SYNC` | A whole `otto-workbench sync` run by an unattended scheduler | The sum of the bounded refreshes it contains, so a healthy sync is never cut short and a hung one still ends. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add`, `status` | A bound would be wrong, not merely large. |
 
 For QUICK, LOCAL, NETWORK and LAUNCH the cost is the same whatever the
@@ -96,6 +97,19 @@ TRANSFER = 600.0
 # no timeout of its own; an unattended sync that waits forever for a hung
 # socket blocks every later maintenance run.
 REFRESH = 900.0
+
+# One unattended `otto-workbench sync`, run by the maintenance timer. It holds
+# two `pi update` refreshes (REFRESH each) and two `pi --list-models` listings
+# (LAUNCH each); the TRANSFER term is headroom for the steps that touch the
+# network without a bound of their own — extension clone refreshes, tool
+# installs. The bound is their sum: anything smaller cuts a healthy run short,
+# anything much larger lets a hang block every later timer fire for no reason.
+# Written as an expression so it follows the tiers it is built from rather
+# than drifting from them.
+# ceiling: sized from the bounded steps alone, not measured; add a term if
+# sync gains another bounded network step, and re-derive it from real durations
+# once the maintenance log records them.
+SYNC = 2 * REFRESH + 2 * LAUNCH + TRANSFER
 
 # No bound, because a bound would be wrong rather than merely large.
 #

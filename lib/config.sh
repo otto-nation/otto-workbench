@@ -233,8 +233,9 @@ wb_pi_catalogue() {
 # run-bounded`. PYTHON is the interpreter that runs `lib/config_cli.py`;
 # omitted, `python3` on PATH is used. Returns 1, printing why on stderr,
 # when the command fails or the bound expires. The child's stdout is
-# discarded. The default tier is REFRESH; pass `--tier NAME` before `--`
-# to pick another bounded tier.
+# discarded unless `--relay` is passed before `--`, which streams its
+# output to stderr as it is written. The default tier is REFRESH; pass
+# `--tier NAME` before `--` to pick another bounded tier.
 #
 # Callers that wrap this in `_pi_user_scope` (ai/pi/steps.sh) must pass
 # the interpreter they resolved *before* that wrap. `_pi_user_scope`

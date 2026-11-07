@@ -294,3 +294,16 @@ _run_tasks() {
   grep -q '^KillMode=process$' \
     "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.service.template"
 }
+
+@test "the maintenance script bounds fetch and sync by tier and leaves the rest alone" {
+  # The unit's KillMode=process signals only the script, so a unit timeout would
+  # leave a hung git child running; the bound has to be on the command itself.
+  # run-due-auto-tasks must stay bare: a process-group kill would take the
+  # detached agents it spawns down with it. A grep because the tiers cannot be
+  # overridden from the environment, and a hung fetch cannot be staged in a test.
+  local script="$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
+  grep -q 'wb_run_bounded --tier TRANSFER --relay -- git .* fetch origin main' "$script"
+  grep -q 'wb_run_bounded --tier SYNC --relay -- .*otto-workbench" sync' "$script"
+  grep -q '^"\$MAIN_WORKTREE/maintenance/bin/run-due-auto-tasks"' "$script"
+  ! grep -q 'wb_run_bounded.*run-due-auto-tasks' "$script"
+}

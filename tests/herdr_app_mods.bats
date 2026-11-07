@@ -137,10 +137,9 @@ _cksum() {
 }
 
 @test "manifest-less identical target is adopted without rewrite" {
-  mkdir -p "$APP/mods/team-prs/_lib"
-  cp "$SRC/team-prs/main.js" "$APP/mods/team-prs/main.js"
-  cp "$SRC/team-prs/mod.json" "$APP/mods/team-prs/mod.json"
-  cp "$SRC/_lib/location.js" "$APP/mods/team-prs/_lib/location.js"
+  mkdir -p "$APP/mods"
+  cp -R "$SRC/team-prs" "$APP/mods/team-prs"
+  cp -R "$SRC/_lib" "$APP/mods/team-prs/_lib"
   before_main=$(_cksum "$APP/mods/team-prs/main.js")
   run _run
   [ "$status" -eq 0 ]

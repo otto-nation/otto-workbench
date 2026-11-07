@@ -238,34 +238,29 @@ def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
     assert not core.run_lock.is_held(_target(repo, "feat/a"))
 
 
-def _awaiting(run, item, decision_id, kind=batch.model.DecisionKind.DIRTY_WORKTREE):
-    """Park *item* on an open *kind* decision, as a dirty worktree leaves it."""
-    item.status = batch.model.ItemStatus.AWAITING_DECISION
-    run.decisions.append(batch.model.Decision(id=decision_id, item=item.key, step="worktree",
-                                              kind=kind))
-
-
 def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
         monkeypatch, tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_run_plan",
                         lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
-    real_run = batch.scheduler.Scheduler.run_until_blocked
     seen = {}
 
     def drop_one_then_drive(self):
         first, second = self.run.items
-        _awaiting(self.run, first, "d1")
-        _awaiting(self.run, second, "d2")
         self.session.commit()
-        # What a `pr batch resolve` beside a live driver does: it writes the
+        # What `pr batch release` beside a live driver does: it writes the
         # request and reports it queued, and the driver's tick applies it.
+        # Drain+release only — admitting the other item would try to spawn a
+        # worktree this fixture does not have.
         batch.store.write_request(self.run.id, Release(first.key))
         seen["before"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
-        status = real_run(self)
+        self.session.drain(settle=False)
+        self.session.commit()
+        self._release(self.run, frozenset(self._live))
         seen["status"] = self.run.item(first.key).status
         seen["after"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
-        return status
+        self.run.status = batch.model.RunStatus.DONE
+        return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", drop_one_then_drive)
     assert _main(["batch", "run", "--checkout", str(repo),

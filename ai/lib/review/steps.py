@@ -517,6 +517,7 @@ def _phase_synthesis(
             # rewords keeps the prior's `sid`, which `is_new_nit` matches.
             record = drop_out_of_delta_nits(
                 record, job.preflight.delta_files, prior_ids(job)).record
+        # Runs after the out-of-delta nit drop and before disprove; order matters (see review.claims docstring).
         record = review.claims.settle(job, record)
         _post_process_review(
             job, record, skipped_groups=skipped_groups, total_groups=group_count,

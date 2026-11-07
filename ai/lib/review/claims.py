@@ -415,7 +415,7 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     extra = next(ids, None)
     if extra is not None:
         raise RuntimeError(
-            f"expected {len(derived)} CLAIM findings at the end of the "
-            f"visible list; found {len(tail)} with origins {origins}",
+            f"derived_at and tail disagree: {len(derived_at)} indexes, "
+            f"{len(tail)} ids",
         )
     return replace(record, claims=tuple(linked))

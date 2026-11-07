@@ -233,6 +233,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     )
     if _is_incremental(job):
         record = drop_out_of_delta_nits(record, job.preflight.delta_files, prior_ids(job)).record
+    # Runs after the out-of-delta nit drop and before disprove; order matters (see review.claims docstring).
     record = review.claims.settle(job, record)
     if _should_disprove(job, disprove):
         record = _phase_disprove(job, record).record

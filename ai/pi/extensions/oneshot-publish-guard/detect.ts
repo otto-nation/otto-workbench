@@ -1,4 +1,5 @@
 import { isGithubWrite, OWNERS_CHECK } from "../_shared/github-writes.ts";
+import { PUBLISHING_TOOLS } from "../upstream-guard/tool-calls.ts";
 import { statements } from "../_shared/statements.ts";
 import { tokenize } from "../_shared/tokenize.ts";
 
@@ -7,7 +8,7 @@ import { tokenize } from "../_shared/tokenize.ts";
  *
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
- * file pulls in nothing but ../_shared, which imports only Node built-ins, so
+ * file pulls in nothing but ../_shared and upstream-guard/tool-calls.ts, which import only Node built-ins, so
  * tests/pi_extensions_oneshot_publish.bats can run it under plain `node`.
  *
  * What counts as publishing is `linear issue create` plus every GitHub write
@@ -46,6 +47,17 @@ function filesLinearIssue(statement: string): boolean {
 export function isPublishing(command: string, ownersCheck: string = OWNERS_CHECK): boolean {
   if (statements(command).some(filesLinearIssue)) return true;
   return isGithubWrite(command, ownersCheck);
+}
+
+/**
+ * True when the Pi tool NAME publishes without going through bash.
+ *
+ * The list is upstream-guard's own (PUBLISHING_TOOLS), so the owner boundary and
+ * this rule cannot disagree about which tools post. Own-property lookup:
+ * `toString` is not a tool.
+ */
+export function isPublishingTool(name: string): boolean {
+  return Object.hasOwn(PUBLISHING_TOOLS, name);
 }
 
 /**

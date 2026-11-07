@@ -79,6 +79,20 @@ _publishes() {
   [ "$output" = true ]
 }
 
+@test "oneshot-publish-guard: the PR comment tools publish, the read tools do not" {
+  run node --input-type=module -e "
+    const { isPublishingTool } = await import('$REPO_ROOT/ai/pi/extensions/oneshot-publish-guard/detect.ts');
+    const names = ['gh_pr_post_comment', 'gh_pr_reply_comment', 'gh_pr_bulk_reply', 'gh_pr_diff', 'gh_pr_context', 'toString', 'bash'];
+    process.stdout.write(names.map((n) => n + '=' + isPublishingTool(n)).join(' '));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "gh_pr_post_comment=true gh_pr_reply_comment=true gh_pr_bulk_reply=true gh_pr_diff=false gh_pr_context=false toString=false bash=false" ]
+}
+
+@test "oneshot-publish-guard: the extension blocks a publishing tool in a one-shot session" {
+  grep -q 'isPublishingTool(event.toolName)' "$REPO_ROOT/ai/pi/extensions/oneshot-publish-guard/index.ts"
+}
+
 @test "oneshot-publish-guard: json and print are oneshot; rpc and tui are not" {
   run node --input-type=module -e "
     const { isOneshotSession } = await import('$REPO_ROOT/ai/pi/extensions/oneshot-publish-guard/detect.ts');

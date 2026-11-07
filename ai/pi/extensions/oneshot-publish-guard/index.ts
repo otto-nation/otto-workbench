@@ -9,6 +9,9 @@
  * followed issue-tracker.md's "Nothing is truly out of scope" and filed
  * anyway. This is the mechanical half.
  *
+ * The Pi tools that post without bash (the PR comment tools) are refused the
+ * same way, by name.
+ *
  * Silent in every other mode. Workbench automation is unaffected because its
  * agents run Pi in rpc mode — `_build_agent_cmd` and `_build_fix_cmd` in
  * ai/lib/agent/backend_pi.py (the argv starts `*pi, "--mode", "rpc", …`). The
@@ -32,14 +35,16 @@ import {
   isToolCallEventType,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { isOneshotSession, isPublishing } from "./detect.ts";
+import { isOneshotSession, isPublishing, isPublishingTool } from "./detect.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     // A missing ctx.mode reads as not one-shot, which fails safe (allows).
     if (!isOneshotSession(ctx.mode)) return;
-    if (!isToolCallEventType("bash", event)) return;
-    if (!isPublishing(event.input.command)) return;
+    const publishes = isToolCallEventType("bash", event)
+      ? isPublishing(event.input.command)
+      : isPublishingTool(event.toolName);
+    if (!publishes) return;
 
     // terminate is left off deliberately, as in the other guards: the agent
     // should carry on with the turn having reported the deferral instead.

@@ -54,6 +54,7 @@ import agent.templates
 import fix.baseline
 import fix.blame
 import fix.containment
+import fix.head_guard
 import fix.leftovers
 import fix.scope
 import fix.suite
@@ -994,7 +995,8 @@ def run(
     if not items:
         return FixRun()
 
-    head_before = git.client.head_sha(cwd=adapter.workdir)
+    head_state = fix.head_guard.read(adapter.workdir)
+    head_before = head_state.sha
     # The pre-agent half of the commit scope, taken at the same moment as the
     # HEAD it is the counterpart of: everything dirty here is somebody else's,
     # and what appears after the agent runs is the pass's own.
@@ -1063,7 +1065,7 @@ def run(
     try:
         return _run_pass(adapter, items, trail=trail, verify=verify, head_before=head_before,
                          dirty_before=dirty_before, baseline_ref=baseline_ref,
-                         pre_pass=pre_pass)
+                         pre_pass=pre_pass, head_state=head_state)
     except (KeyboardInterrupt, SystemExit):
         _interrupted(adapter, dirty_before, head_before, trail)
         raise
@@ -1072,7 +1074,7 @@ def run(
 def _run_pass(
     adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
     verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
-    pre_pass: fix.containment.Snapshot,
+    pre_pass: fix.containment.Snapshot, head_state: fix.head_guard.HeadState,
 ) -> FixRun:
     """`run`'s body once the pass is cleared to start: batch, settle, gate, check, land."""
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
@@ -1170,7 +1172,7 @@ def _run_pass(
         fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
     spec = adapter.landing(settled.outcomes, committed)
-    landed = _land(adapter, spec, head_before, trail)
+    landed = _land(adapter, spec, head_state, trail)
     _stamp(settled.outcomes, head_before, landed.sha)
     fix.leftovers.report(adapter.workdir, fix.leftovers.find(
         adapter.workdir, pre_pass, dirty_before,
@@ -1196,14 +1198,24 @@ def _run_pass(
 
 
 def _land(
-    adapter: FixAdapter, spec: LandSpec, head_before: str, trail: Trail | None,
+    adapter: FixAdapter, spec: LandSpec, head_state: fix.head_guard.HeadState,
+    trail: Trail | None,
 ) -> git.land.LandResult:
     """Commit the pre-suite scope and push it.
 
     ``spec.paths`` is the commit scope computed before the suite ran.
     Containment restored any suite writes, so land stages those names at
     pre-suite content. land itself is unchanged: it still adds by pathspec.
+
+    A branch switch or history rewrite since `head_state` was read refuses the
+    landing (`fix.head_guard`), unless the domain recovers its own commits.
     """
+    found = fix.head_guard.drift(adapter.workdir, head_state)
+    fix.head_guard.report(found, trail)
+    if found.refuses_landing and not spec.recover:
+        return git.land.LandResult(
+            git.land.CommitStatus.COMMIT_FAILED, error=found.message(),
+        )
     return git.land.land(
         adapter.workdir,
         message=fix.suite.with_trailer(spec.message, adapter.suite),
@@ -1211,7 +1223,7 @@ def _land(
         owner_check=gh.owner_hooks.refuse_outgoing,
         trail=trail,
         regen=spec.regen,
-        recover_from=head_before if spec.recover else None,
+        recover_from=head_state.sha if spec.recover else None,
         paths=spec.paths,
         args=spec.args,
     )

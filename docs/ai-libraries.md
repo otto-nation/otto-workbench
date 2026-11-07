@@ -757,6 +757,18 @@ moves to *needs a person*, is recorded that way in state so `--finish` cannot
 republish it, and holds publishing for the round. One the gate could not settle
 goes out with the `Not verified automatically` hedge.
 
+### fix/head_guard.py
+
+Whether HEAD moved under a fix pass, and what that means for landing.
+
+The engine reads HEAD and the branch before the agent runs and compares them
+again just before it lands. A commit made on top is tolerated and recorded,
+because a hand commit made while the agent runs is allowed by contract. A
+branch switch or a history rewrite (reset, rebase, amend) is refused, since
+landing would then commit the pass's scope onto a branch it never worked on or
+on top of history it did not read. A domain that asks to ``recover`` is
+reported, never refused.
+
 ### fix/leftovers.py
 
 Files a fix pass changed that its commit does not hold.

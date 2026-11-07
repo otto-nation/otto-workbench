@@ -226,7 +226,10 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # backend is the fix templates' prose, the engine committing for the agent,
 # and `review.convergence.fix_coverage` declining to cover a fix commit whose
 # parent is not the reviewed commit — which records an out-of-band commit in
-# the review domain but does not prevent one.
+# the review domain but does not prevent one — and the engine refusing to land
+# on a branch switch or history rewrite during the pass (`fix.head_guard`). A
+# commit on top is recorded, not refused, because a hand commit made while the
+# agent runs is tolerated by contract.
 # Upgrade if Claude Code grows a regex or argv-aware permission matcher.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",

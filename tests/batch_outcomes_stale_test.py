@@ -10,8 +10,9 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
-import batch.report  # noqa: E402
-from batch.model import Decision, DecisionKind, Step, StepStatus  # noqa: E402
+import batch.session_report  # noqa: E402
+from batch.model import DecisionKind, Finding, FindingReason, Step, StepStatus  # noqa: E402
+from batch_report_support import make_item, make_run, no_debt  # noqa: E402
 
 ITEM = batch.model.Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="s",
                         worktree="/wt")
@@ -36,11 +37,13 @@ def test_rebase_without_stale_is_done():
     assert r.status is StepStatus.DONE
 
 
-def test_prep_for_stale_says_regenerate_or_undo_never_accept():
-    text = batch.report.prep(
-        Decision(id="d", item="o/r#1", step="rebase", kind=DecisionKind.STEP_REVIEW,
-                 payload={"evidence": [{"kind": "stale", "files": ["a.pb.go"]}]}),
-        ITEM)
-    assert "a.pb.go" in text
-    assert "`undo`" in text
-    assert "never" in text
+def test_stale_session_says_undo_then_regenerate(tmp_path):
+    item = make_item(
+        1, worktree=str(tmp_path), pre_rebase_head="p0",
+        status=batch.model.ItemStatus.NEEDS_SESSION,
+        findings=[Finding(reason=FindingReason.STALE_GENERATED, step="rebase",
+                          files=["a.pb.go"])])
+    entries = batch.session_report.sessions(make_run([item]), closeout=no_debt, tree=None)
+    assert entries and entries[0].findings[0].files == ["a.pb.go"]
+    why = " ".join(c.why for c in entries[0].commands)
+    assert "undo" in why and "regenerate" in why

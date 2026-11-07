@@ -73,7 +73,8 @@ _BOXES: tuple[_Box, ...] = (
          "no behaviour behind it — say that instead, in those words"),
     _Box("declined", FixOutcome.DECLINED,
          "you read the {noun} and it should not be acted on. Replace `<why>` "
-         "with the reason, in one sentence"),
+         "with the reason, in one sentence — required: a decline with no "
+         "reason is handed to a person instead"),
     _Box("needs a person", FixOutcome.NEEDS_HUMAN,
          "the {noun} is real but the call is not yours. Replace `<why>` with "
          "what the decision turns on"),

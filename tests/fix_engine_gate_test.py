@@ -417,6 +417,30 @@ def test_a_decline_with_no_reason_reaches_the_trail(tmp_path, landed, head):
     assert warned[0][3]["items"] == ["i0"]
 
 
+def test_an_unreasoned_decline_is_recorded_as_needs_human(tmp_path, landed, head):
+    """A rejection nobody can weigh is handed to a person, not closed.
+
+    Holds with no trail attached too: the demotion is the record, not the report.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(adapter, run_fix=_answer(adapter, tick="declined"))
+
+    assert [o.outcome for o in run.outcomes] == [FixOutcome.NEEDS_HUMAN]
+    assert "without giving a reason" in run.outcomes[0].reason
+    assert adapter.recorded.outcomes[0].outcome is FixOutcome.NEEDS_HUMAN
+
+
+def test_a_reasoned_decline_stays_declined(tmp_path, landed, head):
+    adapter = StubAdapter(tmp_path, count=1)
+
+    run, _ = _run(adapter, run_fix=_answer(
+        adapter, tick="declined", reason="out of scope here"))
+
+    assert [o.outcome for o in run.outcomes] == [FixOutcome.DECLINED]
+    assert run.outcomes[0].reason == "out of scope here"
+
+
 def test_a_reasoned_decline_is_not_reported_as_unreasoned(tmp_path, landed, head):
     """The negative control: an ordinary decline must not fire the event."""
     adapter = StubAdapter(tmp_path, count=1)

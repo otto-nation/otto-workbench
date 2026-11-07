@@ -28,6 +28,7 @@ class StepStatus(StrEnum):
     RUNNING = "running"
     DONE = "done"
     SKIPPED = "skipped"
+    # classify still sets this; a schema-2 run records findings instead of opening a decision.
     NEEDS_DECISION = "needs_decision"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
@@ -37,6 +38,7 @@ class ItemStatus(StrEnum):
     QUEUED = "queued"
     WAITING_ADMISSION = "waiting_admission"
     RUNNING = "running"
+    # Load-only: schema-2 runs record needs_session instead of opening a decision.
     AWAITING_DECISION = "awaiting_decision"
     READY_TO_PUBLISH = "ready_to_publish"
     DONE = "done"
@@ -47,6 +49,7 @@ class ItemStatus(StrEnum):
 
 class RunStatus(StrEnum):
     RUNNING = "running"
+    # Load-only: schema-2 runs never wait on a person.
     WAITING = "waiting"
     DONE = "done"
     CANCELLED = "cancelled"
@@ -243,7 +246,7 @@ class Item:
     worktree: str = ""
     status: ItemStatus = ItemStatus.QUEUED
     steps: list[StepRecord] = field(default_factory=list)
-    # Comment item ids the operator chose to file as tracking issues at publish.
+    # Load-only: comment item ids a v1 publish decision tracked.
     track: list[str] = field(default_factory=list)
     wait_reason: str = ""
     # Local HEAD moved during this run, so a self-review is owed whatever GitHub's head says.
@@ -262,10 +265,7 @@ class Item:
     pre_rebase_head: str = ""
     # The head a batch publish pushed, or "" when nothing was pushed.
     published_sha: str = ""
-    # The commits the operator has `force-publish`ed past, accumulated across
-    # refusals: one publish can be refused for drafted commits it dropped and
-    # then for remote commits it would drop, and confirming the second must not
-    # unconfirm the first. Cleared once a publish lands.
+    # Load-only: commits a v1 force-publish confirmed past.
     forced: list[str] = field(default_factory=list)
     # The origin key of the item's checkout, recorded at plan time.
     # Empty in runs saved before it existed.
@@ -300,10 +300,12 @@ class Run:
     started_at: str
     steps: list[Step]
     pool: int
+    # Load-only for v1 runs; schema 2 uses auto_publish_ff.
     auto_publish: list[Step]
     status: RunStatus = RunStatus.RUNNING
     trail_root: str = ""
     items: list[Item] = field(default_factory=list)
+    # Load-only: schema-2 runs record findings and never open a decision.
     decisions: list[Decision] = field(default_factory=list)
     # Skip the pre-push hook on publish pushes (`pr batch run --no-verify`).
     no_verify: bool = False

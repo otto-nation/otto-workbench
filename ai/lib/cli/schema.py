@@ -121,20 +121,21 @@ def schema_contracts() -> list[str]:
 
     Derived from the mode table so the error naming them cannot list an
     invocation that no longer serves one. `review` still contributes by mode;
-    `batch` serves version 1 on every subcommand and is listed by the ones that
-    print a document.
+    `batch` is listed by the subcommands that print a document (`plan` serves
+    1, `status`/`next`/`report` serve 2).
     """
     review = [f"{SCRIPT} review {flag}" for flag, mode in cli.review_modes.MODES.items()
               if mode.schema_versions]
-    # `batch` serves version 1 on every subcommand; listed by the subcommands
-    # that print a document, so the refusal names what a consumer can call.
-    batch = [f"{SCRIPT} batch {sub}" for sub in ("plan", "status", "next", "resolve --dry-run")]
+    # `batch plan` still serves version 1; status/next/report serve version 2.
+    batch = [f"{SCRIPT} batch {sub}" for sub in ("plan", "status", "next", "report")]
     return review + batch + [f"{SCRIPT} status", f"{SCRIPT} stack"]
 
 
 def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
-    if command in ("batch", "status", "stack"):
+    if command == "batch":
+        return (1,) if argv and argv[0] == "plan" else (2,)
+    if command in ("status", "stack"):
         return (1,)
     if command != "review":
         return ()

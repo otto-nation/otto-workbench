@@ -32,27 +32,9 @@ refused.
 tracked, or the PR's saved `pr` state says a closeout is owed
 (`batch.plan.closeout_debt`). The last case applies even when there is nothing
 to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
-`--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
-a `not_incorporated_remote` one also lists the remote commits, and the operator
-answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. A `drafted_dropped` one lists
-the drafted commits the branch no longer carries — a hand `reset --hard`, a
-rebase that dropped one, a hand push without it — and is answered by
-cherry-picking them back and retrying, or by `force-publish` past exactly that
-list. A commit whose replay git could not determine is listed too, marked
-unverifiable: the gate fails closed. Confirmations accumulate on the item
-(`Item.forced`), so confirming one refusal never reopens the other.
-
-A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
-of the old lease that the local branch already contains (`remote_fast_forwarded`)
-— the push that follows is a fast-forward and loses nothing.
-
-A branch the operator rebased by hand with `--fork-point` reaches the
-`not_incorporated_remote` refusal too: the commits the fork point skipped are
-the ones listed, and the rebase's start tip stays the one the batch saw before
-the hand rebase (`batch.resolve`, `force`), so `not_incorporated` does not fire
-for it. The lease advances as soon as
-the push lands, so a failure in the replies after it never strands the item.
+`--track-all`. A refusal is a `failed` finding on step `publish` carrying `reason`.
+The lease advances as soon as the push lands, so a failure in the replies after
+it never strands the item.
 """
 
 # doc-group: batch
@@ -131,55 +113,6 @@ class PublishPlan:
     @property
     def ok(self) -> bool:
         return self.refusal is None
-
-
-# A preview carries the diff for a person to read; past this it is cut, and
-# says so, rather than handing a GUI a multi-megabyte string.
-DIFF_LIMIT = 400_000
-
-
-@dataclass(frozen=True)
-class CarriedCommit:
-    sha: str
-    subject: str
-
-
-@dataclass(frozen=True)
-class Carried:
-    """What publishing *tree* would put on the remote, for a person to read first.
-
-    ``commits`` and ``diff`` span the remote tip to the local tip — for a
-    rebased branch that is every commit the force-push replaces the remote
-    with, which is what the push actually does. ``remote_ahead`` counts commits
-    the remote gained since the batch planned from it (``Item.remote_sha``).
-    """
-
-    commits: list[CarriedCommit]
-    diff: str
-    truncated: bool
-    remote_ahead: int
-
-
-def carried(item: Item, tree: TreeState) -> Carried:
-    """The commits, diff and remote drift a publish of *item* over *tree* would carry."""
-    wt = item.worktree
-    commits: list[CarriedCommit] = []
-    diff = ""
-    if tree.local and tree.remote and tree.local != tree.remote:
-        for line in git.client.lines("log", "--format=%H%x09%s",
-                                     f"{tree.remote}..{tree.local}", cwd=wt):
-            sha, _, subject = line.partition("\t")
-            commits.append(CarriedCommit(sha, subject))
-        # `git.client.out` strips trailing whitespace; a diff's last newline is
-        # not part of the preview contract.
-        diff = git.client.out("diff", tree.remote, tree.local, cwd=wt)
-    ahead = 0
-    if item.remote_sha and tree.remote and tree.remote != item.remote_sha:
-        count = git.client.out("rev-list", "--count",
-                               f"{item.remote_sha}..{tree.remote}", cwd=wt)
-        ahead = int(count) if count.isdigit() else 0
-    return Carried(commits=commits, diff=diff[:DIFF_LIMIT],
-                   truncated=len(diff) > DIFF_LIMIT, remote_ahead=ahead)
 
 
 def _cherry_plus(cwd: str, upstream: str, head: str, limit: str = "",
@@ -348,49 +281,6 @@ def _has_staged(wt: str) -> bool:
     if not wt or not Path(wt).is_dir():
         return False
     return git.client.run("diff", "--cached", "--quiet", cwd=wt).returncode == 1
-
-
-def _tracked_clean(wt: str) -> bool:
-    """Whether *wt* has no staged or unstaged changes to tracked files.
-
-    Untracked files are allowed. Unreadable is not clean.
-    """
-    return (git.client.run("diff", "--quiet", cwd=wt).ok
-            and git.client.run("diff", "--cached", "--quiet", cwd=wt).ok)
-
-
-def try_adopt_equivalent_remote(item: Item, tree: TreeState) -> bool:
-    """`git reset --keep` *tree.remote* when every local commit is already on it.
-
-    Tracked files must be clean; untracked files are allowed. Fails closed on a
-    missing worktree, an unreadable comparison, any unique local commit, or a
-    reset that does not land. Does not write the lease — the caller does.
-    """
-    if not tree.fetched or not tree.remote or tree.remote == item.remote_sha:
-        return False
-    wt = item.worktree
-    if not wt or not Path(wt).is_dir() or not _tracked_clean(wt):
-        return False
-    if _cherry_plus(wt, tree.remote, "HEAD") != ():
-        return False
-    return git.client.run("reset", "--keep", tree.remote, cwd=wt).ok
-
-
-def remote_fast_forwarded(item: Item, tree: TreeState) -> bool:
-    """Whether the remote moved forward from the lease to a commit the local branch holds.
-
-    ``lease ⊑ remote ⊑ local``: pushing the local branch over that remote is a
-    fast-forward, so nothing anyone pushed is lost. Fails closed on a fetch that
-    failed, a missing ref, or an ancestry git will not confirm. Does not write
-    the lease — the caller does.
-    """
-    if not (tree.fetched and tree.remote and tree.local and item.remote_sha):
-        return False
-    if tree.remote == item.remote_sha or not item.worktree:
-        return False
-    wt = item.worktree
-    return (git.client.ok("merge-base", "--is-ancestor", item.remote_sha, tree.remote, cwd=wt)
-            and git.client.ok("merge-base", "--is-ancestor", tree.remote, tree.local, cwd=wt))
 
 
 def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> PublishPlan:

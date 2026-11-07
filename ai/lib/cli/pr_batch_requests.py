@@ -1,4 +1,4 @@
-"""Inbox-writing `pr batch` commands: resolve, cancel, and release.
+"""Inbox-writing `pr batch` commands: cancel and release.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 """
@@ -8,19 +8,16 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 from __future__ import annotations
 
 import sys
-from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import batch.inbox
 import batch.plan
 import batch.report
-import batch.resolve
 import batch.store
 import cli.pr_batch_common
-import cli.schema
 import core.report
 from batch.model import FINISHED_RUN, Item, Run
-from batch.requests import Cancel, Decide, Release
+from batch.requests import Cancel, Release
 
 EXIT_OK = batch.report.EXIT_OK
 
@@ -30,11 +27,10 @@ def _unreachable(run_id: str) -> str:
             f"will be applied by the next session to open it")
 
 
-def _deliver(run_id: str, request: Decide | Cancel | Release, bin_dir: Path,
+def _deliver(run_id: str, request: Cancel | Release, bin_dir: Path,
              verb: str) -> batch.inbox.Delivery:
     """`batch.inbox.deliver`, naming on stderr each earlier request the same drain failed."""
-    delivery = batch.inbox.deliver(run_id, request,
-                                   batch.inbox.ApplyContext(pr_bin=str(bin_dir / "pr")),
+    delivery = batch.inbox.deliver(run_id, request, batch.inbox.ApplyContext(),
                                    command=f"pr batch {verb} {run_id}")
     for other in delivery.others:
         if not other.ok:
@@ -53,90 +49,6 @@ def _own_error(run_id: str, delivery: batch.inbox.Delivery) -> str:
         if failed.name == delivery.name:
             return failed.error
     return ""
-
-
-@dataclass(frozen=True)
-class _HolderView:
-    """The queued-resolve `holder` object."""
-
-    role: str | None
-    pid: int
-    command: str
-
-
-def _holder_view(holder: batch.store.Holder | None) -> dict | None:
-    """The queued-resolve `holder` object, or None when the delivery named nobody."""
-    if holder is None:
-        return None
-    return asdict(_HolderView(None if holder.role is None else holder.role.value,
-                              holder.pid, holder.command))
-
-
-def _request(args) -> Decide:
-    return Decide(decision=args.decision_id, action=args.action, reason=args.reason,
-                  body_file=args.body_file, commit=args.commit)
-
-
-def _dry_run(run_id: str, run: batch.store.Run, request: Decide, bin_dir: Path) -> int:
-    """`resolve --dry-run`: the publish plan as JSON, the run untouched, no inbox write."""
-    try:
-        # preview() checks the action first (ResolveError -> usage exit), then
-        # looks up the decision (KeyError -> exit 1); the handlers rely on that order.
-        seen = batch.resolve.preview(run, request, pr_bin=str(bin_dir / "pr"))
-    except KeyError:
-        return cli.pr_batch_common.fail(
-            f"run {run_id} has no decision {request.decision}")
-    except batch.resolve.ResolveError as exc:
-        print(f"pr batch: {exc}", file=sys.stderr)
-        return (cli.schema.EXIT_USAGE
-                if request.action not in batch.resolve.PUBLISH_ACTIONS else 1)
-    plan, debt, carried = seen.plan, seen.closeout, seen.carried
-    core.report.emit_json({
-        "schema_version": batch.report.SCHEMA_VERSION,
-        "decision": request.decision, "action": request.action,
-        "ok": plan.ok, "refusal": plan.refusal.value if plan.refusal else None,
-        "detail": plan.detail, "pushes": plan.pushes, "commands": plan.commands,
-        "refused_commits": plan.commits,
-        "commits": [asdict(c) for c in carried.commits],
-        "diff": carried.diff, "truncated": carried.truncated,
-        "remote_ahead": carried.remote_ahead,
-        "closeout": {**asdict(debt), "owed": debt.owed, "describe": debt.describe()},
-    })
-    return EXIT_OK
-
-
-def cmd_resolve(args, bin_dir: Path) -> int:
-    run_id = args.run_id
-    try:
-        run = batch.store.load(run_id)
-    except batch.store.RunNotFound:
-        return cli.pr_batch_common.fail(f"no run {run_id}")
-    request = _request(args)
-    if args.dry_run:
-        return _dry_run(run_id, run, request, bin_dir)
-    try:
-        delivery = _deliver(run_id, request, bin_dir, "resolve")
-    except batch.store.RunNotFound:
-        return cli.pr_batch_common.fail(f"no run {run_id}")
-    except batch.store.RunUnreachable:
-        return cli.pr_batch_common.fail(_unreachable(run_id))
-    if delivery.queued:
-        result: dict = {"applied": False, "queued": True, "decision": args.decision_id}
-        if view := _holder_view(delivery.holder):
-            result["holder"] = view
-        core.report.emit_json(result)
-        return EXIT_OK
-    error = _own_error(run_id, delivery)
-    if delivery.own is None and not error:
-        error = "the drain did not report this request"
-    applied = delivery.own is not None and not error
-    result = {"applied": applied, "decision": args.decision_id,
-              "open_decisions": len(batch.store.load(run_id).open_decisions())}
-    if error:
-        result["errors"] = [error]
-        print(f"pr batch: {error}", file=sys.stderr)
-    core.report.emit_json(result)
-    return EXIT_OK if applied else 1
 
 
 def ambiguous(given: str | None) -> str | None:

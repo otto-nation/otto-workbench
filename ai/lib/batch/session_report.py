@@ -1,4 +1,4 @@
-"""Per-PR session commands derived from a v1 run's decisions and local `pr` state.
+"""Per-PR session commands derived from findings and stored v1 decisions.
 
 The builder shows; it never writes. Findings come from `Item.findings` plus
 open v1 decisions via `batch.findings`. Commands are argv tuples.
@@ -59,7 +59,7 @@ COMMENT_BEFORE_PUSH = "comment on the PR before pushing: it is not a draft"
 NO_CHECKOUT = "no checkout found"
 PROVIDER_NOTE = "otto-workbench config set issues.provider PROVIDER --project"
 TEAM_NOTE = "otto-workbench config set issues.team TEAM --project"
-_ACTIVE = frozenset({RunStatus.RUNNING, RunStatus.WAITING})
+_ACTIVE = frozenset({RunStatus.RUNNING})
 _SEV_RANK = {Severity.BLOCK: 0, Severity.WAIT: 1, Severity.ACT: 2}
 _CLOSEOUT_ARGV = tuple(shlex.split(CLOSEOUT_COMMAND))
 

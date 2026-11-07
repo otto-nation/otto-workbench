@@ -4,7 +4,7 @@
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
-    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions, cancels and releases waiting to be applied
+    <state_dir>/batch/<run-id>/requests/*.json  the inbox: cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
@@ -69,7 +69,7 @@ import core.run_lock
 import core.serde
 import core.workbench_paths
 from batch.model import FINISHED_RUN, CancelState, Item, Run
-from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Release, Request
+from batch.requests import Cancel, Envelope, Malformed, Outcome, Release, Request
 
 STATE_FILE = "state.json"
 # The cancel sidecar older `pr batch cancel` wrote. `session()` folds it into
@@ -108,7 +108,7 @@ class Role(enum.Enum):
 
     # A scheduler: `pr batch run` or `resume`.
     DRIVER = "driver"
-    # Draining requests with no scheduler: resolve, cancel, the hand-off.
+    # Draining requests with no scheduler: cancel, release, the hand-off.
     APPLIER = "applier"
     # `pr gc` deciding whether to remove a finished run.
     GC = "gc"
@@ -116,7 +116,7 @@ class Role(enum.Enum):
 
 _DOING: dict[Role | None, str] = {
     Role.DRIVER: "driving it",
-    Role.APPLIER: "applying a decision",
+    Role.APPLIER: "applying a request",
     Role.GC: "removing it",
     None: "holding it",
 }
@@ -403,7 +403,7 @@ def _requests_dir(run_id: str) -> Path:
     return run_dir(run_id) / REQUESTS_DIR
 
 
-def write_request(run_id: str, request: Decide | Cancel | Release) -> str:
+def write_request(run_id: str, request: Cancel | Release) -> str:
     """Queue *request* in *run_id*'s inbox and return the file name it was written under.
 
     Names sort by write time, which is the order a drain applies them in, after
@@ -626,17 +626,6 @@ class Session:
             outcome = self._inbox.apply(self._run, envelope)
         self.commit()
         _retire(self._run.id, envelope.name, outcome)
-        self._inbox.report(self._run, outcome)
-        return outcome
-
-    def apply(self, request: Decide | Cancel | Release) -> Outcome:
-        """Apply a request that never sat in the inbox, and report it as a drained one is.
-
-        For a holder that synthesizes requests (the scheduler's auto-publish
-        and stacked retry). Nothing is committed: the holder's next `commit()`
-        persists the effect, as it does for any other change to `run`.
-        """
-        outcome = self._inbox.apply(self._run, Envelope("", request))
         self._inbox.report(self._run, outcome)
         return outcome
 

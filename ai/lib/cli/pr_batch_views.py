@@ -1,4 +1,4 @@
-"""Read-only `pr batch` views: plan, status, next, report, and the report they share.
+"""Read-only `pr batch` views: plan, status, report, and the deprecated next alias.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import batch.live
@@ -24,6 +25,8 @@ import core.serde
 from batch.model import Item, Run
 
 EXIT_OK = batch.report.EXIT_OK
+_NEXT_HINT = ("pr batch next is deprecated and will be removed; "
+              "use pr batch report --format json")
 
 
 def offline(p: argparse.ArgumentParser) -> None:
@@ -44,7 +47,9 @@ def report(run: Run, active: bool, github: dict | None = None,
 
 
 def cmd_status(args) -> int:
-    """`status` and `next`: the report, a projection of it, or what it summarises."""
+    """`status` and the deprecated `next` alias."""
+    if args.command == "next":
+        return cmd_next(args)
     run_id = cli.pr_batch_common.resolve_run_id(args.run_id)
     if not run_id:
         return cli.pr_batch_common.fail("no batch runs yet")
@@ -53,9 +58,6 @@ def cmd_status(args) -> int:
     except batch.store.RunNotFound:
         return cli.pr_batch_common.fail(f"no run {run_id}")
     active = cli.pr_batch_common.is_active(run_id)
-    if args.command == "next":
-        core.report.emit_json(batch.report.next_view(report(run, active, _github(run, args.offline))))
-        return EXIT_OK
     if args.full:
         core.report.emit_json({"schema_version": run.schema_version, "active": active,
                                # Where the run's state.json and logs live, so a
@@ -64,13 +66,22 @@ def cmd_status(args) -> int:
                                "run_dir": str(batch.store.run_dir(run.id)),
                                "run": core.serde.to_dict(run)})
         return EXIT_OK
-    if args.decision:
-        try:
-            core.report.emit_json(batch.report.decision_detail(run, args.decision))
-        except KeyError:
-            return cli.pr_batch_common.fail(f"run {run_id} has no decision {args.decision}")
-        return EXIT_OK
     core.report.emit_json(report(run, active, _github(run, args.offline)))
+    return EXIT_OK
+
+
+def cmd_next(args) -> int:
+    """Deprecated alias of `pr batch report --format json`."""
+    print(_NEXT_HINT, file=sys.stderr)
+    run_id = cli.pr_batch_common.resolve_run_id(args.run_id)
+    if not run_id:
+        return cli.pr_batch_common.fail("no batch runs yet")
+    try:
+        run = batch.store.load(run_id)
+    except batch.store.RunNotFound:
+        return cli.pr_batch_common.fail(f"no run {run_id}")
+    _path, doc = write_report(run, offline=args.offline)
+    core.report.emit_json({**doc, "hint": _NEXT_HINT})
     return EXIT_OK
 
 

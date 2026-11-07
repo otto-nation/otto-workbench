@@ -1,4 +1,4 @@
-"""Drive a run: admit steps, reap them, and stop when only decisions remain; a schema-2 run records findings instead and always settles."""
+"""Drive a run: admit steps, reap them, and record findings; the run always settles."""
 
 # doc-group: batch
 
@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import collections
 import functools
-import secrets
 import shlex
 import time
 from dataclasses import dataclass, field
@@ -22,17 +21,16 @@ import batch.machine
 import batch.outcomes
 import batch.plan
 import batch.publish
-import batch.report
 import batch.store
 import batch.targets
 import git.client
 import pr.ci_need
 import rebase.inspect
-from batch.model import (STEP_ORDER, CancelState, Decision, DecisionKind, DirtyReason,
+from batch.model import (STEP_ORDER, CancelState, DecisionKind, DirtyReason,
                          EvidenceKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
-                         StepStatus, stacked_on_items)
+                         StepStatus)
 from batch.plan import PlanRow
-from batch.requests import Cancel, Decide, Outcome, Release
+from batch.requests import Cancel, Outcome, Release
 from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure_worktree,
                          restore_generated_dirt, step_argv)
 from config.workbench_config import BatchConfig
@@ -82,10 +80,10 @@ def _unpublished(worktree: str, remote_sha: str) -> bool:
 
 
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
-            pool: int, auto_publish: list[Step], now: datetime | None = None,
+            pool: int, now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
             no_verify: bool = False, focus: Sequence[str] = (),
-            with_ai: list[Step] | None = None, schema_version: int = 1,
+            with_ai: list[Step] | None = None,
             auto_publish_ff: bool = False) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
@@ -117,10 +115,10 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
         if base in queued and base != it.key:
             it.stacked_on = base
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
-               steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
+               steps=list(steps), pool=pool, auto_publish=[], items=items,
                ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []),
                no_verify=no_verify, focus=list(focus), with_ai=with_ai,
-               schema_version=schema_version, auto_publish_ff=auto_publish_ff)
+               schema_version=2, auto_publish_ff=auto_publish_ff)
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
@@ -132,18 +130,8 @@ def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRo
 
 
 def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,
-            emit: Callable[..., None]) -> Decision | None:
-    if run.schema_version >= 2:
-        batch.findings.record(run, item, step, kind, payload, emit=emit)
-        return None
-    d = Decision(id=secrets.token_hex(4), item=item.key, step=step, kind=kind, payload=payload,
-                 created_at=batch.store.now_iso())
-    run.decisions.append(d)
-    item.status = ItemStatus.AWAITING_DECISION
-    # The payload stays in state.json (`pr batch status --decision`); the event
-    # carries only what an agent acts on.
-    emit("decision_created", run=run.id, **batch.report.decision_event(run, d))
-    return d
+            emit: Callable[..., None]) -> None:
+    batch.findings.record(run, item, step, kind, payload, emit=emit)
 
 
 def _interrupt_running(run: Run, item: Item, *, emit: Callable[..., None]) -> bool:
@@ -151,14 +139,8 @@ def _interrupt_running(run: Run, item: Item, *, emit: Callable[..., None]) -> bo
     for rec in item.steps:
         if rec.status is not StepStatus.RUNNING:
             continue
-        if run.schema_version >= 2:
-            rec.status = StepStatus.PENDING
-            item.status = ItemStatus.QUEUED
-            found = True
-            continue
-        rec.status = StepStatus.INTERRUPTED
-        _decide(run, item, rec.step.value, DecisionKind.INTERRUPTED,
-                {"log_path": rec.log_path}, emit=emit)
+        rec.status = StepStatus.PENDING
+        item.status = ItemStatus.QUEUED
         found = True
     return found
 
@@ -172,13 +154,11 @@ def mark_interrupted(run: Run, *, emit: Callable[..., None]) -> bool:
 
 def emit_outcome(run: Run, outcome: Outcome, *,
                  emit: Callable[..., None] = batch.events.emit) -> None:
-    """Emit the events one applied request produces, whether drained or synthesized.
+    """Emit the events one applied request produces.
 
-    The one mapping from an outcome to events. A `Cancel` emits
-    `cancel_requested`. Any other request emits `decision_resolved` (empty
-    `decision` and `action` for a malformed one), then `decision_created` for
-    each decision it created and `item_finished` for each item it made
-    terminal. A failed outcome carries `error`.
+    A `Cancel` emits `cancel_requested`. A `Release` emits `item_finished` for
+    each item it made terminal. A malformed request emits nothing: stderr and
+    `failed_requests` already carry it. A failed outcome carries `error`.
     """
     request = outcome.request
     failed = {"error": outcome.error} if outcome.error else {}
@@ -189,14 +169,6 @@ def emit_outcome(run: Run, outcome: Outcome, *,
         for key in outcome.finished:
             emit("item_finished", run=run.id, item=key, status=run.item(key).status.value,
                  **failed)
-        return
-    decided = isinstance(request, Decide)
-    emit("decision_resolved", run=run.id, decision=request.decision if decided else "",
-         action=request.action if decided else "", **failed)
-    for created in outcome.created:
-        emit("decision_created", run=run.id, **batch.report.decision_event(run, created))
-    for key in outcome.finished:
-        emit("item_finished", run=run.id, item=key, status=run.item(key).status.value)
 
 
 @dataclass
@@ -374,7 +346,7 @@ class Scheduler:
     # ── admitting ────────────────────────────────────────────────────────
 
     def _ready(self, item: Item) -> bool:
-        return not (item.terminal or item.key in self._live or self.run.open_decisions(item.key))
+        return not (item.terminal or item.key in self._live)
 
     def _discard_generated_dirt(self, path: str, item: Item) -> bool:
         """Whether *path* is clean enough to proceed, restoring generated-only dirt.
@@ -468,36 +440,8 @@ class Scheduler:
             payload["unpublished"] = True
         if debt.owed:
             payload["closeout"] = debt.describe()
-        d = _decide(self.run, item, "publish", DecisionKind.PUBLISH, payload, emit=self._emit)
-        if d is None:
-            item.status = ItemStatus.DONE
-            self._emit("item_finished", run=self.run.id, item=item.key,
-                       status=item.status.value)
-            return
-        item.status = ItemStatus.READY_TO_PUBLISH
-        # --auto-publish answers the publish decision itself, and only for an
-        # item that closed with nothing open and every drafted step listed and
-        # finished DONE — a step the operator skipped or that failed left work
-        # nobody vouched for, so its publish stays the operator's to answer.
-        # An owed closeout is comments work, so it needs `comments` listed too.
-        # A comments step this run attempted (started_at set, or an exit_code)
-        # that did not finish DONE — failed, then skip-step — leaves that debt
-        # unvouched: auto-publish does not fire. Debt from an earlier `pr` run,
-        # with comments never attempted here, still auto-publishes under
-        # `--auto-publish comments`.
-        # session.apply reports the outcome through the inbox — item_finished
-        # on DONE, or the refusal's decision — so READY_TO_PUBLISH is not
-        # announced first.
-        finished = all(r.status is StepStatus.DONE for r in item.steps if r.drafted)
-        comments = next((r for r in item.steps if r.step is Step.COMMENTS), None)
-        attempted = comments is not None and (bool(comments.started_at)
-                                              or comments.exit_code is not None)
-        unvouched = debt.owed and attempted and comments.status is not StepStatus.DONE
-        vouched = set(drafted) | ({Step.COMMENTS} if debt.owed else set())
-        if finished and not unvouched and not unpublished and \
-                vouched <= set(self.run.auto_publish):
-            self.session.apply(Decide(decision=d.id, action="publish"))
-            return
+        _decide(self.run, item, "publish", DecisionKind.PUBLISH, payload, emit=self._emit)
+        item.status = ItemStatus.DONE
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)
 
     def _refresh_remote(self, item: Item, remote: str) -> None:
@@ -620,20 +564,10 @@ class Scheduler:
         if rec.step is not Step.REBASE or not item.stacked_on:
             return False
         base = self.run.item(item.stacked_on)
-        if self.run.schema_version < 2 and base.terminal:
-            return False
         _decide(self.run, item, rec.step.value, DecisionKind.STEP_REVIEW,
                 {"evidence": [{"kind": EvidenceKind.STACKED_ON.value, "item": base.key}]},
                 emit=self._emit)
         return True
-
-    def _release_stacked(self) -> None:
-        for d in self.run.open_decisions():
-            if d.kind is not DecisionKind.STEP_REVIEW:
-                continue
-            bases = stacked_on_items(d)
-            if bases and all(self.run.item(k).terminal for k in bases):
-                self.session.apply(Decide(decision=d.id, action="retry"))
 
     def _verdict(self, item: Item, rec: StepRecord) -> batch.admission.Verdict:
         """The host's answer for *rec*, and the floor slot's when the host refuses
@@ -654,7 +588,6 @@ class Scheduler:
         return ask(True)
 
     def _admit(self) -> None:
-        self._release_stacked()
         self._peers = self._machine.sync(self._live_steps())
         self._admit_items()
         # Waiting for the floor means refused with nothing running; a driver
@@ -740,9 +673,7 @@ class Scheduler:
         # still RUNNING. The drop lives in commit, not here, so every terminal
         # write — settle, interrupt-with-cancel, a later finish — uses one path.
         self.session.commit()
-        self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
-                   run=self.run.id, status=status.value,
-                   open_decisions=len(self.run.open_decisions()))
+        self._emit("run_finished", run=self.run.id, status=status.value)
         return status
 
     def _kill_live(self) -> None:
@@ -764,8 +695,6 @@ class Scheduler:
             return RunStatus.CANCELLED
         if all(i.terminal for i in self.run.items):
             return RunStatus.DONE
-        if all(i.terminal or self.run.open_decisions(i.key) for i in self.run.items):
-            return RunStatus.WAITING
         return None
 
     def _once(self) -> RunStatus | None:
@@ -820,7 +749,6 @@ class Scheduler:
         self.session.commit()
         pending.append(("run_finished", {
             "run": self.run.id, "status": status.value,
-            "open_decisions": len(self.run.open_decisions()),
         }))
         self._flush(pending)
 

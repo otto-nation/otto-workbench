@@ -3323,7 +3323,7 @@ routinely disagree:
 | `gc` | remote | no | target | find |
 
 `cli.locks` takes the locks and documents why each command holds what it holds.
-`batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
+`batch cancel`/`release`'s per-run lock and `gc`'s lock on each pruned target are taken
 in the handler, not declared on the Need — they are in that table.
 
 `review`, `create`, `ci`, `comments`, `rebase` and `batch` are the commands
@@ -4013,22 +4013,20 @@ process that predates claims and is still fetching.
 
 Apply one inbound request to a loaded run, and settle a run that is idle.
 
-`apply_one` is the policy: a `Decide` goes through `batch.resolve.apply`
-unless the decision already carries that action (an idempotent replay), a
-`Cancel` records `Run.cancel` — `kill` only upgrades, `requested_at` is set
-the first time only — and a `Release` drops one item, resolving its open
-decisions as `released`. A cancel against `DONE` is an error; against
-`CANCELLED` it is a no-op success. A release against a finished run, an
-unknown or already-terminal item, or a running item without `--kill`, is an
-error. `settle_idle` turns a recorded cancel into `CANCELLED`, or every item
-terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is what a
-caller holds: apply, settle, report.
+`apply_one` is the policy: a `Cancel` records `Run.cancel` — `kill` only
+upgrades, `requested_at` is set the first time only — and a `Release` drops
+one item, resolving its open v1 decisions as `released`. A cancel against
+`DONE` is an error; against `CANCELLED` it is a no-op success. A release
+against a finished run, an unknown or already-terminal item, or a running
+item without `--kill`, is an error. `settle_idle` turns a recorded cancel
+into `CANCELLED`, or every item terminal into `DONE`, and never promotes
+`CANCELLED`. `Inbox` is what a caller holds: apply, settle, report.
 
-`deliver` is the one path for `pr batch resolve`, `cancel` and `release`: it
-writes the request, then either applies it in an `APPLIER` session or returns
-`queued` when a live holder that drains will apply it. A request reported
-`queued` is applied by that holder or its hand-off, or, if the holder dies,
-by the next session to open the run.
+`deliver` is the one path for `pr batch cancel` and `release`: it writes the
+request, then either applies it in an `APPLIER` session or returns `queued`
+when a live holder that drains will apply it. A request reported `queued` is
+applied by that holder or its hand-off, or, if the holder dies, by the next
+session to open the run.
 
 ### batch/live.py
 
@@ -4206,62 +4204,28 @@ refused.
 tracked, or the PR's saved `pr` state says a closeout is owed
 (`batch.plan.closeout_debt`). The last case applies even when there is nothing
 to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
-`--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
-a `not_incorporated_remote` one also lists the remote commits, and the operator
-answers it with `force-publish` (push past exactly those commits; one that
-appeared since is refused again) or drops the PR. A `drafted_dropped` one lists
-the drafted commits the branch no longer carries — a hand `reset --hard`, a
-rebase that dropped one, a hand push without it — and is answered by
-cherry-picking them back and retrying, or by `force-publish` past exactly that
-list. A commit whose replay git could not determine is listed too, marked
-unverifiable: the gate fails closed. Confirmations accumulate on the item
-(`Item.forced`), so confirming one refusal never reopens the other.
-
-A `remote_moved` retry adopts the remote as the lease when it is a fast-forward
-of the old lease that the local branch already contains (`remote_fast_forwarded`)
-— the push that follows is a fast-forward and loses nothing.
-
-A branch the operator rebased by hand with `--fork-point` reaches the
-`not_incorporated_remote` refusal too: the commits the fork point skipped are
-the ones listed, and the rebase's start tip stays the one the batch saw before
-the hand rebase (`batch.resolve`, `force`), so `not_incorporated` does not fire
-for it. The lease advances as soon as
-the push lands, so a failure in the replies after it never strands the item.
+`--track-all`. A refusal is a `failed` finding on step `publish` carrying `reason`.
+The lease advances as soon as the push lands, so a failure in the replies after
+it never strands the item.
 
 ### batch/report.py
 
-The compact document `pr batch status`, `pr batch next` and a run's last line print.
+The compact document `pr batch status` and a run's last line print.
 
-One builder, three projections: `build` is the whole report, `next_view` its
-actionable part (also the `run_summary` line), and `decision_detail` one
-decision with its full payload and log tail.
+One builder: `build` is the whole report.
 
 | Section | Content |
 |---|---|
 | `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
-| `counts` | items by status, open decisions |
+| `counts` | items by status |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
-| `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
-| `github` | `pr batch status`/`next` only: what GitHub says about the run's repos now (see `batch.live`) |
+| `github` | `pr batch status` only: what GitHub says about the run's repos now (see `batch.live`) |
 | `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
-it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
-without settling (interrupted — `pr batch resume` it), and null while a
-scheduler holds the run. A review decision's finding counts leave declined
-findings out of must/should/nit and count them apart as `declined`.
-
-`next` is empty while a scheduler holds the run — it is still moving items, so
-the reader waits for its `run_summary`. While the run waits, `next` offers
-`prep` and `pr batch resolve` commands, never a `pr` subcommand against a batch
-item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed`
-entry per PR whose saved `pr` state still owes a closeout. Each entry carries
-the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
-and no actions. A closed PR is left out.
-
-When a finished run's `github` section shows open PRs with work owed, PRs the
-run never saw, or heads that moved since it ran, `hint` says so and points at
-`pr batch run`: the run itself has nothing left, but the PRs do.
+it is `done` or `cancelled`, 1 when it stopped without settling (interrupted —
+`pr batch resume` it) or when a stored waiting v1 run has not been resumed, and
+null while a scheduler holds the run.
 
 ### batch/report_md.py
 
@@ -4272,53 +4236,20 @@ Rendered from the JSON only. Filing commands go in a trailing
 
 ### batch/requests.py
 
-Typed inbound requests for a `pr batch` run: decide, cancel, release, or malformed.
+Typed inbound requests for a `pr batch` run: cancel, release, or malformed.
 
-A request file without ``kind`` parses as a ``Decide``, so files queued by
-older code stay valid. ``to_dict`` always writes the tag. ``drain_order``
-puts every ``Cancel`` ahead of everything else (by name) so a cancel never
-loses to a publish or release queued beside it.
-
-### batch/resolve.py
-
-Apply an operator's answer to one decision, then move the item on.
-
-| Kind | Action | Effect |
-|---|---|---|
-| `step_review` | `accept` | the decision's own step → `done`; its commits stay drafted |
-| | `retry` | that step → `pending`. A `stacked_on` review is retried by the scheduler once its base item is terminal |
-| | `skip-step` | that step → `skipped`; commits it made stay drafted |
-| | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
-| `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
-| `rebase_conflict` | `retry` / `abort` | rebase → `pending` (a `tree: clean` payload restarts; a paused one resumes) / `skipped` (`tree: clean` runs no command; paused runs `pr rebase --abort`); a failed abort → `failed` |
-| `rebase_refused` | `drop-pr` / `force` / `rebase-from-fork-point` | item → `dropped` and its target lock released / forced draft rebase / draft rebase from the payload's fork point: rebase `done` and drafted (`force` needs payload `override`; `rebase-from-fork-point` needs payload `fork_point` or a remedy starting `--fork-point `); `pre_rebase_head` stays the tip the refused attempt started from, so a hand `--fork-point` rebase publishes through `force-publish` |
-| `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
-| `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped`, and its target lock released (see below) |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped` (item → `dropped` when the step is `worktree` or `publish`); item → `dropped` and its target lock released. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease. A `remote_moved` retry adopts a remote that fast-forwarded the lease to a commit the local branch holds, and otherwise `git reset --keep`s a patch-equivalent remote when tracked files are clean and the local branch has no unique commits (the remote may carry more) |
-| `failed` | `force-publish` | only `reason: not_incorporated_remote` or `drafted_dropped`; same as `publish` past exactly the commits listed in the refusal, added to those the item was already forced past (a newly appeared commit refuses again) |
-| `publish` | `publish` | see `batch.publish`; success → item `done`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
-| | `discard` | item → `done` and its target lock released; local commits stay and nothing is pushed |
-
-Every action that leaves the item terminal (`dropped` or `done`) ends the
-batch's claim on that PR: the driver holding the run releases the item's target
-lock at the tick that drains the request (`batch.targets.ItemHolds`), so a
-manual `pr` command on the branch works while the run carries on. Only the
-driver can release it, since the flock is its own; with no driver live,
-`resolve` applies the request itself and no item lock is held to release.
-
-`ACTION_INPUTS` names the flags an action needs; `available_actions` and
-`resolve_command` are what `pr batch status` offers.
-
-`open-chat` is offered where listed and refused by the CLI, leaving the
-decision open.
+A request file without ``kind``, or ``kind: decide``, parses as ``Malformed``
+naming that ``pr batch resolve`` was removed. ``to_dict`` always writes the
+tag. ``drain_order`` puts every ``Cancel`` ahead of everything else (by name)
+so a cancel never loses to a release queued beside it.
 
 ### batch/scheduler.py
 
-Drive a run: admit steps, reap them, and stop when only decisions remain; a schema-2 run records findings instead and always settles.
+Drive a run: admit steps, reap them, and record findings; the run always settles.
 
 ### batch/session_report.py
 
-Per-PR session commands derived from a v1 run's decisions and local `pr` state.
+Per-PR session commands derived from findings and stored v1 decisions.
 
 The builder shows; it never writes. Findings come from `Item.findings` plus
 open v1 decisions via `batch.findings`. Commands are argv tuples.
@@ -4366,7 +4297,7 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
-    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions, cancels and releases waiting to be applied
+    <state_dir>/batch/<run-id>/requests/*.json  the inbox: cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
@@ -8113,7 +8044,7 @@ This module is the one place they are taken for a command:
 | Command / mode | Holds |
 |---|---|
 | `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
-| `batch resolve`, `batch cancel` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can — never the global, so it reaches a live run |
+| `batch cancel`, `batch release` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can — never the global, so it reaches a live run |
 | `batch status`, `next`, `plan` | nothing |
 | `rebase`, `push`, `describe`, `fix` | target + checkout |
 | `comments` | target + checkout; `--reply` / `--settle` the target only |
@@ -8249,19 +8180,18 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
-    pr batch resume [RUN_ID]                   continue a waiting or interrupted run
-    pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
+    pr batch resume [RUN_ID]                   continue an interrupted run
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
-    pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
-    pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
+    pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
+    pr batch next   [RUN_ID] [--offline]       deprecated alias of report --format json
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
 
-Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
+Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next/report fall back to the newest run on the machine and say so on stderr.
 
 A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when a v1 run that has not been resumed is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 1 when it stopped without settling. resume never clears a recorded cancel. cancel and release write the run's inbox; a live holder that drains applies a queued request.
 
 ### cli/pr_batch_common.py
 
@@ -8272,13 +8202,13 @@ A leaf: imported by `cli.pr_batch`, `cli.pr_batch_requests`, and
 
 ### cli/pr_batch_requests.py
 
-Inbox-writing `pr batch` commands: resolve, cancel, and release.
+Inbox-writing `pr batch` commands: cancel and release.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 
 ### cli/pr_batch_views.py
 
-Read-only `pr batch` views: plan, status, next, report, and the report they share.
+Read-only `pr batch` views: plan, status, report, and the deprecated next alias.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 

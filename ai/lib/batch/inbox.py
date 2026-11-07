@@ -1,40 +1,34 @@
 """Apply one inbound request to a loaded run, and settle a run that is idle.
 
-`apply_one` is the policy: a `Decide` goes through `batch.resolve.apply`
-unless the decision already carries that action (an idempotent replay), a
-`Cancel` records `Run.cancel` — `kill` only upgrades, `requested_at` is set
-the first time only — and a `Release` drops one item, resolving its open
-decisions as `released`. A cancel against `DONE` is an error; against
-`CANCELLED` it is a no-op success. A release against a finished run, an
-unknown or already-terminal item, or a running item without `--kill`, is an
-error. `settle_idle` turns a recorded cancel into `CANCELLED`, or every item
-terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is what a
-caller holds: apply, settle, report.
+`apply_one` is the policy: a `Cancel` records `Run.cancel` — `kill` only
+upgrades, `requested_at` is set the first time only — and a `Release` drops
+one item, resolving its open v1 decisions as `released`. A cancel against
+`DONE` is an error; against `CANCELLED` it is a no-op success. A release
+against a finished run, an unknown or already-terminal item, or a running
+item without `--kill`, is an error. `settle_idle` turns a recorded cancel
+into `CANCELLED`, or every item terminal into `DONE`, and never promotes
+`CANCELLED`. `Inbox` is what a caller holds: apply, settle, report.
 
-`deliver` is the one path for `pr batch resolve`, `cancel` and `release`: it
-writes the request, then either applies it in an `APPLIER` session or returns
-`queued` when a live holder that drains will apply it. A request reported
-`queued` is applied by that holder or its hand-off, or, if the holder dies,
-by the next session to open the run.
+`deliver` is the one path for `pr batch cancel` and `release`: it writes the
+request, then either applies it in an `APPLIER` session or returns `queued`
+when a live holder that drains will apply it. A request reported `queued` is
+applied by that holder or its hand-off, or, if the holder dies, by the next
+session to open the run.
 """
 
 # doc-group: batch
 
 from __future__ import annotations
 
-import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-import batch.publish
-import batch.resolve
 import batch.store
 import core.run_lock
-from batch.model import FINISHED_RUN, CancelState, Item, ItemStatus, Run, RunStatus
-from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Release
+from batch.model import FINISHED_RUN, CancelState, ItemStatus, Run, RunStatus
+from batch.requests import Cancel, Envelope, Malformed, Outcome, Release
 from batch.store import Holder, Role
-from pr.comments_fix import CloseoutDebt
 
 
 def _ignore(run: Run, outcome: Outcome) -> None:
@@ -44,49 +38,15 @@ def _ignore(run: Run, outcome: Outcome) -> None:
 
 @dataclass(frozen=True)
 class ApplyContext:
-    pr_bin: str
-    runner: Callable[..., int] | None = None
-    tree: Callable[[Item], batch.publish.TreeState] | None = None
-    closeout: Callable[[str, str], CloseoutDebt] | None = None
     report: Callable[[Run, Outcome], None] = _ignore
 
 
-def apply_one(run: Run, request: Decide | Cancel | Release, ctx: ApplyContext, *,
+def apply_one(run: Run, request: Cancel | Release, ctx: ApplyContext, *,
               name: str = "") -> Outcome:
-    """Apply *request* to *run* and return the outcome.
-
-    Replay of a ``Decide`` whose decision already carries ``request.action``
-    is success without invoking the runner. ``ResolveError``, ``KeyError``,
-    ``TypeError``, ``OSError`` and ``subprocess.SubprocessError`` become
-    ``Outcome.error``. ``finished`` names the decision's item when that item
-    became terminal during this apply.
-    """
+    """Apply *request* to *run* and return the outcome."""
     if isinstance(request, Cancel):
         return _apply_cancel(run, request, name)
-    if isinstance(request, Release):
-        return _apply_release(run, request, name)
-    return _apply_decide(run, request, ctx, name)
-
-
-def _apply_decide(run: Run, request: Decide, ctx: ApplyContext,
-                  name: str) -> Outcome:
-    try:
-        decision = run.decision(request.decision)
-        item = run.item(decision.item)
-        if decision.resolution == request.action:
-            return Outcome(name=name, request=request)
-        was_terminal = item.terminal
-        created = batch.resolve.apply(
-            run, request, pr_bin=ctx.pr_bin, runner=ctx.runner,
-            tree=ctx.tree, closeout=ctx.closeout)
-        finished = (item.key,) if item.terminal and not was_terminal else ()
-        return Outcome(name=name, request=request, created=tuple(created),
-                       finished=finished)
-    except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
-        return Outcome(name=name, request=request, error=str(exc))
-    except (OSError, subprocess.SubprocessError) as exc:
-        return Outcome(name=name, request=request,
-                       error=f"{type(exc).__name__}: {exc}")
+    return _apply_release(run, request, name)
 
 
 def _apply_cancel(run: Run, request: Cancel, name: str) -> Outcome:
@@ -220,7 +180,7 @@ def _attempt(run_id: str, name: str, ctx: ApplyContext, command: str) -> Deliver
                     holder=None)
 
 
-def deliver(run_id: str, request: Decide | Cancel | Release, ctx: ApplyContext, *,
+def deliver(run_id: str, request: Cancel | Release, ctx: ApplyContext, *,
             command: str) -> Delivery:
     """Queue *request* in *run_id*'s inbox, then apply it here or leave it to a holder that will.
 

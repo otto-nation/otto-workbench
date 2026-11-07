@@ -348,12 +348,6 @@ def _load_pr_state(item: Item):
     return pr.state.load_state(pr.target.target_dir(key, item.branch)) if key else None
 
 
-def recorded_pre_rebase_head(item: Item) -> str:
-    """The pre-rebase tip `pr rebase` saved for *item*'s branch, or ""."""
-    state = _load_pr_state(item)
-    return state.rebase.pre_rebase_head if state is not None else ""
-
-
 def comment_items(item: Item) -> list[dict]:
     state = _load_pr_state(item)
     if state is None:

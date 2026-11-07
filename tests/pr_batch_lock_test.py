@@ -268,7 +268,7 @@ def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", drop_one_then_drive)
     assert _main(["batch", "run", "--checkout", str(repo),
-                  "--with-review", "--auto-publish", "rebase"]) == 10
+                  "--with-review"]) == 10
     assert seen["before"] == [True, True]
     assert seen["status"] is batch.model.ItemStatus.DROPPED
     assert seen["after"] == [False, True]
@@ -280,10 +280,10 @@ def test_resume_does_not_take_back_a_dropped_or_done_items_target(monkeypatch, t
     repo = repo_with_origin(tmp_path / "repo")
     run = batch.scheduler.new_run(
         [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b"), _row(repo, 3, "feat/c")],
-        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[])
+        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[],
+        schema_version=2)
     run.items[0].status = batch.model.ItemStatus.DROPPED
     run.items[1].status = batch.model.ItemStatus.DONE
-    _awaiting(run, run.items[2], "d3")
     run.status = batch.model.RunStatus.WAITING
     seed(run)
     seen = {}

@@ -97,23 +97,25 @@ def test_with_ai_review_is_exit_2(monkeypatch, capsys):
     assert "--with-review" in capsys.readouterr().err
 
 
-def test_auto_publish_keeps_schema_1(monkeypatch):
+def test_auto_publish_ff_is_a_schema_2_run(monkeypatch):
+    # Revert: restore type=_steps.
     _plan_all(monkeypatch)
     seen = {}
 
     def fake_run(self):
         seen["schema"] = self.run.schema_version
         seen["with_ai"] = self.run.with_ai
+        seen["ff"] = self.run.auto_publish_ff
         return stops_at(batch.model.RunStatus.DONE)(self)
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r", "--auto-publish", "rebase"]) == 0
-    assert seen["schema"] == 1
-    assert seen["with_ai"] is None
+    assert _main(["batch", "run", "--checkout", "/r", "--auto-publish", "ff"]) == 0
+    assert seen["schema"] == 2
+    assert seen["with_ai"] == []
+    assert seen["ff"] is True
 
 
-def test_auto_publish_with_ai_is_exit_2(monkeypatch, capsys):
+def test_auto_publish_takes_only_ff(monkeypatch, capsys):
+    # Revert: restore type=_steps.
     _plan_all(monkeypatch)
-    assert _main(["batch", "run", "--checkout", "/r",
-                  "--auto-publish", "rebase", "--with-ai=ci"]) == 2
-    assert "--with-ai" in capsys.readouterr().err
+    assert _main(["batch", "run", "--checkout", "/r", "--auto-publish", "rebase"]) == 2

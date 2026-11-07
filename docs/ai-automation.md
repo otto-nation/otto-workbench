@@ -785,7 +785,7 @@ session with stdin closed, and runs drafted — the batch is the only publisher.
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
-pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review]
+pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff]
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
 pr batch next [RUN_ID]                   # only what needs action (JSON)
@@ -814,9 +814,9 @@ its base; `resume` retries `stacked_on` once that base is terminal, rebasing fro
 dirty worktree except a rebase resuming its paused replay or restoring generated files.
 
 A default run never opens a decision; items end `done` or `needs_session` with
-`findings` (`batch/findings.py`), shown by `pr batch report`. `--auto-publish`
-runs keep the decision lifecycle below. An item that closes with drafted work,
-an owed closeout, or unpublished local commits opens one `publish` decision. Publish fetches the branch and refuses (`failed`) with `wrong_branch`,
+`findings` (`batch/findings.py`), shown by `pr batch report`. A run started
+before schema 2 keeps that lifecycle until `pr batch resume` converts its open
+decisions to findings (one-way). An item that closes with drafted work, an owed closeout, or unpublished local commits opens one `publish` decision. Publish fetches the branch and refuses (`failed`) with `wrong_branch`,
 `fetch_failed`, `remote_moved`, `not_comparable`, `not_incorporated`, `not_incorporated_remote`,
 or `drafted_dropped` (see `batch.publish`). Otherwise it fast-forwards with
 `pr push --expect <planned head>`, or force-pushes with
@@ -826,9 +826,9 @@ tracked, or a closeout is owed — with `--track-all` when the owed part is
 a tracking issue. A commit `--finish` pushes becomes the lease.
 `force-publish` answers only `not_incorporated_remote` and `drafted_dropped` for the listed
 commits (a hand `--fork-point` rebase: the skipped ones); a new one refuses again.
-A publish `retry` leases on a remote equal to local; on `remote_moved` it leases on a remote that fast-forwarded the lease to a commit local holds, or else resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish STEPS` resolves that
-decision when the item closes with no open decision and every drafted
-step is listed and `done`; an owed closeout counts as `comments`.
+A publish `retry` leases on a remote equal to local; on `remote_moved` it leases on a remote that fast-forwarded the lease to a commit local holds, or else resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish ff` pushes a
+clean fast-forward (`pr push --expect`) when an item closes with no findings;
+never a force push, closeout post or issue filing.
 `--no-verify` skips the pre-push hook on the branch push (`pr push` / `pr rebase --push-only`) and the comments closeout push.
 `pr batch resolve … --action publish|force-publish --dry-run` prints what that
 publish would push and changes nothing: it plans over `peek_tree` (reads origin

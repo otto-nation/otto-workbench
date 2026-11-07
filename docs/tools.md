@@ -944,7 +944,7 @@ Takes no flags.
 | `--with-ai` `<steps>` | Run these steps with today's AI argv; any of rebase,ci,comments. review needs --with-review. |
 | `--with-review` | Add the review step (today's argv). |
 | `--pool` `<pool>` | Concurrency ceiling. |
-| `--auto-publish` `<steps>` | Publish an item without asking when it closes with no open decision and every drafted step is in STEPS and finished done. An owed closeout counts as comments work. Steps never push while they run. |
+| `--auto-publish` `<ff>` | Push a clean fast-forward (`pr push --expect`) when an item closes with no findings; never a force push, closeout post or issue filing. |
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume and resolve honor it. |

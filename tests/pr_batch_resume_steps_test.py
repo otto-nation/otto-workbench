@@ -56,18 +56,17 @@ def test_resume_steps_skips_pending_review_and_narrows_run_steps(monkeypatch):
 
 
 def test_resume_steps_leaves_an_open_review_decision_alone(monkeypatch):
-    run = _interrupted_run(review_status=StepStatus.NEEDS_DECISION, persist=False)
-    run.items[0].status = batch.model.ItemStatus.AWAITING_DECISION
-    run.decisions.append(batch.model.Decision(
-        id="d1", item=run.items[0].key, step="review",
-        kind=batch.model.DecisionKind.STEP_REVIEW))
+    run = _interrupted_run(review_status=StepStatus.DONE, persist=False)
+    run.schema_version = 2
+    run.items[0].findings.append(
+        batch.model.Finding(reason=batch.model.FindingReason.REVIEW_FINDINGS, step="review"))
     seed(run)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(batch.model.RunStatus.WAITING))
     assert _main(["batch", "resume", run.id, "--steps", "rebase,ci,comments"]) == 10
     loaded = batch.store.load(run.id)
-    assert loaded.items[0].step(Step.REVIEW).status is StepStatus.NEEDS_DECISION
-    assert loaded.decision("d1").open
+    assert loaded.items[0].step(Step.REVIEW).status is StepStatus.DONE
+    assert loaded.items[0].findings[0].reason is batch.model.FindingReason.REVIEW_FINDINGS
 
 
 def test_resume_refuses_to_widen_steps(monkeypatch, capsys):

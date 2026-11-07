@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
+import batch.autopublish  # noqa: E402
 import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.targets  # noqa: E402
@@ -170,7 +171,7 @@ def test_every_step_is_spawned_with_only_its_items_marker(monkeypatch):
 
 def test_a_resolve_command_runs_with_its_items_marker(repo, monkeypatch):
     calls = []
-    monkeypatch.setattr(batch.resolve, "default_runner",
+    monkeypatch.setattr(batch.autopublish, "default_runner",
                         lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
     item = _item(repo, "feat/a", 1)
     target = batch.targets.item_target_dir(item)
@@ -185,7 +186,7 @@ def test_command_runner_without_a_runner_uses_child_env(repo, monkeypatch):
     monkeypatch.setattr(batch.targets, "child_env",
                         lambda item: seen.append(item) or {"X": "1"})
     calls = []
-    monkeypatch.setattr(batch.resolve, "default_runner",
+    monkeypatch.setattr(batch.autopublish, "default_runner",
                         lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
     item = _item(repo, "feat/a", 1)
     batch.resolve.command_runner(item, None)(["pr", "push"])
@@ -198,7 +199,7 @@ def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
     monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
     monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
     calls = []
-    monkeypatch.setattr(batch.resolve, "default_runner",
+    monkeypatch.setattr(batch.autopublish, "default_runner",
                         lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
     planned = PlanRow("acme/widget", str(repo), 1, "t", "feat/a", "h", False,
                       {Step.REVIEW: NEED})

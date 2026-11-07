@@ -410,7 +410,10 @@ def _poll_status(stop, first, codes):
 
 
 def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
-    seed(_run())
+    item = Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="aaa",
+                status=ItemStatus.QUEUED, steps=[StepRecord(Step.REBASE)])
+    seed(Run(id=RID, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
+             status=RunStatus.WAITING, items=[item], schema_version=2))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: RunStatus.WAITING)
     real_flock = fcntl.flock

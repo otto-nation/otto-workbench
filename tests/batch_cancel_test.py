@@ -65,7 +65,12 @@ def _events(out):
 # ── R1/R4: resume loads only under the run lock ──────────────────────────────
 
 def test_resume_drives_only_a_run_it_loaded_under_the_run_lock(monkeypatch):
-    run = seed(_run())
+    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {Step.REVIEW: StepNeed(True, "x")})
+    run = batch.scheduler.new_run([row], steps=[Step.REVIEW], selected=None, pool=1,
+                                  auto_publish=[], schema_version=2)
+    run.items[0].worktree = "/wt"
+    run.status = RunStatus.WAITING
+    seed(run)
     lock_file = batch.store.run_lock(run.id).path
     loads = []
     real = batch.store.load

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import collections
+import functools
 import secrets
 import shlex
 import time
@@ -14,6 +15,7 @@ from collections.abc import Sequence
 from typing import Callable
 
 import batch.admission
+import batch.autopublish
 import batch.events
 import batch.findings
 import batch.machine
@@ -83,7 +85,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
             no_verify: bool = False, focus: Sequence[str] = (),
-            with_ai: list[Step] | None = None, schema_version: int = 1) -> Run:
+            with_ai: list[Step] | None = None, schema_version: int = 1,
+            auto_publish_ff: bool = False) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -117,7 +120,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
                ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []),
                no_verify=no_verify, focus=list(focus), with_ai=with_ai,
-               schema_version=schema_version)
+               schema_version=schema_version, auto_publish_ff=auto_publish_ff)
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
@@ -231,7 +234,9 @@ class Scheduler:
                  release: Callable[[Run, frozenset[str]], object] | None = None,
                  machine: batch.machine.Machine | batch.machine.PerRun | None = None,
                  hold_tree: Callable[[Item], str] | None = None,
-                 branch: Callable[[str], str] = checked_out_branch):
+                 branch: Callable[[str], str] = checked_out_branch,
+                 tree: Callable[[Item], batch.publish.TreeState] | None = None,
+                 push: Callable[..., int] | None = None):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
         # Called with the run and the items whose step is still live after
         # every commit a tick makes, so the driver can give back the target
@@ -266,6 +271,8 @@ class Scheduler:
         # waiting, and with nothing running it queues for the floor slot.
         self._refused = False
         self._descends, self._commits = descends, commits
+        self._tree = tree or batch.publish.read_tree
+        self._push = push
 
     @property
     def run(self) -> Run:
@@ -439,6 +446,23 @@ class Scheduler:
             self._emit("item_finished", run=self.run.id, item=item.key,
                        status=item.status.value)
             return
+        if self.run.auto_publish_ff:
+            runner = self._push or functools.partial(
+                batch.autopublish.default_runner, env=batch.targets.child_env(item))
+            result = batch.autopublish.fast_forward(
+                self.run, item, debt, unpublished=unpublished, pr_bin=self.pr_bin,
+                tree=self._tree, runner=runner, emit=self._emit)
+            if result is batch.autopublish.FastForward.FAILED:
+                self._emit("item_finished", run=self.run.id, item=item.key,
+                           status=item.status.value)
+                return
+            if result is batch.autopublish.FastForward.PUSHED and not debt.owed:
+                item.status = ItemStatus.DONE
+                self._emit("item_finished", run=self.run.id, item=item.key,
+                           status=item.status.value)
+                return
+            if result is batch.autopublish.FastForward.PUSHED:
+                drafted = []
         payload = {"drafted": [s.value for s in drafted], "track": list(item.track)}
         if unpublished:
             payload["unpublished"] = True

@@ -321,6 +321,8 @@ class Run:
     # and means every step runs as before (AI). An empty list is a default
     # unattended run: no step uses AI.
     with_ai: list[Step] | None = None
+    # --auto-publish ff. auto_publish (list[Step]) is load-only for v1 runs.
+    auto_publish_ff: bool = False
 
     def uses_ai(self, step: Step) -> bool:
         return self.with_ai is None or step in self.with_ai

@@ -161,7 +161,8 @@ class Harness:
             commits=commits or (lambda wt, base: [self.heads.get(wt, "h0")]),
             verbose=verbose, machine=machine, hold_tree=hold_tree,
             # The fake worktree for branch b is /wt/b, so its name is its branch.
-            branch=branch or (lambda wt: Path(wt).name))
+            branch=branch or (lambda wt: Path(wt).name),
+            push=publish, tree=tree_fn)
         self.sched = self._make()
 
     @property

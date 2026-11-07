@@ -12,9 +12,9 @@
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
-A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish keeps the attended v1 run (exit 10 when waiting). --no-verify skips the pre-push hook on those publishes.
+A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when a v1 / `--auto-publish` run is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 10 when a v1 run that has not been resumed is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 """
 
 # doc-group: cli
@@ -33,6 +33,7 @@ from pathlib import Path
 
 import batch.admission
 import batch.events
+import batch.findings
 import batch.inbox
 import batch.machine
 import batch.plan
@@ -90,13 +91,13 @@ run that settles is `run_summary`: the run, its counts, and what needs action
 next.
 
 A default run never waits on a decision: it exits 0 and `pr batch report`
-prints what needs a person. Exit 10 is only for `--auto-publish` and v1 runs.
---auto-publish STEPS answers clean publishes without asking (attended v1).
+prints what needs a person. Exit 10 is only for v1 runs not yet resumed.
+--auto-publish ff pushes a clean fast-forward (`pr push --expect`) when an
+item closes with no findings; never a force push, closeout post or issue filing.
 A v1 run waiting on you lists `next` entries (also printed
 by `pr batch next`) that say why, name any prep, and list the
 `pr batch resolve RUN_ID DECISION_ID --action …` commands that answer it;
-`pr batch resume` continues. --auto-publish STEPS answers clean publishes
-without asking.
+`pr batch resume` converts that run to findings (one-way).
 """
 
 _DEFAULT_RUN = (
@@ -136,10 +137,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--with-review", action="store_true",
                    help="Add the review step (today's argv)")
     r.add_argument("--pool", type=int, default=None, help="Concurrency ceiling")
-    r.add_argument("--auto-publish", type=_steps, default=[], metavar="STEPS",
-                   help="Publish an item without asking when it closes with no open decision "
-                        "and every drafted step is in STEPS and finished done. An owed closeout "
-                        "counts as comments work. Steps never push while they run")
+    r.add_argument("--auto-publish", choices=["ff"], default=None,
+                   help="Push a clean fast-forward (`pr push --expect`) when an item closes "
+                        "with no findings; never a force push, closeout post or issue filing")
     r.add_argument("--prs", default="", help="Comma-separated repo#number keys to include")
     r.add_argument("--select", type=_selection, action="append", default=[],
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")
@@ -440,10 +440,6 @@ def _skip_held(rows: list[batch.plan.PlanRow]) -> list[batch.plan.PlanRow]:
 def _check_run_args(parser: argparse.ArgumentParser, args) -> None:
     if Step.REVIEW in (args.with_ai or []):
         parser.error("review needs --with-review, not --with-ai")
-    if args.auto_publish and args.with_ai:
-        parser.error(
-            "`--auto-publish` keeps the attended v1 run until it is replaced by "
-            "`--auto-publish ff`; it cannot combine with `--with-ai`")
     selected_review = any(Step.REVIEW in s.steps for s in args.select)
     if Step.REVIEW in args.steps and not args.with_review and not selected_review:
         parser.error("review in --steps needs --with-review")
@@ -481,12 +477,12 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
         cfg = _cfg(dirs)
         run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
                                       pool=batch.admission.ceiling(args.pool, cfg),
-                                      auto_publish=args.auto_publish,
+                                      auto_publish=[],
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       no_verify=args.no_verify, focus=focus,
-                                      with_ai=None if args.auto_publish else args.with_ai,
-                                      schema_version=1 if args.auto_publish else 2)
+                                      with_ai=args.with_ai, schema_version=2,
+                                      auto_publish_ff=args.auto_publish == "ff")
         if focus:
             _warn_focus_without_review(run)
         session = held.enter_context(batch.store.create(run, inbox=inbox,
@@ -510,7 +506,7 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
 def _emit_started(run: Run) -> None:
     batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
                       steps=[s.value for s in run.steps],
-                      auto_publish=[s.value for s in run.auto_publish],
+                      auto_publish="ff" if run.auto_publish_ff else None,
                       with_ai=None if run.with_ai is None else [s.value for s in run.with_ai])
     for item in run.items:
         batch.events.emit("item_queued", run=run.id, item=item.key,
@@ -574,6 +570,7 @@ def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
         holds = _hold_items(held, run, "resume")
     except _Refused as exc:
         return exc
+    batch.findings.upgrade_v1(run, emit=batch.events.emit)
     if steps is not None:
         _narrow_resume(run, steps)
     batch.scheduler.mark_interrupted(run, emit=batch.events.emit)

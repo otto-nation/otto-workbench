@@ -3,7 +3,10 @@
 The one owner of "decision → finding", read by the scheduler, the report, and
 `upgrade_v1`. A schema-2 run never opens a decision: `record` appends to
 `Item.findings` and sets `needs_session` when any finding is `block` or `wait`.
-Act-only findings leave the item to close `done`.
+Act-only findings leave the item to close `done`. `upgrade_v1` converts an
+in-flight v1 run in place (one-way): open decisions map through `record`
+except `publish` (v2 `_close` re-reads) and `interrupted` (step back to
+pending); `with_ai` stays `None` so AI argv does not silently change.
 
 | v1 decision | finding |
 |---|---|
@@ -29,8 +32,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import batch.store
-from batch.model import (Decision, DecisionKind, EvidenceKind, Finding, FindingReason,
-                         Item, ItemStatus, Run, Severity, severity_of, stacked_on_items)
+from batch.model import (FINISHED_RUN, Decision, DecisionKind, EvidenceKind, Finding,
+                         FindingReason, Item, ItemStatus, Run, Severity, Step, StepStatus,
+                         severity_of, stacked_on_items)
 from batch.publish import Refusal
 from rebase.types import ConflictStrategy
 from review.types import SEVERITY_MUST, severity_by_key
@@ -154,6 +158,25 @@ def record(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *
     if any(severity_of(f) is not Severity.ACT for f in found):
         item.status = ItemStatus.NEEDS_SESSION
     return found
+
+
+def upgrade_v1(run: Run, *, emit: Callable[..., None]) -> bool:
+    """Convert an in-flight v1 run to schema 2. One-way; no-op for finished or v2."""
+    if run.schema_version >= 2 or run.status in FINISHED_RUN:
+        return False
+    for decision in list(run.open_decisions()):
+        item = run.item(decision.item)
+        if decision.kind is DecisionKind.INTERRUPTED and decision.step in {s.value for s in Step}:
+            item.step(Step(decision.step)).status = StepStatus.PENDING
+        elif decision.kind not in (DecisionKind.INTERRUPTED, DecisionKind.PUBLISH):
+            record(run, item, decision.step, decision.kind, decision.payload, emit=emit)
+        decision.resolution = "upgraded"
+        decision.resolved_at = batch.store.now_iso()
+    for item in run.items:
+        if item.status in (ItemStatus.AWAITING_DECISION, ItemStatus.READY_TO_PUBLISH):
+            item.status = ItemStatus.QUEUED
+    run.schema_version = 2
+    return True
 
 
 def _finding(reason: FindingReason, decision: Decision, *, detail: str = "",

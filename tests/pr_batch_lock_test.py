@@ -268,7 +268,7 @@ def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", drop_one_then_drive)
     assert _main(["batch", "run", "--checkout", str(repo),
-                  "--with-review", "--auto-publish", "rebase"]) == 10
+                  "--with-review"]) == 10
     assert seen["before"] == [True, True]
     assert seen["status"] is batch.model.ItemStatus.DROPPED
     assert seen["after"] == [False, True]

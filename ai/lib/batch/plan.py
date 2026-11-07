@@ -508,7 +508,7 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
     return StepNeed(True, of)
 
 
-def _pr_state(repo_dir: str, branch: str) -> pr.state.PRState | None:
+def pr_state(repo_dir: str, branch: str) -> pr.state.PRState | None:
     """The `pr` state saved for *branch* of *repo_dir*'s repo, or None when there is none."""
     # A checkout that is gone has no state rather than an error: a finished
     # run's report reads every item, including ones whose checkout was removed,
@@ -517,6 +517,9 @@ def _pr_state(repo_dir: str, branch: str) -> pr.state.PRState | None:
         return None
     key = pr.target.repo_key_from_origin(repo_dir)
     return pr.state.load_state(pr.target.target_dir(key, branch)) if key else None
+
+
+_pr_state = pr_state
 
 
 def _settled_from(

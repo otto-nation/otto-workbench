@@ -182,13 +182,14 @@ def adopt_project_review_yml(wt_path: str) -> bool:
     return True
 
 
-def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
+def load_issue_provider(wt_path: str | None = None, *, adopt: bool = True) -> IssueProviderInfo:
     """The issue tracker for this scope, project config first.
 
     A repo still holding the legacy ``.claude/review.yml`` is converted on
     the way through, so the answer comes from one place afterwards.
+    Pass ``adopt=False`` for a read that must not write ``.workbench.yml``.
     """
-    if wt_path:
+    if wt_path and adopt:
         adopt_project_review_yml(wt_path)
     cfg = config.workbench_config.load_config_or_default(wt_path)
     tracker = cfg.issues

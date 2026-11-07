@@ -91,6 +91,69 @@ class EvidenceKind(StrEnum):
     STACKED_ON = "stacked_on"
 
 
+class FindingReason(StrEnum):
+    """Why a PR still needs a focused session. Unpersisted in schema v1; values are stable."""
+
+    CONFLICT_HANDWRITTEN = "conflict_handwritten"
+    CONFLICT_GENERATED = "conflict_generated"
+    STALE_GENERATED = "stale_generated"
+    STACK_WAIT_BASE = "stack_wait_base"
+    STACK_CARRIES_BASE_COMMITS = "stack_carries_base_commits"
+    WORKTREE_COLLISION = "worktree_collision"
+    DIRTY_WORKTREE = "dirty_worktree"
+    WRONG_BRANCH = "wrong_branch"
+    CI_FAILING = "ci_failing"
+    THREADS_NEED_HUMAN = "threads_need_human"
+    CLOSEOUT_OWED = "closeout_owed"
+    READY_TO_PUSH = "ready_to_push"
+    PUSH_REFUSED = "push_refused"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    FAILED_UNKNOWN = "failed_unknown"
+
+
+class Severity(StrEnum):
+    BLOCK = "block"
+    WAIT = "wait"
+    ACT = "act"
+
+
+SEVERITY: dict[FindingReason, Severity] = {
+    FindingReason.CONFLICT_HANDWRITTEN: Severity.BLOCK,
+    FindingReason.CONFLICT_GENERATED: Severity.BLOCK,
+    FindingReason.STALE_GENERATED: Severity.BLOCK,
+    FindingReason.STACK_WAIT_BASE: Severity.WAIT,
+    FindingReason.STACK_CARRIES_BASE_COMMITS: Severity.BLOCK,
+    FindingReason.WORKTREE_COLLISION: Severity.BLOCK,
+    FindingReason.DIRTY_WORKTREE: Severity.BLOCK,
+    FindingReason.WRONG_BRANCH: Severity.BLOCK,
+    FindingReason.CI_FAILING: Severity.ACT,
+    FindingReason.THREADS_NEED_HUMAN: Severity.ACT,
+    FindingReason.CLOSEOUT_OWED: Severity.ACT,
+    FindingReason.READY_TO_PUSH: Severity.ACT,
+    FindingReason.PUSH_REFUSED: Severity.BLOCK,
+    FindingReason.BUDGET_EXHAUSTED: Severity.BLOCK,
+    FindingReason.FAILED_UNKNOWN: Severity.BLOCK,
+}
+
+
+@dataclass
+class Finding:
+    """One reason a PR still needs a person. Derived from v1 decisions; not persisted."""
+
+    reason: FindingReason
+    step: str
+    detail: str = ""
+    files: list[str] = field(default_factory=list)
+    log_path: str = ""
+    data: dict = field(default_factory=dict)
+    created_at: str = ""
+
+    def to_dict(self) -> dict:
+        return {"reason": self.reason.value, "step": self.step, "detail": self.detail,
+                "files": list(self.files), "data": dict(self.data),
+                "log": self.log_path or None}
+
+
 TERMINAL_ITEM = frozenset({ItemStatus.DONE, ItemStatus.DROPPED, ItemStatus.SKIPPED_CLOSED})
 
 # The one owner of "a run that has ended": statuses a run never leaves.
@@ -189,6 +252,9 @@ class Item:
     # The origin key of the item's checkout, recorded at plan time.
     # Empty in runs saved before it existed.
     repo_key: str = ""
+    # Copied from PlanRow.is_draft so the report can require a comment before
+    # a hand push on a non-draft PR. Additive; older state loads as False.
+    is_draft: bool = False
 
     def __post_init__(self) -> None:
         if not self.remote_sha:

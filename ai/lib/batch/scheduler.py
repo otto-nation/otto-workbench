@@ -101,7 +101,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
                           head_sha=r.head_sha, steps=recs, base_ref=r.base_ref,
-                          repo_key=r.repo_key))
+                          repo_key=r.repo_key, is_draft=r.is_draft))
     # A fork's head branch names a branch in another repo — often `main` —
     # so keying it under the base repo would stack every PR based on `main`.
     by_branch = {(r.repo, r.branch): r.key for r in rows if not r.is_fork}

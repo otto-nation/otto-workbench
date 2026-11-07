@@ -381,6 +381,7 @@ _unscoped() {
   [ "$status" -eq 0 ]
 }
 
+# passes-at-base: it pins wiring that already existed; only deleting that wiring fails it
 @test "review-guard: verify mode routes writes through verifyWriteAllowed" {
   # Same reason as above: the SDK import keeps review-guard.ts unloadable, so
   # the wiring from the env flag to the predicate is asserted textually.

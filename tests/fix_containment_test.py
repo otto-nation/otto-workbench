@@ -24,6 +24,7 @@ import review.fix
 from config.workbench_config import FixConfig, WorkbenchConfig
 from git.land import CommitStatus
 
+from fix_containment_support import _repo, _tracked_ignored_repo
 from fix_engine_support import StubAdapter, _answer
 from review_fix_pass_support import (
     _PUSHED, _committed_paths, _make_job, git_wt, _answer as _review_answer,
@@ -33,25 +34,6 @@ from review_record_support import finding, record
 SERVICES = "ansible/inventory/group_vars/homelab/services.yml"
 ORIGINAL = "services:\n  foo: bar\n"
 CLOBBER = "fixture\nline2\n"
-
-
-def _repo(tmp_path, files):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    hooks = tmp_path / "hooks"
-    hooks.mkdir()
-    git_out(wt, "init", "-q", "-b", "main")
-    git_out(wt, "config", "user.email", "test@example.com")
-    git_out(wt, "config", "user.name", "Test")
-    git_out(wt, "config", "commit.gpgsign", "false")
-    git_out(wt, "config", "core.hooksPath", str(hooks))
-    for rel, text in files.items():
-        path = wt / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-    git_out(wt, "add", "-A")
-    git_out(wt, "commit", "-qm", "initial")
-    return wt
 
 
 def _script(tmp_path, body):
@@ -75,6 +57,20 @@ class TestSnapshot:
         (wt / "x.cache").write_text("nope\n")
         snap = fix.containment.take(wt)
         assert "x.cache" not in snap.by_path()
+
+    def test_a_tracked_file_under_an_ignored_path_is_visible(self, tmp_path):
+        wt = _tracked_ignored_repo(tmp_path)
+        assert "build/tracked.txt" in fix.containment.take(wt).by_path()
+
+    # passes-at-base: an unborn repo skipped the HEAD seed by never having one
+    def test_an_unborn_repo_still_snapshots(self, tmp_path):
+        wt = tmp_path / "unborn"
+        wt.mkdir()
+        git_out(wt, "init", "-q", "-b", "main")
+        (wt / "a.py").write_text("x\n")
+        snap = fix.containment.take(wt)
+        assert snap.ok
+        assert "a.py" in snap.by_path()
 
     def test_a_failed_read_is_not_an_empty_tree(self, tmp_path):
         snap = fix.containment.take(tmp_path)
@@ -195,6 +191,21 @@ class TestSuiteAndDirty:
             fix.engine.run(adapter, verify=verify)
 
         assert (wt / "a.py").read_text() == "dirty\n"
+
+    def test_a_verify_write_to_a_tracked_ignored_file_is_reverted(self, tmp_path):
+        wt = _tracked_ignored_repo(tmp_path)
+        adapter = StubAdapter(wt)
+
+        def verify(*_a, **_k):
+            (wt / "build" / "tracked.txt").write_text("CLOBBER\n")
+            return {}
+
+        with patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)):
+            fix.engine.run(adapter, verify=verify)
+
+        assert (wt / "build" / "tracked.txt").read_text() == "v1\n"
+        saved = adapter.artifacts / "containment" / "verify" / "build" / "tracked.txt"
+        assert saved.read_text() == "CLOBBER\n"
 
     @patch("git.push.push", return_value=_PUSHED)
     def test_the_fix_agents_edit_to_an_anchor_survives_verify(self, _push, tmp_path):

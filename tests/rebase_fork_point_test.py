@@ -118,7 +118,7 @@ class TestForkPointReplay:
 
     def _fresh(
         self, repo: Path, fork_point: str, *, force: bool = False,
-        stop_on_conflict: bool = False,
+        pause_on_conflict: bool = False,
     ) -> int:
         """`lifecycle.fresh` with everything outside the replay stubbed out.
 
@@ -141,7 +141,7 @@ class TestForkPointReplay:
             return rebase.lifecycle.fresh(
                 str(repo), _ctx(), rebase.types.RunMode.REBASE_ONLY,
                 force=force, target_ref=_TARGET, fork_point=fork_point,
-                stop_on_conflict=stop_on_conflict,
+                pause_on_conflict=pause_on_conflict,
             )
 
     def test_only_the_commits_after_the_fork_point_are_replayed(self, tmp_path):
@@ -173,7 +173,7 @@ class TestForkPointReplay:
         """
         repo = self._partially_landed(tmp_path)
 
-        self._fresh(repo, "", force=True, stop_on_conflict=True)
+        self._fresh(repo, "", force=True, pause_on_conflict=True)
 
         assert (repo / ".git" / "rebase-merge").exists()
         git_in(repo, "rebase", "--abort")

@@ -180,7 +180,7 @@ def test_step_conflicts_no_fix_reports():
         rc = rebase.lifecycle.step_conflicts(
             "/fake", ctx, rebase.types.RunMode.PUSH, ["a.py"],
             rebase.types.ResolutionTally(), target_ref=_TARGET,
-            stop_on_conflict=True,
+            pause_on_conflict=True,
         )
 
     assert rc == 3
@@ -202,7 +202,7 @@ def test_step_conflicts_no_fix_saves_state():
         rebase.lifecycle.step_conflicts(
             "/fake", ctx, rebase.types.RunMode.PUSH, ["a.py"],
             rebase.types.ResolutionTally(), target_ref=_TARGET,
-            stop_on_conflict=True,
+            pause_on_conflict=True,
         )
 
     assert saved == [(pr.domains.RebaseStatus.CONFLICTS, ctx)]

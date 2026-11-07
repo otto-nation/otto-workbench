@@ -216,7 +216,9 @@ def cmd_start(
     run that started it.
     """
     rebase.hooks_chain.warn_if_shadowed(cwd)
-    if rebase.inspect.rebase_in_progress(cwd):
+    in_progress = rebase.inspect.rebase_in_progress(cwd)
+    pause_on_conflict = stop_on_conflict or in_progress
+    if in_progress:
         target_ref = rebase.target.resume_target_ref(ctx, target_ref, trail=trail)
         core.trail.tdecision(
             trail, "rebase_state", "detected in-progress rebase",
@@ -231,7 +233,7 @@ def cmd_start(
                 cwd, ctx, mode, target_ref=target_ref, force=True,
                 tally=rebase.lifecycle.resumed_tally(cwd, ctx),
                 verify=verify, snapshot=snapshot, trail=trail,
-                stop_on_conflict=stop_on_conflict, resuming=True,
+                pause_on_conflict=pause_on_conflict,
             )
         finally:
             # An earlier run may have stashed and then stopped with the rebase
@@ -253,7 +255,7 @@ def cmd_start(
         return rebase.lifecycle.fresh(
             cwd, ctx, mode, force=force, target_ref=target_ref,
             fork_point=fork_point, verify=verify, snapshot=snapshot,
-            trail=trail, stop_on_conflict=stop_on_conflict,
+            trail=trail, pause_on_conflict=pause_on_conflict,
         )
     finally:
         # try/finally rather than a trailing call: the run lock gets this right
@@ -351,7 +353,7 @@ def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
         rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
                        fork_point=args.fork_point or "", verify=verify,
                        snapshot=snapshot, trail=trail,
-                       stop_on_conflict=getattr(args, "stop_on_conflict", False))
+                       stop_on_conflict=args.stop_on_conflict)
 
         # A hold here is the rebase's own: it resolved a region to one side,
         # and cmd_push would report the held landing as a failed force-push.

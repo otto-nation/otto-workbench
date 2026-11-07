@@ -14,6 +14,11 @@ and are otherwise unreachable.
 Tool denials on the verify agent (Claude Edit/Write, Pi review-guard) are
 ergonomics. Process writes — ``python3 -c``, a suite, ``sed`` — bypass both,
 which is why this restore is the real control.
+
+The review adapter's commit scope is the other half: it keeps only finding
+anchors and the tests named for them, so a PR file that is not an anchor stays
+in the worktree with a warning. The engine also refuses to land when HEAD moved
+during the pass and the domain did not ask to recover an agent's own commit.
 """
 
 # ceiling: gitignored writes are invisible to this snapshot, because
@@ -39,6 +44,7 @@ from pathlib import Path
 
 import core.log
 import core.proc
+import core.timeouts
 import git.client
 from core.trail import Trail, twarn
 
@@ -241,7 +247,7 @@ def _put_back(workdir: Path, record: FileRecord | None, rel: str) -> None:
     # Bytes, not text: `git.client.run` decodes, which corrupts a binary blob.
     blob = subprocess.run(
         ["git", "cat-file", "blob", record.sha], cwd=workdir,
-        capture_output=True, check=False,
+        capture_output=True, check=False, timeout=core.timeouts.LOCAL,
     )
     if blob.returncode != 0:
         core.log.warn(

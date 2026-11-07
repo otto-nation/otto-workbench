@@ -528,22 +528,6 @@ file that does not exist records no verdict rather than an approval.
 Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
 one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).
 
-### What a self-review fix pass will commit
-
-The engine attributes work by comparing the worktree before and after the fix
-agent (`fix.scope.agent_changed`). The review adapter then keeps only finding
-anchors and tests or `_support` modules named for those anchors. A file on the
-PR that is not an anchor stays dirty, is named in a warning, and is reported as
-`left_out` so a green `fix.verify_command` over it is PARTIAL rather than a
-clean bill for the commit.
-
-The verify agent and the suite run in the same worktree. Content snapshots
-(`fix.containment`) bracket both phases and restore anything they wrote, so a
-verify rewrite of a file the fix agent already edited (or of a tracked inventory
-file it used as a fixture) cannot reach `git.land`. Clobbered bytes land under
-the pass artifacts in `containment/<phase>/`. If HEAD moved and the domain did
-not ask to recover an agent's own commit, the pass refuses to land.
-
 ### Which files the rebase fix pass is allowed to touch
 
 When a rebase's force-push is rejected by a pre-push check, `pr rebase` runs a

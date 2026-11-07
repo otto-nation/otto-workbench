@@ -137,6 +137,9 @@ NO_DEPS_TESTS = {
     # Fake `gh` on PATH; stdlib and pytest only, and the suites importing it
     # (via conftest's pytest_plugins) carry the deps.
     "tests/stub_gh_support.py",
+    # A hooks-neutralised temp repo builder; conftest and git only, and the
+    # suites importing it carry the deps.
+    "tests/fix_containment_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')

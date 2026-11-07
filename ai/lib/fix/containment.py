@@ -30,8 +30,10 @@ in the worktree with a warning.
 # no stat cache. Upgrade trigger: once a pass trail shows snapshots taking
 # over 5 seconds, seed from a copy of the real index instead.
 #
-# ceiling: the fix agent still runs in the real tree. Upgrade once a way
-# exists to provision ignored state in a temp worktree.
+# ceiling: the fix agent still runs in the real tree, so it can overwrite an
+# operator's uncommitted edit (never committed — path attribution — but
+# clobbered). Upgrade trigger: once a `fix_pass_left_dirty` trail event
+# carries `already_dirty` paths the operator did not ask the pass to touch.
 
 # doc-group: pipeline
 

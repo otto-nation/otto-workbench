@@ -757,6 +757,17 @@ moves to *needs a person*, is recorded that way in state so `--finish` cannot
 republish it, and holds publishing for the round. One the gate could not settle
 goes out with the `Not verified automatically` hedge.
 
+### fix/leftovers.py
+
+Files a fix pass changed that its commit does not hold.
+
+A pass commits only the paths it can attribute to itself, so an edit to a file
+that was already dirty, or to a PR file that is not a finding anchor, stays in
+the worktree while the pass reports a clean landing. This module compares the
+worktree before the pass with the worktree after landing, by content, and says
+what the commit left behind — on the console and as a ``fix_pass_left_dirty``
+trail event. It reports and never changes the tree.
+
 ### fix/reconcile.py
 
 What the agent said against what the worktree shows, per item.

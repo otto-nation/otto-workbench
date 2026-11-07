@@ -24,6 +24,7 @@ import review.fix
 from config.workbench_config import FixConfig, WorkbenchConfig
 from git.land import CommitStatus
 
+from fix_containment_support import _repo
 from fix_engine_support import StubAdapter, _answer
 from review_fix_pass_support import (
     _PUSHED, _committed_paths, _make_job, git_wt, _answer as _review_answer,
@@ -33,25 +34,6 @@ from review_record_support import finding, record
 SERVICES = "ansible/inventory/group_vars/homelab/services.yml"
 ORIGINAL = "services:\n  foo: bar\n"
 CLOBBER = "fixture\nline2\n"
-
-
-def _repo(tmp_path, files):
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    hooks = tmp_path / "hooks"
-    hooks.mkdir()
-    git_out(wt, "init", "-q", "-b", "main")
-    git_out(wt, "config", "user.email", "test@example.com")
-    git_out(wt, "config", "user.name", "Test")
-    git_out(wt, "config", "commit.gpgsign", "false")
-    git_out(wt, "config", "core.hooksPath", str(hooks))
-    for rel, text in files.items():
-        path = wt / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-    git_out(wt, "add", "-A")
-    git_out(wt, "commit", "-qm", "initial")
-    return wt
 
 
 def _script(tmp_path, body):
@@ -89,6 +71,7 @@ class TestSnapshot:
         wt = _tracked_ignored_repo(tmp_path)
         assert "build/tracked.txt" in fix.containment.take(wt).by_path()
 
+    # passes-at-base: an unborn repo skipped the HEAD seed by never having one
     def test_an_unborn_repo_still_snapshots(self, tmp_path):
         wt = tmp_path / "unborn"
         wt.mkdir()

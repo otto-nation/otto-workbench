@@ -71,6 +71,8 @@ by three routes. Two now report themselves; the third cannot:
 The third is the path-attribution ceiling and is not closeable by a check: a file moving
 is evidence that something happened, never that *this item* is what happened. That is
 what this manual step is for.
+A pass that leaves files it changed out of its commit now says so — on the console and as a
+`fix_pass_left_dirty` trail event (`otto-log query --event-type fix_pass_left_dirty`).
 
 A change reaching main this way is the worst case — not unreviewed, but *reported as
 absent*, so nobody looks. A regression shipped this way is invisible to the one artifact

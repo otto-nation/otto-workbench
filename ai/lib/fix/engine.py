@@ -54,6 +54,7 @@ import agent.templates
 import fix.baseline
 import fix.blame
 import fix.containment
+import fix.leftovers
 import fix.scope
 import fix.suite
 import fix.tracking
@@ -1045,6 +1046,10 @@ def run(
               f"{len(dirty_before)} file(s) already modified before the pass",
               data={"paths": sorted(dirty_before), "workdir": str(adapter.workdir)})
 
+    # Content before the agent runs, so what the commit leaves behind can be
+    # named afterwards: `fix.leftovers` compares it with the tree after landing.
+    pre_pass = fix.containment.take(adapter.workdir)
+
     # Taken before the agent runs, for the one question asked of a red verify
     # run: was the tree already red? Skipped for a domain whose checks never
     # run, and when the repo names no command — a snapshot nobody will compare.
@@ -1057,7 +1062,8 @@ def run(
 
     try:
         return _run_pass(adapter, items, trail=trail, verify=verify, head_before=head_before,
-                         dirty_before=dirty_before, baseline_ref=baseline_ref)
+                         dirty_before=dirty_before, baseline_ref=baseline_ref,
+                         pre_pass=pre_pass)
     except (KeyboardInterrupt, SystemExit):
         _interrupted(adapter, dirty_before, head_before, trail)
         raise
@@ -1066,6 +1072,7 @@ def run(
 def _run_pass(
     adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
     verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
+    pre_pass: fix.containment.Snapshot,
 ) -> FixRun:
     """`run`'s body once the pass is cleared to start: batch, settle, gate, check, land."""
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
@@ -1165,6 +1172,10 @@ def _run_pass(
     spec = adapter.landing(settled.outcomes, committed)
     landed = _land(adapter, spec, head_before, trail)
     _stamp(settled.outcomes, head_before, landed.sha)
+    fix.leftovers.report(adapter.workdir, fix.leftovers.find(
+        adapter.workdir, pre_pass, dirty_before,
+        exclude=fix.leftovers.artifacts_prefix(adapter.workdir, adapter.artifacts),
+    ), landed, trail)
 
     exit_code = settled.exit_code
     if landed.status is git.land.CommitStatus.COMMIT_FAILED:

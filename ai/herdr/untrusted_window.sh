@@ -127,8 +127,9 @@ _herdr_untrusted_terminal_addr() {
 # Terminal.state is "live" or "finished" (L35-36); afar is a set of machine ids
 # (L140). Missing file: no terminals.
 _herdr_untrusted_check_terminals() {
-  local file="$(_herdr_untrusted_core_dir "$HERDR_UNTRUSTED_SESSION")/terminals.json"
-  local raw entries line addr body failed=0
+  local file core_dir raw entries line addr body failed=0
+  core_dir=$(_herdr_untrusted_core_dir "$HERDR_UNTRUSTED_SESSION") || return 1
+  file="$core_dir/terminals.json"
   [[ -e "$file" ]] || return 0
   raw=$(cat "$file") || { warn "herdr untrusted window: could not read $file"; return 1; }
   if ! _herdr_untrusted_is_object "$raw"; then

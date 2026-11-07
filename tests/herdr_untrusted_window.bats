@@ -252,7 +252,7 @@ _write_json() {
   _seed_untrusted
   _write_json "$STATE/$SESSION/terminals.json" '{"next_id":2,"terminals":{"1":{"address":"t1","state":"live"}}}'
   _stub_open
-  XDG_STATE_HOME= run _run_launcher
+  XDG_STATE_HOME='' run _run_launcher
   [ "$status" -ne 0 ]
   [[ "$output" == *"hc kill t1"* ]]
 }

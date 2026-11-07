@@ -6646,6 +6646,21 @@ only a target refusal; the content is then judged as for an unknown/upstream
 group and still needs the cross-ref override. ``check_command`` never reads
 either override.
 
+### gh/shell_lex.py
+
+How a command line splits into statements the way bash reads it.
+
+Heredoc bodies are dropped, quoting is honoured, and the operators ``;``,
+``&``, ``|``, ``(``, ``)`` and a newline end a statement. ``segments`` keeps
+which statements pipe into the next one; ``split_statements`` is the same
+split as plain words. Imports nothing from ``gh``: the shape classifier and
+the content scanner both build on it.
+
+Only ``<<-`` lets a heredoc terminator be indented. Accepting indentation for
+a plain ``<<`` would end the body early on a line that happens to be the
+marker word, and scan the rest of the body as commands. A here-string
+(``<<<word``) opens no heredoc.
+
 ### gh/shell_wrappers.py
 
 Transparent command wrappers — ``env``, ``sudo``, ``time``, ``timeout`` and the rest — peeled off.

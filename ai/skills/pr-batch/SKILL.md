@@ -9,11 +9,11 @@ skip: "Do not use for a single PR (use pr-rebase, pr-comments, or ci-failures in
 
 # PR Batch
 
-Sweeps the viewer's open PRs with `pr batch`: rebase, CI fix, comments, and
-self-review, each as a drafted child. The batch is the only thing that
-publishes. A run that needs a person exits 10 (`waiting`); `pr batch next`
-lists why and the `pr batch resolve` that answers it; `pr batch resume`
-continues. This skill adds no lifecycle of its own — it wraps the CLI.
+Sweeps the viewer's open PRs with `pr batch`: rebase, CI, comments, and
+opt-in self-review, each as a drafted child. The batch is the only thing that
+publishes. A default run never waits on a decision: it exits 0 and
+`pr batch report` / `<run-dir>/report.md` prints what needs a person.
+This skill adds no lifecycle of its own — it wraps the CLI.
 
 Run with `/pr-batch`.
 
@@ -53,20 +53,22 @@ Start as a background job; it streams NDJSON and can run a long time:
 pr batch run --checkout DIR
 ```
 
-`run` plans for itself. Default `--steps` is rebase,ci,comments,review, each
-only where the plan says it is needed. Last line is `run_summary`. Exit 0 is
-done or cancelled; 10 is waiting on decisions, not failure.
+`run` plans for itself. Default `--steps` is rebase,ci,comments (no AI, no
+review). Last line is `run_summary`. Exit 0 is done or cancelled; a default
+run never exits 10. Read `<run-dir>/report.md`. Per PR, run its printed
+commands, or re-run that PR with AI:
+`pr batch run --checkout DIR --prs o/r#N --select o/r#N=rebase --with-ai=rebase`.
 
-Omit review when the sweep should not spend on it:
+`--with-ai=rebase,ci,comments` restores today's AI argv. `--with-review` adds
+review. `--prs` limits keys; `--select KEY=STEPS` runs exactly those steps for
+one PR. `--auto-publish STEPS` keeps the attended v1 run. `--no-verify` skips
+the pre-push hook on publishes the batch makes; persist it only when the user
+has already read a hook failure.
 
-```bash
-pr batch run --checkout DIR --steps rebase,ci,comments
-```
-
-`--prs` limits keys; `--select KEY=STEPS` runs exactly those steps for one
-PR. `--auto-publish STEPS` answers a clean publish when every drafted step is
-listed and done. `--no-verify` skips the pre-push hook on publishes the batch
-makes; persist it only when the user has already read a hook failure.
+Findings the report names: `conflict_handwritten` / `conflict_generated`,
+`ci_failing`, `threads_need_human`, `ready_to_push`, `stack_wait_base`,
+`dirty_worktree`, `failed_unknown`. `block`/`wait` → item `needs_session`;
+`act` only → `done`.
 
 ---
 
@@ -85,7 +87,8 @@ makes; persist it only when the user has already read a hook failure.
 
 ## Decisions
 
-When the run waits, read `pr batch next` (or `pr batch status`). Each `next`
+For `--auto-publish` runs and runs started before this version. When the run
+waits, read `pr batch next` (or `pr batch status`). Each `next`
 entry has `why`, `prep`, `worktree`, `actions`, and copy-paste
 `pr batch resolve RUN_ID DECISION_ID --action A` commands. Apply one action
 per decision; do not invent flags.

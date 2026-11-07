@@ -1,4 +1,4 @@
-"""Drive a run: admit steps, reap them, and stop when only decisions remain."""
+"""Drive a run: admit steps, reap them, and stop when only decisions remain; a schema-2 run records findings instead and always settles."""
 
 # doc-group: batch
 
@@ -15,6 +15,7 @@ from typing import Callable
 
 import batch.admission
 import batch.events
+import batch.findings
 import batch.machine
 import batch.outcomes
 import batch.plan
@@ -81,7 +82,8 @@ def _unpublished(worktree: str, remote_sha: str) -> bool:
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
-            no_verify: bool = False, focus: Sequence[str] = ()) -> Run:
+            no_verify: bool = False, focus: Sequence[str] = (),
+            with_ai: list[Step] | None = None, schema_version: int = 1) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -114,7 +116,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
                ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []),
-               no_verify=no_verify, focus=list(focus))
+               no_verify=no_verify, focus=list(focus), with_ai=with_ai,
+               schema_version=schema_version)
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
@@ -126,7 +129,10 @@ def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRo
 
 
 def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,
-            emit: Callable[..., None]) -> Decision:
+            emit: Callable[..., None]) -> Decision | None:
+    if run.schema_version >= 2:
+        batch.findings.record(run, item, step, kind, payload, emit=emit)
+        return None
     d = Decision(id=secrets.token_hex(4), item=item.key, step=step, kind=kind, payload=payload,
                  created_at=batch.store.now_iso())
     run.decisions.append(d)
@@ -141,6 +147,11 @@ def _interrupt_running(run: Run, item: Item, *, emit: Callable[..., None]) -> bo
     found = False
     for rec in item.steps:
         if rec.status is not StepStatus.RUNNING:
+            continue
+        if run.schema_version >= 2:
+            rec.status = StepStatus.PENDING
+            item.status = ItemStatus.QUEUED
+            found = True
             continue
         rec.status = StepStatus.INTERRUPTED
         _decide(run, item, rec.step.value, DecisionKind.INTERRUPTED,
@@ -308,7 +319,8 @@ class Scheduler:
         base = rec.start_head or live.head_before
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                          log_tail=list(live.tail), head_before=base,
-                                         log_path=rec.log_path)
+                                         log_path=rec.log_path,
+                                         fixing=self.run.uses_ai(rec.step))
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
         head = self._head(item.worktree)
         moved = head != base
@@ -433,6 +445,11 @@ class Scheduler:
         if debt.owed:
             payload["closeout"] = debt.describe()
         d = _decide(self.run, item, "publish", DecisionKind.PUBLISH, payload, emit=self._emit)
+        if d is None:
+            item.status = ItemStatus.DONE
+            self._emit("item_finished", run=self.run.id, item=item.key,
+                       status=item.status.value)
+            return
         item.status = ItemStatus.READY_TO_PUBLISH
         # --auto-publish answers the publish decision itself, and only for an
         # item that closed with nothing open and every drafted step listed and
@@ -476,6 +493,15 @@ class Scheduler:
 
     def _pending(self, item: Item) -> StepRecord | None:
         return next((r for r in item.steps if r.status is StepStatus.PENDING), None)
+
+    def _note_comments(self, item: Item, rec: StepRecord) -> bool:
+        """Skip a non-AI comments step and record that review feedback is owed."""
+        if rec.step is not Step.COMMENTS or self.run.uses_ai(Step.COMMENTS):
+            return False
+        rec.status = StepStatus.SKIPPED
+        _decide(self.run, item, rec.step.value, DecisionKind.COMMENT_ITEM,
+                {"detail": "review feedback is owed"}, emit=self._emit)
+        return True
 
     def _confirm(self, item: Item, rec: StepRecord) -> PlanRow | None:
         try:
@@ -570,7 +596,7 @@ class Scheduler:
         if rec.step is not Step.REBASE or not item.stacked_on:
             return False
         base = self.run.item(item.stacked_on)
-        if base.terminal:
+        if self.run.schema_version < 2 and base.terminal:
             return False
         _decide(self.run, item, rec.step.value, DecisionKind.STEP_REVIEW,
                 {"evidence": [{"kind": EvidenceKind.STACKED_ON.value, "item": base.key}]},
@@ -620,6 +646,8 @@ class Scheduler:
             if rec is None:
                 self._close(item)
                 continue
+            if self._note_comments(item, rec):
+                continue
             if self._off_branch(item, rec):
                 continue
             if self._tree_blocks(item, rec):
@@ -667,7 +695,7 @@ class Scheduler:
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait,
                          fork_point=self._rebase_fork_point(item, rec),
-                         focus=self.run.focus)
+                         focus=self.run.focus, ai=self.run.uses_ai(rec.step))
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         rec.start_head = rec.start_head or head_before

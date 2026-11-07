@@ -654,7 +654,8 @@ def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsy
         return batch.model.RunStatus.WAITING
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r", "--steps", "review"]) == 10
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "review",
+                  "--with-review"]) == 10
     last = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert last["kind"] == "run_summary"
     assert (last["run"]["exit_hint"], last["run"]["active"]) == (10, False)

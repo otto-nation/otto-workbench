@@ -139,6 +139,7 @@ def test_mid_loop_drains_a_queued_request_written_to_disk():
     h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
     with pytest.raises(KeyboardInterrupt):
         h.sched.run_until_blocked()
+    h.sched._sleep = lambda _: None
     batch.store.write_request(h.run.id, Cancel())
     assert h.sched.run_until_blocked() is batch.model.RunStatus.CANCELLED
     assert "cancel_requested" in h.kinds()

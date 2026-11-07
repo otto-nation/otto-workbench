@@ -1,8 +1,9 @@
 import { View, div } from "gpui-kit";
-import { stub } from "./_lib/location.js";
+import { locate } from "./_lib/location.js";
 
 export default class TeamPrs extends View {
   render() {
-    return div({}, stub ? "team-prs" : "");
+    void locate;
+    return div({}, "team-prs");
   }
 }

@@ -83,6 +83,19 @@ class TestSave:
         )
         assert recorded == [{"path": "big.bin", "reason": "file exceeds 32 bytes"}]
 
+    def test_total_cap_skips_files_past_the_budget(self, tmp_path):
+        wt = _repo(tmp_path, {"a.py": "orig\n"})
+        (wt / "one.bin").write_bytes(b"x" * 30)
+        (wt / "two.bin").write_bytes(b"y" * 30)
+        artifacts = tmp_path / "art"
+
+        with patch.object(fix.dirty_backup, "MAX_TOTAL_BYTES", 40):
+            result = _save(wt, artifacts, {"one.bin", "two.bin"})
+
+        assert result.paths == ("one.bin",)
+        assert [s.path for s in result.skipped] == ["two.bin"]
+        assert not (artifacts / "dirty-backup" / "two.bin").exists()
+
     def test_backup_failure_does_not_raise(self, tmp_path):
         wt = _repo(tmp_path, {"a.py": "orig\n"})
         (wt / "a.py").write_text("dirty\n")

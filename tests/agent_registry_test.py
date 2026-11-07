@@ -182,7 +182,7 @@ class TestVerifyPhases:
     """Each gated domain has a gate phase of its own, and no gate is retried."""
 
     def test_the_gates_are_the_three_verify_phases(self):
-        assert agent.registry._VERIFY_PHASES == {
+        assert agent.registry.VERIFY_PHASES == {
             Phase.FIX_VERIFY, Phase.COMMENTS_VERIFY, Phase.CI_VERIFY,
         }
 
@@ -191,10 +191,16 @@ class TestVerifyPhases:
             p for p, s in PHASES.items()
             if s.template and s.template_for() == "verify-fixes.md"
         }
-        assert gates == agent.registry._VERIFY_PHASES
+        assert gates == agent.registry.VERIFY_PHASES
 
     def test_no_gate_is_a_retryable_fix_pass(self):
-        assert not agent.registry._VERIFY_PHASES & set(RETRYABLE_FIX_PHASES)
+        assert not agent.registry.VERIFY_PHASES & set(RETRYABLE_FIX_PHASES)
+
+    def test_an_unknown_phase_string_is_not_a_gate(self):
+        assert not agent.registry.is_verify_phase("")
+        assert not agent.registry.is_verify_phase("nope")
+        assert not agent.registry.is_verify_phase("fix")
+        assert agent.registry.is_verify_phase("ci_verify")
 
 
 class TestPhaseShapes:

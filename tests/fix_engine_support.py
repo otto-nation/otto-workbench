@@ -121,10 +121,12 @@ def snapshots():
     not warn on every pass; `fix_containment_test.py` drives the real thing.
     """
     empty = fix.containment.Snapshot(ok=True)
-    with patch.object(fix.scope, "changed_files",
-                      return_value=set()) as m:
-        with patch.object(fix.containment, "take", return_value=empty):
-            yield m
+    with (
+        patch.object(fix.scope, "changed_files", return_value=set()) as m,
+        patch.object(fix.containment, "take", return_value=empty),
+        patch.object(fix.containment, "read_tree", return_value=empty),
+    ):
+        yield m
 
 
 # How many times a one-batch pass reads the worktree: the shared baseline, the

@@ -299,20 +299,29 @@ REVIEW_PHASES: tuple[Phase, ...] = tuple(
 # `fix.engine._retry` never sees it. Listed rather than derived for the reason
 # `SCAN_PHASES` is: nothing on a `PhaseSpec` says "gate", and the field that
 # would say so is declared on the adapter, which this module sits beneath.
-_VERIFY_PHASES: frozenset[Phase] = frozenset(
+VERIFY_PHASES: frozenset[Phase] = frozenset(
     {Phase.FIX_VERIFY, Phase.COMMENTS_VERIFY, Phase.CI_VERIFY}
 )
+
+
+def is_verify_phase(phase: str) -> bool:
+    """Whether *phase* (an ``AgentInvocation.phase`` string) is a verify gate."""
+    try:
+        return Phase(phase) in VERIFY_PHASES
+    except ValueError:
+        # "" is AgentInvocation's default and names no phase at all.
+        return False
 
 # The phases whose retry budget `agent.phases.phase_retry_turns` actually
 # decides: a fix-shaped phase is the only thing a `FixAdapter` names as its own,
 # and `fix.engine._retry` is that function's one caller. Derived from the shape
 # so a fix pass added later inherits the retry invariant its tests assert
 # instead of being a fifth entry somebody has to remember to list — and a gate
-# added later fails that invariant loudly until it joins `_VERIFY_PHASES`,
+# added later fails that invariant loudly until it joins `VERIFY_PHASES`,
 # which is the safe direction for this to break in.
 RETRYABLE_FIX_PHASES: tuple[Phase, ...] = tuple(
     p for p, s in PHASES.items()
-    if s.shape is PhaseShape.FIX and p not in _VERIFY_PHASES
+    if s.shape is PhaseShape.FIX and p not in VERIFY_PHASES
 )
 
 # A review's phase 1 is one scan chosen from these two, so every question about

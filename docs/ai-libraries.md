@@ -676,8 +676,9 @@ snapshots *content* (not path sets) around those phases and restores anything
 they changed, so the fix agent's pre-phase edits survive and a rewrite of an
 already-dirty file is undone.
 
-The snapshot uses a temporary ``GIT_INDEX_FILE`` so it never touches the
-operator's real index or stash. Blobs it writes live in the object database
+The snapshot uses a temporary ``GIT_INDEX_FILE`` seeded from ``HEAD`` so it
+never touches the operator's real index or stash, and so a tracked file under
+an ignored path is still seen. Blobs it writes live in the object database
 and are otherwise unreachable.
 
 Tool denials on the verify agent (Claude Edit/Write, Pi review-guard) are
@@ -755,6 +756,29 @@ it judges behaviour only. A **broken** verdict is never posted or resolved: it
 moves to *needs a person*, is recorded that way in state so `--finish` cannot
 republish it, and holds publishing for the round. One the gate could not settle
 goes out with the `Not verified automatically` hedge.
+
+### fix/head_guard.py
+
+Whether HEAD moved under a fix pass, and what that means for landing.
+
+The engine reads HEAD and the branch before the agent runs and compares them
+again just before it lands. A commit made on top is tolerated and recorded,
+because a hand commit made while the agent runs is allowed by contract. A
+branch switch or a history rewrite (reset, rebase, amend) is refused, since
+landing would then commit the pass's scope onto a branch it never worked on or
+on top of history it did not read. A domain that asks to ``recover`` is
+reported, never refused.
+
+### fix/leftovers.py
+
+Files a fix pass changed that its commit does not hold.
+
+A pass commits only the paths it can attribute to itself, so an edit to a file
+that was already dirty, or to a PR file that is not a finding anchor, stays in
+the worktree while the pass reports a clean landing. This module compares the
+worktree before the pass with the worktree after landing, by content, and says
+what the commit left behind — on the console and as a ``fix_pass_left_dirty``
+trail event. It reports and never changes the tree.
 
 ### fix/reconcile.py
 

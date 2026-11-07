@@ -7,8 +7,9 @@ snapshots *content* (not path sets) around those phases and restores anything
 they changed, so the fix agent's pre-phase edits survive and a rewrite of an
 already-dirty file is undone.
 
-The snapshot uses a temporary ``GIT_INDEX_FILE`` so it never touches the
-operator's real index or stash. Blobs it writes live in the object database
+The snapshot uses a temporary ``GIT_INDEX_FILE`` seeded from ``HEAD`` so it
+never touches the operator's real index or stash, and so a tracked file under
+an ignored path is still seen. Blobs it writes live in the object database
 and are otherwise unreachable.
 
 Tool denials on the verify agent (Claude Edit/Write, Pi review-guard) are
@@ -20,12 +21,19 @@ anchors and the tests named for them, so a PR file that is not an anchor stays
 in the worktree with a warning.
 """
 
-# ceiling: gitignored writes are invisible to this snapshot, because
-# ``git add -A`` respects exclude-standard. Upgrade trigger: if an agent is
-# observed writing a gitignored path that later feeds a commit.
+# ceiling: untracked gitignored writes and submodule (gitlink) contents are
+# invisible to this snapshot; tracked files under an ignored path are seen
+# because the temp index is seeded from HEAD. Upgrade trigger: if an agent
+# is observed writing an untracked ignored path that later feeds a commit.
 #
-# ceiling: the fix agent still runs in the real tree. Upgrade once a way
-# exists to provision ignored state in a temp worktree.
+# ceiling: every snapshot rehashes each tracked file — the seeded index has
+# no stat cache. Upgrade trigger: once a pass trail shows snapshots taking
+# over 5 seconds, seed from a copy of the real index instead.
+#
+# ceiling: the fix agent still runs in the real tree, so it can overwrite an
+# operator's uncommitted edit (never committed — path attribution — but
+# clobbered). Upgrade trigger: once a `fix_pass_left_dirty` trail event
+# carries `already_dirty` paths the operator did not ask the pass to touch.
 
 # doc-group: pipeline
 
@@ -85,30 +93,73 @@ class Reverted:
     saved_to: Path | None
 
 
+@dataclass(frozen=True)
+class WorktreeTree:
+    """A tree object holding the worktree's tracked and untracked-unignored content."""
+
+    sha: str = ""
+    ok: bool = True
+
+
+def worktree_tree(workdir: str | Path) -> WorktreeTree:
+    """Write the worktree's content as a tree object, leaving the real index alone.
+
+    The temporary index is seeded from ``HEAD`` when there is one, so a tracked
+    file under a ``.gitignore`` path still has an entry that ``add -A`` updates.
+    An unborn repo skips the seed. Failed reads return ``WorktreeTree(ok=False)``
+    and warn; callers must not treat that as an empty tree.
+    """
+    workdir = Path(workdir)
+    with tempfile.TemporaryDirectory(prefix="fix-snap-") as tmp:
+        env = os.environ | {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        has_head = git.client.run(
+            "rev-parse", "--verify", "-q", "HEAD", cwd=workdir,
+        ).ok
+        failed = _fill_index(workdir, env, has_head)
+        if failed is not None:
+            _unread(workdir, failed)
+            return WorktreeTree(ok=False)
+        written = git.client.run("write-tree", cwd=workdir, env=env)
+        sha = written.stdout.strip()
+        if not written.ok or not sha:
+            _unread(workdir, written)
+            return WorktreeTree(ok=False)
+        return WorktreeTree(sha=sha)
+
+
+def _fill_index(
+    workdir: Path, env: dict[str, str], has_head: bool,
+) -> core.proc.CmdResult | None:
+    """Seed (when HEAD exists) and fill the temp index; the failing step, if any."""
+    steps = [("add", "-A", "--", ".")]
+    if has_head:
+        steps.insert(0, ("read-tree", "HEAD"))
+    for step in steps:
+        done = git.client.run(*step, cwd=workdir, env=env)
+        if not done.ok:
+            return done
+    return None
+
+
+def read_tree(workdir: str | Path, treeish: str) -> Snapshot:
+    """The records of every blob under *treeish*, or ``Snapshot(ok=False)``."""
+    listed = git.client.run("ls-tree", "-r", "-z", treeish, cwd=workdir)
+    if not listed.ok:
+        _unread(Path(workdir), listed)
+        return Snapshot(ok=False)
+    return Snapshot(files=_parse_tree(listed.stdout), ok=True)
+
+
 def take(workdir: str | Path) -> Snapshot:
     """Snapshot worktree contents without touching the real index.
 
     Failed reads return ``Snapshot(ok=False)`` and warn. Callers must not
     treat that as an empty tree.
     """
-    workdir = Path(workdir)
-    with tempfile.TemporaryDirectory(prefix="fix-snap-") as tmp:
-        index = str(Path(tmp) / "index")
-        env = os.environ | {"GIT_INDEX_FILE": index}
-        added = git.client.run("add", "-A", "--", ".", cwd=workdir, env=env)
-        if not added.ok:
-            _unread(workdir, added)
-            return Snapshot(ok=False)
-        tree = git.client.run("write-tree", cwd=workdir, env=env)
-        sha = tree.stdout.strip()
-        if not tree.ok or not sha:
-            _unread(workdir, tree)
-            return Snapshot(ok=False)
-        listed = git.client.run("ls-tree", "-r", "-z", sha, cwd=workdir, env=env)
-        if not listed.ok:
-            _unread(workdir, listed)
-            return Snapshot(ok=False)
-        return Snapshot(files=_parse_tree(listed.stdout), ok=True)
+    tree = worktree_tree(workdir)
+    if not tree.ok:
+        return Snapshot(ok=False)
+    return read_tree(workdir, tree.sha)
 
 
 @contextmanager

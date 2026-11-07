@@ -32,14 +32,13 @@ committing everything is how unreviewed content reaches a branch.
 
 from __future__ import annotations
 
-import os
 import re
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import core.log
 import core.proc
+import fix.containment
 import git.client
 
 # Scratch files an agent leaves behind, which are not the pass's work.
@@ -285,17 +284,16 @@ def rename_partners(
 
 
 def _rename_diff(wt_path: str | Path) -> core.proc.CmdResult:
-    """`git diff HEAD -M` against a temp index of the current worktree."""
-    fallback = ("diff", "HEAD", "-M", "--name-status", "--diff-filter=R")
-    with tempfile.TemporaryDirectory(prefix="fix-renames-") as tmp:
-        env = os.environ | {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
-        added = git.client.run("add", "-A", "--", ".", cwd=wt_path, env=env)
-        if not added.ok:
-            return git.client.run(*fallback, cwd=wt_path)
-        listed = git.client.run(*fallback, cwd=wt_path, env=env)
-        if listed.ok:
-            return listed
-    return git.client.run(*fallback, cwd=wt_path)
+    """`git diff -M` from HEAD to a tree of the current worktree."""
+    tree = fix.containment.worktree_tree(wt_path)
+    if tree.ok:
+        return git.client.run(
+            "diff", "-M", "--name-status", "--diff-filter=R", "HEAD", tree.sha,
+            cwd=wt_path,
+        )
+    return git.client.run(
+        "diff", "HEAD", "-M", "--name-status", "--diff-filter=R", cwd=wt_path,
+    )
 
 
 @dataclass(frozen=True)

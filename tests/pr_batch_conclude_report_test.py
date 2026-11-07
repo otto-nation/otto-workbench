@@ -45,7 +45,8 @@ def test_run_summary_survives_a_report_write_failure(monkeypatch, capsys):
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     monkeypatch.setattr(cli.pr_batch_views, "write_report", boom)
-    assert _main(["batch", "run", "--checkout", "/r", "--steps", "review"]) == 0
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "review",
+                  "--with-review"]) == 0
     lines = capsys.readouterr().out.splitlines()
     last = json.loads(lines[-1])
     assert last["kind"] == "run_summary"

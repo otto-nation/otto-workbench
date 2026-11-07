@@ -4,6 +4,7 @@ The state file is authoritative; events only save a consumer from polling it.
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 `generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
 `item_skipped_held` is a PR a new `run` left out because an unfinished run still holds it.
+`finding_created` is a schema-2 recording (`run`, `item`, `reason`, `step`).
 """
 
 # doc-group: batch
@@ -21,6 +22,7 @@ EVENT_KINDS = frozenset({
     "step_finished", "decision_created", "decision_resolved", "item_finished",
     "cancel_requested", "item_skipped_held",
     "run_waiting", "run_finished", "run_summary", "generated_dirt_restored",
+    "finding_created",
 })
 
 

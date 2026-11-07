@@ -3912,6 +3912,32 @@ The state file is authoritative; events only save a consumer from polling it.
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 `generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
 `item_skipped_held` is a PR a new `run` left out because an unfinished run still holds it.
+`finding_created` is a schema-2 recording (`run`, `item`, `reason`, `step`).
+
+### batch/findings.py
+
+Map a v1 decision to findings (spec §3.1).
+
+The one owner of "decision → finding", read by the scheduler, the report, and
+`upgrade_v1`. A schema-2 run never opens a decision: `record` appends to
+`Item.findings` and sets `needs_session` when any finding is `block` or `wait`.
+Act-only findings leave the item to close `done`.
+
+| v1 decision | finding |
+|---|---|
+| `rebase_conflict` aborted, all classes `accept_theirs`/`regenerate` | `conflict_generated` |
+| `rebase_conflict` else | `conflict_handwritten` (`data.classes`; `data.paused` when paused) |
+| `rebase_refused` | `failed_unknown` |
+| `step_review` + `stacked_on` | `stack_wait_base` |
+| `step_review` + `one_sided`/`stale` | `stale_generated` |
+| `step_review` evidence exactly `ci_failing` or `ci_unfixed` | `ci_failing` |
+| `step_review` + `open_findings` | `failed_unknown` until `review_findings` lands |
+| `step_review` other / mixed | `failed_unknown` (evidence kinds in `detail`) |
+| `comment_item` | `threads_need_human` |
+| `dirty_worktree` | `dirty_worktree` |
+| `failed` | `wrong_branch` / `worktree_collision` / `budget_exhausted` / `push_refused` / `failed_unknown` |
+| `interrupted` | none |
+| `publish` | `ready_to_push` and/or `closeout_owed` |
 
 ### batch/gc.py
 
@@ -4055,6 +4081,9 @@ bumps `Run.schema_version`.
 ### batch/outcomes.py
 
 Turn what a finished step left behind into a step status and decisions.
+
+`classify(..., fixing=True)` is the v1 default until PR 7: CI evidence is
+`ci_unfixed`. A read-only CI step passes `fixing=False` and uses `ci_failing`.
 
 A `failed` decision's `reason` is one of these, or a publish refusal from
 `batch.publish.Refusal`. Each maps to one sentence, which status prints as `why`.
@@ -4239,15 +4268,15 @@ decision open.
 
 ### batch/scheduler.py
 
-Drive a run: admit steps, reap them, and stop when only decisions remain.
+Drive a run: admit steps, reap them, and stop when only decisions remain; a schema-2 run records findings instead and always settles.
 
 ### batch/session_report.py
 
 Per-PR session commands derived from a v1 run's decisions and local `pr` state.
 
 The builder shows; it never writes. Findings come from open v1 decisions
-(spec §3.1, with `step_review` + `open_findings` mapping to `failed_unknown`
-until `review_findings` lands). Commands are argv tuples.
+via `batch.findings` (spec §3.1, with `step_review` + `open_findings` mapping
+to `failed_unknown` until `review_findings` lands). Commands are argv tuples.
 
 Ordering: stack-topological on `stacked_on` (`after=[base]` while the base is
 non-terminal), then severity (block > wait > act), then PR key.
@@ -4265,7 +4294,9 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 | Finding | Command |
 |---|---|
 | `conflict_handwritten` | `pr rebase --fix --no-push --repo-dir WT` |
+| `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` |
 | `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` |
+| `ci_failing` | `pr ci --fix --repo-dir WT` |
 | `threads_need_human` | `pr comments --fix --repo-dir WT` |
 | `closeout_owed` | `pr comments --finish --post --repo-dir WT` |
 | `ready_to_push` | `publish.plan` push argv |
@@ -8152,7 +8183,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 ### cli/pr_batch.py
 
-`pr batch` — rebase, fix CI, address comments and self-review across my open PRs.
+`pr batch` — rebase, CI, comments and (opt-in) self-review across my open PRs.
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
@@ -8166,9 +8197,9 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
-Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --no-verify skips the pre-push hook on those publishes.
+A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish keeps the attended v1 run (exit 10 when waiting). --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 10 when a v1 / `--auto-publish` run is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 
 ### cli/pr_batch_common.py
 

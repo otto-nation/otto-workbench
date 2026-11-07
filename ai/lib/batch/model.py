@@ -40,6 +40,7 @@ class ItemStatus(StrEnum):
     AWAITING_DECISION = "awaiting_decision"
     READY_TO_PUBLISH = "ready_to_publish"
     DONE = "done"
+    NEEDS_SESSION = "needs_session"
     DROPPED = "dropped"
     SKIPPED_CLOSED = "skipped_closed"
 
@@ -80,19 +81,21 @@ class EvidenceKind(StrEnum):
     trailer of red/timed_out/error on the step's commits; ci_unfixed — ci-check's
     stdout tally; one_sided — `pr rebase`'s stdout report; stale — `pr rebase`'s
     stdout `files_stale` (generated files taken from the base and not rebuilt);
-    stacked_on — another item in the run whose publish goes first.
+    stacked_on — another item in the run whose publish goes first;
+    ci_failing — read-only ci-check's failing jobs.
     """
 
     OPEN_FINDINGS = "open_findings"
     CHECKS_UNVERIFIED = "checks_unverified"
     CI_UNFIXED = "ci_unfixed"
+    CI_FAILING = "ci_failing"
     ONE_SIDED = "one_sided"
     STALE = "stale"
     STACKED_ON = "stacked_on"
 
 
 class FindingReason(StrEnum):
-    """Why a PR still needs a focused session. Unpersisted in schema v1; values are stable."""
+    """Why a PR still needs a focused session. Persisted on the item in schema v2."""
 
     CONFLICT_HANDWRITTEN = "conflict_handwritten"
     CONFLICT_GENERATED = "conflict_generated"
@@ -138,7 +141,11 @@ SEVERITY: dict[FindingReason, Severity] = {
 
 @dataclass
 class Finding:
-    """One reason a PR still needs a person. Derived from v1 decisions; not persisted."""
+    """One reason a PR still needs a person.
+
+    Persisted on `Item.findings` in schema 2 (`log_path` is the stored key).
+    `to_dict()` stays the report shape (`log`). `core.serde` round-trips it.
+    """
 
     reason: FindingReason
     step: str
@@ -154,7 +161,9 @@ class Finding:
                 "log": self.log_path or None}
 
 
-TERMINAL_ITEM = frozenset({ItemStatus.DONE, ItemStatus.DROPPED, ItemStatus.SKIPPED_CLOSED})
+TERMINAL_ITEM = frozenset({
+    ItemStatus.DONE, ItemStatus.NEEDS_SESSION, ItemStatus.DROPPED, ItemStatus.SKIPPED_CLOSED,
+})
 
 # The one owner of "a run that has ended": statuses a run never leaves.
 # store (refs drop on commit), inbox (settle_idle), gc (removal candidates),
@@ -255,6 +264,8 @@ class Item:
     # Copied from PlanRow.is_draft so the report can require a comment before
     # a hand push on a non-draft PR. Additive; older state loads as False.
     is_draft: bool = False
+    # Schema-2 recordings; empty in v1 state and until a v2 run records one.
+    findings: list[Finding] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.remote_sha:
@@ -297,6 +308,13 @@ class Run:
     ref_dirs: list[str] = field(default_factory=list)
     cancel: CancelState | None = None
     schema_version: int = 1
+    # None is a run saved before this field existed, or an --auto-publish run,
+    # and means every step runs as before (AI). An empty list is a default
+    # unattended run: no step uses AI.
+    with_ai: list[Step] | None = None
+
+    def uses_ai(self, step: Step) -> bool:
+        return self.with_ai is None or step in self.with_ai
 
     def item(self, key: str) -> Item:
         for it in self.items:

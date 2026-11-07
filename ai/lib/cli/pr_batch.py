@@ -1,4 +1,4 @@
-"""`pr batch` — rebase, fix CI, address comments and self-review across my open PRs.
+"""`pr batch` — rebase, CI, comments and (opt-in) self-review across my open PRs.
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
@@ -12,9 +12,9 @@
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
-Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --no-verify skips the pre-push hook on those publishes.
+A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish keeps the attended v1 run (exit 10 when waiting). --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 10 when a v1 / `--auto-publish` run is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 """
 
 # doc-group: cli
@@ -73,11 +73,14 @@ def _selection(text: str) -> Selection:
     return Selection(key, _steps(steps))
 
 
+_DEFAULT_STEPS = [Step.REBASE, Step.CI, Step.COMMENTS]
+
 _RUN_EPILOG = """\
 recipes:
-  pr batch run --checkout DIR --steps rebase,ci   rebase and fix CI where needed
-  pr batch run --checkout DIR                     every step, where needed
-  pr batch run --checkout DIR --steps review --focus "…"   review with a focus
+  pr batch run --checkout DIR                     rebase, ci, comments; no AI, no review
+  pr batch run --checkout DIR --with-ai=rebase,ci,comments --with-review
+  pr batch run --checkout DIR --steps rebase,ci   rebase and CI where needed
+  pr batch run --checkout DIR --with-review --focus "…"   review with a focus
   pr batch resume --steps rebase,ci,comments      continue without re-running review
 
 `run` plans for itself — no `pr batch plan` first. It is long-running and
@@ -86,9 +89,11 @@ run's logs/ (--verbose streams it as step_log too), and the last line of a
 run that settles is `run_summary`: the run, its counts, and what needs action
 next.
 
-Nothing is pushed until a publish decision is answered. Exit 10 means the
-run is waiting on you, not that it failed: each `next` entry (also printed
-by `pr batch next`) says why, names any prep, and lists the
+A default run never waits on a decision: it exits 0 and `pr batch report`
+prints what needs a person. Exit 10 is only for `--auto-publish` and v1 runs.
+--auto-publish STEPS answers clean publishes without asking (attended v1).
+A v1 run waiting on you lists `next` entries (also printed
+by `pr batch next`) that say why, name any prep, and list the
 `pr batch resolve RUN_ID DECISION_ID --action …` commands that answer it;
 `pr batch resume` continues. --auto-publish STEPS answers clean publishes
 without asking.
@@ -120,9 +125,16 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--checkout", action="append", metavar="DIR",
                      help="A checkout whose open PRs to run on; repeatable")
     src.add_argument("--plan", metavar="FILE", help="A saved `pr batch plan` document")
-    r.add_argument("--steps", type=_steps, default=list(STEP_ORDER), metavar="STEPS",
-                   help=f"Comma-separated steps, any of {','.join(STEP_ORDER)} (default: all). "
+    r.add_argument("--steps", type=_steps, default=list(_DEFAULT_STEPS), metavar="STEPS",
+                   help=f"Comma-separated steps, any of {','.join(STEP_ORDER)} "
+                        f"(default: {','.join(s.value for s in _DEFAULT_STEPS)}; "
+                        "review needs --with-review). "
                         "Each runs only on PRs the plan marks as needing it")
+    r.add_argument("--with-ai", type=_steps, default=[], metavar="STEPS",
+                   help="Run these steps with today's AI argv; any of rebase,ci,comments. "
+                        "review needs --with-review")
+    r.add_argument("--with-review", action="store_true",
+                   help="Add the review step (today's argv)")
     r.add_argument("--pool", type=int, default=None, help="Concurrency ceiling")
     r.add_argument("--auto-publish", type=_steps, default=[], metavar="STEPS",
                    help="Publish an item without asking when it closes with no open decision "
@@ -425,6 +437,20 @@ def _skip_held(rows: list[batch.plan.PlanRow]) -> list[batch.plan.PlanRow]:
     return kept
 
 
+def _check_run_args(parser: argparse.ArgumentParser, args) -> None:
+    if Step.REVIEW in (args.with_ai or []):
+        parser.error("review needs --with-review, not --with-ai")
+    if args.auto_publish and args.with_ai:
+        parser.error(
+            "`--auto-publish` keeps the attended v1 run until it is replaced by "
+            "`--auto-publish ff`; it cannot combine with `--with-ai`")
+    selected_review = any(Step.REVIEW in s.steps for s in args.select)
+    if Step.REVIEW in args.steps and not args.with_review and not selected_review:
+        parser.error("review in --steps needs --with-review")
+    if (args.with_review or selected_review) and Step.REVIEW not in args.steps:
+        args.steps = list(args.steps) + [Step.REVIEW]
+
+
 def _warn_focus_without_review(run: Run) -> None:
     """Warn when --focus was given but some items have no review step planned."""
     keys = [i.key for i in run.items if not any(
@@ -458,7 +484,9 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
                                       auto_publish=args.auto_publish,
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
-                                      no_verify=args.no_verify, focus=focus)
+                                      no_verify=args.no_verify, focus=focus,
+                                      with_ai=None if args.auto_publish else args.with_ai,
+                                      schema_version=1 if args.auto_publish else 2)
         if focus:
             _warn_focus_without_review(run)
         session = held.enter_context(batch.store.create(run, inbox=inbox,
@@ -482,7 +510,8 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
 def _emit_started(run: Run) -> None:
     batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
                       steps=[s.value for s in run.steps],
-                      auto_publish=[s.value for s in run.auto_publish])
+                      auto_publish=[s.value for s in run.auto_publish],
+                      with_ai=None if run.with_ai is None else [s.value for s in run.with_ai])
     for item in run.items:
         batch.events.emit("item_queued", run=run.id, item=item.key,
                           steps=[s.step.value for s in item.steps])
@@ -608,11 +637,13 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
     import cli.pr_batch_common
     import cli.pr_batch_requests
     import cli.pr_batch_views
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     try:
         if args.command == "plan":
             return cli.pr_batch_views.cmd_plan(args)
         if args.command == "run":
+            _check_run_args(parser, args)
             return _cmd_run(args, bin_dir)
         if args.command == "resume":
             return _cmd_resume(args, bin_dir)

@@ -1,5 +1,8 @@
 """Turn what a finished step left behind into a step status and decisions.
 
+`classify(..., fixing=True)` is the v1 default until PR 7: CI evidence is
+`ci_unfixed`. A read-only CI step passes `fixing=False` and uses `ci_failing`.
+
 A `failed` decision's `reason` is one of these, or a publish refusal from
 `batch.publish.Refusal`. Each maps to one sentence, which status prints as `why`.
 
@@ -246,6 +249,23 @@ def last_report(stdout: str, report_type: str) -> dict | None:
     return typed[-1] if typed else None
 
 
+def ci_failing(stdout: str) -> dict | None:
+    """Failing jobs from a read-only ci-check report, or None when there are none.
+
+    Uses the last stream document that carries `failures` (untyped or
+    `type: final`). A green read-only check prints nothing.
+    """
+    docs = [d for d in stream_reports(stdout) if d.get("failures") is not None
+            and ("type" not in d or d.get("type") == "final")]
+    if not docs:
+        return None
+    failures = docs[-1]["failures"]
+    if not failures:
+        return None
+    jobs = sorted({f["job"] for f in failures if f.get("job")})
+    return {"jobs": jobs, "failures": len(failures)}
+
+
 def ci_unfixed(stdout: str) -> dict | None:
     """The CI failures this run left standing, from ci-check's own tally.
 
@@ -294,7 +314,8 @@ def _unverified_from_line(line: str) -> list[dict]:
             if value in pr.fix.UNVERIFIED_CHECKS]
 
 
-def _evidence(step: Step, stdout: str, item: Item, head_before: str) -> list[dict]:
+def _evidence(step: Step, stdout: str, item: Item, head_before: str,
+              *, fixing: bool = True) -> list[dict]:
     found: list[dict] = []
     if step is Step.REVIEW and (findings := open_findings(item)):
         found.append({"kind": EvidenceKind.OPEN_FINDINGS.value, "findings": findings})
@@ -306,8 +327,12 @@ def _evidence(step: Step, stdout: str, item: Item, head_before: str) -> list[dic
                           "regions": report.get("one_sided_regions", [])})
         if report.get("files_stale"):
             found.append({"kind": EvidenceKind.STALE.value, "files": report["files_stale"]})
-    if step is Step.CI and (unfixed := ci_unfixed(stdout)):
-        found.append({"kind": EvidenceKind.CI_UNFIXED.value, **unfixed})
+    if step is Step.CI:
+        if fixing:
+            if unfixed := ci_unfixed(stdout):
+                found.append({"kind": EvidenceKind.CI_UNFIXED.value, **unfixed})
+        elif failing := ci_failing(stdout):
+            found.append({"kind": EvidenceKind.CI_FAILING.value, **failing})
     if step in _FIXING_STEPS:
         found.extend({"kind": EvidenceKind.CHECKS_UNVERIFIED.value, **check}
                      for check in fix_checks(item.worktree, head_before))
@@ -372,7 +397,8 @@ def _commit_refused(lines: Sequence[str]) -> bool:
 
 
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
-             log_tail: list[str], head_before: str = "", log_path: str = "") -> StepResult:
+             log_tail: list[str], head_before: str = "", log_path: str = "",
+             fixing: bool = True) -> StepResult:
     """The status and decisions a finished step leaves, read from its stdout and the tree.
 
     A clean exit yields at most one `step_review` decision, carrying every
@@ -392,7 +418,7 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
     drafts: list[DecisionDraft] = []
     if step is Step.COMMENTS:
         drafts.extend(DecisionDraft(DecisionKind.COMMENT_ITEM, p) for p in comment_items(item))
-    if evidence := _evidence(step, stdout, item, head_before):
+    if evidence := _evidence(step, stdout, item, head_before, fixing=fixing):
         drafts.append(DecisionDraft(DecisionKind.STEP_REVIEW, {"evidence": evidence}))
     raw = (_json(stdout) or {}).get("pre_rebase_head", "") if step is Step.REBASE else ""
     pre = raw if isinstance(raw, str) else ""

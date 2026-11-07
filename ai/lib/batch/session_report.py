@@ -20,7 +20,9 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 | Finding | Command |
 |---|---|
 | `conflict_handwritten` | `pr rebase --fix --no-push --repo-dir WT` |
+| `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` |
 | `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` |
+| `ci_failing` | `pr ci --fix --repo-dir WT` |
 | `threads_need_human` | `pr comments --fix --repo-dir WT` |
 | `closeout_owed` | `pr comments --finish --post --repo-dir WT` |
 | `ready_to_push` | `publish.plan` push argv |
@@ -117,7 +119,7 @@ def sessions(run: Run, *, closeout: CloseoutFn | None = None,
 
 
 def _session(run: Run, item: Item, closeout: CloseoutFn, tree: TreeFn | None) -> SessionEntry:
-    findings = findings_from_decisions(run, item)
+    findings = list(item.findings) + findings_from_decisions(run, item)
     debt = closeout(item.repo_dir, item.branch)
     if debt.owed and not _has(findings, FindingReason.CLOSEOUT_OWED):
         findings.append(Finding(FindingReason.CLOSEOUT_OWED, "comments", CLOSEOUT_WHY))
@@ -216,6 +218,15 @@ def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionC
     if finding.reason is FindingReason.CONFLICT_HANDWRITTEN and repo:
         return SessionCommand(("pr", "rebase", "--fix", "--no-push", *repo),
                               "resolve hand-written conflicts")
+    if finding.reason is FindingReason.CONFLICT_GENERATED and repo:
+        return SessionCommand(
+            ("pr", "rebase", "--fix", "--no-push", *repo),
+            "rebuild generated files, or declare `rebase.regenerate` and run `pr rebase --no-push`",
+        )
+    if finding.reason is FindingReason.CI_FAILING and repo:
+        jobs = finding.data.get("jobs") or []
+        why = f"fix failing CI ({', '.join(jobs)})" if jobs else "fix failing CI"
+        return SessionCommand(("pr", "ci", "--fix", *repo), why)
     if finding.reason is FindingReason.STALE_GENERATED and item.pre_rebase_head:
         if git_cmd := _git(item, checkout, "reset", "--hard", item.pre_rebase_head):
             return SessionCommand(git_cmd, "undo the rebase, then regenerate")

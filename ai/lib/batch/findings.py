@@ -1,16 +1,20 @@
 """Map a v1 decision to findings (spec §3.1).
 
 The one owner of "decision → finding", read by the scheduler, the report, and
-`upgrade_v1`. A schema-2 run never opens a decision.
+`upgrade_v1`. A schema-2 run never opens a decision: `record` appends to
+`Item.findings` and sets `needs_session` when any finding is `block` or `wait`.
+Act-only findings leave the item to close `done`.
 
 | v1 decision | finding |
 |---|---|
-| `rebase_conflict` | `conflict_handwritten` (`data.classes` when present; `data.paused` when the tree is paused) |
+| `rebase_conflict` aborted, all classes `accept_theirs`/`regenerate` | `conflict_generated` |
+| `rebase_conflict` else | `conflict_handwritten` (`data.classes`; `data.paused` when paused) |
 | `rebase_refused` | `failed_unknown` |
 | `step_review` + `stacked_on` | `stack_wait_base` |
 | `step_review` + `one_sided`/`stale` | `stale_generated` |
+| `step_review` evidence exactly `ci_failing` or `ci_unfixed` | `ci_failing` |
 | `step_review` + `open_findings` | `failed_unknown` until `review_findings` lands |
-| `step_review` other | `failed_unknown` (evidence kinds in `detail`) |
+| `step_review` other / mixed | `failed_unknown` (evidence kinds in `detail`) |
 | `comment_item` | `threads_need_human` |
 | `dirty_worktree` | `dirty_worktree` |
 | `failed` | `wrong_branch` / `worktree_collision` / `budget_exhausted` / `push_refused` / `failed_unknown` |
@@ -22,12 +26,17 @@ The one owner of "decision → finding", read by the scheduler, the report, and
 
 from __future__ import annotations
 
-from batch.model import (Decision, DecisionKind, EvidenceKind, Finding, FindingReason, Item,
-                         Run, stacked_on_items)
+from collections.abc import Callable
+
+import batch.store
+from batch.model import (SEVERITY, Decision, DecisionKind, EvidenceKind, Finding, FindingReason,
+                         Item, ItemStatus, Run, Severity, stacked_on_items)
 from batch.publish import Refusal
+from rebase.types import ConflictStrategy
 
 CLOSEOUT_WHY = "closeout owed per pr state"
 _PUSH_REFUSALS = frozenset(r.value for r in Refusal if r is not Refusal.WRONG_BRANCH)
+_GENERATED = {ConflictStrategy.ACCEPT_THEIRS.value, ConflictStrategy.REGENERATE.value}
 
 
 def findings_from_decisions(run: Run, item: Item) -> list[Finding]:
@@ -44,12 +53,17 @@ def findings_for(decision: Decision) -> list[Finding]:
         return []
     if kind is DecisionKind.REBASE_CONFLICT:
         files = list(payload.get("files") or [])
+        classes = payload.get("classes") or {}
         data = {}
-        if payload.get("classes"):
-            data["classes"] = payload["classes"]
+        if classes:
+            data["classes"] = classes
         if payload.get("rebase_in_progress") or payload.get("tree") == "paused":
             data["paused"] = True
-        return [_finding(FindingReason.CONFLICT_HANDWRITTEN, decision, files=files, data=data)]
+        generated = bool(payload.get("aborted") and classes
+                         and all(c in _GENERATED for c in classes.values()))
+        reason = (FindingReason.CONFLICT_GENERATED if generated
+                  else FindingReason.CONFLICT_HANDWRITTEN)
+        return [_finding(reason, decision, files=files, data=data)]
     if kind is DecisionKind.REBASE_REFUSED:
         return [_finding(FindingReason.FAILED_UNKNOWN, decision,
                          detail=str(payload.get("detail") or payload.get("status") or ""),
@@ -78,6 +92,9 @@ def _step_review(decision: Decision) -> Finding:
         files = [f for e in evidence for f in e.get("files") or []]
         return _finding(FindingReason.STALE_GENERATED, decision, files=files,
                         data={"one_sided": EvidenceKind.ONE_SIDED.value in kinds})
+    if kinds in ({EvidenceKind.CI_FAILING.value}, {EvidenceKind.CI_UNFIXED.value}):
+        jobs = sorted({j for e in evidence for j in (e.get("jobs") or [])})
+        return _finding(FindingReason.CI_FAILING, decision, data={"jobs": jobs})
     kinds_list = [e.get("kind", "") for e in evidence]
     return _finding(FindingReason.FAILED_UNKNOWN, decision,
                     detail=", ".join(kinds_list) or EvidenceKind.OPEN_FINDINGS.value)
@@ -109,6 +126,21 @@ def _publish_findings(decision: Decision) -> list[Finding]:
         found.append(_finding(FindingReason.READY_TO_PUSH, decision))
     if payload.get("closeout"):
         found.append(_finding(FindingReason.CLOSEOUT_OWED, decision, detail=CLOSEOUT_WHY))
+    return found
+
+
+def record(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,
+           emit: Callable[..., None]) -> list[Finding]:
+    """Append findings for one outcome; `needs_session` when any is not `act`."""
+    found = findings_for(Decision(id="", item=item.key, step=step, kind=kind, payload=payload))
+    at = batch.store.now_iso()
+    for finding in found:
+        finding.created_at = at
+        item.findings.append(finding)
+        emit("finding_created", run=run.id, item=item.key,
+             reason=finding.reason.value, step=finding.step)
+    if any(SEVERITY[f.reason] is not Severity.ACT for f in found):
+        item.status = ItemStatus.NEEDS_SESSION
     return found
 
 

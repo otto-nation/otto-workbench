@@ -11,6 +11,7 @@ decision with its full payload and log tail.
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
 | `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
 | `github` | `pr batch status`/`next` only: what GitHub says about the run's repos now (see `batch.live`) |
+| `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
@@ -280,11 +281,13 @@ def build(run: Run, *, active: bool,
           closeout: Callable[[str, str], CloseoutDebt] | None = None,
           pending_requests: int = 0,
           failed_requests: Sequence[FailedRequest] = (),
-          github: dict | None = None) -> dict:
+          github: dict | None = None,
+          sessions: list | None = None) -> dict:
     """The whole report. *active* is whether a scheduler is driving the run.
 
     *github* is the `batch.live` section; None leaves the key out, which is
     what a `run_summary` event carries.
+    *sessions* is the per-PR session list; None leaves the key out.
 
     *closeout* reads what `pr` still owes a PR. None reads saved state
     (`batch.plan.closeout_debt`), and only for a finished run.
@@ -314,6 +317,8 @@ def build(run: Run, *, active: bool,
     }
     if github is not None:
         report["github"] = github
+    if sessions is not None:
+        report["sessions"] = sessions
     return report
 
 

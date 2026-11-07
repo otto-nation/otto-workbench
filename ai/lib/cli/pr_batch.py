@@ -8,6 +8,7 @@
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
+    pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
@@ -178,6 +179,12 @@ def build_parser() -> argparse.ArgumentParser:
     n = sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)")
     n.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
     cli.pr_batch_views.offline(n)
+
+    p = sub.add_parser("report", help="Print per-PR session commands for a run")
+    p.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
+    p.add_argument("--format", choices=("json", "md"), default="",
+                   help="Print JSON or markdown (default: one line per PR, then the report path)")
+    cli.pr_batch_views.offline(p)
     return parser
 
 
@@ -219,18 +226,21 @@ def _driver_inbox(bin_dir: Path, reporter: _Reporter) -> batch.inbox.Inbox:
                                                       report=reporter))
 
 
-def _emit_summary(run: Run, code: int) -> None:
+def _emit_summary(run: Run, code: int, report_path: Path | None = None) -> None:
     """The last line of a settled run: `next`'s document as a `run_summary` event.
 
     Its `exit_hint` is *code*, the process's real exit status. Apply errors
-    make it 1, whatever the run's status alone would say.
+    make it 1, whatever the run's status alone would say. *report_path* is the
+    `report.md` `_conclude` wrote; omitted when nothing was written.
     """
     import cli.pr_batch_common
     import cli.pr_batch_views
 
     view = batch.report.next_view(cli.pr_batch_views.report(run, cli.pr_batch_common.is_active(run.id)))
     view["run"]["exit_hint"] = code
-    batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
+    extra = {"report_path": str(report_path)} if report_path is not None else {}
+    batch.events.emit("run_summary", run=view["run"], counts=view["counts"],
+                      next=view["next"], **extra)
 
 
 def _drive(session: batch.store.Session, reporter: _Reporter, holds: batch.targets.ItemHolds,
@@ -268,7 +278,9 @@ def _conclude(run_id: str, stopped: RunStatus, reporter: _Reporter) -> int:
         batch.events.emit("run_finished", run=run.id, status=run.status.value,
                           open_decisions=len(run.open_decisions()))
     code = 1 if reporter.failed else batch.report.exit_code(run.status)
-    _emit_summary(run, code)
+    import cli.pr_batch_views
+    path = cli.pr_batch_views.write_report(run, offline=True)
+    _emit_summary(run, code, report_path=path)
     return code
 
 
@@ -599,6 +611,8 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
             return cli.pr_batch_requests.cmd_cancel(args, bin_dir)
         if args.command == "release":
             return cli.pr_batch_requests.cmd_release(args, bin_dir)
+        if args.command == "report":
+            return cli.pr_batch_views.cmd_report(args)
         # status and next
         return cli.pr_batch_views.cmd_status(args)
     except batch.plan.PlanError as exc:

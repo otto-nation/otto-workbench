@@ -523,6 +523,7 @@ pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
 pr batch next [RUN_ID]                   # only what needs action (JSON)
+pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state
 pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
@@ -530,8 +531,7 @@ pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
 
-`pr batch run --focus` is forwarded to every review step and replayed by
-`pr batch resume` (`--steps` may only narrow; it does not make a review step needed; open decisions on excluded steps still stand).
+`pr batch run --focus` is forwarded to every review step and replayed by `pr batch resume` (`--steps` may only narrow; it does not make a review step needed; open decisions on excluded steps still stand).
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
 needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
@@ -597,7 +597,7 @@ A `failed` decision's `reason` is one of the classified reasons listed in
 
 A failed step names its `log`, plus `session_log` when a review left one. A failed publish command names its `logs/<owner>__<repo>-<pr>-publish-<n>.log` and keeps the line that showed the reason as `detail` (absent for `error`). A publish refusal runs no command, so it has no log; its `detail` says why.
 
-Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` that settles is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`.
+Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` that settles is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`, plus report_path.
 
 A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues a waiting or interrupted run; a recorded cancel is final and resume refuses it. `open-chat` is UI-only.
 

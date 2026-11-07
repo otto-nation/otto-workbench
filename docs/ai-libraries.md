@@ -4113,6 +4113,7 @@ decision with its full payload and log tail.
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
 | `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
 | `github` | `pr batch status`/`next` only: what GitHub says about the run's repos now (see `batch.live`) |
+| `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
@@ -4131,6 +4132,13 @@ and no actions. A closed PR is left out.
 When a finished run's `github` section shows open PRs with work owed, PRs the
 run never saw, or heads that moved since it ran, `hint` says so and points at
 `pr batch run`: the run itself has nothing left, but the PRs do.
+
+### batch/report_md.py
+
+Markdown and stdout projections of a session report dict.
+
+Rendered from the JSON only. Filing commands go in a trailing
+"File follow-up issues (only on request)" block, never on the stdout line.
 
 ### batch/requests.py
 
@@ -4177,6 +4185,37 @@ decision open.
 ### batch/scheduler.py
 
 Drive a run: admit steps, reap them, and stop when only decisions remain.
+
+### batch/session_report.py
+
+Per-PR session commands derived from a v1 run's decisions and local `pr` state.
+
+The builder shows; it never writes. Findings come from open v1 decisions
+(spec §3.1, with `step_review` + `open_findings` mapping to `failed_unknown`
+until `review_findings` lands). Commands are argv tuples.
+
+Ordering: stack-topological on `stacked_on` (`after=[base]` while the base is
+non-terminal), then severity (block > wait > act), then PR key.
+
+Filing commands (`files_issue`) are never first, never `--track-all`, and
+carry one `--track` per id. Run one only when the user asks.
+
+Argv rules: bare `pr`; `--repo-dir` is an absolute worktree, or absolute
+`repo_dir` plus `--branch` when the worktree is gone; never a relative path;
+no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
+`git -C WT` for direct git. Closeout is the bare `CLOSEOUT_COMMAND`
+(`closeout owed per pr state`), never `CloseoutDebt.command` (which appends
+`--track-all` when an issue is owed).
+
+| Finding | Command |
+|---|---|
+| `conflict_handwritten` | `pr rebase --fix --no-push --repo-dir WT` |
+| `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` |
+| `threads_need_human` | `pr comments --fix --repo-dir WT` |
+| `closeout_owed` | `pr comments --finish --post --repo-dir WT` |
+| `ready_to_push` | `publish.plan` push argv |
+| `wrong_branch` | `git -C WT switch <branch>` |
+| deferred issue | `pr comments --finish --track ID… --post --repo-dir WT` (on request) |
 
 ### batch/steps.py
 
@@ -8053,6 +8092,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
     pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
+    pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
@@ -8075,7 +8115,7 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 
 ### cli/pr_batch_views.py
 
-Read-only `pr batch` views: plan, status, next, and the report they share.
+Read-only `pr batch` views: plan, status, next, report, and the report they share.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 

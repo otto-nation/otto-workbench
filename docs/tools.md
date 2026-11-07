@@ -993,6 +993,14 @@ Takes no flags.
 | `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
 | `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
 
+**`pr batch report`** — Print per-PR session commands for a run
+
+| Flag | Description |
+|------|-------------|
+| `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
+| `--format` `<json\|md>` | Print JSON or markdown (default: one line per PR, then the report path). |
+| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
+
 **`pr gc`** — Clean up stale PR artifacts
 
 Takes no flags.

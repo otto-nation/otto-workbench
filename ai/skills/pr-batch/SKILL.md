@@ -119,8 +119,8 @@ a base that is still open in the run.
 ## Push protocol
 
 Nothing is pushed until a `publish` decision is answered (or
-`--auto-publish` answers it). Force pushes the batch would make are printed
-for the user with the full 40-char SHA and `--expect` — never invent a
+`--auto-publish` answers it). `pr batch report` / `<run-dir>/report.md`
+prints the lease push with the full 40-char SHA and `--expect` — never invent a
 short SHA, never force-push by hand without that lease.
 
 On a **non-draft** PR, comment on the PR before a hand push. Drafts do not
@@ -136,19 +136,18 @@ and the full SHA.
 ## Hand-work reconciliation
 
 Work done in the GitHub UI or another machine does not always match `pr`
-state. `pr batch status` / `pr batch next` `--offline` skip GitHub; without
-it they show GitHub's view of the run's repos. Trust `next` over memory of
-what you posted. Do not clear closeout debt by editing state files.
+state. `pr batch report --offline` skips GitHub; without it the report may
+read GitHub. Trust `report.md` over memory of what you posted. Do not clear
+closeout debt by editing state files.
 
 ---
 
 ## Closeout
 
-An item that still owes `pr comments --finish --post` shows as
-`closeout_owed` on a finished run's `next`. Run that command only when the
-user wants the closeout posted. Never file a tracking issue unless the user
-explicitly asks — not because a `track` action is listed, not because
-deferred threads exist.
+An item that still owes closeout shows as `closeout_owed` in
+`pr batch report` / `report.md`. The printed command is `pr comments --finish --post`
+(it no longer files). Run a filing command (`--track <id>`, never `--track-all`)
+only when the user explicitly asks. Never file because deferred threads exist.
 
 ---
 

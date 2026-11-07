@@ -71,7 +71,7 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
 # would lose, and the operator confirms exactly that list.
 _FORCEABLE = frozenset({batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value,
                         batch.publish.Refusal.DRAFTED_DROPPED.value})
-_PUBLISH_ACTIONS = ("publish", "force-publish")
+PUBLISH_ACTIONS = ("publish", "force-publish")
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
 # What default_runner writes before each child command's output in a publish log.
@@ -363,8 +363,8 @@ def preview(run: Run, request: Decide, *, pr_bin: str,
     moving the lease ref a real publish fetches into. Nothing on *run* changes:
     the forced-commit list is computed, not stored.
     """
-    if request.action not in _PUBLISH_ACTIONS:
-        raise ResolveError(f"--dry-run previews {' and '.join(_PUBLISH_ACTIONS)} only")
+    if request.action not in PUBLISH_ACTIONS:
+        raise ResolveError(f"--dry-run previews {' and '.join(PUBLISH_ACTIONS)} only")
     decision = run.decision(request.decision)
     item = run.item(decision.item)
     _validate(decision, request, item)
@@ -471,7 +471,7 @@ def apply(run: Run, request: Decide, *, pr_bin: str,
         elif moved and batch.publish.try_adopt_equivalent_remote(item, after):
             item.remote_sha = after.remote
     run_cmd = command_runner(item, runner)
-    if request.action in _PUBLISH_ACTIONS:
+    if request.action in PUBLISH_ACTIONS:
         item.forced = confirmed_commits(item, decision, request.action)
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
                            confirmed=item.forced,

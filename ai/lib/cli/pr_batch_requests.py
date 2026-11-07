@@ -82,10 +82,13 @@ def _dry_run(run_id: str, request: Decide, bin_dir: Path) -> int:
     run = batch.store.load(run_id)
     try:
         seen = batch.resolve.preview(run, request, pr_bin=str(bin_dir / "pr"))
+    except KeyError:
+        return cli.pr_batch_common.fail(
+            f"run {run_id} has no decision {request.decision}")
     except batch.resolve.ResolveError as exc:
         print(f"pr batch: {exc}", file=sys.stderr)
         return (cli.schema.EXIT_USAGE
-                if request.action not in ("publish", "force-publish") else 1)
+                if request.action not in batch.resolve.PUBLISH_ACTIONS else 1)
     plan, debt, carried = seen.plan, seen.closeout, seen.carried
     core.report.emit_json({
         "schema_version": batch.report.SCHEMA_VERSION,

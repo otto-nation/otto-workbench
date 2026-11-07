@@ -189,6 +189,16 @@ def test_resolve_dry_run_with_another_action_is_a_usage_error(capsys):
     assert rc == 2
 
 
+def test_resolve_dry_run_unknown_decision_is_an_error(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.PUBLISH)
+    rc = _main(["batch", "resolve", run.id, "UNKNOWN_ID",
+                "--action", "publish", "--dry-run"])
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "UNKNOWN_ID" in captured.err
+    assert not list((batch.store.run_dir(run.id) / "requests").glob("*.json"))
+
+
 def test_status_full_prints_the_raw_run_and_whether_it_is_active(capsys):
     run = _saved_run_with_decision()
     assert _main(["batch", "status", run.id, "--full"]) == 0

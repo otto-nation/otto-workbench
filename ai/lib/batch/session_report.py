@@ -230,16 +230,16 @@ def _from_decision(decision: Decision) -> list[Finding]:
 
 
 def _step_review(decision: Decision) -> Finding:
-    if stacked_on_items(decision):
-        return _finding(FindingReason.STACK_WAIT_BASE, decision,
-                        data={"after": stacked_on_items(decision)})
-    kinds = {e.get("kind") for e in decision.payload.get("evidence") or []}
+    stacked = stacked_on_items(decision)
+    if stacked:
+        return _finding(FindingReason.STACK_WAIT_BASE, decision, data={"after": stacked})
+    evidence = decision.payload.get("evidence") or []
+    kinds = {e.get("kind") for e in evidence}
     if EvidenceKind.ONE_SIDED.value in kinds or EvidenceKind.STALE.value in kinds:
-        files = [f for e in decision.payload.get("evidence") or []
-                 for f in e.get("files") or []]
+        files = [f for e in evidence for f in e.get("files") or []]
         return _finding(FindingReason.STALE_GENERATED, decision, files=files,
                         data={"one_sided": EvidenceKind.ONE_SIDED.value in kinds})
-    kinds_list = [e.get("kind", "") for e in decision.payload.get("evidence") or []]
+    kinds_list = [e.get("kind", "") for e in evidence]
     return _finding(FindingReason.FAILED_UNKNOWN, decision,
                     detail=", ".join(kinds_list) or EvidenceKind.OPEN_FINDINGS.value)
 
@@ -266,12 +266,10 @@ def _failed(decision: Decision) -> Finding:
 def _publish_findings(decision: Decision) -> list[Finding]:
     payload = decision.payload
     found: list[Finding] = []
-    if payload.get("drafted") or payload.get("unpublished"):
+    if payload.get("drafted") or payload.get("unpublished") or not payload.get("closeout"):
         found.append(_finding(FindingReason.READY_TO_PUSH, decision))
     if payload.get("closeout"):
         found.append(_finding(FindingReason.CLOSEOUT_OWED, decision, detail=CLOSEOUT_WHY))
-    if not found:
-        found.append(_finding(FindingReason.READY_TO_PUSH, decision))
     return found
 
 
@@ -391,7 +389,7 @@ def _order(entries: list[SessionEntry]) -> list[SessionEntry]:
     remaining = set(by_key)
     ordered: list[SessionEntry] = []
     while remaining:
-        ready = [k for k in remaining if not _pending_deps(by_key[k], remaining)]
+        ready = [k for k in remaining if not any(a in remaining for a in by_key[k].after)]
         if not ready:
             ready = sorted(remaining)
         ready.sort(key=lambda k: (_SEV_RANK[by_key[k].severity], k))
@@ -399,7 +397,3 @@ def _order(entries: list[SessionEntry]) -> list[SessionEntry]:
         ordered.append(by_key[pick])
         remaining.remove(pick)
     return ordered
-
-
-def _pending_deps(entry: SessionEntry, remaining: set[str]) -> list[str]:
-    return [a for a in entry.after if a in remaining]

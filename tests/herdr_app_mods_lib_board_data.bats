@@ -261,6 +261,24 @@ _gql() {
   [[ "$output" == *'"everyBusy":true'* ]]
 }
 
+@test "loadBatchDoc: non-zero, bad JSON, and reject are ok with doc null" {
+  _bd '
+    let table = [{ prefix: "pr batch status --full --offline", code: 1, stdout: "" }];
+    const nz = pack(await m.loadBatchDoc(exec, ctx));
+    calls.length = 0;
+    table = [{ prefix: "pr batch status --full --offline", stdout: "not-json" }];
+    const bad = pack(await m.loadBatchDoc(exec, ctx));
+    calls.length = 0;
+    table = [{ prefix: "pr batch status --full --offline", reject: { message: "boom" } }];
+    const rej = pack(await m.loadBatchDoc(exec, ctx));
+    process.stdout.write(JSON.stringify({ nz, bad, rej }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"nz":{"ok":true,"doc":null}'* ]]
+  [[ "$output" == *'"bad":{"ok":true,"doc":null}'* ]]
+  [[ "$output" == *'"rej":{"ok":true,"doc":null}'* ]]
+}
+
 @test "loadLanded excludes open PRs, drops closed-unmerged and old merges, respects cap order" {
   _bd '
     const now = Date.parse("2026-06-15T00:00:00.000Z");

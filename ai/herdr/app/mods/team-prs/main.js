@@ -5,8 +5,9 @@ import {
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
 import { boardState, friendlyError, repoId, representatives, spaceTargets } from "./_lib/scope.js";
+import { busyPrs } from "./_lib/batch.js";
 import {
-  assemble, checkTools, loadBusy, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
+  assemble, checkTools, loadBatchDoc, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
 import { renderBoard, renderChips } from "./board.js";
 
@@ -134,20 +135,33 @@ export default class TeamPrs extends View {
     return user.login;
   }
 
+  listingFor(ctx, cycle) {
+    const k = `listing:${ctx.on ?? ""}`;
+    if (!cycle.has(k)) cycle.set(k, loadListing(exec, ctx));
+    return cycle.get(k);
+  }
+
+  batchDocFor(ctx, cycle) {
+    const k = `batch:${ctx.on ?? ""}`;
+    if (!cycle.has(k)) cycle.set(k, loadBatchDoc(exec, ctx));
+    return cycle.get(k);
+  }
+
   async pull(cx, listingOnly) {
+    const cycle = new Map();
     for (const ctx of this.activeTargets()) {
       const key = ctxKey(ctx);
       if (!ctx.cwd) {
         this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
         continue;
       }
-      if (listingOnly) await this.pullListing(ctx, key, cx);
-      else await this.pullFull(ctx, key, cx);
+      if (listingOnly) await this.pullListing(ctx, key, cx, cycle);
+      else await this.pullFull(ctx, key, cx, cycle);
       cx.notify();
     }
   }
 
-  async pullFull(ctx, key, cx) {
+  async pullFull(ctx, key, cx, cycle) {
     const have = await this.ensureTools(ctx, key);
     if (!have || !this.same(key)) return;
     const repo = await loadRepo(exec, ctx);
@@ -156,23 +170,24 @@ export default class TeamPrs extends View {
     this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, busy] = await Promise.all([
+    const [open, listing, doc] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
-      loadListing(exec, ctx),
-      loadBusy(exec, ctx, repo.slug),
+      this.listingFor(ctx, cycle),
+      this.batchDocFor(ctx, cycle),
     ]);
     if (!this.same(key)) return;
-    const bad = [open, listing, busy].find((r) => !r.ok);
+    const bad = [open, listing].find((r) => !r.ok);
     if (bad) { this.fail(key, bad.error); return; }
+    const busy = busyPrs(doc.doc, repo.slug);
     const landedPrs = await this.landed(ctx, key, repo, listing.listing, open.prs);
     if (landedPrs == null || !this.same(key)) return;
     this.commit(key, {
       repo: { slug: repo.slug, host: repo.host }, me: login, tools: have,
-      listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy: busy.busy,
+      listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
       openPrs: open.prs, landedPrs,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
-        slug: repo.slug, host: repo.host, login, busy: busy.busy,
+        slug: repo.slug, host: repo.host, login, busy,
       }),
     }, ctx, cx);
   }
@@ -185,17 +200,22 @@ export default class TeamPrs extends View {
     return result.prs;
   }
 
-  async pullListing(ctx, key, cx) {
+  async pullListing(ctx, key, cx, cycle) {
     const prev = this.cache.get(key);
-    if (!prev?.repo) { await this.pullFull(ctx, key, cx); return; }
-    const listing = await loadListing(exec, ctx);
+    if (!prev?.repo) { await this.pullFull(ctx, key, cx, cycle); return; }
+    const listing = await this.listingFor(ctx, cycle);
     if (!this.same(key)) return;
     if (!listing.ok) { this.fail(key, listing.error); return; }
-    const busyRan = await loadBusy(exec, ctx, prev.repo.slug);
+    const doc = await this.batchDocFor(ctx, cycle);
     if (!this.same(key)) return;
-    const busy = busyRan.ok ? busyRan.busy : (prev.busy ?? new Set());
-    const landedPrs = await this.landed(ctx, key, prev.repo, listing.listing, prev.openPrs ?? []);
-    if (landedPrs == null || !this.same(key)) return;
+    const busy = busyPrs(doc.doc, prev.repo.slug);
+    let landedPrs;
+    if (JSON.stringify(listing.listing) === JSON.stringify(prev.listing)) {
+      landedPrs = prev.landedPrs ?? [];
+    } else {
+      landedPrs = await this.landed(ctx, key, prev.repo, listing.listing, prev.openPrs ?? []);
+      if (landedPrs == null || !this.same(key)) return;
+    }
     this.commit(key, {
       ...prev, listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy, landedPrs,
       prs: assemble({

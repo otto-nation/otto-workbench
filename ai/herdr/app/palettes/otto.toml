@@ -1,0 +1,113 @@
+# otto-nation theme for herdr-app — the one place its colors are written down here.
+#
+# Brand hexes are copied from the org's @otto-nation/brand package, src/tokens.css
+# (github.com/otto-nation/otto-nation.github.io), which owns them; tests/herdr_app_theme.bats
+# checks every brand-named entry against a checkout of it when one is present. Entries
+# under "derived" are not brand colors: the brand has no cyan, so those two terminal
+# colors are ours.
+#
+# Contrast rules carried over from the brand: amarillo is never text on the light canvas
+# (rules, borders, focus rings, and a fill carrying on_amarillo text); rosa is UI and large
+# text only. herdr-app needs literal #rrggbb in a theme file, so values cannot be shared.
+# Edit this file and regenerate with bin/local/generate-herdr-app-themes; never edit the JSON.
+
+[palette]
+canvas_light = "#f7f2e9"
+surface_light = "#fbf6ea"
+ink_light = "#1a1712"
+ink_muted_light = "#5c5447"
+hairline_light = "#e4dac6"
+outline_light = "#8f8575"
+warn_soft_light = "#f3e9d6"
+anil_light = "#2b4ba8"
+done_light = "#486a2f"
+warn_light = "#866118"
+canvas_dark = "#0f0e13"
+surface_dark = "#1f1c14"
+ink_dark = "#e8e3d8"
+ink_muted_dark = "#978d7f"
+hairline_dark = "#3d3420"
+outline_dark = "#706756"
+block_dark = "#393328"
+anil_dark = "#7f9cf0"
+done_dark = "#93be74"
+warn_dark = "#d6aa51"
+amarillo = "#e5ba41"
+rosa = "#d81e5b"
+barro = "#c4552f"
+on_amarillo = "#1a1712"
+on_rosa = "#fbf6ea"
+cyan_light_derived = "#2f6a6e"
+cyan_dark_derived = "#7fb7bb"
+
+[themes.otto-light]
+background = "canvas_light"
+foreground = "ink_light"
+selection = "hairline_light"
+cursor = "ink_light"
+ansi = [
+  "canvas_light", "barro", "done_light", "warn_light",
+  "anil_light", "rosa", "cyan_light_derived", "ink_muted_light",
+  "outline_light", "barro", "done_light", "warn_light",
+  "anil_light", "rosa", "cyan_light_derived", "ink_light",
+]
+
+[themes.otto-light.colors]
+canvas = "canvas_light"
+chrome = "hairline_light"
+surface = "surface_light"
+popover = "surface_light"
+raised = "surface_light"
+hover = "warn_soft_light"
+selected = "hairline_light"
+border = "hairline_light"
+input = "outline_light"
+foreground = "ink_light"
+muted = "ink_muted_light"
+dim = "outline_light"
+accent = "rosa"
+accent_foreground = "on_rosa"
+solid = "ink_light"
+solid_foreground = "surface_light"
+ring = "amarillo"
+working = "warn_light"
+blocked = "rosa"
+done = "done_light"
+idle = "outline_light"
+unknown = "outline_light"
+
+[themes.otto-dark]
+background = "canvas_dark"
+foreground = "ink_dark"
+selection = "hairline_dark"
+cursor = "ink_dark"
+ansi = [
+  "canvas_dark", "barro", "done_dark", "warn_dark",
+  "anil_dark", "rosa", "cyan_dark_derived", "ink_muted_dark",
+  "outline_dark", "barro", "done_dark", "warn_dark",
+  "anil_dark", "rosa", "cyan_dark_derived", "ink_dark",
+]
+
+[themes.otto-dark.colors]
+canvas = "canvas_dark"
+chrome = "canvas_dark"
+surface = "surface_dark"
+popover = "surface_dark"
+raised = "block_dark"
+hover = "hairline_dark"
+selected = "block_dark"
+border = "hairline_dark"
+input = "hairline_dark"
+foreground = "ink_dark"
+muted = "ink_muted_dark"
+dim = "outline_dark"
+accent = "amarillo"
+accent_foreground = "on_amarillo"
+solid = "ink_dark"
+solid_foreground = "canvas_dark"
+ring = "amarillo"
+working = "amarillo"
+blocked = "rosa"
+done = "done_dark"
+idle = "outline_dark"
+unknown = "outline_dark"

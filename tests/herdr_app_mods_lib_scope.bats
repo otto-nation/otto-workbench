@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/scope.js');
-    const { friendlyError, spaceTargets, mergeStates, skippable } = m;
+    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -97,4 +97,34 @@ _js() {
   _js '({a:skippable({kind:"failed",message:"fatal: not a git repository"}),b:skippable({kind:"failed",message:"Not in a repository"}),c:skippable({kind:"failed",message:"origin is not a GitHub remote"}),d:skippable({kind:"auth"}),e:skippable({kind:"unreachable"}),f:skippable({kind:"missing-tool"}),g:skippable({kind:"failed",message:"exit 1"})})'
   [ "$status" -eq 0 ]
   jq -e '.a and .b and .c and (.d|not) and (.e|not) and (.f|not) and (.g|not)' <<<"$output"
+}
+
+@test "boardState: all-scope skips not-a-repo" {
+  _js 'boardState([{cwd:"/a"},{cwd:"/tmp"}],[{repo:{slug:"o/r",host:"github.com"},prs:[{number:1}]},{error:{kind:"failed",message:"fatal: not a git repository"}}],"all")'
+  [ "$status" -eq 0 ]
+  jq -e '.skipped==1 and (.errors|length)==0 and .repos==1' <<<"$output"
+}
+
+@test "boardState: this-scope attributes not-a-repo to cwd" {
+  _js 'boardState([{cwd:"/a"},{cwd:"/tmp"}],[{repo:{slug:"o/r",host:"github.com"},prs:[{number:1}]},{error:{kind:"failed",message:"fatal: not a git repository"}}],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '.errors[0].cwd=="/tmp" and .skipped==0' <<<"$output"
+}
+
+@test "boardState: auth error uses the failing target machine" {
+  _js 'boardState([{on:null,cwd:"/a"},{on:"m",cwd:"/b"}],[{repo:{slug:"o/r"},prs:[{number:1}]},{error:{kind:"auth"}}],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '.errors[0].on=="m"' <<<"$output"
+}
+
+@test "boardState: missing state is loading" {
+  _js 'boardState([{cwd:"/a"}],[],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '.loading==1' <<<"$output"
+}
+
+@test "repoId: missing host is slash-slug" {
+  _js 'repoId({slug:"o/r"})'
+  [ "$status" -eq 0 ]
+  jq -e '.=="/o/r"' <<<"$output"
 }

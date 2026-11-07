@@ -59,7 +59,7 @@ export function mergeStates(states) {
   let slug = null;
   for (const st of states) {
     if (!st?.repo || !st.prs) continue;
-    const id = `${st.repo.host ?? ''}/${st.repo.slug}`;
+    const id = repoId(st.repo);
     if (seen.has(id)) continue;
     seen.add(id);
     slug = slug ?? st.repo.slug;
@@ -67,4 +67,23 @@ export function mergeStates(states) {
     for (const pr of st.prs) prs.push({ ...pr, repoSlug: st.repo.slug });
   }
   return { prs, me, repos: seen.size, slug };
+}
+
+export function repoId(repo) {
+  return `${repo.host ?? ''}/${repo.slug}`;
+}
+
+// What the board shows for these targets: merged PRs, each failure with the
+// target it belongs to, and counts of skipped and still-loading targets.
+export function boardState(targets, states, scope) {
+  const shown = [], errors = [];
+  let skipped = 0, loading = 0;
+  targets.forEach((t, i) => {
+    const st = states[i] ?? {};
+    if (scope === 'all' && skippable(st.error)) { skipped++; return; }
+    if (st.error) errors.push({ on: t.on ?? null, cwd: t.cwd ?? null, error: st.error });
+    else if (st.prs == null) loading++;
+    shown.push(st);
+  });
+  return { ...mergeStates(shown), errors, skipped, loading };
 }

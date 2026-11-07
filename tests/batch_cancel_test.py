@@ -170,7 +170,7 @@ def test_a_new_run_is_locked_before_its_items_and_saved_only_after_them(monkeypa
         return holds
 
     monkeypatch.setattr(cli.pr_batch, "_hold_items", spy)
-    assert _main(["batch", "run", "--checkout", str(repo)]) == 0
+    assert _main(["batch", "run", "--checkout", str(repo), "--with-review"]) == 0
     assert seen == [_Seen(locked=True, saved=False), _Seen(locked=True, saved=False)]
 
 
@@ -181,7 +181,7 @@ def test_a_run_refused_an_item_leaves_no_run_directory(monkeypatch, tmp_path):
                         lambda dirs: Plan("me", [_row(repo, 1, "feat/a")]))
     record = {"pid": os.getppid(), "command": "pr fix", "started": "t0"}
     with held_elsewhere(_target(repo, "feat/a") / core.run_lock.LOCK_FILE, record):
-        assert _main(["batch", "run", "--checkout", str(repo)]) == 1
+        assert _main(["batch", "run", "--checkout", str(repo), "--with-review"]) == 1
     root = batch.store.batch_root()
     assert not root.exists() or list(root.iterdir()) == []
 

@@ -833,6 +833,7 @@ Takes no flags.
 | `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
+| `--track` `<finding-id>` | File this open finding from the branch's existing self-review (repeatable). Requires --self; does not run a review. Cannot combine with --fix, --force, or --recover. |
 | `--push` | Push the --fix commit (requires --fix). |
 | `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
 | `--force` | Skip stale-review and pending-review prompts; not with --recover. |
@@ -1125,6 +1126,7 @@ resolution, model selection, and Vertex quota preflight are in
 | `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
+| `--track` `<finding-id>` | File this open finding from the branch's existing self-review (repeatable). Requires --self; does not run a review. Cannot combine with --fix, --force, or --recover. |
 | `--push` | Push the --fix commit (requires --fix). |
 | `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
 | `--force` | Skip stale-review and pending-review prompts; not with --recover. |

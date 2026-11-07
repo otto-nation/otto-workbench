@@ -2919,6 +2919,18 @@ way as a tracker that cannot create issues: owed while the gate is open, a
 non-event on a draft run. The remedy is `otto-workbench config set issues.team
 TEAM --project`.
 
+### review/file_tracked.py
+
+File selected open findings from a branch's existing self-review record.
+
+Finding ids (`M1`, `S2`, …) are positions in one rendering; a re-run
+renumbers. This path runs no agent. It locates the branch's self-review
+record, refuses unless that record's `covered_sha` (else `head_sha`) still
+covers the worktree HEAD, and then calls `review.finding_issue.file_and_link`.
+
+`--post` is the publishing gate the caller opens. Without it this drafts and
+does not stamp `filed=`.
+
 ### review/finding_issue.py
 
 Filing a tracker issue for the findings a review left unresolved.
@@ -7961,6 +7973,7 @@ This module is the one place they are taken for a command:
 | `create` | target + checkout; `--dry-run` nothing |
 | `ci` | target; `--fix` adds the checkout |
 | `review --self` / `--self --fix` | target + checkout |
+| `review --self --track` | target (writes the review record's `filed=` stamps; no checkout) |
 | `review` of a PR, `--branch` | target; the checkout once the run knows its tree (`core.run_lock.lock_checkout`) |
 | `review --post`, `--repair`, `--summary` | target (also with `--self`) |
 | `review --recover` | target (`--self --recover` adds the checkout) |
@@ -7977,6 +7990,9 @@ REMOTE, no fetch, TARGET only. Under `pr` those flags are handler modes that
 publish a review already on disk. On the `review` binary `--post` means publish;
 without `--fix` there is no tree write, and a run that later switches trees
 takes the checkout then through `lock_checkout`.
+
+`--self --track` is REVIEW_SELF_TRACK_NEED — LOCAL, no fetch, TARGET only.
+`--post` beside it is the publishing gate, not the post mode.
 
 The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
 and `bin/local/validate-run-locks` refuses a lock taken anywhere this module
@@ -8395,6 +8411,7 @@ Usage:
   review <pr_url_or_number>
   review --no-post <pr_url_or_number>
   review --self [<pr_url_or_number>]
+  review --self --track ID [--track ID ...] [--post]
   review [--self] --recover [<pr_url_or_number>]
   review [--self] [--focus TEXT]... [--focus-file PATH]... [<pr_url_or_number>]
 

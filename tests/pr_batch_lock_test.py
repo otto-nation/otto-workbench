@@ -25,7 +25,7 @@ import cli.pr_batch  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from batch.requests import Cancel  # noqa: E402
+from batch.requests import Cancel, Release  # noqa: E402
 from batch_session_support import seed, stops_at  # noqa: E402
 from conftest import make_ctx  # noqa: E402
 from run_lock_support import held_elsewhere, live_pid, repo_with_origin  # noqa: E402
@@ -259,7 +259,7 @@ def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
         self.session.commit()
         # What a `pr batch resolve` beside a live driver does: it writes the
         # request and reports it queued, and the driver's tick applies it.
-        batch.store.write_request(self.run.id, Cancel())
+        batch.store.write_request(self.run.id, Release(first.key))
         seen["before"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
         status = real_run(self)
         seen["status"] = self.run.item(first.key).status
@@ -268,7 +268,7 @@ def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", drop_one_then_drive)
     assert _main(["batch", "run", "--checkout", str(repo),
-                  "--with-review"]) == 10
+                  "--with-review"]) == 0
     assert seen["before"] == [True, True]
     assert seen["status"] is batch.model.ItemStatus.DROPPED
     assert seen["after"] == [False, True]
@@ -348,7 +348,7 @@ def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp
     real = cli.pr_batch._hold_items
 
     def queue_then_hold(held, opened, verb):
-        batch.store.write_request(opened.id, Cancel())
+        batch.store.write_request(opened.id, Release(opened.items[0].key))
         return real(held, opened, verb)
 
     monkeypatch.setattr(cli.pr_batch, "_hold_items", queue_then_hold)
@@ -360,7 +360,7 @@ def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp
         code = _main(["batch", "resume", run.id])
     assert code == 1
     saved = batch.store.load(run.id)
-    assert saved.decision("d1").resolution == "drop-pr"
+    assert saved.items[0].status is batch.model.ItemStatus.DROPPED
     assert batch.store.pending_requests(run.id) == 0
 
 
@@ -392,7 +392,7 @@ def test_a_refused_resume_of_a_terminal_run_hands_off_a_request_queued_against_i
     code = _main(["batch", "resume", run.id])
     assert code == 1
     saved = batch.store.load(run.id)
-    assert saved.decision("d1").resolution == "drop-pr"
+    assert saved.status is batch.model.RunStatus.CANCELLED
     assert batch.store.pending_requests(run.id) == 0
 
 

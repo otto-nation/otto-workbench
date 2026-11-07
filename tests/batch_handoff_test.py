@@ -38,7 +38,7 @@ import core.run_lock  # noqa: E402
 from batch.model import (Decision, DecisionKind, Item, ItemStatus, Run,  # noqa: E402
                          RunStatus, Step, StepRecord)
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from batch.requests import Cancel  # noqa: E402
+from batch.requests import Cancel, Release  # noqa: E402
 from batch.store import Role  # noqa: E402
 from batch_session_support import NullInbox, open_session, seed  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
@@ -143,22 +143,21 @@ def _probe_for(seconds):
 
 def test_a_request_landing_after_a_sessions_last_drain_is_applied_on_release():
     seed(_run())
-    inbox = _LateArrival(Cancel())
+    inbox = _LateArrival(Release("o/r#1"))
     with open_session(RID, Role.APPLIER, inbox=inbox):
         inbox.armed = True
     saved = batch.store.load(RID)
-    assert saved.decision("d1").resolution == "drop-pr"
-    assert saved.status is RunStatus.DONE
+    assert saved.items[0].status is ItemStatus.DROPPED
     assert batch.store.pending_requests(RID) == 0
-    assert [o.request for o in inbox.outcomes] == [Cancel()]
+    assert [o.request for o in inbox.outcomes] == [Release("o/r#1")]
 
 
 def test_a_request_landing_after_creates_last_drain_is_applied_on_release():
-    inbox = _LateArrival(Cancel())
+    inbox = _LateArrival(Release("o/r#1"))
     with batch.store.create(_run(), inbox=inbox, command="pr batch run") as opened:
         opened.commit()
         inbox.armed = True
-    assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
+    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
     assert batch.store.pending_requests(RID) == 0
 
 
@@ -203,7 +202,7 @@ def test_a_live_draining_holder_carries_the_duty(other_pid, monkeypatch, capsys)
 
 def test_a_gc_holder_is_waited_out(other_pid, monkeypatch):
     seed(_run())
-    batch.store.write_request(RID, Cancel())
+    batch.store.write_request(RID, Release("o/r#1"))
     monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0]))
     gc = contextlib.ExitStack()
     gc.enter_context(held_elsewhere(_lock_file(), _holder_record(other_pid, "gc")))
@@ -213,7 +212,7 @@ def test_a_gc_holder_is_waited_out(other_pid, monkeypatch):
         batch.store._hand_off(RID, NullInbox(), "pr batch cancel")
     finally:
         gc.close()
-    assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
+    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
     assert batch.store.pending_requests(RID) == 0
 
 
@@ -343,15 +342,15 @@ def test_deliver_waits_out_a_prober_and_applies_the_request():
     started = time.monotonic()
     timer = _probe_for(_PROBE_S)
     try:
-        delivery = batch.inbox.deliver(RID, Cancel(), _CTX,
-                                       command="pr batch cancel")
+        delivery = batch.inbox.deliver(RID, Release("o/r#1"), _CTX,
+                                       command="pr batch release")
         waited = time.monotonic() - started
     finally:
         timer.join()
     assert waited >= _PROBE_S / 2
     assert delivery.queued is False
     assert delivery.own is not None and delivery.own.ok
-    assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
+    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
     assert batch.store.pending_requests(RID) == 0
 
 
@@ -366,13 +365,13 @@ def test_deliver_against_a_prober_that_never_lets_go_is_unreachable_not_queued(m
 
 def test_a_hand_off_waits_out_a_prober_and_applies_the_request():
     seed(_run())
-    batch.store.write_request(RID, Cancel())
+    batch.store.write_request(RID, Release("o/r#1"))
     timer = _probe_for(_PROBE_S)
     try:
         batch.store._hand_off(RID, NullInbox(), "pr batch cancel")
     finally:
         timer.join()
-    assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
+    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
     assert batch.store.pending_requests(RID) == 0
 
 

@@ -314,8 +314,8 @@ def test_deliver_retries_run_not_found_after_a_successful_write(monkeypatch):
 
     monkeypatch.setattr(batch.store, "session", once_missing)
     monkeypatch.setattr(batch.inbox.time, "sleep", paused.append)
-    delivery = batch.inbox.deliver(run.id, Cancel(), _ctx(),
-                                   command="pr batch cancel")
+    delivery = batch.inbox.deliver(run.id, Release("o/r#1"), _ctx(),
+                                   command="pr batch release")
     assert paused == [0.0]
     assert delivery.queued is False and delivery.own.ok
     assert batch.store.load(run.id).items[0].status is ItemStatus.DROPPED

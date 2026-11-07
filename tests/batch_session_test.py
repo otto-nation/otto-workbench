@@ -22,7 +22,7 @@ import core.run_lock  # noqa: E402
 import core.serde  # noqa: E402
 from batch.model import (CancelState, Decision, DecisionKind, Item, ItemStatus, Run,  # noqa: E402
                          RunStatus, Step, StepRecord)
-from batch.requests import Cancel, Malformed  # noqa: E402
+from batch.requests import Cancel, Malformed, Release  # noqa: E402
 from batch.store import FailedRequest, Holder, Role  # noqa: E402
 from batch_session_support import NullInbox, open_session, seed  # noqa: E402
 from run_lock_support import held_elsewhere, live_pid  # noqa: E402
@@ -492,7 +492,7 @@ def test_a_drain_applies_every_cancel_before_any_decision():
 def test_a_drain_commits_each_request_before_it_unlinks_it(monkeypatch):
     """A crash between the commit and the unlink replays the request; it never loses it."""
     seed(_run())
-    batch.store.write_request(RID, Cancel())
+    batch.store.write_request(RID, Release("o/r#1"))
     real_unlink = Path.unlink
     crashed = []
 
@@ -506,21 +506,23 @@ def test_a_drain_commits_each_request_before_it_unlinks_it(monkeypatch):
     with pytest.raises(OSError, match="crash between commit and unlink"):
         with open_session(RID):
             pytest.fail("the entry drain must crash before the block")
-    assert batch.store.load(RID).decision("d1").resolution == "drop-pr"
+    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
     assert batch.store.pending_requests(RID) == 1
     inbox = NullInbox()
     with open_session(RID, inbox=inbox):
         pass
     assert [o.ok for o in inbox.outcomes] == [True]
     assert batch.store.pending_requests(RID) == 0
-    assert batch.store.load(RID).status is RunStatus.DONE
+    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
 
 
 def test_a_rejected_request_moves_to_rejected_with_its_error():
     seed(_run())
     _requests().mkdir()
     (_requests() / f"{EARLY}-bad.json").write_text("not json")
-    unknown = batch.store.write_request(RID, Cancel())
+    decide = f"{EARLY}-decide.json"
+    (_requests() / decide).write_text(json.dumps(
+        {"kind": "decide", "decision": "d1", "action": "retry"}))
     inbox = NullInbox()
     with open_session(RID, inbox=inbox):
         pass
@@ -530,9 +532,8 @@ def test_a_rejected_request_moves_to_rejected_with_its_error():
     bad = json.loads((rejected / f"{EARLY}-bad.json").read_text())
     assert bad["request"] is None
     assert bad["error"].startswith(f"malformed request {EARLY}-bad.json")
-    body = json.loads((rejected / unknown).read_text())
-    assert body == {"request": batch.requests.to_dict(Cancel()),
-                    "error": "'nope'"}
+    body = json.loads((rejected / decide).read_text())
+    assert "pr batch resolve was removed" in body["error"]
 
 
 def test_failed_requests_lists_rejections_and_reads_older_ones_as_malformed():
@@ -540,13 +541,15 @@ def test_failed_requests_lists_rejections_and_reads_older_ones_as_malformed():
     assert batch.store.failed_requests(RID) == []
     _requests().mkdir()
     (_requests() / f"{EARLY}-bad.json").write_text("not json")
-    unknown = batch.store.write_request(RID, Cancel())
+    decide = f"{EARLY}-decide.json"
+    (_requests() / decide).write_text(json.dumps(
+        {"kind": "decide", "decision": "d1", "action": "retry"}))
     with open_session(RID):
         pass
     old = _requests() / "rejected" / "19691231T000000000000-old.json"
     old.write_text(json.dumps({"decision": "d9", "action": "retry"}))
     failed = batch.store.failed_requests(RID)
-    assert [f.name for f in failed] == [old.name, f"{EARLY}-bad.json", unknown]
+    assert [f.name for f in failed] == [old.name, f"{EARLY}-bad.json", decide]
     assert failed[0] == FailedRequest(old.name, "malformed")
     assert failed[1].error.startswith(f"malformed request {EARLY}-bad.json")
-    assert failed[2] == FailedRequest(unknown, "'nope'")
+    assert "pr batch resolve was removed" in failed[2].error

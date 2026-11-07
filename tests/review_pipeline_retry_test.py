@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +21,7 @@ from core.phases import Phase
 import core.log
 from review.record import Disposition, load_record
 from review.store import StoredReview
-from review.types import ReviewMeta
+from review.types import FindingOrigin, ReviewMeta
 from review.record import FocusSource
 from review_claims_support import CLAIM_DOC
 from review_focus_support import DERIVED_FOCUS, user_area
@@ -529,6 +530,59 @@ def test_the_single_agent_records_claims(tmp_path, monkeypatch):
     rec = load_record(tmp_path)
     assert rec.claims is not None and rec.claims[0].id == "C1"
     assert len(rec.claims) == 1
+
+
+def test_the_single_agent_derives_claim_findings_before_disprove(tmp_path, monkeypatch):
+    job = _prompt_job(_make_preflight(prior_head_sha=""))
+    job.review_file = str(tmp_path / "review.md")
+    job.session_log = str(tmp_path / "session.jsonl")
+    job.wt_path = str(tmp_path)
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    seen = {}
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(json.dumps({
+            "summary": "Looks fine.", "focus": DERIVED_FOCUS,
+            "claims": [{**CLAIM_DOC, "verdict": "contradicted"}],
+        }))
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    monkeypatch.setattr(
+        review.pipeline, "_phase_disprove",
+        lambda _j, rec: seen.update(record=rec) or SimpleNamespace(record=rec),
+    )
+    review.pipeline.run_single_agent(job, disprove=True)
+    assert any(f.origin is FindingOrigin.CLAIM for f in seen["record"].findings)
+
+
+def test_the_single_agent_derives_after_dropping_an_out_of_delta_nit(
+    tmp_path, monkeypatch,
+):
+    """A contradicted claim linked to a dropped out-of-delta nit still derives."""
+    job = _prompt_job(_make_preflight(delta_files=["a.py"]))
+    job.review_file = str(tmp_path / "review.md")
+    job.session_log = str(tmp_path / "session.jsonl")
+    job.wt_path = str(tmp_path)
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(json.dumps({
+            "summary": "Looks fine.", "focus": DERIVED_FOCUS,
+            "findings": [{"id": "N1", "path": "c.py", "line": 1, "body": "rename me"}],
+            "claims": [{**CLAIM_DOC, "verdict": "contradicted", "finding": "N1"}],
+        }))
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    rec = load_record(tmp_path)
+    derived = [f for f in rec.findings if f.origin is FindingOrigin.CLAIM]
+    assert len(derived) == 1
+    assert rec.claims[0].finding == derived[0].id
+    assert not any(f.severity == "N" for f in rec.findings)
 
 
 def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):

@@ -43,7 +43,8 @@ from core.phases import Effort, Mode, Phase
 from eval.scoring import ScoringResult
 import eval.task
 from eval.task import RunArtifacts, RunOptions, create_temp_repo, outcome_for
-from review.artifacts import AgentFinding, ReviewArtifact, output_format
+from review.artifact_format import output_format
+from review.artifacts import AgentFinding, ReviewArtifact
 from review.ingest import IngestRejected, load_artifact
 from review.prompt import VERDICT_OPTIONS
 from review.prompt_sections import _build_focus_section

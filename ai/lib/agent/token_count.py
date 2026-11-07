@@ -28,7 +28,7 @@ a count against a context window owes itself that margin until the two are
 wired together.
 
 The review pipeline records each count in `prompt-stats.json` (see
-`review.prompt`). That write, the `WORKBENCH_AI_MEASURE_TOKENS=0` opt-out, and
+`review.prompt_stats`). That write, the `WORKBENCH_AI_MEASURE_TOKENS=0` opt-out, and
 the measured round-trip latency live there, not here: this module only asks the
 endpoint and returns `None` when it cannot.
 """

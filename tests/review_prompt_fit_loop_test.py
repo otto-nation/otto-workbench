@@ -15,7 +15,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core.phases import Phase
-from review.prompt import PromptTooLarge, unverified_reason
+from review.prompt import PromptTooLarge
+from review.prompt_stats import unverified_reason
 from review.prompt_fit import (
     MAX_PROMPT_RENDERS, _RATCHET_MARGIN, PromptVerification, ratchet_target,
     verify_prompt,
@@ -64,7 +65,7 @@ class TestVerifyPrompt:
 
     def test_a_missing_count_is_unverified_not_a_fail(self, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=None):
+        with patch("review.prompt_stats.count_tokens", return_value=None):
             result = verify_prompt(
                 "hello", model=TEST_MODEL, phase=Phase.SCOUT,
                 backend=None, budget_bytes=10_000, cwd=".",
@@ -76,7 +77,7 @@ class TestVerifyPrompt:
 
     def test_token_overshoot_fails_when_counted(self, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=10_000_000):
+        with patch("review.prompt_stats.count_tokens", return_value=10_000_000):
             result = verify_prompt(
                 "hello", model=TEST_MODEL, phase=Phase.SCOUT,
                 backend=None, budget_bytes=10_000, cwd=".",
@@ -95,7 +96,7 @@ class TestUnverifiedReason:
         assert unverified_reason(Phase.SCOUT) == "unavailable"
 
     def test_the_direct_log_path_uses_the_same_vocabulary(self, tmp_path, monkeypatch):
-        from review.prompt import log_prompt_size
+        from review.prompt_stats import log_prompt_size
 
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         log_prompt_size(
@@ -105,7 +106,7 @@ class TestUnverifiedReason:
         assert _stats(tmp_path)[-1]["token_unverified_reason"] == "no_phase"
 
     def test_the_direct_log_path_records_renders_and_ladder_bytes(self, tmp_path, monkeypatch):
-        from review.prompt import log_prompt_size
+        from review.prompt_stats import log_prompt_size
 
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         log_prompt_size(
@@ -162,7 +163,7 @@ class TestRatchetNeverGrows:
 class TestTheFitLoop:
     def test_first_render_that_fits_counts_once(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=100) as counter:
+        with patch("review.prompt_stats.count_tokens", return_value=100) as counter:
             build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         counter.assert_called_once()
         record = _stats(tmp_path)[-1]
@@ -183,7 +184,7 @@ class TestTheFitLoop:
         )
         renders = []
 
-        with patch("review.prompt.count_tokens", return_value=10), \
+        with patch("review.prompt_stats.count_tokens", return_value=10), \
              patch("agent.templates.render", side_effect=_counting_render(renders)):
             with pytest.raises(PromptTooLarge) as exc:
                 build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
@@ -197,7 +198,7 @@ class TestTheFitLoop:
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         renders = []
 
-        with patch("review.prompt.count_tokens", return_value=10_000_000), \
+        with patch("review.prompt_stats.count_tokens", return_value=10_000_000), \
              patch("agent.templates.render", side_effect=_counting_render(renders)):
             with pytest.raises(PromptTooLarge):
                 build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
@@ -206,7 +207,7 @@ class TestTheFitLoop:
 
     def test_a_token_only_overshoot_says_tokens_not_bytes(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=10_000_000):
+        with patch("review.prompt_stats.count_tokens", return_value=10_000_000):
             with pytest.raises(PromptTooLarge) as exc:
                 build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         assert exc.value.token_overshoot > 0
@@ -217,7 +218,7 @@ class TestTheFitLoop:
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         # First count overflows; later counts fit so the loop can stop.
         counts = iter([10_000_000, 100, 100])
-        with patch("review.prompt.count_tokens", side_effect=lambda *a, **k: next(counts)):
+        with patch("review.prompt_stats.count_tokens", side_effect=lambda *a, **k: next(counts)):
             prompt = build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         assert prompt
         records = _stats(tmp_path)
@@ -228,7 +229,7 @@ class TestTheFitLoop:
 
     def test_unverified_is_recorded(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=None):
+        with patch("review.prompt_stats.count_tokens", return_value=None):
             build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         record = _stats(tmp_path)[-1]
         assert record["token_verified"] is False
@@ -237,7 +238,7 @@ class TestTheFitLoop:
 
     def test_opt_out_is_unverified_disabled(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "0")
-        with patch("review.prompt.count_tokens") as counter:
+        with patch("review.prompt_stats.count_tokens") as counter:
             build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         counter.assert_not_called()
         record = _stats(tmp_path)[-1]
@@ -252,7 +253,7 @@ class TestTheFitLoop:
             seen.append(prompt)
             return 10
 
-        with patch("review.prompt.count_tokens", side_effect=capture):
+        with patch("review.prompt_stats.count_tokens", side_effect=capture):
             built = build_prompt(
                 Phase.SCOUT, _job(tmp_path), max_turns=10,
                 prefix="RETRY HINT\n",

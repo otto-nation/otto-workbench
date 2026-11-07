@@ -16,11 +16,14 @@ import review.pipeline  # noqa: E402
 import review.steps  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
 from review.phases import PhaseResult  # noqa: E402
-from review.record import ReviewRecord  # noqa: E402
+from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
-from review.types import PreflightData, ReviewMeta  # noqa: E402
-from review.verdict import BUDGET_SUMMARY, SETTLED_SUMMARY, mechanical_verdict  # noqa: E402
+from review.types import FindingOrigin, Group, PreflightData, ReviewMeta  # noqa: E402
+from review.verdict import (  # noqa: E402
+    BUDGET_SUMMARY, CLEAN_SUMMARY, CLEAN_VERDICT, SETTLED_SUMMARY,
+    mechanical_verdict,
+)
 from review.verify import PostProcessed  # noqa: E402
 from review_convergence_support import finding, merged, review_job  # noqa: E402
 
@@ -54,10 +57,72 @@ def test_nothing_new_is_false_with_a_failed_group(tmp_path):
     assert not review.steps._nothing_new(_job(tmp_path), merged(fresh=0), ["failure"])
 
 
+def test_a_skipped_group_does_not_carry_a_derived_finding():
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding("S1", "a real bug", path="a.py", line=1),
+            finding(
+                "S2", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+            ),
+        )),
+        ReviewMeta(),
+    )
+    carried = review.steps._carry_forward_prior_findings(
+        prior, [Group("g1", ["a.py"], 1)], {1},
+    )
+    assert carried is not None
+    assert [f.id for f in carried.record.findings] == ["S1"]
+
+
 def test_an_unaccounted_prior_finding_still_needs_synthesis(tmp_path):
     prior = StoredReview(ReviewRecord(findings=(finding("M1", "x", path="b.py", line=1),)),
                          ReviewMeta(head_sha="p" * 40))
     assert not review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
+
+
+def test_an_open_derived_prior_finding_still_needs_synthesis(tmp_path):
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    assert not review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
+
+
+def test_a_fixed_derived_prior_finding_does_not_block_nothing_new(tmp_path):
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+                disposition=Disposition.FIXED,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    assert review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
+
+
+@pytest.mark.parametrize("disposition", [Disposition.DECLINED, Disposition.SKIPPED])
+def test_an_answered_derived_prior_finding_does_not_block_nothing_new(
+    tmp_path, disposition,
+):
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+                disposition=disposition,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    assert review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
 
 
 def test_nothing_new_with_everything_settled(tmp_path):
@@ -71,6 +136,88 @@ def test_a_rejected_group_is_not_a_counted_zero(tmp_path):
     out = review.steps._phase_merge([str(path)], [], ("g1",), declinable=frozenset())
     assert out.fresh is None
     assert not review.steps._nothing_new(_job(tmp_path), out, [])
+
+
+def test_an_open_derived_prior_finding_does_not_write_a_clean_review(
+    tmp_path, monkeypatch,
+):
+    """Groups added nothing; the prior holds only a derived finding. Writer runs."""
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    job = _job(tmp_path, prior=prior, mode=Mode.PR)
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_inject_failures_and_status", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_write_clean_review",
+                        lambda *a, **k: pytest.fail("clean review dropped the derived finding"))
+    monkeypatch.setattr(review.steps, "_write_settled_review",
+                        lambda *a, **k: pytest.fail("settled path dropped the derived finding"))
+    ran = []
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: ran.append(True) or PhaseResult())
+    groups = merged(fresh=0)
+    result = review.steps._run_synthesis_or_fallback(
+        job, _state(), "", 2, groups, [], 0,
+        0.0, 20.0, settled=review.steps._nothing_new(job, groups, []))
+    assert ran
+    assert result.cost == 0.0
+
+
+def test_a_no_group_round_with_an_open_derived_finding_is_not_all_groups_failed(
+    tmp_path, monkeypatch,
+):
+    """Zero groups is not every group failing; the writer re-judges the prior."""
+    prior = StoredReview(
+        ReviewRecord(findings=(
+            finding(
+                "S1", "Claim contradicted: retries back off",
+                path="a.py", origin=FindingOrigin.CLAIM,
+            ),
+        )),
+        ReviewMeta(head_sha="p" * 40),
+    )
+    job = _job(tmp_path, prior=prior, mode=Mode.PR)
+    state = _state()
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_inject_failures_and_status", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_write_clean_review",
+                        lambda *a, **k: pytest.fail("clean review dropped the derived finding"))
+    monkeypatch.setattr(review.steps, "_write_settled_review",
+                        lambda *a, **k: pytest.fail("settled path dropped the derived finding"))
+    monkeypatch.setattr(review.steps, "_build_mechanical_fallback",
+                        lambda *a, **k: pytest.fail("mechanical fallback for a no-group round"))
+    ran = []
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: ran.append(True) or PhaseResult())
+    groups = merged(fresh=0)
+    result = review.steps._run_synthesis_or_fallback(
+        job, state, "", 0, groups, [], 0,
+        0.0, 20.0, settled=review.steps._nothing_new(job, groups, []))
+    assert ran
+    assert result.cost == 0.0
+    assert Phase.SYNTHESIS not in state.failed
+
+
+def test_a_round_with_no_open_derived_finding_still_writes_a_clean_review(
+    tmp_path, monkeypatch,
+):
+    job = _job(tmp_path, mode=Mode.PR)
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: pytest.fail("synthesis ran on a clean round"))
+    result = review.steps._run_synthesis_or_fallback(
+        job, _state(), "", 2, merged(fresh=0), [], 0,
+        0.0, 20.0, settled=False)
+    assert result.cost == 0.0
+    stored = read_review(Path(job.review_file))
+    assert stored.record.summary == f"No findings across 2 groups. {CLEAN_SUMMARY}"
+    assert stored.record.verdict == CLEAN_VERDICT.strip()
 
 
 def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch):

@@ -45,7 +45,8 @@ from core.phases import Effort, Mode, Phase
 from eval.scoring import ScoringResult
 import eval.task
 from eval.task import RunArtifacts, RunOptions, create_temp_repo, outcome_for
-from review.artifacts import DisproveArtifact, DisproveOutcome, output_format
+from review.artifact_format import output_format
+from review.artifacts import DisproveArtifact, DisproveOutcome
 from review.ingest import IngestRejected, load_artifact
 from review.record import RecordFinding, ReviewRecord
 from review.render import render_body

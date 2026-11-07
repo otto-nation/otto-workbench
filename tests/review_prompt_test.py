@@ -17,7 +17,8 @@ from core.phases import Mode, Phase
 
 from unittest.mock import patch
 
-from review.prompt import build_common_sections, log_prompt_size
+from review.prompt import build_common_sections
+from review.prompt_stats import log_prompt_size
 import review.registry
 from conftest import TEST_MODEL
 
@@ -223,7 +224,7 @@ class TestPromptTokenTelemetry:
         budget reasons about comes from real reviews.
         """
         monkeypatch.delenv("WORKBENCH_AI_MEASURE_TOKENS", raising=False)
-        with patch("review.prompt.count_tokens", return_value=1000) as counter:
+        with patch("review.prompt_stats.count_tokens", return_value=1000) as counter:
             review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         counter.assert_called_once()
         assert self._stats(tmp_path)["prompt_tokens"] == 1000
@@ -231,7 +232,7 @@ class TestPromptTokenTelemetry:
     def test_zero_opts_out(self, tmp_path, monkeypatch):
         """The round trip is small but not free, and a run may decline it."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "0")
-        with patch("review.prompt.count_tokens") as counter:
+        with patch("review.prompt_stats.count_tokens") as counter:
             review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         counter.assert_not_called()
         assert "prompt_tokens" not in self._stats(tmp_path)
@@ -241,7 +242,7 @@ class TestPromptTokenTelemetry:
         # The density is recorded against the model that was counted; a phase
         # with no model has nothing to count against.
         monkeypatch.setenv("WORKBENCH_AI_MODEL", TEST_MODEL)
-        with patch("review.prompt.count_tokens", return_value=1000):
+        with patch("review.prompt_stats.count_tokens", return_value=1000):
             review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         assert stats["prompt_tokens"] == 1000
@@ -253,7 +254,7 @@ class TestPromptTokenTelemetry:
     def test_an_unavailable_count_records_nothing(self, tmp_path, monkeypatch):
         """None is not zero — a missing measurement must leave no density behind."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=None):
+        with patch("review.prompt_stats.count_tokens", return_value=None):
             review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         assert "prompt_tokens" not in stats
@@ -262,7 +263,7 @@ class TestPromptTokenTelemetry:
     def test_a_zero_count_records_no_density(self, tmp_path, monkeypatch):
         """Zero is a count, but it is not a density — and must not divide."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=0):
+        with patch("review.prompt_stats.count_tokens", return_value=0):
             review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         assert stats["prompt_tokens"] == 0
@@ -271,7 +272,7 @@ class TestPromptTokenTelemetry:
     def test_counts_against_the_model_the_phase_will_use(self, tmp_path, monkeypatch):
         """A count against another tokenizer is worse than no count at all."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        with patch("review.prompt.count_tokens", return_value=10) as counter:
+        with patch("review.prompt_stats.count_tokens", return_value=10) as counter:
             review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         model = counter.call_args.args[1]
         assert model == self._stats(tmp_path)["token_model"]
@@ -305,7 +306,7 @@ class TestPromptStatsConcurrentAppends:
         def _boom(path, data):
             raise OSError("disk full")
 
-        monkeypatch.setattr("review.prompt.write_json", _boom)
+        monkeypatch.setattr("review.prompt_stats.write_json", _boom)
 
         log_prompt_size(
             "t", "p", {}, job,

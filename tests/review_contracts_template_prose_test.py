@@ -357,3 +357,35 @@ _CLAIMS_SENTENCE = (
 )
 def test_claims_instruction_is_identical_across_copies(path):
     assert _CLAIMS_SENTENCE in path.read_text()
+
+
+@pytest.mark.parametrize("name", ["single-agent.md", "synthesis.md"])
+def test_pr_writer_templates_say_derived_claims_count_toward_the_verdict(name):
+    text = (TEMPLATE_DIR / name).read_text()
+    assert "filed by the harness as a should-fix" in text
+    assert "toward the verdict" in text
+
+
+def test_the_fix_template_explains_claim_items():
+    text = (TEMPLATE_DIR / "fix-findings.md").read_text()
+    assert "from a PR claim" in text
+    assert "adding a missing test is a fix" in text
+    assert "the description is the author's call" in text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        TEMPLATE_DIR / "single-agent.md",
+        TEMPLATE_DIR / "synthesis.md",
+        TEMPLATE_DIR / "self-review.md",
+        TEMPLATE_DIR / "self-review-synthesis.md",
+        AGENTS_DIR / "reviewer.md",
+    ],
+    ids=lambda p: p.name,
+)
+def test_claim_findings_are_filed_by_the_harness_as_a_should_fix(path):
+    text = path.read_text()
+    assert "filed by the harness as a should-fix" in text
+    if path.name in {"self-review.md", "self-review-synthesis.md", "reviewer.md"}:
+        assert "toward the verdict" not in text

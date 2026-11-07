@@ -40,11 +40,12 @@ from review.store import StoredReview
 from review.types import PriorDisposition, PriorFinding, ReplyState
 
 
-def _with_sids(record: ReviewRecord) -> ReviewRecord:
-    """Stamp each finding with the sid a later round recognises it by."""
+def _prior_view(record: ReviewRecord) -> ReviewRecord:
+    """The prior record a re-review sees: stamped sids, writer findings only."""
     return replace(
         record,
-        findings=tuple(replace(f, sid=f.sid or f.stable_id) for f in record.findings),
+        findings=tuple(replace(f, sid=f.sid or f.stable_id)
+                       for f in record.findings if not f.derived),
     )
 
 
@@ -75,7 +76,7 @@ _PRIOR_EXCLUDED_SECTIONS = frozenset({
 
 def _prior_text(prior: StoredReview, file_filter: list[str] | None) -> str:
     """What a re-review is shown of its predecessor; carried findings keep their sid."""
-    record = _with_sids(prior.record)
+    record = _prior_view(prior.record)
     if file_filter:
         return render_findings(_scoped(record, file_filter), sids=True)
     body = render_body(record, sids=True, omit=_PRIOR_EXCLUDED_SECTIONS).strip()

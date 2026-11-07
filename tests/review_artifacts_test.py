@@ -16,10 +16,13 @@ if LIB_DIR not in sys.path:
 
 from core.phases import Mode
 from core.strict import SchemaRejected, example_json, load_strict
+from review.artifact_format import (
+    EXAMPLE_LEAVES_EMPTY, FIELD_NOTES, _nested_dataclass, output_format,
+)
 from review.artifacts import (
-    EXAMPLE_LEAVES_EMPTY, FIELD_NOTES, AgentFinding, DisproveArtifact, GroupArtifact,
-    HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint, _nested_dataclass,
-    as_group_artifact, declinable_sids, output_format,
+    AgentFinding, DisproveArtifact, GroupArtifact,
+    HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint,
+    as_group_artifact, declinable_sids,
 )
 from review.budget import DERIVED_AREA_RESERVE_BYTES
 from review.ingest import IngestErrorKind
@@ -215,7 +218,7 @@ def test_a_ledger_disposition_outside_the_enum_is_rejected():
     assert v.at == "$.prior_findings[0].disposition" and '"Fixed"' in v.detail
 
 
-@pytest.mark.parametrize("harness_field", ["disposition", "stable_id", "checkbox", "skipped"])
+@pytest.mark.parametrize("harness_field", ["disposition", "stable_id", "checkbox", "skipped", "origin"])
 def test_a_harness_owned_field_is_not_writable(harness_field):
     with pytest.raises(SchemaRejected) as exc:
         load_strict(GroupArtifact, _group(**{harness_field: "x"}))

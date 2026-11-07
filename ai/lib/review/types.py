@@ -425,6 +425,18 @@ def review_meta_from_dict(d) -> ReviewMeta:
 # ── Findings ─────────────────────────────────────────────────────────────────
 
 
+class FindingOrigin(StrEnum):
+    """Who produced this finding. The harness sets each value; an agent never does.
+
+    WRITER is an agent-written finding. CLAIM is derived from a verified claim.
+    BEHAVIOUR is reserved; nothing sets it yet.
+    """
+
+    WRITER = "writer"
+    CLAIM = "claim"
+    BEHAVIOUR = "behaviour"
+
+
 @dataclass
 class Finding:
     id: str
@@ -452,6 +464,7 @@ class Finding:
     # next pass does not take it, and a later round re-raising it at the same
     # anchor is marked skipped until the file changes.
     skipped: bool = False
+    origin: FindingOrigin = FindingOrigin.WRITER
 
 
 # ── Prior-finding vocabulary ─────────────────────────────────────────────────

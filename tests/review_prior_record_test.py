@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
@@ -10,12 +12,15 @@ if LIB_DIR not in sys.path:
 from core.phases import Phase
 from review.phases import PhaseResult
 from review.prompt_prior import _build_prior_section, _scoped
-from review.reconcile import _prior_findings, passed_over, reconcile
-from review.record import LedgerLine, SeveritySection
+from review.reconcile import (
+    _prior_findings, open_derived_findings, passed_over, reconcile,
+    record_prior_findings,
+)
+from review.record import Disposition, LedgerLine, SeveritySection
 from review.render import BANNER
 from review.steps import _carry_forward_prior_findings
 from review.store import StoredReview
-from review.types import Group, PreflightData, PriorDisposition, ReviewMeta
+from review.types import FindingOrigin, Group, PreflightData, PriorDisposition, ReviewMeta
 
 from review_record_support import finding, fixture_meta, fixture_record, record
 
@@ -33,6 +38,41 @@ def test_a_fixed_prior_finding_is_not_reconciled():
     prior = StoredReview(fixture_record("self_incremental_fixed"),
                          fixture_meta("self_incremental_fixed"))
     assert "N1" not in [p.ref.finding_id for p in _prior_findings(prior.record)]
+
+
+def test_open_derived_findings_ignores_declined_and_skipped():
+    declined = finding(
+        "S1", "Claim contradicted: x", origin=FindingOrigin.CLAIM,
+        disposition=Disposition.DECLINED,
+    )
+    skipped = finding(
+        "S2", "Claim unsupported: y", origin=FindingOrigin.CLAIM,
+        disposition=Disposition.SKIPPED, path="",
+    )
+    opened = finding(
+        "S3", "Claim contradicted: z", origin=FindingOrigin.CLAIM,
+    )
+    prior = StoredReview(record(declined, skipped, opened), ReviewMeta())
+    assert [f.id for f in open_derived_findings(prior)] == ["S3"]
+    assert open_derived_findings(None) == ()
+
+
+@pytest.mark.parametrize(
+    "disposition, counts_as_open",
+    [
+        (Disposition.UNREACHED, True),
+        (Disposition.DECLINED, False),
+        (Disposition.SKIPPED, False),
+    ],
+)
+def test_open_derived_findings_counts_unreached_as_open(disposition, counts_as_open):
+    derived = finding(
+        "S1", "Claim contradicted: x", origin=FindingOrigin.CLAIM,
+        disposition=disposition,
+    )
+    prior = StoredReview(record(derived), ReviewMeta())
+    ids = [f.id for f in open_derived_findings(prior)]
+    assert ids == (["S1"] if counts_as_open else [])
 
 
 def test_reconcile_dates_the_prior_from_its_sidecar():
@@ -149,3 +189,20 @@ def test_the_pipeline_carries_scoped_prior_findings_into_the_merged_record(
     assert written and written[0].schema_version == PIPELINE_SCHEMA_VERSION
     # The groups may decline only what the prior round held.
     assert captured["declinable"] == declinable_sids(prior) != frozenset()
+
+
+def test_a_derived_prior_finding_is_never_unaccounted(tmp_path):
+    derived = finding(
+        "S2", "Claim contradicted: retries back off",
+        path="a.py", origin=FindingOrigin.CLAIM,
+    )
+    writer = finding("S1", "a real bug", path="b.py")
+    prior = StoredReview(record(writer, derived), ReviewMeta(head_sha="p" * 40))
+    current = record()
+    skipped = passed_over(prior, current, str(tmp_path))
+    assert [p.ref.finding_id for p in skipped] == ["S1"]
+    result = record_prior_findings(
+        str(tmp_path / "review.md"), prior, current, str(tmp_path),
+    )
+    ids = [] if result is None else [r.ref.finding_id for r in result.records]
+    assert "S2" not in ids

@@ -18,7 +18,7 @@ from review.grammar import FindingIdentity, sid_marker
 from review.record import LedgerLine, RecordFinding, TriageEntry
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
-from review.types import PriorDisposition, ReplyState, ReviewMeta
+from review.types import FindingOrigin, PriorDisposition, ReplyState, ReviewMeta
 from review.prompt_prior import (
     _annotate_with_thread_state, _build_prior_section, _in_group, _prior_text, _scoped,
 )
@@ -258,6 +258,22 @@ class TestPriorTextOmitsBookkeeping:
         identity = FindingIdentity.of_fields("handler.go", 42, "missing error check")
         assert identity.stable_id in result
         assert _prior_text(_stored(finding("M1", "missing error check", path="handler.go", line=42)), None) == result
+
+
+def test_derived_findings_are_left_out_of_the_prior_section():
+    rec = record(
+        finding("S1", "missing error check", path="a.py", line=10),
+        finding(
+            "S2", "Claim contradicted: retries back off",
+            path="a.py", origin=FindingOrigin.CLAIM,
+        ),
+    )
+    result = _prior_text(_stored(rec=rec), None)
+    assert "[S1]" in result
+    assert "Claim contradicted" not in result
+    scoped = _prior_text(_stored(rec=rec), ["a.py"])
+    assert "[S1]" in scoped
+    assert "Claim contradicted" not in scoped
 
 
 def test_scoping_reads_the_finding_s_own_path_and_line():

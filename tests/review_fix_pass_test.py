@@ -37,7 +37,7 @@ import review.types
 from core.phases import Effort, Phase
 from pr.fix import FixOutcome
 from review.record import Disposition
-from review.types import Finding
+from review.types import Finding, FindingOrigin
 import fix.verify
 from review_record_support import finding, record
 
@@ -80,6 +80,17 @@ class TestTheWorkSet:
         adapter = review.fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.items()[0].label == review.types.severity_by_key("N").section
+
+    def test_a_claim_item_is_labelled_as_one(self, git_wt, tmp_path):
+        job = _make_job(git_wt, tmp_path)
+        section = review.types.severity_by_key("S").section
+        claim = review.fix.ReviewFixAdapter(
+            job, [_finding("S1", origin=FindingOrigin.CLAIM)],
+        )
+        writer = review.fix.ReviewFixAdapter(job, [_finding("S1")])
+
+        assert claim.items()[0].label == f"{section} — from a PR claim"
+        assert writer.items()[0].label == section
 
     def test_a_review_with_nothing_open_never_runs_the_agent(self, git_wt, tmp_path):
         job = _make_job(

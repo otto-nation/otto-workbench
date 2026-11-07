@@ -1,9 +1,10 @@
-"""The claims ledger: the check, the fingerprint and the record entries.
+"""The claims ledger: the check, the fingerprint, the record entries, and
+the should-fix findings derived from contradicted or unsupported claims.
 
 This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
-into record entries after the check, and the degraded-check warning.
-Renderers take claims off the record and never import it.
+into record entries after the check, the degraded-check warning, and
+`settle`. Renderers take claims off the record and never import it.
 
 The record is tri-state. `None` is not assessed — a writer that did not run, a
 check that degraded, or a legacy `review.json`. `()` is assessed with nothing
@@ -24,9 +25,42 @@ fails `problems()` or schema never runs the claims check, so the repair prompt
 does not mention claims and the second load degrades without that turn having
 named them.
 
-`verify.post_process_record` forces a supported or contradicted claim whose
-snippet is not in its file to unverifiable, with a note, using the same
-evidence matcher findings use.
+`settle` verifies claims, then derives, then appends, then links each source
+claim by position. A dangling link (names no visible finding) is treated as
+no link, so that claim derives. A linked claim derives nothing, so settle is
+idempotent on a record it already linked. A no-op carried round never
+derives twice because that path never calls settle. It runs at both writer
+sites before disprove, so the record disprove reads already holds those
+findings. Disprove clears the link when it falsifies the finding. The
+evidence gate in post_process_record can drop, and disprove can falsify, a
+WRITER finding a claim links to; the link is then cleared and nothing
+re-derives that round.
+Verification uses the same evidence matcher findings use: a supported or
+contradicted claim whose snippet is not in its file becomes unverifiable,
+with a note, and derives nothing.
+
+Derived findings are should-fix, never must-fix: a false statement about the
+change hits maintainability, reliability, or developer experience, not
+correctness, security, or data integrity (D1). The body is three lines: the
+collapsed claim text under `Claim contradicted:` or `Claim unsupported:`,
+the evidence prose, and `Source: description` or `Source: ticket`. The last
+line is always that `Source:` line so a derived body never ends in a
+non-defect phrase (D11).
+
+A prior round's derived findings (`origin` other than writer) are never
+shown in the prior prompt and never accounted for. The writer re-judges
+the claims and settle re-derives. A DECLINED or SKIPPED derived finding
+keeps its disposition from one writer round to the next, matched by
+stable_id (path plus the first 80 characters of the first line;
+description and ticket claims with the same wording collide). After a
+round that settles or ends clean without the writer — the merged record
+never holds derived findings — that answer is lost, and the next writer
+round re-derives the finding OPEN. A FALSIFIED derived finding is not
+re-derived the round after it was falsified, but a later round re-derives
+it. A true no-op round carries them with their claims. An OPEN or
+UNREACHED prior derived finding stops a round being treated as clean or
+settled, so the writer re-judges (`reconcile.open_derived_findings`,
+`steps._writer_must_rejudge`).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,
@@ -49,14 +83,17 @@ import json
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 
+from core.phases import Mode
 import review.budget
 import review.focus
+import review.merge
+import review.verify
 from review.artifacts import ReviewArtifact
-from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport
-from review.grammar import strip_line_suffix
+from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerdict
+from review.grammar import FindingIdentity, strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
-from review.record import ReviewRecord
-from review.types import ReviewJob
+from review.record import Disposition, RecordFinding, ReviewRecord
+from review.types import FindingOrigin, ReviewJob
 
 CLAIM_KINDS = frozenset({
     IngestErrorKind.MISSING_CLAIMS,
@@ -66,6 +103,11 @@ CLAIM_KINDS = frozenset({
 })
 
 _SIZE_FIELDS = ("text", "evidence", "snippet")
+
+_DERIVED_HEAD = {
+    ClaimVerdict.CONTRADICTED: "Claim contradicted",
+    ClaimVerdict.UNSUPPORTED: "Claim unsupported",
+}
 
 
 def _error(kind: IngestErrorKind, at: str, detail: str) -> IngestError:
@@ -226,3 +268,154 @@ def check_warning(errors: Sequence[IngestError]) -> str:
         if any(e.kind in CLAIM_KINDS for e in errors) else ()
     )
     return review.focus.check_warning(errors, more=more)
+
+
+def _derives_finding(claim: ClaimEntry) -> bool:
+    return claim.verdict in _DERIVED_HEAD and not claim.finding
+
+
+def derived_findings(
+    claims: tuple[ClaimEntry, ...] | None, *, checkbox: bool,
+) -> tuple[RecordFinding, ...]:
+    """Should-fix findings for contradicted or unsupported claims with no link.
+
+    A false statement about the change is should-fix: it hits maintainability,
+    reliability, or developer experience, not correctness, security, or data
+    integrity (D1). The code defect behind a false claim, if any, is a
+    separate writer finding. A claim the writer already covered (`finding`
+    set) derives nothing.
+
+    Each body is three lines: the collapsed claim text under `Claim
+    contradicted:` or `Claim unsupported:`, the evidence prose, and
+    `Source: description` or `Source: ticket`. The last line is always that
+    `Source:` line so a derived body never ends in a non-defect phrase (D11).
+    """
+    if not claims:
+        return ()
+    out: list[RecordFinding] = []
+    for claim in claims:
+        if not _derives_finding(claim):
+            continue
+        head = _DERIVED_HEAD[claim.verdict]
+        text = " ".join(claim.text.split())
+        body = f"{head}: {text}\n{claim.evidence}\nSource: {claim.source.value}"
+        contradicted = claim.verdict is ClaimVerdict.CONTRADICTED
+        path = claim.path if contradicted else ""
+        evidence = claim.snippet if contradicted else ""
+        out.append(RecordFinding(
+            id=f"S{len(out) + 1}",
+            severity="S",
+            path=path,
+            line=None,
+            body=body,
+            evidence=evidence,
+            stable_id=FindingIdentity.of_fields(path, None, body).stable_id,
+            checkbox=checkbox,
+            origin=FindingOrigin.CLAIM,
+        ))
+    return tuple(out)
+
+
+def _prior_derived(job: ReviewJob) -> dict[str, RecordFinding]:
+    if job.prior is None:
+        return {}
+    return {
+        f.stable_id: f
+        for f in job.prior.record.findings
+        if f.derived and f.stable_id
+    }
+
+
+def _carry_derived(
+    finding: RecordFinding, prior: dict[str, RecordFinding],
+) -> RecordFinding | None:
+    """Copy a prior DECLINED/SKIPPED, or drop a FALSIFIED same stable_id.
+
+    Empty *prior* (job.prior None) leaves the finding OPEN. A prior derived
+    finding that was FALSIFIED is in findings but not visible; it is not
+    re-derived.
+    """
+    old = prior.get(finding.stable_id)
+    if old is None:
+        return finding
+    if old.disposition is Disposition.FALSIFIED:
+        return None
+    if old.disposition in (Disposition.DECLINED, Disposition.SKIPPED):
+        return replace(finding, disposition=old.disposition, reason=old.reason)
+    return finding
+
+
+def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    """Verify claims, derive findings, append them, and link each source claim.
+
+    Runs at both writer sites before disprove. A claim whose cited code did
+    not verify becomes unverifiable and derives nothing. A finding link that
+    names no visible finding is cleared first, so a dangling link is no link
+    and the claim derives. Linking is by position, not stable_id: the claims
+    that consume an id are the post-append claims, zipped with the last
+    len(derived) visible findings. append_findings adds newcomers at the end;
+    _rewrite_record keeps claim order and length, so derived_at still lines
+    up, and starting after the append keeps rewritten links and evidence.
+    stable_id is not unique per claim — two unsupported claims that share
+    a first line hash alike.
+
+    A derived finding whose stable_id matches a prior derived finding that
+    was DECLINED or SKIPPED carries that disposition and reason. A prior
+    derived finding that was FALSIFIED (in prior.record.findings, not
+    visible) is not re-derived for that stable_id: the claim stays
+    contradicted or unsupported with no finding. job.prior None leaves
+    every derived finding OPEN.
+    """
+    if record.claims is None:
+        return record
+    claims = review.verify.verified_claims(
+        record.claims, job.wt_path, [f["path"] for f in job.pr.files],
+    )
+    record = without_vanished_links(replace(record, claims=claims))
+    claims = record.claims
+    derived = derived_findings(claims, checkbox=job.mode is Mode.SELF)
+    if not derived:
+        return record
+    prior = _prior_derived(job)
+    kept: list[RecordFinding] = []
+    kept_at: list[int] = []
+    for index, finding in zip(
+        (i for i, c in enumerate(claims) if _derives_finding(c)),
+        derived,
+        strict=True,
+    ):
+        carried = _carry_derived(finding, prior)
+        if carried is None:
+            continue
+        kept.append(carried)
+        kept_at.append(index)
+    derived = tuple(kept)
+    if not derived:
+        return record
+    derived_at = tuple(kept_at)
+    record = review.merge.append_findings(record, derived)
+    if record.claims is None or len(record.claims) != len(claims):
+        raise RuntimeError(
+            f"append_findings changed claim count from {len(claims)} to "
+            f"{0 if record.claims is None else len(record.claims)}",
+        )
+    tail = record.visible[-len(derived):]
+    origins = tuple(f.origin.name for f in tail)
+    if len(tail) != len(derived) or any(
+        f.origin is not FindingOrigin.CLAIM for f in tail
+    ):
+        raise RuntimeError(
+            f"expected {len(derived)} CLAIM findings at the end of the "
+            f"visible list; found {len(tail)} with origins {origins}",
+        )
+    ids = iter(f.id for f in tail)
+    linked = list(record.claims)
+    for i in derived_at:
+        linked[i] = replace(linked[i], finding=next(ids))
+    extra = next(ids, None)
+    if extra is not None:
+        raise RuntimeError(
+            f"derived_at and tail disagree: {len(derived_at)} indexes, "
+            f"{len(tail)} ids",
+        )
+    return replace(record, claims=tuple(linked))

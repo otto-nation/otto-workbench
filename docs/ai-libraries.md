@@ -867,12 +867,13 @@ budgets retries, not bytes.
 
 ### review/claims.py
 
-The claims ledger: the check, the fingerprint and the record entries.
+The claims ledger: the check, the fingerprint, the record entries, and
+the should-fix findings derived from contradicted or unsupported claims.
 
 This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
-into record entries after the check, and the degraded-check warning.
-Renderers take claims off the record and never import it.
+into record entries after the check, the degraded-check warning, and
+`settle`. Renderers take claims off the record and never import it.
 
 The record is tri-state. `None` is not assessed — a writer that did not run, a
 check that degraded, or a legacy `review.json`. `()` is assessed with nothing
@@ -893,9 +894,42 @@ fails `problems()` or schema never runs the claims check, so the repair prompt
 does not mention claims and the second load degrades without that turn having
 named them.
 
-`verify.post_process_record` forces a supported or contradicted claim whose
-snippet is not in its file to unverifiable, with a note, using the same
-evidence matcher findings use.
+`settle` verifies claims, then derives, then appends, then links each source
+claim by position. A dangling link (names no visible finding) is treated as
+no link, so that claim derives. A linked claim derives nothing, so settle is
+idempotent on a record it already linked. A no-op carried round never
+derives twice because that path never calls settle. It runs at both writer
+sites before disprove, so the record disprove reads already holds those
+findings. Disprove clears the link when it falsifies the finding. The
+evidence gate in post_process_record can drop, and disprove can falsify, a
+WRITER finding a claim links to; the link is then cleared and nothing
+re-derives that round.
+Verification uses the same evidence matcher findings use: a supported or
+contradicted claim whose snippet is not in its file becomes unverifiable,
+with a note, and derives nothing.
+
+Derived findings are should-fix, never must-fix: a false statement about the
+change hits maintainability, reliability, or developer experience, not
+correctness, security, or data integrity (D1). The body is three lines: the
+collapsed claim text under `Claim contradicted:` or `Claim unsupported:`,
+the evidence prose, and `Source: description` or `Source: ticket`. The last
+line is always that `Source:` line so a derived body never ends in a
+non-defect phrase (D11).
+
+A prior round's derived findings (`origin` other than writer) are never
+shown in the prior prompt and never accounted for. The writer re-judges
+the claims and settle re-derives. A DECLINED or SKIPPED derived finding
+keeps its disposition from one writer round to the next, matched by
+stable_id (path plus the first 80 characters of the first line;
+description and ticket claims with the same wording collide). After a
+round that settles or ends clean without the writer — the merged record
+never holds derived findings — that answer is lost, and the next writer
+round re-derives the finding OPEN. A FALSIFIED derived finding is not
+re-derived the round after it was falsified, but a later round re-derives
+it. A true no-op round carries them with their claims. An OPEN or
+UNREACHED prior derived finding stops a round being treated as clean or
+settled, so the writer re-judges (`reconcile.open_derived_findings`,
+`steps._writer_must_rejudge`).
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,
@@ -1295,17 +1329,6 @@ builder, which template it renders, and which file the agent is told to write
 are `review.registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
 
-Each rendered prompt's exact input-token count is appended to `prompt-stats.json`
-in the review directory (model it was counted against, bytes-per-token), via
-`agent.token_count.count_tokens`. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out.
-On by default because it shipped opt-in and was never once switched on. The
-round trip is mostly fixed latency — about 0.29s for a 6KB prompt, 0.55s for a
-374KB one — against a phase that then runs for minutes. A machine with no Vertex
-credentials skips it and records nothing rather than recording a guess. The
-count is the rendered prompt alone; the system prompt and tool schemas `claude
--p` assembles internally are charged to the same request and are not visible
-here — see `agent.token_count` for the observed margin.
-
 ### review/prompt_fit.py
 
 Plan → render → verify → re-plan, until the prompt fits or the cap is hit.
@@ -1364,6 +1387,19 @@ Not to be confused with `review.sections`, which is the posting pipeline's
 config-driven registry of sections already written to a review document —
 that module reads what an agent wrote, this one decides what an agent is
 shown before it writes anything.
+
+### review/prompt_stats.py
+
+Each rendered prompt's exact input-token count is appended to `prompt-stats.json`
+in the review directory (model it was counted against, bytes-per-token), via
+`agent.token_count.count_tokens`. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out.
+On by default because it shipped opt-in and was never once switched on. The
+round trip is mostly fixed latency — about 0.29s for a 6KB prompt, 0.55s for a
+374KB one — against a phase that then runs for minutes. A machine with no Vertex
+credentials skips it and records nothing rather than recording a guess. The
+count is the rendered prompt alone; the system prompt and tool schemas `claude
+-p` assembles internally are charged to the same request and are not visible
+here — see `agent.token_count` for the observed margin.
 
 ### review/recover.py
 
@@ -1577,16 +1613,25 @@ files a review reports and the diff it sends come off one range.
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.
 
+### review/artifact_format.py
+
+The prompt shows the agent `example()` as `core.serde.to_dict` writes
+it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
+what `review.ingest` accepts are one schema. A test holds the notes to the
+fields.
+
+`output_format` is that rendering. `CARRY_FIELDS` (sid, declined,
+prior_findings) are hidden on a first-round prompt. `DERIVE_FIELDS` (title,
+rationale, paths on a FocusReport) are shown only when the Focus section asks
+the writer to add areas.
+
 ### review/artifacts.py
 
 What a review agent writes: one JSON document per phase, each a frozen dataclass.
 
 Scout, holistic, group, single, synthesis and disprove each write one of the
-types here. The prompt shows the agent `example()` as `core.serde.to_dict` writes
-it, followed by `FIELD_NOTES` for every field, so what the prompt asks for and
-what `review.ingest` accepts are one schema. A test
-holds each example to the strict reader and to `problems()`, and holds the
-notes to the fields.
+types here. The field guide and output format are `review.artifact_format`'s.
+A test holds each example to the strict reader and to `problems()`.
 
 The types are narrower than the record on purpose. `ReviewRecord` carries what
 the harness decides — dispositions, stable IDs, failures, static analysis,
@@ -4474,7 +4519,7 @@ a count against a context window owes itself that margin until the two are
 wired together.
 
 The review pipeline records each count in `prompt-stats.json` (see
-`review.prompt`). That write, the `WORKBENCH_AI_MEASURE_TOKENS=0` opt-out, and
+`review.prompt_stats`). That write, the `WORKBENCH_AI_MEASURE_TOKENS=0` opt-out, and
 the measured round-trip latency live there, not here: this module only asks the
 endpoint and returns `None` when it cannot.
 

@@ -9,8 +9,9 @@ regular file no larger than ``MAX_SCAN_BYTES``; missing, unreadable, stdin
 
 The whole command text is scanned, including non-write statements — a
 deliberate over-refusal, so a reference sitting next to a write cannot slip
-through unread. Every statement also contributes ``cat`` operands, ``<``
-input redirects, and ``$(< file)`` / ``$(cat file)`` substitutions.
+through unread. Every statement also contributes ``cat`` operands and ``<``
+input redirects; a substitution's body is a statement of its own, so
+``$(< file)`` and ``$(cat file)`` are read the same way.
 Redirections are read with one grammar, ``gh.shell_wrappers.REDIRECT``: an
 fd-prefixed heredoc or here-string names no file, ``--body-file <(cmd)`` names
 none either, and ``<`` inputs are read from the raw statement so a redirect
@@ -41,9 +42,10 @@ _FILE_PREFIXES = tuple(f"{flag}=" for flag in _FILE_FLAGS)
 _FIELD_WORDS = ("-F", "--field")
 _FIELD_PREFIX = "--field="
 
-# `--body-file <(cmd)` reaches here as a bare `<`: the tokenizer splits at the
-# paren and makes `cmd` its own statement, whose operands are scanned there.
-_PROCESS_SUBSTITUTION = "<"
+# `--body-file <(cmd)` reaches here as one word: the tokenizer keeps the
+# substitution whole and makes `cmd` its own statement, whose operands are
+# scanned there.
+_PROCESS_SUBSTITUTION = ("<(", ">(")
 
 
 @dataclass(frozen=True)
@@ -148,7 +150,7 @@ def _named_files(args: Sequence[str]) -> tuple[str, ...]:
         if taken is None:
             i += 1
             continue
-        if taken.path and taken.path != _PROCESS_SUBSTITUTION:
+        if taken.path and not taken.path.startswith(_PROCESS_SUBSTITUTION):
             paths.append(taken.path)
         i = taken.next_index
     return tuple(paths)
@@ -193,12 +195,8 @@ def _field_file(value: str) -> str:
 
 
 def _shell_file_paths(statement: Sequence[str], words: Sequence[str]) -> tuple[str, ...]:
-    """Paths ``cat`` (in the peeled *words*) and ``<`` redirects (anywhere in *statement*) name, and ``$(< f)`` / ``$(cat f)`` substitutions."""
-    paths: list[str] = []
-    paths.extend(_cat_operands(words))
-    paths.extend(_redirected(statement).inputs)
-    paths.extend(_subst_operands(words))
-    return tuple(paths)
+    """Paths ``cat`` (in the peeled *words*) and ``<`` redirects (anywhere in *statement*) name."""
+    return (*_cat_operands(words), *_redirected(statement).inputs)
 
 
 @dataclass(frozen=True)
@@ -233,24 +231,6 @@ def _cat_operands(words: Sequence[str]) -> list[str]:
     if not words or Path(words[0]).name != "cat":
         return []
     return [word for word in _redirected(words[1:]).operands if not word.startswith("-")]
-
-
-def _subst_operands(words: Sequence[str]) -> list[str]:
-    paths: list[str] = []
-    for word in words:
-        inner = _subst_inner(word)
-        if inner is None:
-            continue
-        parts = inner.split()
-        paths.extend(_cat_operands(parts))
-        paths.extend(_redirected(parts).inputs)
-    return paths
-
-
-def _subst_inner(word: str) -> str | None:
-    if word.startswith("$(") and word.endswith(")") and len(word) > 3:
-        return word[2:-1].strip()
-    return None
 
 
 def _read_if_scannable(path: str, cwd: str | Path) -> str:

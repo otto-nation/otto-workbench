@@ -261,3 +261,25 @@ def test_check_command_refuses_a_cross_ref_cat_after_fd_dup(github_owners, tmp_p
     verdict = gh.owners.check_command(
         f"cat 2>&1 notes.md | {_WRITE} --body-file -", str(tmp_path))
     assert not verdict.ok and "me/lib#12" in verdict.reason
+
+
+@pytest.mark.parametrize("body", [
+    "--body-file <(echo hi)", "--body $(echo hi)", '--body "$(echo hi)"',
+])
+def test_check_command_refuses_a_repo_flag_after_a_substitution(github_owners, tmp_path, body):
+    github_owners({"work": ["otto-nation"]})
+    verdict = gh.owners.check_command(
+        f"gh issue comment 1 {body} -R stranger/lib", str(tmp_path))
+    assert not verdict.ok and "stranger" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    'echo "$(gh issue comment 1 -R stranger/lib --body x)"',
+    'x="$(gh issue comment 1 -R stranger/lib --body x)"',
+    "echo `gh issue comment 1 -R stranger/lib --body x`",
+])
+def test_check_command_refuses_a_write_inside_a_quoted_substitution(
+        github_owners, tmp_path, command):
+    github_owners({"work": ["otto-nation"]})
+    verdict = gh.owners.check_command(command, str(tmp_path))
+    assert not verdict.ok and "stranger" in verdict.reason

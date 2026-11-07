@@ -234,3 +234,7 @@ write	sudo 2>/dev/null gh pr close 1
 write	sudo 2>/dev/null -n gh pr close 1
 read	cat 2>&1 notes.md | grep x
 read	gh pr view 1 2>&1 | head
+write	echo "$(gh issue comment 1 --body x)"
+write	x="$(gh pr close 1)"
+write	echo `gh pr close 1`
+read	x="$(gh pr view 1 --json body)"

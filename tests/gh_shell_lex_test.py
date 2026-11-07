@@ -33,3 +33,18 @@ def test_a_redirect_operator_holding_amp_or_bar_stays_one_word():
         words = gh.shell_lex.split_statements(f"cat {operator} a.md | gh x")
         assert words == [["cat", *operator.split(), "a.md"], ["gh", "x"]], operator
     assert gh.shell_lex.split_statements("a |& b") == [["a"], ["b"]]
+
+
+def test_a_substitution_stays_one_word_and_its_body_is_split():
+    first = gh.shell_lex.split_statements("gh issue comment 1 --body $(echo hi) -R s/l")
+    assert first[0] == ["gh", "issue", "comment", "1", "--body", "$(echo hi)", "-R", "s/l"]
+    assert first[-1] == ["echo", "hi"] and len(first) == 2
+    process = gh.shell_lex.split_statements("gh x --body-file <(cat x) -R s/l")
+    assert process == [["gh", "x", "--body-file", "<(cat x)", "-R", "s/l"], ["cat", "x"]]
+    quoted = gh.shell_lex.split_statements('echo "$(a | b)"')
+    assert quoted == [["echo", "$(a | b)"], ["a"], ["b"]]
+    backtick = gh.shell_lex.split_statements("echo `gh pr close 1` -R s/l")
+    assert backtick == [["echo", "`gh pr close 1`", "-R", "s/l"], ["gh", "pr", "close", "1"]]
+    nested = gh.shell_lex.split_statements("echo $(a $(b))")
+    assert nested[0] == ["echo", "$(a $(b))"] and nested[1:] == [["a", "$(b)"], ["b"]]
+    assert gh.shell_lex.split_statements("echo '$(x)'") == [["echo", "$(x)"]]

@@ -3,7 +3,8 @@
 Heredoc bodies are dropped, quoting is honoured, and the operators ``;``,
 ``&``, ``|``, ``(``, ``)`` and a newline end a statement. An ``&`` or ``|``
 that belongs to a redirect operator (``2>&1``, ``&>x``, ``>|``) stays part of
-its word. ``segments`` keeps which statements pipe into the next one;
+its word, and a substitution stays whole in its statement while its body
+follows as statements of its own. ``segments`` keeps which statements pipe into the next one;
 ``split_statements`` is the same split as plain words. Imports nothing from
 ``gh``: the shape classifier and the content scanner both build on it.
 
@@ -19,14 +20,15 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 _OPERATOR_CHARS = ";&|()\n"
 _PIPES = frozenset({"|", "|&"})
 _HEREDOC_OPEN = re.compile(r"(?<!<)<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)")
 # Private-use stand-ins the masking pass writes so shlex keeps a redirect
-# operator whole; `_unmask` restores them after lexing.
-_AMP, _BAR = "\ue000", "\ue001"
+# operator or a substitution whole; `_unmask` restores them after lexing.
+_AMP, _BAR, _OPEN, _CLOSE = "\ue000", "\ue001", "\ue002", "\ue003"
 
 
 @dataclass(frozen=True)
@@ -75,9 +77,58 @@ def _redirect_char(command: str, i: int) -> str | None:
     return None
 
 
-def _mask(command: str) -> str:
-    """*command* with redirect-operator ``&``/``|`` outside quotes made opaque to shlex."""
+def _substitution_end(command: str, start: int) -> int:
+    """Index just past the ``)`` closing the substitution whose body starts at *start*."""
+    depth, quote, i = 1, "", start
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            i += 2 if ch == "\\" and quote == '"' else 1
+            quote = "" if ch == quote else quote
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        quote = ch if ch in "'\"" else ""
+        depth += (ch == "(") - (ch == ")")
+        i += 1
+        if depth == 0:
+            return i
+    return len(command)
+
+
+def _span_end(command: str, i: int, quote: str) -> int | None:
+    """Where the substitution opening at *i* ends, or None when none opens there.
+
+    A backtick and ``$(`` open one unquoted or inside double quotes; ``<(`` and
+    ``>(`` only unquoted. The caller never asks inside single quotes.
+    """
+    pair = command[i:i + 2]
+    if command[i] == "`":
+        end = command.find("`", i + 1)
+        return len(command) if end == -1 else end + 1
+    if pair == "$(" or (not quote and pair in ("<(", ">(")):
+        return _substitution_end(command, i + 2)
+    return None
+
+
+@dataclass(frozen=True)
+class _Masked:
+    """*text* with redirect operators and substitutions made opaque to shlex."""
+
+    text: str
+    spans: tuple[str, ...]
+
+
+def _mask(command: str) -> _Masked:
+    """*command* with redirect-operator ``&``/``|`` and every substitution made opaque to shlex.
+
+    Each substitution becomes one placeholder naming its index in ``spans``,
+    so the word that holds it keeps its place and its flags stay in the
+    statement. Single quotes shield everything; a backslash escapes one char.
+    """
     out: list[str] = []
+    spans: list[str] = []
     quote, i = "", 0
     while i < len(command):
         ch = command[i]
@@ -85,16 +136,33 @@ def _mask(command: str) -> str:
             out.append(command[i:i + 2])
             i += 2
             continue
+        end = None if quote == "'" else _span_end(command, i, quote)
+        if end is not None:
+            spans.append(command[i:end])
+            out.append(f"{_OPEN}{len(spans) - 1}{_CLOSE}")
+            i = end
+            continue
         if ch in "'\"" and quote in ("", ch):
             quote = "" if quote else ch
         stand_in = _redirect_char(command, i) if ch in "&|" and not quote else None
         out.append(stand_in or ch)
         i += 1
-    return "".join(out)
+    return _Masked("".join(out), tuple(spans))
 
 
-def _unmask(token: str) -> str:
-    return token.replace(_AMP, "&").replace(_BAR, "|")
+_SPAN_RE = re.compile(f"{_OPEN}(\\d+){_CLOSE}")
+
+
+def _unmask(token: str, spans: Sequence[str]) -> str:
+    token = token.replace(_AMP, "&").replace(_BAR, "|")
+    return _SPAN_RE.sub(lambda found: spans[int(found.group(1))], token)
+
+
+def _span_body(span: str) -> str:
+    """The command inside a substitution's delimiters."""
+    if span.startswith("`"):
+        return span[1:-1] if len(span) > 1 and span.endswith("`") else span[1:]
+    return span[2:-1] if span.endswith(")") else span[2:]
 
 
 def _flush(segments: list[Segment], words: list[str], separator: str) -> None:
@@ -105,12 +173,16 @@ def _flush(segments: list[Segment], words: list[str], separator: str) -> None:
 def segments(command: str) -> list[Segment]:
     """*command* as statements, each recording whether it pipes into the next.
 
-    POSIX quoting applies, so an operator inside quotes is an argument. Heredoc
+    A substitution (``$(…)``, ``<(…)``, ``>(…)``, backticks) stays inside the
+    word that holds it, and its body is split the same way and follows the
+    outer statements. POSIX quoting applies, so an operator inside quotes is an
+    argument. Heredoc
     bodies are dropped first — they are content, not commands, and an
     unbalanced quote in one must not make the shape unknown. Raises
     ``ValueError`` on an unbalanced quote — a command whose shape is unknown.
     """
-    lexer = shlex.shlex(_mask(_drop_heredoc_bodies(command)), posix=True, punctuation_chars=_OPERATOR_CHARS)
+    masked = _mask(_drop_heredoc_bodies(command))
+    lexer = shlex.shlex(masked.text, posix=True, punctuation_chars=_OPERATOR_CHARS)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
@@ -121,9 +193,9 @@ def segments(command: str) -> list[Segment]:
             _flush(found, words, token)
             words = []
             continue
-        words.append(_unmask(token))
+        words.append(_unmask(token, masked.spans))
     _flush(found, words, "")
-    return found
+    return found + [nested for span in masked.spans for nested in segments(_span_body(span))]
 
 
 def split_statements(command: str) -> list[list[str]]:

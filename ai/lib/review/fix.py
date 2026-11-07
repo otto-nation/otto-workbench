@@ -619,6 +619,21 @@ def _bullet_paths(paths: set[str]) -> str:
     return "\n".join(f"- {p}" for p in sorted(paths))
 
 
+def _keep_anchors(
+    keep: set[str], anchors: set[str], wt_path: Path,
+) -> set[str]:
+    """`keep` without paths that are not a finding anchor or its test."""
+    refused = {p for p in keep if not fix.scope.anchor_or_test(p, anchors)}
+    if refused:
+        core.log.warn(
+            f"not committing {len(refused)} file(s) outside finding anchors "
+            f"and their tests in {wt_path}: {', '.join(sorted(refused))}. "
+            "A PR file that is not an anchor stays in the worktree for the "
+            "operator."
+        )
+    return keep - refused
+
+
 class ReviewFixAdapter(fix.engine.FixAdapter):
     """The findings pass, in the terms `fix.engine` runs one in.
 
@@ -768,26 +783,35 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
         }
 
     def commit_scope(self, changed: set[str] | None) -> set[str] | None:
-        """The files the agent touched that belong on this branch.
+        """The files the agent touched that are finding anchors or their tests.
 
         Paths outside the branch, the finding anchors, and their tests and
-        support modules are dropped here — the same warn-and-leave contract as
+        support modules are dropped first — the same warn-and-leave contract as
         `_drop_scratch`, applied after attribution so a file already dirty when
         the pass started is still never credited.
+
+        A second, stricter guard then refuses any remaining path that is not a
+        finding anchor or a test named for one. A file on the PR that is not an
+        anchor stays in the worktree for the operator; committing it is how a
+        verify-agent fixture (or a drive-by edit) reached a branch it was never
+        asked about.
 
         A rename is exempt, because dropping half of one is worse than
         committing the whole: the branch file set is fixed when the PR is
         collected and cannot contain a name the agent invents mid-fix, so the
         destination reads as out of branch while the source's deletion reads
         as in it. Committing only the deletion leaves a tree that does not
-        build and content stranded in the worktree.
+        build and content stranded in the worktree. A rename partner is
+        readmitted only if its kept counterpart passed the anchor guard.
         """
         if changed is None:
             return None
-        sources = self._branch_files() | self._anchor_files()
+        anchors = self._anchor_files()
+        sources = self._branch_files() | anchors
         keep = fix.scope.drop_outside(
             changed, self._allowed_paths(), self.workdir, sources,
         )
+        keep = _keep_anchors(keep, anchors, self.workdir)
         return keep | fix.scope.rename_partners(
             changed - keep, keep, self.workdir,
         )
@@ -799,6 +823,9 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
 
         A snapshot that failed arrives as None and lands an empty scope, which
         commits nothing — `record` is what then says where the work was left.
+        Paths left out of the scope stay dirty; the engine names them as
+        `left_out` so a green suite over them is reported PARTIAL rather than
+        vanishing.
         """
         self.changed = changed
         self.summary = _summary(

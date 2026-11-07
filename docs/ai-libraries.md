@@ -892,9 +892,13 @@ named them.
 `settle` verifies claims, then derives, then appends, then links each source
 claim by position. A dangling link (names no visible finding) is treated as
 no link, so that claim derives. A linked claim derives nothing, so settle is
-idempotent and a no-op carried round never derives twice. It runs at both
-writer sites before disprove, so the record disprove reads already holds
-those findings. Disprove clears the link when it falsifies the finding.
+idempotent on a record it already linked. A no-op carried round never
+derives twice because that path never calls settle. It runs at both writer
+sites before disprove, so the record disprove reads already holds those
+findings. Disprove clears the link when it falsifies the finding. The
+evidence gate in post_process_record can drop, and disprove can falsify, a
+WRITER finding a claim links to; the link is then cleared and nothing
+re-derives that round.
 Verification uses the same evidence matcher findings use: a supported or
 contradicted claim whose snippet is not in its file becomes unverifiable,
 with a note, and derives nothing.

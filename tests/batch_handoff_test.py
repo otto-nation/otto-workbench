@@ -271,7 +271,7 @@ _PARKED_HARNESS = textwrap.dedent("""\
     lib, tests, signals, run_id, mode = sys.argv[1:6]
     sys.path[:0] = [lib, tests]
     import batch.store
-    from batch.requests import Cancel, Outcome
+    from batch.requests import Outcome, Release
     from batch.store import Role
     from batch_session_support import NullInbox
     signals = pathlib.Path(signals)
@@ -284,16 +284,17 @@ _PARKED_HARNESS = textwrap.dedent("""\
 
     class ParkingInbox(NullInbox):
         def apply(self, run, envelope):
-            if getattr(envelope.request, "decision", "") != "park":
+            request = envelope.request
+            if not (isinstance(request, Release) and request.item == "park"):
                 return super().apply(run, envelope)
             park()
-            return Outcome(name=envelope.name, request=envelope.request)
+            return Outcome(name=envelope.name, request=request)
 
     role = Role.APPLIER if mode == "applier" else Role.DRIVER
     with batch.store.session(run_id, role, inbox=ParkingInbox(),
                              command=f"test {mode}") as opened:
         if mode == "applier":
-            batch.store.write_request(run_id, Cancel())
+            batch.store.write_request(run_id, Release("park"))
         else:
             opened.finish()
             park()

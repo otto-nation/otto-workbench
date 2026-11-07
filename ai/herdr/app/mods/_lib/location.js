@@ -63,6 +63,7 @@ export function hostOf(url) {
   return parseRemote(url).host;
 }
 
+// Mirrors HERDR_UNTRUSTED_APP_DIR in lib/constants.sh (shell owns it).
 export const UNTRUSTED_HOME_SUFFIX = '/.config/herdr-app-untrusted';
 
 export function isUntrustedHome(appHome) {

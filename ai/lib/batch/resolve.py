@@ -36,20 +36,18 @@ from __future__ import annotations
 
 import functools
 import secrets
-import shlex
-import subprocess
-import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import batch.autopublish
 import batch.outcomes
 import batch.plan
 import batch.publish
 import batch.store
 import batch.targets
-import core.timeouts
+from batch.autopublish import default_runner, last_command
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
 from batch.requests import Decide
 from batch.store import now_iso
@@ -74,8 +72,6 @@ _FORCEABLE = frozenset({batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value,
 PUBLISH_ACTIONS = ("publish", "force-publish")
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
-# What default_runner writes before each child command's output in a publish log.
-_COMMAND_HEADER = "$ "
 
 
 @dataclass(frozen=True)
@@ -116,25 +112,6 @@ def _named_fork_point(payload: Mapping) -> str:
     return ""
 
 
-def default_runner(argv: list[str], log_path: Path | None = None, *,
-                   env: Mapping[str, str] | None = None) -> int:
-    """Run one resolve command as a child.
-
-    With *log_path*, a `$ <argv>` header and everything it prints are appended
-    there. *env* is the child's environment, this process's when None.
-    """
-    if log_path is None:
-        return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
-                              start_new_session=True, timeout=core.timeouts.UNBOUNDED,
-                              env=env).returncode
-    with log_path.open("a") as log:
-        log.write(f"{_COMMAND_HEADER}{shlex.join(argv)}\n")
-        log.flush()
-        return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=log,
-                              stderr=subprocess.STDOUT, start_new_session=True,
-                              timeout=core.timeouts.UNBOUNDED, env=env).returncode
-
-
 def command_runner(item: Item, runner: Callable[..., int] | None) -> Callable[..., int]:
     """What runs *item*'s resolve commands.
 
@@ -144,7 +121,8 @@ def command_runner(item: Item, runner: Callable[..., int] | None) -> Callable[..
     """
     if runner is not None:
         return runner
-    return functools.partial(default_runner, env=batch.targets.child_env(item))
+    return functools.partial(batch.autopublish.default_runner,
+                             env=batch.targets.child_env(item))
 
 
 def _unavailable(decision: Decision, action: str, item: Item) -> str:
@@ -242,21 +220,10 @@ def _fail(run: Run, item: Item, step: str, *,
     return d
 
 
-def _last_command(lines: list[str]) -> list[str]:
-    """The lines the failing command printed: those after the last `$ ` header.
-
-    `default_runner` writes a `$ <argv>` header before each child command, so
-    an earlier command that succeeded cannot lend the failure its reason. A
-    log with no header is read whole.
-    """
-    starts = [i for i, line in enumerate(lines) if line.startswith(_COMMAND_HEADER)]
-    return lines[starts[-1] + 1:] if starts else lines
-
-
 def _publish_failed(run: Run, item: Item, log: Path) -> Decision:
     """A failed publish command as a decision: its classified reason, headline and log."""
     lines = log.read_text(errors="replace").splitlines() if log.is_file() else []
-    found = batch.outcomes.classify_failure(_last_command(lines))
+    found = batch.outcomes.classify_failure(last_command(lines))
     return _fail(run, item, "publish", reason=found.reason.value, detail=found.detail,
                  extra={"log": str(log),
                         "log_tail": lines[-batch.outcomes.LOG_TAIL_LINES:]})

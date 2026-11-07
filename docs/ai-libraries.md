@@ -699,7 +699,7 @@ nothing on disk held the operator's bytes from before the agent ran. This
 module copies already-dirty files under ``artifacts/dirty-backup/`` so a
 ``fix_pass_left_dirty`` warning can name a restorable copy.
 
-It reuses ``fix.containment._save_clobber`` (bytes-exact, binary-safe, symlinks
+It reuses ``fix.containment.save_clobber`` (bytes-exact, binary-safe, symlinks
 recorded not followed). Backup failure never aborts the pass: a trail warning
 is recorded and the pass continues. The copies live under the pass's artifacts,
 which are already excluded from the commit and from leftovers.

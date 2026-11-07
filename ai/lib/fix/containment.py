@@ -220,7 +220,7 @@ def restore(
     saved_to = Path(artifacts) / "containment" / phase
     saved_to.mkdir(parents=True, exist_ok=True)
     for path in changed:
-        _save_clobber(workdir, saved_to, path)
+        save_clobber(workdir, saved_to, path)
         _put_back(workdir, before_map.get(path), path)
 
     named = ", ".join(changed)
@@ -263,7 +263,7 @@ def _parse_tree(raw: str) -> tuple[FileRecord, ...]:
     return tuple(records)
 
 
-def _save_clobber(workdir: Path, dest: Path, rel: str) -> None:
+def save_clobber(workdir: Path, dest: Path, rel: str) -> None:
     src = workdir / rel
     if not src.is_file() and not src.is_symlink():
         return

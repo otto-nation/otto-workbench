@@ -1075,7 +1075,7 @@ def run(
         return _run_pass(adapter, items, trail=trail, verify=verify, head_before=head_before,
                          dirty_before=dirty_before, baseline_ref=baseline_ref,
                          pre_pass=pre_pass, head_state=head_state,
-                         backup_dir=backup.dest)
+                         backup_dir=backup.dest, backed_up=backup.paths)
     except (KeyboardInterrupt, SystemExit):
         _interrupted(adapter, dirty_before, head_before, trail)
         raise
@@ -1085,7 +1085,7 @@ def _run_pass(
     adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
     verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
     pre_pass: fix.containment.Snapshot, head_state: fix.head_guard.HeadState,
-    backup_dir: Path | None,
+    backup_dir: Path | None, backed_up: tuple[str, ...] = (),
 ) -> FixRun:
     """`run`'s body once the pass is cleared to start: batch, settle, gate, check, land."""
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
@@ -1188,7 +1188,8 @@ def _run_pass(
     fix.leftovers.report(adapter.workdir, fix.leftovers.find(
         adapter.workdir, pre_pass, dirty_before,
         exclude=fix.leftovers.artifacts_prefix(adapter.workdir, adapter.artifacts),
-    ), landed, trail, backup_dir=backup_dir)
+    ), landed, trail, backup_dir=backup_dir,
+                        backed_up=backed_up)
 
     exit_code = settled.exit_code
     if landed.status is git.land.CommitStatus.COMMIT_FAILED:

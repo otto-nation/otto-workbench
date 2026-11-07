@@ -3928,6 +3928,25 @@ are no host metrics. Whether a driver may start a step regardless — the floor
 slot — is the caller's to establish and pass as `floor`; `decide` no longer
 infers it from this run having nothing running.
 
+### batch/autopublish.py
+
+Run a publish child and, for `--auto-publish ff`, a fast-forward-only push.
+
+`default_runner` writes a `$ <argv>` header before each child's output so a
+failure's reason is read from that command alone (`last_command`).
+
+`fast_forward` is the only remote write a schema-2 run makes. It reuses
+`publish.plan` with closeout stripped to unlanded-only, then runs
+`commands[0]` only when that argv is a plain `pr push --expect`. It never
+force-pushes (`pr rebase --push-only`), never posts a closeout, and never
+files an issue.
+
+| Result | When |
+|---|---|
+| `skipped` | a drafted step is not `done`, the item has findings, local work no step vouched for, or the plan is not a clean fast-forward |
+| `pushed` | `pr push --expect` exited 0; `remote_sha`/`published_sha` become the post-push local tip |
+| `failed` | the push exited non-zero; `findings.record` of the classified failure (`push_refused` or `failed_unknown`) |
+
 ### batch/events.py
 
 NDJSON progress events for live consumers of `pr batch run`.
@@ -3945,7 +3964,10 @@ Map a v1 decision to findings (spec §3.1).
 The one owner of "decision → finding", read by the scheduler, the report, and
 `upgrade_v1`. A schema-2 run never opens a decision: `record` appends to
 `Item.findings` and sets `needs_session` when any finding is `block` or `wait`.
-Act-only findings leave the item to close `done`.
+Act-only findings leave the item to close `done`. `upgrade_v1` converts an
+in-flight v1 run in place (one-way): open decisions map through `record`
+except `publish` (v2 `_close` re-reads) and `interrupted` (step back to
+pending); `with_ai` stays `None` so AI argv does not silently change.
 
 | v1 decision | finding |
 |---|---|
@@ -8222,9 +8244,9 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
 
-A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish keeps the attended v1 run (exit 10 when waiting). --no-verify skips the pre-push hook on those publishes.
+A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when a v1 / `--auto-publish` run is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 10 when a v1 run that has not been resumed is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
 
 ### cli/pr_batch_common.py
 

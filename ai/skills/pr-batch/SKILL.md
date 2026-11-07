@@ -61,7 +61,7 @@ commands, or re-run that PR with AI:
 
 `--with-ai=rebase,ci,comments` restores today's AI argv. `--with-review` adds
 review. `--prs` limits keys; `--select KEY=STEPS` runs exactly those steps for
-one PR. `--auto-publish STEPS` keeps the attended v1 run. `--no-verify` skips
+one PR. `--auto-publish ff` (fast-forward only). `--no-verify` skips
 the pre-push hook on publishes the batch makes; persist it only when the user
 has already read a hook failure.
 
@@ -87,7 +87,8 @@ Findings the report names: `conflict_handwritten` / `conflict_generated`,
 
 ## Decisions
 
-For `--auto-publish` runs and runs started before this version. When the run
+Runs started before this version: `resume` converts their decisions to
+findings; until then `pr batch resolve` answers them. When the run
 waits, read `pr batch next` (or `pr batch status`). Each `next`
 entry has `why`, `prep`, `worktree`, `actions`, and copy-paste
 `pr batch resolve RUN_ID DECISION_ID --action A` commands. Apply one action
@@ -121,10 +122,9 @@ a base that is still open in the run.
 
 ## Push protocol
 
-Nothing is pushed until a `publish` decision is answered (or
-`--auto-publish` answers it). `pr batch report` / `<run-dir>/report.md`
-prints the lease push with the full 40-char SHA and `--expect` — never invent a
-short SHA, never force-push by hand without that lease.
+Nothing is pushed unless `--auto-publish ff`. `pr batch report` /
+`<run-dir>/report.md` prints the lease push with the full 40-char SHA and
+`--expect` — never invent a short SHA, never force-push by hand without that lease.
 
 On a **non-draft** PR, comment on the PR before a hand push. Drafts do not
 need that comment.

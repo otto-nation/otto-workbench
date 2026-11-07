@@ -30,7 +30,7 @@ _refusal() {
 
 # _tool_refusal CWD TOOL JSON [CHECKER] — toolCallRefusal's answer, or ALLOWED.
 _tool_refusal() {
-  run node --input-type=module -e "
+  run env TMPDIR="${TOOL_TMPDIR:-$TMPDIR}" node --input-type=module -e "
     const { toolCallRefusal } = await import('$REPO_ROOT/ai/pi/extensions/upstream-guard/tool-calls.ts');
     const input = JSON.parse(process.argv[3]);
     const reason = process.argv[4]
@@ -250,7 +250,8 @@ import gh.owners; print(gh.owners.ALLOW_CROSS_REF_ENV)
   _owners_config otto-nation
   _upstream_repo git@github.com:stranger/lib.git
   mkdir -p "$TMPDIR/scratch"
-  TMPDIR="$TMPDIR/scratch" _tool_refusal "$TMPDIR/repo" gh_pr_post_comment '{"body":"hello"}'
+  TOOL_TMPDIR="$TMPDIR/scratch"
+  _tool_refusal "$TMPDIR/repo" gh_pr_post_comment '{"body":"hello"}'
   [[ "$output" == *"stranger"* ]]
   run find "$TMPDIR/scratch" -name 'upstream-guard-*'
   [ -z "$output" ]
@@ -307,7 +308,8 @@ import gh.owners; print(gh.owners.ALLOW_CROSS_REF_ENV)
   _two_groups
   _upstream_repo git@github.com:otto-nation/svc.git
   mkdir -p "$TMPDIR/scratch"
-  TMPDIR="$TMPDIR/scratch" _tool_refusal "$TMPDIR/repo" linear_add_comment '{"id":"E-1","body":"see me/lib#12"}'
+  TOOL_TMPDIR="$TMPDIR/scratch"
+  _tool_refusal "$TMPDIR/repo" linear_add_comment '{"id":"E-1","body":"see me/lib#12"}'
   [[ "$output" == *"me/lib#12"* ]]
   run find "$TMPDIR/scratch" -name 'upstream-guard-*'
   [ -z "$output" ]

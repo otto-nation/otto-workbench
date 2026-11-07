@@ -73,6 +73,20 @@ export function repoId(repo) {
   return `${repo.host ?? ''}/${repo.slug}`;
 }
 
+// First target per known repo; unknown-repo targets all stay so they get resolved.
+export function representatives(targets, repoOf) {
+  const seen = new Set();
+  const out = [];
+  for (const t of targets ?? []) {
+    const id = repoOf(t);
+    if (id == null) { out.push(t); continue; }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(t);
+  }
+  return out;
+}
+
 // What the board shows for these targets: merged PRs, each failure with the
 // target it belongs to, and counts of skipped and still-loading targets.
 export function boardState(targets, states, scope) {

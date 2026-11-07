@@ -4,7 +4,7 @@ import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme,
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
-import { boardState, friendlyError, spaceTargets } from "./_lib/scope.js";
+import { boardState, friendlyError, repoId, representatives, spaceTargets } from "./_lib/scope.js";
 import {
   assemble, checkTools, loadBusy, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
@@ -51,13 +51,14 @@ export default class TeamPrs extends View {
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
+    this.repoByKey = new Map();
     this.inflight = this.again = this.againListing = false;
     this.watchKey = this.key = null;
     this.pollListing = false;
     if (isUntrustedHome(appHome())) return;
     cx.timer.every(180000, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => {
-      if (targetsOf().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
+      if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
     });
     this.refresh(cx);
   }
@@ -86,7 +87,13 @@ export default class TeamPrs extends View {
     });
   }
 
-  same(key) { return targetsOf().some((c) => ctxKey(c) === key); }
+  activeTargets() {
+    const all = targetsOf();
+    if (scopeOf() !== "all") return all;
+    return representatives(all, (c) => this.repoByKey.get(ctxKey(c)));
+  }
+
+  same(key) { return this.activeTargets().some((c) => ctxKey(c) === key); }
 
   fail(key, error) {
     this.cache.set(key, { ...(this.cache.get(key) ?? {}), error, stale: true });
@@ -128,7 +135,7 @@ export default class TeamPrs extends View {
   }
 
   async pull(cx, listingOnly) {
-    for (const ctx of targetsOf()) {
+    for (const ctx of this.activeTargets()) {
       const key = ctxKey(ctx);
       if (!ctx.cwd) {
         this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
@@ -146,6 +153,7 @@ export default class TeamPrs extends View {
     const repo = await loadRepo(exec, ctx);
     if (!this.same(key)) return;
     if (!repo.ok) { this.fail(key, repo.error); return; }
+    this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
     const [open, listing, busy] = await Promise.all([
@@ -234,7 +242,7 @@ export default class TeamPrs extends View {
       return v_flex().id("prs").size_full().items_center().justify_center().bg(t.background)
         .child(div().text_color(t.dim).child("PR board is disabled in the untrusted window"));
     }
-    const targets = targetsOf();
+    const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
     if (this.key !== scopeKey) {
       this.key = scopeKey; this.watchKey = null; this.pollListing = false; this.refresh(cx);

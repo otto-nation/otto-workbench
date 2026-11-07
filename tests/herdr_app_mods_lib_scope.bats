@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/scope.js');
-    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId } = m;
+    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId, representatives } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -127,4 +127,10 @@ _js() {
   _js 'repoId({slug:"o/r"})'
   [ "$status" -eq 0 ]
   jq -e '.=="/o/r"' <<<"$output"
+}
+
+@test "representatives: first per known repo; unknown all kept; order kept" {
+  _js 'representatives([{n:1},{n:2},{n:3},{n:4}], (t) => t.n===1||t.n===2 ? "id" : (t.n===3 ? "other" : null))'
+  [ "$status" -eq 0 ]
+  jq -e 'length==3 and .[0].n==1 and .[1].n==3 and .[2].n==4' <<<"$output"
 }

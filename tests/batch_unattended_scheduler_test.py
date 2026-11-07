@@ -15,7 +15,11 @@ if str(LIB_DIR) not in sys.path:
 import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 from batch.model import FindingReason, ItemStatus, Step, StepStatus  # noqa: E402
-from batch_scheduler_support import NEED, Harness, row  # noqa: E402
+# `_close_open_sessions` and `_quiet_outcomes` are autouse fixtures, imported only so
+# pytest registers them (the `noqa: F401` covers them); the other names are used directly.
+from batch_scheduler_support import (  # noqa: F401,E402
+    NEED, Harness, _close_open_sessions, _quiet_outcomes, row,
+)
 
 
 def _v2(**kw):

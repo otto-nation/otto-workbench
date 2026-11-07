@@ -13,7 +13,7 @@ Act-only findings leave the item to close `done`.
 | `step_review` + `stacked_on` | `stack_wait_base` |
 | `step_review` + `one_sided`/`stale` | `stale_generated` |
 | `step_review` evidence exactly `ci_failing` or `ci_unfixed` | `ci_failing` |
-| `step_review` + `open_findings` | `failed_unknown` until `review_findings` lands |
+| `step_review` evidence exactly `open_findings` | `review_findings` (`data.severity` block if any open must-fix) |
 | `step_review` other / mixed | `failed_unknown` (evidence kinds in `detail`) |
 | `comment_item` | `threads_need_human` |
 | `dirty_worktree` | `dirty_worktree` |
@@ -29,10 +29,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import batch.store
-from batch.model import (SEVERITY, Decision, DecisionKind, EvidenceKind, Finding, FindingReason,
-                         Item, ItemStatus, Run, Severity, stacked_on_items)
+from batch.model import (Decision, DecisionKind, EvidenceKind, Finding, FindingReason,
+                         Item, ItemStatus, Run, Severity, severity_of, stacked_on_items)
 from batch.publish import Refusal
 from rebase.types import ConflictStrategy
+from review.types import SEVERITY_MUST, severity_by_key
 
 CLOSEOUT_WHY = "closeout owed per pr state"
 _PUSH_REFUSALS = frozenset(r.value for r in Refusal if r is not Refusal.WRONG_BRANCH)
@@ -95,6 +96,17 @@ def _step_review(decision: Decision) -> Finding:
     if kinds in ({EvidenceKind.CI_FAILING.value}, {EvidenceKind.CI_UNFIXED.value}):
         jobs = sorted({j for e in evidence for j in (e.get("jobs") or [])})
         return _finding(FindingReason.CI_FAILING, decision, data={"jobs": jobs})
+    if kinds == {EvidenceKind.OPEN_FINDINGS.value}:
+        listed = [f for e in evidence for f in e.get("findings") or []]
+        must = severity_by_key(SEVERITY_MUST).label
+        block = any(not f.get("declined") and f.get("severity") == must for f in listed)
+        counts: dict[str, int] = {}
+        for f in listed:
+            label = str(f.get("severity") or "")
+            counts[label] = counts.get(label, 0) + 1
+        sev = Severity.BLOCK if block else Severity.ACT
+        return _finding(FindingReason.REVIEW_FINDINGS, decision,
+                        data={"findings": listed, "counts": counts, "severity": sev.value})
     kinds_list = [e.get("kind", "") for e in evidence]
     return _finding(FindingReason.FAILED_UNKNOWN, decision,
                     detail=", ".join(kinds_list) or EvidenceKind.OPEN_FINDINGS.value)
@@ -139,7 +151,7 @@ def record(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *
         item.findings.append(finding)
         emit("finding_created", run=run.id, item=item.key,
              reason=finding.reason.value, step=finding.step)
-    if any(SEVERITY[f.reason] is not Severity.ACT for f in found):
+    if any(severity_of(f) is not Severity.ACT for f in found):
         item.status = ItemStatus.NEEDS_SESSION
     return found
 

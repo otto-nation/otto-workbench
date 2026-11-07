@@ -3931,7 +3931,7 @@ Act-only findings leave the item to close `done`.
 | `step_review` + `stacked_on` | `stack_wait_base` |
 | `step_review` + `one_sided`/`stale` | `stale_generated` |
 | `step_review` evidence exactly `ci_failing` or `ci_unfixed` | `ci_failing` |
-| `step_review` + `open_findings` | `failed_unknown` until `review_findings` lands |
+| `step_review` evidence exactly `open_findings` | `review_findings` (`data.severity` block if any open must-fix) |
 | `step_review` other / mixed | `failed_unknown` (evidence kinds in `detail`) |
 | `comment_item` | `threads_need_human` |
 | `dirty_worktree` | `dirty_worktree` |
@@ -4274,9 +4274,8 @@ Drive a run: admit steps, reap them, and stop when only decisions remain; a sche
 
 Per-PR session commands derived from a v1 run's decisions and local `pr` state.
 
-The builder shows; it never writes. Findings come from open v1 decisions
-via `batch.findings` (spec §3.1, with `step_review` + `open_findings` mapping
-to `failed_unknown` until `review_findings` lands). Commands are argv tuples.
+The builder shows; it never writes. Findings come from `Item.findings` plus
+open v1 decisions via `batch.findings`. Commands are argv tuples.
 
 Ordering: stack-topological on `stacked_on` (`after=[base]` while the base is
 non-terminal), then severity (block > wait > act), then PR key.
@@ -4297,11 +4296,13 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 | `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` |
 | `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` |
 | `ci_failing` | `pr ci --fix --repo-dir WT` |
+| `review_findings` | `pr review --self --fix --repo-dir WT` |
 | `threads_need_human` | `pr comments --fix --repo-dir WT` |
 | `closeout_owed` | `pr comments --finish --post --repo-dir WT` |
 | `ready_to_push` | `publish.plan` push argv |
 | `wrong_branch` | `git -C WT switch <branch>` |
 | deferred issue | `pr comments --finish --track ID… --post --repo-dir WT` (on request) |
+| open review findings | `pr review --self --track ID… --post --repo-dir WT` (on request) |
 
 ### batch/steps.py
 

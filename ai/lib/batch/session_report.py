@@ -1,8 +1,7 @@
 """Per-PR session commands derived from a v1 run's decisions and local `pr` state.
 
-The builder shows; it never writes. Findings come from open v1 decisions
-via `batch.findings` (spec §3.1, with `step_review` + `open_findings` mapping
-to `failed_unknown` until `review_findings` lands). Commands are argv tuples.
+The builder shows; it never writes. Findings come from `Item.findings` plus
+open v1 decisions via `batch.findings`. Commands are argv tuples.
 
 Ordering: stack-topological on `stacked_on` (`after=[base]` while the base is
 non-terminal), then severity (block > wait > act), then PR key.
@@ -23,11 +22,13 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 | `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` |
 | `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` |
 | `ci_failing` | `pr ci --fix --repo-dir WT` |
+| `review_findings` | `pr review --self --fix --repo-dir WT` |
 | `threads_need_human` | `pr comments --fix --repo-dir WT` |
 | `closeout_owed` | `pr comments --finish --post --repo-dir WT` |
 | `ready_to_push` | `publish.plan` push argv |
 | `wrong_branch` | `git -C WT switch <branch>` |
 | deferred issue | `pr comments --finish --track ID… --post --repo-dir WT` (on request) |
+| open review findings | `pr review --self --track ID… --post --repo-dir WT` (on request) |
 """
 
 # doc-group: batch
@@ -42,10 +43,12 @@ from pathlib import Path
 import batch.plan
 import batch.publish
 import review.deferred_issue
+import review.finding_issue
 import review.issue
+import review.paths
 from batch.findings import CLOSEOUT_WHY, findings_from_decisions
-from batch.model import (SEVERITY, Finding, FindingReason, Item, ItemStatus, Run, RunStatus,
-                         Severity)
+from batch.model import (Finding, FindingReason, Item, ItemStatus, Run, RunStatus, Severity,
+                         severity_of)
 from batch.publish import Refusal, TreeState
 from pr.comments_fix import CLOSEOUT_COMMAND, CloseoutDebt
 
@@ -185,7 +188,7 @@ def _after(run: Run, item: Item) -> list[str]:
 def _severity(findings: list[Finding]) -> Severity:
     if not findings:
         return Severity.ACT
-    return min((SEVERITY[f.reason] for f in findings), key=lambda s: _SEV_RANK[s])
+    return min((severity_of(f) for f in findings), key=lambda s: _SEV_RANK[s])
 
 
 def _has(findings: list[Finding], reason: FindingReason) -> bool:
@@ -210,6 +213,8 @@ def _commands(item: Item, findings: list[Finding],
         ))
     if filing := _filing_command(item, checkout):
         commands.append(filing)
+    if filing := _review_filing_command(item, findings, checkout):
+        commands.append(filing)
     return commands
 
 
@@ -227,6 +232,9 @@ def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionC
         jobs = finding.data.get("jobs") or []
         why = f"fix failing CI ({', '.join(jobs)})" if jobs else "fix failing CI"
         return SessionCommand(("pr", "ci", "--fix", *repo), why)
+    if finding.reason is FindingReason.REVIEW_FINDINGS and repo:
+        return SessionCommand(("pr", "review", "--self", "--fix", *repo),
+                              "address open review findings")
     if finding.reason is FindingReason.STALE_GENERATED and item.pre_rebase_head:
         if git_cmd := _git(item, checkout, "reset", "--hard", item.pre_rebase_head):
             return SessionCommand(git_cmd, "undo the rebase, then regenerate")
@@ -238,6 +246,27 @@ def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionC
         if git_cmd := _git(item, checkout, "switch", item.branch):
             return SessionCommand(git_cmd, f"check out {item.branch}")
     return None
+
+
+def _review_filing_command(item: Item, findings: list[Finding],
+                           checkout: str | None) -> SessionCommand | None:
+    if not any(f.reason is FindingReason.REVIEW_FINDINGS for f in findings):
+        return None
+    if checkout is None or checkout != item.worktree:
+        return None
+    ids = [f.id for f in review.finding_issue.filable(
+        review.paths.self_review_dir(item.repo, item.branch))]
+    if not ids:
+        return None
+    argv: list[str] = ["pr", "review", "--self"]
+    for finding_id in ids:
+        argv.extend(["--track", finding_id])
+    argv.extend(["--post", "--repo-dir", checkout])
+    return SessionCommand(
+        tuple(argv),
+        "file tracking issues for open review findings (only on request; runs no review)",
+        files_issue=True,
+    )
 
 
 def _filing_command(item: Item, checkout: str | None) -> SessionCommand | None:

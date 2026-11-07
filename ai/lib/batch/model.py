@@ -106,6 +106,7 @@ class FindingReason(StrEnum):
     DIRTY_WORKTREE = "dirty_worktree"
     WRONG_BRANCH = "wrong_branch"
     CI_FAILING = "ci_failing"
+    REVIEW_FINDINGS = "review_findings"
     THREADS_NEED_HUMAN = "threads_need_human"
     CLOSEOUT_OWED = "closeout_owed"
     READY_TO_PUSH = "ready_to_push"
@@ -130,6 +131,7 @@ SEVERITY: dict[FindingReason, Severity] = {
     FindingReason.DIRTY_WORKTREE: Severity.BLOCK,
     FindingReason.WRONG_BRANCH: Severity.BLOCK,
     FindingReason.CI_FAILING: Severity.ACT,
+    FindingReason.REVIEW_FINDINGS: Severity.BLOCK,
     FindingReason.THREADS_NEED_HUMAN: Severity.ACT,
     FindingReason.CLOSEOUT_OWED: Severity.ACT,
     FindingReason.READY_TO_PUSH: Severity.ACT,
@@ -159,6 +161,13 @@ class Finding:
         return {"reason": self.reason.value, "step": self.step, "detail": self.detail,
                 "files": list(self.files), "data": dict(self.data),
                 "log": self.log_path or None}
+
+
+def severity_of(finding: Finding) -> Severity:
+    raw = finding.data.get("severity")
+    if raw:
+        return Severity(raw)
+    return SEVERITY[finding.reason]
 
 
 TERMINAL_ITEM = frozenset({

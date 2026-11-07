@@ -2,7 +2,10 @@
 Description=otto-workbench maintenance timer
 
 [Timer]
-OnBootSec=5min
+# OnUnitActiveSec counts from the service's last activation, which a restart of the
+# user manager forgets, and OnBootSec is a one-shot that has long elapsed by then.
+# OnStartupSec counts from the manager's start, so every restart re-arms the timer.
+OnStartupSec=5min
 OnUnitActiveSec=__INTERVAL__sec
 Persistent=true
 

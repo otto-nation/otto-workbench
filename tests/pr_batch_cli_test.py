@@ -325,8 +325,8 @@ def test_resume_emits_interrupted_for_a_running_step(monkeypatch, capsys):
     run.status = batch.model.RunStatus.INTERRUPTED
     seed(run)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(batch.model.RunStatus.WAITING))
-    assert _main(["batch", "resume", run.id]) == 10
+                        stops_at(batch.model.RunStatus.DONE))
+    assert _main(["batch", "resume", run.id]) == 0
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
     assert all(e.get("kind") != "decision_created" for e in lines)
     loaded = batch.store.load(run.id)
@@ -523,7 +523,7 @@ def test_resume_verbose_reaches_the_scheduler(monkeypatch):
 def test_resume_ends_with_a_run_summary(monkeypatch, capsys):
     run = _saved_v2_waiting()
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: batch.model.RunStatus.DONE)
+                        stops_at(batch.model.RunStatus.DONE))
     assert _main(["batch", "resume", run.id]) == 0
     last = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert last["kind"] == "run_summary"
@@ -532,10 +532,12 @@ def test_resume_ends_with_a_run_summary(monkeypatch, capsys):
 
 
 def test_a_run_summary_after_apply_errors_hints_the_real_exit_code(monkeypatch, capsys):
-    run = _saved_run_with_decision()
-    batch.store.write_request(run.id, Cancel())
+    run = _saved_v2_waiting()
+    reqs = batch.store.run_dir(run.id) / "requests"
+    reqs.mkdir(exist_ok=True)
+    (reqs / "bad.json").write_text('{"kind": "decide"}', encoding="utf-8")
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: batch.model.RunStatus.WAITING)
+                        stops_at(batch.model.RunStatus.DONE))
     assert _main(["batch", "resume", run.id]) == 1
     last = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert last["kind"] == "run_summary"

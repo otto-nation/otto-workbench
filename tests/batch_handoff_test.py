@@ -40,7 +40,7 @@ from batch.model import (Decision, DecisionKind, Item, ItemStatus, Run,  # noqa:
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch.requests import Cancel, Release  # noqa: E402
 from batch.store import Role  # noqa: E402
-from batch_session_support import NullInbox, open_session, seed  # noqa: E402
+from batch_session_support import NullInbox, open_session, seed, stops_at  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
 
 RID = "20261014T130000-beef"
@@ -391,7 +391,7 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
     seed(Run(id=RID, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
              status=RunStatus.WAITING, items=[item]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: RunStatus.WAITING)
+                        stops_at(RunStatus.DONE))
     real_flock = fcntl.flock
     flocked_by = []
 
@@ -411,7 +411,7 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
     finally:
         stop.set()
         poller.join(_PROC_TIMEOUT)
-    assert resumes == [10] * 10
+    assert resumes == [0] * 10
     assert polls and set(polls) == {0}
     assert _POLLER not in flocked_by
     assert "is busy" not in capsys.readouterr().err

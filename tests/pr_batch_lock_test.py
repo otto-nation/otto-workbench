@@ -143,10 +143,11 @@ def test_resume_holds_the_batch_lock_and_names_the_run(monkeypatch):
     def fake_run(self):
         seen["held"] = _batch_held(key)
         seen["record"] = json.loads(_batch_path(key).read_text())
-        return batch.model.RunStatus.WAITING
+        self.run.status = batch.model.RunStatus.DONE
+        return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "resume", run.id]) == 10
+    assert _main(["batch", "resume", run.id]) == 0
     assert seen["held"] is True
     assert seen["record"]["run"] == run.id
     assert not _batch_held(key)
@@ -290,14 +291,15 @@ def test_resume_does_not_take_back_a_dropped_or_done_items_target(monkeypatch, t
     def fake_run(self):
         seen["held"] = [core.run_lock.is_held(_target(repo, b))
                         for b in ("feat/a", "feat/b", "feat/c")]
-        return batch.model.RunStatus.WAITING
+        self.run.status = batch.model.RunStatus.DONE
+        return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     with live_pid() as pid, held_elsewhere(
             _target(repo, "feat/a") / core.run_lock.LOCK_FILE,
             {"pid": pid, "command": "pr fix", "started": "t0"}):
         code = _main(["batch", "resume", run.id])
-    assert code == 10
+    assert code == 0
     assert seen["held"] == [True, False, True]
 
 

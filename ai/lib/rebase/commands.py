@@ -24,6 +24,7 @@ import pr.context
 import pr.domains
 import pr.state
 from pr.domains import RebaseStatus
+import rebase.conflict_stop
 import rebase.hooks_chain
 import rebase.inspect
 import rebase.land
@@ -62,11 +63,9 @@ def cmd_abort(
     cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
 ) -> int:
     """Abort an in-progress rebase and reset state."""
-    core.log.info("Aborting rebase...")
-    r = git.client.run("rebase", "--abort", cwd=cwd)
+    r = rebase.conflict_stop.abort_in_progress(cwd)
     if r.ok:
         rebase.types.RebaseOutcome(status=RebaseStatus.ABORTED, target_base=target_ref).save(ctx)
-        core.log.ok("Rebase aborted.")
     return r.returncode
 
 

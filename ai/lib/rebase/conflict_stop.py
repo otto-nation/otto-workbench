@@ -90,6 +90,19 @@ def try_generated(
     return True
 
 
+def abort_in_progress(cwd: str):
+    """``git rebase --abort`` plus the log lines both abort paths share.
+
+    Lives here rather than in ``rebase.commands``: that module imports
+    ``lifecycle``, which imports this one. ``cmd_abort`` calls this.
+    """
+    core.log.info("Aborting rebase...")
+    r = git.client.run("rebase", "--abort", cwd=cwd)
+    if r.ok:
+        core.log.ok("Rebase aborted.")
+    return r
+
+
 def abort_clean(
     cwd: str, ctx, *, target_ref: str,
     classes: dict[str, str], tally: rebase_types.ResolutionTally,
@@ -97,18 +110,30 @@ def abort_clean(
     """Abort the in-progress rebase, emit the exit-3 report, return CONFLICTS_EXIT.
 
     Captures the conflict snapshot before ``git rebase --abort``, which drops
-    rebase state. Does not import ``rebase.commands``: that module imports
-    ``lifecycle``, which imports this one.
+    rebase state. A failed abort leaves the replay paused: status stays
+    conflicts, the report's ``tree`` is ``paused``, and nothing is marked
+    ABORTED.
     """
     pre = tally.pre_rebase_head or rebase_inspect.rebase_orig_head(cwd)
-    report = rebase_types.ConflictReport.from_repo(
+    clean = rebase_types.ConflictReport.from_repo(
         cwd, aborted=True, tree="clean", classes=classes,
         files_stale=list(tally.stale), pre_rebase_head=pre,
     )
-    core.log.info("Aborting rebase...")
-    r = git.client.run("rebase", "--abort", cwd=cwd)
-    if r.ok:
-        core.log.ok("Rebase aborted.")
+    r = abort_in_progress(cwd)
+    if not r.ok:
+        rebase_types.RebaseOutcome(
+            status=RebaseStatus.CONFLICTS,
+            files_stale=list(tally.stale),
+            aborted=False,
+            classes=dict(classes),
+            pre_rebase_head=pre,
+            target_base=target_ref,
+        ).save(ctx)
+        rebase_types.ConflictReport.from_repo(
+            cwd, aborted=False, tree="paused", classes=classes,
+            files_stale=list(tally.stale), pre_rebase_head=pre,
+        ).emit()
+        return rebase_types.CONFLICTS_EXIT
     rebase_types.RebaseOutcome(
         status=RebaseStatus.ABORTED,
         files_stale=list(tally.stale),
@@ -117,5 +142,5 @@ def abort_clean(
         pre_rebase_head=pre,
         target_base=target_ref,
     ).save(ctx)
-    report.emit()
+    clean.emit()
     return rebase_types.CONFLICTS_EXIT

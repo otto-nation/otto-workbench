@@ -1,8 +1,8 @@
 """Per-PR session commands derived from a v1 run's decisions and local `pr` state.
 
 The builder shows; it never writes. Findings come from open v1 decisions
-(spec §3.1, with `step_review` + `open_findings` mapping to `failed_unknown`
-until `review_findings` lands). Commands are argv tuples.
+via `batch.findings` (spec §3.1, with `step_review` + `open_findings` mapping
+to `failed_unknown` until `review_findings` lands). Commands are argv tuples.
 
 Ordering: stack-topological on `stacked_on` (`after=[base]` while the base is
 non-terminal), then severity (block > wait > act), then PR key.
@@ -41,8 +41,9 @@ import batch.plan
 import batch.publish
 import review.deferred_issue
 import review.issue
-from batch.model import (SEVERITY, Decision, DecisionKind, EvidenceKind, Finding, FindingReason,
-                         Item, ItemStatus, Run, RunStatus, Severity, stacked_on_items)
+from batch.findings import CLOSEOUT_WHY, findings_from_decisions
+from batch.model import (SEVERITY, Finding, FindingReason, Item, ItemStatus, Run, RunStatus,
+                         Severity)
 from batch.publish import Refusal, TreeState
 from pr.comments_fix import CLOSEOUT_COMMAND, CloseoutDebt
 
@@ -50,14 +51,12 @@ CloseoutFn = Callable[[str, str], CloseoutDebt]
 TreeFn = Callable[[Item], TreeState | None]
 
 COMMENT_BEFORE_PUSH = "comment on the PR before pushing: it is not a draft"
-CLOSEOUT_WHY = "closeout owed per pr state"
 NO_CHECKOUT = "no checkout found"
 PROVIDER_NOTE = "otto-workbench config set issues.provider PROVIDER --project"
 TEAM_NOTE = "otto-workbench config set issues.team TEAM --project"
 _ACTIVE = frozenset({RunStatus.RUNNING, RunStatus.WAITING})
 _SEV_RANK = {Severity.BLOCK: 0, Severity.WAIT: 1, Severity.ACT: 2}
 _CLOSEOUT_ARGV = tuple(shlex.split(CLOSEOUT_COMMAND))
-_PUSH_REFUSALS = frozenset(r.value for r in Refusal if r is not Refusal.WRONG_BRANCH)
 
 
 @dataclass(frozen=True)
@@ -104,14 +103,6 @@ class SessionEntry:
             "commands": [c.to_dict() for c in self.commands],
             "notes": list(self.notes), "logs": list(self.logs),
         }
-
-
-def findings_from_decisions(run: Run, item: Item) -> list[Finding]:
-    """Map *item*'s open v1 decisions to findings (spec §3.1)."""
-    found: list[Finding] = []
-    for decision in run.open_decisions(item.key):
-        found.extend(_from_decision(decision))
-    return found
 
 
 def sessions(run: Run, *, closeout: CloseoutFn | None = None,
@@ -197,90 +188,6 @@ def _severity(findings: list[Finding]) -> Severity:
 
 def _has(findings: list[Finding], reason: FindingReason) -> bool:
     return any(f.reason is reason for f in findings)
-
-
-def _from_decision(decision: Decision) -> list[Finding]:
-    kind, payload = decision.kind, decision.payload
-    if kind is DecisionKind.INTERRUPTED:
-        return []
-    if kind is DecisionKind.REBASE_CONFLICT:
-        files = list(payload.get("files") or [])
-        data = {}
-        if payload.get("classes"):
-            data["classes"] = payload["classes"]
-        if payload.get("rebase_in_progress") or payload.get("tree") == "paused":
-            data["paused"] = True
-        return [_finding(FindingReason.CONFLICT_HANDWRITTEN, decision, files=files, data=data)]
-    if kind is DecisionKind.REBASE_REFUSED:
-        return [_finding(FindingReason.FAILED_UNKNOWN, decision,
-                         detail=str(payload.get("detail") or payload.get("status") or ""),
-                         data={"remedy": payload.get("remedy", "")})]
-    if kind is DecisionKind.STEP_REVIEW:
-        return [_step_review(decision)]
-    if kind is DecisionKind.COMMENT_ITEM:
-        return [_finding(FindingReason.THREADS_NEED_HUMAN, decision)]
-    if kind is DecisionKind.DIRTY_WORKTREE:
-        return [_finding(FindingReason.DIRTY_WORKTREE, decision,
-                         detail=str(payload.get("reason") or ""))]
-    if kind is DecisionKind.FAILED:
-        return [_failed(decision)]
-    if kind is DecisionKind.PUBLISH:
-        return _publish_findings(decision)
-    return [_finding(FindingReason.FAILED_UNKNOWN, decision)]
-
-
-def _step_review(decision: Decision) -> Finding:
-    stacked = stacked_on_items(decision)
-    if stacked:
-        return _finding(FindingReason.STACK_WAIT_BASE, decision, data={"after": stacked})
-    evidence = decision.payload.get("evidence") or []
-    kinds = {e.get("kind") for e in evidence}
-    if EvidenceKind.ONE_SIDED.value in kinds or EvidenceKind.STALE.value in kinds:
-        files = [f for e in evidence for f in e.get("files") or []]
-        return _finding(FindingReason.STALE_GENERATED, decision, files=files,
-                        data={"one_sided": EvidenceKind.ONE_SIDED.value in kinds})
-    kinds_list = [e.get("kind", "") for e in evidence]
-    return _finding(FindingReason.FAILED_UNKNOWN, decision,
-                    detail=", ".join(kinds_list) or EvidenceKind.OPEN_FINDINGS.value)
-
-
-def _failed(decision: Decision) -> Finding:
-    reason = str(decision.payload.get("reason") or "")
-    if reason == Refusal.WRONG_BRANCH.value:
-        return _finding(FindingReason.WRONG_BRANCH, decision,
-                        detail=str(decision.payload.get("detail") or ""))
-    if decision.step == "publish" and reason in _PUSH_REFUSALS:
-        return _finding(FindingReason.PUSH_REFUSED, decision,
-                        detail=str(decision.payload.get("detail") or ""),
-                        data={"refusal": reason})
-    if reason == FindingReason.WORKTREE_COLLISION.value:
-        return _finding(FindingReason.WORKTREE_COLLISION, decision,
-                        detail=str(decision.payload.get("detail") or ""))
-    if reason == "quota_exhausted":
-        return _finding(FindingReason.BUDGET_EXHAUSTED, decision)
-    return _finding(FindingReason.FAILED_UNKNOWN, decision,
-                    detail=str(decision.payload.get("detail") or ""),
-                    data={"reason": reason} if reason else {})
-
-
-def _publish_findings(decision: Decision) -> list[Finding]:
-    payload = decision.payload
-    found: list[Finding] = []
-    if payload.get("drafted") or payload.get("unpublished") or not payload.get("closeout"):
-        found.append(_finding(FindingReason.READY_TO_PUSH, decision))
-    if payload.get("closeout"):
-        found.append(_finding(FindingReason.CLOSEOUT_OWED, decision, detail=CLOSEOUT_WHY))
-    return found
-
-
-def _finding(reason: FindingReason, decision: Decision, *, detail: str = "",
-             files: list[str] | None = None, data: dict | None = None) -> Finding:
-    payload = decision.payload
-    return Finding(
-        reason=reason, step=decision.step, detail=detail, files=list(files or []),
-        log_path=str(payload.get("log") or payload.get("log_path") or ""),
-        data=dict(data or {}),
-    )
 
 
 def _commands(item: Item, findings: list[Finding],

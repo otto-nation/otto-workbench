@@ -295,8 +295,12 @@ def _commands(item: Item, findings: list[Finding],
         seen.add(finding.reason)
         if cmd := _command_for(item, finding):
             commands.append(cmd)
-    if planned is not None and planned.plan.ok:
-        commands.extend(_push_commands(item, planned.plan))
+    if planned is not None and planned.plan.ok and planned.plan.pushes:
+        commands.append(SessionCommand(
+            tuple(planned.plan.commands[0]),
+            "push under the planned lease",
+            push=True,
+        ))
     if filing := _filing_command(item):
         commands.append(filing)
     return commands
@@ -318,18 +322,6 @@ def _command_for(item: Item, finding: Finding) -> SessionCommand | None:
         if git_cmd := _git(item, "switch", item.branch):
             return SessionCommand(git_cmd, f"check out {item.branch}")
     return None
-
-
-def _push_commands(item: Item, plan: batch.publish.PublishPlan) -> list[SessionCommand]:
-    commands: list[SessionCommand] = []
-    for argv in plan.commands:
-        relocated = _relocate(argv, item)
-        if relocated is None:
-            continue
-        commands.append(SessionCommand(
-            relocated, "push under the planned lease",
-            push="push" in relocated or "--push-only" in relocated))
-    return commands
 
 
 def _filing_command(item: Item) -> SessionCommand | None:
@@ -396,28 +388,6 @@ def _git(item: Item, *args: str) -> tuple[str, ...] | None:
     if not Path(path).is_absolute():
         return None
     return ("git", "-C", path, *args)
-
-
-def _relocate(argv: list[str], item: Item) -> tuple[str, ...] | None:
-    repo = _repo_args(item)
-    if repo is None:
-        return None
-    body = _strip_repo_flags(argv[1:] if argv else [])
-    return ("pr", *body, *repo)
-
-
-def _strip_repo_flags(argv: list[str]) -> list[str]:
-    out: list[str] = []
-    skip = False
-    for a in argv:
-        if skip:
-            skip = False
-            continue
-        if a in ("--repo-dir", "--branch"):
-            skip = True
-            continue
-        out.append(a)
-    return out
 
 
 def _order(entries: list[SessionEntry]) -> list[SessionEntry]:

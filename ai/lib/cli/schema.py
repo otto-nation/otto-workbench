@@ -129,12 +129,12 @@ def schema_contracts() -> list[str]:
     # `batch` serves version 1 on every subcommand; listed by the subcommands
     # that print a document, so the refusal names what a consumer can call.
     batch = [f"{SCRIPT} batch {sub}" for sub in ("plan", "status", "next", "resolve --dry-run")]
-    return review + batch
+    return review + batch + [f"{SCRIPT} status"]
 
 
 def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
-    if command == "batch":
+    if command in ("batch", "status"):
         return (1,)
     if command != "review":
         return ()

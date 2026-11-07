@@ -83,7 +83,8 @@ def _run_pass(command: str, argv: list[str], ctx: pr.context.ResolvedContext, *,
     )
 
 
-def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
+def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, *,
+               schema_version: int | None = None, **_kw) -> int:
     """Render unified status dashboard from cached state.
 
     The dashboard is a fold over the domain registry, not a list of renderers:
@@ -102,6 +103,11 @@ def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     out of that dump gets the commit the checkout is on now, which is the one
     the staleness markers above were computed against. Without one it is the
     last recorded commit, matching the cached push.
+
+    `pr --schema-version 1 status` wraps that dump in a versioned envelope
+    (`schema_version`, `state_file`, `state`) so a consumer polling a branch
+    with no state yet reads null rather than an empty stream. The dashboard
+    still goes to stderr. Without the flag, stdout is the dump itself.
     """
     state = pr.state.load_state(ctx.target_dir)
 
@@ -129,6 +135,17 @@ def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     if ctx.worktree_root is None:
         core.log.dim(
             f"no checkout of {branch} here — showing the last recorded state")
+    if schema_version is not None:
+        # The versioned envelope: always a document, so a consumer polling a
+        # branch with no state yet reads null rather than an empty stream. The
+        # state is still a cache by contract (`pr.state.load_state`).
+        json.dump({
+            "schema_version": schema_version,
+            "state_file": str(ctx.target_dir / pr.state.STATE_FILE),
+            "state": pr.state.state_to_dict(state) if state else None,
+        }, sys.stdout, indent=2)
+        print()
+        return 0
     if state:
         json.dump(pr.state.state_to_dict(state), sys.stdout, indent=2)
         print()

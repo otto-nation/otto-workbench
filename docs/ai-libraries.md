@@ -676,8 +676,9 @@ snapshots *content* (not path sets) around those phases and restores anything
 they changed, so the fix agent's pre-phase edits survive and a rewrite of an
 already-dirty file is undone.
 
-The snapshot uses a temporary ``GIT_INDEX_FILE`` so it never touches the
-operator's real index or stash. Blobs it writes live in the object database
+The snapshot uses a temporary ``GIT_INDEX_FILE`` seeded from ``HEAD`` so it
+never touches the operator's real index or stash, and so a tracked file under
+an ignored path is still seen. Blobs it writes live in the object database
 and are otherwise unreachable.
 
 Tool denials on the verify agent (Claude Edit/Write, Pi review-guard) are

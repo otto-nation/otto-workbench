@@ -323,6 +323,22 @@ class TestRenamePartners:
     def test_nothing_dropped_asks_git_nothing(self, git_wt):
         assert fix.scope.rename_partners(set(), {"src.py"}, git_wt) == set()
 
+    def test_an_untouched_tracked_ignored_file_is_not_reported_as_renamed(
+        self, git_wt,
+    ):
+        body = "".join(f"line {n}\n" for n in range(20))
+        (git_wt / "build").mkdir()
+        (git_wt / "build" / "gen.py").write_text(body)
+        (git_wt / ".gitignore").write_text("*.cache\nbuild/\n")
+        git_out(git_wt, "add", "-f", "-A")
+        git_out(git_wt, "commit", "-qm", "tracked under an ignored path")
+        (git_wt / "src").mkdir()
+        (git_wt / "src" / "gen_copy.py").write_text(body)
+
+        listed = fix.scope._rename_diff(git_wt).stdout
+
+        assert "build/gen.py" not in listed
+
     @patch("git.client.run")
     def test_a_failed_read_readmits_nothing(self, mock_run, git_wt):
         mock_run.return_value = CmdResult(returncode=1, stdout="", stderr="boom")

@@ -54,7 +54,7 @@ moves a file no check can tie back to it.
 
 The verify agent and the repo's `fix.verify_command` also run in the real worktree.
 Containment snapshots content around each of those phases and restores anything they
-wrote, so a verify rewrite of a file already dirty (or of a PR file the pass never
+wrote (including tracked files under an ignored path), so a verify rewrite of a file already dirty (or of a PR file the pass never
 asked about) cannot ride into the commit. Clobbered bytes are saved under the pass's
 `containment/` artifacts. Tool denials on the verify agent are extra; process writes
 bypass them, which is why the restore is the control.

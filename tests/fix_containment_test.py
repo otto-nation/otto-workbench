@@ -61,6 +61,15 @@ def _script(tmp_path, body):
     return str(path)
 
 
+def _tracked_ignored_repo(tmp_path):
+    wt = _repo(tmp_path, {".gitignore": "build/\n", "a.py": "x\n"})
+    (wt / "build").mkdir()
+    (wt / "build" / "tracked.txt").write_text("v1\n")
+    git_out(wt, "add", "-f", "build/tracked.txt")
+    git_out(wt, "commit", "-qm", "tracked under an ignored path")
+    return wt
+
+
 class TestSnapshot:
     def test_a_content_change_is_visible(self, tmp_path):
         wt = _repo(tmp_path, {"a.py": "one\n"})
@@ -75,6 +84,19 @@ class TestSnapshot:
         (wt / "x.cache").write_text("nope\n")
         snap = fix.containment.take(wt)
         assert "x.cache" not in snap.by_path()
+
+    def test_a_tracked_file_under_an_ignored_path_is_visible(self, tmp_path):
+        wt = _tracked_ignored_repo(tmp_path)
+        assert "build/tracked.txt" in fix.containment.take(wt).by_path()
+
+    def test_an_unborn_repo_still_snapshots(self, tmp_path):
+        wt = tmp_path / "unborn"
+        wt.mkdir()
+        git_out(wt, "init", "-q", "-b", "main")
+        (wt / "a.py").write_text("x\n")
+        snap = fix.containment.take(wt)
+        assert snap.ok
+        assert "a.py" in snap.by_path()
 
     def test_a_failed_read_is_not_an_empty_tree(self, tmp_path):
         snap = fix.containment.take(tmp_path)
@@ -195,6 +217,21 @@ class TestSuiteAndDirty:
             fix.engine.run(adapter, verify=verify)
 
         assert (wt / "a.py").read_text() == "dirty\n"
+
+    def test_a_verify_write_to_a_tracked_ignored_file_is_reverted(self, tmp_path):
+        wt = _tracked_ignored_repo(tmp_path)
+        adapter = StubAdapter(wt)
+
+        def verify(*_a, **_k):
+            (wt / "build" / "tracked.txt").write_text("CLOBBER\n")
+            return {}
+
+        with patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)):
+            fix.engine.run(adapter, verify=verify)
+
+        assert (wt / "build" / "tracked.txt").read_text() == "v1\n"
+        saved = adapter.artifacts / "containment" / "verify" / "build" / "tracked.txt"
+        assert saved.read_text() == "CLOBBER\n"
 
     @patch("git.push.push", return_value=_PUSHED)
     def test_the_fix_agents_edit_to_an_anchor_survives_verify(self, _push, tmp_path):

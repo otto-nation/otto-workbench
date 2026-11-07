@@ -155,6 +155,7 @@ class TestReportBackup:
 
         fix.leftovers.report(
             tmp_path, found, _landed(), trail, backup_dir=backup,
+            backed_up=("a.py",),
         )
 
         err = capsys.readouterr().err
@@ -178,3 +179,18 @@ class TestReportBackup:
         assert str(backup) not in err
         trail.warn.assert_called_once()
         assert "backup" not in trail.warn.call_args.kwargs["data"]
+
+
+class TestReportSkippedBackup:
+    def test_names_only_copied_files(self, tmp_path, capsys):
+        found = fix.leftovers.Leftovers(
+            paths=("a.py", "big.bin"), already_dirty=("a.py", "big.bin"),
+        )
+        fix.leftovers.report(
+            tmp_path, found, _landed(), Mock(),
+            backup_dir=tmp_path / "dirty-backup", backed_up=("a.py",),
+        )
+        err = capsys.readouterr().err
+        assert "pre-pass copies of a.py" in err
+        assert "no pre-pass copy of big.bin" in err
+        assert "dirty-backup.skipped.json" in err

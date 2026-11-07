@@ -103,7 +103,7 @@ class TestSave:
         trail = Mock()
 
         with patch.object(
-            fix.dirty_backup, "_save_clobber", side_effect=RuntimeError("disk"),
+            fix.dirty_backup, "save_clobber", side_effect=RuntimeError("disk"),
         ):
             try:
                 result = _save(wt, artifacts, {"a.py"}, trail=trail)

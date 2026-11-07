@@ -6,7 +6,7 @@ nothing on disk held the operator's bytes from before the agent ran. This
 module copies already-dirty files under ``artifacts/dirty-backup/`` so a
 ``fix_pass_left_dirty`` warning can name a restorable copy.
 
-It reuses ``fix.containment._save_clobber`` (bytes-exact, binary-safe, symlinks
+It reuses ``fix.containment.save_clobber`` (bytes-exact, binary-safe, symlinks
 recorded not followed). Backup failure never aborts the pass: a trail warning
 is recorded and the pass continues. The copies live under the pass's artifacts,
 which are already excluded from the commit and from leftovers.
@@ -29,7 +29,7 @@ from pathlib import Path, PurePosixPath
 
 import core.log
 from core.trail import Trail, twarn
-from fix.containment import _save_clobber
+from fix.containment import save_clobber
 
 DIRNAME = "dirty-backup"
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -115,7 +115,7 @@ def _save(
             continue
         dest.mkdir(parents=True, exist_ok=True)
         try:
-            _save_clobber(workdir, dest, rel)
+            save_clobber(workdir, dest, rel)
         except OSError as exc:
             skipped.append(Skipped(rel, f"unreadable: {exc}"))
             continue

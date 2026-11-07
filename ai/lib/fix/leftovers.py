@@ -76,12 +76,14 @@ def find(
 
 def report(
     workdir: str | Path, found: Leftovers, landed: LandResult, trail: Trail | None,
-    backup_dir: str | Path | None = None,
+    backup_dir: str | Path | None = None, backed_up: tuple[str, ...] = (),
 ) -> None:
     """Warn on the console and record ``fix_pass_left_dirty`` when *found* has paths.
 
     *backup_dir* is named only when an already-dirty path was changed, so the
     operator can restore the pre-pass bytes ``fix.dirty_backup`` copied there.
+    Only the already-dirty paths in *backed_up* are claimed as copied; the rest
+    were skipped (see ``dirty-backup.skipped.json``).
     """
     if not found.known:
         tinfo(trail, "fix_leftovers_unread",
@@ -100,7 +102,17 @@ def report(
             f"{', '.join(found.already_dirty)}"
         )
         if backup_dir is not None:
-            message += f"; pre-pass copies under {backup_dir}"
+            copied = [p for p in found.already_dirty if p in backed_up]
+            missing = [p for p in found.already_dirty if p not in backed_up]
+            if copied:
+                message += (
+                    f"; pre-pass copies of {', '.join(copied)} under {backup_dir}"
+                )
+            if missing:
+                message += (
+                    f"; no pre-pass copy of {', '.join(missing)} "
+                    "(see dirty-backup.skipped.json)"
+                )
     message += "."
     core.log.warn(message)
     data = {

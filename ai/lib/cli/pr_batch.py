@@ -156,6 +156,9 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--reason", default="", help="Why, recorded with the answer")
     v.add_argument("--body-file", default="", help="File holding a reply body, for actions that post one")
     v.add_argument("--commit", default="", help="Commit that settles the decision, for actions that cite one")
+    v.add_argument("--dry-run", action="store_true",
+                   help="With --action publish or force-publish: print what it would push, "
+                        "and change nothing")
 
     c = sub.add_parser("cancel", help="Stop the run; a recorded cancel is final")
     c.add_argument("run_id", nargs="?", help=f"Run to cancel (default: {_DEFAULT_RUN_REFUSES})")

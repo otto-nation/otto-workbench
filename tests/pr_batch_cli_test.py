@@ -13,9 +13,14 @@ if str(LIB_DIR) not in sys.path:
 import batch.live  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
+import batch.publish  # noqa: E402
+import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.requests import Cancel, Decide  # noqa: E402
+from batch.publish import TreeState  # noqa: E402
+from pr.comments_fix import CloseoutDebt  # noqa: E402
+from rebase.types import RefDivergence  # noqa: E402
 import cli.pr  # noqa: E402
 import core.tool_parser  # noqa: E402
 import cli.pr_batch  # noqa: E402
@@ -154,12 +159,59 @@ def test_resolve_rejects_a_bad_action(capsys):
     assert "accept" in capsys.readouterr().err
 
 
+def test_resolve_dry_run_prints_the_plan_and_applies_nothing(capsys, monkeypatch):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.PUBLISH)
+    monkeypatch.setattr(
+        batch.resolve, "preview",
+        lambda run, request, **kw: batch.resolve.PublishPreview(
+            plan=batch.publish.PublishPlan(commands=[["pr", "push"]], pushes=True),
+            tree=TreeState(local="l", remote="r",
+                           divergence=RefDivergence(ahead=1, behind=0, comparable=True)),
+            closeout=CloseoutDebt(replies=True, reply_count=2),
+            carried=batch.publish.Carried(
+                commits=[batch.publish.CarriedCommit("l", "s")],
+                diff="d", truncated=False, remote_ahead=0),
+        ),
+    )
+    rc = _main(["batch", "resolve", run.id, "d1", "--action", "publish", "--dry-run"])
+    doc = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert (doc["schema_version"], doc["ok"], doc["commands"]) == (1, True, [["pr", "push"]])
+    assert doc["commits"] == [{"sha": "l", "subject": "s"}]
+    assert doc["closeout"]["reply_count"] == 2 and doc["closeout"]["owed"] is True
+    assert batch.store.load(run.id).decision("d1").open
+    assert not list((batch.store.run_dir(run.id) / "requests").glob("*.json"))
+
+
+def test_resolve_dry_run_with_another_action_is_a_usage_error(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.REBASE_CONFLICT)
+    rc = _main(["batch", "resolve", run.id, "d1", "--action", "retry", "--dry-run"])
+    assert rc == 2
+
+
+def test_resolve_dry_run_unknown_decision_is_an_error(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.PUBLISH)
+    rc = _main(["batch", "resolve", run.id, "UNKNOWN_ID",
+                "--action", "publish", "--dry-run"])
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "UNKNOWN_ID" in captured.err
+    assert not list((batch.store.run_dir(run.id) / "requests").glob("*.json"))
+
+
 def test_status_full_prints_the_raw_run_and_whether_it_is_active(capsys):
     run = _saved_run_with_decision()
     assert _main(["batch", "status", run.id, "--full"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["run"]["id"] == run.id and out["active"] is False
     assert out["run"]["decisions"][0]["id"] == "d1"
+
+
+def test_status_full_names_the_run_directory(capsys):
+    run = _saved_run_with_decision()
+    assert _main(["batch", "status", run.id, "--full"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["run_dir"] == str(batch.store.run_dir(run.id))
 
 
 def test_status_prints_the_compact_report_by_default(capsys):

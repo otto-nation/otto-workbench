@@ -133,6 +133,55 @@ class PublishPlan:
         return self.refusal is None
 
 
+# A preview carries the diff for a person to read; past this it is cut, and
+# says so, rather than handing a GUI a multi-megabyte string.
+DIFF_LIMIT = 400_000
+
+
+@dataclass(frozen=True)
+class CarriedCommit:
+    sha: str
+    subject: str
+
+
+@dataclass(frozen=True)
+class Carried:
+    """What publishing *tree* would put on the remote, for a person to read first.
+
+    ``commits`` and ``diff`` span the remote tip to the local tip — for a
+    rebased branch that is every commit the force-push replaces the remote
+    with, which is what the push actually does. ``remote_ahead`` counts commits
+    the remote gained since the batch planned from it (``Item.remote_sha``).
+    """
+
+    commits: list[CarriedCommit]
+    diff: str
+    truncated: bool
+    remote_ahead: int
+
+
+def carried(item: Item, tree: TreeState) -> Carried:
+    """The commits, diff and remote drift a publish of *item* over *tree* would carry."""
+    wt = item.worktree
+    commits: list[CarriedCommit] = []
+    diff = ""
+    if tree.local and tree.remote and tree.local != tree.remote:
+        for line in git.client.lines("log", "--format=%H%x09%s",
+                                     f"{tree.remote}..{tree.local}", cwd=wt):
+            sha, _, subject = line.partition("\t")
+            commits.append(CarriedCommit(sha, subject))
+        # `git.client.out` strips trailing whitespace; a diff's last newline is
+        # not part of the preview contract.
+        diff = git.client.out("diff", tree.remote, tree.local, cwd=wt)
+    ahead = 0
+    if item.remote_sha and tree.remote and tree.remote != item.remote_sha:
+        count = git.client.out("rev-list", "--count",
+                               f"{item.remote_sha}..{tree.remote}", cwd=wt)
+        ahead = int(count) if count.isdigit() else 0
+    return Carried(commits=commits, diff=diff[:DIFF_LIMIT],
+                   truncated=len(diff) > DIFF_LIMIT, remote_ahead=ahead)
+
+
 def _cherry_plus(cwd: str, upstream: str, head: str, limit: str = "",
                  *, verbose: bool = False) -> tuple[str, ...] | None:
     """Commits on *head* with no patch-equivalent on *upstream*; None when unreadable."""

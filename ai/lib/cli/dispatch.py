@@ -63,6 +63,7 @@ PARSER_FACTORIES = {
     "rebase": "cli.pr_rebase:build_parser",
     "push": "cli.pr_push:build_parser",
     "describe": "cli.pr_describe:build_parser",
+    "stack": "cli.pr_stack:build_parser",
     "batch": "cli.pr_batch:build_parser",
     "create": "cli.pr_create:build_parser",
 }

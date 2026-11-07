@@ -924,6 +924,10 @@ Takes no flags.
 | `--body-file` `<path>` | Read the replacement body from this file. Not with `--body`. |
 | `--closes` `<id>` | Issue to close on merge (repeatable). |
 
+**`pr stack`** — Show the repo's PR stack graph (JSON)
+
+Takes no flags.
+
 **`pr batch plan`** — Show which PRs need which steps
 
 | Flag | Description |
@@ -964,6 +968,7 @@ Takes no flags.
 | `--reason` `<reason>` | Why, recorded with the answer. |
 | `--body-file` `<body-file>` | File holding a reply body, for actions that post one. |
 | `--commit` `<commit>` | Commit that settles the decision, for actions that cite one. |
+| `--dry-run` | With --action publish or force-publish: print what it would push, and change nothing. |
 
 **`pr batch cancel`** — Stop the run; a recorded cancel is final
 

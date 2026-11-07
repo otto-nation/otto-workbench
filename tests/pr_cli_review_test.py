@@ -570,7 +570,7 @@ def test_an_unsupported_schema_version_is_refused(reviews_dir, capsys):
 def test_a_command_serving_no_document_refuses_the_handshake(capsys):
     """`--schema-version` is global so one parse can see it, not because every
     command answers it."""
-    assert _run_main("status", "--schema-version", "1") == \
+    assert _run_main("gc", "--schema-version", "1") == \
         cli.pr.EXIT_USAGE
     assert "pr review --list" in capsys.readouterr().err
 
@@ -578,11 +578,20 @@ def test_a_command_serving_no_document_refuses_the_handshake(capsys):
 def test_the_schema_contracts_are_read_off_the_mode_table():
     """An error naming an invocation that no longer serves a document is worse
     than no error at all."""
-    assert cli.schema.schema_contracts() == ["pr review --list"]
+    assert cli.schema.schema_contracts() == [
+        "pr review --list",
+        "pr batch plan",
+        "pr batch status",
+        "pr batch next",
+        "pr batch resolve --dry-run",
+        "pr status",
+        "pr stack",
+    ]
     assert cli.schema.served_schema_versions("review", ["--list"]) == \
         review.listing.SCHEMA_VERSIONS
     assert cli.schema.served_schema_versions("review", ["--summary"]) == ()
-    assert cli.schema.served_schema_versions("status", []) == ()
+    assert cli.schema.served_schema_versions("status", []) == (1,)
+    assert cli.schema.served_schema_versions("stack", []) == (1,)
 
 
 # ── cmd_review --dismiss ────────────────────────────────

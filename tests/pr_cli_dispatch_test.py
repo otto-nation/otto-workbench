@@ -170,6 +170,37 @@ def test_status_refreshes_push_without_writing_it_to_state(worktree, capsys):
     assert pr.state.load_state(target).push == pr.domains.PushDomain()
 
 
+def test_status_under_the_handshake_wraps_the_state_in_an_envelope(worktree, capsys):
+    target = worktree / "target"
+    _status_state(target)
+    ctx = make_ctx(repo="acme/widget", branch="feat/x", worktree_root=worktree,
+                   target_dir=target)
+    with patch("git.client.run", return_value=core.proc.CmdResult(0, "0\n")):
+        rc = cli.pr_commands.cmd_status([], ctx, schema_version=1)
+    doc = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert doc["schema_version"] == 1
+    assert doc["state_file"] == str(ctx.target_dir / "state.json")
+    assert doc["state"]["identity"]["branch"] == ctx.branch
+
+
+def test_status_under_the_handshake_reports_absent_state_as_null(capsys):
+    rc = cli.pr_commands.cmd_status([], make_ctx(worktree_root=None),
+                                    schema_version=1)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["state"] is None
+
+
+def test_status_without_the_handshake_is_unchanged(worktree, capsys):
+    target = worktree / "target"
+    _status_state(target)
+    ctx = make_ctx(repo="acme/widget", branch="feat/x", worktree_root=worktree,
+                   target_dir=target)
+    with patch("git.client.run", return_value=core.proc.CmdResult(0, "0\n")):
+        cli.pr_commands.cmd_status([], ctx)
+    assert "schema_version" not in json.loads(capsys.readouterr().out)
+
+
 def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
     assert_no_worktree_exit(capsys, "feat/test", _cmd_fix,
                             [], make_ctx(worktree_root=None))
@@ -222,6 +253,23 @@ def test_main_does_not_lock_for_status(mock_resolve, mock_call, worktree):
     mock_call.return_value = 0
     _run_main("--repo-dir", str(worktree), "status")
     assert not _lock_file(target).exists()
+
+
+@patch("pr.context.resolve_local")
+def test_main_schema_version_1_status_serves_the_envelope(
+        mock_resolve, worktree, capsys):
+    target = worktree / "target"
+    _status_state(target)
+    mock_resolve.return_value = make_ctx(
+        repo="acme/widget", branch="feat/x",
+        worktree_root=worktree, target_dir=target)
+    with patch("git.client.run", return_value=core.proc.CmdResult(0, "0\n")):
+        rc = _run_main("--schema-version", "1", "--repo-dir", str(worktree),
+                       "status")
+    doc = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert doc["schema_version"] == 1
+    assert doc["state_file"] == str(target / "state.json")
 
 
 @patch("review.gc.prune_merged_targets", return_value=review.gc.PruneOutcome())
@@ -368,7 +416,7 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
 _RESOLVES_LOCALLY = {
     "create": False, "status": True, "ci": False, "review": False,
     "comments": False, "fix": False, "rebase": False, "push": True, "describe": False,
-    "batch": False, "gc": False,
+    "stack": True, "batch": False, "gc": False,
 }
 
 # Which commands fetch and fast-forward the worktree first. The old
@@ -377,7 +425,7 @@ _RESOLVES_LOCALLY = {
 _FETCHES = {
     "create": False, "status": False, "ci": True, "review": True,
     "comments": True, "fix": True, "rebase": False, "push": False, "describe": True,
-    "batch": False, "gc": False,
+    "stack": False, "batch": False, "gc": False,
 }
 
 # Which bare invocations may create a worktree. Flag variants that flip this
@@ -386,7 +434,7 @@ _FETCHES = {
 _CREATES_WORKTREE = {
     "create": False, "status": False, "ci": False, "review": False,
     "comments": False, "fix": True, "rebase": True, "push": False, "describe": False,
-    "batch": False, "gc": False,
+    "stack": False, "batch": False, "gc": False,
 }
 
 
@@ -457,6 +505,7 @@ _DECLARED_LOCKS = {
     ("rebase", ("--push-only",)): _TC,
     ("push", ("--expect", "abc")): _TC,
     ("describe", ()): _TC,
+    ("stack", ()): _NO,
     ("batch", ()): _NO,
     ("batch", ("run", "--checkout", "/r")): _NO,
     ("batch", ("resume",)): _NO,
@@ -595,6 +644,7 @@ def test_command_creates_a_worktree_only_if_declared(command, tmp_path):
     (["status"], FIND),
     (["push"], FIND),
     (["describe"], FIND),
+    (["stack"], FIND),
     (["gc"], FIND),
 ])
 def test_flag_variants_pass_their_worktree_need(argv, expected, tmp_path):

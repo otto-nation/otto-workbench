@@ -240,7 +240,7 @@ def test_every_command_with_a_delegate_has_a_parser_factory():
     still has a parser of its own to answer `--help` with.
     """
     scripted = {name for name, spec in cli.registry.COMMANDS.items() if spec.script}
-    assert set(cli.dispatch.PARSER_FACTORIES) == scripted | {"batch", "create", "push"}
+    assert set(cli.dispatch.PARSER_FACTORIES) == scripted | {"batch", "create", "push", "stack"}
 
 
 @pytest.mark.parametrize("command", sorted(cli.registry.COMMANDS))

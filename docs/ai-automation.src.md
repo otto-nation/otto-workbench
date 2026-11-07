@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 705 -->
+<!-- doc-budget: 720 -->
 
 # AI Automation
 
@@ -533,9 +533,10 @@ pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the
 pr batch next [RUN_ID]                   # only what needs action (JSON)
 pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
-pr batch status [RUN_ID] --full          # the raw run state
+pr batch status [RUN_ID] --full          # the raw run state plus `run_dir`
 pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  # JSON `applied`; `queued`+`holder` when deferred
+pr batch resolve RUN_ID DECISION_ID --action publish|force-publish --dry-run  # preview; change nothing
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
 
@@ -571,6 +572,12 @@ A publish `retry` leases on a remote equal to local; on `remote_moved` it leases
 decision when the item closes with no open decision and every drafted
 step is listed and `done`; an owed closeout counts as `comments`.
 `--no-verify` skips the pre-push hook on the branch push (`pr push` / `pr rebase --push-only`) and the comments closeout push.
+`pr batch resolve … --action publish|force-publish --dry-run` prints what that
+publish would push and changes nothing: it plans over `peek_tree` (reads origin
+without moving the lease). The document is `{schema_version, decision, action,
+ok, refusal, detail, pushes, commands, refused_commits, commits: [{sha, subject}],
+diff, truncated, remote_ahead, closeout}` (`closeout` carries `owed` and `describe`).
+Exit 0 even when `ok` is false; 2 for any other action; 1 for an unknown decision.
 
 A step that needs a person opens one `step_review` whose `evidence` is
 `open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,
@@ -580,7 +587,7 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase: `git reset --hard` to t
 pre-rebase head; the answer to `one_sided` and `stale`, never `accept`). Kinds
 and actions are tabled in [`batch/resolve.py`](ai-libraries.md#batchresolvepy).
 
-`pr batch status` prints one compact report:
+`pr batch status` prints one compact report. `--full` is the raw run state plus `run_dir` (where `state.json` and `logs/` live).
 
 - `run`: `id`, `status`, `active` (a driver holds the run's resource), `exit_hint`, a one-line `hint`, `pending_requests` (inbox count) and `failed_requests` (`[{name, error}]` from `rejected/`). `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a driver holds the run.
 - `counts`: items by status, and open decisions.
@@ -615,6 +622,14 @@ drivers' pending steps and `batch.mem_reserve`, covers its observed peak and pre
 nothing running anywhere the queue's head starts one step regardless ([`batch/machine.py`](ai-libraries.md#batchmachinepy)). `--pool` and `batch.pool_max` (default 2)
 cap a run; with no pressure metrics (macOS) `batch.pool_default` (1) caps steps machine-wide. State lives under
 `~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces that have no live claim and no run ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
+
+### pr status
+
+Without `--schema-version`, stdout is the state dump (or empty when there is none) and the dashboard is on stderr. `pr --schema-version 1 status` wraps it in `{schema_version, state_file, state}` with `state` null when the branch has no state yet.
+
+### pr stack
+
+`pr stack` prints the repo's open PRs as a stack graph (`{schema_version, trunk, nodes, cycles}`). Parent authority, in order: an open native GitHub stack (closed stacks do not count), the PR's base branch when another open PR owns it, `git.topology.stack_parent`, else the trunk. Health is `up-to-date`, `needs-rebase`, `has-conflicts`, `base-closed`, or `unknown`. `--pr N` prints that PR's ladder, bottom first.
 
 ### The Pi package the sync declares, and who gets it
 

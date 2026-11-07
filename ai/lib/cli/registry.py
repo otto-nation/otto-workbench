@@ -255,6 +255,10 @@ _SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("describe", "Revise the PR description",
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),  script="pr-describe",
                 handler="cli.pr_describe:main"),
+    # A read of GitHub and the local refs; no lock, no fetch of its own.
+    CommandSpec("stack",    "Show the repo's PR stack graph (JSON)",
+                Need(LOCAL,  update=False, locks=NO_LOCK),
+                handler="cli.pr_stack:main"),
     # Orchestrates other commands across many PRs, so it resolves no target of
     # its own. `run` and `resume` hold one batch lock per repo they cover (see
     # `_batch_need`) and every item's TARGET; children pass through on a marker

@@ -44,7 +44,7 @@ CREATE = pr.context.WorktreeNeed.CREATE
 
 def test_the_registry_names_every_subcommand():
     assert set(COMMANDS) == {"create", "status", "ci", "review", "comments",
-                             "fix", "rebase", "push", "describe", "batch", "gc"}
+                             "fix", "rebase", "push", "describe", "stack", "batch", "gc"}
 
 
 def test_no_command_is_declared_twice():
@@ -66,7 +66,7 @@ def test_the_delegating_commands_name_their_script():
     """Which commands are backed by a script, pinned as literals.
 
     Read off the registry the spec would be asserting against, this would pass
-    for any partition of the eleven — including one that quietly stopped
+    for any partition of the twelve — including one that quietly stopped
     delegating `comments` and ran it in-process.
     """
     backed = {name: spec.script for name, spec in COMMANDS.items() if spec.script}
@@ -80,7 +80,7 @@ def test_the_delegating_commands_name_their_script():
 
 
 def test_the_internal_commands_name_no_script():
-    for name in ("create", "status", "fix", "gc", "push"):
+    for name in ("create", "status", "fix", "gc", "push", "stack"):
         assert COMMANDS[name].script is None, name
 
 
@@ -124,6 +124,7 @@ _HANDLERS = {
     "rebase":   "cli.pr_rebase:main",
     "push":     "cli.pr_push:main",
     "describe": "cli.pr_describe:main",
+    "stack":    "cli.pr_stack:main",
     "batch":    "cli.pr_batch:cmd_batch",
     "gc":       "cli.pr_commands:cmd_gc",
 }
@@ -147,19 +148,19 @@ def test_every_handler_path_resolves_to_a_callable():
 def test_the_registry_is_the_only_list_of_subcommands():
     """Every subparser `pr` builds comes from a spec, and every spec builds one.
 
-    The set assertion above hardcodes the eleven names and never looks at the
+    The set assertion above hardcodes the twelve names and never looks at the
     parser, so a subcommand added directly to `_build_parser` would pass it.
     """
     import cli.pr
     assert set(core.tool_parser.subparsers(cli.pr._build_parser())) == set(COMMANDS)
 
 
-# The order the eleven are declared in, spelled out rather than read off
+# The order the twelve are declared in, spelled out rather than read off
 # `_SPECS`. Reading it off the tuple makes every assertion below a tautology:
 # the order tracks whatever the registry says, which is the one thing the
 # reordering would change.
 _DISPLAY_ORDER = ["create", "status", "ci", "review", "comments",
-                  "fix", "rebase", "push", "describe", "batch", "gc"]
+                  "fix", "rebase", "push", "describe", "stack", "batch", "gc"]
 
 
 def test_the_declaration_order_is_the_display_order():

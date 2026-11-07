@@ -58,6 +58,10 @@ def cmd_status(args) -> int:
         return EXIT_OK
     if args.full:
         core.report.emit_json({"schema_version": run.schema_version, "active": active,
+                               # Where the run's state.json and logs live, so a
+                               # consumer can watch it without deriving the path.
+                               # Optional, so the schema does not bump.
+                               "run_dir": str(batch.store.run_dir(run.id)),
                                "run": core.serde.to_dict(run)})
         return EXIT_OK
     if args.decision:

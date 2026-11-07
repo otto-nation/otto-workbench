@@ -8,7 +8,6 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from pathlib import Path
 
@@ -35,12 +34,13 @@ def offline(p: argparse.ArgumentParser) -> None:
                         "even while a driver holds the run")
 
 
-def report(run: Run, active: bool, github: dict | None = None) -> dict:
+def report(run: Run, active: bool, github: dict | None = None,
+           sessions: list | None = None) -> dict:
     """The whole report for *run*, with what its inbox still holds and what it rejected."""
     return batch.report.build(run, active=active,
                               pending_requests=batch.store.pending_requests(run.id),
                               failed_requests=batch.store.failed_requests(run.id),
-                              github=github)
+                              github=github, sessions=sessions)
 
 
 def cmd_status(args) -> int:
@@ -54,7 +54,7 @@ def cmd_status(args) -> int:
         return cli.pr_batch_common.fail(f"no run {run_id}")
     active = cli.pr_batch_common.is_active(run_id)
     if args.command == "next":
-        core.report.emit_json(batch.report.next_view(report(run, active, _github(run, args))))
+        core.report.emit_json(batch.report.next_view(report(run, active, _github(run, args.offline))))
         return EXIT_OK
     if args.full:
         core.report.emit_json({"schema_version": run.schema_version, "active": active,
@@ -66,13 +66,13 @@ def cmd_status(args) -> int:
         except KeyError:
             return cli.pr_batch_common.fail(f"run {run_id} has no decision {args.decision}")
         return EXIT_OK
-    core.report.emit_json(report(run, active, _github(run, args)))
+    core.report.emit_json(report(run, active, _github(run, args.offline)))
     return EXIT_OK
 
 
-def _github(run: Run, args) -> dict:
-    """The report's `github` section: GitHub's open PRs for *run*'s repos, unless --offline."""
-    return batch.live.skipped() if args.offline else batch.live.view(run, cwd=os.getcwd())
+def _github(run: Run, offline: bool) -> dict:
+    """The report's `github` section: GitHub's open PRs for *run*'s repos, unless *offline*."""
+    return batch.live.skipped() if offline else batch.live.view(run, cwd=os.getcwd())
 
 
 def cmd_plan(args) -> int:
@@ -87,13 +87,10 @@ def write_report(run: Run, *, offline: bool) -> tuple[Path, dict]:
 
     Offline skips GitHub and `peek_tree`. A missing worktree is never probed.
     """
-    github = batch.live.skipped() if offline else batch.live.view(run, cwd=os.getcwd())
-    entries = batch.session_report.sessions(
-        run, closeout=batch.plan.closeout_debt,
-        tree=None if offline else _peek,
-    )
-    doc = report(run, cli.pr_batch_common.is_active(run.id), github)
-    doc["sessions"] = [e.to_dict() for e in entries]
+    github = _github(run, offline)
+    entries = batch.session_report.sessions(run, tree=None if offline else _peek)
+    doc = report(run, cli.pr_batch_common.is_active(run.id), github,
+                 sessions=[e.to_dict() for e in entries])
     directory = batch.store.run_dir(run.id)
     directory.mkdir(parents=True, exist_ok=True)
     core.serde.write_json(directory / "report.json", doc)
@@ -114,8 +111,7 @@ def cmd_report(args) -> int:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return cli.pr_batch_common.fail(f"no run {run_id}")
-    path, _ = write_report(run, offline=args.offline)
-    doc = json.loads((path.parent / "report.json").read_text())
+    path, doc = write_report(run, offline=args.offline)
     if args.format == "json":
         core.report.emit_json(doc)
         return EXIT_OK

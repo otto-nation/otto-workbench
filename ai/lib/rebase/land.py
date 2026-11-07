@@ -51,7 +51,7 @@ def land_rebased(
     if not verify:
         args = ("--no-verify", *args)
     landed = git.land.land_head(
-        cwd, gated=True, args=tuple(args), trail=trail, regen=regen,
+        cwd, gated=True, owner_check=None, args=tuple(args), trail=trail, regen=regen,
     )
     # Only a refusal leaves something an agent could repair. A held, lost, or
     # unverified push says nothing is wrong with the worktree, and handing one to

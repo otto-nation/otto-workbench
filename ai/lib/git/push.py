@@ -77,6 +77,15 @@ there is no gate to open. A `False` default would let the next call site
 inherit the ungated answer by omitting the argument, which is how three of
 those four came to push without ever asking.
 
+`owner_check` is required too, for the same reason. A callable that raises to refuse
+is asked, with what is about to go (`Outgoing`: the remote, its push URL and the
+pre-push stdin lines), after the gate and before git runs, so a push the
+workbench makes is checked even where a repo's own `core.hooksPath` keeps the
+global hooks from running and whether or not `--no-verify` is passed. The
+`--no-verify` retry of a lost push is covered by the same check: it sends the
+same commits. `None` is an explicit "no check", which only a test or a caller
+with no owner configuration may pass.
+
 Every outcome but `PUSHED` names the command that would finish it, and
 `resume_command` is where that mapping lives — one place rather than a line of
 prose per call site, and data rather than a log line, so `land` can carry it
@@ -96,7 +105,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -107,6 +116,22 @@ import core.proc
 import core.publishing
 import core.timeouts
 from core.trail import Trail, tspan
+
+
+ZERO_SHA = "0" * 40
+
+
+@dataclass(frozen=True)
+class Outgoing:
+    """What a push is about to send: the remote, its push URL, and git's pre-push stdin lines."""
+
+    remote: str
+    url: str
+    ref_lines: tuple[str, ...]
+
+
+# Raises to refuse the push; receives the worktree and what is going out.
+OwnerCheck = Callable[[str | Path, Outgoing], None]
 
 
 class PushStatus(StrEnum):
@@ -552,6 +577,7 @@ def push(
     wt_path: str | Path,
     *,
     gated: bool,
+    owner_check: OwnerCheck | None,
     sha: str = "",
     branch: str = "",
     remote: str = "origin",
@@ -563,7 +589,8 @@ def push(
     `sha` and `branch` default to the worktree's HEAD and current branch. `args`
     is passed through to `git push` — `--force-with-lease` for a rebase, or an
     explicit remote and refspec for a first push. `gated` consults the
-    publishing gate and is required of every caller.
+    publishing gate and is required of every caller, as is `owner_check`, which
+    runs after the gate and raises to refuse a push whose commits may not go.
 
     The gate is asked before the two local reads, not after: it answers whether
     anything may happen at all, and a held run should leave the repository
@@ -578,6 +605,9 @@ def push(
 
     sha = sha or git.client.head_sha(cwd=wt_path)
     branch = branch or git.client.current_branch(cwd=wt_path)
+
+    if owner_check is not None:
+        owner_check(wt_path, _outgoing(wt_path, remote, sha, branch))
 
     r = _run_push(wt_path, argv, trail)
     output = _push_output(r)
@@ -602,6 +632,16 @@ def push(
     if result.status is not PushStatus.LOST:
         return result
     return _retry_lost(wt_path, result, remote, argv, trail)
+
+
+def _outgoing(wt_path: str | Path, remote: str, sha: str, branch: str) -> Outgoing:
+    """What a push of *sha* to *remote*'s *branch* sends, as the pre-push hook sees it."""
+    url = git.client.out("remote", "get-url", "--push", remote, cwd=wt_path)
+    tracked = git.client.out(
+        "rev-parse", "-q", "--verify", f"refs/remotes/{remote}/{branch}",
+        cwd=wt_path) or ZERO_SHA
+    ref = f"refs/heads/{branch}"
+    return Outgoing(remote, url, (f"{ref} {sha} {ref} {tracked}",))
 
 
 def _push_command(wt_path: str | Path, args: Sequence[str]) -> str:

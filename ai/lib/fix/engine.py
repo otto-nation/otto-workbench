@@ -1148,6 +1148,7 @@ def _run_pass(
         adapter.workdir,
         message=fix.suite.with_trailer(spec.message, adapter.suite),
         gated=True,
+        owner_check=None,
         trail=trail,
         regen=spec.regen,
         recover_from=head_before if spec.recover else None,

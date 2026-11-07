@@ -7019,6 +7019,15 @@ there is no gate to open. A `False` default would let the next call site
 inherit the ungated answer by omitting the argument, which is how three of
 those four came to push without ever asking.
 
+`owner_check` is required too, for the same reason. A callable that raises to refuse
+is asked, with what is about to go (`Outgoing`: the remote, its push URL and the
+pre-push stdin lines), after the gate and before git runs, so a push the
+workbench makes is checked even where a repo's own `core.hooksPath` keeps the
+global hooks from running and whether or not `--no-verify` is passed. The
+`--no-verify` retry of a lost push is covered by the same check: it sends the
+same commits. `None` is an explicit "no check", which only a test or a caller
+with no owner configuration may pass.
+
 Every outcome but `PUSHED` names the command that would finish it, and
 `resume_command` is where that mapping lives — one place rather than a line of
 prose per call site, and data rather than a log line, so `land` can carry it

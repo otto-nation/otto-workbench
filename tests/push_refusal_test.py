@@ -30,7 +30,7 @@ def test_a_refusal_records_the_verdict_not_the_banner(monkeypatch):
                         lambda *a, **k: core.proc.CmdResult(1, "", _HOOK_DUMP))
     trail = Trail.start(script="test", context={})
 
-    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x",
                        trail=trail)
 
     recorded = _last_event()["data"]["error"]
@@ -44,7 +44,7 @@ def test_a_refusal_keeps_the_whole_hook_output(monkeypatch):
                         lambda *a, **k: core.proc.CmdResult(1, "", _HOOK_DUMP))
     trail = Trail.start(script="test", context={})
 
-    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x",
                        trail=trail)
 
     assert result.log is not None
@@ -57,7 +57,7 @@ def test_a_refusal_still_records_the_sha_and_branch(monkeypatch):
                         lambda *a, **k: core.proc.CmdResult(1, "", "denied"))
     trail = Trail.start(script="test", context={})
 
-    git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x", trail=trail)
+    git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x", trail=trail)
 
     data = _last_event()["data"]
     assert data["sha"] == "1a2b3c4d"
@@ -68,7 +68,7 @@ def test_a_push_without_a_trail_still_reports_the_refusal(monkeypatch):
     monkeypatch.setattr(git.client, "run",
                         lambda *a, **k: core.proc.CmdResult(1, "", "denied"))
 
-    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x")
 
     assert result.status is git.push.PushStatus.REFUSED
     assert result.log is None

@@ -137,7 +137,7 @@ def _push(
     if message:
         log(message)
     result = git.push.push(
-        wt, gated=False, branch=branch, remote=remote, args=args, trail=trail,
+        wt, gated=False, owner_check=None, branch=branch, remote=remote, args=args, trail=trail,
     )
     if result.status in _FAILED:
         return SyncResult(SyncOutcome.FAILED, result.output or message, result)

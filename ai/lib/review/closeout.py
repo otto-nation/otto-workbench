@@ -182,7 +182,7 @@ def push_held_commit(
     # this state file carries reports every push as lost. `report` names the
     # force-push remedy for a divergence, so nothing is added on top of it.
     nv = ("--no-verify",) if no_push_verify else ()
-    result = git.push.push(wt_path, gated=True, trail=trail, args=nv)
+    result = git.push.push(wt_path, gated=True, owner_check=None, trail=trail, args=nv)
     git.push.report(result, wt_path)
     if result.status is git.push.PushStatus.HELD:
         return

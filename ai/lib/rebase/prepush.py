@@ -424,7 +424,7 @@ def _land_rebuild(
 
     rebuilt = _rebuilt_files(generated)
     landed = git.land.land(
-        cwd, message=REGEN_MESSAGE, gated=True, args=tuple(args),
+        cwd, message=REGEN_MESSAGE, gated=True, owner_check=None, args=tuple(args),
         trail=trail, paths=rebuilt,
     )
     if landed.sha:

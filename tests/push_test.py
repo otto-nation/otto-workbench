@@ -179,7 +179,7 @@ def test_holds_reads_the_remote_rather_than_the_tracking_ref(pushable):
 def test_push_that_lands_is_pushed(pushable):
     wt, _ = pushable
     sha = _commit(wt, "work")
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
     assert result.status is git.push.PushStatus.PUSHED
     assert result.ok
     assert result.sha == sha
@@ -192,7 +192,7 @@ def test_push_that_vanishes_is_lost(pushable):
     wt, remote = pushable
     sha = _commit(wt, "work")
     _lose_pushes(remote)
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
     assert result.status is git.push.PushStatus.LOST
     assert not result.ok
     assert result.sha == sha
@@ -206,7 +206,7 @@ def test_rejected_push_is_refused_not_lost(pushable):
     git_in(wt, "push", "-q", "origin", "main")
     git_in(wt, "reset", "-q", "--hard", "HEAD~1")
     _commit(wt, "mine")
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
     assert result.status is git.push.PushStatus.REFUSED
     assert result.refusal is git.push.Refusal.DIVERGED
 
@@ -216,7 +216,7 @@ def test_unreachable_remote_is_unverified_not_lost(pushable, monkeypatch):
     wt, _ = pushable
     sha = _commit(wt, "work")
     monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: None)
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
     assert result.status is git.push.PushStatus.UNVERIFIED
     assert not result.ok
     assert result.sha == sha
@@ -226,7 +226,7 @@ def test_gated_push_is_held_and_attempts_nothing(pushable):
     """The publishing gate is shut by default — see conftest's _drafts_only."""
     wt, _ = pushable
     sha = _commit(wt, "work")
-    result = git.push.push(wt, gated=True)
+    result = git.push.push(wt, gated=True, owner_check=None)
     assert result.status is git.push.PushStatus.HELD
     assert git.push.remote_head(wt, "main") != sha
 
@@ -241,10 +241,44 @@ def test_a_held_push_reads_nothing_from_the_repository(pushable, monkeypatch):
     wt, _ = pushable
     _commit(wt, "work")
     monkeypatch.setattr(git.client, "run", _never_runs)
-    result = git.push.push(wt, gated=True)
+    result = git.push.push(wt, gated=True, owner_check=None)
     assert result.status is git.push.PushStatus.HELD
     assert result.sha == ""
-    assert git.push.push(wt, gated=True, sha="abc1234").sha == "abc1234"
+    assert git.push.push(wt, gated=True, owner_check=None, sha="abc1234").sha == "abc1234"
+
+
+def test_an_owner_check_refusal_stops_the_push_before_git_runs(pushable):
+    wt, remote = pushable
+    sha = _commit(wt, "work")
+
+    def refuse(cwd, outgoing):
+        raise RuntimeError("owner boundary")
+
+    with pytest.raises(RuntimeError, match="owner boundary"):
+        git.push.push(wt, gated=False, owner_check=refuse)
+    assert git.push.remote_head(wt, "main") != sha
+
+
+def test_the_owner_check_sees_the_push_url_and_the_commit(pushable):
+    wt, remote = pushable
+    sha = _commit(wt, "work")
+    tracked = git.client.out("rev-parse", "refs/remotes/origin/main", cwd=wt)
+    seen = []
+    git.push.push(wt, gated=False, owner_check=lambda cwd, out: seen.append(out))
+    url = git.client.out("remote", "get-url", "--push", "origin", cwd=wt)
+    assert seen == [git.push.Outgoing(
+        "origin", url, (f"refs/heads/main {sha} refs/heads/main {tracked}",))]
+
+
+def test_a_held_push_never_asks_the_owner_check(pushable):
+    wt, _ = pushable
+    _commit(wt, "work")
+
+    def never(cwd, outgoing):
+        raise AssertionError("asked")
+
+    result = git.push.push(wt, gated=True, owner_check=never)
+    assert result.status is git.push.PushStatus.HELD
 
 
 # ── a push the connection dropped ───────────────────────────────────────────
@@ -280,7 +314,7 @@ def test_a_dropped_push_the_remote_took_is_pushed(pushable, drops_the_connection
     wt, _ = pushable
     sha = _commit(wt, "work")
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.PUSHED
     assert result.refusal is git.push.Refusal.DROPPED
@@ -295,7 +329,7 @@ def test_a_dropped_push_the_remote_never_took_is_lost_and_retried(
     _commit(wt, "work")
     _lose_pushes(remote)
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.LOST
     assert result.retry is git.push.Retry.ATTEMPTED
@@ -320,7 +354,7 @@ def test_a_dropped_push_recovers_when_the_retry_lands(pushable, monkeypatch):
         return real_run(*args, **kwargs)
 
     monkeypatch.setattr(git.client, "run", drop_then_heal)
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.PUSHED
     assert result.retry is git.push.Retry.ATTEMPTED
@@ -339,7 +373,7 @@ def test_a_dropped_push_the_remote_could_not_be_asked_about_is_unverified(
     sha = _commit(wt, "work")
     monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: None)
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.UNVERIFIED
     assert result.refusal is git.push.Refusal.DROPPED
@@ -356,7 +390,7 @@ def test_a_retry_the_remote_could_not_be_asked_about_records_the_attempt(
     answers = ["", None]
     monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: answers.pop(0))
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.UNVERIFIED
     assert result.retry is git.push.Retry.ATTEMPTED
@@ -374,7 +408,7 @@ def test_an_auth_failure_is_refused_without_asking_the_remote(monkeypatch):
         lambda *a, **k: core.proc.CmdResult(128, "", "Permission denied (publickey)."))
     monkeypatch.setattr(git.push, "remote_head", _never_runs)
 
-    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x")
 
     assert result.status is git.push.PushStatus.REFUSED
     assert result.refusal is git.push.Refusal.AUTH
@@ -386,7 +420,7 @@ def test_a_hook_rejection_is_refused_without_asking_the_remote(monkeypatch):
                         lambda *a, **k: core.proc.CmdResult(1, "", refused))
     monkeypatch.setattr(git.push, "remote_head", _never_runs)
 
-    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x")
 
     assert result.status is git.push.PushStatus.REFUSED
     assert result.refusal is git.push.Refusal.HOOK
@@ -398,7 +432,7 @@ def test_a_dropped_push_reaches_the_trail(pushable, drops_the_connection):
     sha = _commit(wt, "work")
     trail = Trail.start(script="test", context={})
 
-    git.push.push(wt, gated=False, trail=trail)
+    git.push.push(wt, gated=False, owner_check=None, trail=trail)
 
     event = _last_event()
     assert event["data"]["sha"] == sha
@@ -466,7 +500,7 @@ def test_lost_push_retries_once_and_recovers(pushable, monkeypatch):
         return real_run(*args, **kwargs)
 
     monkeypatch.setattr(git.client, "run", heal_after_first)
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.PUSHED
     assert result.retry is git.push.Retry.ATTEMPTED
@@ -480,7 +514,7 @@ def test_retry_is_bounded_at_one(pushable, count_pushes):
     _commit(wt, "work")
     _lose_pushes(remote)
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.LOST
     assert result.retry is git.push.Retry.ATTEMPTED
@@ -491,7 +525,7 @@ def test_a_landed_push_is_not_retried(pushable, count_pushes):
     wt, _ = pushable
     _commit(wt, "work")
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.PUSHED
     assert result.retry is git.push.Retry.NONE
@@ -512,7 +546,7 @@ def test_retry_blocked_when_head_moved(pushable, monkeypatch):
         return result
 
     monkeypatch.setattr(git.client, "run", move_head)
-    result = git.push.push(wt, gated=False, sha=sha)
+    result = git.push.push(wt, gated=False, owner_check=None, sha=sha)
 
     assert result.status is git.push.PushStatus.LOST
     assert result.retry is git.push.Retry.HEAD_MOVED
@@ -532,7 +566,7 @@ def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
         return result
 
     monkeypatch.setattr(git.client, "run", dirty)
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.LOST
     assert result.retry is git.push.Retry.DIRTY
@@ -585,7 +619,7 @@ def test_pre_push_hook_output_is_relayed_before_the_push_returns(pushable, monke
     watch = _StderrWatch(sys.stderr)
     monkeypatch.setattr(sys, "stderr", watch)
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
     done = time.monotonic()
 
     assert result.status is git.push.PushStatus.PUSHED
@@ -602,7 +636,7 @@ def test_a_refusing_hook_is_captured_and_relayed(pushable, monkeypatch):
     watch = _StderrWatch(sys.stderr)
     monkeypatch.setattr(sys, "stderr", watch)
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
 
     assert result.status is git.push.PushStatus.REFUSED
     assert result.refusal is git.push.Refusal.HOOK
@@ -617,7 +651,7 @@ def test_a_refusing_hook_is_reported_as_a_labelled_replay(pushable, monkeypatch,
     _install_pre_push(wt, f"cat >/dev/null\necho {_HOOK_FAIL} >&2\nexit 1\n")
     _commit(wt, "work")
 
-    result = git.push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False, owner_check=None)
     git.push.report(result, wt)
 
     printed = capsys.readouterr().err
@@ -630,7 +664,7 @@ def test_a_push_is_a_timed_trail_span(pushable):
     _commit(wt, "work")
     trail = Trail.start(script="test", context={})
 
-    git.push.push(wt, gated=False, trail=trail)
+    git.push.push(wt, gated=False, owner_check=None, trail=trail)
 
     events = _trail_events()
     ends = [e for e in events
@@ -649,7 +683,7 @@ def test_a_no_verify_push_records_that_hooks_were_skipped(pushable):
     _commit(wt, "work")
     trail = Trail.start(script="test", context={})
 
-    git.push.push(wt, gated=False, args=("--no-verify",), trail=trail)
+    git.push.push(wt, gated=False, owner_check=None, args=("--no-verify",), trail=trail)
 
     events = _trail_events()
     hooks = [e for e in events

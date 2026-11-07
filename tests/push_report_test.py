@@ -89,7 +89,7 @@ def test_a_push_records_the_arguments_it_was_given(monkeypatch):
     """Nothing can replay them later unless the result carried them out."""
     monkeypatch.setattr(git.client, "run",
                         lambda *a, **k: core.proc.CmdResult(1, "", "failed to push some refs"))
-    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x",
                        args=["--force-with-lease"])
     assert result.args == ("--force-with-lease",)
 
@@ -321,7 +321,7 @@ def test_a_relayed_dropped_push_labels_its_excerpt_too(capsys):
 def test_a_refused_push_records_that_its_output_was_relayed(monkeypatch):
     monkeypatch.setattr(git.client, "run",
                         lambda *a, **k: core.proc.CmdResult(1, "", "failed to push some refs"))
-    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=False, owner_check=None, sha="1a2b3c4d", branch="feat/x")
     assert result.status is git.push.PushStatus.REFUSED
     assert result.relayed
 
@@ -337,6 +337,6 @@ def test_the_signal_account_git_never_printed_is_not_a_replay():
 def test_a_held_push_was_never_relayed(monkeypatch):
     monkeypatch.setattr(git.push.core.publishing, "enabled", lambda: False)
     monkeypatch.setattr(git.push.core.publishing, "draft", lambda *a, **k: None)
-    result = git.push.push("/tmp/wt", gated=True, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=True, owner_check=None, sha="1a2b3c4d", branch="feat/x")
     assert result.status is git.push.PushStatus.HELD
     assert not result.relayed

@@ -86,6 +86,7 @@ def _commit_count(wt: Path) -> int:
 def _land(repo, **kwargs):
     kwargs.setdefault("message", "fix: work")
     kwargs.setdefault("gated", False)
+    kwargs.setdefault("owner_check", None)
     with patch("git.push.push", return_value=_PUSHED) as mock_push:
         landed = git.land.land(repo, **kwargs)
     return landed, mock_push

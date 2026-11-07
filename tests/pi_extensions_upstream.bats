@@ -28,6 +28,24 @@ _refusal() {
   " -- "$1" "$2" "${3:-}"
 }
 
+# _tool_refusal CWD TOOL JSON [CHECKER] — toolCallRefusal's answer, or ALLOWED.
+_tool_refusal() {
+  run env TMPDIR="${TOOL_TMPDIR:-$TMPDIR}" node --input-type=module -e "
+    const { toolCallRefusal } = await import('$REPO_ROOT/ai/pi/extensions/upstream-guard/tool-calls.ts');
+    const input = JSON.parse(process.argv[3]);
+    const reason = process.argv[4]
+      ? toolCallRefusal(process.argv[2], input, process.argv[1], process.argv[4])
+      : toolCallRefusal(process.argv[2], input, process.argv[1]);
+    process.stdout.write(reason ?? 'ALLOWED');
+  " -- "$1" "$2" "$3" "${4:-}"
+}
+
+# _two_groups — github.owners with a work and a personal group.
+_two_groups() {
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'github:\n  owners:\n    work: [otto-nation]\n    personal: [me]\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
+}
+
 @test "upstream-guard: refuses a filing in a repo whose origin is not ours" {
   _owners_config otto-nation
   _upstream_repo git@github.com:stranger/lib.git
@@ -177,4 +195,122 @@ import gh.owners; print(gh.owners.ALLOW_CROSS_REF_ENV)
   done
   # Agreement means nothing if both sides gave one answer to everything.
   [[ "$seen" == *allowed* && "$seen" == *refused* ]]
+}
+
+@test "upstream-guard: gh_pr_post_comment in an upstream checkout is refused" {
+  _owners_config otto-nation
+  _upstream_repo git@github.com:stranger/lib.git
+  _tool_refusal "$TMPDIR/repo" gh_pr_post_comment '{"body":"hello"}'
+  [[ "$output" == *"owner boundary"*"stranger"* ]]
+}
+
+@test "upstream-guard: gh_pr_reply_comment in an upstream checkout is refused" {
+  _owners_config otto-nation
+  _upstream_repo git@github.com:stranger/lib.git
+  _tool_refusal "$TMPDIR/repo" gh_pr_reply_comment '{"reply_to_id":1,"body":"hello"}'
+  [[ "$output" == *"stranger"* ]]
+}
+
+@test "upstream-guard: a PR comment naming another owner group is refused" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _tool_refusal "$TMPDIR/repo" gh_pr_post_comment '{"body":"see me/lib#12"}'
+  [[ "$output" == *"me/lib#12"* ]]
+}
+
+@test "upstream-guard: one crossing body refuses a whole bulk reply" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _tool_refusal "$TMPDIR/repo" gh_pr_bulk_reply \
+    '{"replies":[{"reply_to_id":1,"body":"fine"},{"reply_to_id":2,"body":"see me/lib#12"}]}'
+  [[ "$output" == *"me/lib#12"* ]]
+}
+
+@test "upstream-guard: a plain PR comment in our own repo is allowed" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _tool_refusal "$TMPDIR/repo" gh_pr_post_comment '{"body":"looks good"}'
+  [ "$output" = ALLOWED ]
+  _tool_refusal "$TMPDIR/repo" gh_pr_bulk_reply \
+    '{"replies":[{"reply_to_id":1,"body":"a"},{"reply_to_id":2,"body":"b"}]}'
+  [ "$output" = ALLOWED ]
+}
+
+@test "upstream-guard: a tool that publishes nothing never reaches the check" {
+  _tool_refusal "$TMPDIR" gh_pr_diff '{}' /nonexistent
+  [ "$output" = ALLOWED ]
+}
+
+@test "upstream-guard: a publishing tool with no working check is refused" {
+  _tool_refusal "$TMPDIR" gh_pr_post_comment '{"body":"hi"}' /nonexistent
+  [[ "$output" == *"could not run"* ]]
+}
+
+@test "upstream-guard: a refused tool call leaves no temp directory behind" {
+  _owners_config otto-nation
+  _upstream_repo git@github.com:stranger/lib.git
+  mkdir -p "$TMPDIR/scratch"
+  TOOL_TMPDIR="$TMPDIR/scratch"
+  _tool_refusal "$TMPDIR/repo" gh_pr_post_comment '{"body":"hello"}'
+  [[ "$output" == *"stranger"* ]]
+  run find "$TMPDIR/scratch" -name 'upstream-guard-*'
+  [ -z "$output" ]
+}
+
+@test "upstream-guard: tool-calls.ts imports no SDK" {
+  run grep -nE '^\s*import .*(@earendil-works/pi-coding-agent|isToolCallEventType)' \
+    "$REPO_ROOT/ai/pi/extensions/upstream-guard/tool-calls.ts"
+  [ "$status" -ne 0 ]
+  [ -f "$REPO_ROOT/ai/pi/extensions/upstream-guard/tool-calls.ts" ]
+}
+
+@test "upstream-guard: a Linear issue naming another owner group is refused" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _tool_refusal "$TMPDIR/repo" linear_create_issue '{"team":"ENG","title":"fix","description":"see me/lib#12"}'
+  [[ "$output" == *"me/lib#12"* ]]
+}
+
+@test "upstream-guard: every text field of a Linear write is scanned" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  local call
+  for call in \
+    'linear_create_issue {"team":"E","title":"see me/lib#12"}' \
+    'linear_update_issue {"id":"E-1","description":"see me/lib#12"}' \
+    'linear_add_comment {"id":"E-1","body":"see me/lib#12"}' \
+    'linear_create_project {"name":"p","teams":["E"],"content":"see me/lib#12"}' \
+    'linear_update_initiative {"id":"i","description":"see me/lib#12"}' \
+    'linear_create_release {"pipeline":"p","name":"r","description":"see me/lib#12"}'; do
+    _tool_refusal "$TMPDIR/repo" "${call%% *}" "${call#* }"
+    [[ "$output" == *"me/lib#12"* ]] || { echo "not scanned: $call -> $output"; return 1; }
+  done
+}
+
+@test "upstream-guard: a Linear write in our own group is allowed" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  _tool_refusal "$TMPDIR/repo" linear_add_comment '{"id":"E-1","body":"see otto-nation/svc#12"}'
+  [ "$output" = ALLOWED ]
+}
+
+@test "upstream-guard: a Linear write with no working check is refused" {
+  _tool_refusal "$TMPDIR" linear_create_issue '{"team":"E","title":"x"}' /nonexistent
+  [[ "$output" == *"Linear write"*"could not run"* ]]
+}
+
+@test "upstream-guard: a Linear read never reaches the check" {
+  _tool_refusal "$TMPDIR" linear_get_issue '{"id":"E-1"}' /nonexistent
+  [ "$output" = ALLOWED ]
+}
+
+@test "upstream-guard: a refused Linear call leaves no temp directory behind" {
+  _two_groups
+  _upstream_repo git@github.com:otto-nation/svc.git
+  mkdir -p "$TMPDIR/scratch"
+  TOOL_TMPDIR="$TMPDIR/scratch"
+  _tool_refusal "$TMPDIR/repo" linear_add_comment '{"id":"E-1","body":"see me/lib#12"}'
+  [[ "$output" == *"me/lib#12"* ]]
+  run find "$TMPDIR/scratch" -name 'upstream-guard-*'
+  [ -z "$output" ]
 }

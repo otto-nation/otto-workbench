@@ -11,6 +11,9 @@
  * specific to any checkout, and a session with no repository is exactly where
  * a write's target cannot be resolved — which refuses.
  *
+ * It also holds the Pi tools that publish without bash (the PR comment tools)
+ * to the same check — see ./tool-calls.ts.
+ *
  * The refusal lives in ./detect.ts so it can be tested without the SDK. What
  * stays here is only the wiring.
  */
@@ -20,11 +23,14 @@ import {
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { upstreamRefusal } from "./detect.ts";
+import { toolCallRefusal } from "./tool-calls.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
-    if (!isToolCallEventType("bash", event)) return;
-    const reason = upstreamRefusal(event.input.command, ctx.cwd ?? process.cwd());
+    const cwd = ctx.cwd ?? process.cwd();
+    const reason = isToolCallEventType("bash", event)
+      ? upstreamRefusal(event.input.command, cwd)
+      : toolCallRefusal(event.toolName, event.input as Record<string, unknown>, cwd);
     if (!reason) return;
     // terminate is left off, as in the other guards: the agent carries on,
     // drafting the command for the user instead.

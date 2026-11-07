@@ -271,6 +271,16 @@ def check_message(text: str, cwd: str | Path) -> HookVerdict:
     return _content_verdict(gh.owners.check_text(body, cwd, dest.owner))
 
 
+def check_published_text(text: str, cwd: str | Path) -> HookVerdict:
+    """Whether *text* may be published from the checkout at *cwd*.
+
+    The group is the checkout's own, not a destination's: the caller (a Pi tool
+    guard) does not know where the text lands. A user's cross-ref override
+    lifts a content refusal with a warning, as for a commit message.
+    """
+    return _content_verdict(gh.owners.check_text(text, cwd))
+
+
 def _push_updates(ref_lines: Sequence[str]) -> list[_PushUpdate] | HookVerdict:
     updates: list[_PushUpdate] = []
     for line in ref_lines:

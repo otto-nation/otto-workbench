@@ -7957,6 +7957,7 @@ answers no question anyone asks of it.
     owners-check --configured
     owners-check --classify -- COMMAND
     owners-check --message-file FILE --cwd DIR
+    owners-check --text FILE --cwd DIR
     owners-check --push REMOTE URL --cwd DIR
 
 The first form is what ``claude-bash-guard`` and Pi's ``upstream-guard`` run
@@ -7979,8 +7980,10 @@ never read as an answer. An unparseable command is answered ``write``.
 
 ``--message-file`` checks a commit message (commit-msg hook). ``--push``
 checks commits about to be pushed (pre-push hook), reading git's ref lines
-from stdin. Both exit 0 to allow, 2 to refuse, and 3 when the check could not
-run. A content refusal is lifted when the user set ``WORKBENCH_ALLOW_CROSS_REF=1``,
+from stdin. ``--text`` checks the text in FILE against the group of the
+checkout at ``--cwd`` — what Pi's ``upstream-guard`` runs for the Linear write
+tools, whose text goes to Linear rather than through a GitHub command. All
+three exit 0 to allow, 2 to refuse, and 3 when the check could not run. A content refusal is lifted when the user set ``WORKBENCH_ALLOW_CROSS_REF=1``,
 with a warning on stderr.
 
 ``WORKBENCH_ALLOW_UPSTREAM`` is not read here — see ``gh.owners``.

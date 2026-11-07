@@ -4,6 +4,7 @@
     owners-check --configured
     owners-check --classify -- COMMAND
     owners-check --message-file FILE --cwd DIR
+    owners-check --text FILE --cwd DIR
     owners-check --push REMOTE URL --cwd DIR
 
 The first form is what ``claude-bash-guard`` and Pi's ``upstream-guard`` run
@@ -26,8 +27,10 @@ never read as an answer. An unparseable command is answered ``write``.
 
 ``--message-file`` checks a commit message (commit-msg hook). ``--push``
 checks commits about to be pushed (pre-push hook), reading git's ref lines
-from stdin. Both exit 0 to allow, 2 to refuse, and 3 when the check could not
-run. A content refusal is lifted when the user set ``WORKBENCH_ALLOW_CROSS_REF=1``,
+from stdin. ``--text`` checks the text in FILE against the group of the
+checkout at ``--cwd`` — what Pi's ``upstream-guard`` runs for the Linear write
+tools, whose text goes to Linear rather than through a GitHub command. All
+three exit 0 to allow, 2 to refuse, and 3 when the check could not run. A content refusal is lifted when the user set ``WORKBENCH_ALLOW_CROSS_REF=1``,
 with a warning on stderr.
 
 ``WORKBENCH_ALLOW_UPSTREAM`` is not read here — see ``gh.owners``.
@@ -69,9 +72,9 @@ class _Parser(argparse.ArgumentParser):
 
 def _hook_mode(argv: list[str]) -> bool:
     for word in argv:
-        if word in ("--message-file", "--push"):
+        if word in ("--message-file", "--push", "--text"):
             return True
-        if word.startswith("--message-file=") or word.startswith("--push="):
+        if word.startswith(("--message-file=", "--push=", "--text=")):
             return True
     return False
 
@@ -89,6 +92,8 @@ def build_parser() -> _Parser:
                       help="print 'write' or 'read' for COMMAND; exit 0 either way")
     mode.add_argument("--message-file", metavar="FILE",
                       help="check a commit message file (commit-msg hook)")
+    mode.add_argument("--text", metavar="FILE",
+                      help="check published text against the checkout's group")
     mode.add_argument("--push", nargs=2, metavar=("REMOTE", "URL"),
                       help="check commits about to be pushed (pre-push hook)")
     parser.add_argument("command", nargs="*", help="the command, after --")
@@ -153,6 +158,17 @@ def _message_file(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     return _hook_exit(gh.owner_hooks.check_message(text, cwd))
 
 
+def _text(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    cwd = _require_cwd(parser, args.cwd)
+    path = Path(args.text)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"cannot read {path}: {exc}", file=sys.stderr)
+        return CANNOT_RUN
+    return _hook_exit(gh.owner_hooks.check_published_text(text, cwd))
+
+
 def _push(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     cwd = _require_cwd(parser, args.cwd)
     remote, url = args.push
@@ -171,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
         return _classify(_command_line(parser, args.command))
     if args.message_file is not None:
         return _message_file(parser, args)
+    if args.text is not None:
+        return _text(parser, args)
     if args.push is not None:
         return _push(parser, args)
     cwd = _require_cwd(parser, args.cwd)

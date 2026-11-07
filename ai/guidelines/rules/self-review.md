@@ -47,7 +47,8 @@ A fix pass's commit message and terminal summary are rendered from the agent's o
 on the tracking file. The commit is not: staging takes every path the pass touched that
 belongs on the branch, with the outcomes unread. "Belongs" means a finding anchor or a
 test or `_support` module named for one — not every file on the PR. A PR file that is
-not an anchor stays in the worktree with a warning, for the operator. Attribution between
+not an anchor stays in the worktree with a warning, for the operator (for example an inventory file
+a verify agent used as a fixture). Attribution between
 the two is by path, and an agent that answers a finding by editing its caller or its test
 moves a file no check can tie back to it.
 

@@ -223,7 +223,7 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
 # global flags, and one that cannot be closed here because the matcher grammar
 # has no way to express "any flags, then this subcommand". What holds on this
 # backend is the fix templates' prose, the engine committing for the agent,
-# and — for ``git -C . commit`` — the HEAD-moved refusal in fix.engine._land.
+# and — for ``git -C . commit`` — the engine's HEAD-moved refusal.
 # Upgrade if Claude Code grows a regex or argv-aware permission matcher.
 FIX_DENIED_TOOLS = ",".join((
     "Bash(gh:*)",

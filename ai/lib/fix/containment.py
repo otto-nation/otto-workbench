@@ -136,6 +136,8 @@ def restore(
     first. A snapshot that failed to read reverts nothing and warns.
     """
     workdir = Path(workdir)
+    # `ok` alone suffices: both snapshots come from the same take(), and any
+    # git failure there sets ok=False.
     if not before.ok or not after.ok:
         core.log.warn(
             f"could not snapshot the worktree around the {phase} phase — "

@@ -122,8 +122,8 @@ def _installed(site: Path, pin: BrandPin) -> str | None:
 def _cache_path(pin: BrandPin) -> Path:
     """State-dir path of the pinned tarball; resolved per call from the live root."""
     from urllib.parse import urlparse
-    from core import workbench_paths
-    return workbench_paths.state_dir() / "herdr-app-themes" / Path(urlparse(pin.url).path).name
+    import core.workbench_paths
+    return core.workbench_paths.state_dir() / "herdr-app-themes" / Path(urlparse(pin.url).path).name
 
 
 def _verified(blob: bytes, pin: BrandPin) -> bool:
@@ -160,12 +160,12 @@ def _fetch(pin: BrandPin) -> str:
     from urllib.error import URLError
     from urllib.parse import urlparse
     from urllib.request import urlopen
-    from core import timeouts
+    import core.timeouts
     parsed = urlparse(pin.url)
     if parsed.scheme not in ("https", "file"):
         raise BrandError(f"brand tarball URL scheme {parsed.scheme!r} is not https or file")
     try:
-        with urlopen(pin.url, timeout=timeouts.TRANSFER) as resp:
+        with urlopen(pin.url, timeout=core.timeouts.TRANSFER) as resp:
             blob = resp.read()
     except (OSError, URLError) as err:
         raise BrandError(f"brand tokens unavailable: {err}") from err
@@ -222,6 +222,33 @@ def _resolve(value: object, palette: dict[str, str], where: str) -> object:
     raise PaletteError(f"{where}: {value!r} is not a name in [palette]")
 
 
+def _palette_hex(
+    name: str,
+    value: object,
+    source: Path,
+    theme: str,
+    schemes: dict,
+    brand,
+) -> str:
+    """Literal #rrggbb for one palette entry, resolving brand:<token> via SCHEME."""
+    if isinstance(value, str) and HEX.match(value):
+        return value
+    ref = BRAND.match(value) if isinstance(value, str) else None
+    if ref is None:
+        raise PaletteError(f"{source.name}: palette.{name} = {value!r} is not #rrggbb")
+    scheme = schemes.get(theme)
+    if scheme not in ("light", "dark"):
+        raise PaletteError(
+            f"{source.name}: themes.{theme} uses brand tokens but has no [schemes] entry"
+        )
+    hex_value = brand()[scheme].get(ref.group(1))
+    if hex_value is None:
+        raise PaletteError(
+            f"{source.name}: themes.{theme} palette.{name} = {value!r} is not a token"
+        )
+    return hex_value
+
+
 def _render_source(source: Path, brand) -> dict[str, str]:
     """The theme files one palette file defines, each mapped to its text."""
     data = tomllib.loads(source.read_text())
@@ -234,26 +261,10 @@ def _render_source(source: Path, brand) -> dict[str, str]:
             raise PaletteError(f"{source.name}: schemes.{name} = {scheme!r} is not light or dark")
     files: dict[str, str] = {}
     for theme, spec in themes.items():
-        resolved: dict[str, str] = {}
-        for name, value in palette.items():
-            if isinstance(value, str) and HEX.match(value):
-                resolved[name] = value
-                continue
-            ref = BRAND.match(value) if isinstance(value, str) else None
-            if ref is None:
-                raise PaletteError(f"{source.name}: palette.{name} = {value!r} is not #rrggbb")
-            scheme = schemes.get(theme)
-            if scheme not in ("light", "dark"):
-                raise PaletteError(
-                    f"{source.name}: themes.{theme} uses brand tokens but has no [schemes] entry"
-                )
-            token = ref.group(1)
-            hex_value = brand()[scheme].get(token)
-            if hex_value is None:
-                raise PaletteError(
-                    f"{source.name}: themes.{theme} palette.{name} = {value!r} is not a token"
-                )
-            resolved[name] = hex_value
+        resolved = {
+            name: _palette_hex(name, value, source, theme, schemes, brand)
+            for name, value in palette.items()
+        }
         files[f"{theme}{SUFFIX}"] = (
             json.dumps(_resolve(spec, resolved, f"{source.name}: themes.{theme}"), indent=2) + "\n"
         )

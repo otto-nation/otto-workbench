@@ -60,7 +60,9 @@ asked about) cannot ride into the commit. Clobbered bytes are saved under the pa
 as an extra directory; that grant is writable on both backends, so the same
 content snapshot wraps it around the pass and restores any path the agent changed
 (`containment/extra-worktree/`). Operator dirt the agent did not touch is left as
-it was. Before the agent runs, files already dirty in the worktree
+it was. The restore is by content, so it cannot tell the agent from you: an edit you
+make in that worktree while the pass runs is put back too, with your version saved
+under the same directory. Before the agent runs, files already dirty in the worktree
 are copied under the pass's `dirty-backup/` artifacts so an overwrite of the operator's
 uncommitted edit is restorable from disk. Tool denials on the verify agent are extra; process writes
 bypass them, which is why the restore is the control. A pass whose agent switched

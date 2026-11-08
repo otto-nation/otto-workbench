@@ -199,7 +199,14 @@ def around_each(
 
     ``exclude`` is the pass's own workdir, so listing it cannot revert the
     agent's real edits. Empty *workdirs* is a no-op — every adapter but comments.
+
+    Attribution is by content, so an edit the operator makes in one of these
+    trees while the pass runs is reverted like an agent write; the saved copy
+    under ``artifacts/containment/<phase>`` holds it.
     """
+    # ceiling: content snapshots cannot tell the agent's write from the
+    # operator's concurrent edit. Upgrade trigger: if an operator reports a
+    # mid-pass edit lost to this restore, deny the agent writes there instead.
     skip = Path(exclude).resolve() if exclude is not None else None
     unique = {Path(raw).resolve(): Path(raw) for raw in reversed(list(workdirs)) if raw}
     dirs = [p for k, p in reversed(unique.items()) if k != skip]

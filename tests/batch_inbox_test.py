@@ -154,10 +154,11 @@ def test_apply_one_release_drops_the_item_and_resolves_only_its_open_decisions(m
     assert out.ok and out.finished == ("o/r#1",)
     assert run.items[0].status is ItemStatus.DROPPED
     assert run.items[0].wait_reason == ""
-    assert run.decision("d1").resolution == "released"
-    assert run.decision("d1").resolved_at == "t-rel"
-    assert run.decision("d0").resolution == "retry"
-    assert run.decision("d2").open
+    by_id = {d.id: d for d in run.decisions}
+    assert by_id["d1"].resolution == "released"
+    assert by_id["d1"].resolved_at == "t-rel"
+    assert by_id["d0"].resolution == "retry"
+    assert by_id["d2"].open
     assert run.items[1].status is ItemStatus.AWAITING_DECISION
 
 
@@ -168,7 +169,7 @@ def test_apply_one_release_of_a_running_item_with_kill_drops_it():
         run, Release("o/r#1", kill=True), ApplyContext())
     assert out.ok and out.finished == ("o/r#1",)
     assert run.items[0].status is ItemStatus.DROPPED
-    assert run.decision("d1").resolution == "released"
+    assert next(d for d in run.decisions if d.id == "d1").resolution == "released"
 
 
 def test_settle_idle_cancel_wins_over_every_item_terminal():
@@ -235,7 +236,7 @@ def test_deliver_queues_for_a_live_holder_that_drains():
     assert delivery.queued is True and delivery.own is None and delivery.others == ()
     assert delivery.holder.role is Role.DRIVER
     assert [e.name for e in batch.store.peek_requests(run.id)] == [delivery.name]
-    assert batch.store.load(run.id).decision("d1").open
+    assert next(d for d in batch.store.load(run.id).decisions if d.id == "d1").open
 
 
 def test_deliver_waits_out_a_gc_holder_and_then_applies(monkeypatch):

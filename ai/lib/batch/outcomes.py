@@ -1,10 +1,10 @@
 """Turn what a finished step left behind into a step status and decisions.
 
-`classify(..., fixing=True)` is the v1 default until PR 7: CI evidence is
-`ci_unfixed`. A read-only CI step passes `fixing=False` and uses `ci_failing`.
+`classify(..., fixing=True)` treats CI evidence as `ci_unfixed`. A read-only
+CI step passes `fixing=False` and uses `ci_failing`.
 
-A `failed` decision's `reason` is one of these, or a publish refusal from
-`batch.publish.Refusal`. Each maps to one sentence, which status prints as `why`.
+A `failed` finding's `reason` is one of these, or a publish refusal from
+`batch.publish.Refusal`:
 
 - `ai_prompt_failed`: the step's AI prompt failed
 - `review_orchestration_failed`: the review produced no review file
@@ -135,55 +135,6 @@ _MARKERS = (
         core.quota_throttle.QUOTA_EXHAUSTED_PHRASE.lower(), *_PROVIDER_LIMIT_PHRASES)),
     _Marker(FailureReason.AI_PROMPT_FAILED, ("ai prompt failed",)),
 )
-
-FAILURE_WHY: dict[str, str] = {
-    FailureReason.AI_PROMPT_FAILED.value: "an AI prompt the step depends on failed",
-    FailureReason.REVIEW_ORCHESTRATION_FAILED.value:
-        "the self-review's agents exited before writing a review",
-    FailureReason.COMMIT_FAILED.value:
-        "a pre-commit hook refused the fix commit",
-    FailureReason.PRE_PUSH_REJECTED.value:
-        "the pre-push checks rejected the push (a failing hook, or uncommitted work)",
-    FailureReason.UNANSWERED_HANDBACKS.value:
-        "a thread handed to a person has no answer on GitHub, so the summary was not posted "
-        "(the push, if any, landed; answer the thread with `pr comments`, then retry)",
-    FailureReason.LOCK_BUSY.value: "another pr run held this branch's lock",
-    FailureReason.PUSH_REJECTED.value: "git refused the push, or the remote did not keep it",
-    FailureReason.WORKTREE_COLLISION.value:
-        "the PR's worktree path already holds a worktree on another branch "
-        "(move it with `git worktree move`, then retry)",
-    FailureReason.QUOTA_EXHAUSTED.value:
-        "the AI provider's quota or spend limit ran out; stop and wait for it to reset "
-        "rather than retrying",
-    FailureReason.OWNERS_UNCONFIGURED.value:
-        f"github.owners is not configured, so every GitHub write was refused; "
-        f"record our owners with: {gh.owners.FIX_COMMAND}",
-    FailureReason.MISE_UNTRUSTED.value:
-        "a mise config in the worktree is not trusted, so a hook could not run "
-        "(read it, `mise trust` it, then retry)",
-    FailureReason.GITHUB.value: "GitHub could not be asked about the PR",
-    FailureReason.ERROR.value: "the step failed for a reason the batch does not recognise",
-    batch.publish.Refusal.REMOTE_MOVED.value: "someone pushed to the PR branch since the batch planned it",
-    batch.publish.Refusal.NOT_COMPARABLE.value: "the local and remote branches could not be compared",
-    batch.publish.Refusal.NOT_INCORPORATED.value:
-        "the rebase started from a tip missing commits of the PR's remote head",
-    batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
-        "the remote has commits a push of the local branch would drop",
-    batch.publish.Refusal.FETCH_FAILED.value: "the PR branch could not be fetched",
-    batch.publish.Refusal.UNLANDED_FIXES.value:
-        "the fix commit was refused, or the worktree still holds staged fixes",
-    batch.publish.Refusal.WRONG_BRANCH.value:
-        "the PR's worktree is checked out on another branch",
-    batch.publish.Refusal.DRAFTED_DROPPED.value:
-        "commits the batch drafted are no longer on the local branch",
-}
-# Written by runs before `lock_busy` existed; state files still carry it.
-FAILURE_WHY["busy"] = FAILURE_WHY[FailureReason.LOCK_BUSY]
-
-
-def why(reason: str) -> str:
-    """The sentence for a failed decision's `reason`; unknown reasons read as `error`."""
-    return FAILURE_WHY.get(reason, FAILURE_WHY[FailureReason.ERROR.value])
 
 
 def _clean(line: str) -> str:

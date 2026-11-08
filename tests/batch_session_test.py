@@ -334,7 +334,7 @@ def test_an_exceptional_exit_leaves_requests_written_during_the_block_queued():
             batch.store.write_request(RID, Cancel())
             raise _Stop()
     assert batch.store.pending_requests(RID) == 1
-    assert batch.store.load(RID).decision("d1").open
+    assert next(d for d in batch.store.load(RID).decisions if d.id == "d1").open
 
 
 # ── create ────────────────────────────────────────────────────────────────────

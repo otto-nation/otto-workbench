@@ -16,7 +16,6 @@ from review.record import Disposition  # noqa: E402
 from review_record_support import finding, record, store_record  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
-import batch.publish  # noqa: E402
 import pr.fix  # noqa: E402
 
 ITEM = batch.model.Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="s",
@@ -286,14 +285,6 @@ def test_a_failed_step_records_reason_detail_log_and_session_log():
         "reason": "review_orchestration_failed", "exit_code": 1, "log_tail": REVIEW_TAIL,
         "detail": REVIEW_TAIL[0].removeprefix("✗ "), "log": "/logs/o__r-1-review-0.log",
         "session_log": "/state/reviews/maximum-self-b/session.jsonl"}
-
-
-def test_every_recorded_reason_has_a_sentence():
-    recorded = ({r.value for r in batch.outcomes.FailureReason}
-                | {r.value for r in batch.publish.Refusal})
-    assert recorded <= set(batch.outcomes.FAILURE_WHY)
-    assert batch.outcomes.why("busy") == batch.outcomes.why("lock_busy")
-    assert batch.outcomes.why("no-such-reason") == batch.outcomes.why("error")
 
 
 def test_the_module_docstring_names_every_failure_reason():

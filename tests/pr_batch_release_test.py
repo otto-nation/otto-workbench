@@ -60,7 +60,7 @@ def test_release_applies_on_a_waiting_run_and_prints_json(capsys):
     }
     saved = batch.store.load(run.id)
     assert saved.item("o/r#1").status is ItemStatus.DROPPED
-    assert saved.decision("d1").resolution == "released"
+    assert next(d for d in saved.decisions if d.id == "d1").resolution == "released"
 
 
 def test_release_bare_number_matches_the_only_pr(capsys):

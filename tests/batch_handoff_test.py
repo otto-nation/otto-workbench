@@ -170,7 +170,7 @@ def test_an_exceptional_exit_hands_nothing_off(monkeypatch):
         raise _Stop()
     assert calls == []
     assert batch.store.pending_requests(RID) == 1
-    assert batch.store.load(RID).decision("d1").open
+    assert next(d for d in batch.store.load(RID).decisions if d.id == "d1").open
     with open_session(RID):
         pass
     assert [args[0] for args in calls] == [RID]
@@ -252,7 +252,7 @@ def test_a_hand_off_that_cannot_get_in_warns_and_leaves_the_request(holder, othe
     else:
         assert len(slept) >= 2
     assert batch.store.pending_requests(RID) == 1
-    assert batch.store.load(RID).decision("d1").open
+    assert next(d for d in batch.store.load(RID).decisions if d.id == "d1").open
 
 
 # ── two real processes ────────────────────────────────────────────────────────
@@ -361,7 +361,7 @@ def test_deliver_against_a_prober_that_never_lets_go_is_unreachable_not_queued(m
     with held_elsewhere(_lock_file(), _VACATED), pytest.raises(batch.store.RunUnreachable):
         batch.inbox.deliver(RID, Cancel(), _CTX, command="pr batch cancel")
     assert batch.store.pending_requests(RID) == 1
-    assert batch.store.load(RID).decision("d1").open
+    assert next(d for d in batch.store.load(RID).decisions if d.id == "d1").open
 
 
 def test_a_hand_off_waits_out_a_prober_and_applies_the_request():

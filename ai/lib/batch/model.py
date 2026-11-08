@@ -319,9 +319,8 @@ class Run:
     ref_dirs: list[str] = field(default_factory=list)
     cancel: CancelState | None = None
     schema_version: int = 1
-    # None is a run saved before this field existed, or an --auto-publish run,
-    # and means every step runs as before (AI). An empty list is a default
-    # unattended run: no step uses AI.
+    # None is a run saved before this field existed and means every step runs
+    # with AI. An empty list is a default unattended run: no step uses AI.
     with_ai: list[Step] | None = None
     # --auto-publish ff. auto_publish (list[Step]) is load-only for v1 runs.
     auto_publish_ff: bool = False
@@ -334,12 +333,6 @@ class Run:
             if it.key == key:
                 return it
         raise KeyError(key)
-
-    def decision(self, decision_id: str) -> Decision:
-        for d in self.decisions:
-            if d.id == decision_id:
-                return d
-        raise KeyError(decision_id)
 
     def open_decisions(self, item_key: str | None = None) -> list[Decision]:
         return [d for d in self.decisions

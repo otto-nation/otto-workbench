@@ -73,18 +73,6 @@ def test_a_dropped_drafted_commit_refuses_even_with_nothing_to_push():
     assert "1 commit(s) the batch drafted" in got.detail
 
 
-def test_a_confirmed_dropped_commit_publishes():
-    got = batch.publish.plan(_item(), "pr", _tree(1, 0, dropped=("c1 fix: x",)),
-                             confirmed=["c1 fix: x"])
-    assert got.commands == [["pr", "push", "--expect", "r0", *WT]]
-
-
-def test_a_confirmation_does_not_cover_a_drafted_commit_dropped_since():
-    tree = _tree(1, 0, dropped=("c1 fix: x", "c2 fix: y"))
-    got = batch.publish.plan(_item(), "pr", tree, confirmed=["c1 fix: x"])
-    assert (got.refusal, got.commits) == (Refusal.DRAFTED_DROPPED, ["c1 fix: x", "c2 fix: y"])
-
-
 def test_drafted_commits_are_listed_once_in_step_order():
     item = _item()
     item.step(Step.REVIEW).commits = ["b", "a"]

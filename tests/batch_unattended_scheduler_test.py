@@ -86,7 +86,7 @@ def test_interrupt_requeues_the_step():
     rec = h.run.items[0].step(Step.REBASE)
     rec.status = StepStatus.RUNNING
     h.run.items[0].status = ItemStatus.RUNNING
-    assert batch.scheduler.mark_interrupted(h.run, emit=h._record) is True
+    assert batch.scheduler.mark_interrupted(h.run) is True
     assert rec.status is StepStatus.PENDING
     assert h.run.items[0].status is ItemStatus.QUEUED
     assert h.run.decisions == []

@@ -201,18 +201,8 @@ def around_each(
     agent's real edits. Empty *workdirs* is a no-op — every adapter but comments.
     """
     skip = Path(exclude).resolve() if exclude is not None else None
-    dirs: list[Path] = []
-    seen: set[Path] = set()
-    for raw in workdirs:
-        if not raw:
-            continue
-        key = Path(raw).resolve()
-        if skip is not None and key == skip:
-            continue
-        if key in seen:
-            continue
-        seen.add(key)
-        dirs.append(Path(raw))
+    unique = {Path(raw).resolve(): Path(raw) for raw in reversed(list(workdirs)) if raw}
+    dirs = [p for k, p in reversed(unique.items()) if k != skip]
     if not dirs:
         yield
         return

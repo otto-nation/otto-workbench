@@ -350,6 +350,20 @@ for name, value in palette.items():
 PY
 }
 
+@test "an inherited GIT_DIR does not retarget the repo root" {
+  # A git hook exports GIT_DIR, and git then skips discovery: the
+  # `git -C <script dir> rev-parse --show-toplevel` this used to call answered
+  # the cwd (bin/local) and looked for site/package.json next to the script.
+  sandbox_state_dir
+  mkdir -p "$BATS_TEST_TMPDIR/nogit"
+  cd "$BATS_TEST_TMPDIR"
+  GIT_DIR="$BATS_TEST_TMPDIR/nogit" run "$GEN" --resolve-brand --offline
+  [[ "$output" != *"bin/local/site"* ]]
+  # 0 (tokens found) or 3 (brand unavailable) both mean site/package.json was
+  # read from the repo root; a git lookup under GIT_DIR never gets that far.
+  [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
+}
+
 @test "a tarball without package/src/tokens.css exits 3" {
   sandbox_state_dir
   local root="$BATS_TEST_TMPDIR/pkg" tgz="$BATS_TEST_TMPDIR/brand.tgz" integrity

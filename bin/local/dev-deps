@@ -115,9 +115,10 @@ _has_locale() {
 # _brand_tokens_ready — whether --resolve-brand can answer without fetching.
 # --offline is required: without it a missing cache would fetch, and check
 # would report green on a machine that has no tokens yet (the revert that
-# cannot be seen through the stub).
+# cannot be seen through the stub). The generator's own error stays on stderr so a
+# failure names its cause rather than only "missing".
 _brand_tokens_ready() {
-  "$WORKBENCH_DIR/bin/local/generate-herdr-app-themes" --resolve-brand --offline >/dev/null 2>&1
+  "$WORKBENCH_DIR/bin/local/generate-herdr-app-themes" --resolve-brand --offline >/dev/null
 }
 
 _fetch_brand_tokens() {

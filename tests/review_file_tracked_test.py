@@ -102,6 +102,16 @@ def test_unknown_id_is_refused(reviews_dir, monkeypatch, capsys):
     assert [f.id for f in review.finding_issue.filable(review_dir)] == ["M1"]
 
 
+def test_post_exits_nonzero_when_nothing_is_stamped(reviews_dir, monkeypatch, capsys):
+    """Revert: return 0 after file_and_link when no finding has filed=."""
+    _seed(reviews_dir, "M1", covered_sha=HEAD)
+    monkeypatch.setattr(review.finding_issue, "file_and_link", lambda *a, **k: True)
+    with core.publishing.run(post=True):
+        rc = review.file_tracked.run(_ctx(), frozenset({"M1"}))
+    assert rc == 1
+    assert "filed nothing" in capsys.readouterr().err
+
+
 def test_without_post_does_not_call_create_issue(reviews_dir, monkeypatch):
     """Revert: drop the `publishing.enabled()` guard and always call `file_and_link`."""
     _seed(reviews_dir, "M1")

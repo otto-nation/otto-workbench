@@ -147,6 +147,15 @@ class CommentFixAdapter(fix.engine.FixAdapter):
         """
         return super().add_dirs() + ([self.main_wt] if self.main_wt else [])
 
+    def contain_worktrees(self) -> list[Path]:
+        """The default-branch checkout granted in ``add_dirs``, when there is one.
+
+        That grant is a write grant on both backends. Prompt text calling the
+        tree read-only does not revert a write; the engine snapshots this path
+        around the pass and restores anything the agent changed.
+        """
+        return [self.main_wt] if self.main_wt else []
+
     def items(self) -> list[fix.types.FixItem]:
         return fix.comment_checklist.fix_items(
             self.round.fixable, self.threads_by_id, self.workdir,

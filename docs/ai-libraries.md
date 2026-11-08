@@ -667,7 +667,7 @@ kept drifting apart over.
 
 ### fix/containment.py
 
-Content snapshots that restore a verify or suite phase's writes.
+Content snapshots that restore a phase's writes in a named worktree.
 
 A fix pass's verify agent and the repo's suite both run in the operator's real
 worktree with write access. Their writes used to fold into the commit scope —
@@ -675,6 +675,13 @@ including a tracked file the verify agent overwrote with a fixture. This module
 snapshots *content* (not path sets) around those phases and restores anything
 they changed, so the fix agent's pre-phase edits survive and a rewrite of an
 already-dirty file is undone.
+
+The same helpers wrap extra worktrees a domain granted the agent — the comments
+pass's default-branch checkout is ``--add-dir`` / Pi ``REVIEW_ALLOWED_DIRS``,
+so it is writable on both backends, and prompt text calling it read-only does
+not revert a write. ``around_each`` snapshots those trees around the pass and
+restores any path whose content changed, leaving the operator's pre-existing
+dirt intact when the agent did not touch it.
 
 The snapshot uses a temporary ``GIT_INDEX_FILE`` seeded from ``HEAD`` so it
 never touches the operator's real index or stash, and so a tracked file under

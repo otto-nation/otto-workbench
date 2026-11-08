@@ -1,4 +1,4 @@
-"""Content snapshots that restore a verify or suite phase's writes.
+"""Content snapshots that restore a phase's writes in a named worktree.
 
 A fix pass's verify agent and the repo's suite both run in the operator's real
 worktree with write access. Their writes used to fold into the commit scope —
@@ -6,6 +6,13 @@ including a tracked file the verify agent overwrote with a fixture. This module
 snapshots *content* (not path sets) around those phases and restores anything
 they changed, so the fix agent's pre-phase edits survive and a rewrite of an
 already-dirty file is undone.
+
+The same helpers wrap extra worktrees a domain granted the agent — the comments
+pass's default-branch checkout is ``--add-dir`` / Pi ``REVIEW_ALLOWED_DIRS``,
+so it is writable on both backends, and prompt text calling it read-only does
+not revert a write. ``around_each`` snapshots those trees around the pass and
+restores any path whose content changed, leaving the operator's pre-existing
+dirt intact when the agent did not touch it.
 
 The snapshot uses a temporary ``GIT_INDEX_FILE`` seeded from ``HEAD`` so it
 never touches the operator's real index or stash, and so a tracked file under
@@ -46,8 +53,8 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -177,6 +184,39 @@ def around(
         restore(
             workdir, before, after, artifacts=artifacts, phase=phase, trail=trail,
         )
+
+
+@contextmanager
+def around_each(
+    workdirs: Sequence[str | Path],
+    artifacts: str | Path,
+    trail: Trail | None,
+    *,
+    exclude: str | Path | None = None,
+    phase: str = "extra-worktree",
+) -> Iterator[None]:
+    """Snapshot each extra worktree around a pass; restore anything it wrote.
+
+    ``exclude`` is the pass's own workdir, so listing it cannot revert the
+    agent's real edits. Empty *workdirs* is a no-op — every adapter but comments.
+
+    Attribution is by content, so an edit the operator makes in one of these
+    trees while the pass runs is reverted like an agent write; the saved copy
+    under ``artifacts/containment/<phase>`` holds it.
+    """
+    # ceiling: content snapshots cannot tell the agent's write from the
+    # operator's concurrent edit. Upgrade trigger: if an operator reports a
+    # mid-pass edit lost to this restore, deny the agent writes there instead.
+    skip = Path(exclude).resolve() if exclude is not None else None
+    unique = {Path(raw).resolve(): Path(raw) for raw in reversed(list(workdirs)) if raw}
+    dirs = [p for k, p in reversed(unique.items()) if k != skip]
+    if not dirs:
+        yield
+        return
+    with ExitStack() as stack:
+        for wd in dirs:
+            stack.enter_context(around(wd, artifacts, phase, trail))
+        yield
 
 
 def restore(

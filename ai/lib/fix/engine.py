@@ -214,6 +214,8 @@ class FixAdapter(ABC):
     `fix_hint` is what the unproductive-pass guard prepends before a second
     attempt, and `add_dirs` the directories the agent may read; both have an
     answer that suits most domains and neither is worth declaring when it does.
+    `contain_worktrees` is the extra trees those grants made writable — empty
+    unless a domain handed the agent a sibling checkout.
     """
 
     phase: Phase
@@ -393,6 +395,16 @@ class FixAdapter(ABC):
         for a CI or pre-push pass as it was for comments.
         """
         return list(dict.fromkeys([self.workdir, self.artifacts]))
+
+    def contain_worktrees(self) -> list[Path]:
+        """Extra worktrees to snapshot around the agent; none by default.
+
+        Writes in ``workdir`` are attributed and committed. Writes in a sibling
+        the agent was granted — the comments pass's default-branch checkout —
+        are not, and nothing else reverts them. Returning ``workdir`` here is
+        filtered out so it cannot undo the pass's own edits.
+        """
+        return []
 
     def after_verify(self, outcomes: list[ItemOutcome]) -> None:
         """A domain's last word before the commit is landed and pushed.
@@ -1088,6 +1100,26 @@ def _run_pass(
     backup_dir: Path | None, backed_up: tuple[str, ...] = (),
 ) -> FixRun:
     """`run`'s body once the pass is cleared to start: batch, settle, gate, check, land."""
+    with fix.containment.around_each(
+        adapter.contain_worktrees(), adapter.artifacts, trail,
+        exclude=adapter.workdir,
+    ):
+        return _run_contained_pass(
+            adapter, items, trail=trail, verify=verify,
+            head_before=head_before, dirty_before=dirty_before,
+            baseline_ref=baseline_ref, pre_pass=pre_pass,
+            head_state=head_state, backup_dir=backup_dir,
+            backed_up=backed_up,
+        )
+
+
+def _run_contained_pass(
+    adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
+    verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
+    pre_pass: fix.containment.Snapshot, head_state: fix.head_guard.HeadState,
+    backup_dir: Path | None, backed_up: tuple[str, ...] = (),
+) -> FixRun:
+    """The pass after extra-worktree snapshots are in place."""
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)
     name = PHASES[adapter.phase].label

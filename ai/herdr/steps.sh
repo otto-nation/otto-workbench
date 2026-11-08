@@ -20,6 +20,8 @@ fi
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/untrusted_window.sh"
 # shellcheck source=mods_install.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mods_install.sh"
+# shellcheck source=layouts_install.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/layouts_install.sh"
 
 # step_install_herdr — installs herdr via its vendor installer when not on PATH.
 # Keeping an installed herdr current is step_update_herdr's job.

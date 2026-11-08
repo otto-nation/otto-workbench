@@ -354,6 +354,13 @@ _gql() {
   [[ "$output" == *'"runs8":0'* ]]
 }
 
+_rr() {
+  run node --input-type=module -e "
+    import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
+    $1
+  "
+}
+
 @test "checkTools parses present and missing by basename" {
   _bd '
     let table = [{ prefix: "sh -c ", stdout: "/usr/bin/pr\n/opt/homebrew/bin/gh\n" }];
@@ -370,4 +377,36 @@ _gql() {
   [[ "$output" == *'"wt":false'* ]]
   [[ "$output" == *'"everySome":true'* ]]
   [[ "$output" == *'"everyNone":true'* ]]
+}
+
+@test "readReview ok text and missing file is text null" {
+  _rr '
+    const calls = [];
+    const readTextFile = async (path, opts) => {
+      calls.push({ path, on: opts && opts.on });
+      if (path === "/gone.md") return null;
+      return "# review";
+    };
+    const ok = await m.readReview(readTextFile, "/r.md", "mac");
+    const miss = await m.readReview(readTextFile, "/gone.md", "mac");
+    process.stdout.write(JSON.stringify({ ok, miss, calls }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ok":true'* ]]
+  [[ "$output" == *'"text":"# review"'* ]]
+  [[ "$output" == *'"text":null'* ]]
+  [[ "$output" == *'"path":"/r.md"'* ]]
+  [[ "$output" == *'"on":"mac"'* ]]
+}
+
+@test "readReview reject with on is unreachable; without on is failed" {
+  _rr '
+    const readTextFile = async () => { throw new Error("lost"); };
+    const withOn = await m.readReview(readTextFile, "/r.md", "mac");
+    const noOn = await m.readReview(readTextFile, "/r.md", null);
+    process.stdout.write(JSON.stringify({ withOn, noOn }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"kind":"unreachable"'* ]]
+  [[ "$output" == *'"kind":"failed"'* ]]
 }

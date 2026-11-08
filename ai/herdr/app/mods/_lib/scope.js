@@ -64,7 +64,12 @@ export function mergeStates(states) {
     seen.add(id);
     slug = slug ?? st.repo.slug;
     me = me || st.me || '';
-    for (const pr of st.prs) prs.push({ ...pr, repoSlug: st.repo.slug, viewer: st.me });
+    for (const pr of st.prs) {
+      prs.push({
+        ...pr, repoSlug: st.repo.slug, host: st.repo.host, viewer: st.me,
+        on: st.repo.on ?? null,
+      });
+    }
   }
   return { prs, me, repos: seen.size, slug };
 }

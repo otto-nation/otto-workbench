@@ -90,7 +90,7 @@ function asOpen(pull, extra) {
   return {
     ...emptyEnrich(),
     ...pull,
-    state: 'OPEN',
+    state: e.state ?? 'OPEN',
     isDraft: e.isDraft ?? pull.draft,
     inMergeQueue: e.inMergeQueue ?? false,
     mergeable: e.mergeable ?? 'UNKNOWN',
@@ -164,6 +164,16 @@ export async function loadOpenPrs(exec, ctx, slug) {
     exec, ctx, slug, numbers, graphqlArgv,
   );
   return { ok: true, prs: pulls.map((p) => asOpen(p, byNumber[p.number])), partial };
+}
+
+export async function readReview(readTextFile, path, on) {
+  try {
+    const text = await readTextFile(path, { on });
+    return { ok: true, text: text ?? null };
+  } catch (err) {
+    const kind = on != null && on !== '' ? 'unreachable' : 'failed';
+    return { ok: false, error: { kind, message: messageOf(err) } };
+  }
 }
 
 export async function loadListing(exec, ctx) {

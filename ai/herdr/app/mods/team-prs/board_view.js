@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme, layout, run, props,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme, layout, run, props, openOverlay,
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
 import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
@@ -309,6 +309,20 @@ export default class TeamPrs extends View {
     return tabOf() === "mine" ? prs.filter((p) => isMine(p, me)) : filterPrs(prs, filtersOf(), me);
   }
 
+  // One window, replaced in place by the next click. The window is a separate copy of this mod, so
+  // it gets a snapshot of the card (and its review runs) as props.
+  openDetail(pr) {
+    openOverlay({
+      kind: "window", key: "team-prs-detail", mod: "team-prs", width: 0.55, height: 0.8,
+      props: { detail: {
+        repo: pr.repoSlug, host: pr.host, number: pr.number, title: pr.title, author: pr.author,
+        branch: pr.branch, ci: pr.ciStatus, decision: pr.reviewDecision, additions: pr.additions,
+        deletions: pr.deletions, files: pr.changedFiles, url: pr.url,
+        runs: (pr.reviewRuns ?? []).map((r) => r.run),
+      } },
+    });
+  }
+
   onSize(size, cx) { this.size = size; cx.notify(); }
 
   compactHeader(tab, t) {
@@ -331,7 +345,7 @@ export default class TeamPrs extends View {
     return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(tabOf(), t))
-      .child(renderCompact({ sections, onOpen: (_pr) => {}, showRepo: scopeOf() === "all" }));
+      .child(renderCompact({ sections, onOpen: (pr) => this.openDetail(pr), showRepo: scopeOf() === "all" }));
   }
 
   railView(state) {
@@ -358,8 +372,7 @@ export default class TeamPrs extends View {
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx) }))
       .child(renderBoard({
         tab, prs: state.prs ?? [], filters, me: state.me ?? "",
-        // Detail window lands in PR 4.
-        onOpen: (_pr) => {},
+        onOpen: (pr) => this.openDetail(pr),
         spinner: "⠋", showRepo: scopeOf() === "all",
       }));
   }

@@ -1,4 +1,4 @@
-"""`pr batch` resume, resolve and cancel as run sessions: the races a bare run lock left open."""
+"""`pr batch` resume and cancel as run sessions: the races a bare run lock left open."""
 
 import json
 import os

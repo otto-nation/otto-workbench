@@ -4177,7 +4177,7 @@ comments are priced per thread, about a point per hundred threads in the search,
 and are read only as far as `_THREAD_COMMENTS` — enough to see whether anyone
 spoke after a settlement.
 
-A read (`pr batch plan` / `status` / `next`) must not take packed-refs.lock:
+A read (`pr batch plan` / `status` / `report`) must not take packed-refs.lock:
 a killed status that wrote refs left a stale 0-byte lock that blocked every
 later ref update. It lists origin tips with `ls-remote`, fetches those SHAs
 with no ref updates (`-c maintenance.auto=false -c gc.auto=0` and an empty
@@ -8063,7 +8063,7 @@ This module is the one place they are taken for a command:
 |---|---|
 | `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
 | `batch cancel`, `batch release` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can — never the global, so it reaches a live run |
-| `batch status`, `next`, `plan` | nothing |
+| `batch status`, `report`, `plan` | nothing |
 | `rebase`, `push`, `describe`, `fix` | target + checkout |
 | `comments` | target + checkout; `--reply` / `--settle` the target only |
 | `create` | target + checkout; `--dry-run` nothing |
@@ -8202,10 +8202,9 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
-    pr batch next   [RUN_ID] [--offline]       deprecated alias of report --format json
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
 
-Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next/report fall back to the newest run on the machine and say so on stderr.
+Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
 A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
 
@@ -8226,7 +8225,7 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 
 ### cli/pr_batch_views.py
 
-Read-only `pr batch` views: plan, status, report, and the deprecated next alias.
+Read-only `pr batch` views: plan, status and report.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 

@@ -122,12 +122,12 @@ def schema_contracts() -> list[str]:
     Derived from the mode table so the error naming them cannot list an
     invocation that no longer serves one. `review` still contributes by mode;
     `batch` is listed by the subcommands that print a document (`plan` serves
-    1, `status`/`next`/`report` serve 2).
+    1, `status`/`report` serve 2).
     """
     review = [f"{SCRIPT} review {flag}" for flag, mode in cli.review_modes.MODES.items()
               if mode.schema_versions]
-    # `batch plan` still serves version 1; status/next/report serve version 2.
-    batch = [f"{SCRIPT} batch {sub}" for sub in ("plan", "status", "next", "report")]
+    # `batch plan` still serves version 1; status/report serve version 2.
+    batch = [f"{SCRIPT} batch {sub}" for sub in ("plan", "status", "report")]
     return review + batch + [f"{SCRIPT} status", f"{SCRIPT} stack"]
 
 

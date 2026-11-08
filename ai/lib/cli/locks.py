@@ -16,7 +16,7 @@ This module is the one place they are taken for a command:
 |---|---|
 | `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
 | `batch cancel`, `batch release` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can — never the global, so it reaches a live run |
-| `batch status`, `next`, `plan` | nothing |
+| `batch status`, `report`, `plan` | nothing |
 | `rebase`, `push`, `describe`, `fix` | target + checkout |
 | `comments` | target + checkout; `--reply` / `--settle` the target only |
 | `create` | target + checkout; `--dry-run` nothing |

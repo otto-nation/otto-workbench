@@ -983,13 +983,6 @@ Takes no flags.
 | `--full` | Print the raw run state instead of the report. |
 | `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
 
-**`pr batch next`** — Deprecated alias of report --format json
-
-| Flag | Description |
-|------|-------------|
-| `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
-| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
-
 **`pr batch report`** — Print per-PR session commands for a run
 
 | Flag | Description |

@@ -2,7 +2,7 @@
 
 Incident: `pr comments --fix` in batch held publishing for threads awaiting
 discussion, then `git commit` failed the pre-commit hook. The edits stayed
-staged. After `pr batch resolve … --action settle-*`, resume produced a
+staged. After a v1 run's settle decision (removed in schema v2), resume produced a
 `publish` decision. `batch.publish` saw HEAD == origin (nothing to push) and
 ran `pr comments --finish --post`, which posted FIXED replies for work that
 never reached the remote.

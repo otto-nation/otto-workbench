@@ -379,9 +379,9 @@ def test_a_hand_off_waits_out_a_prober_and_applies_the_request():
 # ── R7: status polling never refuses a take ──────────────────────────────────
 
 def _poll_status(stop, first, codes):
-    """What `pr batch status`/`next` run after dispatch (NO_LOCK), in a loop until *stop*."""
+    """What `pr batch status`/`report` run after dispatch (NO_LOCK), in a loop until *stop*."""
     while not stop.is_set():
-        for sub in ("status", "next"):
+        for sub in ("status", "report"):
             codes.append(cli.pr_batch.cmd_batch([sub, RID], None, bin_dir=BIN_DIR))
         first.set()
 

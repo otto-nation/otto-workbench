@@ -290,8 +290,8 @@ HERDR_APP_MODS_SRC_DIR="$WORKBENCH_DIR/ai/herdr/app/mods"
 # <name>$HERDR_APP_THEME_SUFFIX as <name>.json: herdr-app names a theme by its file stem.
 HERDR_APP_THEME_SUFFIX=".generated.json"
 # Theme names for the app's light/dark pair.
-HERDR_APP_THEME_LIGHT="gruvbox-light"
-HERDR_APP_THEME_DARK="gruvbox-dark"
+HERDR_APP_THEME_LIGHT="otto-light"
+HERDR_APP_THEME_DARK="otto-dark"
 # Isolated herdr-app home and herdr-core session for agent machines. The session
 # name is a cross-repo contract with homelab's
 # scripts/setup-herdr-untrusted-window.sh --session default; both repos pin

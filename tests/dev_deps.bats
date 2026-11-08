@@ -38,9 +38,12 @@ _run() {
     err()     { echo "ERR $*"; }
     install_package() { echo "HELPER $*"; return 0; }
     _cmd_runnable() { command -v "$1" >/dev/null 2>&1; }
+    ready="$5"
+    _brand_tokens_ready() { return "$ready"; }
+    _fetch_brand_tokens() { echo "HELPER brand-tokens"; return 0; }
     PATH="$3"
     "$2"
-  ' _ "$REPO_ROOT" "$1" "${2:-/usr/bin:/bin}" "${3:-}"
+  ' _ "$REPO_ROOT" "$1" "${2:-/usr/bin:/bin}" "${3:-}" "${DEV_DEPS_BRAND_READY:-0}"
 }
 
 # _sc_pin — the CI action's shellcheck pin, read the way the script reads it.
@@ -181,4 +184,22 @@ _sc_lab() {
   run bash -c '. "$1"; PATH="$2"; _locale_hint' _ "$REPO_ROOT/bin/local/dev-deps" "$STUBS"
   [ "$status" -eq 0 ]
   [ "$output" = "sudo locale-gen en_US.UTF-8" ]
+}
+
+@test "check reports brand tokens when the ready helper fails" {
+  DEV_DEPS_BRAND_READY=1
+  run _run dev_deps_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"otto brand tokens (herdr-app theme) — run: bin/local/dev-deps (or: npm --prefix site ci)"* ]]
+}
+
+@test "check does not report brand tokens when the ready helper succeeds" {
+  run _run dev_deps_check
+  [[ "$output" != *"otto brand tokens"* ]]
+}
+
+@test "install fetches brand tokens" {
+  run _run dev_deps_install
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HELPER brand-tokens"* ]]
 }

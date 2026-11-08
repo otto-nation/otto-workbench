@@ -1,0 +1,108 @@
+# otto-nation theme for herdr-app.
+#
+# @otto-nation/brand owns every brand hex (src/tokens.css in the package pinned
+# by site/package.json). A brand:<token> name is the CSS custom property without
+# its leading --. [schemes] picks :root (light) or :root overlaid with .dark.
+# The two derived cyans are ours: the brand has no cyan, so those terminal
+# colors stay literal hex here.
+#
+# Contrast rules carried over from the brand: amarillo is never text on the light
+# canvas (rules, borders, focus rings, and a fill carrying on_amarillo text); rosa
+# is UI and large text only. Edit this file and regenerate with
+# bin/local/generate-herdr-app-themes; never edit the JSON.
+
+[palette]
+canvas = "brand:ow-canvas"
+surface = "brand:ow-surface"
+ink = "brand:ow-ink"
+ink_muted = "brand:ow-ink-muted"
+hairline = "brand:ow-hairline"
+outline = "brand:ow-outline"
+warn_soft = "brand:ow-warn-soft"
+anil = "brand:ow-anil"
+done = "brand:ow-done"
+warn = "brand:ow-warn"
+block = "brand:ow-block"
+amarillo = "brand:ow-amarillo"
+rosa = "brand:ow-rosa"
+barro = "brand:ow-barro"
+on_amarillo = "brand:ow-on-amarillo"
+on_rosa = "brand:ow-on-rosa"
+cyan_light_derived = "#2f6a6e"
+cyan_dark_derived = "#7fb7bb"
+
+[schemes]
+otto-light = "light"
+otto-dark = "dark"
+
+[themes.otto-light]
+background = "canvas"
+foreground = "ink"
+selection = "hairline"
+cursor = "ink"
+ansi = [
+  "canvas", "barro", "done", "warn",
+  "anil", "rosa", "cyan_light_derived", "ink_muted",
+  "outline", "barro", "done", "warn",
+  "anil", "rosa", "cyan_light_derived", "ink",
+]
+
+[themes.otto-light.colors]
+canvas = "canvas"
+chrome = "hairline"
+surface = "surface"
+popover = "surface"
+raised = "surface"
+hover = "warn_soft"
+selected = "hairline"
+border = "hairline"
+input = "outline"
+foreground = "ink"
+muted = "ink_muted"
+dim = "outline"
+accent = "rosa"
+accent_foreground = "on_rosa"
+solid = "ink"
+solid_foreground = "surface"
+ring = "amarillo"
+working = "warn"
+blocked = "rosa"
+done = "done"
+idle = "outline"
+unknown = "outline"
+
+[themes.otto-dark]
+background = "canvas"
+foreground = "ink"
+selection = "hairline"
+cursor = "ink"
+ansi = [
+  "canvas", "barro", "done", "warn",
+  "anil", "rosa", "cyan_dark_derived", "ink_muted",
+  "outline", "barro", "done", "warn",
+  "anil", "rosa", "cyan_dark_derived", "ink",
+]
+
+[themes.otto-dark.colors]
+canvas = "canvas"
+chrome = "canvas"
+surface = "surface"
+popover = "surface"
+raised = "block"
+hover = "hairline"
+selected = "block"
+border = "hairline"
+input = "hairline"
+foreground = "ink"
+muted = "ink_muted"
+dim = "outline"
+accent = "amarillo"
+accent_foreground = "on_amarillo"
+solid = "ink"
+solid_foreground = "canvas"
+ring = "amarillo"
+working = "amarillo"
+blocked = "rosa"
+done = "done"
+idle = "outline"
+unknown = "outline"

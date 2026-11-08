@@ -80,10 +80,12 @@ def cmd_plan(args) -> int:
 def write_report(run: Run, *, offline: bool) -> tuple[Path, dict]:
     """Write `report.json` and `report.md` under the run dir; return the path and document.
 
-    Offline skips GitHub and `peek_tree`. A missing worktree is never probed.
+    Offline skips GitHub and `peek_tree`; the tree is read from local objects.
+    A missing worktree is never probed.
     """
     github = _github(run, offline)
-    entries = batch.session_report.sessions(run, tree=None if offline else _peek)
+    reader = batch.publish.local_tree if offline else batch.publish.peek_tree
+    entries = batch.session_report.sessions(run, tree=lambda item: _tree(item, reader))
     doc = report(run, cli.pr_batch_common.is_active(run.id), github,
                  sessions=[e.to_dict() for e in entries])
     directory = batch.store.run_dir(run.id)
@@ -120,9 +122,9 @@ def cmd_report(args) -> int:
     return EXIT_OK
 
 
-def _peek(item: Item):
-    """`peek_tree` only when the worktree is a directory; never a relative probe."""
+def _tree(item: Item, reader):
+    """*reader* only when the worktree is a directory; never a relative probe."""
     wt = item.worktree
     if not (wt and Path(wt).is_dir()):
         return None
-    return batch.publish.peek_tree(item)
+    return reader(item)

@@ -24,17 +24,10 @@ moving that ref — `ls-remote` of `refs/heads/<branch>`, then
 `batch.plan.fetch_objects` for the SHA — so a report can call `publish.plan`
 without moving the lease the rebase trusts as last-seen.
 
-Both pushes are `pr` commands leasing on `remote_sha`, so each writes its own
-report into the publish log and a remote that moved after the fetch is still
-refused.
-
-`pr comments --finish --post` follows when the comments step drafted, an item is
-tracked, or the PR's saved `pr` state says a closeout is owed
-(`batch.plan.closeout_debt`). The last case applies even when there is nothing
-to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
-`--track-all`. A refusal is a `failed` finding on step `publish` carrying `reason`.
-The lease advances as soon as the push lands, so a failure in the replies after
-it never strands the item.
+Both pushes are `pr` commands leasing on `remote_sha`. Schema-2 runs do not
+spawn a publish child: `--auto-publish ff` runs `commands[0]` when it is a
+plain `pr push --expect`, and `session_report` prints the planned argv.
+Closeout is a `closeout_owed` finding, not a post from this module.
 """
 
 # doc-group: batch
@@ -276,6 +269,11 @@ def peek_tree(item: Item) -> TreeState:
     return _tree_from(item, tip, fetched=True)
 
 
+def local_tree(item: Item) -> TreeState:
+    """Compare *item*'s local branch with its planned remote SHA; no network."""
+    return _tree_from(item, item.remote_sha, fetched=True)
+
+
 def _has_staged(wt: str) -> bool:
     """Whether *wt* has staged changes. An unreadable tree is not staged."""
     if not wt or not Path(wt).is_dir():
@@ -306,14 +304,10 @@ def _comments_command(item: Item, pr_bin: str, closeout: CloseoutDebt,
 
 
 def plan(item: Item, pr_bin: str, tree: TreeState, *,
-         confirmed: Sequence[str] = (), closeout: CloseoutDebt = CloseoutDebt(),
+         closeout: CloseoutDebt = CloseoutDebt(),
          no_verify: bool = False) -> PublishPlan:
     """The commands that publish *item* given *tree*, or the refusal that stops it.
 
-    *confirmed* is the operator's ``force-publish``: the commits listed in the
-    refusals they answered, remote or drafted. It pushes past those and past
-    nothing else — a commit that appeared since is refused again, with the full
-    list.
     *closeout* is what `pr` recorded as owed to the PR; when it is owed the
     comments command runs even with nothing drafted or to push.
     """
@@ -337,7 +331,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
             Refusal.UNLANDED_FIXES,
             "the fix commit was refused, or the worktree still holds staged fixes",
         )
-    if set(tree.dropped) - set(confirmed):
+    if tree.dropped:
         return _refuse(Refusal.DRAFTED_DROPPED,
                        f"{len(tree.dropped)} commit(s) the batch drafted are not on "
                        f"{item.branch}", list(tree.dropped))
@@ -347,7 +341,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
             return _refuse(Refusal.NOT_INCORPORATED,
                            f"the rebase started from {git.client.abbrev(item.pre_rebase_head)}, "
                            f"which lacks {git.client.abbrev(item.remote_sha)}")
-        if set(tree.unincorporated) - set(confirmed):
+        if tree.unincorporated:
             return _refuse(Refusal.NOT_INCORPORATED_REMOTE,
                            f"{len(tree.unincorporated)} remote commit(s) have no equivalent "
                            f"in {item.branch}", list(tree.unincorporated))

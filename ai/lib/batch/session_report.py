@@ -124,8 +124,11 @@ def sessions(run: Run, *, closeout: CloseoutFn | None = None,
 def _session(run: Run, item: Item, closeout: CloseoutFn, tree: TreeFn | None) -> SessionEntry:
     findings = list(item.findings) + findings_from_decisions(run, item)
     debt = closeout(item.repo_dir, item.branch)
-    if debt.owed and not _has(findings, FindingReason.CLOSEOUT_OWED):
-        findings.append(Finding(FindingReason.CLOSEOUT_OWED, "comments", CLOSEOUT_WHY))
+    if debt.owed:
+        if not _has(findings, FindingReason.CLOSEOUT_OWED):
+            findings.append(Finding(FindingReason.CLOSEOUT_OWED, "comments", CLOSEOUT_WHY))
+    else:
+        _drop(findings, FindingReason.CLOSEOUT_OWED)
     planned = _plan_tree(item, tree, debt)
     if planned is not None:
         _apply_plan(findings, planned)
@@ -162,9 +165,12 @@ def _plan_tree(item: Item, tree: TreeFn | None, debt: CloseoutDebt) -> _Planned 
 
 def _apply_plan(findings: list[Finding], planned: _Planned) -> None:
     result = planned.plan
-    if result.ok:
-        if result.pushes and not _has(findings, FindingReason.READY_TO_PUSH):
+    if result.ok and result.pushes:
+        if not _has(findings, FindingReason.READY_TO_PUSH):
             findings.append(Finding(FindingReason.READY_TO_PUSH, "publish"))
+    else:
+        _drop(findings, FindingReason.READY_TO_PUSH)
+    if result.ok:
         return
     if result.refusal is Refusal.WRONG_BRANCH:
         if not _has(findings, FindingReason.WRONG_BRANCH):
@@ -193,6 +199,10 @@ def _severity(findings: list[Finding]) -> Severity:
 
 def _has(findings: list[Finding], reason: FindingReason) -> bool:
     return any(f.reason is reason for f in findings)
+
+
+def _drop(findings: list[Finding], reason: FindingReason) -> None:
+    findings[:] = [f for f in findings if f.reason is not reason]
 
 
 def _commands(item: Item, findings: list[Finding],

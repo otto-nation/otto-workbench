@@ -10,8 +10,8 @@ skip: "Do not use for a single PR (use pr-rebase, pr-comments, or ci-failures in
 # PR Batch
 
 Sweeps the viewer's open PRs with `pr batch`: rebase, CI, comments, and
-opt-in self-review, each as a drafted child. The batch is the only thing that
-publishes. A default run never waits on a decision: it exits 0 and
+opt-in self-review, each as a drafted child. Nothing is pushed unless
+`--auto-publish ff`. A default run never waits on a decision: it exits 0 and
 `pr batch report` / `<run-dir>/report.md` prints what needs a person.
 This skill adds no lifecycle of its own — it wraps the CLI.
 
@@ -75,15 +75,17 @@ has already read a hook failure.
   interrupted run. Excluded pending steps become skipped; a later rebase
   commit does not re-queue a dropped review. Adding a step is refused
   (exit 2): start a new run to add one.
-- `pr batch release RUN_ID PR` drops one finished or stuck PR and frees its
-  locks; the worktree stays. `pr batch cancel RUN_ID` stops the whole run.
+- `pr batch release RUN_ID PR` drops one non-terminal PR and frees its
+  locks; the worktree stays. Terminal items are refused. `pr batch cancel RUN_ID`
+  stops the whole run.
 
 ---
 
 ## Findings
 
-Read `pr batch report` / `report.md`. Each finding names a printed command.
-Do not invent flags. Never accept a stale rebase.
+Read `pr batch report` / `report.md`. Printed commands come from the report;
+do not invent flags. Never accept a stale rebase. Some findings have no
+command: read the log or wait.
 
 | Finding | Meaning | Command |
 |---|---|---|
@@ -95,11 +97,13 @@ Do not invent flags. Never accept a stale rebase.
 | `threads_need_human` | review comments need a person | `pr comments --fix --repo-dir WT` |
 | `closeout_owed` | `pr` still owes a closeout | `pr comments --finish --post --repo-dir WT` |
 | `ready_to_push` | local work is ready under the lease | printed `pr push --expect` / `pr rebase --push-only --expect` |
-| `push_refused` | `publish.plan` refused | read the refusal; never force without `--expect` |
-| `stack_wait_base` | base PR is still open | wait for it to merge, then `pr rebase --fork-point` |
-| `dirty_worktree` | paused rebase or dirty tree | stash, or `pr rebase --abort` when paused |
 | `wrong_branch` | worktree is on another branch | `git -C WT switch <branch>` |
-| `failed_unknown` | unclassified failure | read the log path |
+| `push_refused` | `publish.plan` refused | none — read the refusal; never force without `--expect` |
+| `stack_wait_base` | base PR is still open | none — wait for it to merge |
+| `dirty_worktree` | paused rebase or dirty tree | none — stash, or `pr rebase --abort` when paused |
+| `worktree_collision` | another worktree occupies the path | none — `git worktree move` |
+| `budget_exhausted` | AI quota or spend limit | none — wait for it to reset |
+| `failed_unknown` | unclassified failure | none — read the log path |
 
 `block`/`wait` → item `needs_session`; `act` only → `done`.
 

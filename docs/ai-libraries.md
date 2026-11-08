@@ -3963,7 +3963,7 @@ files an issue.
 |---|---|
 | `skipped` | a drafted step is not `done`, the item has findings, local work no step vouched for, or the plan is not a clean fast-forward |
 | `pushed` | `pr push --expect` exited 0; `remote_sha`/`published_sha` become the post-push local tip |
-| `failed` | the push exited non-zero; `findings.record` of the classified failure (`push_refused` or `failed_unknown`) |
+| `failed` | the push exited non-zero; `findings.record` of the classified failure (`failed_unknown`) |
 
 ### batch/events.py
 
@@ -3974,6 +3974,7 @@ The state file is authoritative; events only save a consumer from polling it.
 `generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
 `item_skipped_held` is a PR a new `run` left out because an unfinished run still holds it.
 `finding_created` is a schema-2 recording (`run`, `item`, `reason`, `step`).
+`commits_unrecorded` is a step whose new commits git would not list; the attempt's tip is stored instead.
 
 ### batch/findings.py
 
@@ -3994,9 +3995,9 @@ pending); `with_ai` stays `None` so AI argv does not silently change.
 | `rebase_refused` | `failed_unknown` |
 | `step_review` + `stacked_on` | `stack_wait_base` |
 | `step_review` + `one_sided`/`stale` | `stale_generated` |
-| `step_review` evidence exactly `ci_failing` or `ci_unfixed` | `ci_failing` |
-| `step_review` evidence exactly `open_findings` | `review_findings` (`data.severity` block if any open must-fix) |
-| `step_review` other / mixed | `failed_unknown` (evidence kinds in `detail`) |
+| `step_review` with `ci_failing`/`ci_unfixed` | `ci_failing` (`data.checks_unverified` when present) |
+| `step_review` with `open_findings` | `review_findings` (`data.severity` block if any open must-fix; `data.checks_unverified` when present) |
+| `step_review` other | `failed_unknown` (evidence kinds in `detail`) |
 | `comment_item` | `threads_need_human` |
 | `dirty_worktree` | `dirty_worktree` |
 | `failed` | `wrong_branch` / `worktree_collision` / `budget_exhausted` / `push_refused` / `failed_unknown` |
@@ -4144,11 +4145,11 @@ bumps `Run.schema_version`.
 
 Turn what a finished step left behind into a step status and decisions.
 
-`classify(..., fixing=True)` is the v1 default until PR 7: CI evidence is
-`ci_unfixed`. A read-only CI step passes `fixing=False` and uses `ci_failing`.
+`classify(..., fixing=True)` treats CI evidence as `ci_unfixed`. A read-only
+CI step passes `fixing=False` and uses `ci_failing`.
 
-A `failed` decision's `reason` is one of these, or a publish refusal from
-`batch.publish.Refusal`. Each maps to one sentence, which status prints as `why`.
+A `failed` finding's `reason` is one of these, or a publish refusal from
+`batch.publish.Refusal`:
 
 - `ai_prompt_failed`: the step's AI prompt failed
 - `review_orchestration_failed`: the review produced no review file
@@ -4214,17 +4215,10 @@ moving that ref — `ls-remote` of `refs/heads/<branch>`, then
 `batch.plan.fetch_objects` for the SHA — so a report can call `publish.plan`
 without moving the lease the rebase trusts as last-seen.
 
-Both pushes are `pr` commands leasing on `remote_sha`, so each writes its own
-report into the publish log and a remote that moved after the fetch is still
-refused.
-
-`pr comments --finish --post` follows when the comments step drafted, an item is
-tracked, or the PR's saved `pr` state says a closeout is owed
-(`batch.plan.closeout_debt`). The last case applies even when there is nothing
-to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
-`--track-all`. A refusal is a `failed` finding on step `publish` carrying `reason`.
-The lease advances as soon as the push lands, so a failure in the replies after
-it never strands the item.
+Both pushes are `pr` commands leasing on `remote_sha`. Schema-2 runs do not
+spawn a publish child: `--auto-publish ff` runs `commands[0]` when it is a
+plain `pr push --expect`, and `session_report` prints the planned argv.
+Closeout is a `closeout_owed` finding, not a post from this module.
 
 ### batch/report.py
 
@@ -8206,7 +8200,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
-A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
+A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted. Nothing is pushed unless `--auto-publish ff`. --no-verify skips the pre-push hook on those publishes.
 
 Exit 0 when a run is done or cancelled, 1 when it stopped without settling. resume never clears a recorded cancel. cancel and release write the run's inbox; a live holder that drains applies a queued request.
 

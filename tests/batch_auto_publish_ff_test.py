@@ -93,8 +93,7 @@ def test_a_failed_ff_push_is_a_finding():
     item = h.run.items[0]
     assert published
     assert item.status is ItemStatus.NEEDS_SESSION
-    assert item.findings[0].reason in (
-        FindingReason.PUSH_REFUSED, FindingReason.FAILED_UNKNOWN)
+    assert item.findings[0].reason is FindingReason.FAILED_UNKNOWN
 
 
 # passes-at-base: the default path this change must not alter

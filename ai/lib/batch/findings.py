@@ -15,9 +15,9 @@ pending); `with_ai` stays `None` so AI argv does not silently change.
 | `rebase_refused` | `failed_unknown` |
 | `step_review` + `stacked_on` | `stack_wait_base` |
 | `step_review` + `one_sided`/`stale` | `stale_generated` |
-| `step_review` evidence exactly `ci_failing` or `ci_unfixed` | `ci_failing` |
-| `step_review` evidence exactly `open_findings` | `review_findings` (`data.severity` block if any open must-fix) |
-| `step_review` other / mixed | `failed_unknown` (evidence kinds in `detail`) |
+| `step_review` with `ci_failing`/`ci_unfixed` | `ci_failing` (`data.checks_unverified` when present) |
+| `step_review` with `open_findings` | `review_findings` (`data.severity` block if any open must-fix; `data.checks_unverified` when present) |
+| `step_review` other | `failed_unknown` (evidence kinds in `detail`) |
 | `comment_item` | `threads_need_human` |
 | `dirty_worktree` | `dirty_worktree` |
 | `failed` | `wrong_branch` / `worktree_collision` / `budget_exhausted` / `push_refused` / `failed_unknown` |
@@ -35,6 +35,7 @@ import batch.store
 from batch.model import (FINISHED_RUN, Decision, DecisionKind, EvidenceKind, Finding,
                          FindingReason, Item, ItemStatus, Run, Severity, Step, StepStatus,
                          severity_of, stacked_on_items)
+from batch.outcomes import FailureReason
 from batch.publish import Refusal
 from rebase.types import ConflictStrategy
 from review.types import SEVERITY_MUST, severity_by_key
@@ -97,10 +98,13 @@ def _step_review(decision: Decision) -> Finding:
         files = [f for e in evidence for f in e.get("files") or []]
         return _finding(FindingReason.STALE_GENERATED, decision, files=files,
                         data={"one_sided": EvidenceKind.ONE_SIDED.value in kinds})
-    if kinds in ({EvidenceKind.CI_FAILING.value}, {EvidenceKind.CI_UNFIXED.value}):
+    unverified = [e for e in evidence
+                  if e.get("kind") == EvidenceKind.CHECKS_UNVERIFIED.value]
+    extra = {"checks_unverified": unverified} if unverified else {}
+    if EvidenceKind.CI_FAILING.value in kinds or EvidenceKind.CI_UNFIXED.value in kinds:
         jobs = sorted({j for e in evidence for j in (e.get("jobs") or [])})
-        return _finding(FindingReason.CI_FAILING, decision, data={"jobs": jobs})
-    if kinds == {EvidenceKind.OPEN_FINDINGS.value}:
+        return _finding(FindingReason.CI_FAILING, decision, data={"jobs": jobs, **extra})
+    if EvidenceKind.OPEN_FINDINGS.value in kinds:
         listed = [f for e in evidence for f in e.get("findings") or []]
         must = severity_by_key(SEVERITY_MUST).label
         block = any(not f.get("declined") and f.get("severity") == must for f in listed)
@@ -110,7 +114,8 @@ def _step_review(decision: Decision) -> Finding:
             counts[label] = counts.get(label, 0) + 1
         sev = Severity.BLOCK if block else Severity.ACT
         return _finding(FindingReason.REVIEW_FINDINGS, decision,
-                        data={"findings": listed, "counts": counts, "severity": sev.value})
+                        data={"findings": listed, "counts": counts,
+                              "severity": sev.value, **extra})
     kinds_list = [e.get("kind", "") for e in evidence]
     return _finding(FindingReason.FAILED_UNKNOWN, decision,
                     detail=", ".join(kinds_list) or EvidenceKind.OPEN_FINDINGS.value)
@@ -125,10 +130,10 @@ def _failed(decision: Decision) -> Finding:
         return _finding(FindingReason.PUSH_REFUSED, decision,
                         detail=str(decision.payload.get("detail") or ""),
                         data={"refusal": reason})
-    if reason == FindingReason.WORKTREE_COLLISION.value:
+    if reason == FailureReason.WORKTREE_COLLISION.value:
         return _finding(FindingReason.WORKTREE_COLLISION, decision,
                         detail=str(decision.payload.get("detail") or ""))
-    if reason == "quota_exhausted":
+    if reason == FailureReason.QUOTA_EXHAUSTED.value:
         return _finding(FindingReason.BUDGET_EXHAUSTED, decision)
     return _finding(FindingReason.FAILED_UNKNOWN, decision,
                     detail=str(decision.payload.get("detail") or ""),

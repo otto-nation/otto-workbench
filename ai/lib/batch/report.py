@@ -24,7 +24,7 @@ from collections import Counter
 from collections.abc import Sequence
 
 import batch.live
-from batch.model import Item, Run, RunStatus
+from batch.model import Item, ItemStatus, Run, RunStatus
 from batch.store import FailedRequest
 
 SCHEMA_VERSION = 2
@@ -52,6 +52,12 @@ def _hint(run: Run, active: bool, github: dict | None = None) -> str:
     if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
         if batch.live.owes(github):
             return f"the run is {run.status.value}; {_github_hint(github)}"
+        n = sum(1 for i in run.items if i.status is ItemStatus.NEEDS_SESSION)
+        if n:
+            return (f"the run is {run.status.value}; {n} PR{'' if n == 1 else 's'} "
+                    f"need a session — `pr batch report`")
+        if any(i.findings for i in run.items):
+            return f"the run is {run.status.value}; findings remain — `pr batch report`"
         return f"the run is {run.status.value}; nothing is left to answer"
     return (f"continue with `pr batch resume {run.id}`; its decisions become "
             "findings (`pr batch report`)")

@@ -54,6 +54,7 @@ import agent.templates
 import fix.baseline
 import fix.blame
 import fix.containment
+import fix.dirty_backup
 import fix.head_guard
 import fix.leftovers
 import fix.scope
@@ -1050,7 +1051,15 @@ def run(
 
     # Content before the agent runs, so what the commit leaves behind can be
     # named afterwards: `fix.leftovers` compares it with the tree after landing.
+    # Already-dirty files are copied under artifacts/dirty-backup first, so an
+    # overwrite is restorable from disk. Failure here must not abort the pass.
     pre_pass = fix.containment.take(adapter.workdir)
+    backup = fix.dirty_backup.save(
+        adapter.workdir, adapter.artifacts, dirty_before, trail=trail,
+        exclude=fix.leftovers.artifacts_prefix(
+            adapter.workdir, adapter.artifacts,
+        ),
+    )
 
     # Taken before the agent runs, for the one question asked of a red verify
     # run: was the tree already red? Skipped for a domain whose checks never
@@ -1065,7 +1074,8 @@ def run(
     try:
         return _run_pass(adapter, items, trail=trail, verify=verify, head_before=head_before,
                          dirty_before=dirty_before, baseline_ref=baseline_ref,
-                         pre_pass=pre_pass, head_state=head_state)
+                         pre_pass=pre_pass, head_state=head_state,
+                         backup_dir=backup.dest, backed_up=backup.paths)
     except (KeyboardInterrupt, SystemExit):
         _interrupted(adapter, dirty_before, head_before, trail)
         raise
@@ -1075,6 +1085,7 @@ def _run_pass(
     adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
     verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
     pre_pass: fix.containment.Snapshot, head_state: fix.head_guard.HeadState,
+    backup_dir: Path | None, backed_up: tuple[str, ...] = (),
 ) -> FixRun:
     """`run`'s body once the pass is cleared to start: batch, settle, gate, check, land."""
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
@@ -1177,7 +1188,8 @@ def _run_pass(
     fix.leftovers.report(adapter.workdir, fix.leftovers.find(
         adapter.workdir, pre_pass, dirty_before,
         exclude=fix.leftovers.artifacts_prefix(adapter.workdir, adapter.artifacts),
-    ), landed, trail)
+    ), landed, trail, backup_dir=backup_dir,
+                        backed_up=backed_up)
 
     exit_code = settled.exit_code
     if landed.status is git.land.CommitStatus.COMMIT_FAILED:

@@ -56,7 +56,11 @@ The verify agent and the repo's `fix.verify_command` also run in the real worktr
 Containment snapshots content around each of those phases and restores anything they
 wrote (including tracked files under an ignored path), so a verify rewrite of a file already dirty (or of a PR file the pass never
 asked about) cannot ride into the commit. Clobbered bytes are saved under the pass's
-`containment/` artifacts. Before the agent runs, files already dirty in the worktree
+`containment/` artifacts. The comments pass also grants the default-branch worktree
+as an extra directory; that grant is writable on both backends, so the same
+content snapshot wraps it around the pass and restores any path the agent changed
+(`containment/extra-worktree/`). Operator dirt the agent did not touch is left as
+it was. Before the agent runs, files already dirty in the worktree
 are copied under the pass's `dirty-backup/` artifacts so an overwrite of the operator's
 uncommitted edit is restorable from disk. Tool denials on the verify agent are extra; process writes
 bypass them, which is why the restore is the control. A pass whose agent switched

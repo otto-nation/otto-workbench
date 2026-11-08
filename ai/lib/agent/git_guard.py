@@ -12,6 +12,11 @@ Not a sandbox: an absolute git path, a ``PATH=`` override, or a ``!`` shell
 alias bypasses it.
 """
 
+# ceiling: the shim compares --absolute-git-dir against the fix worktree's
+# own git dir, so a sibling worktree of the same repo is not guarded.
+# Upgrade trigger: if a fix agent is ever observed running a guarded git
+# subcommand against a sibling worktree.
+
 # doc-group: backend
 
 from __future__ import annotations

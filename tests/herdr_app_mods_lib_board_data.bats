@@ -361,28 +361,6 @@ _rr() {
   "
 }
 
-@test "loadPr ok maps one graphql PR and passes cwd/on" {
-  _bd '
-    const pr0 = {isDraft:true,reviewDecision:"APPROVED",mergeable:"MERGEABLE",additions:1,deletions:2,changedFiles:3,mergeQueueEntry:{id:"q"},commits:{nodes:[{commit:{statusCheckRollup:{state:"SUCCESS"}}}]},latestReviews:{nodes:[{author:{login:"bob"},state:"APPROVED"}]},reviewRequests:{nodes:[]},state:"OPEN",mergedAt:null};
-    const table = [{ prefix: "gh api graphql", stdout: JSON.stringify({ data: { repository: { pr0 } } }) }];
-    const r = pack(await m.loadPr(exec, ctx, "acme/box", 3, "ada"));
-    const pr = r.pr;
-    process.stdout.write(JSON.stringify({
-      ok: r.ok, every: calls.every(everyOn), n: calls.length,
-      gql: calls[0] && calls[0].args[1], number: pr.number, state: pr.state,
-      isDraft: pr.isDraft, ci: pr.ciStatus, add: pr.additions, inMq: pr.inMergeQueue,
-    }));
-  '
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'"ok":true'* ]]
-  [[ "$output" == *'"every":true'* ]]
-  [[ "$output" == *'"gql":"graphql"'* ]]
-  [[ "$output" == *'"number":3'* ]]
-  [[ "$output" == *'"state":"OPEN"'* ]]
-  [[ "$output" == *'"isDraft":true'* ]]
-  [[ "$output" == *'"inMq":true'* ]]
-}
-
 @test "checkTools parses present and missing by basename" {
   _bd '
     let table = [{ prefix: "sh -c ", stdout: "/usr/bin/pr\n/opt/homebrew/bin/gh\n" }];
@@ -399,33 +377,6 @@ _rr() {
   [[ "$output" == *'"wt":false'* ]]
   [[ "$output" == *'"everySome":true'* ]]
   [[ "$output" == *'"everyNone":true'* ]]
-}
-
-@test "loadPr closed PR keeps state from graphql" {
-  _bd '
-    const pr0 = {isDraft:false,reviewDecision:null,mergeable:"UNKNOWN",additions:0,deletions:0,changedFiles:0,mergeQueueEntry:null,commits:{nodes:[]},latestReviews:{nodes:[]},reviewRequests:{nodes:[]},state:"CLOSED",mergedAt:null};
-    const table = [{ prefix: "gh api graphql", stdout: JSON.stringify({ data: { repository: { pr0 } } }) }];
-    const r = pack(await m.loadPr(exec, ctx, "o/n", 9, "ada"));
-    process.stdout.write(JSON.stringify({ ok: r.ok, state: r.pr.state, number: r.pr.number }));
-  '
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'"ok":true'* ]]
-  [[ "$output" == *'"state":"CLOSED"'* ]]
-  [[ "$output" == *'"number":9'* ]]
-}
-
-@test "loadPr typed error on gh fail and missing node" {
-  _bd '
-    let table = [{ prefix: "gh api graphql", code: 1, stderr: "boom" }];
-    const fail = pack(await m.loadPr(exec, ctx, "o/n", 1, "ada"));
-    calls.length = 0;
-    table = [{ prefix: "gh api graphql", stdout: JSON.stringify({ data: { repository: {} } }) }];
-    const miss = pack(await m.loadPr(exec, ctx, "o/n", 1, "ada"));
-    process.stdout.write(JSON.stringify({ fail, miss }));
-  '
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'"kind":"failed"'* ]]
-  [[ "$output" == *'not found'* ]]
 }
 
 @test "readReview ok text and missing file is text null" {

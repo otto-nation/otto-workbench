@@ -207,22 +207,24 @@ _brand_site() {
   [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
 }
 
-@test "node_modules at another version is ignored" {
+@test "a node_modules brand at a different version than the pin is unused" {
   sandbox_state_dir
   _brand_site 9.9.9
   _brand_palette
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"unavailable"* ]]
+  [[ "$output" == *"brand tokens unavailable"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
 }
 
-@test "a lock resolved that differs from package.json exits 3" {
+@test "a lock resolved that differs from the package.json url is stale" {
   sandbox_state_dir
   _brand_site 1.2.0 "file://${BATS_TEST_TMPDIR}/other.tgz"
   _brand_palette
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"npm --prefix site install"* ]]
+  [[ "$output" == *"package-lock.json is stale"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
 }
 
 @test "package.json with no brand dependency exits 3" {

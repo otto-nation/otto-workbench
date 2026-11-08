@@ -16,7 +16,6 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.publish  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.requests  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
@@ -110,7 +109,7 @@ def test_the_plan_base_ref_reaches_the_item():
     need = {batch.model.Step.REVIEW: StepNeed(True, "x")}
     row = PlanRow("o/r", "/r", 1, "t", "feat", "h", False, need, base_ref="main")
     run = batch.scheduler.new_run([row], steps=list(batch.model.STEP_ORDER), selected=None,
-                                  pool=1, auto_publish=[])
+                                  pool=1)
     assert run.items[0].base_ref == "main"
 
 
@@ -252,11 +251,6 @@ def _head(work):
     return git_out(work, "rev-parse", "HEAD").strip()
 
 
-def _retry(run):
-    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
-    return run.items[0]
-
-
 def _advance_main(pair):
     git_in(pair.seed, "checkout", "-q", "main")
     (pair.seed / "upstream.txt").write_text("upstream\n")
@@ -304,160 +298,6 @@ def _assert_refused(item, pair, planned, head):
     assert item.status is batch.model.ItemStatus.QUEUED
 
 
-def test_a_publish_retry_leases_on_the_branch_the_operator_pushed(tmp_path):
-    # Regression: the retry re-planned against the old lease, so every publish
-    # after a hand push refused remote_moved and the item could only be dropped.
-    pair = remote_and_clone(tmp_path)
-    run = _remote_moved_run(pair)
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    git_in(pair.work, "push", "-q", "origin", "feat")
-    item = _retry(run)
-    assert item.remote_sha == remote_tip(pair.origin, "feat")
-    assert item.published_sha == ""
-    assert item.status is batch.model.ItemStatus.QUEUED
-    assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).ok
-
-
-def test_a_publish_retry_adopts_a_patch_equivalent_rebase(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _remote_moved_run(pair)
-    planned = run.items[0].remote_sha
-    (pair.work / "scratch.txt").write_text("untracked\n")
-    _equivalent_rebase(pair)
-    assert _head(pair.work) != remote_tip(pair.origin, "feat")
-    item = _retry(run)
-    _assert_adopted(item, pair, planned)
-    assert (pair.work / "scratch.txt").read_text() == "untracked\n"
-
-
-def test_a_publish_retry_adopts_a_fast_forward_remote(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _remote_moved_run(pair)
-    planned = run.items[0].remote_sha
-    advance(pair.seed, "feat", "colleague")
-    item = _retry(run)
-    _assert_adopted(item, pair, planned)
-
-
-def test_a_publish_retry_keeps_the_lease_when_a_local_commit_is_unique(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _remote_moved_run(pair)
-    planned = run.items[0].remote_sha
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: local")
-    head = _head(pair.work)
-    advance(pair.seed, "feat", "colleague")
-    item = _retry(run)
-    _assert_refused(item, pair, planned, head)
-    assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).refusal is \
-        Refusal.REMOTE_MOVED
-
-
-def test_a_publish_retry_keeps_the_lease_when_a_rebase_has_a_unique_local_commit(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _remote_moved_run(pair)
-    planned = run.items[0].remote_sha
-    _equivalent_rebase(pair)
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: local")
-    head = _head(pair.work)
-    item = _retry(run)
-    _assert_refused(item, pair, planned, head)
-
-
-def test_a_publish_retry_keeps_the_lease_when_a_conflict_resolved_differently(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _remote_moved_run(pair)
-    planned = run.items[0].remote_sha
-    git_in(pair.seed, "checkout", "-q", "main")
-    (pair.seed / "feat.txt").write_text("main\n")
-    commit_all(pair.seed, "chore: touch feat")
-    git_in(pair.seed, "push", "-q", "origin", "main")
-    _rebase_feat_resolving(pair.seed, "remote\n")
-    git_in(pair.seed, "push", "-q", "--force", "origin", "feat")
-    _rebase_feat_resolving(pair.work, "local\n")
-    head = _head(pair.work)
-    item = _retry(run)
-    _assert_refused(item, pair, planned, head)
-
-
-def test_a_publish_retry_keeps_the_lease_when_a_tracked_file_is_dirty(tmp_path):
-    # reset --keep would succeed: feat.txt's blob is the same on both sides,
-    # and the remote only added a new file. The explicit clean check must refuse.
-    pair = remote_and_clone(tmp_path)
-    run = _remote_moved_run(pair)
-    planned = run.items[0].remote_sha
-    head = _head(pair.work)
-    (pair.work / "feat.txt").write_text("dirty\n")
-    advance(pair.seed, "feat", "colleague")
-    item = _retry(run)
-    _assert_refused(item, pair, planned, head)
-    assert (pair.work / "feat.txt").read_text() == "dirty\n"
-
-
-def test_publishing_a_fast_forward_moves_the_remote_and_the_lease(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _publish_run(pair)
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    local = git_out(pair.work, "rev-parse", "HEAD").strip()
-    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"),
-                        pr_bin=PR_BIN)
-    assert remote_tip(pair.origin, "feat") == local
-    assert run.items[0].remote_sha == local == run.items[0].published_sha
-    assert run.items[0].status is batch.model.ItemStatus.DONE
-
-
-def test_a_publish_that_commits_before_pushing_leases_on_what_it_pushed(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _publish_run(pair)
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-
-    def regenerating_push(argv, log_path=None):
-        (pair.work / "regen.txt").write_text("regen\n")
-        commit_all(pair.work, "chore: regenerate")
-        git_in(pair.work, "push", "-q", "origin", "feat")
-        return 0
-
-    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
-                        runner=regenerating_push)
-    assert run.items[0].remote_sha == remote_tip(pair.origin, "feat")
-    assert run.items[0].published_sha == run.items[0].remote_sha
-
-
-def test_a_fast_forward_publish_logs_what_the_push_said(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    run = _publish_run(pair)
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"),
-                        pr_bin=PR_BIN)
-    logs = sorted(batch.store.logs_dir("r1").glob("o__r-1-publish-*.log"))
-    assert [p.name for p in logs] == ["o__r-1-publish-0.log"]
-    assert "Pushed" in logs[0].read_text()
-
-
-def test_a_fast_forward_a_hook_refuses_records_pre_push_rejected(tmp_path, live_git_hooks):
-    pair = remote_and_clone(tmp_path)
-    run = _publish_run(pair)
-    hooks = tmp_path / "hooks"
-    hooks.mkdir()
-    hook = hooks / "pre-push"
-    hook.write_text("#!/bin/sh\necho 'lint failed' >&2\nexit 1\n")
-    hook.chmod(0o755)
-    git_in(pair.work, "config", "core.hooksPath", str(hooks))
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"),
-                        pr_bin=PR_BIN)
-    failed = run.open_decisions()[-1]
-    assert failed.payload["reason"] == "pre_push_rejected"
-    assert failed.payload["detail"].startswith("push refused (hook)")
-    assert "lint failed" in Path(failed.payload["log"]).read_text()
-
-
 def test_owed_closeout_alone_publishes_only_the_replies():
     got = batch.publish.plan(_item(), "pr", _tree(0, 0),
                              closeout=CloseoutDebt(summary=True))
@@ -489,38 +329,3 @@ def test_owed_closeout_is_still_refused_when_somebody_pushed():
 
 def test_no_debt_and_nothing_drafted_plans_nothing():
     assert batch.publish.plan(_item(), "pr", _tree(0, 0), closeout=CloseoutDebt()).commands == []
-
-
-def test_carried_lists_the_commits_and_diff_the_push_would_carry(tmp_path):
-    repo = init_repo(tmp_path / "r")
-    (repo / "f").write_text("a\n")
-    commit_all(repo, "base")
-    base = git_out(repo, "rev-parse", "HEAD").strip()
-    (repo / "f").write_text("a\nb\n")
-    commit_all(repo, "add b")
-    local = git_out(repo, "rev-parse", "HEAD").strip()
-    item = batch.model.Item(key="o/r#1", repo="o/r", repo_dir=str(repo), pr=1, branch="main",
-                            head_sha=base, worktree=str(repo), remote_sha=base)
-    tree = TreeState(local=local, remote=base,
-                     divergence=RefDivergence(ahead=1, behind=0, comparable=True))
-
-    got = batch.publish.carried(item, tree)
-
-    assert [(c.sha, c.subject) for c in got.commits] == [(local, "add b")]
-    assert "+b" in got.diff
-    assert (got.truncated, got.remote_ahead) == (False, 0)
-
-
-def test_carried_counts_remote_commits_since_the_planned_head(tmp_path):
-    repo = init_repo(tmp_path / "r")
-    (repo / "f").write_text("a\n")
-    commit_all(repo, "planned")
-    planned = git_out(repo, "rev-parse", "HEAD").strip()
-    (repo / "f").write_text("a\nc\n")
-    commit_all(repo, "someone else")
-    remote = git_out(repo, "rev-parse", "HEAD").strip()
-    item = batch.model.Item(key="o/r#1", repo="o/r", repo_dir=str(repo), pr=1, branch="main",
-                            head_sha=planned, worktree=str(repo), remote_sha=planned)
-    tree = TreeState(local=planned, remote=remote,
-                     divergence=RefDivergence(ahead=0, behind=1, comparable=True))
-    assert batch.publish.carried(item, tree).remote_ahead == 1

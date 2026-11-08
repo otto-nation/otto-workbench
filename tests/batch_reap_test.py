@@ -15,7 +15,7 @@ import batch.plan  # noqa: E402
 import batch.store  # noqa: E402
 import core.run_lock  # noqa: E402
 from batch.model import Item, Run, RunStatus, Step, StepRecord  # noqa: E402
-from batch.requests import Decide  # noqa: E402
+from batch.requests import Cancel  # noqa: E402
 from batch_session_support import seed_raw  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
 
@@ -51,7 +51,7 @@ def _tombstone(run_id):
 def test_pending_requests_keep_the_run(monkeypatch):
     """A queued request keeps the run before it is ever renamed to a tombstone."""
     _put("r1")
-    batch.store.write_request("r1", Decide(decision="d1", action="retry"))
+    batch.store.write_request("r1", Cancel())
     moved = []
     real = batch.store.os.rename
 
@@ -114,7 +114,7 @@ def test_write_request_after_removal_does_not_recreate_the_dir():
     assert not batch.store.run_dir("r1").exists()
     assert not _tombstone("r1").exists()
     with pytest.raises(batch.store.RunNotFound):
-        batch.store.write_request("r1", Decide(decision="d1", action="retry"))
+        batch.store.write_request("r1", Cancel())
     assert not batch.store.run_dir("r1").exists()
 
 

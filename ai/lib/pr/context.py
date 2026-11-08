@@ -38,7 +38,7 @@ routinely disagree:
 | `gc` | remote | no | target | find |
 
 `cli.locks` takes the locks and documents why each command holds what it holds.
-`batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
+`batch cancel`/`release`'s per-run lock and `gc`'s lock on each pruned target are taken
 in the handler, not declared on the Need — they are in that table.
 
 `review`, `create`, `ci`, `comments`, `rebase` and `batch` are the commands

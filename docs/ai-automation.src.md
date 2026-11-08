@@ -532,13 +532,10 @@ pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff]
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
-pr batch next [RUN_ID]                   # only what needs action (JSON)
+pr batch next [RUN_ID]                   # deprecated alias of report --format json
 pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state plus `run_dir`
-pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
-pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]  # JSON `applied`; `queued`+`holder` when deferred
-pr batch resolve RUN_ID DECISION_ID --action publish|force-publish --dry-run  # preview; change nothing
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
 
@@ -552,71 +549,32 @@ when the branch is behind its PR's base, from fetched objects (a run keeps them
 in `refs/pr-batch/`; GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed). `comments` is needed when `pr comments` would find something to answer (`pr.owed_feedback`): threads, review bodies or PR comments.
 `ci` runs `ci-check --no-rebase --head-sha <planned remote head>` (not `pr ci`)
 when the rollup failed, with `--wait` if still running; `--fix` and the rate-limit
-rerun only under `--with-ai=ci`. Fork heads skip both. A stacked PR waits for
-its base; `resume` retries `stacked_on` once that base is terminal, rebasing from
-`--fork-point`. One fetching rebase or CI step per repo at a time. No start in a
-dirty worktree except a rebase resuming its paused replay or restoring generated files.
+rerun only under `--with-ai=ci`. Fork heads skip both. A stacked PR records
+`stack_wait_base` and is not rebased in the run. One fetching rebase or CI step
+per repo at a time. No start in a dirty worktree except restoring generated files.
 
 A default run never opens a decision; items end `done` or `needs_session` with
-`findings` (`batch/findings.py`), shown by `pr batch report`. A run started
-before schema 2 keeps that lifecycle until `pr batch resume` converts its open
-decisions to findings (one-way). An item that closes with drafted work, an owed closeout, or unpublished local commits opens one `publish` decision. Publish fetches the branch and refuses (`failed`) with `wrong_branch`,
-`fetch_failed`, `remote_moved`, `not_comparable`, `not_incorporated`, `not_incorporated_remote`,
-or `drafted_dropped` (see `batch.publish`). Otherwise it fast-forwards with
-`pr push --expect <planned head>`, or force-pushes with
-`pr rebase --push-only --expect <planned head>`, then runs
-`pr comments --finish --post` when the comments step drafted, items were
-tracked, or a closeout is owed — with `--track-all` when the owed part is
-a tracking issue. A commit `--finish` pushes becomes the lease.
-`force-publish` answers only `not_incorporated_remote` and `drafted_dropped` for the listed
-commits (a hand `--fork-point` rebase: the skipped ones); a new one refuses again.
-A publish `retry` leases on a remote equal to local; on `remote_moved` it leases on a remote that fast-forwarded the lease to a commit local holds, or else resets onto one holding every local patch, though the adopted remote may carry commits beyond local's (`batch.resolve`). `--auto-publish ff` pushes a
-clean fast-forward (`pr push --expect`) when an item closes with no findings;
-never a force push, closeout post or issue filing.
-`--no-verify` skips the pre-push hook on the branch push (`pr push` / `pr rebase --push-only`) and the comments closeout push.
-`pr batch resolve … --action publish|force-publish --dry-run` prints what that
-publish would push and changes nothing: it plans over `peek_tree` (reads origin
-without moving the lease). The document is `{schema_version, decision, action,
-ok, refusal, detail, pushes, commands, refused_commits, commits: [{sha, subject}],
-diff, truncated, remote_ahead, closeout}` (`closeout` carries `owed` and `describe`).
-Exit 0 even when `ok` is false; 2 for any other action; 1 for an unknown decision.
+`findings` (`batch/findings.py`), shown by `pr batch report`. A stored waiting
+v1 run converts on `resume` (one-way). `--auto-publish ff` pushes a clean
+fast-forward (`pr push --expect`) when an item closes with no findings; never a
+force push, closeout post or issue filing. `--no-verify` skips the pre-push hook
+on those publishes.
 
-A step that needs a person opens one `step_review` whose `evidence` is
-`open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,
-or `unreadable` when the step's commit-range `git log` failed; a commit with
-no trailer is not evidence), `ci_unfixed`, `one_sided`, `stale` (`files_stale`), or `stacked_on`.
-Actions: `accept`, `retry`, `skip-step`, `undo` (rebase: `git reset --hard` to the
-pre-rebase head; the answer to `one_sided` and `stale`, never `accept`). Kinds
-and actions are tabled in [`batch/resolve.py`](ai-libraries.md#batchresolvepy).
+`pr batch status` prints one compact report. `--full` is the raw run state plus `run_dir`.
+Keys: `run` (`id`, `status`, `active`, `exit_hint`, `hint`, `pending_requests`,
+`failed_requests`), `counts` (items by status), `items` (non-terminal only),
+`github`, `sessions` (`pr batch report` only). `exit_hint` is 0 once finished,
+1 when it stopped without settling, null while a driver holds the run.
+`run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`
+(`run`, `item`, `reason`, `step`). Exit 0 or 1 only.
 
-`pr batch status` prints one compact report. `--full` is the raw run state plus `run_dir` (where `state.json` and `logs/` live).
+`pr batch next` is a deprecated alias of `pr batch report --format json`.
+Both carry `github` unless `--offline`. Keys and checkout rules are in
+[`batch/live.py`](ai-libraries.md#batchlivepy).
 
-- `run`: `id`, `status`, `active` (a driver holds the run's resource), `exit_hint`, a one-line `hint`, `pending_requests` (inbox count) and `failed_requests` (`[{name, error}]` from `rejected/`). `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a driver holds the run.
-- `counts`: items by status, and open decisions.
-- `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
-- `next`: one entry per open decision — or, once the run is finished, one `closeout_owed` entry per PR that `pr` still owes a closeout, whose `commands` is the `pr comments --finish --post …` that pays it.
-
-`pr batch next` prints the same report without `items`. Both also carry `github`: GitHub's current view of the run's repos — open PRs the run never saw, heads pushed since, closed PRs, and what each open PR owes — so work done on another machine shows. A finished run whose `github` shows work owed says so in `hint`. Keys and checkout rules are in [`batch/live.py`](ai-libraries.md#batchlivepy); `--offline` skips it.
-
-Each `next` entry carries:
-
-- `why`: a classified sentence.
-- `prep`: any work outside `pr` it needs first — the conflicted files to resolve, the review file and its must/should/nit counts (declined findings are left out of those and counted apart as `declined`), the remote commits to check, or a thread excerpt.
-- `worktree`.
-- `actions`, and `commands`: decision entries carry one copy-paste `pr batch resolve` per action; a finished run's `closeout_owed` entries carry the `pr comments --finish --post …` command with no actions. A required input is shown as a placeholder, an optional one in brackets.
-- `payload`: a small kind-specific part of the decision's payload.
-- `log` and `session_log` paths.
-
-Log tails appear only under `--decision`. `next` is empty while a scheduler holds the run (wait for its `run_summary`), and in a finished run that owes nothing.
-
-A `failed` decision's `reason` is one of the classified reasons listed in
-[`batch/outcomes.py`](ai-libraries.md#batchoutcomespy).
-
-A failed step names its `log`, plus `session_log` when a review left one. A failed publish command names its `logs/<owner>__<repo>-<pr>-publish-<n>.log` and keeps the line that showed the reason as `detail` (absent for `error`). A publish refusal runs no command, so it has no log; its `detail` says why.
-
-Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`; `finding_created` carries `run`, `item`, `reason`, `step`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` that settles is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`, plus report_path.
-
-A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues a waiting or interrupted run; a recorded cancel is final and resume refuses it. `open-chat` is UI-only.
+Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose`
+also stream it as `step_log` events. `resume` continues an interrupted run; a
+recorded cancel is final and resume refuses it.
 
 Admission counts every batch driver on the machine: a step starts when free memory, less other
 drivers' pending steps and `batch.mem_reserve`, covers its observed peak and pressure stays under

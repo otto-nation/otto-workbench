@@ -129,16 +129,17 @@ def test_new_run_copies_is_draft():
     # Revert: drop is_draft=r.is_draft in scheduler.new_run.
     row = PlanRow("o/r", "/r", 1, "t", "b", SHA, True,
                   {Step.REBASE: StepNeed(True, "x")})
-    run = new_run([row], steps=[Step.REBASE], selected=None, pool=1, auto_publish=[])
+    run = new_run([row], steps=[Step.REBASE], selected=None, pool=1)
     assert run.items[0].is_draft is True
 
 
 def test_waiting_and_running_runs_have_no_sessions():
     item = make_item(1, status=ItemStatus.AWAITING_DECISION)
     d = make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"})
-    for status in (RunStatus.WAITING, RunStatus.RUNNING):
-        run = make_run([item], [d], status=status)
-        assert batch.session_report.sessions(run, closeout=no_debt, tree=None) == []
+    running = make_run([item], [d], status=RunStatus.RUNNING)
+    assert batch.session_report.sessions(running, closeout=no_debt, tree=None) == []
+    waiting = make_run([item], [d], status=RunStatus.WAITING)
+    assert batch.session_report.sessions(waiting, closeout=no_debt, tree=None)
 
 
 @pytest.mark.parametrize("kind,step,payload,reason", [

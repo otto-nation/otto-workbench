@@ -36,7 +36,7 @@ def _interrupted_run(*, steps=None, needs=None, review_status=StepStatus.PENDING
                      persist=True):
     chosen = list(steps) if steps is not None else list(batch.model.STEP_ORDER)
     rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False, needs or NEED_ALL)]
-    run = batch.scheduler.new_run(rows, steps=chosen, selected=None, pool=1, auto_publish=[])
+    run = batch.scheduler.new_run(rows, steps=chosen, selected=None, pool=1)
     run.items[0].worktree = "/wt"
     if run.items[0].has(Step.REVIEW):
         run.items[0].step(Step.REVIEW).status = review_status
@@ -47,8 +47,8 @@ def _interrupted_run(*, steps=None, needs=None, review_status=StepStatus.PENDING
 def test_resume_steps_skips_pending_review_and_narrows_run_steps(monkeypatch):
     run = _interrupted_run()
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(batch.model.RunStatus.WAITING))
-    assert _main(["batch", "resume", run.id, "--steps", "rebase,ci,comments"]) == 10
+                        stops_at(batch.model.RunStatus.DONE))
+    assert _main(["batch", "resume", run.id, "--steps", "rebase,ci,comments"]) == 0
     loaded = batch.store.load(run.id)
     assert loaded.steps == [Step.REBASE, Step.CI, Step.COMMENTS]
     assert loaded.items[0].step(Step.REVIEW).status is StepStatus.SKIPPED
@@ -62,8 +62,8 @@ def test_resume_steps_leaves_an_open_review_decision_alone(monkeypatch):
         batch.model.Finding(reason=batch.model.FindingReason.REVIEW_FINDINGS, step="review"))
     seed(run)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(batch.model.RunStatus.WAITING))
-    assert _main(["batch", "resume", run.id, "--steps", "rebase,ci,comments"]) == 10
+                        stops_at(batch.model.RunStatus.DONE))
+    assert _main(["batch", "resume", run.id, "--steps", "rebase,ci,comments"]) == 0
     loaded = batch.store.load(run.id)
     assert loaded.items[0].step(Step.REVIEW).status is StepStatus.DONE
     assert loaded.items[0].findings[0].reason is batch.model.FindingReason.REVIEW_FINDINGS

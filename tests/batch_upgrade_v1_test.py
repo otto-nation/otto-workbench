@@ -101,8 +101,8 @@ def test_resume_converts_before_driving(monkeypatch):
     # Revert: delete the upgrade_v1 call in _try_resume.
     rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                     {Step.REBASE: StepNeed(True, "x")})]
-    run = batch.scheduler.new_run(rows, steps=[Step.REBASE], selected=None, pool=1,
-                                  auto_publish=[])
+    run = batch.scheduler.new_run(rows, steps=[Step.REBASE], selected=None, pool=1)
+    run.schema_version = 1
     run.status = RunStatus.WAITING
     item = run.items[0]
     item.status = ItemStatus.AWAITING_DECISION
@@ -115,12 +115,14 @@ def test_resume_converts_before_driving(monkeypatch):
     def fake_run(self):
         seen["schema"] = self.run.schema_version
         seen["open"] = [d.id for d in self.run.open_decisions()]
+        seen["findings"] = [f.reason for f in self.run.items[0].findings]
         return stops_at(RunStatus.DONE)(self)
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "resume", run.id]) == 0
     assert seen["schema"] == 2
     assert seen["open"] == []
+    assert seen["findings"] == [FindingReason.CONFLICT_HANDWRITTEN]
     loaded = batch.store.load(run.id)
     assert loaded.schema_version == 2
     assert not loaded.open_decisions()

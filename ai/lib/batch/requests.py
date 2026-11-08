@@ -1,9 +1,9 @@
-"""Typed inbound requests for a `pr batch` run: decide, cancel, release, or malformed.
+"""Typed inbound requests for a `pr batch` run: cancel, release, or malformed.
 
-A request file without ``kind`` parses as a ``Decide``, so files queued by
-older code stay valid. ``to_dict`` always writes the tag. ``drain_order``
-puts every ``Cancel`` ahead of everything else (by name) so a cancel never
-loses to a publish or release queued beside it.
+A request file without ``kind``, or ``kind: decide``, parses as ``Malformed``
+naming that ``pr batch resolve`` was removed. ``to_dict`` always writes the
+tag. ``drain_order`` puts every ``Cancel`` ahead of everything else (by name)
+so a cancel never loses to a release queued beside it.
 """
 
 # doc-group: batch
@@ -14,22 +14,10 @@ import enum
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from batch.model import Decision
-
 
 class Kind(enum.Enum):
-    DECIDE = "decide"
     CANCEL = "cancel"
     RELEASE = "release"
-
-
-@dataclass(frozen=True)
-class Decide:
-    decision: str
-    action: str
-    reason: str = ""
-    body_file: str = ""
-    commit: str = ""
 
 
 @dataclass(frozen=True)
@@ -48,7 +36,7 @@ class Malformed:
     reason: str
 
 
-Request = Decide | Cancel | Release | Malformed
+Request = Cancel | Release | Malformed
 
 
 @dataclass(frozen=True)
@@ -62,7 +50,6 @@ class Outcome:
     name: str
     request: Request
     error: str = ""
-    created: tuple[Decision, ...] = ()
     finished: tuple[str, ...] = ()
 
     @property
@@ -71,18 +58,18 @@ class Outcome:
 
 
 def parse(raw: object) -> Request:
-    """Turn a JSON value into a ``Decide``, ``Cancel``, ``Release``, or ``Malformed``.
+    """Turn a JSON value into a ``Cancel``, ``Release``, or ``Malformed``.
 
-    A dict with no ``kind``, or ``kind == decide``, is a ``Decide`` and needs
-    string ``decision`` and ``action``. ``kind == cancel`` is a ``Cancel``.
+    A dict with no ``kind``, or ``kind == decide``, is ``Malformed`` naming
+    that resolve was removed. ``kind == cancel`` is a ``Cancel``.
     ``kind == release`` is a ``Release`` and needs a string ``item``.
     Anything else is ``Malformed``.
     """
     if not isinstance(raw, dict):
         return Malformed("not an object")
     kind = raw.get("kind")
-    if kind is None or kind == Kind.DECIDE.value:
-        return _parse_decide(raw)
+    if kind is None or kind == "decide":
+        return Malformed("pr batch resolve was removed in schema v2")
     if kind == Kind.CANCEL.value:
         return Cancel(kill=bool(raw.get("kill")))
     if kind == Kind.RELEASE.value:
@@ -97,32 +84,11 @@ def _parse_release(raw: dict) -> Request:
     return Release(item=item, kill=bool(raw.get("kill")))
 
 
-def _parse_decide(raw: dict) -> Request:
-    for key in ("decision", "action"):
-        if key not in raw:
-            return Malformed(f"missing {key}")
-        if not isinstance(raw[key], str):
-            return Malformed(f"{key} must be a str")
-    return Decide(
-        decision=raw["decision"], action=raw["action"],
-        reason=raw.get("reason", ""), body_file=raw.get("body_file", ""),
-        commit=raw.get("commit", ""))
-
-
-def to_dict(request: Decide | Cancel | Release) -> dict:
+def to_dict(request: Cancel | Release) -> dict:
     """JSON object for *request*, always tagged with ``kind``."""
     if isinstance(request, Cancel):
         return {"kind": Kind.CANCEL.value, "kill": request.kill}
-    if isinstance(request, Release):
-        return {"kind": Kind.RELEASE.value, "item": request.item, "kill": request.kill}
-    return {
-        "kind": Kind.DECIDE.value,
-        "decision": request.decision,
-        "action": request.action,
-        "reason": request.reason,
-        "body_file": request.body_file,
-        "commit": request.commit,
-    }
+    return {"kind": Kind.RELEASE.value, "item": request.item, "kill": request.kill}
 
 
 def drain_order(envelopes: Iterable[Envelope]) -> list[Envelope]:

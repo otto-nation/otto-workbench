@@ -2,19 +2,18 @@
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
-    pr batch resume [RUN_ID]                   continue a waiting or interrupted run
-    pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
+    pr batch resume [RUN_ID]                   continue an interrupted run
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
-    pr batch status [RUN_ID] [--full | --decision ID] [--offline]   the run report (JSON)
-    pr batch next   [RUN_ID] [--offline]       only what needs action (JSON)
+    pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
+    pr batch next   [RUN_ID] [--offline]       deprecated alias of report --format json
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
 
-Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next fall back to the newest run on the machine and say so on stderr.
+Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next/report fall back to the newest run on the machine and say so on stderr.
 
 A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when a v1 run that has not been resumed is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve, cancel and release write the run's inbox; a live holder that drains applies a queued request. resolve JSON always includes `applied` (true only when this call applied the decision). Queued is `applied` false plus `holder`; exit 0 is not "the decision closed".
+Exit 0 when a run is done or cancelled, 1 when it stopped without settling. resume never clears a recorded cancel. cancel and release write the run's inbox; a live holder that drains applies a queued request.
 """
 
 # doc-group: cli
@@ -87,17 +86,13 @@ recipes:
 `run` plans for itself — no `pr batch plan` first. It is long-running and
 streams NDJSON events; start it as a background job. Step output stays in the
 run's logs/ (--verbose streams it as step_log too), and the last line of a
-run that settles is `run_summary`: the run, its counts, and what needs action
-next.
+run that settles is `run_summary`: the run, its counts, and report_path.
 
 A default run never waits on a decision: it exits 0 and `pr batch report`
-prints what needs a person. Exit 10 is only for v1 runs not yet resumed.
+prints what needs a person.
 --auto-publish ff pushes a clean fast-forward (`pr push --expect`) when an
 item closes with no findings; never a force push, closeout post or issue filing.
-A v1 run waiting on you lists `next` entries (also printed
-by `pr batch next`) that say why, name any prep, and list the
-`pr batch resolve RUN_ID DECISION_ID --action …` commands that answer it;
-`pr batch resume` converts that run to findings (one-way).
+`pr batch resume` converts a stored waiting v1 run to findings (one-way).
 """
 
 _DEFAULT_RUN = (
@@ -145,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")
     r.add_argument("--no-verify", action="store_true",
                    help="Skip the pre-push hook on every publish push (CI still runs the "
-                        "gates). Persisted on the run so resume and resolve honor it")
+                        "gates). Persisted on the run so resume honors it")
     review.focus.add_focus_args(r)
     r.add_argument("--verbose", action="store_true",
                    help="Also stream each step's stderr as step_log events "
@@ -160,18 +155,6 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--verbose", action="store_true",
                    help="Also stream each step's stderr as step_log events")
 
-    v = sub.add_parser("resolve", help="Answer one decision")
-    v.add_argument("run_id", help="Run the decision belongs to")
-    v.add_argument("decision_id", help="Decision to answer")
-    v.add_argument("--action", required=True,
-                   help="The answer; which actions apply depends on the decision's kind")
-    v.add_argument("--reason", default="", help="Why, recorded with the answer")
-    v.add_argument("--body-file", default="", help="File holding a reply body, for actions that post one")
-    v.add_argument("--commit", default="", help="Commit that settles the decision, for actions that cite one")
-    v.add_argument("--dry-run", action="store_true",
-                   help="With --action publish or force-publish: print what it would push, "
-                        "and change nothing")
-
     c = sub.add_parser("cancel", help="Stop the run; a recorded cancel is final")
     c.add_argument("run_id", nargs="?", help=f"Run to cancel (default: {_DEFAULT_RUN_REFUSES})")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
@@ -184,14 +167,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("status", help="Print a run's report: what needs action, and why (JSON)")
     s.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
-    view = s.add_mutually_exclusive_group()
-    view.add_argument("--full", action="store_true",
-                      help="Print the raw run state instead of the report")
-    view.add_argument("--decision", default="", metavar="ID",
-                      help="Print one decision with its full payload and log tail")
+    s.add_argument("--full", action="store_true",
+                   help="Print the raw run state instead of the report")
     cli.pr_batch_views.offline(s)
 
-    n = sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)")
+    n = sub.add_parser("next", help="Deprecated alias of report --format json")
     n.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
     cli.pr_batch_views.offline(n)
 
@@ -236,14 +216,13 @@ class _Reporter:
 
 
 def _driver_inbox(bin_dir: Path, reporter: _Reporter) -> batch.inbox.Inbox:
-    """The inbox a `run`/`resume` session drains with: resolve's real seams, outcomes to *reporter*."""
-    return batch.inbox.Inbox(batch.inbox.ApplyContext(pr_bin=str(bin_dir / "pr"),
-                                                      report=reporter))
+    """The inbox a `run`/`resume` session drains with: outcomes to *reporter*."""
+    return batch.inbox.Inbox(batch.inbox.ApplyContext(report=reporter))
 
 
 def _emit_summary(run: Run, code: int, report_path: Path | None,
                   doc: dict | None = None) -> None:
-    """The last line of a settled run: `next`'s document as a `run_summary` event.
+    """The last line of a settled run: `run_summary` with run, counts, report_path.
 
     Its `exit_hint` is *code*, the process's real exit status. Apply errors
     make it 1, whatever the run's status alone would say. *report_path* is the
@@ -254,11 +233,10 @@ def _emit_summary(run: Run, code: int, report_path: Path | None,
         import cli.pr_batch_common
         import cli.pr_batch_views
         doc = cli.pr_batch_views.report(run, cli.pr_batch_common.is_active(run.id))
-    view = batch.report.next_view(doc)
-    view["run"]["exit_hint"] = code
+    run_view = dict(doc["run"])
+    run_view["exit_hint"] = code
     extra = {"report_path": str(report_path)} if report_path is not None else {}
-    batch.events.emit("run_summary", run=view["run"], counts=view["counts"],
-                      next=view["next"], **extra)
+    batch.events.emit("run_summary", run=run_view, counts=doc["counts"], **extra)
 
 
 def _drive(session: batch.store.Session, reporter: _Reporter, holds: batch.targets.ItemHolds,
@@ -293,8 +271,7 @@ def _conclude(run_id: str, stopped: RunStatus, reporter: _Reporter) -> int:
     """
     run = batch.store.load(run_id)
     if run.status is not stopped:
-        batch.events.emit("run_finished", run=run.id, status=run.status.value,
-                          open_decisions=len(run.open_decisions()))
+        batch.events.emit("run_finished", run=run.id, status=run.status.value)
     code = 1 if reporter.failed else batch.report.exit_code(run.status)
     import cli.pr_batch_views
     path: Path | None = None
@@ -477,11 +454,10 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
         cfg = _cfg(dirs)
         run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
                                       pool=batch.admission.ceiling(args.pool, cfg),
-                                      auto_publish=[],
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       no_verify=args.no_verify, focus=focus,
-                                      with_ai=args.with_ai, schema_version=2,
+                                      with_ai=args.with_ai,
                                       auto_publish_ff=args.auto_publish == "ff")
         if focus:
             _warn_focus_without_review(run)
@@ -644,8 +620,6 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
             return _cmd_run(args, bin_dir)
         if args.command == "resume":
             return _cmd_resume(args, bin_dir)
-        if args.command == "resolve":
-            return cli.pr_batch_requests.cmd_resolve(args, bin_dir)
         if args.command == "cancel":
             return cli.pr_batch_requests.cmd_cancel(args, bin_dir)
         if args.command == "release":

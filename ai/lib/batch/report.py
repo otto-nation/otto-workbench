@@ -1,249 +1,41 @@
-"""The compact document `pr batch status`, `pr batch next` and a run's last line print.
+"""The compact document `pr batch status` and a run's last line print.
 
-One builder, three projections: `build` is the whole report, `next_view` its
-actionable part (also the `run_summary` line), and `decision_detail` one
-decision with its full payload and log tail.
+One builder: `build` is the whole report.
 
 | Section | Content |
 |---|---|
 | `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
-| `counts` | items by status, open decisions |
+| `counts` | items by status |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
-| `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
-| `github` | `pr batch status`/`next` only: what GitHub says about the run's repos now (see `batch.live`) |
+| `github` | `pr batch status` only: what GitHub says about the run's repos now (see `batch.live`) |
 | `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
-it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
-without settling (interrupted — `pr batch resume` it), and null while a
-scheduler holds the run. A review decision's finding counts leave declined
-findings out of must/should/nit and count them apart as `declined`.
-
-`next` is empty while a scheduler holds the run — it is still moving items, so
-the reader waits for its `run_summary`. While the run waits, `next` offers
-`prep` and `pr batch resolve` commands, never a `pr` subcommand against a batch
-item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed`
-entry per PR whose saved `pr` state still owes a closeout. Each entry carries
-the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
-and no actions. A closed PR is left out.
-
-When a finished run's `github` section shows open PRs with work owed, PRs the
-run never saw, or heads that moved since it ran, `hint` says so and points at
-`pr batch run`: the run itself has nothing left, but the PRs do.
+it is `done` or `cancelled`, 1 when it stopped without settling (interrupted —
+`pr batch resume` it) or when a stored waiting v1 run has not been resumed, and
+null while a scheduler holds the run.
 """
 
 # doc-group: batch
 
 from __future__ import annotations
 
-import shlex
 from collections import Counter
-from collections.abc import Callable, Sequence
-from pathlib import Path
+from collections.abc import Sequence
 
 import batch.live
-import batch.outcomes
-import batch.plan
-import batch.publish
-import batch.resolve
-import review.paths
-from batch.model import (FINISHED_RUN, Decision, DecisionKind, DirtyReason, EvidenceKind, Item,
-                         ItemStatus, Run, RunStatus, Step, stacked_on_items)
+from batch.model import Item, Run, RunStatus
 from batch.store import FailedRequest
-from pr.comments_fix import CloseoutDebt
-from review.types import SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD, severity_by_key
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 EXIT_OK = 0
-EXIT_WAITING = 10
 EXIT_FAILED = 1
-_STATUS_EXIT = {RunStatus.DONE: EXIT_OK, RunStatus.CANCELLED: EXIT_OK,
-                RunStatus.WAITING: EXIT_WAITING}
-_EXCERPT = 200
-_NEXT_KEYS = ("schema_version", "run", "counts", "next")
-# What a `next` entry keeps of each kind's payload; the rest is behind --decision.
-_PAYLOAD_KEYS: dict[DecisionKind, tuple[str, ...]] = {
-    DecisionKind.FAILED: ("reason", "detail", "exit_code", "commits"),
-    DecisionKind.REBASE_CONFLICT: ("files", "remaining_commits"),
-    DecisionKind.REBASE_REFUSED: ("status", "override", "remedy", "detail"),
-    DecisionKind.COMMENT_ITEM: ("id", "outcome", "file", "line", "replyable"),
-    DecisionKind.PUBLISH: ("drafted", "unpublished", "track", "closeout"),
-    DecisionKind.DIRTY_WORKTREE: ("path", "reason"),
-}
+_STATUS_EXIT = {RunStatus.DONE: EXIT_OK, RunStatus.CANCELLED: EXIT_OK}
 
 
 def exit_code(status: RunStatus) -> int:
-    """What `run`/`resume` exit with for a run that stopped at *status*: 10 is waiting."""
+    """What `run`/`resume` exit with for a run that stopped at *status*."""
     return _STATUS_EXIT.get(status, EXIT_FAILED)
-
-
-def _evidence(decision: Decision, kind: EvidenceKind) -> list[dict]:
-    return [e for e in decision.payload.get("evidence", []) if e.get("kind") == kind.value]
-
-
-def _evidence_kinds(decision: Decision) -> list[str]:
-    return [e.get("kind", "") for e in decision.payload.get("evidence", [])]
-
-
-def _finding_counts(decision: Decision) -> dict | None:
-    """Open findings by severity, declined ones left out of those and counted apart."""
-    findings = [f for e in _evidence(decision, EvidenceKind.OPEN_FINDINGS)
-                for f in e.get("findings", [])]
-    if not findings:
-        return None
-    labels = [f.get("severity") for f in findings if not f.get("declined")]
-    counts = {name: labels.count(severity_by_key(key).label)
-              for name, key in (("must", SEVERITY_MUST), ("should", SEVERITY_SHOULD),
-                                ("nit", SEVERITY_NIT))}
-    counts["declined"] = len(findings) - len(labels)
-    return counts
-
-
-def why(decision: Decision) -> str:
-    """One sentence saying why *decision* is waiting on a person."""
-    p, kind = decision.payload, decision.kind
-    if kind is DecisionKind.FAILED:
-        return batch.outcomes.why(p.get("reason", ""))
-    if kind is DecisionKind.REBASE_CONFLICT:
-        files = p.get("files") or []
-        return (f"the rebase stopped on conflicts in {len(files)} file(s)" if files
-                else "the rebase stopped on conflicts")
-    if kind is DecisionKind.REBASE_REFUSED:
-        return f"pr rebase refused: {p.get('detail') or p.get('status') or 'no reason given'}"
-    if kind in (DecisionKind.STEP_REVIEW, DecisionKind.OPEN_FINDINGS):
-        kinds = _evidence_kinds(decision) or ["open_findings"]
-        return f"the {decision.step} step needs a person: {', '.join(kinds)}"
-    if kind is DecisionKind.COMMENT_ITEM:
-        return f"a review comment needs a person ({p.get('outcome', 'deferred')})"
-    if kind is DecisionKind.DIRTY_WORKTREE:
-        return ("a rebase is paused in the worktree"
-                if p.get("reason") == DirtyReason.REBASE_IN_PROGRESS
-                else "the worktree has uncommitted changes")
-    if kind is DecisionKind.INTERRUPTED:
-        return f"the {decision.step} step was interrupted before it finished"
-    if kind is DecisionKind.PUBLISH:
-        parts = []
-        if p.get("drafted"):
-            parts.append(f"drafted work is ready to publish: {', '.join(p['drafted'])}")
-        if p.get("unpublished"):
-            parts.append("the local branch holds work no step drafted (a hand rebase?) "
-                         "that the remote lacks")
-        if p.get("closeout"):
-            parts.append(f"pr comments owes this PR a closeout: {p['closeout']}")
-        return "; ".join(parts) or "drafted work is ready to publish"
-    # Every kind today is named above; a kind added later still gets a true sentence.
-    return f"the {decision.step} step needs a person ({kind.value})"
-
-
-def prep(decision: Decision, item: Item) -> str | None:
-    """Work outside `pr` the decision needs before it is answered, or None."""
-    p, kind = decision.payload, decision.kind
-    if kind is DecisionKind.REBASE_CONFLICT:
-        files = ", ".join(p.get("files") or []) or "the conflicted files"
-        return f"resolve {files} in {item.worktree}, then retry"
-    counts = _finding_counts(decision) if kind is DecisionKind.STEP_REVIEW else None
-    if counts is not None:
-        path = review.paths.self_review_file_path(item.repo, item.branch)
-        return (f"read {path}; finding counts "
-                f"{counts['must']}/{counts['should']}/{counts['nit']} (must/should/nit), "
-                f"{counts['declined']} declined")
-    if kind is DecisionKind.STEP_REVIEW and (stale := _evidence(decision, EvidenceKind.STALE)):
-        files = ", ".join(f for e in stale for f in e.get("files", []))
-        return (f"the rebase left {files} stale in {item.worktree}: regenerate them with the "
-                "repo's generators and commit, or `undo`; never `accept` the rebase as it stands")
-    if kind is DecisionKind.STEP_REVIEW and (bases := stacked_on_items(decision)):
-        return f"wait for {', '.join(bases)} to finish; `pr batch resume` retries this step"
-    if kind is DecisionKind.FAILED and \
-            p.get("reason") == batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
-        return f"check {'; '.join(p.get('commits', []))} against {item.remote_sha}"
-    if kind is DecisionKind.FAILED and \
-            p.get("reason") == batch.publish.Refusal.WRONG_BRANCH.value:
-        return f"check out {item.branch} in {item.worktree}, then retry"
-    if kind is DecisionKind.FAILED and \
-            p.get("reason") == batch.publish.Refusal.DRAFTED_DROPPED.value:
-        return (f"cherry-pick {'; '.join(p.get('commits', []))} back onto {item.branch} "
-                f"in {item.worktree} and retry, or force-publish without them")
-    if kind is DecisionKind.COMMENT_ITEM:
-        where = f"{p['file']}:{p.get('line', 0)}" if p.get("file") else "the PR conversation"
-        return f"thread {p.get('id', '')} on {where}: {p.get('summary', '')[:_EXCERPT]}"
-    if kind is DecisionKind.DIRTY_WORKTREE and p.get("stash"):
-        return (f"commit or stash the changes in {p.get('path') or item.worktree} "
-                f"({p['stash']}), then retry")
-    return None
-
-
-def _small_payload(decision: Decision) -> dict:
-    if decision.kind in (DecisionKind.STEP_REVIEW, DecisionKind.OPEN_FINDINGS):
-        small: dict = {"evidence": _evidence_kinds(decision)}
-        if (counts := _finding_counts(decision)) is not None:
-            small["findings"] = counts
-        if bases := stacked_on_items(decision):
-            small["stacked_on"] = bases
-        return small
-    keys = _PAYLOAD_KEYS.get(decision.kind, ())
-    return {k: decision.payload[k] for k in keys if k in decision.payload}
-
-
-def _log(decision: Decision, item: Item) -> str | None:
-    p = decision.payload
-    # Both are stable persisted keys: failed payloads carry `log`, interrupted ones `log_path`.
-    if p.get("log") or p.get("log_path"):
-        return p.get("log") or p.get("log_path")
-    step = batch.resolve.step_of(decision)
-    if step is None or not item.has(step):
-        return None
-    return item.step(step).log_path or None
-
-
-def _session_log(decision: Decision, item: Item) -> str | None:
-    if decision.payload.get("session_log"):
-        return decision.payload["session_log"]
-    if decision.step != Step.REVIEW.value:
-        return None
-    path = review.paths.self_review_dir(item.repo, item.branch) / review.paths.FILENAME_SESSION
-    return str(path) if path.is_file() else None
-
-
-def _actions(decision: Decision, item: Item) -> list[str]:
-    return batch.resolve.available_actions(decision, item) if decision.open else []
-
-
-def _commands(run: Run, decision: Decision, actions: list[str]) -> list[str]:
-    return [batch.resolve.resolve_command(run.id, decision.id, a) for a in actions]
-
-
-def _entry(run: Run, decision: Decision, *, full: bool = False) -> dict:
-    item = run.item(decision.item)
-    actions = _actions(decision, item)
-    return {"decision": decision.id, "pr": item.key, "kind": decision.kind.value,
-            "why": why(decision), "prep": prep(decision, item), "worktree": item.worktree,
-            "actions": actions, "commands": _commands(run, decision, actions),
-            "payload": dict(decision.payload) if full else _small_payload(decision),
-            "log": _log(decision, item), "session_log": _session_log(decision, item)}
-
-
-def _owed_entries(run: Run, closeout: Callable[[str, str], CloseoutDebt]) -> list[dict]:
-    """One entry per item whose saved `pr` state still owes a closeout, for a finished run.
-
-    The run no longer owns these PRs, so the entry is the `pr` command that
-    pays the debt, not a `pr batch resolve`. A closed PR is left out.
-    """
-    entries = []
-    for item in run.items:
-        if item.status is ItemStatus.SKIPPED_CLOSED:
-            continue
-        debt = closeout(item.repo_dir, item.branch)
-        if not debt.owed:
-            continue
-        where = (["--repo-dir", item.worktree]
-                 if item.worktree and Path(item.worktree).is_dir()
-                 else ["--repo-dir", item.repo_dir, "--branch", item.branch])
-        entries.append({"decision": None, "pr": item.key, "kind": "closeout_owed",
-                        "why": f"closeout owed: {debt.describe()}", "prep": None,
-                        "worktree": item.worktree, "actions": [],
-                        "commands": [shlex.join([*shlex.split(debt.command), *where])],
-                        "payload": {}, "log": None, "session_log": None})
-    return entries
 
 
 def _github_hint(github: dict) -> str:
@@ -254,19 +46,15 @@ def _github_hint(github: dict) -> str:
     return f"GitHub shows {said} — see `github`, and start a new `pr batch run`"
 
 
-def _hint(run: Run, active: bool, owed: bool = False, github: dict | None = None) -> str:
+def _hint(run: Run, active: bool, github: dict | None = None) -> str:
     if active:
         return "a scheduler is driving this run; wait for its run_summary line"
-    if run.status in FINISHED_RUN:
-        if owed:
-            return (f"the run is {run.status.value}; `next` lists what pr still owes these "
-                    "PRs — run each entry's command")
+    if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
         if batch.live.owes(github):
             return f"the run is {run.status.value}; {_github_hint(github)}"
         return f"the run is {run.status.value}; nothing is left to answer"
-    if run.open_decisions():
-        return f"answer each `next` entry, then continue with `pr batch resume {run.id}`"
-    return f"nothing is waiting on you; continue with `pr batch resume {run.id}`"
+    return (f"continue with `pr batch resume {run.id}`; its decisions become "
+            "findings (`pr batch report`)")
 
 
 def _item_view(item: Item) -> dict:
@@ -278,7 +66,6 @@ def _item_view(item: Item) -> dict:
 
 
 def build(run: Run, *, active: bool,
-          closeout: Callable[[str, str], CloseoutDebt] | None = None,
           pending_requests: int = 0,
           failed_requests: Sequence[FailedRequest] = (),
           github: dict | None = None,
@@ -289,55 +76,23 @@ def build(run: Run, *, active: bool,
     what a `run_summary` event carries.
     *sessions* is the per-PR session list; None leaves the key out.
 
-    *closeout* reads what `pr` still owes a PR. None reads saved state
-    (`batch.plan.closeout_debt`), and only for a finished run.
     *pending_requests* is how many requests wait in the run's inbox, and
     *failed_requests* lists the ones a drain rejected. Both are reported under
     `run`.
     """
-    owned = not active and run.status not in FINISHED_RUN
-    if owned:
-        entries = [_entry(run, d) for d in run.open_decisions()]
-    elif not active:
-        entries = _owed_entries(run, closeout or batch.plan.closeout_debt)
-    else:
-        entries = []
     report = {
         "schema_version": SCHEMA_VERSION,
         "run": {"id": run.id, "status": run.status.value, "active": active,
                 "exit_hint": None if active else exit_code(run.status),
-                "hint": _hint(run, active, bool(entries) and not owned, github),
+                "hint": _hint(run, active, github),
                 "pending_requests": pending_requests,
                 "failed_requests": [{"name": f.name, "error": f.error}
                                     for f in failed_requests]},
-        "counts": {"items": dict(Counter(i.status.value for i in run.items)),
-                   "open_decisions": len(run.open_decisions())},
+        "counts": {"items": dict(Counter(i.status.value for i in run.items))},
         "items": [_item_view(i) for i in run.items if not i.terminal],
-        "next": entries,
     }
     if github is not None:
         report["github"] = github
     if sessions is not None:
         report["sessions"] = sessions
     return report
-
-
-def next_view(report: dict) -> dict:
-    """The part of *report* that needs action: everything but `items`."""
-    return {k: report[k] for k in (*_NEXT_KEYS, "github") if k in report}
-
-
-def decision_detail(run: Run, decision_id: str) -> dict:
-    """One decision with its full payload (log tail included), open or resolved."""
-    decision = run.decision(decision_id)
-    return {"schema_version": SCHEMA_VERSION, "run": run.id, "step": decision.step,
-            "created_at": decision.created_at, "resolution": decision.resolution,
-            "resolved_at": decision.resolved_at, **_entry(run, decision, full=True)}
-
-
-def decision_event(run: Run, decision: Decision) -> dict:
-    """The fields a `decision_created` event carries: what an agent acts on, nothing more."""
-    item = run.item(decision.item)
-    return {"item": item.key, "decision": decision.id, "decision_kind": decision.kind.value,
-            "why": why(decision),
-            "commands": _commands(run, decision, _actions(decision, item))}

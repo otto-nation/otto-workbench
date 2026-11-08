@@ -19,9 +19,9 @@ from batch.store import now_iso
 SCHEMA_VERSION = 1
 EVENT_KINDS = frozenset({
     "run_started", "item_queued", "admission_wait", "step_started", "step_log",
-    "step_finished", "decision_created", "decision_resolved", "item_finished",
+    "step_finished", "item_finished",
     "cancel_requested", "item_skipped_held",
-    "run_waiting", "run_finished", "run_summary", "generated_dirt_restored",
+    "run_finished", "run_summary", "generated_dirt_restored",
     "finding_created",
 })
 

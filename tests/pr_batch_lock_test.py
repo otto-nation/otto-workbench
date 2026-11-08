@@ -25,7 +25,7 @@ import cli.pr_batch  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from batch.requests import Decide  # noqa: E402
+from batch.requests import Cancel, Release  # noqa: E402
 from batch_session_support import seed, stops_at  # noqa: E402
 from conftest import make_ctx  # noqa: E402
 from run_lock_support import held_elsewhere, live_pid, repo_with_origin  # noqa: E402
@@ -64,7 +64,7 @@ def _saved_run(rows=None):
                             {batch.model.Step.REVIEW: StepNeed(True, "x")},
                             repo_key="acme-widget-testhash")]
     run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
-                                  pool=1, auto_publish=[])
+                                  pool=1)
     run.status = batch.model.RunStatus.WAITING
     return seed(run)
 
@@ -143,10 +143,11 @@ def test_resume_holds_the_batch_lock_and_names_the_run(monkeypatch):
     def fake_run(self):
         seen["held"] = _batch_held(key)
         seen["record"] = json.loads(_batch_path(key).read_text())
-        return batch.model.RunStatus.WAITING
+        self.run.status = batch.model.RunStatus.DONE
+        return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "resume", run.id]) == 10
+    assert _main(["batch", "resume", run.id]) == 0
     assert seen["held"] is True
     assert seen["record"]["run"] == run.id
     assert not _batch_held(key)
@@ -237,38 +238,33 @@ def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
     assert not core.run_lock.is_held(_target(repo, "feat/a"))
 
 
-def _awaiting(run, item, decision_id, kind=batch.model.DecisionKind.DIRTY_WORKTREE):
-    """Park *item* on an open *kind* decision, as a dirty worktree leaves it."""
-    item.status = batch.model.ItemStatus.AWAITING_DECISION
-    run.decisions.append(batch.model.Decision(id=decision_id, item=item.key, step="worktree",
-                                              kind=kind))
-
-
 def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
         monkeypatch, tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_run_plan",
                         lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
-    real_run = batch.scheduler.Scheduler.run_until_blocked
     seen = {}
 
     def drop_one_then_drive(self):
         first, second = self.run.items
-        _awaiting(self.run, first, "d1")
-        _awaiting(self.run, second, "d2")
         self.session.commit()
-        # What a `pr batch resolve` beside a live driver does: it writes the
+        # What `pr batch release` beside a live driver does: it writes the
         # request and reports it queued, and the driver's tick applies it.
-        batch.store.write_request(self.run.id, Decide("d1", "drop-pr"))
+        # Drain+release only — admitting the other item would try to spawn a
+        # worktree this fixture does not have.
+        batch.store.write_request(self.run.id, Release(first.key))
         seen["before"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
-        status = real_run(self)
+        self.session.drain(settle=False)
+        self.session.commit()
+        self._release(self.run, frozenset(self._live))
         seen["status"] = self.run.item(first.key).status
         seen["after"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
-        return status
+        self.run.status = batch.model.RunStatus.DONE
+        return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", drop_one_then_drive)
     assert _main(["batch", "run", "--checkout", str(repo),
-                  "--with-review"]) == 10
+                  "--with-review"]) == 0
     assert seen["before"] == [True, True]
     assert seen["status"] is batch.model.ItemStatus.DROPPED
     assert seen["after"] == [False, True]
@@ -280,8 +276,7 @@ def test_resume_does_not_take_back_a_dropped_or_done_items_target(monkeypatch, t
     repo = repo_with_origin(tmp_path / "repo")
     run = batch.scheduler.new_run(
         [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b"), _row(repo, 3, "feat/c")],
-        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[],
-        schema_version=2)
+        steps=[batch.model.Step.REVIEW], selected=None, pool=1)
     run.items[0].status = batch.model.ItemStatus.DROPPED
     run.items[1].status = batch.model.ItemStatus.DONE
     run.status = batch.model.RunStatus.WAITING
@@ -291,14 +286,15 @@ def test_resume_does_not_take_back_a_dropped_or_done_items_target(monkeypatch, t
     def fake_run(self):
         seen["held"] = [core.run_lock.is_held(_target(repo, b))
                         for b in ("feat/a", "feat/b", "feat/c")]
-        return batch.model.RunStatus.WAITING
+        self.run.status = batch.model.RunStatus.DONE
+        return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     with live_pid() as pid, held_elsewhere(
             _target(repo, "feat/a") / core.run_lock.LOCK_FILE,
             {"pid": pid, "command": "pr fix", "started": "t0"}):
         code = _main(["batch", "resume", run.id])
-    assert code == 10
+    assert code == 0
     assert seen["held"] == [True, False, True]
 
 
@@ -338,7 +334,7 @@ def test_resume_is_refused_when_an_item_is_held(monkeypatch, tmp_path, capsys):
 def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     run = batch.scheduler.new_run([_row(repo, 1, "feat/a")], steps=[batch.model.Step.REVIEW],
-                                  selected=None, pool=1, auto_publish=[])
+                                  selected=None, pool=1)
     item = run.items[0]
     item.status = batch.model.ItemStatus.AWAITING_DECISION
     item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
@@ -349,7 +345,7 @@ def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp
     real = cli.pr_batch._hold_items
 
     def queue_then_hold(held, opened, verb):
-        batch.store.write_request(opened.id, Decide("d1", "drop-pr"))
+        batch.store.write_request(opened.id, Release(opened.items[0].key))
         return real(held, opened, verb)
 
     monkeypatch.setattr(cli.pr_batch, "_hold_items", queue_then_hold)
@@ -361,7 +357,7 @@ def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp
         code = _main(["batch", "resume", run.id])
     assert code == 1
     saved = batch.store.load(run.id)
-    assert saved.decision("d1").resolution == "drop-pr"
+    assert saved.items[0].status is batch.model.ItemStatus.DROPPED
     assert batch.store.pending_requests(run.id) == 0
 
 
@@ -370,7 +366,7 @@ def test_a_refused_resume_of_a_terminal_run_hands_off_a_request_queued_against_i
     run = batch.scheduler.new_run(
         [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                  {batch.model.Step.REVIEW: StepNeed(True, "x")})],
-        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[])
+        steps=[batch.model.Step.REVIEW], selected=None, pool=1)
     item = run.items[0]
     item.status = batch.model.ItemStatus.AWAITING_DECISION
     item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
@@ -384,7 +380,7 @@ def test_a_refused_resume_of_a_terminal_run_hands_off_a_request_queued_against_i
     def drain_then_queue(self, *, settle):
         outcomes = real(self, settle=settle)
         if not queued:
-            queued.append(batch.store.write_request(self.run.id, Decide("d1", "drop-pr")))
+            queued.append(batch.store.write_request(self.run.id, Cancel()))
         return outcomes
 
     monkeypatch.setattr(batch.store.Session, "drain", drain_then_queue)
@@ -393,7 +389,7 @@ def test_a_refused_resume_of_a_terminal_run_hands_off_a_request_queued_against_i
     code = _main(["batch", "resume", run.id])
     assert code == 1
     saved = batch.store.load(run.id)
-    assert saved.decision("d1").resolution == "drop-pr"
+    assert saved.status is batch.model.RunStatus.CANCELLED
     assert batch.store.pending_requests(run.id) == 0
 
 

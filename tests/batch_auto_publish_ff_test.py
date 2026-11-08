@@ -22,7 +22,7 @@ from batch_scheduler_support import (  # noqa: F401,E402
 
 
 def _ff_run(**kw):
-    h = Harness([row(1, {Step.CI: NEED})], schema_version=2, with_ai=[Step.CI],
+    h = Harness([row(1, {Step.CI: NEED})], with_ai=[Step.CI],
                 moves={("ci", "/wt/b1")}, **kw)
     h.run.auto_publish_ff = True
     return h
@@ -59,7 +59,7 @@ def test_ff_never_force_pushes_a_diverged_branch():
 def test_ff_never_posts_the_closeout():
     # Revert: pass the full debt to plan.
     needs = {Step.CI: NEED, Step.COMMENTS: NEED}
-    h = Harness([row(1, needs)], schema_version=2,
+    h = Harness([row(1, needs)],
                 with_ai=[Step.CI, Step.COMMENTS], moves={("ci", "/wt/b1")},
                 closeout=lambda d, b: CloseoutDebt(summary=True), tree=ff_tree)
     h.run.auto_publish_ff = True
@@ -99,7 +99,7 @@ def test_a_failed_ff_push_is_a_finding():
 
 # passes-at-base: the default path this change must not alter
 def test_no_ff_without_the_flag():
-    h = Harness([row(1, {Step.CI: NEED})], schema_version=2, with_ai=[Step.CI],
+    h = Harness([row(1, {Step.CI: NEED})], with_ai=[Step.CI],
                 moves={("ci", "/wt/b1")}, tree=ff_tree)
     h.sched.run_until_blocked()
     assert h.published == []

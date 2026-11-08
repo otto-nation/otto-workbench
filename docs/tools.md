@@ -947,7 +947,7 @@ Takes no flags.
 | `--auto-publish` `<ff>` | Push a clean fast-forward (`pr push --expect`) when an item closes with no findings; never a force push, closeout post or issue filing. |
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
-| `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume and resolve honor it. |
+| `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume honors it. |
 | `--focus` `<text>` | An area the review must cover (repeatable; each text at most 4096 bytes; at most 5 texts). |
 | `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; each file at most 4096 bytes; at most 5 texts). |
 | `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
@@ -959,18 +959,6 @@ Takes no flags.
 | `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering; refused when several unfinished runs cover this repo). |
 | `--steps` `<steps>` | Narrow the run to these steps (a subset of the run's). Each excluded pending step becomes skipped; a later commit does not re-queue a dropped review. Adding a step is refused. |
 | `--verbose` | Also stream each step's stderr as step_log events. |
-
-**`pr batch resolve`** — Answer one decision
-
-| Flag | Description |
-|------|-------------|
-| `<run-id>` | Run the decision belongs to. |
-| `<decision-id>` | Decision to answer. |
-| `--action` `<action>` | The answer; which actions apply depends on the decision's kind. Required. |
-| `--reason` `<reason>` | Why, recorded with the answer. |
-| `--body-file` `<body-file>` | File holding a reply body, for actions that post one. |
-| `--commit` `<commit>` | Commit that settles the decision, for actions that cite one. |
-| `--dry-run` | With --action publish or force-publish: print what it would push, and change nothing. |
 
 **`pr batch cancel`** — Stop the run; a recorded cancel is final
 
@@ -992,11 +980,10 @@ Takes no flags.
 | Flag | Description |
 |------|-------------|
 | `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
-| `--full` | Print the raw run state instead of the report. Not with `--decision`. |
-| `--decision` `<id>` | Print one decision with its full payload and log tail. Not with `--full`. |
+| `--full` | Print the raw run state instead of the report. |
 | `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
 
-**`pr batch next`** — Print only what needs action: run, counts and next (JSON)
+**`pr batch next`** — Deprecated alias of report --format json
 
 | Flag | Description |
 |------|-------------|

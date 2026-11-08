@@ -124,8 +124,7 @@ def test_new_run_marks_a_pr_stacked_on_another_in_the_run():
     need = {Step.REBASE: StepNeed(True, "x")}
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h1", False, dict(need)),
             PlanRow("o/r", "/r", 2, "t", "b2", "h2", False, dict(need), base_ref="b1")]
-    run = batch.scheduler.new_run(rows, steps=list(STEP_ORDER), selected=None, pool=1,
-                                  auto_publish=[])
+    run = batch.scheduler.new_run(rows, steps=list(STEP_ORDER), selected=None, pool=1)
     assert [i.stacked_on for i in run.items] == ["", "o/r#1"]
 
 
@@ -145,8 +144,7 @@ def _scheduler(run):
 
 
 def _empty_run(ref_dirs):
-    return batch.scheduler.new_run([], steps=list(STEP_ORDER), selected=None, pool=1,
-                                   auto_publish=[], ref_namespace="refs/pr-batch/abcd",
+    return batch.scheduler.new_run([], steps=list(STEP_ORDER), selected=None, pool=1, ref_namespace="refs/pr-batch/abcd",
                                    ref_dirs=ref_dirs)
 
 
@@ -229,8 +227,7 @@ def test_a_fork_branch_named_like_a_base_does_not_stack_that_pr():
     need = {Step.REBASE: StepNeed(True, "x")}
     rows = [PlanRow("o/r", "/r", 1, "t", "main", "h1", False, dict(need), is_fork=True),
             PlanRow("o/r", "/r", 2, "t", "b2", "h2", False, dict(need), base_ref="main")]
-    run = batch.scheduler.new_run(rows, steps=list(STEP_ORDER), selected=None, pool=1,
-                                  auto_publish=[])
+    run = batch.scheduler.new_run(rows, steps=list(STEP_ORDER), selected=None, pool=1)
     assert [i.stacked_on for i in run.items] == ["", ""]
 
 

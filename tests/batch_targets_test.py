@@ -13,14 +13,12 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 import batch.autopublish  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.targets  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step  # noqa: E402
 from batch.plan import PlanRow  # noqa: E402
-from batch.requests import Decide  # noqa: E402
 # `_quiet_outcomes` is an autouse fixture; imported only so pytest registers it here.
 from batch_scheduler_support import (  # noqa: E402,F401
     NEED, Harness, _close_open_sessions, _quiet_outcomes, attach_scheduler, ff_tree, row,
@@ -167,59 +165,6 @@ def test_every_step_is_spawned_with_only_its_items_marker(monkeypatch):
     # argv[-1] is --repo-dir's worktree (`/wt/b{pr}` from the harness). Match
     # that exact path, not a last-character substring, so PR 10 is not "0".
     assert all(marker == f"/targets/{Path(worktree).name[1:]}" for worktree, marker in seen)
-
-
-def test_a_resolve_command_runs_with_its_items_marker(repo, monkeypatch):
-    calls = []
-    monkeypatch.setattr(batch.autopublish, "default_runner",
-                        lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
-    item = _item(repo, "feat/a", 1)
-    target = batch.targets.item_target_dir(item)
-    with core.run_lock.hold({TARGET}, target_dir=target, command="pr batch run", started="t"):
-        run_cmd = batch.resolve.command_runner(item, None)
-        assert run_cmd(["pr", "push"]) == 0
-    assert calls[0][LOCK_ENV] == str(target)
-
-
-def test_command_runner_without_a_runner_uses_child_env(repo, monkeypatch):
-    seen = []
-    monkeypatch.setattr(batch.targets, "child_env",
-                        lambda item: seen.append(item) or {"X": "1"})
-    calls = []
-    monkeypatch.setattr(batch.autopublish, "default_runner",
-                        lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
-    item = _item(repo, "feat/a", 1)
-    batch.resolve.command_runner(item, None)(["pr", "push"])
-    assert seen == [item]
-    assert calls == [{"X": "1"}]
-
-
-def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
-    monkeypatch.setenv(LOCK_ENV, "/x:/y")
-    monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
-    monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
-    calls = []
-    monkeypatch.setattr(batch.autopublish, "default_runner",
-                        lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
-    planned = PlanRow("acme/widget", str(repo), 1, "t", "feat/a", "h", False,
-                      {Step.REVIEW: NEED})
-    run = batch.scheduler.new_run([planned], steps=[Step.REVIEW], selected=None, pool=1,
-                                  auto_publish=[])
-    item = run.items[0]
-    item.worktree = str(repo)
-    run.decisions.append(Decision(id="d1", item=item.key, step="publish",
-                                  kind=DecisionKind.PUBLISH))
-    target = batch.targets.item_target_dir(item)
-    sched = attach_scheduler(
-        run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
-        emit=lambda *a, **k: None, runner=None, tree=ff_tree)
-    with core.run_lock.hold({TARGET}, target_dir=target, command="pr batch run", started="t"):
-        sched.session.apply(Decide("d1", "publish"))
-    assert calls
-    env = calls[0]
-    assert env[LOCK_ENV] == str(target)
-    assert TREE_LOCK_ENV not in env
-    assert GLOBAL_LOCK_ENV not in env
 
 
 def _holding(holds, *keys_by_target):

@@ -509,7 +509,6 @@ _DECLARED_LOCKS = {
     ("batch", ()): _NO,
     ("batch", ("run", "--checkout", "/r")): _NO,
     ("batch", ("resume",)): _NO,
-    ("batch", ("resolve", "r", "d", "--action", "accept")): _NO,
     ("batch", ("cancel",)): _NO,
     ("batch", ("release", "r", "o/r#1")): _NO,
     ("batch", ("status",)): _NO,

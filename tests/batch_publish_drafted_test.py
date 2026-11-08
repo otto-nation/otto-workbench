@@ -19,7 +19,6 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.publish  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.requests  # noqa: E402
 import batch.store  # noqa: E402
 import git.client  # noqa: E402
@@ -187,42 +186,6 @@ def test_a_commit_git_cannot_resolve_is_refused_as_unverifiable(tmp_path):
     assert batch.publish.read_tree(item).dropped == ("fffffff (unverifiable)",)
 
 
-# ── forward-only lease moves ────────────────────────────────────────────────
-
-
-def test_a_remote_that_fast_forwarded_to_a_commit_local_holds_is_a_forward_move(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    planned = remote_tip(pair.origin, "feat")
-    item = _item(worktree=str(pair.work), remote=planned)
-    moved = advance(pair.seed, "feat", "colleague")
-    git_in(pair.work, "pull", "-q", "--ff-only", "origin", "feat")
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    tree = batch.publish.read_tree(item)
-    assert tree.remote == moved
-    assert batch.publish.remote_fast_forwarded(item, tree)
-
-
-def test_a_remote_reset_backwards_is_not_a_forward_move(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    planned = advance(pair.seed, "feat", "later")
-    git_in(pair.work, "pull", "-q", "--ff-only", "origin", "feat")
-    item = _item(worktree=str(pair.work), remote=planned)
-    git_in(pair.seed, "push", "-q", "-f", "origin", "feat~1:refs/heads/feat")
-    tree = batch.publish.read_tree(item)
-    assert tree.remote != planned
-    assert not batch.publish.remote_fast_forwarded(item, tree)
-
-
-def test_a_remote_commit_local_lacks_is_not_a_forward_move(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    item = _item(worktree=str(pair.work), remote=remote_tip(pair.origin, "feat"))
-    advance(pair.seed, "feat", "colleague")
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    assert not batch.publish.remote_fast_forwarded(item, batch.publish.read_tree(item))
-
-
 def _remote_moved_run(item):
     run = batch.model.Run(id="r1", started_at="t", steps=list(batch.model.STEP_ORDER), pool=1,
                           auto_publish=[], items=[item])
@@ -233,37 +196,6 @@ def _remote_moved_run(item):
     return run
 
 
-def test_a_remote_moved_retry_adopts_a_fast_forward_local_already_holds(tmp_path):
-    """Regression: local held the remote plus a fix, so it was neither equal to the
-    remote nor patch-equivalent to it, and every retry refused remote_moved."""
-    pair = remote_and_clone(tmp_path)
-    item = _item(worktree=str(pair.work), remote=remote_tip(pair.origin, "feat"))
-    run = _remote_moved_run(item)
-    moved = advance(pair.seed, "feat", "colleague")
-    git_in(pair.work, "pull", "-q", "--ff-only", "origin", "feat")
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    head = _head(pair.work)
-    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
-    assert item.remote_sha == moved
-    assert _head(pair.work) == head
-    assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).commands == [
-        ["pr", "push", "--expect", moved, "--repo-dir", str(pair.work)]]
-
-
-def test_a_remote_moved_retry_keeps_the_lease_after_a_reset_backwards(tmp_path):
-    pair = remote_and_clone(tmp_path)
-    planned = advance(pair.seed, "feat", "later")
-    git_in(pair.work, "pull", "-q", "--ff-only", "origin", "feat")
-    item = _item(worktree=str(pair.work), remote=planned)
-    run = _remote_moved_run(item)
-    git_in(pair.seed, "push", "-q", "-f", "origin", "feat~1:refs/heads/feat")
-    (pair.work / "fix.txt").write_text("fix\n")
-    commit_all(pair.work, "fix: x")
-    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
-    assert item.remote_sha == planned
-
-
 class _Recorder:
     def __init__(self):
         self.calls = []
@@ -271,64 +203,3 @@ class _Recorder:
     def __call__(self, argv, log_path=None):
         self.calls.append(argv)
         return 0
-
-
-def test_confirming_one_refusal_does_not_unconfirm_the_other(tmp_path, monkeypatch):
-    """A branch can lose drafted work and remote work at once; each force-publish
-    adds to what the operator confirmed rather than replacing it."""
-    monkeypatch.setattr(batch.store, "attempt_log_path",
-                        lambda *a: tmp_path / "publish.log")
-    item = _item(remote="s")
-    item.step(Step.CI).commits = ["c1"]
-    run = batch.model.Run(id="r1", started_at="t", steps=list(batch.model.STEP_ORDER), pool=1,
-                          auto_publish=[], items=[item])
-    run.decisions = [batch.model.Decision(id="d1", item=item.key, step="publish",
-                                          kind=batch.model.DecisionKind.PUBLISH)]
-
-    def tree(it):
-        return TreeState(local="new", remote=it.remote_sha,
-                         divergence=RefDivergence(ahead=1, behind=1, comparable=True),
-                         unincorporated=("r1 theirs",), dropped=("c1 ours",))
-
-    rec = _Recorder()
-
-    def answer(action):
-        decision = run.open_decisions()[-1]
-        batch.resolve.apply(run, batch.requests.Decide(decision.id, action), pr_bin="pr",
-                            runner=rec, tree=tree,
-                            closeout=lambda d, b: batch.resolve.CloseoutDebt())
-        return run.open_decisions()
-
-    first = answer("publish")[-1]
-    assert first.payload["reason"] == Refusal.DRAFTED_DROPPED.value
-    second = answer("force-publish")[-1]
-    assert second.payload["reason"] == Refusal.NOT_INCORPORATED_REMOTE.value
-    assert answer("force-publish") == []
-    assert rec.calls == [["pr", "rebase", "--push-only", "--expect", "s", *WT]]
-    assert item.forced == []
-
-
-def test_a_forced_publish_with_nothing_to_push_spends_the_confirmation(tmp_path, monkeypatch):
-    """A hand push left local == origin, so the forced publish pushes nothing; the
-    confirmation must not carry over to a later publish of the same item."""
-    monkeypatch.setattr(batch.store, "attempt_log_path",
-                        lambda *a: tmp_path / "publish.log")
-    item = _item(remote="s")
-    run = batch.model.Run(id="r1", started_at="t", steps=list(batch.model.STEP_ORDER), pool=1,
-                          auto_publish=[], items=[item])
-    run.decisions = [batch.model.Decision(id="d1", item=item.key, step="publish",
-                                          kind=batch.model.DecisionKind.FAILED,
-                                          payload={"reason": Refusal.DRAFTED_DROPPED.value,
-                                                   "commits": ["c1 ours"]})]
-
-    def tree(it):
-        return TreeState(local=it.remote_sha, remote=it.remote_sha,
-                         divergence=RefDivergence(comparable=True), dropped=("c1 ours",))
-
-    rec = _Recorder()
-    batch.resolve.apply(run, batch.requests.Decide("d1", "force-publish"), pr_bin="pr",
-                        runner=rec, tree=tree,
-                        closeout=lambda d, b: batch.resolve.CloseoutDebt())
-    assert rec.calls == []
-    assert item.status is batch.model.ItemStatus.DONE
-    assert item.forced == []

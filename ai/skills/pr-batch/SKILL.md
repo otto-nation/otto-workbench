@@ -54,9 +54,9 @@ pr batch run --checkout DIR
 ```
 
 `run` plans for itself. Default `--steps` is rebase,ci,comments (no AI, no
-review). Last line is `run_summary`. Exit 0 is done or cancelled; a default
-run never exits 10. Read `<run-dir>/report.md`. Per PR, run its printed
-commands, or re-run that PR with AI:
+review). Last line is `run_summary`. Exit 0 is done or cancelled. Read
+`<run-dir>/report.md`. Per PR, run its printed commands, or re-run that PR
+with AI:
 `pr batch run --checkout DIR --prs o/r#N --select o/r#N=rebase --with-ai=rebase`.
 
 `--with-ai=rebase,ci,comments` restores today's AI argv. `--with-review` adds
@@ -65,10 +65,7 @@ one PR. `--auto-publish ff` (fast-forward only). `--no-verify` skips
 the pre-push hook on publishes the batch makes; persist it only when the user
 has already read a hook failure.
 
-Findings the report names: `conflict_handwritten` / `conflict_generated`,
-`ci_failing`, `threads_need_human`, `ready_to_push`, `stack_wait_base`,
-`dirty_worktree`, `failed_unknown`. `block`/`wait` → item `needs_session`;
-`act` only → `done`.
+`pr batch next` is deprecated; use `pr batch report --format json`.
 
 ---
 
@@ -76,8 +73,8 @@ Findings the report names: `conflict_handwritten` / `conflict_generated`,
 
 - Prefer `--steps rebase,ci,comments` unless the user asked for review.
 - `--select o/r#N=review` reviews one PR without reviewing the rest.
-- `pr batch resume --steps rebase,ci,comments` **may only narrow** a waiting
-  or interrupted run. Excluded pending steps become skipped; a later rebase
+- `pr batch resume --steps rebase,ci,comments` **may only narrow** an
+  interrupted run. Excluded pending steps become skipped; a later rebase
   commit does not re-queue a dropped review. Adding a step is refused
   (exit 2): start a new run to add one.
 - `pr batch release RUN_ID PR` drops one finished or stuck PR and frees its
@@ -85,38 +82,35 @@ Findings the report names: `conflict_handwritten` / `conflict_generated`,
 
 ---
 
-## Decisions
+## Findings
 
-Runs started before this version: `resume` converts their decisions to
-findings; until then `pr batch resolve` answers them. When the run
-waits, read `pr batch next` (or `pr batch status`). Each `next`
-entry has `why`, `prep`, `worktree`, `actions`, and copy-paste
-`pr batch resolve RUN_ID DECISION_ID --action A` commands. Apply one action
-per decision; do not invent flags.
+Read `pr batch report` / `report.md`. Each finding names a printed command.
+Do not invent flags. Never accept a stale rebase.
 
-| Kind | Actions | Notes |
+| Finding | Meaning | Command |
 |---|---|---|
-| `step_review` | `accept`, `retry`, `skip-step`, `undo`, `open-chat` | `undo` is rebase only (`git reset --hard` to the pre-rebase head). **`one_sided` → `undo`, never `accept`.** |
-| `comment_item` | `settle-fixed`, `settle-addressed`, `settle-dismissed`, `reply`, `track`, `open-chat` | `settle-dismissed` needs `--reason`; `reply` needs `--body-file`. |
-| `rebase_conflict` | `retry`, `abort`, `open-chat` | `retry` resumes a paused replay, or restarts the rebase when the tree was aborted clean (`tree: clean`); `abort` drops a paused replay, or just skips the rebase when the tree is already clean. |
-| `rebase_refused` | `drop-pr`, `force`, `rebase-from-fork-point` | `force` needs payload `override`; `rebase-from-fork-point` needs a named fork point. |
-| `dirty_worktree` | `retry`, `drop-pr`, `open-chat` | Payload names a stash command. |
-| `failed` / `interrupted` | `retry`, `skip-step`, `drop-pr` | `failed` also has `force-publish` for `not_incorporated_remote` or `drafted_dropped`. |
-| `publish` | `publish`, `discard` | `publish` is the lease push; `discard` marks the item done without pushing. |
-| `open_findings` | `accept`, `open-chat` | Load-only from older runs; prefer `step_review`. |
+| `conflict_handwritten` | rebase aborted on a hand-written conflict | `pr rebase --fix --no-push --repo-dir WT` |
+| `conflict_generated` | rebase aborted; generated files need a declared regenerator | `pr rebase --fix --no-push --repo-dir WT` |
+| `stale_generated` | rebase left generated files stale | `git reset --hard <pre_rebase_head>` — never accept |
+| `ci_failing` | read-only CI is red | `pr ci --fix --repo-dir WT` |
+| `review_findings` | open self-review findings | `pr review --self --fix --repo-dir WT` |
+| `threads_need_human` | review comments need a person | `pr comments --fix --repo-dir WT` |
+| `closeout_owed` | `pr` still owes a closeout | `pr comments --finish --post --repo-dir WT` |
+| `ready_to_push` | local work is ready under the lease | printed `pr push --expect` / `pr rebase --push-only --expect` |
+| `push_refused` | `publish.plan` refused | read the refusal; never force without `--expect` |
+| `stack_wait_base` | base PR is still open | wait for it to merge, then `pr rebase --fork-point` |
+| `dirty_worktree` | paused rebase or dirty tree | stash, or `pr rebase --abort` when paused |
+| `wrong_branch` | worktree is on another branch | `git -C WT switch <branch>` |
+| `failed_unknown` | unclassified failure | read the log path |
 
-`open-chat` is for a UI; the CLI leaves the decision open. After resolve,
-`pr batch resume` continues. Queued resolve JSON is `applied: false` plus
-`holder` — exit 0 is not "the decision closed".
+`block`/`wait` → item `needs_session`; `act` only → `done`.
 
 ---
 
 ## Stacks
 
-A stacked child waits for its base item's publish. `resume` retries
-`stacked_on` once that base is terminal, rebasing from `--fork-point`.
-`rebase_refused` offers `rebase-from-fork-point`. Do not rebase a child onto
-a base that is still open in the run.
+`stack_wait_base` waits for the base PR to merge. Then rebase the child with
+`--fork-point`. Do not rebase a child onto a base that is still open.
 
 ---
 

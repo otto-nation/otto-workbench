@@ -28,14 +28,9 @@ from run_lock_support import held_elsewhere  # noqa: E402
 
 _HOLDING_COMMANDS = {
     "driver": "pr batch resume",
-    "applier": "pr batch resolve",
+    "applier": "pr batch cancel",
     "gc": "pr gc",
 }
-
-
-def _no_command(*args, **kwargs) -> int:
-    """A resolve runner whose every command succeeds without running."""
-    return 0
 
 
 class NullInbox:
@@ -43,7 +38,7 @@ class NullInbox:
 
     def __init__(self) -> None:
         self.outcomes = []
-        self._ctx = batch.inbox.ApplyContext(pr_bin="pr", runner=_no_command)
+        self._ctx = batch.inbox.ApplyContext()
 
     def apply(self, run, envelope):
         return batch.inbox.apply_one(run, envelope.request, self._ctx, name=envelope.name)

@@ -63,30 +63,21 @@ def _even(item):
                      divergence=RefDivergence(ahead=0, behind=0, comparable=True))
 
 
-def _inbox(pr_bin, *, runner, tree, closeout, emit):
-    """The session Inbox a scheduler test drives with: the fakes as apply seams, events to *emit*.
-
-    It is the only place a drained or synthesized request is applied and
-    reported, so event assertions see every outcome through `emit_outcome`.
-    """
+def _inbox(emit):
+    """The session Inbox a scheduler test drives with: events to *emit*."""
     return batch.inbox.Inbox(batch.inbox.ApplyContext(
-        pr_bin, runner=runner, tree=tree, closeout=closeout,
         report=lambda run, outcome: batch.scheduler.emit_outcome(run, outcome, emit=emit)))
 
 
-def attach_scheduler(run, *, runner=None, tree=None, closeout=None, **kw):
+def attach_scheduler(run, *, closeout=None, **kw):
     """Open a DRIVER session for *run* (creating it when needed) and return a Scheduler on it.
 
-    *runner*, *tree* and *closeout* are apply seams, so they go to the session
-    inbox's ApplyContext; the Scheduler also gets *closeout*, which `_close`
-    reads for auto-publish. Outcomes are emitted to `kw["emit"]` when given.
     The session stays open until `_close_open_sessions` tears the stack down.
     `create` + first `commit` is used when the run is not on disk yet, so
     `finish` has not settled an empty run to DONE before the scheduler starts.
     """
     stack = contextlib.ExitStack()
-    inbox = _inbox(kw.get("pr_bin", "pr"), runner=runner, tree=tree, closeout=closeout,
-                   emit=kw.get("emit", batch.events.emit))
+    inbox = _inbox(kw.get("emit", batch.events.emit))
     state = batch.store.run_dir(run.id) / batch.store.STATE_FILE
     if state.is_file():
         session = stack.enter_context(
@@ -116,22 +107,20 @@ def _close_open_sessions():
 
 
 class Harness:
-    def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
+    def __init__(self, rows, *, codes=None, pool=2, host=HEALTHY,
                  replan=None, worktrees=None, heads=None, selected=None, cfg=None,
                  runner=None, tree=None, closeout=None, moves=(), stdouts=None,
                  contains=None, dirty=None, rebasing=None, unpublished=None,
                  descends=None, commits=None, verbose=False,
                  machine=None, hold_tree=None, branch=None, focus=(),
-                 with_ai=None, schema_version=1):
+                 with_ai=None):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
         self.published, self.publish_code = [], 0
         run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER),
                                       selected=selected, pool=pool,
-                                      auto_publish=list(auto_publish),
-                                      focus=focus, with_ai=with_ai,
-                                      schema_version=schema_version)
+                                      focus=focus, with_ai=with_ai)
         self.heads = heads or {}
         publish = runner or self._publish
         tree_fn = tree or ff_tree
@@ -139,12 +128,8 @@ class Harness:
         seed(run)
         self._stack = contextlib.ExitStack()
         _OPEN.append(self._stack)
-        # The publish runner and tree read are apply seams: they reach the
-        # session inbox, which applies every request. closeout also goes to
-        # the Scheduler, whose _close reads it for auto-publish.
         self.session = self._stack.enter_context(open_session(
-            run.id, inbox=_inbox("pr", runner=publish, tree=tree_fn, closeout=close,
-                                 emit=self._record)))
+            run.id, inbox=_inbox(self._record)))
         self._make = lambda: batch.scheduler.Scheduler(
             self.session, pr_bin="pr", cfg=cfg or BatchConfig(pool_max=4),
             host=lambda: host, spawn=self._spawn,

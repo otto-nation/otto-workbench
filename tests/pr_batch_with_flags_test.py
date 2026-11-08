@@ -119,3 +119,11 @@ def test_auto_publish_takes_only_ff(monkeypatch, capsys):
     # Revert: restore type=_steps.
     _plan_all(monkeypatch)
     assert _main(["batch", "run", "--checkout", "/r", "--auto-publish", "rebase"]) == 2
+
+
+def test_resolve_and_status_decision_are_gone(capsys):
+    # Revert: restore the resolve subparser and status --decision.
+    assert _main(["batch", "resolve", "r1", "d1", "--action", "retry"]) == 2
+    err = capsys.readouterr().err
+    assert "invalid choice" in err or "invalid" in err.lower() or "unrecognized" in err.lower()
+    assert _main(["batch", "status", "r1", "--decision", "d1"]) == 2

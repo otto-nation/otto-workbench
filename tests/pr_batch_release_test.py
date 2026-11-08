@@ -32,7 +32,7 @@ def _waiting(*, extra=(), drafted=True):
     rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                     {Step.REVIEW: StepNeed(True, "x")}), *extra]
     run = batch.scheduler.new_run(rows, steps=[Step.REVIEW], selected=None,
-                                  pool=1, auto_publish=[])
+                                  pool=1)
     item = run.items[0]
     item.worktree = "/wt"
     rec = item.step(Step.REVIEW)

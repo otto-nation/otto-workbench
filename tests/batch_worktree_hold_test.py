@@ -21,7 +21,7 @@ import batch.steps  # noqa: E402
 import batch.targets  # noqa: E402
 import cli.pr_batch  # noqa: E402
 import core.run_lock  # noqa: E402
-from batch.model import DecisionKind, Item, ItemStatus, Run, Step  # noqa: E402
+from batch.model import FindingReason, Item, ItemStatus, Run, Step  # noqa: E402
 from batch.publish import Refusal, TreeState  # noqa: E402
 # `_quiet_outcomes` and `_close_open_sessions` are autouse fixtures; imported so pytest
 # registers them here.
@@ -185,9 +185,11 @@ def test_a_new_worktree_another_command_holds_is_a_decision_not_a_step():
     item = h.run.items[0]
     assert h.spawned == []
     assert item.worktree == ""
-    (d,) = h.run.open_decisions()
-    assert (d.kind, d.step, d.payload["reason"]) == (DecisionKind.FAILED, "worktree", "lock_busy")
-    assert d.payload["detail"] == "/wt/b1 is held by x"
+    (f,) = item.findings
+    assert f.reason is FindingReason.FAILED_UNKNOWN
+    assert f.step == "worktree"
+    assert f.data.get("reason") == "lock_busy"
+    assert "held by x" in f.detail
 
 
 def test_a_new_worktree_is_held_before_any_step_starts():
@@ -206,17 +208,17 @@ def test_a_step_never_starts_on_a_worktree_switched_to_another_branch():
     h = Harness([row(1, ONLY_REVIEW)], branch=lambda wt: "feat/other")
     h.sched._once()
     assert h.spawned == []
-    (d,) = h.run.open_decisions()
-    assert (d.kind, d.step, d.payload["reason"]) == (DecisionKind.FAILED, "review",
-                                                     "wrong_branch")
-    assert d.payload["detail"] == "/wt/b1 is on feat/other, not b1"
+    (f,) = h.run.items[0].findings
+    assert f.reason is FindingReason.WRONG_BRANCH
+    assert f.step == "review"
+    assert f.detail == "/wt/b1 is on feat/other, not b1"
 
 
 def test_a_branch_git_cannot_name_is_not_the_items_branch():
     h = Harness([row(1, ONLY_REVIEW)], branch=lambda wt: "")
     h.sched._once()
     assert h.spawned == []
-    assert "no branch git could name" in h.run.open_decisions()[0].payload["detail"]
+    assert "no branch git could name" in h.run.items[0].findings[0].detail
 
 
 def test_publish_refuses_a_worktree_on_another_branch():

@@ -40,7 +40,7 @@ from batch.model import (Decision, DecisionKind, Item, ItemStatus, Run,  # noqa:
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch.requests import Cancel, Release  # noqa: E402
 from batch.store import Role  # noqa: E402
-from batch_session_support import NullInbox, open_session, seed, stops_at  # noqa: E402
+from batch_session_support import NullInbox, open_session, seed, seed_raw, stops_at  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
 
 RID = "20261014T130000-beef"
@@ -387,10 +387,16 @@ def _poll_status(stop, first, codes):
 
 
 def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
-    item = Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="aaa",
-                status=ItemStatus.QUEUED, steps=[StepRecord(Step.REBASE)])
-    seed(Run(id=RID, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
-             status=RunStatus.WAITING, items=[item]))
+    # Revert: skip reseeding WAITING before each resume — later resumes then
+    # refuse a DONE run (`run … is done`) instead of taking the lock.
+    def waiting():
+        item = Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b",
+                    head_sha="aaa", status=ItemStatus.QUEUED,
+                    steps=[StepRecord(Step.REBASE)])
+        return Run(id=RID, started_at="t", steps=[Step.REBASE], pool=1,
+                   auto_publish=[], status=RunStatus.WAITING, items=[item])
+
+    seed(waiting())
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(RunStatus.DONE))
     real_flock = fcntl.flock
@@ -408,6 +414,7 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
     try:
         assert first.wait(_PROC_TIMEOUT)
         for _ in range(10):
+            seed_raw(waiting())
             resumes.append(_main(["batch", "resume", RID]))
     finally:
         stop.set()

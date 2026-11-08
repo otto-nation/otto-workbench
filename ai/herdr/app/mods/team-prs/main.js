@@ -1,16 +1,35 @@
+// team-prs board. Scope key `team-prs.scope`: "this" reads the pinned or focused checkout, "all" reads every
+// open space's start folder. One fetch per repo (repoId), one listing per machine, one watch per reviews
+// root; spaces outside a repo are skipped in All spaces.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme,
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
+import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
+import { busyPrs } from "./_lib/batch.js";
 import {
-  assemble, checkTools, loadBusy, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
+  assemble, checkTools, loadBatchDoc, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
 import { renderBoard, renderChips } from "./board.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
+}
+
+function scopeOf() {
+  return shared("team-prs.scope") === "all" ? "all" : "this";
+}
+
+// The checkouts the board reads: the pinned or focused one, or every open space's.
+function targetsOf() {
+  if (scopeOf() === "all") {
+    const all = spaceTargets(spaces());
+    if (all.length) return all;
+  }
+  const c = ctxOf();
+  return [{ on: c.on, cwd: c.cwd }];
 }
 
 function ctxKey(ctx) {
@@ -27,10 +46,7 @@ function tabOf() {
 }
 
 function errorText(err, ctx) {
-  if (!err) return "";
-  if (err.kind === "auth") return `run gh auth login on ${ctx?.on != null ? ctx.on : "this Mac"}`;
-  if (err.kind === "unreachable") return "the machine is unreachable";
-  return err.message ?? "";
+  return friendlyError(err, ctx?.on, scopeOf());
 }
 
 
@@ -39,14 +55,14 @@ export default class TeamPrs extends View {
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
+    this.repoByKey = new Map();
     this.inflight = this.again = this.againListing = false;
-    this.watchKey = this.key = null;
+    this.watchRoot = this.key = null;
     this.pollListing = false;
     if (isUntrustedHome(appHome())) return;
     cx.timer.every(180000, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => {
-      const c = ctxOf();
-      if (c.on != null || this.pollListing) this.refresh(cx, { listingOnly: true });
+      if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
     });
     this.refresh(cx);
   }
@@ -75,7 +91,13 @@ export default class TeamPrs extends View {
     });
   }
 
-  same(key) { return ctxKey(ctxOf()) === key; }
+  activeTargets() {
+    const all = targetsOf();
+    if (scopeOf() !== "all") return all;
+    return representatives(all, (c) => this.repoByKey.get(ctxKey(c)));
+  }
+
+  same(key) { return this.activeTargets().some((c) => ctxKey(c) === key); }
 
   fail(key, error) {
     this.cache.set(key, { ...(this.cache.get(key) ?? {}), error, stale: true });
@@ -83,7 +105,8 @@ export default class TeamPrs extends View {
 
   commit(key, data, ctx, cx) {
     this.cache.set(key, { ...data, error: null, stale: false, updatedAt: Date.now() });
-    if (ctx.on == null) this.startWatch(cx, key, data.reviewsRoot);
+    // The watch follows the machine's reviews root, not a checkout.
+    if (ctx.on == null) this.startWatch(cx, data.reviewsRoot);
   }
 
   async ensureTools(ctx, key) {
@@ -97,7 +120,7 @@ export default class TeamPrs extends View {
     }
     const missing = ["pr", "gh"].filter((n) => !have[n]);
     if (missing.length) {
-      this.fail(key, { kind: "missing-tool", message: missing.join(", ") });
+      this.fail(key, { kind: "missing-tool", tools: missing, message: missing.join(", ") });
       return null;
     }
     return have;
@@ -114,42 +137,64 @@ export default class TeamPrs extends View {
     return user.login;
   }
 
-  async pull(cx, listingOnly) {
-    const ctx = ctxOf();
-    const key = ctxKey(ctx);
-    if (!ctx.cwd) {
-      this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
-      return;
-    }
-    if (listingOnly) await this.pullListing(ctx, key, cx);
-    else await this.pullFull(ctx, key, cx);
+  listingFor(ctx, cycle) {
+    const k = `listing:${ctx.on ?? ""}`;
+    if (!cycle.has(k)) cycle.set(k, loadListing(exec, ctx));
+    return cycle.get(k);
   }
 
-  async pullFull(ctx, key, cx) {
+  batchDocFor(ctx, cycle) {
+    const k = `batch:${ctx.on ?? ""}`;
+    if (!cycle.has(k)) cycle.set(k, loadBatchDoc(exec, ctx));
+    return cycle.get(k);
+  }
+
+  async pull(cx, listingOnly) {
+    const cycle = new Map();
+    await Promise.all(this.activeTargets().map(async (ctx) => {
+      const key = ctxKey(ctx);
+      if (!ctx.cwd) {
+        this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
+        return;
+      }
+      if (listingOnly) await this.pullListing(ctx, key, cx, cycle);
+      else await this.pullFull(ctx, key, cx, cycle);
+      cx.notify();
+    }));
+    const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces()).map(ctxKey)];
+    for (const k of staleKeys(this.cache.keys(), keep)) {
+      this.cache.delete(k);
+      this.repoByKey.delete(k);
+    }
+  }
+
+  async pullFull(ctx, key, cx, cycle) {
     const have = await this.ensureTools(ctx, key);
     if (!have || !this.same(key)) return;
     const repo = await loadRepo(exec, ctx);
     if (!this.same(key)) return;
     if (!repo.ok) { this.fail(key, repo.error); return; }
+    this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, busy] = await Promise.all([
+    const [open, listing, doc] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
-      loadListing(exec, ctx),
-      loadBusy(exec, ctx, repo.slug),
+      this.listingFor(ctx, cycle),
+      this.batchDocFor(ctx, cycle),
     ]);
     if (!this.same(key)) return;
-    const bad = [open, listing, busy].find((r) => !r.ok);
+    const bad = [open, listing].find((r) => !r.ok);
     if (bad) { this.fail(key, bad.error); return; }
+    const busy = busyPrs(doc.doc, repo.slug);
     const landedPrs = await this.landed(ctx, key, repo, listing.listing, open.prs);
     if (landedPrs == null || !this.same(key)) return;
     this.commit(key, {
       repo: { slug: repo.slug, host: repo.host }, me: login, tools: have,
-      listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy: busy.busy,
+      listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
       openPrs: open.prs, landedPrs,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
-        slug: repo.slug, host: repo.host, login, busy: busy.busy,
+        slug: repo.slug, host: repo.host, login, busy,
       }),
     }, ctx, cx);
   }
@@ -162,17 +207,22 @@ export default class TeamPrs extends View {
     return result.prs;
   }
 
-  async pullListing(ctx, key, cx) {
+  async pullListing(ctx, key, cx, cycle) {
     const prev = this.cache.get(key);
-    if (!prev?.repo) { await this.pullFull(ctx, key, cx); return; }
-    const listing = await loadListing(exec, ctx);
+    if (!prev?.repo) { await this.pullFull(ctx, key, cx, cycle); return; }
+    const listing = await this.listingFor(ctx, cycle);
     if (!this.same(key)) return;
     if (!listing.ok) { this.fail(key, listing.error); return; }
-    const busyRan = await loadBusy(exec, ctx, prev.repo.slug);
+    const doc = await this.batchDocFor(ctx, cycle);
     if (!this.same(key)) return;
-    const busy = busyRan.ok ? busyRan.busy : (prev.busy ?? new Set());
-    const landedPrs = await this.landed(ctx, key, prev.repo, listing.listing, prev.openPrs ?? []);
-    if (landedPrs == null || !this.same(key)) return;
+    const busy = busyPrs(doc.doc, prev.repo.slug);
+    let landedPrs;
+    if (JSON.stringify(listing.listing) === JSON.stringify(prev.listing)) {
+      landedPrs = prev.landedPrs ?? [];
+    } else {
+      landedPrs = await this.landed(ctx, key, prev.repo, listing.listing, prev.openPrs ?? []);
+      if (landedPrs == null || !this.same(key)) return;
+    }
     this.commit(key, {
       ...prev, listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy, landedPrs,
       prs: assemble({
@@ -182,17 +232,19 @@ export default class TeamPrs extends View {
     }, ctx, cx);
   }
 
-  startWatch(cx, key, root) {
-    if (!root || this.watchKey === key) return;
-    this.watchKey = key;
+  startWatch(cx, root) {
+    if (!root || this.watchRoot === root) return;
+    this.watchRoot = root;
     this.pollListing = false;
     cx.spawn(async (cx) => {
       try {
-        while (this.watchKey === key && this.same(key)) {
+        while (this.watchRoot === root && this.activeTargets().some((c) => c.on == null)) {
           await watchFolder(root);
-          if (this.watchKey === key && this.same(key)) this.refresh(cx, { listingOnly: true });
+          if (this.watchRoot === root && this.activeTargets().some((c) => c.on == null)) {
+            this.refresh(cx, { listingOnly: true });
+          }
         }
-      } catch { if (this.watchKey === key) this.pollListing = true; }
+      } catch { if (this.watchRoot === root) this.pollListing = true; }
     });
   }
 
@@ -219,16 +271,38 @@ export default class TeamPrs extends View {
       return v_flex().id("prs").size_full().items_center().justify_center().bg(t.background)
         .child(div().text_color(t.dim).child("PR board is disabled in the untrusted window"));
     }
-    const ctx = ctxOf(), key = ctxKey(ctx);
-    if (this.key !== key) {
-      this.key = key; this.watchKey = null; this.pollListing = false; this.refresh(cx);
+    const targets = this.activeTargets();
+    const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
+    if (this.key !== scopeKey) {
+      this.key = scopeKey; this.refresh(cx, { listingOnly: true });
     }
-    const state = this.cache.get(key) ?? {};
-    if (state.error && state.prs == null) {
-      return v_flex().id("prs").size_full().items_center().justify_center().bg(t.background)
-        .child(div().text_color(t.dim).child(errorText(state.error, ctx)));
+    const states = targets.map((c) => this.cache.get(ctxKey(c)) ?? {});
+    const scope = scopeOf();
+    const view = boardState(targets, states, scope);
+    const errLine = (e) => {
+      const base = String(e.cwd).split("/").filter(Boolean).pop();
+      return `${base ?? ""}${e.on != null ? " on " + e.on : ""}: ${friendlyError(e.error, e.on, scope)}`;
+    };
+    if (view.repos === 0 && view.errors.length && !view.loading) {
+      return v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background)
+        .children(view.errors.slice(0, 3).map((e) => div().text_color(t.dim).child(errLine(e))))
+        .child(this.scopeToggle(t));
     }
-    return this.boardView(cx, ctx, state, t);
+    if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
+      return v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background)
+        .child(div().text_color(t.dim).child("No open space is in a GitHub repository"))
+        .child(this.scopeToggle(t));
+    }
+    return this.boardView(cx, targets[0], view, t);
+  }
+
+  scopeToggle(t) {
+    const scope = scopeOf();
+    const btn = (name, label) => div().id(`scope-${name}`).px(8).py(4).rounded(6).text_size(11)
+      .cursor_pointer().when(scope === name, (e) => e.bg(t.selected).text_color(t.foreground))
+      .when(scope !== name, (e) => e.text_color(t.muted))
+      .on_click(() => setShared("team-prs.scope", name)).child(label);
+    return h_flex().gap(4).child(btn("this", "This space")).child(btn("all", "All spaces"));
   }
 
   boardView(cx, ctx, state, t) {
@@ -241,7 +315,7 @@ export default class TeamPrs extends View {
         tab, prs: state.prs ?? [], filters, me: state.me ?? "",
         // Detail window lands in PR 4.
         onOpen: (_pr) => {},
-        spinner: "⠋",
+        spinner: "⠋", showRepo: scopeOf() === "all",
       }));
   }
 
@@ -250,16 +324,25 @@ export default class TeamPrs extends View {
       .cursor_pointer().when(tab === name, (e) => e.bg(t.selected).text_color(t.foreground))
       .when(tab !== name, (e) => e.text_color(t.muted))
       .on_click(() => setShared("team-prs.tab", name)).child(label);
+    const loading = state.loading && !state.repos;
+    const nFail = state.errors?.length ?? 0;
+    const first = state.errors?.[0];
     return h_flex().id("prs-header").h(42).flex_none().px(14).gap(8).items_center()
-      .child(div().font_semibold().child(state.repo?.slug ?? "no repo"))
-      .when(ctx.on != null, (e) => e.child(div().text_size(11).text_color(t.dim).child(String(ctx.on))))
+      .child(this.scopeToggle(t))
+      .when(scopeOf() === "all", (e) => e.child(div().text_size(11).text_color(t.dim)
+        .child(loading ? "loading…" : `${state.repos} repos`)))
+      .when(scopeOf() !== "all", (e) => e.child(div().font_semibold().child(loading ? "loading…" : (state.slug ?? "no repo"))))
+      .when(scopeOf() !== "all" && ctx?.on != null, (e) => e.child(div().text_size(11).text_color(t.dim).child(String(ctx.on))))
       .child(h_flex().gap(4).child(btn("team", "Team")).child(btn("mine", "Mine")))
-      .child(div().id("pin").px(8).py(4).rounded(6).text_size(11).cursor_pointer()
+      .when(scopeOf() !== "all", (e) => e.child(div().id("pin").px(8).py(4).rounded(6).text_size(11).cursor_pointer()
         .border_1().border_color(t.border)
         .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
-        .child(pin ? "pinned" : "pin"))
-      .when(Boolean(state.stale), (e) => e
+        .child(pin ? "pinned" : "pin")))
+      .when(nFail && scopeOf() !== "all", (e) => e
         .child(div().text_size(11).text_color(t.ansi1).child("stale"))
-        .child(div().text_size(11).text_color(t.dim).truncate().child(errorText(state.error, ctx))));
+        .child(div().text_size(11).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
+      .when(nFail && scopeOf() === "all", (e) => e
+        .child(div().text_size(11).text_color(t.ansi1).truncate()
+          .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`)));
   }
 }

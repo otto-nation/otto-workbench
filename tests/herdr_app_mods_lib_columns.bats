@@ -222,6 +222,18 @@ _filter() {
   [ "$output" = "pending-review" ]
 }
 
+@test "isMine: viewer wins over me; author vs me is case-insensitive" {
+  run node --input-type=module -e "
+    const { isMine } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    process.stdout.write(JSON.stringify({
+      a: isMine({author:'Bob',viewer:'bob'}, 'alice'),
+      b: isMine({author:'bob'}, 'BOB'),
+    }));
+  "
+  [ "$status" -eq 0 ]
+  jq -e '.a and .b' <<<"$output"
+}
+
 @test "filterPrs: mine author compare is case-insensitive" {
   _filter '[{"number":1,"author":"Alice","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"mine":true}' 'alice'
   [ "$status" -eq 0 ]

@@ -76,16 +76,21 @@ export function mineColumn(pr) {
   return 'pending-review';
 }
 
+export function isMine(pr, me) {
+  const login = String(pr.author ?? '').toLowerCase();
+  const who = String(pr.viewer ?? me ?? '').toLowerCase();
+  return login === who;
+}
+
 export function filterPrs(prs, filters, me) {
   const drafts = Boolean(filters?.drafts);
   const landed = Boolean(filters?.landed);
   const mine = Boolean(filters?.mine);
   const authors = Array.isArray(filters?.authors) ? filters.authors : [];
-  const meKey = String(me ?? '').toLowerCase();
   const authorSet = new Set(authors.map((a) => String(a).toLowerCase()));
   return prs.filter((pr) => {
     const login = String(pr.author ?? '').toLowerCase();
-    if (mine && login !== meKey) return false;
+    if (mine && !isMine(pr, me)) return false;
     if (!drafts && pr.isDraft) return false;
     if (!landed && teamColumn(pr) === 'landed') return false;
     if (authorSet.size > 0 && !authorSet.has(login)) return false;

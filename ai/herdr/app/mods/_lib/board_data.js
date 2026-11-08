@@ -176,7 +176,7 @@ export async function loadListing(exec, ctx) {
   return { ok: true, listing: parsed.value, reviewsRoot: parsed.value.reviews_root };
 }
 
-export async function loadBusy(exec, ctx, slug) {
+export async function loadBatchDoc(exec, ctx) {
   let ran;
   try {
     ran = await exec('pr', ['batch', 'status', '--full', '--offline'], {
@@ -184,14 +184,19 @@ export async function loadBusy(exec, ctx, slug) {
       on: ctx.on,
     });
   } catch {
-    return { ok: true, busy: new Set() };
+    return { ok: true, doc: null };
   }
-  if (ran.code !== 0) return { ok: true, busy: new Set() };
+  if (ran.code !== 0) return { ok: true, doc: null };
   try {
-    return { ok: true, busy: busyPrs(JSON.parse(ran.stdout), slug) };
+    return { ok: true, doc: JSON.parse(ran.stdout) };
   } catch {
-    return { ok: true, busy: new Set() };
+    return { ok: true, doc: null };
   }
+}
+
+export async function loadBusy(exec, ctx, slug) {
+  const ran = await loadBatchDoc(exec, ctx);
+  return { ok: true, busy: busyPrs(ran.doc, slug) };
 }
 
 function listingRows(listing) {

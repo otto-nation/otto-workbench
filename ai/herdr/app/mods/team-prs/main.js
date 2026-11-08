@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme, layout, run, props,
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
 import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
@@ -12,7 +12,10 @@ import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
+import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
+import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
+import { renderCompact, renderRail } from "./compact.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -283,17 +286,58 @@ export default class TeamPrs extends View {
       const base = String(e.cwd).split("/").filter(Boolean).pop();
       return `${base ?? ""}${e.on != null ? " on " + e.on : ""}: ${friendlyError(e.error, e.on, scope)}`;
     };
+    const mode = viewOf(props(), this.size?.width, layout());
+    const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
+    if (mode === "rail" && view.repos === 0 && !view.loading) return this.railView(view);
     if (view.repos === 0 && view.errors.length && !view.loading) {
-      return v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background)
+      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background))
         .children(view.errors.slice(0, 3).map((e) => div().text_color(t.dim).child(errLine(e))))
         .child(this.scopeToggle(t));
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
-      return v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background)
+      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background))
         .child(div().text_color(t.dim).child("No open space is in a GitHub repository"))
         .child(this.scopeToggle(t));
     }
+    if (mode === "rail") return this.railView(view);
+    if (mode === "compact") return this.compactView(view, t);
     return this.boardView(cx, targets[0], view, t);
+  }
+
+  listed(state) {
+    const prs = state.prs ?? [], me = state.me ?? "";
+    return tabOf() === "mine" ? prs.filter((p) => isMine(p, me)) : filterPrs(prs, filtersOf(), me);
+  }
+
+  onSize(size, cx) { this.size = size; cx.notify(); }
+
+  compactHeader(tab, t) {
+    const btn = (name, label) => div().id(`tab-${name}`).px(8).py(4).rounded(6).text_size(11)
+      .cursor_pointer().when(tab === name, (e) => e.bg(t.selected).text_color(t.foreground))
+      .when(tab !== name, (e) => e.text_color(t.muted))
+      .on_click(() => setShared("team-prs.tab", name)).child(label);
+    return h_flex().h(28).flex_none().px(8).gap(4).items_center()
+      .child(this.scopeToggle(t))
+      .child(h_flex().gap(4).child(btn("team", "Team")).child(btn("mine", "Mine")))
+      .child(div().id("open-board").px(8).py(4).rounded(6).text_size(11).cursor_pointer()
+        .on_click(() => run("tab.new", { name: "PRs", mod: "team-prs" }))
+        .child("Open board"));
+  }
+
+  compactView(state, t) {
+    const mine = tabOf() === "mine";
+    const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
+    const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
+    return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+      .on_size_change((size, cx) => this.onSize(size, cx))
+      .child(this.compactHeader(tabOf(), t))
+      .child(renderCompact({ sections, onOpen: (_pr) => {}, showRepo: scopeOf() === "all" }));
+  }
+
+  railView(state) {
+    return v_flex().id("prs").size_full()
+      .on_size_change((size, cx) => this.onSize(size, cx))
+      .child(renderRail({ count: this.listed(state).length }));
   }
 
   scopeToggle(t) {
@@ -309,6 +353,7 @@ export default class TeamPrs extends View {
     const filters = filtersOf(), tab = tabOf(), pin = shared("team-prs.pin");
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter(Boolean))].sort();
     return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13)
+      .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx) }))
       .child(renderBoard({

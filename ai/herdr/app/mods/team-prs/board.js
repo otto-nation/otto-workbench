@@ -1,7 +1,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine } from "./_lib/columns.js";
+import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
@@ -17,16 +17,6 @@ function pill(text, color) {
   const t = theme();
   return div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10)
     .text_color(color ?? t.muted).child(text);
-}
-
-function grouped(prs, colOf, columns) {
-  const buckets = {};
-  for (const c of columns) buckets[c.key] = [];
-  for (const pr of prs) {
-    const key = colOf(pr);
-    if (buckets[key]) buckets[key].push(pr);
-  }
-  return columns.map((c) => ({ ...c, items: buckets[c.key] ?? [] }));
 }
 
 function column(col, opts) {
@@ -47,7 +37,7 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo }
     ? prs.filter((p) => isMine(p, me))
     : filterPrs(prs, filters, me);
   const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
-  const cols = grouped(list, mine ? mineColumn : teamColumn, spec);
+  const cols = groupColumns(list, mine ? mineColumn : teamColumn, spec);
   return h_flex().id("prs-board").flex_1().h_full().min_h(0).gap(8).p(8).bg(t.background)
     .text_color(t.foreground).text_size(13)
     .children(cols.map((c) => column(c, { onOpen, spinner, showRepo })));

@@ -10,7 +10,7 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.steps  # noqa: E402
 import git.topology  # noqa: E402
-from batch.model import DecisionKind  # noqa: E402
+from batch.model import FindingReason  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from conftest import git_in, init_repo  # noqa: E402
 
@@ -39,11 +39,13 @@ def test_a_failed_switch_with_no_such_directory_is_not_a_collision(tmp_path, mon
 
 
 def test_a_collision_fails_the_item_with_its_reason():
+    # Revert: skip findings.record in scheduler._decide.
     h = Harness(
         [row(1)],
         worktrees=lambda d, b: WorktreeResult("", False, "x", collision=True),
     )
     h.sched.run_until_blocked()
-    failed = next(d for d in h.run.decisions if d.kind is DecisionKind.FAILED)
+    failed = h.run.items[0].findings[0]
+    assert failed.reason is FindingReason.WORKTREE_COLLISION
     assert failed.step == "worktree"
-    assert failed.payload["reason"] == "worktree_collision"
+    assert failed.detail == "x"

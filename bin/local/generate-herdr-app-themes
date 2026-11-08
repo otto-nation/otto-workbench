@@ -2,11 +2,15 @@
 """Generate herdr-app theme files from the palettes that own their colors.
 
 Usage: bin/local/generate-herdr-app-themes [--check] [--palettes DIR] [--out DIR]
+                                           [--tokens FILE]
 
-Every ai/herdr/app/palettes/*.toml holds a [palette] of named hex colors and
-one [themes.<name>] table per theme, whose values are palette names. Each theme
-is rendered to ai/herdr/app/themes/<name>.generated.json with every name replaced
-by its hex; sync links it into herdr-app as <name>.json (HERDR_APP_THEME_SUFFIX in
+Every ai/herdr/app/palettes/*.toml holds a [palette] of named colors and one
+[themes.<name>] table per theme, whose values are palette names. A palette value
+is #rrggbb or brand:<token> (the CSS custom property without its leading --).
+[schemes] maps a theme name to light or dark and is never rendered; a theme that
+uses brand: must have one. Each theme is rendered to
+ai/herdr/app/themes/<name>.generated.json with every name replaced by its hex;
+sync links it into herdr-app as <name>.json (HERDR_APP_THEME_SUFFIX in
 lib/constants.sh names the suffix for the sync side). herdr-app skips a theme file in which a color names another color, so the
 JSON must carry literal hex values and cannot be the source.
 
@@ -14,11 +18,14 @@ Options:
   --check          Exit 1 if a theme file is stale or missing, without writing
   --palettes DIR   Read palettes from DIR (default: ai/herdr/app/palettes)
   --out DIR        Write themes to DIR (default: ai/herdr/app/themes)
+  --tokens FILE    Read brand tokens from FILE instead of the pinned install
   -h, --help       Show this help
 
 Exit status: 0 up to date (or written), 1 stale under --check, 2 a palette is
 invalid: a value that is not a palette name, a palette entry that is not
-#rrggbb, or two palettes defining the same theme.
+#rrggbb or brand:<token>, a missing or invalid [schemes] entry, an unknown
+brand token, or two palettes defining the same theme. 3 brand tokens
+unavailable.
 """
 
 from __future__ import annotations
@@ -33,12 +40,45 @@ import tomllib
 from pathlib import Path
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+BRAND = re.compile(r"^brand:([a-z0-9-]+)$")
+DECL = re.compile(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})")
 # tests/herdr_app_theme.bats checks this against HERDR_APP_THEME_SUFFIX.
 SUFFIX = ".generated.json"
 
 
 class PaletteError(Exception):
     """A palette file that cannot be rendered."""
+
+
+class BrandError(Exception):
+    """Brand tokens could not be loaded."""
+
+
+def _parse_tokens(text: str) -> dict[str, dict[str, str]]:
+    """Light and dark maps of token name to #rrggbb from a tokens.css body."""
+    stripped = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    root_m = re.search(r":root\s*\{(.*?)\}", stripped, flags=re.DOTALL)
+    if root_m is None:
+        raise BrandError("brand tokens have no :root block")
+    root = dict(DECL.findall(root_m.group(1)))
+    dark_m = re.search(r"\.dark\s*\{(.*?)\}", stripped, flags=re.DOTALL)
+    dark = dict(DECL.findall(dark_m.group(1))) if dark_m else {}
+    return {"light": root, "dark": {**root, **dark}}
+
+
+def _brand_loader(tokens: Path | None):
+    """Zero-argument brand loader; reads --tokens, cached after the first call."""
+    loaded: dict[str, dict[str, str]] | None = None
+
+    def brand() -> dict[str, dict[str, str]]:
+        nonlocal loaded
+        if loaded is None:
+            if tokens is None:
+                raise BrandError("brand tokens unavailable — pass --tokens")
+            loaded = _parse_tokens(tokens.read_text())
+        return loaded
+
+    return brand
 
 
 def _resolve(value: object, palette: dict[str, str], where: str) -> object:
@@ -52,24 +92,49 @@ def _resolve(value: object, palette: dict[str, str], where: str) -> object:
     raise PaletteError(f"{where}: {value!r} is not a name in [palette]")
 
 
-def _render_source(source: Path) -> dict[str, str]:
+def _render_source(source: Path, brand) -> dict[str, str]:
     """The theme files one palette file defines, each mapped to its text."""
     data = tomllib.loads(source.read_text())
-    palette = data.get("palette", {})
-    bad = [n for n, v in palette.items() if not isinstance(v, str) or not HEX.match(v)]
-    if bad:
-        raise PaletteError(f"{source.name}: palette.{bad[0]} = {palette[bad[0]]!r} is not #rrggbb")
-    return {
-        f"{theme}{SUFFIX}": json.dumps(_resolve(spec, palette, f"{source.name}: themes.{theme}"), indent=2) + "\n"
-        for theme, spec in data.get("themes", {}).items()
-    }
+    palette, themes = data.get("palette", {}), data.get("themes", {})
+    schemes = data.get("schemes", {})
+    for name, scheme in schemes.items():
+        if name not in themes:
+            raise PaletteError(f"{source.name}: schemes.{name} names an undefined theme")
+        if scheme not in ("light", "dark"):
+            raise PaletteError(f"{source.name}: schemes.{name} = {scheme!r} is not light or dark")
+    files: dict[str, str] = {}
+    for theme, spec in themes.items():
+        resolved: dict[str, str] = {}
+        for name, value in palette.items():
+            if isinstance(value, str) and HEX.match(value):
+                resolved[name] = value
+                continue
+            ref = BRAND.match(value) if isinstance(value, str) else None
+            if ref is None:
+                raise PaletteError(f"{source.name}: palette.{name} = {value!r} is not #rrggbb")
+            scheme = schemes.get(theme)
+            if scheme not in ("light", "dark"):
+                raise PaletteError(
+                    f"{source.name}: themes.{theme} uses brand tokens but has no [schemes] entry"
+                )
+            token = ref.group(1)
+            hex_value = brand()[scheme].get(token)
+            if hex_value is None:
+                raise PaletteError(
+                    f"{source.name}: themes.{theme} palette.{name} = {value!r} is not a token"
+                )
+            resolved[name] = hex_value
+        files[f"{theme}{SUFFIX}"] = (
+            json.dumps(_resolve(spec, resolved, f"{source.name}: themes.{theme}"), indent=2) + "\n"
+        )
+    return files
 
 
-def render(palettes_dir: Path) -> dict[str, str]:
+def render(palettes_dir: Path, brand) -> dict[str, str]:
     """Every theme file name mapped to the text it should hold."""
     out: dict[str, str] = {}
     for source in sorted(palettes_dir.glob("*.toml")):
-        files = _render_source(source)
+        files = _render_source(source, brand)
         clash = sorted(files.keys() & out.keys())
         if clash:
             raise PaletteError(f"{source.name}: theme {clash[0].removesuffix(SUFFIX)!r} is defined by another palette too")
@@ -82,6 +147,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--palettes", type=Path)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--tokens", type=Path)
     parser.add_argument("-h", "--help", action="store_true")
     args = parser.parse_args(argv)
     if args.help:
@@ -96,7 +162,10 @@ def main(argv: list[str]) -> int:
     out_dir = args.out or root / "ai/herdr/app/themes"
 
     try:
-        files = render(palettes_dir)
+        files = render(palettes_dir, _brand_loader(args.tokens))
+    except BrandError as err:
+        print(f"generate-herdr-app-themes: {err}", file=sys.stderr)
+        return 3
     except (PaletteError, tomllib.TOMLDecodeError) as err:
         print(f"generate-herdr-app-themes: {err}", file=sys.stderr)
         return 2

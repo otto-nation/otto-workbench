@@ -31,6 +31,38 @@ accent = "ink"
 EOF
 }
 
+_tokens() {
+  cat > "$BATS_TEST_TMPDIR/tokens.css" <<'EOF'
+:root {
+  /* } */
+  --ow-canvas: #f7f2e9;
+  --ow-only-root: #abcdef;
+}
+.dark {
+  --ow-canvas: #0f0e13;
+}
+EOF
+}
+
+_brand_palette() {
+  cat > "$PAL/test.toml" <<EOF
+[palette]
+canvas = "brand:ow-canvas"
+only = "brand:${1:-ow-only-root}"
+
+[schemes]
+sample-light = "light"
+sample-dark = "${2:-dark}"
+
+[themes.sample-light]
+background = "canvas"
+
+[themes.sample-dark]
+background = "canvas"
+accent = "only"
+EOF
+}
+
 @test "committed theme files match their palettes" {
   run "$GEN" --check
   [ "$status" -eq 0 ]
@@ -90,4 +122,61 @@ EOF
   run "$GEN" --palettes "$PAL" --out "$OUT"
   [ "$status" -ne 0 ]
   [ -z "$(find "$OUT" -name '*.tmp')" ]
+}
+
+@test "light and dark brand:ow-canvas resolve to each block's hex" {
+  sandbox_state_dir
+  _tokens
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
+  [ "$(jq -r .background "$OUT/sample-dark.generated.json")" = "#0f0e13" ]
+}
+
+@test "a dark theme resolves a token only :root defines" {
+  sandbox_state_dir
+  _tokens
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .accent "$OUT/sample-dark.generated.json")" = "#abcdef" ]
+}
+
+@test "an unknown brand token exits 2 and writes nothing" {
+  sandbox_state_dir
+  _tokens
+  _brand_palette ow-missing
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"palette.only"*"ow-missing"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
+}
+
+@test "a brand reference with no [schemes] entry exits 2" {
+  sandbox_state_dir
+  _tokens
+  _brand_palette
+  sed -i.bak '/^\[schemes\]/,/^$/d' "$PAL/test.toml"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"no [schemes] entry"* ]]
+}
+
+@test "a scheme value other than light/dark exits 2" {
+  sandbox_state_dir
+  _tokens
+  _brand_palette ow-only-root sepia
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not light or dark"* ]]
+}
+
+@test "brand references with no --tokens exit 3 and write nothing" {
+  sandbox_state_dir
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"brand tokens unavailable"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
 }

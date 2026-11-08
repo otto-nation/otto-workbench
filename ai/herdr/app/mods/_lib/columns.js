@@ -97,3 +97,14 @@ export function filterPrs(prs, filters, me) {
     return true;
   });
 }
+
+// Bucket PRs into the given columns; unknown colOf keys are dropped.
+export function groupColumns(prs, colOf, columns) {
+  const buckets = {};
+  for (const c of columns) buckets[c.key] = [];
+  for (const pr of prs) {
+    const key = colOf(pr);
+    if (buckets[key]) buckets[key].push(pr);
+  }
+  return columns.map((c) => ({ ...c, items: buckets[c.key] ?? [] }));
+}

@@ -17,6 +17,7 @@ setup() {
   FIXTURE="$REPO_ROOT/tests/fixtures/herdr-app-main.json"
   unset HERDR_ENV HERDR_PANE_ID
   narrow_path_to bash jq
+  UNTRUSTED="$BATS_TEST_TMPDIR/untrusted-app"
 }
 
 teardown() {
@@ -43,6 +44,21 @@ _seed_main() {
 
 _cksum() {
   cksum "$1" | awk '{print $1}'
+}
+
+_run_step() {
+  bash -c '
+    set -e
+    export NO_COLOR=1
+    WORKBENCH_DIR="$1"
+    export WORKBENCH_STABLE_DIR="$1"
+    . "$1/lib/ui.sh"
+    . "$1/ai/herdr/steps.sh"
+    HERDR_APP_LAYOUTS_SRC_DIR="$2"
+    HERDR_UNTRUSTED_APP_DIR="$3"
+    HERDR_APP_LAYOUTS_MANIFEST="$4"
+    step_herdr_app_layouts
+  ' _ "$REPO_ROOT" "$SRC" "$UNTRUSTED" "$MANIFEST"
 }
 
 @test "jq puts prs third under sidebar-lists with sidebar view" {
@@ -172,4 +188,32 @@ _cksum() {
   [ "$(cat "$APP/layouts/workbench.json")" = '{"id":"hand"}' ]
   grep -qx $'workbench\t'"$recorded" "$MANIFEST"
   [[ "$output" == *"left as is"* ]]
+}
+
+@test "step is a no-op when herdr-app is absent" {
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$APP" ]
+}
+
+@test "untrusted app dir is left untouched" {
+  _seed_main
+  mkdir -p "$UNTRUSTED/layouts"
+  printf '%s\n' keep > "$UNTRUSTED/layouts/KEEP"
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$UNTRUSTED/layouts/KEEP")" = keep ]
+  [ ! -e "$UNTRUSTED/layouts/workbench.json" ]
+  [ -f "$APP/layouts/workbench.json" ]
+}
+
+@test "step prints the layout.switch hint on first install only" {
+  _seed_main
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'herdr-app: show the workbench layout (PR list under agents) with: herdr-app do layout.switch --name workbench'* ]]
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'layout.switch --name workbench'* ]]
 }

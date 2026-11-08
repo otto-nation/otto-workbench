@@ -196,6 +196,22 @@ step_herdr_app_mods() {
   return 0
 }
 
+# step_herdr_app_layouts — derives workbench herdr-app layouts from main.json.
+# No-op when herdr-app is not installed. Never writes HERDR_UNTRUSTED_APP_DIR.
+# Prints a layout.switch hint the first time workbench is installed.
+# Non-fatal: always returns 0.
+step_herdr_app_layouts() {
+  _herdr_app_present || return 0
+  _herdr_app_install_layouts
+  local name
+  for name in "${HERDR_APP_LAYOUTS_NEWLY_INSTALLED[@]}"; do
+    [[ "$name" == workbench ]] || continue
+    info 'herdr-app: show the workbench layout (PR list under agents) with: herdr-app do layout.switch --name workbench'
+    break
+  done
+  return 0
+}
+
 # _herdr_config_swap FILE CANDIDATE — moves CANDIDATE over FILE, then asks
 # `herdr config check`; on failure puts the original back (or removes FILE when
 # there was none) and warns with herdr's diagnostic. Returns 1 when rolled back.
@@ -296,6 +312,8 @@ sync_herdr_app() {
   step_herdr_app_theme
   sync_header "herdr-app mods"
   step_herdr_app_mods
+  sync_header "herdr-app layouts"
+  step_herdr_app_layouts
   sync_header "herdr-app untrusted window"
   step_herdr_untrusted_window
   sync_component_bin "$HERDR_SRC_DIR"
@@ -309,6 +327,7 @@ register_herdr_steps() {
   register_step "Herdr machines"     step_herdr_machine_note
   register_step "Herdr app theme"         step_herdr_app_theme
   register_step "Herdr app mods"          step_herdr_app_mods
+  register_step "Herdr app layouts"       step_herdr_app_layouts
   register_step "Herdr untrusted window"  step_herdr_untrusted_window
 }
 

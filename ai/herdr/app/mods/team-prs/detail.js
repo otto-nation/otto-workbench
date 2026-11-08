@@ -1,5 +1,5 @@
 import { div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
 
@@ -12,6 +12,15 @@ function button(id, label, onClick) {
     .border_1().border_color(t.border).hover((s) => s.bg(t.hover))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .on_click(() => onClick()).child(label);
+}
+
+function reviewBody(stamp, body) {
+  const t = theme();
+  const dim = (s) => div().text_color(t.dim).child(s);
+  if (body == null) return dim("loading…");
+  if (body.ok === false) return dim(body.error?.message ?? "");
+  if (body.text == null) return dim("review file not found — it may have been pruned");
+  return TextView.markdown("review-" + stamp, body.text).selectable().scrollable();
 }
 
 export function prUrl(d) {
@@ -34,7 +43,7 @@ export function renderDetailHeader(d, { onClose, onOpenUrl }) {
       .child(div().child(d.decision ? String(d.decision).toLowerCase().replace(/_/g, " ") : "")));
 }
 
-export function renderDetail(d, { onClose, onOpenUrl, nowMs }) {
+export function renderDetail(d, { onClose, onOpenUrl, nowMs, openStamp, bodyFor, onToggle }) {
   const t = theme();
   const rows = historyRows(d.runs ?? [], nowMs);
   return v_flex().id("prs-detail").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13)
@@ -42,9 +51,11 @@ export function renderDetail(d, { onClose, onOpenUrl, nowMs }) {
     .child(div().px(10).py(6).flex_none().text_color(t.muted).child("Review history"))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(10).gap(6)
       .when(!rows.length, (e) => e.child(div().text_color(t.dim).child("No reviews yet")))
-      .children(rows.map((r) => v_flex().id(`run-${r.stamp}`).p(8).gap(2).rounded(8).border_1().border_color(t.border)
+      .children(rows.map((r) => v_flex().id(`run-${r.stamp}`).p(8).gap(2).rounded(8).border_1()
+        .border_color(t.border).cursor_pointer().on_click(() => onToggle(r.stamp))
         .child(h_flex().gap(8).child(div().font_semibold().child(r.verdict || "review"))
           .child(div().text_color(t.dim).child(r.when)).child(div().text_color(t.dim).child(r.shortSha)))
         .child(div().text_size(11).child(r.findingsText))
-        .child(div().text_size(11).text_color(t.dim).child(`${r.post.label}${r.costText ? " · " + r.costText : ""}`)))));
+        .child(div().text_size(11).text_color(t.dim).child(`${r.post.label}${r.costText ? " · " + r.costText : ""}`))
+        .when(openStamp === r.stamp, (e) => e.child(reviewBody(r.stamp, bodyFor(r.stamp)))))));
 }

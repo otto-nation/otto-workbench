@@ -37,7 +37,7 @@ def _save(run_id, item, age_days):
 
 def test_done_drafted_without_published_sha_uses_the_failed_window(monkeypatch):
     # Revert: return False from _kept_work when status is DONE and drafted.
-    monkeypatch.setattr(batch.plan, "drop_refs", lambda *a, **k: None)
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda *a, **k: True)
     item = Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b",
                 head_sha="aaa", status=ItemStatus.DONE, published_sha="",
                 steps=[StepRecord(Step.REBASE, status=StepStatus.DONE, drafted=True)])
@@ -49,7 +49,7 @@ def test_done_drafted_without_published_sha_uses_the_failed_window(monkeypatch):
 
 def test_non_act_findings_use_the_failed_window(monkeypatch):
     # Revert: ignore item.findings in _kept_work.
-    monkeypatch.setattr(batch.plan, "drop_refs", lambda *a, **k: None)
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda *a, **k: True)
     item = Item(
         key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="aaa",
         status=ItemStatus.NEEDS_SESSION,

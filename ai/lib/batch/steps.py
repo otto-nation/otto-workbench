@@ -46,9 +46,9 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
     `--fork-point` so only the child's unique commits replay; never `--force`.
     Only the review step takes *focus*.
 
-    *ai* defaults True (v1, until PR 7). False drops `--fix` from rebase and CI;
-    the CLI's default run passes False. Comments and review argv stay as they are
-    (the scheduler never spawns a non-AI comments step; review is AI).
+    *ai* defaults True. False drops `--fix` from rebase and CI; the CLI's
+    default run passes False. Comments and review argv stay as they are (the
+    scheduler never spawns a non-AI comments step; review is AI).
     """
     if step is Step.REBASE:
         argv = [pr_bin, "rebase", "--no-push"]

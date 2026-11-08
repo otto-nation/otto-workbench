@@ -49,7 +49,7 @@ def test_declined_must_fix_or_should_fix_only_is_act():
     assert should[0].data["severity"] == Severity.ACT.value
 
 
-def test_mixed_evidence_stays_failed_unknown():
+def test_mixed_open_findings_and_checks_is_review_findings():
     d = make_decision(DecisionKind.STEP_REVIEW, "review", {
         "evidence": [
             {"kind": "open_findings", "findings": [{"severity": MUST}]},
@@ -57,7 +57,8 @@ def test_mixed_evidence_stays_failed_unknown():
         ],
     })
     found = batch.findings.findings_for(d)
-    assert found[0].reason is FindingReason.FAILED_UNKNOWN
+    assert found[0].reason is FindingReason.REVIEW_FINDINGS
+    assert found[0].data["checks_unverified"][0]["commit"] == "abc"
 
 
 def test_filing_command_tracks_ids_on_a_live_worktree(tmp_path, monkeypatch):

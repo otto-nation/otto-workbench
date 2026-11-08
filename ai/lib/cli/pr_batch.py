@@ -10,7 +10,7 @@
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
-A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
+A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted. Nothing is pushed unless `--auto-publish ff`. --no-verify skips the pre-push hook on those publishes.
 
 Exit 0 when a run is done or cancelled, 1 when it stopped without settling. resume never clears a recorded cancel. cancel and release write the run's inbox; a live holder that drains applies a queued request.
 """
@@ -544,7 +544,7 @@ def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
     batch.findings.upgrade_v1(run, emit=batch.events.emit)
     if steps is not None:
         _narrow_resume(run, steps)
-    batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
+    batch.scheduler.mark_interrupted(run)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
     return _drive(session, reporter, holds, bin_dir=bin_dir,
                   cfg=_cfg([i.repo_dir for i in run.items]), verbose=verbose)

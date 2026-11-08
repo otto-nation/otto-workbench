@@ -42,7 +42,7 @@ def test_ci_failing_only_maps_to_ci_failing():
     assert found[0].data["jobs"] == ["lint", "t"]
 
 
-def test_ci_failing_mixed_with_checks_is_failed_unknown():
+def test_ci_failing_mixed_with_checks_is_ci_failing():
     d = make_decision(DecisionKind.STEP_REVIEW, "ci", {
         "evidence": [
             {"kind": "ci_failing", "jobs": ["t"]},
@@ -50,8 +50,9 @@ def test_ci_failing_mixed_with_checks_is_failed_unknown():
         ],
     })
     found = batch.findings.findings_for(d)
-    assert found[0].reason is FindingReason.FAILED_UNKNOWN
-    assert "ci_failing" in found[0].detail and "checks_unverified" in found[0].detail
+    assert found[0].reason is FindingReason.CI_FAILING
+    assert found[0].data["jobs"] == ["t"]
+    assert found[0].data["checks_unverified"][0]["commit"] == "abc"
 
 
 def test_record_sets_needs_session_only_for_block_or_wait():

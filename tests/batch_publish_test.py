@@ -62,18 +62,6 @@ def test_an_unincorporated_refusal_names_the_remote_commits():
     assert "2 remote commit(s)" in got.detail
 
 
-def test_a_confirmed_publish_force_pushes_past_unincorporated_commits():
-    got = batch.publish.plan(_item(), "pr", _tree(2, 3, unincorporated=("c1 subj",)),
-                             confirmed=["c1 subj"])
-    assert got.commands == [["pr", "rebase", "--push-only", "--expect", "r0", *WT]]
-
-
-def test_a_confirmation_covers_only_the_commits_the_operator_saw():
-    tree = _tree(2, 3, unincorporated=("c1 subj", "c2 new"))
-    got = batch.publish.plan(_item(), "pr", tree, confirmed=["c1 subj"])
-    assert (got.refusal, got.commits) == (Refusal.NOT_INCORPORATED_REMOTE, ["c1 subj", "c2 new"])
-
-
 def test_no_verify_appends_to_push_commands_not_comments():
     item = _item(track=["T1"])
     item.step(batch.model.Step.COMMENTS).drafted = True
@@ -215,7 +203,7 @@ def _fork_point_rebased(tmp_path):
 
 
 @pytest.mark.parametrize("start", ["planned", "none"])
-def test_a_fork_point_rebase_by_hand_publishes_past_the_skipped_commits(tmp_path, start):
+def test_a_fork_point_rebase_by_hand_is_not_incorporated_remote(tmp_path, start):
     # "planned": a forced re-run kept the refused rebase's start tip. "none": the
     # batch's own rebase was a no-op, so no start tip was recorded.
     pair, planned, skipped = _fork_point_rebased(tmp_path)
@@ -224,8 +212,6 @@ def test_a_fork_point_rebase_by_hand_publishes_past_the_skipped_commits(tmp_path
     tree = batch.publish.read_tree(item)
     refused = batch.publish.plan(item, "pr", tree)
     assert (refused.refusal, refused.commits) == (Refusal.NOT_INCORPORATED_REMOTE, skipped)
-    assert batch.publish.plan(item, "pr", tree, confirmed=skipped).commands == [
-        ["pr", "rebase", "--push-only", "--expect", planned, "--repo-dir", str(pair.work)]]
 
 
 def _publish_run(pair):

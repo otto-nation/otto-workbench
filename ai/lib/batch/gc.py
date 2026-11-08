@@ -34,7 +34,8 @@ import batch.plan
 import batch.store
 import config.workbench_projects
 import core.log
-from batch.model import FINISHED_RUN, DecisionKind, Item, ItemStatus, Run, StepStatus
+from batch.model import (FINISHED_RUN, DecisionKind, Item, ItemStatus, Run, Severity,
+                         StepStatus, severity_of)
 from review.gc import GC_FAILED_STALE_DAYS, GC_STALE_DAYS
 
 DAY_SECONDS = 86400
@@ -43,21 +44,19 @@ DAY_SECONDS = 86400
 def _kept_work(run: Run, item: Item) -> bool:
     """Whether *item* ended with work nobody published or settled.
 
-    A failed step or a still-open `failed` decision, a dropped item, or drafted
-    steps that were never pushed: the item never reached `done`, or its publish
-    decision was answered with `discard`.
+    A dropped item, a failed step, a non-act finding, drafted steps that were
+    never pushed (`published_sha` empty), or a still-open v1 `failed` decision.
     """
     if item.status is ItemStatus.DROPPED:
         return True
     if any(r.status is StepStatus.FAILED for r in item.steps):
         return True
-    mine = [d for d in run.decisions if d.item == item.key]
-    if any(d.kind is DecisionKind.FAILED and d.open for d in mine):
+    if any(severity_of(f) is not Severity.ACT for f in item.findings):
         return True
-    if not any(r.drafted for r in item.steps):
-        return False
-    return item.status is not ItemStatus.DONE or any(
-        d.kind is DecisionKind.PUBLISH and d.resolution == "discard" for d in mine)
+    if any(r.drafted for r in item.steps) and not item.published_sha:
+        return True
+    mine = [d for d in run.decisions if d.item == item.key]
+    return any(d.kind is DecisionKind.FAILED and d.open for d in mine)
 
 
 def retention_days(run: Run) -> int:

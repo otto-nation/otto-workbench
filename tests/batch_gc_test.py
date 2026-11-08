@@ -39,10 +39,11 @@ DAY = 86400
 NOW = 2_000_000_000.0
 
 
-def _item(status=ItemStatus.DONE, step_status=StepStatus.DONE, drafted=False):
+def _item(status=ItemStatus.DONE, step_status=StepStatus.DONE, drafted=False,
+          published_sha=""):
     return Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="aaa",
-                status=status, steps=[StepRecord(Step.REBASE, status=step_status,
-                                                 drafted=drafted)])
+                status=status, published_sha=published_sha,
+                steps=[StepRecord(Step.REBASE, status=step_status, drafted=drafted)])
 
 
 def _save(run_id, status=RunStatus.DONE, item=None, decisions=(), age_days=10.0,
@@ -111,7 +112,7 @@ def test_published_drafts_and_settled_failures_count_as_clean(dropped_refs):
         Decision(id="d2", item="o/r#1", step="publish", kind=DecisionKind.PUBLISH,
                  resolution="publish"),
     ]
-    _save("clean", item=_item(drafted=True), decisions=decisions,
+    _save("clean", item=_item(drafted=True, published_sha="abc"), decisions=decisions,
           age_days=review.gc.GC_STALE_DAYS + 1)
     assert batch.gc.gc_runs(now=NOW) == 1
 

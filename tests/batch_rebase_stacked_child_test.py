@@ -7,10 +7,8 @@ replays the parent's old commits onto the rewritten parent). A
 action that runs that argv.
 """
 
-import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 from conftest import git_in, git_out, init_repo, run_checked
 
@@ -20,17 +18,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.model  # noqa: E402
-import batch.outcomes  # noqa: E402
-import batch.requests  # noqa: E402
 import batch.steps  # noqa: E402
 import gh.landed  # noqa: E402
-import rebase.refusals  # noqa: E402
-from batch.model import Step, StepStatus  # noqa: E402
-from batch.steps import WorktreeResult  # noqa: E402
-from rebase.types import REFUSAL_EXIT  # noqa: E402
-from batch_scheduler_support import (  # noqa: F401
-    NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row,
-)
 
 
 def _commit(repo: Path, name: str, subject: str) -> str:
@@ -84,38 +73,6 @@ def _advance_main_and_rebase_parent(repo: Path) -> str:
     git_in(repo, "checkout", "-q", "parent")
     git_in(repo, "rebase", "main")
     return old_parent
-
-
-def _refused_child(tmp_path) -> tuple[batch.model.Decision, batch.model.Item, Path]:
-    """A `rebase_refused` decision for a stacked child whose payload names a fork point."""
-    repo = _stacked(tmp_path)
-    _advance_main_and_rebase_parent(repo)
-    git_in(repo, "checkout", "-q", "child")
-    ctx = SimpleNamespace(branch="child")
-    report = rebase.refusals.partially_landed_check(
-        str(repo), ctx, target_ref="parent",
-    )
-    item = batch.model.Item(
-        key="o/r#2", repo="o/r", repo_dir="/r", pr=2, branch="child",
-        head_sha="s", worktree=str(repo), stacked_on="o/r#1", base_ref="parent",
-        steps=[batch.model.StepRecord(batch.model.Step.REBASE)],
-        status=batch.model.ItemStatus.AWAITING_DECISION,
-    )
-    classified = batch.outcomes.classify(
-        batch.model.Step.REBASE, REFUSAL_EXIT, json.dumps({
-            "branch": report.branch, "signal": report.signal,
-            "detail": report.detail, "status": report.status,
-            "override": report.override, "remedy": report.remedy,
-            "commits_ahead": report.commits_ahead,
-        }),
-        item=item, log_tail=[],
-    )
-    decision = batch.model.Decision(
-        id="d1", item=item.key, step="rebase",
-        kind=batch.model.DecisionKind.REBASE_REFUSED,
-        payload=classified.decisions[0].payload,
-    )
-    return decision, item, repo
 
 
 def test_rebasing_the_parent_makes_the_child_look_partially_landed(tmp_path):
@@ -194,46 +151,3 @@ def test_batch_rebase_argv_uses_merge_base_of_parent_pre_rebase_head(tmp_path):
     assert "--force" not in argv
 
 
-ONLY_REBASE = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO}
-
-
-def _child_rebase_argv(tmp_path, *, extra_parent: bool, pre_rebase_head: str | None,
-                       parent_rebased: bool = True):
-    """Spawn the stacked child's rebase via the scheduler and return its argv."""
-    repo = _stacked(tmp_path, extra_parent=extra_parent)
-    parent_pre = git_out(repo, "rev-parse", "parent").strip()
-    git_in(repo, "checkout", "-q", "child")
-    expected = git_out(repo, "merge-base", parent_pre, "child").strip()
-    wt = str(repo)
-    h = Harness(
-        [row(1, ONLY_REBASE), row(2, ONLY_REBASE, base_ref="b1")], pool=2,
-        worktrees=lambda d, b: WorktreeResult(wt, False, ""),
-    )
-    parent = h.run.item("o/r#1")
-    child = h.run.item("o/r#2")
-    assert child.stacked_on == "o/r#1"
-    parent.pre_rebase_head = parent_pre if pre_rebase_head is None else pre_rebase_head
-    parent.step(Step.REBASE).status = StepStatus.DONE if parent_rebased else StepStatus.SKIPPED
-    child.worktree = wt
-    h.sched._start(child, child.step(Step.REBASE), row(2, ONLY_REBASE, base_ref="b1"))
-    return h.spawned[-1], expected, parent_pre
-
-
-def test_scheduler_passes_merge_base_when_parent_grew_after_fork(tmp_path):
-    argv, expected, parent_pre = _child_rebase_argv(
-        tmp_path, extra_parent=True, pre_rebase_head=None)
-    assert expected != parent_pre
-    assert "--fork-point" in argv
-    assert argv[argv.index("--fork-point") + 1] == expected
-    assert "--force" not in argv
-
-
-def test_scheduler_omits_fork_point_when_parent_pre_rebase_head_is_empty(tmp_path):
-    argv, _, _ = _child_rebase_argv(tmp_path, extra_parent=True, pre_rebase_head="")
-    assert "--fork-point" not in argv
-
-
-def test_scheduler_omits_fork_point_when_parent_rebase_was_skipped(tmp_path):
-    argv, _, _ = _child_rebase_argv(
-        tmp_path, extra_parent=True, pre_rebase_head=None, parent_rebased=False)
-    assert "--fork-point" not in argv

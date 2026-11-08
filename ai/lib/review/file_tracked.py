@@ -86,8 +86,12 @@ def run(ctx, track: frozenset[str]) -> int:
         f for f in (record.visible if record else [])
         if f.id in pending and f.filed
     ]
-    if stamped:
-        core.log.info(
-            f"Filed {', '.join(f.id for f in stamped)} as {stamped[0].filed}"
+    if not stamped:
+        core.log.error(
+            "--track --post filed nothing; the findings are still open"
         )
+        return 1
+    core.log.info(
+        f"Filed {', '.join(f.id for f in stamped)} as {stamped[0].filed}"
+    )
     return 0

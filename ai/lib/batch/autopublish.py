@@ -13,7 +13,7 @@ files an issue.
 |---|---|
 | `skipped` | a drafted step is not `done`, the item has findings, local work no step vouched for, or the plan is not a clean fast-forward |
 | `pushed` | `pr push --expect` exited 0; `remote_sha`/`published_sha` become the post-push local tip |
-| `failed` | the push exited non-zero; `findings.record` of the classified failure (`push_refused` or `failed_unknown`) |
+| `failed` | the push exited non-zero; `findings.record` of the classified failure (`failed_unknown`) |
 """
 
 # doc-group: batch

@@ -92,9 +92,9 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
         chosen = selected.get(r.key, []) if selected is not None else \
             [s for s in steps if r.needs.get(s) and r.needs[s].needed]
         # A row whose only work is the closeout pr recorded as owed is kept with
-        # every step skipped: _admit closes it straight away and publish pays the
-        # debt. Only when comments is a step of this run, and never past an
-        # explicit selection that left the row out.
+        # every step skipped: _admit closes it straight away and records
+        # closeout_owed. Only when comments is a step of this run, and never past
+        # an explicit selection that left the row out.
         closeout_only = (not chosen and not explicit and bool(r.closeout)
                          and Step.COMMENTS in steps)
         if not chosen and not closeout_only:
@@ -134,7 +134,7 @@ def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, 
     batch.findings.record(run, item, step, kind, payload, emit=emit)
 
 
-def _interrupt_running(run: Run, item: Item, *, emit: Callable[..., None]) -> bool:
+def _interrupt_running(run: Run, item: Item) -> bool:
     found = False
     for rec in item.steps:
         if rec.status is not StepStatus.RUNNING:
@@ -145,10 +145,10 @@ def _interrupt_running(run: Run, item: Item, *, emit: Callable[..., None]) -> bo
     return found
 
 
-def mark_interrupted(run: Run, *, emit: Callable[..., None]) -> bool:
+def mark_interrupted(run: Run) -> bool:
     found = False
     for item in run.items:
-        found = _interrupt_running(run, item, emit=emit) or found
+        found = _interrupt_running(run, item) or found
     return found
 
 
@@ -243,7 +243,7 @@ class Scheduler:
         # waiting, and with nothing running it queues for the floor slot.
         self._refused = False
         self._descends, self._commits = descends, commits
-        self._tree = tree or batch.publish.read_tree
+        self._tree = tree or batch.publish.peek_tree
         self._push = push
 
     @property
@@ -558,8 +558,7 @@ class Scheduler:
         """Hold a stacked PR's rebase behind its base item's publish.
 
         Rebasing onto the base's pre-push tip would carry the base's old
-        commits, so the rebase waits as a decision — which lets the run settle —
-        and `_release_stacked` retries it once the base item is terminal.
+        commits, so the rebase records `stack_wait_base` and the run can settle.
         """
         if rec.step is not Step.REBASE or not item.stacked_on:
             return False
@@ -624,35 +623,11 @@ class Scheduler:
                 continue
             self._start(item, rec, fresh)
 
-    def _rebase_fork_point(self, item: Item, rec: StepRecord) -> str:
-        """`--fork-point` for a stacked child's rebase, or empty.
-
-        After the parent is rewritten the child's prefix matches the old parent
-        by patch-id. The fork is merge-base(parent.pre_rebase_head, HEAD): the
-        parent's tip is not always an ancestor of the child. Empty when there is
-        no parent in this run, no recorded tip, a parent whose rebase did not
-        finish (skipped, or its tip is from an earlier attempt), or no merge-base.
-        """
-        if rec.step is not Step.REBASE or not item.stacked_on:
-            return ""
-        try:
-            parent = self.run.item(item.stacked_on)
-        except KeyError:
-            return ""
-        if not parent.pre_rebase_head:
-            return ""
-        if not parent.has(Step.REBASE) or parent.step(Step.REBASE).status is not StepStatus.DONE:
-            return ""
-        return git.client.out(
-            "merge-base", parent.pre_rebase_head, "HEAD", cwd=item.worktree)
-
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
         log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
         wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
-                         wait=wait,
-                         fork_point=self._rebase_fork_point(item, rec),
-                         focus=self.run.focus, ai=self.run.uses_ai(rec.step))
+                         wait=wait, focus=self.run.focus, ai=self.run.uses_ai(rec.step))
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         rec.start_head = rec.start_head or head_before
@@ -698,9 +673,9 @@ class Scheduler:
         return None
 
     def _once(self) -> RunStatus | None:
-        # ceiling: force and publish run inline, so a tick blocks reaping and events
-        # while they run; upgrade to scheduled step attempts if a live UI needs step
-        # logs during publish or inline runs exceed a minute.
+        # ceiling: auto-publish ff runs inline, so a tick blocks reaping and events
+        # while it runs; upgrade to a scheduled attempt if a live UI needs logs
+        # during the push or an inline push exceeds a minute.
         # The inbox reports each outcome as it is applied; the returned list is
         # not emitted again here.
         self.session.drain(settle=False)
@@ -742,7 +717,7 @@ class Scheduler:
         if self.run.status in (RunStatus.DONE, RunStatus.WAITING, RunStatus.CANCELLED):
             self._flush(pending)
             return
-        mark_interrupted(self.run, emit=lambda kind, **fields: pending.append((kind, fields)))
+        mark_interrupted(self.run)
         status = (RunStatus.CANCELLED if self.run.cancel is not None
                   else RunStatus.INTERRUPTED)
         self.run.status = status

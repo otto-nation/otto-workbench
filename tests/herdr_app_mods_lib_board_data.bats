@@ -354,6 +354,35 @@ _gql() {
   [[ "$output" == *'"runs8":0'* ]]
 }
 
+_rr() {
+  run node --input-type=module -e "
+    import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
+    $1
+  "
+}
+
+@test "loadPr ok maps one graphql PR and passes cwd/on" {
+  _bd '
+    const pr0 = {isDraft:true,reviewDecision:"APPROVED",mergeable:"MERGEABLE",additions:1,deletions:2,changedFiles:3,mergeQueueEntry:{id:"q"},commits:{nodes:[{commit:{statusCheckRollup:{state:"SUCCESS"}}}]},latestReviews:{nodes:[{author:{login:"bob"},state:"APPROVED"}]},reviewRequests:{nodes:[]},state:"OPEN",mergedAt:null};
+    const table = [{ prefix: "gh api graphql", stdout: JSON.stringify({ data: { repository: { pr0 } } }) }];
+    const r = pack(await m.loadPr(exec, ctx, "acme/box", 3, "ada"));
+    const pr = r.pr;
+    process.stdout.write(JSON.stringify({
+      ok: r.ok, every: calls.every(everyOn), n: calls.length,
+      gql: calls[0] && calls[0].args[1], number: pr.number, state: pr.state,
+      isDraft: pr.isDraft, ci: pr.ciStatus, add: pr.additions, inMq: pr.inMergeQueue,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ok":true'* ]]
+  [[ "$output" == *'"every":true'* ]]
+  [[ "$output" == *'"gql":"graphql"'* ]]
+  [[ "$output" == *'"number":3'* ]]
+  [[ "$output" == *'"state":"OPEN"'* ]]
+  [[ "$output" == *'"isDraft":true'* ]]
+  [[ "$output" == *'"inMq":true'* ]]
+}
+
 @test "checkTools parses present and missing by basename" {
   _bd '
     let table = [{ prefix: "sh -c ", stdout: "/usr/bin/pr\n/opt/homebrew/bin/gh\n" }];
@@ -370,4 +399,63 @@ _gql() {
   [[ "$output" == *'"wt":false'* ]]
   [[ "$output" == *'"everySome":true'* ]]
   [[ "$output" == *'"everyNone":true'* ]]
+}
+
+@test "loadPr closed PR keeps state from graphql" {
+  _bd '
+    const pr0 = {isDraft:false,reviewDecision:null,mergeable:"UNKNOWN",additions:0,deletions:0,changedFiles:0,mergeQueueEntry:null,commits:{nodes:[]},latestReviews:{nodes:[]},reviewRequests:{nodes:[]},state:"CLOSED",mergedAt:null};
+    const table = [{ prefix: "gh api graphql", stdout: JSON.stringify({ data: { repository: { pr0 } } }) }];
+    const r = pack(await m.loadPr(exec, ctx, "o/n", 9, "ada"));
+    process.stdout.write(JSON.stringify({ ok: r.ok, state: r.pr.state, number: r.pr.number }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ok":true'* ]]
+  [[ "$output" == *'"state":"CLOSED"'* ]]
+  [[ "$output" == *'"number":9'* ]]
+}
+
+@test "loadPr typed error on gh fail and missing node" {
+  _bd '
+    let table = [{ prefix: "gh api graphql", code: 1, stderr: "boom" }];
+    const fail = pack(await m.loadPr(exec, ctx, "o/n", 1, "ada"));
+    calls.length = 0;
+    table = [{ prefix: "gh api graphql", stdout: JSON.stringify({ data: { repository: {} } }) }];
+    const miss = pack(await m.loadPr(exec, ctx, "o/n", 1, "ada"));
+    process.stdout.write(JSON.stringify({ fail, miss }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"kind":"failed"'* ]]
+  [[ "$output" == *'not found'* ]]
+}
+
+@test "readReview ok text and missing file is text null" {
+  _rr '
+    const calls = [];
+    const readTextFile = async (path, opts) => {
+      calls.push({ path, on: opts && opts.on });
+      if (path === "/gone.md") return null;
+      return "# review";
+    };
+    const ok = await m.readReview(readTextFile, "/r.md", "mac");
+    const miss = await m.readReview(readTextFile, "/gone.md", "mac");
+    process.stdout.write(JSON.stringify({ ok, miss, calls }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ok":true'* ]]
+  [[ "$output" == *'"text":"# review"'* ]]
+  [[ "$output" == *'"text":null'* ]]
+  [[ "$output" == *'"path":"/r.md"'* ]]
+  [[ "$output" == *'"on":"mac"'* ]]
+}
+
+@test "readReview reject with on is unreachable; without on is failed" {
+  _rr '
+    const readTextFile = async () => { throw new Error("lost"); };
+    const withOn = await m.readReview(readTextFile, "/r.md", "mac");
+    const noOn = await m.readReview(readTextFile, "/r.md", null);
+    process.stdout.write(JSON.stringify({ withOn, noOn }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"kind":"unreachable"'* ]]
+  [[ "$output" == *'"kind":"failed"'* ]]
 }

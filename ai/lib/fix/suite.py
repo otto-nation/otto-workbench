@@ -93,17 +93,18 @@ from pr.fix import CHECKS_TRAILER, ItemOutcome
 # of what failed at the end, and a head-clip of a verbose runner is the banner.
 OUTPUT_TAIL_CHARS = 2000
 
-# How many left-out paths a PARTIAL note names before it settles for a count.
-LEFT_OUT_SHOWN = 3
+# How many paths (left out or rewritten) a note names before it settles for a count.
+PATHS_SHOWN = 3
 
 
 def _named_paths(paths: tuple[str, ...]) -> str:
     """A short comma list of *paths*, with a remainder count when it overflows."""
-    shown = ", ".join(paths[:LEFT_OUT_SHOWN])
-    more = len(paths) - LEFT_OUT_SHOWN
+    shown = ", ".join(paths[:PATHS_SHOWN])
+    more = len(paths) - PATHS_SHOWN
     if more > 0:
         shown += f" and {more} more"
     return shown
+
 
 # The hedge a red run puts on every fix the pass claimed. Phrased as the state
 # of the tree rather than as an accusation about the item — one run cannot tell
@@ -268,13 +269,13 @@ class SuiteResult:
             return f"Checks green: {self.command} ({self.duration_s:.0f}s)"
         if self.status is SuiteStatus.RED:
             tail = (f"; {len(self.inherited)} of its failures also fail before this pass: "
-                    f"{', '.join(self.inherited[:LEFT_OUT_SHOWN])}{_FIRST_SUITE_CAVEAT}"
+                    f"{', '.join(self.inherited[:PATHS_SHOWN])}{_FIRST_SUITE_CAVEAT}"
                     ) if self.inherited else ""
             return f"Checks RED: {self.command} ({self.duration_s:.0f}s){tail}"
         if self.status is SuiteStatus.PREEXISTING:
             return (
                 f"Checks red before this pass too: {self.command} — "
-                f"{', '.join(self.inherited[:LEFT_OUT_SHOWN])} also fail at the pass's "
+                f"{', '.join(self.inherited[:PATHS_SHOWN])} also fail at the pass's "
                 f"base; not attributed to this pass{_FIRST_SUITE_CAVEAT}"
             )
         if self.status is SuiteStatus.PARTIAL and self.rewrote:
@@ -610,7 +611,7 @@ def qualify_tally(tally: str, result: SuiteResult) -> str:
         return f"{tally} (unverified: no fix.verify_command declared)"
     if result.status in (SuiteStatus.TIMED_OUT, SuiteStatus.ERROR):
         return f"{tally} (unverified: the repo's checks did not answer)"
-    if result.rewrote:
+    if result.rewrote and result.status is SuiteStatus.PARTIAL:
         return (
             f"{tally} (unverified: the checks rewrote {len(result.rewrote)} "
             "tracked file(s), which were restored)"

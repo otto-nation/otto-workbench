@@ -25,6 +25,7 @@ from pr.fix import CHECKS_TRAILER, FixOutcome
 
 from fix_containment_support import _repo
 from fix_engine_support import StubAdapter, _answer
+from fix_suite_support import _RecordingTrail
 from review_fix_pass_support import _PUSHED, _committed_paths, _make_job, _run
 from review_record_support import finding, record
 
@@ -248,21 +249,13 @@ class TestReviewPassTally:
         assert "src.py" in err
 
 
-class _RecordingTrail:
-    """A trail that keeps what it was told, so a test can read it back."""
 
-    def __init__(self):
-        self.events = []
+def test_a_preexisting_result_that_rewrote_keeps_the_preexisting_tally():
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.PREEXISTING, command="c", rewrote=("a.py",),
+    )
 
-    def info(self, action, detail, data=None):
-        self.events.append(("info", action, detail, data or {}))
+    tally = fix.suite.qualify_tally("1 fixed, 0 skipped", result)
 
-    def warn(self, action, detail, data=None):
-        self.events.append(("warn", action, detail, data or {}))
-
-    def error(self, action, detail, data=None):
-        self.events.append(("error", action, detail, data or {}))
-
-    def failure(self, action, detail, **kwargs):
-        self.events.append(("failure", action, detail, kwargs))
-        return None
+    assert "already red" in tally
+    assert "rewrote" not in tally

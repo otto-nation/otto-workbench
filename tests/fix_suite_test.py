@@ -32,21 +32,7 @@ import fix.blame  # noqa: E402
 import fix.suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 
-
-class _RecordingTrail:
-    """A trail that keeps what it was told, so a test can read it back."""
-
-    def __init__(self):
-        self.events = []
-
-    def info(self, action, detail, data=None):
-        self.events.append(("info", action, detail, data or {}))
-
-    def warn(self, action, detail, data=None):
-        self.events.append(("warn", action, detail, data or {}))
-
-    def error(self, action, detail, data=None):
-        self.events.append(("error", action, detail, data or {}))
+from fix_suite_support import _RecordingTrail  # noqa: E402
 
 
 def _script(tmp_path: Path, name: str, body: str) -> str:

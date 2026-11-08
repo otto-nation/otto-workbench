@@ -19,9 +19,9 @@ _js() {
 }
 
 @test "viewOf: sidebar compact/rail; pane width compact/board" {
-  _js '({a:viewOf({view:"sidebar"},268,tree268),b:viewOf({view:"sidebar"},268,tree120),c:viewOf({},400,null),d:viewOf({},900,null)})'
+  _js '({a:viewOf({view:"sidebar"},268,tree268),b:viewOf({view:"sidebar"},268,tree120),c:viewOf({},400,null),d:viewOf({},900,null),e:viewOf({view:"sidebar"},70,tree268)})'
   [ "$status" -eq 0 ]
-  jq -e '.a=="compact" and .b=="rail" and .c=="compact" and .d=="board"' <<<"$output"
+  jq -e '.a=="compact" and .b=="rail" and .c=="compact" and .d=="board" and .e=="rail"' <<<"$output"
 }
 
 @test "findNode: nested id, missing is null" {

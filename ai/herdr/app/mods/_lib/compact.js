@@ -18,7 +18,9 @@ export function isRail(tree) {
 
 // Props say where the copy lives; width says how much room a board pane has.
 export function viewOf(props, width, tree) {
-  if (props?.view === "sidebar") return isRail(tree) ? "rail" : "compact";
+  // The block's own measured width is the live signal: a runtime resize does not
+  // rewrite the layout tree, so the tree alone would miss a collapsed sidebar.
+  if (props?.view === "sidebar") return (width ?? Infinity) < 160 || isRail(tree) ? "rail" : "compact";
   if ((width ?? Infinity) < 560) return "compact";
   return "board";
 }

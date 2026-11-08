@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme, layout, run,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme, layout, run, props,
 } from "herdr";
 import { locate, isUntrustedHome } from "./_lib/location.js";
 import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
@@ -55,7 +55,6 @@ function errorText(err, ctx) {
 
 export default class TeamPrs extends View {
   init(_props, cx) {
-    this.props = _props;
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
@@ -287,17 +286,19 @@ export default class TeamPrs extends View {
       const base = String(e.cwd).split("/").filter(Boolean).pop();
       return `${base ?? ""}${e.on != null ? " on " + e.on : ""}: ${friendlyError(e.error, e.on, scope)}`;
     };
+    const mode = viewOf(props(), this.size?.width, layout());
+    const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
+    if (mode === "rail" && view.repos === 0 && !view.loading) return this.railView(view);
     if (view.repos === 0 && view.errors.length && !view.loading) {
-      return v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background)
+      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background))
         .children(view.errors.slice(0, 3).map((e) => div().text_color(t.dim).child(errLine(e))))
         .child(this.scopeToggle(t));
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
-      return v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background)
+      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background))
         .child(div().text_color(t.dim).child("No open space is in a GitHub repository"))
         .child(this.scopeToggle(t));
     }
-    const mode = viewOf(this.props, this.size?.width, layout());
     if (mode === "rail") return this.railView(view);
     if (mode === "compact") return this.compactView(view, t);
     return this.boardView(cx, targets[0], view, t);

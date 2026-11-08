@@ -122,7 +122,8 @@ def schema_contracts() -> list[str]:
     Derived from the mode table so the error naming them cannot list an
     invocation that no longer serves one. `review` still contributes by mode;
     `batch` is listed by the subcommands that print a document (`plan` serves
-    1, `status`/`report` serve 2).
+    1, `status`/`report` serve 2). `run`/`resume` emit NDJSON events at
+    version 1 (`served_schema_versions`); they are not this list.
     """
     review = [f"{SCRIPT} review {flag}" for flag, mode in cli.review_modes.MODES.items()
               if mode.schema_versions]
@@ -134,7 +135,14 @@ def schema_contracts() -> list[str]:
 def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
     if command == "batch":
-        return (1,) if argv and argv[0] == "plan" else (2,)
+        sub = argv[0] if argv else ""
+        if sub == "plan":
+            return (1,)
+        if sub in ("status", "report"):
+            return (2,)
+        if sub in ("run", "resume"):
+            return (1,)
+        return ()
     if command in ("status", "stack"):
         return (1,)
     if command != "review":

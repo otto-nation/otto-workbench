@@ -781,7 +781,7 @@ command as taking no target, or give it a delegate to read.
 
 `pr batch` rebases, checks CI and notes comments on your open PRs. AI and
 review are opt-in. Every step is a child `pr` (CI: `ci-check`) in a new
-session with stdin closed, and runs drafted — the batch is the only publisher.
+session with stdin closed, and runs drafted. Nothing is pushed unless `--auto-publish ff`.
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
@@ -821,7 +821,7 @@ Keys: `run` (`id`, `status`, `active`, `exit_hint`, `hint`, `pending_requests`,
 `github`, `sessions` (`pr batch report` only). `exit_hint` is 0 once finished,
 1 when it stopped without settling, null while a driver holds the run.
 `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`
-(`run`, `item`, `reason`, `step`). Exit 0 or 1 only.
+(`run`, `item`, `reason`, `step`). Exit 0 or 1; widening `resume --steps` is 2.
 
 `pr batch status` and `pr batch report` carry `github` unless `--offline`. Keys and checkout rules are in
 [`batch/live.py`](ai-libraries.md#batchlivepy).

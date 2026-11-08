@@ -38,11 +38,12 @@ def test_review_run_yields_review_findings_and_track_command(tmp_path, monkeypat
     monkeypatch.setattr(
         review.finding_issue, "filable",
         lambda d: [SimpleNamespace(id="M1")])
-    wt = tmp_path / "wt"
+    wt = tmp_path / "b1"
     wt.mkdir()
     h = Harness(
         [row(1, ONLY_REVIEW)], with_ai=[Step.REVIEW],
-        worktrees=lambda d, b: WorktreeResult(str(wt), False, ""))
+        worktrees=lambda d, b: WorktreeResult(str(wt), False, ""),
+        branch=lambda _wt: "b1")
     h.sched.run_until_blocked()
     item = h.run.items[0]
     assert any(f.reason is FindingReason.REVIEW_FINDINGS for f in item.findings)

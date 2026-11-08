@@ -63,6 +63,22 @@ accent = "only"
 EOF
 }
 
+_brand_site() {
+  local site="$BATS_TEST_TMPDIR/site" url="file://${BATS_TEST_TMPDIR}/brand.tgz"
+  mkdir -p "$site"
+  if [[ "${3:-}" == none ]]; then
+    printf '%s\n' '{}' > "$site/package.json"
+  else
+    printf '%s\n' "{\"dependencies\": {\"@otto-nation/brand\": \"$url\"}}" > "$site/package.json"
+  fi
+  printf '%s\n' "{\"packages\": {\"node_modules/@otto-nation/brand\": {\"version\": \"1.2.0\", \"resolved\": \"${2:-$url}\", \"integrity\": \"sha512-fake\"}}}" > "$site/package-lock.json"
+  [[ -z "${1:-}" ]] && return 0
+  mkdir -p "$site/node_modules/@otto-nation/brand/src"
+  printf '%s\n' "{\"version\": \"$1\"}" > "$site/node_modules/@otto-nation/brand/package.json"
+  _tokens
+  cp "$BATS_TEST_TMPDIR/tokens.css" "$site/node_modules/@otto-nation/brand/src/tokens.css"
+}
+
 @test "committed theme files match their palettes" {
   run "$GEN" --check
   [ "$status" -eq 0 ]
@@ -174,9 +190,46 @@ EOF
 
 @test "brand references with no --tokens exit 3 and write nothing" {
   sandbox_state_dir
+  _brand_site
   _brand_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
   [[ "$output" == *"brand tokens unavailable"* ]]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
+}
+
+@test "pinned node_modules tokens resolve without --tokens" {
+  sandbox_state_dir
+  _brand_site 1.2.0
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
+}
+
+@test "node_modules at another version is ignored" {
+  sandbox_state_dir
+  _brand_site 9.9.9
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"unavailable"* ]]
+}
+
+@test "a lock resolved that differs from package.json exits 3" {
+  sandbox_state_dir
+  _brand_site 1.2.0 "file://${BATS_TEST_TMPDIR}/other.tgz"
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"npm --prefix site install"* ]]
+}
+
+@test "package.json with no brand dependency exits 3" {
+  sandbox_state_dir
+  _brand_site "" "" none
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"@otto-nation/brand"* ]]
 }

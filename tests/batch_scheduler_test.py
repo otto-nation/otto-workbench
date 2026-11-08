@@ -228,7 +228,10 @@ def test_unreadable_request_file_does_not_crash_the_run():
     batch.store.write_request(h.run.id, Cancel())
     assert h.sched.run_until_blocked() is batch.model.RunStatus.CANCELLED
     failed = batch.store.failed_requests(h.run.id)
-    assert failed and "not an object" in failed[0].error
+    # Revert: raise from `_read_request` on JSON errors.
+    assert failed and failed[0].name == "20261001T000000000000-bad.json"
+    assert "malformed request 20261001T000000000000-bad.json" in failed[0].error
+    assert "Expecting value" in failed[0].error
 
 
 def test_malformed_request_is_reported_and_the_rest_apply():

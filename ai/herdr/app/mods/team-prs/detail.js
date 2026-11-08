@@ -20,7 +20,7 @@ function reviewBody(stamp, body) {
   if (body == null) return dim("loading…");
   if (body.ok === false) return dim(body.error?.message ?? "");
   if (body.text == null) return dim("review file not found — it may have been pruned");
-  return TextView.markdown("review-" + stamp, body.text).selectable().scrollable();
+  return TextView.markdown("review-" + stamp, body.text).selectable();
 }
 
 export function prUrl(d) {

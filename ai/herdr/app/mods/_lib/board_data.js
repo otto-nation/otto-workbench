@@ -166,36 +166,6 @@ export async function loadOpenPrs(exec, ctx, slug) {
   return { ok: true, prs: pulls.map((p) => asOpen(p, byNumber[p.number])), partial };
 }
 
-export async function loadPr(exec, ctx, slug, number, login) {
-  const ran = await invoke(exec, ctx, 'gh', graphqlArgv(slug, [number]));
-  if (!ran.ok) return ran;
-  const parsed = readJson(ran.stdout);
-  if (!parsed.ok) return parsed;
-  const extra = mapGraphql(parsed.value, [number])[number];
-  if (extra == null) {
-    return {
-      ok: false,
-      error: { kind: 'failed', message: `PR #${number} not found` },
-    };
-  }
-  return {
-    ok: true,
-    pr: asOpen({
-      number,
-      title: '',
-      author: '',
-      branch: '',
-      baseBranch: '',
-      draft: extra.isDraft,
-      url: '',
-      headSha: '',
-      labels: [],
-      createdAt: null,
-      updatedAt: null,
-    }, extra),
-  };
-}
-
 export async function readReview(readTextFile, path, on) {
   try {
     const text = await readTextFile(path, { on });

@@ -4,7 +4,6 @@ import { exec, props, closeOverlay, readTextFile } from "herdr";
 import Board from "./board_view.js";
 import { renderDetail } from "./detail.js";
 import { readReview } from "./_lib/board_data.js";
-import { historyRows } from "./_lib/history.js";
 
 export default class TeamPrs extends Board {
   init(p, cx) {
@@ -16,7 +15,8 @@ export default class TeamPrs extends Board {
   }
 
   runOf(stamp) {
-    return historyRows(this.detail.runs ?? [], 0).find((r) => r.stamp === stamp);
+    const run = (this.detail.runs ?? []).find((r) => (r.stamp ?? "") === stamp);
+    return run ? { reviewFile: run.review_file ?? "" } : undefined;
   }
 
   cacheKey(run) {
@@ -42,7 +42,7 @@ export default class TeamPrs extends Board {
     if (!run) return;
     const key = this.cacheKey(run);
     const hit = this.reviews.get(key);
-    if (hit && hit.stamp === stamp && hit.result !== undefined) return;
+    if (hit && hit.stamp === stamp && hit.result !== undefined && hit.result.ok !== false) return;
     if (hit && hit.stamp !== stamp) this.reviews.delete(key);
     this.reviews.set(key, { stamp, result: undefined });
     cx.spawn(async (cx) => {

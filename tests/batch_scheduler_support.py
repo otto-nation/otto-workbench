@@ -161,6 +161,8 @@ class Harness:
 
     def _record(self, kind, **fields):
         """The one event sink: the Scheduler's own events and every reported outcome."""
+        if kind not in batch.events.EVENT_KINDS:
+            raise ValueError(f"unknown batch event: {kind}")
         self.events.append((kind, fields))
 
     def resume(self):

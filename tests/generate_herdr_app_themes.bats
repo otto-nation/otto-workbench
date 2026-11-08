@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for bin/local/generate-herdr-app-themes — palettes render to herdr-app theme files.
 bats_require_minimum_version 1.5.0
-# select-on: bin/local/generate-herdr-app-themes ai/herdr/app/palettes/*.toml ai/herdr/app/themes/*.generated.json
+# select-on: bin/local/generate-herdr-app-themes ai/herdr/app/palettes/*.toml ai/herdr/app/themes/*.generated.json site/package.json site/package-lock.json
 
 setup() {
   load 'test_helper'
@@ -329,6 +329,25 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   [ "$status" -eq 0 ]
   [ "$output" = "cache" ]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
+}
+
+@test "an unknown otto brand token or drifted otto JSON fails --check" {
+  run "$GEN" --check
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  python3 - "$REPO_ROOT" <<'PY'
+import sys, tomllib
+from pathlib import Path
+palette = tomllib.loads(
+    (Path(sys.argv[1]) / "ai/herdr/app/palettes/otto.toml").read_text()
+)["palette"]
+for name, value in palette.items():
+    if name.endswith("_derived"):
+        continue
+    want = "brand:ow-" + name.replace("_", "-")
+    if value != want:
+        raise SystemExit(f"{name}: {value!r} is not {want!r}")
+PY
 }
 
 @test "a tarball without package/src/tokens.css exits 3" {

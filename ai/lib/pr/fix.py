@@ -53,7 +53,8 @@ CHECKS_TRAILER = "Fix-Checks"
 
 # The trailer values that leave a pass's claims unverified: a red run, a
 # timeout, a command that could not start, a green run over a tree holding
-# files the commit leaves out, or a red run whose every failure was red before
+# files the commit leaves out, a green run whose checks rewrote tracked files
+# that were then restored, or a red run whose every failure was red before
 # the pass. `tests/fix_checks_trailer_test.py`
 # fails if this drifts from `fix.suite.SuiteStatus`.
 UNVERIFIED_CHECKS = frozenset({"red", "timed_out", "error", "partial", "preexisting"})

@@ -79,6 +79,19 @@ _brand_site() {
   cp "$BATS_TEST_TMPDIR/tokens.css" "$site/node_modules/@otto-nation/brand/src/tokens.css"
 }
 
+_brand_tarball() {
+  local root="$BATS_TEST_TMPDIR/pkg" tgz="$BATS_TEST_TMPDIR/brand.tgz" integrity
+  mkdir -p "$root/package/src"
+  _tokens
+  cp "$BATS_TEST_TMPDIR/tokens.css" "$root/package/src/tokens.css"
+  COPYFILE_DISABLE=1 tar -czf "$tgz" -C "$root" package
+  integrity="$(python3 -c 'import base64, hashlib, pathlib, sys
+print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read_bytes()).digest()).decode())' "$tgz")"
+  mkdir -p "$BATS_TEST_TMPDIR/site"
+  printf '%s\n' "{\"dependencies\": {\"@otto-nation/brand\": \"file://${tgz}\"}}" > "$BATS_TEST_TMPDIR/site/package.json"
+  printf '%s\n' "{\"packages\": {\"node_modules/@otto-nation/brand\": {\"version\": \"1.2.0\", \"resolved\": \"file://${tgz}\", \"integrity\": \"${integrity}\"}}}" > "$BATS_TEST_TMPDIR/site/package-lock.json"
+}
+
 @test "committed theme files match their palettes" {
   run "$GEN" --check
   [ "$status" -eq 0 ]
@@ -192,9 +205,10 @@ _brand_site() {
   sandbox_state_dir
   _brand_site
   _brand_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  run "$GEN" --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
   [[ "$output" == *"brand tokens unavailable"* ]]
+  [[ "$output" == *"bin/local/dev-deps"* ]]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
 }
 
@@ -211,7 +225,7 @@ _brand_site() {
   sandbox_state_dir
   _brand_site 9.9.9
   _brand_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  run "$GEN" --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
   [[ "$output" == *"brand tokens unavailable"* ]]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
@@ -234,4 +248,83 @@ _brand_site() {
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
   [[ "$output" == *"@otto-nation/brand"* ]]
+}
+
+@test "a file:// tarball renders and is cached under the state dir" {
+  sandbox_state_dir
+  _brand_tarball
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
+  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+}
+
+@test "a second --offline run succeeds from cache after the tarball is gone" {
+  sandbox_state_dir
+  _brand_tarball
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 0 ]
+  rm -f "$BATS_TEST_TMPDIR/brand.tgz" "$OUT"/*.generated.json
+  run "$GEN" --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
+}
+
+@test "an integrity mismatch exits 3 and caches no file and no tmp" {
+  sandbox_state_dir
+  _brand_tarball
+  python3 -c "import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = json.loads(p.read_text())
+data['packages']['node_modules/@otto-nation/brand']['integrity'] = 'sha512-dGhlamNSrkUGCDEZAWE5w=='
+p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"integrity"* ]]
+  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes" ]
+}
+
+@test "a corrupted cached tarball with --offline exits 3 and is not trusted" {
+  sandbox_state_dir
+  _brand_tarball
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 0 ]
+  printf 'nope' > "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz"
+  rm -f "$OUT"/*.generated.json
+  run "$GEN" --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
+}
+
+@test "--check with a valid file:// tarball and empty cache exits 3 and does not fetch" {
+  sandbox_state_dir
+  _brand_tarball
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  [ "$status" -eq 0 ]
+  run "$GEN" --check --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"bin/local/dev-deps"* ]]
+  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+}
+
+@test "a tarball without package/src/tokens.css exits 3" {
+  sandbox_state_dir
+  local root="$BATS_TEST_TMPDIR/pkg" tgz="$BATS_TEST_TMPDIR/brand.tgz" integrity
+  mkdir -p "$root/package"
+  printf 'x\n' > "$root/package/README"
+  COPYFILE_DISABLE=1 tar -czf "$tgz" -C "$root" package
+  integrity="$(python3 -c 'import base64, hashlib, pathlib, sys
+print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read_bytes()).digest()).decode())' "$tgz")"
+  mkdir -p "$BATS_TEST_TMPDIR/site"
+  printf '%s\n' "{\"dependencies\": {\"@otto-nation/brand\": \"file://${tgz}\"}}" > "$BATS_TEST_TMPDIR/site/package.json"
+  printf '%s\n' "{\"packages\": {\"node_modules/@otto-nation/brand\": {\"version\": \"1.2.0\", \"resolved\": \"file://${tgz}\", \"integrity\": \"${integrity}\"}}}" > "$BATS_TEST_TMPDIR/site/package-lock.json"
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"package/src/tokens.css"* ]]
 }

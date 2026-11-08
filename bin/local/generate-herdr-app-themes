@@ -2,7 +2,7 @@
 """Generate herdr-app theme files from the palettes that own their colors.
 
 Usage: bin/local/generate-herdr-app-themes [--check] [--palettes DIR] [--out DIR]
-                                           [--tokens FILE] [--site DIR]
+                                           [--tokens FILE] [--site DIR] [--offline]
 
 Every ai/herdr/app/palettes/*.toml holds a [palette] of named colors and one
 [themes.<name>] table per theme, whose values are palette names. A palette value
@@ -15,28 +15,34 @@ lib/constants.sh names the suffix for the sync side). herdr-app skips a theme fi
 JSON must carry literal hex values and cannot be the source.
 
 Options:
-  --check          Exit 1 if a theme file is stale or missing, without writing
+  --check          Exit 1 if a theme file is stale or missing, without writing.
+                   Implies --offline: never fetches.
   --palettes DIR   Read palettes from DIR (default: ai/herdr/app/palettes)
   --out DIR        Write themes to DIR (default: ai/herdr/app/themes)
   --tokens FILE    Read brand tokens from FILE instead of the pinned install
   --site DIR       Site package root (default: <repo>/site)
+  --offline        Do not fetch the pinned brand tarball
   -h, --help       Show this help
 
 Exit status: 0 up to date (or written), 1 stale under --check, 2 a palette is
 invalid: a value that is not a palette name, a palette entry that is not
 #rrggbb or brand:<token>, a missing or invalid [schemes] entry, an unknown
 brand token, or two palettes defining the same theme. 3 brand tokens
-unavailable.
+unavailable — run bin/local/dev-deps.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tarfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,8 +110,71 @@ def _installed(site: Path, pin: BrandPin) -> str | None:
     return css.read_text()
 
 
-def _brand_loader(tokens: Path | None, site: Path):
-    """Zero-argument brand loader; --tokens, then the pinned install, then BrandError."""
+def _cache_path(pin: BrandPin) -> Path:
+    """State-dir path of the pinned tarball; resolved per call from the live root."""
+    from urllib.parse import urlparse
+    from core import workbench_paths
+    return workbench_paths.state_dir() / "herdr-app-themes" / Path(urlparse(pin.url).path).name
+
+
+def _verified(blob: bytes, pin: BrandPin) -> bool:
+    """Whether BLOB's sha512 matches the lock integrity."""
+    digest = base64.b64encode(hashlib.sha512(blob).digest()).decode()
+    return digest == pin.integrity.removeprefix("sha512-")
+
+
+def _tokens_from_tarball(blob: bytes) -> str:
+    """package/src/tokens.css from an npm-pack tarball body, in memory."""
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
+        try:
+            member = tar.extractfile("package/src/tokens.css")
+        except KeyError:
+            member = None
+        if member is None:
+            raise BrandError("brand tarball has no package/src/tokens.css")
+        return member.read().decode()
+
+
+def _cached(pin: BrandPin) -> str | None:
+    """tokens.css from the verified cache tarball, or None if missing or corrupt."""
+    path = _cache_path(pin)
+    if not path.is_file():
+        return None
+    blob = path.read_bytes()
+    if not _verified(blob, pin):
+        return None
+    return _tokens_from_tarball(blob)
+
+
+def _fetch(pin: BrandPin) -> str:
+    """Download the pin, verify, atomically cache, and return tokens.css."""
+    from urllib.error import URLError
+    from urllib.parse import urlparse
+    from urllib.request import urlopen
+    from core import timeouts
+    parsed = urlparse(pin.url)
+    if parsed.scheme not in ("https", "file"):
+        raise BrandError(f"brand tarball URL scheme {parsed.scheme!r} is not https or file")
+    try:
+        with urlopen(pin.url, timeout=timeouts.TRANSFER) as resp:
+            blob = resp.read()
+    except (OSError, URLError) as err:
+        raise BrandError(f"brand tokens unavailable: {err}") from err
+    if not _verified(blob, pin):
+        raise BrandError("brand tarball failed integrity check")
+    path = _cache_path(pin)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        tmp.write_bytes(blob)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return _tokens_from_tarball(blob)
+
+
+def _brand_loader(tokens: Path | None, site: Path, offline: bool):
+    """Zero-argument brand loader: --tokens, install, cache, then fetch unless offline."""
     loaded: dict[str, dict[str, str]] | None = None
 
     def brand() -> dict[str, dict[str, str]]:
@@ -114,9 +183,12 @@ def _brand_loader(tokens: Path | None, site: Path):
             if tokens is not None:
                 loaded = _parse_tokens(tokens.read_text())
             else:
-                text = _installed(site, _pin(site))
+                pin = _pin(site)
+                text = _installed(site, pin) or _cached(pin)
+                if text is None and not offline:
+                    text = _fetch(pin)
                 if text is None:
-                    raise BrandError("brand tokens unavailable — pass --tokens")
+                    raise BrandError("brand tokens unavailable offline — run bin/local/dev-deps")
                 loaded = _parse_tokens(text)
         return loaded
 
@@ -191,6 +263,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--out", type=Path)
     parser.add_argument("--tokens", type=Path)
     parser.add_argument("--site", type=Path)
+    parser.add_argument("--offline", action="store_true")
     parser.add_argument("-h", "--help", action="store_true")
     args = parser.parse_args(argv)
     if args.help:
@@ -204,9 +277,13 @@ def main(argv: list[str]) -> int:
     palettes_dir = args.palettes or root / "ai/herdr/app/palettes"
     out_dir = args.out or root / "ai/herdr/app/themes"
     site = args.site or root / "site"
+    sys.path.insert(0, str(root / "ai" / "lib"))
+    offline = args.offline
+    if args.check:
+        offline = True
 
     try:
-        files = render(palettes_dir, _brand_loader(args.tokens, site))
+        files = render(palettes_dir, _brand_loader(args.tokens, site, offline))
     except BrandError as err:
         print(f"generate-herdr-app-themes: {err}", file=sys.stderr)
         return 3

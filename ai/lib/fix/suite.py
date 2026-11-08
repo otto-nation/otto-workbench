@@ -50,6 +50,16 @@ agent's edits are uncommitted but they are *in the tree the tests import*, and
 the files it may touch are restricted to the branch's own (`fix.scope`), which
 the committed diff already names.
 
+**What a green run that rewrote tracked files means.** The suite runs in the
+real worktree; containment restores anything it wrote so the commit stages
+pre-suite bytes. A formatter that rewrites a tracked file can still exit 0,
+and that green then describes a tree that was not committed — CI fails on
+exactly that file. The pass does not fail: the status becomes `PARTIAL` (the
+same unverified trailer a green run over left-out files already uses), the
+tally names the restored files, and a `fix_suite_rewrote_files` trail event
+records them. Untracked or ignored build outputs the suite writes are not
+this case.
+
 The command is argv, split with `shlex` and run without a shell. Not a security
 boundary — the agent that just ran had unrestricted bash — but a repo's gate is
 one command, and accepting a shell line would invite the `&&` chain that becomes
@@ -75,6 +85,7 @@ import core.log
 import core.trail
 from core.trail import Trail, tinfo, twarn
 import fix.blame
+import fix.containment
 from pr.fix import CHECKS_TRAILER, ItemOutcome
 
 # What of a failing run's output is worth carrying into a commit body and a
@@ -82,8 +93,18 @@ from pr.fix import CHECKS_TRAILER, ItemOutcome
 # of what failed at the end, and a head-clip of a verbose runner is the banner.
 OUTPUT_TAIL_CHARS = 2000
 
-# How many left-out paths a PARTIAL note names before it settles for a count.
-LEFT_OUT_SHOWN = 3
+# How many paths (left out or rewritten) a note names before it settles for a count.
+PATHS_SHOWN = 3
+
+
+def _named_paths(paths: tuple[str, ...]) -> str:
+    """A short comma list of *paths*, with a remainder count when it overflows."""
+    shown = ", ".join(paths[:PATHS_SHOWN])
+    more = len(paths) - PATHS_SHOWN
+    if more > 0:
+        shown += f" and {more} more"
+    return shown
+
 
 # The hedge a red run puts on every fix the pass claimed. Phrased as the state
 # of the tree rather than as an accusation about the item — one run cannot tell
@@ -205,6 +226,9 @@ class SuiteResult:
     # Paths in the tree the checks ran over that the commit leaves out. Set on
     # PARTIAL, where they are the reason the green run does not count.
     left_out: tuple[str, ...] = ()
+    # Tracked-in-HEAD paths the suite rewrote that containment then restored.
+    # Set on PARTIAL when that is why the green run does not describe the commit.
+    rewrote: tuple[str, ...] = ()
     # The failing tests a red run named, parsed from its whole output before
     # the tail was clipped. Empty when none could be read — and then nothing
     # can be called inherited.
@@ -245,23 +269,24 @@ class SuiteResult:
             return f"Checks green: {self.command} ({self.duration_s:.0f}s)"
         if self.status is SuiteStatus.RED:
             tail = (f"; {len(self.inherited)} of its failures also fail before this pass: "
-                    f"{', '.join(self.inherited[:LEFT_OUT_SHOWN])}{_FIRST_SUITE_CAVEAT}"
+                    f"{', '.join(self.inherited[:PATHS_SHOWN])}{_FIRST_SUITE_CAVEAT}"
                     ) if self.inherited else ""
             return f"Checks RED: {self.command} ({self.duration_s:.0f}s){tail}"
         if self.status is SuiteStatus.PREEXISTING:
             return (
                 f"Checks red before this pass too: {self.command} — "
-                f"{', '.join(self.inherited[:LEFT_OUT_SHOWN])} also fail at the pass's "
+                f"{', '.join(self.inherited[:PATHS_SHOWN])} also fail at the pass's "
                 f"base; not attributed to this pass{_FIRST_SUITE_CAVEAT}"
             )
+        if self.status is SuiteStatus.PARTIAL and self.rewrote:
+            return (
+                f"Checks green but not on this commit: {self.command} rewrote "
+                f"{_named_paths(self.rewrote)}, which were restored"
+            )
         if self.status is SuiteStatus.PARTIAL:
-            shown = ", ".join(self.left_out[:LEFT_OUT_SHOWN])
-            more = len(self.left_out) - LEFT_OUT_SHOWN
-            if more > 0:
-                shown += f" and {more} more"
             return (
                 f"Checks green but not on this commit: {self.command} ran with "
-                f"{shown} in the tree, which the commit leaves out"
+                f"{_named_paths(self.left_out)} in the tree, which the commit leaves out"
             )
         if self.status is SuiteStatus.TIMED_OUT:
             return (
@@ -586,6 +611,11 @@ def qualify_tally(tally: str, result: SuiteResult) -> str:
         return f"{tally} (unverified: no fix.verify_command declared)"
     if result.status in (SuiteStatus.TIMED_OUT, SuiteStatus.ERROR):
         return f"{tally} (unverified: the repo's checks did not answer)"
+    if result.rewrote and result.status is SuiteStatus.PARTIAL:
+        return (
+            f"{tally} (unverified: the checks rewrote {len(result.rewrote)} "
+            "tracked file(s), which were restored)"
+        )
     if result.status is SuiteStatus.PARTIAL:
         return (
             f"{tally} (unverified: the checks ran with {len(result.left_out)} "
@@ -636,6 +666,62 @@ def with_trailer(message: str, result: SuiteResult) -> str:
     """*message* with the checks trailer as its final paragraph, when there is one."""
     trailer = checks_trailer(result)
     return f"{message.rstrip()}\n\n{trailer}" if trailer else message
+
+
+def with_rewrites(
+    result: SuiteResult,
+    paths: tuple[str, ...] | list[str],
+    workdir: str | Path,
+    trail: Trail | None = None,
+) -> SuiteResult:
+    """*result*, demoted to PARTIAL when the suite rewrote tracked files.
+
+    Containment has already put the pre-suite bytes back. A green verdict then
+    describes a tree the commit is not — the same shape as `scoped_to`, with
+    restored tracked files in place of files the commit leaves out. Untracked
+    or ignored outputs are not this case. Red is left alone: it already
+    withdraws the claims, and the pass does not fail a second time for the
+    rewrite.
+    """
+    tracked = _tracked_in_head(workdir, tuple(paths))
+    if not tracked:
+        return result
+    named = ", ".join(tracked)
+    message = (
+        f"The repo's checks rewrote {len(tracked)} tracked file(s) that were "
+        f"restored: {named}."
+    )
+    if result.status is SuiteStatus.GREEN:
+        message += (
+            " The checks passed against the rewritten content; "
+            "the commit holds the restored bytes."
+        )
+    core.log.warn(message)
+    twarn(
+        trail, "fix_suite_rewrote_files", message,
+        data={"paths": list(tracked), "workdir": str(workdir)},
+    )
+    updated = replace(result, rewrote=tracked)
+    if updated.status is SuiteStatus.GREEN:
+        return replace(updated, status=SuiteStatus.PARTIAL)
+    return updated
+
+
+def _tracked_in_head(
+    workdir: str | Path, paths: tuple[str, ...],
+) -> tuple[str, ...]:
+    """The subset of *paths* that ``HEAD`` itself carries.
+
+    Unknown is not "these are tracked": a snapshot that could not be read
+    returns nothing, so a failed read cannot invent a rewrite qualifier.
+    """
+    if not paths:
+        return ()
+    head = fix.containment.read_tree(workdir, "HEAD")
+    if not head.ok:
+        return ()
+    known = head.by_path()
+    return tuple(path for path in paths if path in known)
 
 
 def scoped_to(result: SuiteResult, left_out: set[str]) -> SuiteResult:
@@ -689,5 +775,6 @@ __all__ = [
     "run",
     "scoped_to",
     "should_run",
+    "with_rewrites",
     "with_trailer",
 ]

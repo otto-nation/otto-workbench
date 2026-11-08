@@ -6470,6 +6470,16 @@ agent's edits are uncommitted but they are *in the tree the tests import*, and
 the files it may touch are restricted to the branch's own (`fix.scope`), which
 the committed diff already names.
 
+**What a green run that rewrote tracked files means.** The suite runs in the
+real worktree; containment restores anything it wrote so the commit stages
+pre-suite bytes. A formatter that rewrites a tracked file can still exit 0,
+and that green then describes a tree that was not committed — CI fails on
+exactly that file. The pass does not fail: the status becomes `PARTIAL` (the
+same unverified trailer a green run over left-out files already uses), the
+tally names the restored files, and a `fix_suite_rewrote_files` trail event
+records them. Untracked or ignored build outputs the suite writes are not
+this case.
+
 The command is argv, split with `shlex` and run without a shell. Not a security
 boundary — the agent that just ran had unrestricted bash — but a repo's gate is
 one command, and accepting a shell line would invite the `&&` chain that becomes

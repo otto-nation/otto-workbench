@@ -395,6 +395,22 @@ class TestTheCommitScope:
 
         assert "unverified: the repo's checks did not answer" in spec.message
 
+    def test_the_tally_says_so_when_the_checks_rewrote_tracked_files(
+        self, git_wt, tmp_path,
+    ):
+        adapter = self._adapter(git_wt, tmp_path)
+        adapter.suite = fix.suite.SuiteResult(
+            status=fix.suite.SuiteStatus.PARTIAL, command="checks",
+            rewrote=("a.py",),
+        )
+
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
+
+        assert (
+            "unverified: the checks rewrote 1 tracked file(s), which were restored"
+            in spec.message
+        )
+
     def test_a_pass_with_nothing_to_check_carries_no_note_at_all(
         self, git_wt, tmp_path,
     ):

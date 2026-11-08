@@ -32,21 +32,7 @@ import fix.blame  # noqa: E402
 import fix.suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 
-
-class _RecordingTrail:
-    """A trail that keeps what it was told, so a test can read it back."""
-
-    def __init__(self):
-        self.events = []
-
-    def info(self, action, detail, data=None):
-        self.events.append(("info", action, detail, data or {}))
-
-    def warn(self, action, detail, data=None):
-        self.events.append(("warn", action, detail, data or {}))
-
-    def error(self, action, detail, data=None):
-        self.events.append(("error", action, detail, data or {}))
+from fix_suite_support import _RecordingTrail  # noqa: E402
 
 
 def _script(tmp_path: Path, name: str, body: str) -> str:
@@ -474,6 +460,47 @@ def test_a_partial_note_names_a_few_left_out_paths_and_counts_the_rest():
     assert "tests/f0_support.py" in result.note
     assert "tests/f3_support.py" not in result.note
     assert "and 7 more" in result.note
+
+
+def test_qualify_tally_names_restored_tracked_rewrites():
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.PARTIAL, rewrote=("a.py",),
+    )
+
+    assert fix.suite.qualify_tally("1 fixed, 0 skipped", result) == (
+        "1 fixed, 0 skipped (unverified: the checks rewrote 1 tracked file(s), "
+        "which were restored)"
+    )
+
+
+def test_a_rewrite_qualifier_wins_over_left_out():
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.PARTIAL,
+        left_out=("extra.py",), rewrote=("a.py",),
+    )
+
+    qualified = fix.suite.qualify_tally("1 fixed, 0 skipped", result)
+
+    assert "rewrote 1 tracked file(s), which were restored" in qualified
+    assert "leaves out" not in qualified
+
+
+def test_a_partial_note_names_restored_rewrites_ahead_of_left_out():
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.PARTIAL, command="c",
+        rewrote=("a.py",), left_out=("extra.py",),
+    )
+
+    assert "rewrote a.py, which were restored" in result.note
+    assert "leaves out" not in result.note
+
+
+def test_a_green_tally_is_unchanged_when_nothing_was_rewritten():
+    result = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.GREEN)
+
+    assert fix.suite.qualify_tally("1 fixed, 0 skipped", result) == (
+        "1 fixed, 0 skipped"
+    )
 
 
 def _kill_runner_group(pid_file: Path) -> None:

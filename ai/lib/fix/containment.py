@@ -171,19 +171,35 @@ def take(workdir: str | Path) -> Snapshot:
     return read_tree(workdir, tree.sha)
 
 
+@dataclass
+class Writes:
+    """What ``around`` restored. Empty until the ``with`` block exits."""
+
+    paths: tuple[str, ...] = ()
+    saved_to: Path | None = None
+
+
 @contextmanager
 def around(
     workdir: str | Path, artifacts: str | Path, phase: str, trail: Trail | None,
-) -> Iterator[None]:
-    """Snapshot, run the phase, snapshot, restore anything the phase wrote."""
+) -> Iterator[Writes]:
+    """Snapshot, run the phase, snapshot, restore anything the phase wrote.
+
+    Yields a ``Writes`` filled in ``finally`` with the paths restore undid, so
+    the caller can read them after the ``with`` block. The verify phase ignores
+    this; the suite phase threads tracked paths onto the tally.
+    """
+    writes = Writes()
     before = take(workdir)
     try:
-        yield
+        yield writes
     finally:
         after = take(workdir)
-        restore(
+        done = restore(
             workdir, before, after, artifacts=artifacts, phase=phase, trail=trail,
         )
+        writes.paths = done.paths
+        writes.saved_to = done.saved_to
 
 
 @contextmanager

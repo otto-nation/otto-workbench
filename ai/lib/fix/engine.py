@@ -1195,11 +1195,14 @@ def _run_contained_pass(
     # so `land` below stages pre-suite content for the names in `committed`.
     with fix.containment.around(
         adapter.workdir, adapter.artifacts, "suite", trail,
-    ):
+    ) as writes:
         adapter.suite = _verify_suite(
             adapter, settled.outcomes, changed, trail, by_id,
             base=head_before, left_out=left_out,
             baseline_ref=baseline_ref, dirty_before=frozenset(dirty_before))
+    adapter.suite = fix.suite.with_rewrites(
+        adapter.suite, writes.paths, adapter.workdir, trail,
+    )
 
     # Between the verdicts and the push, which is the only window that works:
     # both gates have spoken here — the per-item one above and the batch suite

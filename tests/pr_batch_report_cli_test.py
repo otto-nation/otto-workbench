@@ -84,16 +84,3 @@ def test_run_summary_sets_report_path_as_last_line(monkeypatch, capsys):
     assert Path(last["report_path"]).name == "report.md"
 
 
-def test_next_is_a_deprecated_report_alias(capsys):
-    # Revert: drop the hint.
-    item = make_item(1)
-    run = make_run([item])
-    seed_raw(run)
-    assert _main(["batch", "next", run.id, "--offline"]) == 0
-    captured = capsys.readouterr()
-    assert "deprecated" in captured.err
-    assert "pr batch report --format json" in captured.err
-    doc = json.loads(captured.out)
-    assert "sessions" in doc
-    assert doc["hint"].startswith("pr batch next is deprecated")
-    assert "next" not in doc

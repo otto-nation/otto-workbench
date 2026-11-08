@@ -65,8 +65,6 @@ one PR. `--auto-publish ff` (fast-forward only). `--no-verify` skips
 the pre-push hook on publishes the batch makes; persist it only when the user
 has already read a hook failure.
 
-`pr batch next` is deprecated; use `pr batch report --format json`.
-
 ---
 
 ## Cost control

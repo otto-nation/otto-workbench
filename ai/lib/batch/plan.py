@@ -8,7 +8,7 @@ comments are priced per thread, about a point per hundred threads in the search,
 and are read only as far as `_THREAD_COMMENTS` — enough to see whether anyone
 spoke after a settlement.
 
-A read (`pr batch plan` / `status` / `next`) must not take packed-refs.lock:
+A read (`pr batch plan` / `status` / `report`) must not take packed-refs.lock:
 a killed status that wrote refs left a stale 0-byte lock that blocked every
 later ref update. It lists origin tips with `ls-remote`, fetches those SHAs
 with no ref updates (`-c maintenance.auto=false -c gc.auto=0` and an empty

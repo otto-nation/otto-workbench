@@ -788,7 +788,6 @@ pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff]
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
-pr batch next [RUN_ID]                   # deprecated alias of report --format json
 pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state plus `run_dir`
@@ -824,8 +823,7 @@ Keys: `run` (`id`, `status`, `active`, `exit_hint`, `hint`, `pending_requests`,
 `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`
 (`run`, `item`, `reason`, `step`). Exit 0 or 1 only.
 
-`pr batch next` is a deprecated alias of `pr batch report --format json`.
-Both carry `github` unless `--offline`. Keys and checkout rules are in
+`pr batch status` and `pr batch report` carry `github` unless `--offline`. Keys and checkout rules are in
 [`batch/live.py`](ai-libraries.md#batchlivepy).
 
 Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose`

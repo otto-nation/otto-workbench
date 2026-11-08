@@ -582,7 +582,6 @@ def test_the_schema_contracts_are_read_off_the_mode_table():
         "pr review --list",
         "pr batch plan",
         "pr batch status",
-        "pr batch next",
         "pr batch report",
         "pr status",
         "pr stack",

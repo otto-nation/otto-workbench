@@ -160,8 +160,8 @@ def test_status_prints_the_compact_report_by_default(capsys):
     assert "open_decisions" not in out["counts"]
 
 
-@pytest.mark.parametrize("command", ["status", "next"])
-def test_status_and_next_ask_github_about_the_runs_repos(monkeypatch, capsys, command):
+@pytest.mark.parametrize("command", [["status"], ["report", "--format", "json"]])
+def test_status_and_report_ask_github_about_the_runs_repos(monkeypatch, capsys, command):
     run = _saved_run_with_decision()
     seen = {}
 
@@ -170,12 +170,12 @@ def test_status_and_next_ask_github_about_the_runs_repos(monkeypatch, capsys, co
         return {"checked": True, "owed": [], "untracked": [], "moved": []}
 
     monkeypatch.setattr(batch.live, "view", fake_view)
-    assert _main(["batch", command, run.id]) == 0
+    assert _main(["batch", *command, run.id]) == 0
     assert json.loads(capsys.readouterr().out)["github"]["checked"] is True
     assert seen == {"run": run.id, "cwd": os.getcwd()}
 
 
-@pytest.mark.parametrize("command", ["status", "next"])
+@pytest.mark.parametrize("command", [["status"], ["report", "--format", "json"]])
 def test_offline_skips_github(monkeypatch, capsys, command):
     run = _saved_run_with_decision()
 
@@ -183,7 +183,7 @@ def test_offline_skips_github(monkeypatch, capsys, command):
         raise AssertionError("asked GitHub under --offline")
 
     monkeypatch.setattr(batch.live, "view", no_github)
-    assert _main(["batch", command, run.id, "--offline"]) == 0
+    assert _main(["batch", *command, run.id, "--offline"]) == 0
     assert json.loads(capsys.readouterr().out)["github"] == {"checked": False, "skipped": True}
 
 

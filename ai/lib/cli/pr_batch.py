@@ -6,10 +6,9 @@
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
-    pr batch next   [RUN_ID] [--offline]       deprecated alias of report --format json
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
 
-Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/next/report fall back to the newest run on the machine and say so on stderr.
+Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
 A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish ff pushes a clean fast-forward at item close. --no-verify skips the pre-push hook on those publishes.
 
@@ -170,10 +169,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--full", action="store_true",
                    help="Print the raw run state instead of the report")
     cli.pr_batch_views.offline(s)
-
-    n = sub.add_parser("next", help="Deprecated alias of report --format json")
-    n.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
-    cli.pr_batch_views.offline(n)
 
     p = sub.add_parser("report", help="Print per-PR session commands for a run")
     p.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
@@ -626,7 +621,7 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
             return cli.pr_batch_requests.cmd_release(args, bin_dir)
         if args.command == "report":
             return cli.pr_batch_views.cmd_report(args)
-        # status and next
+        # status
         return cli.pr_batch_views.cmd_status(args)
     except batch.plan.PlanError as exc:
         return cli.pr_batch_common.fail(str(exc))

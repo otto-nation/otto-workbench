@@ -1,0 +1,168 @@
+/*
+ * otto-nation palette — the single owner of these values across the org.
+ *
+ * Origin: otto-stack's docs-site/assets/scss/common/_variables-custom.scss
+ * ($theme-base-color and the $dark-* ramp). otto-stack still holds a drifted SCSS
+ * copy; its Hugo migration is a consumption change, not a second extraction.
+ *
+ * Contrast rules, which are not optional:
+ *   --ow-amarillo  1.65:1 on canvas. Never text on light. Rules, borders, prompts,
+ *                  SVG line-work. It reaches 9.73:1 on the dark terminal block.
+ *   --ow-rosa      4.42:1 on canvas — below the 4.5:1 AA floor for normal text, above
+ *                  the 3:1 large-text floor. UI and large text only, never inline prose.
+ *   Body copy is always --ow-ink or --ow-ink-muted on --ow-canvas.
+ *   --ow-block-*   the dark band surfaces, measured against --ow-block, not canvas.
+ *                  Dark and warm in both themes, but restated in .dark so the band
+ *                  still separates from a dark page.
+ *   --ow-done      5.57:1 on canvas. Success state, text-safe.
+ *   --ow-warn      5.04:1 on canvas. Warning state, text-safe.
+ *   --ow-anil      7.04:1 on canvas. Text-safe: links, and a fill that carries
+ *                  --ow-canvas text. Restated in .dark so it holds on both ramps.
+ *   --ow-ink-muted 6.92:1 on surface. Cards sit on --ow-surface, not canvas, so
+ *                  muted copy inside one is measured there too.
+ *   --ow-on-amarillo 9.73:1 on amarillo. The text colour for an amarillo fill.
+ *                  Amarillo does not change between themes, so neither does this:
+ *                  --ow-ink inverts to a light colour in .dark and would vanish.
+ *   --ow-on-rosa   4.57:1 on rosa. The text colour for a rosa fill, invariant for
+ *                  the same reason. --ow-canvas reads 4.42:1 there and the dark
+ *                  canvas 3.90:1 — both under AA for the small labels a fill carries.
+ *   --ow-outline   3.26:1 on canvas. The boundary of a control whose edge is how
+ *                  you find it — a text input. Clears the 3:1 non-text floor;
+ *                  --ow-hairline (1.24:1) stays for dividers and card edges.
+ *   --ow-outline   3.37:1 on surface.
+ *   --ow-done-soft, --ow-warn-soft: tinted panels behind done and warning
+ *                  content. Text on them is measured against the tint:
+ *   --ow-ink-muted 6.27:1 on done-soft.
+ *   --ow-done      5.22:1 on done-soft.
+ *   --ow-ink-muted 6.20:1 on warn-soft.
+ *   --ow-warn      4.67:1 on warn-soft.
+ *
+ * The ratios below are asserted by test/contrast.test.mjs, which parses them out
+ * of this comment and recomputes them from the hexes. Edit a hex without editing
+ * the claim, or the reverse, and the test fails.
+ */
+
+:root {
+  --ow-canvas: #f7f2e9;
+  --ow-surface: #fbf6ea;
+  --ow-ink: #1a1712;
+  --ow-ink-muted: #5c5447;
+  --ow-hairline: #e4dac6;
+  --ow-amarillo: #e5ba41;
+  --ow-rosa: #d81e5b;
+  --ow-barro: #c4552f;
+  --ow-anil: #2b4ba8;
+  --ow-done: #486a2f;
+  --ow-warn: #866118;
+  --ow-on-amarillo: #1a1712;
+  --ow-on-rosa: #fbf6ea;
+  --ow-outline: #8f8575;
+  --ow-done-soft: #e6ede7;
+  --ow-warn-soft: #f3e9d6;
+
+  /* The install block and the footer stay dark in both themes — a shell prompt
+   * has to read as a terminal, and the footer closes the page on a solid band.
+   * They do not follow the theme-dependent ramp, so they own their own tokens
+   * whose contrast is measured against --ow-block rather than --ow-canvas:
+   *   --ow-block-ink        13.96:1 on the block. Body copy.
+   *   --ow-block-ink-muted   4.61:1 on the block. Labels and buttons, AA.
+   *   --ow-block-hairline    never text. Dividers and borders only.
+   * The .dark block restates all four — see the note there. */
+  --ow-block: #1a1712;
+  --ow-block-ink: #e8e3d8;
+  --ow-block-ink-muted: #8a8073;
+  --ow-block-hairline: #3d3420;
+
+  --color-fd-background: var(--ow-canvas);
+  --color-fd-foreground: var(--ow-ink);
+  --color-fd-muted: var(--ow-surface);
+  --color-fd-muted-foreground: var(--ow-ink-muted);
+  --color-fd-popover: var(--ow-surface);
+  --color-fd-popover-foreground: var(--ow-ink);
+  --color-fd-card: var(--ow-surface);
+  --color-fd-card-foreground: var(--ow-ink);
+  --color-fd-border: var(--ow-hairline);
+  --color-fd-primary: var(--ow-rosa);
+  --color-fd-primary-foreground: var(--ow-canvas);
+  --color-fd-secondary: var(--ow-surface);
+  --color-fd-secondary-foreground: var(--ow-ink);
+  --color-fd-accent: var(--ow-surface);
+  --color-fd-accent-foreground: var(--ow-ink);
+  --color-fd-ring: var(--ow-amarillo);
+}
+
+.dark {
+  --ow-canvas: #0f0e13;
+  --ow-surface: #1f1c14;
+  --ow-ink: #e8e3d8;
+  --ow-ink-muted: #978d7f;
+  --ow-hairline: #3d3420;
+
+  /* Text-safe accents lift off the dark ramp the way --ow-done and --ow-warn do.
+   * At the light-ramp hex, anil links sat 2.17:1 on a dark card and muted copy
+   * 4.39:1, both under AA. --ow-anil stays a fill for --ow-canvas text, which
+   * is near-black here, so the pairing inverts with the theme and holds:
+   *   --ow-anil             6.41:1 on the dark surface. Links on cards.
+   *   --ow-ink-muted        5.21:1 on the dark surface. Muted copy on cards. */
+  --ow-anil: #7f9cf0;
+
+  /* The outline and the soft tints move with the ramp. A tint light enough to
+   * read as a panel on the dark surface pulls muted copy under AA, so these sit
+   * close to the surface — a quiet tint, with the border carrying the state:
+   *   --ow-outline          3.44:1 against the dark canvas.
+   *   --ow-outline          3.05:1 on the dark surface.
+   *   --ow-ink-muted        4.73:1 on the dark done-soft.
+   *   --ow-done             7.25:1 on the dark done-soft.
+   *   --ow-ink-muted        4.77:1 on the dark warn-soft.
+   *   --ow-warn             7.21:1 on the dark warn-soft. */
+  --ow-outline: #706756;
+  --ow-done-soft: #1e2719;
+  --ow-warn-soft: #2a2314;
+
+  /* The block ramp lifts rather than staying frozen. One of the four changes
+   * README § The four intended pixel changes enumerates. Against the light canvas
+   * the band sinks 16.02:1 below the page; against the dark canvas the same
+   * hex sits 1.08:1 from it, which is invisible, and Footer has no border to
+   * fall back on. Light mode cannot be reproduced by going darker — the dark
+   * canvas is already near black, so even pure black only reaches 1.11:1 — so
+   * the band lifts off the page instead of sinking below it, and the ink ramp
+   * on it moves by the same amount to hold its readings:
+   *   --ow-block            1.54:1 against the dark canvas. A distinct band.
+   *   --ow-block-ink        9.78:1 on the dark block. Body copy.
+   *   --ow-block-ink-muted  4.74:1 on the dark block. Labels and buttons, AA.
+   *   --ow-block-hairline   1.48:1 on the dark block, matching light's 1.46.
+   *   --ow-done             9.02:1 on the dark canvas. Success state, text-safe.
+   *   --ow-warn             8.90:1 on the dark canvas. Warning state, text-safe. */
+  --ow-block: #393328;
+  --ow-block-ink: #e8e3d8;
+  --ow-block-ink-muted: #a89e8f;
+  --ow-block-hairline: #544c3c;
+  --ow-done: #93be74;
+  --ow-warn: #d6aa51;
+
+  /* Every other --color-fd-* role is derived: it references an --ow-* token
+   * redefined above, and var() resolves against this element's own cascaded
+   * value of that token, so the :root declaration already picks up the dark
+   * ramp once .dark is active. --color-fd-primary is the one exception — it
+   * swaps to a different token (amarillo instead of rosa) rather than
+   * following a redefined one, so it must be restated here. */
+  --color-fd-primary: var(--ow-amarillo);
+}
+
+body {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.02em;
+}

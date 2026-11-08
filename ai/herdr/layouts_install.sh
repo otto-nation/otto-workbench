@@ -66,6 +66,35 @@ _herdr_layout_keep() {
   return 0
 }
 
+# _herdr_layout_protected DEST NAME OLD_SUM OUT MAN_OUT HOME — 0 when DEST
+# must stay (hand edit, foreign file, or a shipped layout). Records the
+# checksum that should remain in the manifest, or nothing. 1 means write.
+_herdr_layout_protected() {
+  local dest="$1" name="$2" old_sum="$3" out="$4" man_out="$5" home="$6"
+  local dest_sum installed="$home/installed.json"
+  if [[ -f "$installed" ]] && jq -e --arg k "layout:$name" 'has($k)' "$installed" >/dev/null; then
+    warn "herdr-app layout $name: $dest is a shipped herdr-app layout — left as is"
+    _herdr_layout_keep "$name" "$old_sum" "$man_out"
+    return 0
+  fi
+  [[ -f "$dest" ]] || return 1
+  dest_sum=$(_herdr_layout_cksum "$dest")
+  if [[ -n "$old_sum" && "$dest_sum" != "$old_sum" ]]; then
+    warn "herdr-app layout $name: $dest differs from the workbench copy — left as is; delete it and re-run otto-workbench sync to restore it"
+    _herdr_layout_keep "$name" "$old_sum" "$man_out"
+    return 0
+  fi
+  if [[ -z "$old_sum" ]]; then
+    if printf '%s\n' "$out" | cmp -s "$dest" -; then
+      printf '%s\t%s\n' "$name" "$dest_sum" >> "$man_out"
+      return 0
+    fi
+    warn "herdr-app layout $name: $dest exists without a workbench manifest and differs from the workbench copy — left as is"
+    return 0
+  fi
+  return 1
+}
+
 # _herdr_layout_install_one SRC HOME NAME OLD_SUM MAN_OUT — derives NAME.json
 # from HOME/layouts/main.json. Non-fatal.
 _herdr_layout_install_one() {
@@ -83,6 +112,9 @@ _herdr_layout_install_one() {
     return 0
   fi
   mkdir -p "$home/layouts" || { warn "Could not create $home/layouts"; return 0; }
+  if _herdr_layout_protected "$dest" "$name" "$old_sum" "$out" "$man_out" "$home"; then
+    return 0
+  fi
   [[ -f "$dest" ]] || HERDR_APP_LAYOUTS_NEWLY_INSTALLED+=("$name")
   if ! _herdr_layout_write "$dest" "$out" changed; then
     _herdr_layout_keep "$name" "$old_sum" "$man_out"

@@ -114,3 +114,62 @@ _cksum() {
   [ ! -e "$APP/layouts/workbench.json" ]
   [[ "$output" == *"could not derive"* ]]
 }
+
+@test "hand-edited layout is warned and kept" {
+  _seed_main
+  run _run
+  [ "$status" -eq 0 ]
+  recorded=$(awk -F'\t' '$1=="workbench"{print $2}' "$MANIFEST")
+  printf '%s\n' '{"id":"hand"}' > "$APP/layouts/workbench.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [ "$(cat "$APP/layouts/workbench.json")" = '{"id":"hand"}' ]
+  [[ "$output" == *"left as is"* ]]
+  grep -qx $'workbench\t'"$recorded" "$MANIFEST"
+}
+
+@test "manifest-less identical layout is adopted" {
+  _seed_main
+  jq -f "$SRC/workbench.jq" "$APP/layouts/main.json" > "$APP/layouts/workbench.json"
+  before=$(_cksum "$APP/layouts/workbench.json")
+  run _run
+  [ "$status" -eq 0 ]
+  [ "$(_cksum "$APP/layouts/workbench.json")" = "$before" ]
+  grep -qx $'workbench\t'"$before" "$MANIFEST"
+  [[ "$output" != *"left as is"* ]]
+}
+
+@test "manifest-less different layout is left alone" {
+  _seed_main
+  printf '%s\n' '{"id":"mine"}' > "$APP/layouts/workbench.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [ "$(cat "$APP/layouts/workbench.json")" = '{"id":"mine"}' ]
+  [[ "$output" == *"left as is"* ]]
+  [ ! -f "$MANIFEST" ] || ! grep -q $'^workbench\t' "$MANIFEST"
+}
+
+@test "shipped layout name in installed.json is refused" {
+  _seed_main
+  printf '%s\n' '{"id":"shipped"}' > "$APP/layouts/workbench.json"
+  printf '%s\n' '{"layout:workbench":{}}' > "$APP/installed.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [ "$(cat "$APP/layouts/workbench.json")" = '{"id":"shipped"}' ]
+  [[ "$output" == *"shipped"* ]]
+  [ ! -f "$MANIFEST" ] || ! grep -q $'^workbench\t' "$MANIFEST"
+}
+
+@test "a hand-edited layout is not regenerated after main.json changes" {
+  _seed_main
+  run _run
+  [ "$status" -eq 0 ]
+  recorded=$(awk -F'\t' '$1=="workbench"{print $2}' "$MANIFEST")
+  printf '%s\n' '{"id":"hand"}' > "$APP/layouts/workbench.json"
+  jq '.children[0].size.px = 300' "$FIXTURE" > "$APP/layouts/main.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [ "$(cat "$APP/layouts/workbench.json")" = '{"id":"hand"}' ]
+  grep -qx $'workbench\t'"$recorded" "$MANIFEST"
+  [[ "$output" == *"left as is"* ]]
+}

@@ -3,6 +3,7 @@
 
 Usage: bin/local/generate-herdr-app-themes [--check] [--palettes DIR] [--out DIR]
                                            [--tokens FILE] [--site DIR] [--offline]
+                                           [--resolve-brand]
 
 Every ai/herdr/app/palettes/*.toml holds a [palette] of named colors and one
 [themes.<name>] table per theme, whose values are palette names. A palette value
@@ -22,6 +23,8 @@ Options:
   --tokens FILE    Read brand tokens from FILE instead of the pinned install
   --site DIR       Site package root (default: <repo>/site)
   --offline        Do not fetch the pinned brand tarball
+  --resolve-brand  Load brand tokens (fetching unless --offline), print the
+                   source (tokens|installed|cache|fetched), write no themes.
   -h, --help       Show this help
 
 Exit status: 0 up to date (or written), 1 stale under --check, 2 a palette is
@@ -67,6 +70,12 @@ class BrandPin:
     url: str
     version: str
     integrity: str
+
+
+@dataclass(frozen=True)
+class BrandLoad:
+    tokens: dict[str, dict[str, str]]
+    source: str
 
 
 def _parse_tokens(text: str) -> dict[str, dict[str, str]]:
@@ -173,6 +182,22 @@ def _fetch(pin: BrandPin) -> str:
     return _tokens_from_tarball(blob)
 
 
+def _load_brand(tokens: Path | None, site: Path, offline: bool) -> BrandLoad:
+    """Parsed tokens and which source answered: tokens|installed|cache|fetched."""
+    if tokens is not None:
+        return BrandLoad(_parse_tokens(tokens.read_text()), "tokens")
+    pin = _pin(site)
+    text = _installed(site, pin)
+    if text is not None:
+        return BrandLoad(_parse_tokens(text), "installed")
+    text = _cached(pin)
+    if text is not None:
+        return BrandLoad(_parse_tokens(text), "cache")
+    if not offline:
+        return BrandLoad(_parse_tokens(_fetch(pin)), "fetched")
+    raise BrandError("brand tokens unavailable offline — run bin/local/dev-deps")
+
+
 def _brand_loader(tokens: Path | None, site: Path, offline: bool):
     """Zero-argument brand loader: --tokens, install, cache, then fetch unless offline."""
     loaded: dict[str, dict[str, str]] | None = None
@@ -180,16 +205,7 @@ def _brand_loader(tokens: Path | None, site: Path, offline: bool):
     def brand() -> dict[str, dict[str, str]]:
         nonlocal loaded
         if loaded is None:
-            if tokens is not None:
-                loaded = _parse_tokens(tokens.read_text())
-            else:
-                pin = _pin(site)
-                text = _installed(site, pin) or _cached(pin)
-                if text is None and not offline:
-                    text = _fetch(pin)
-                if text is None:
-                    raise BrandError("brand tokens unavailable offline — run bin/local/dev-deps")
-                loaded = _parse_tokens(text)
+            loaded = _load_brand(tokens, site, offline).tokens
         return loaded
 
     return brand
@@ -264,6 +280,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--tokens", type=Path)
     parser.add_argument("--site", type=Path)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--resolve-brand", action="store_true")
     parser.add_argument("-h", "--help", action="store_true")
     args = parser.parse_args(argv)
     if args.help:
@@ -283,6 +300,9 @@ def main(argv: list[str]) -> int:
         offline = True
 
     try:
+        if args.resolve_brand:
+            print(_load_brand(args.tokens, site, offline).source)
+            return 0
         files = render(palettes_dir, _brand_loader(args.tokens, site, offline))
     except BrandError as err:
         print(f"generate-herdr-app-themes: {err}", file=sys.stderr)

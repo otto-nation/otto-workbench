@@ -3,7 +3,8 @@
 #
 # The one list of the workbench's development and test dependencies: what the
 # pre-push gate and the suites run. Without it each tool surfaced on its own,
-# as a confusing test failure on whichever machine lacked it.
+# as a confusing test failure on whichever machine lacked it. Includes the
+# pinned otto brand tokens the herdr-app theme generator resolves against.
 #
 # Usage:
 #   dev-deps            install what can be installed without root, then check
@@ -111,6 +112,18 @@ _has_locale() {
   [[ $'\n'"$have"$'\n' == *$'\n'"$lower"$'\n'* || $'\n'"$have"$'\n' == *$'\n'"$alt"$'\n'* ]]
 }
 
+# _brand_tokens_ready — whether --resolve-brand can answer without fetching.
+# --offline is required: without it a missing cache would fetch, and check
+# would report green on a machine that has no tokens yet (the revert that
+# cannot be seen through the stub).
+_brand_tokens_ready() {
+  "$WORKBENCH_DIR/bin/local/generate-herdr-app-themes" --resolve-brand --offline >/dev/null 2>&1
+}
+
+_fetch_brand_tokens() {
+  "$WORKBENCH_DIR/bin/local/generate-herdr-app-themes" --resolve-brand
+}
+
 # dev_deps_install — installs every dependency that needs no root. Failures are
 # left for dev_deps_check to report, so one bad install does not hide the rest.
 dev_deps_install() {
@@ -122,6 +135,7 @@ dev_deps_install() {
   # pytest with pytest-xdist, so bin/local/run-tests can parallelise. Its mise
   # spec uses the pipx backend; the helper installs that backend's uv itself.
   install_package pytest || true
+  _fetch_brand_tokens || true
 }
 
 # dev_deps_check — reports every missing dependency with the command that fixes
@@ -147,6 +161,7 @@ dev_deps_check() {
   if [[ "$(uname -s)" != Darwin ]] && ! _has_locale "$DEV_LOCALE"; then
     missing+=("locale $DEV_LOCALE — run: $(_locale_hint)")
   fi
+  _brand_tokens_ready || missing+=("otto brand tokens (herdr-app theme) — run: bin/local/dev-deps (or: npm --prefix site ci)")
 
   if [[ ${#missing[@]} -eq 0 ]]; then
     success "development dependencies present"

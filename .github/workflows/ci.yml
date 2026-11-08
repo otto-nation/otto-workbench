@@ -103,6 +103,11 @@ jobs:
       - name: Verify Taskfile parses
         run: task --list
 
+      # Tests never fetch. This fills the cache so the committed-theme check
+      # can resolve brand tokens without hitting the network.
+      - name: Cache the pinned brand tokens
+        run: bin/local/generate-herdr-app-themes --resolve-brand
+
       - name: Run bats tests (shard ${{ matrix.shard }}/3)
         run: |
           mkdir -p "$RUNNER_TEMP/junit"

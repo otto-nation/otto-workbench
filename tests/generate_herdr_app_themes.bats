@@ -312,6 +312,25 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
 }
 
+@test "--resolve-brand --offline exits 3 on an empty cache and 0 from cache after a fetch" {
+  sandbox_state_dir
+  _brand_tarball
+  _brand_palette
+  run "$GEN" --resolve-brand --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 3 ]
+  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
+  run "$GEN" --resolve-brand --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 0 ]
+  [ "$output" = "fetched" ]
+  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
+  run "$GEN" --resolve-brand --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cache" ]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
+}
+
 @test "a tarball without package/src/tokens.css exits 3" {
   sandbox_state_dir
   local root="$BATS_TEST_TMPDIR/pkg" tgz="$BATS_TEST_TMPDIR/brand.tgz" integrity

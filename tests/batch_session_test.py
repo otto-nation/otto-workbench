@@ -307,12 +307,13 @@ def test_a_normal_exit_commits_what_the_block_changed():
 
 
 def test_a_normal_exit_drains_a_request_written_during_the_block():
+    # Revert: skip the exit drain in Session.finish.
     seed(_run())
     with open_session(RID):
         batch.store.write_request(RID, Cancel())
     saved = batch.store.load(RID)
-    assert saved.decision("d1").resolution == "drop-pr"
-    assert saved.status is RunStatus.DONE
+    assert saved.cancel is not None
+    assert saved.status is RunStatus.CANCELLED
     assert batch.store.pending_requests(RID) == 0
 
 
@@ -474,25 +475,29 @@ def test_a_half_written_request_is_invisible_to_the_inbox():
 
 
 def test_a_drain_applies_every_cancel_before_any_decision():
+    # Revert: apply envelopes in file-name order, not drain_order.
     seed(_run())
-    decide = batch.store.write_request(RID, Cancel())
+    release = batch.store.write_request(RID, Release("o/r#1"))
     cancel = batch.store.write_request(RID, Cancel(kill=True))
-    assert decide < cancel
+    assert release < cancel
     inbox = NullInbox()
     with open_session(RID, inbox=inbox):
         pass
-    assert [o.name for o in inbox.outcomes] == [cancel, decide]
+    assert [o.name for o in inbox.outcomes] == [cancel, release]
     assert all(o.ok for o in inbox.outcomes)
     assert batch.store.pending_requests(RID) == 0
     saved = batch.store.load(RID)
     assert saved.cancel.kill is True
     assert saved.status is RunStatus.CANCELLED
+    assert saved.items[0].status is ItemStatus.DROPPED
 
 
 def test_a_drain_commits_each_request_before_it_unlinks_it(monkeypatch):
     """A crash between the commit and the unlink replays the request; it never loses it."""
+    # Revert: unlink the request before commit in Session._drain_one.
+    # Cancel, not Release: a replayed Release errors once the item is DROPPED.
     seed(_run())
-    batch.store.write_request(RID, Release("o/r#1"))
+    batch.store.write_request(RID, Cancel())
     real_unlink = Path.unlink
     crashed = []
 
@@ -506,14 +511,16 @@ def test_a_drain_commits_each_request_before_it_unlinks_it(monkeypatch):
     with pytest.raises(OSError, match="crash between commit and unlink"):
         with open_session(RID):
             pytest.fail("the entry drain must crash before the block")
-    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
+    saved = batch.store.load(RID)
+    assert saved.cancel is not None
+    assert saved.status is RunStatus.WAITING
     assert batch.store.pending_requests(RID) == 1
     inbox = NullInbox()
     with open_session(RID, inbox=inbox):
         pass
     assert [o.ok for o in inbox.outcomes] == [True]
     assert batch.store.pending_requests(RID) == 0
-    assert batch.store.load(RID).items[0].status is ItemStatus.DROPPED
+    assert batch.store.load(RID).status is RunStatus.CANCELLED
 
 
 def test_a_rejected_request_moves_to_rejected_with_its_error():

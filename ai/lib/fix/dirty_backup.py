@@ -21,13 +21,12 @@ which are already excluded from the commit and from leftovers.
 
 from __future__ import annotations
 
-import json
-import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import core.log
+import core.serde
 from core.trail import Trail, twarn
 from fix.containment import save_clobber
 
@@ -144,11 +143,7 @@ def _excluded(
 
 def _write_skipped(artifacts: Path, skipped: list[Skipped]) -> None:
     payload = [{"path": item.path, "reason": item.reason} for item in skipped]
-    path = Path(artifacts) / _SKIPPED_NAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.parent / f".{path.name}.tmp"
-    tmp.write_text(json.dumps(payload, indent=2) + "\n")
-    os.replace(tmp, path)
+    core.serde.write_json(Path(artifacts) / _SKIPPED_NAME, payload)
 
 
 def _failed(

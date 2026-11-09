@@ -20,8 +20,9 @@ import gh.client
 import core.proc
 import review.dedup
 import review.format
+import review.render
 import gh.pr_reads
-from review.sections import ReviewSections
+from review.record import ReviewRecord
 
 import core.log
 from gh.client import LineResolutionError
@@ -223,8 +224,7 @@ def _reclassify_and_retry(
     commit_id: str, chunk_size: int, severity_filter: set[str],
     submit: bool,
     pr_data: PRData | None = None,
-    sections: ReviewSections | None = None,
-    event: ReviewEvent = ReviewEvent.COMMENT,
+    *, record: ReviewRecord, event: ReviewEvent = ReviewEvent.COMMENT,
 ) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
     """Re-fetch diff and reclassify findings after a LineResolutionError.
 
@@ -250,9 +250,8 @@ def _reclassify_and_retry(
         core.log.info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
         new_inline, new_body = review.format.renumber_for_posting(new_inline, new_body)
         new_inline_comments = [review.format.format_inline_comment(f) for f in new_inline]
-        new_body_text = review.format.format_body_text(
-            new_body, True, severity_filter,
-            sections=sections,
+        new_body_text = review.render.comment_body(
+            record, new_body, has_inline=True, severity_filter=severity_filter,
         )
         try:
             results = _post_chunked_review(
@@ -266,9 +265,8 @@ def _reclassify_and_retry(
             core.log.warn("Retry still failed — demoting all to body-level")
 
     _, new_body = review.format.renumber_for_posting([], list(inline) + list(body_findings))
-    new_body_text = review.format.format_body_text(
-        new_body, False, severity_filter,
-        sections=sections,
+    new_body_text = review.render.comment_body(
+        record, new_body, has_inline=False, severity_filter=severity_filter,
     )
     results = _post_chunked_review(
         args.repo, args.pr, commit_id,
@@ -348,9 +346,9 @@ def _post_and_track(
     chunk_size: int, severity_filter: set[str],
     pr_data: PRData | None = None,
     review_sha: str = "", sha_drifted: bool = False,
-    sections: ReviewSections | None = None,
+    *, record: ReviewRecord,
 ):
-    verdict = sections.get("verdict") if sections else ""
+    verdict = record.verdict.strip()
     submit = getattr(args, "submit", False)
     event = event_of(args)
 
@@ -393,7 +391,7 @@ def _post_and_track(
         inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
             args, inline, body_findings,
             commit_id, chunk_size, severity_filter, submit, pr_data,
-            sections=sections, event=event,
+            record=record, event=event,
         )
 
     if not results:

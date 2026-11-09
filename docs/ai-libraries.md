@@ -3181,7 +3181,8 @@ Post one review file to its PR: parse, check positions, renumber, and post as a 
 sidecar, resolve the PR's refs and diff, drop findings already posted,
 classify the rest as inline or body comments, and post them in chunks — or
 print the plan on a dry run. `cli.review_post` is the command over this; the
-posting mechanics are `review.posting`, formatting is `review.format`.
+posting mechanics are `review.posting`, inline comments `review.format`'s,
+the body `review.render.comment_body`'s.
 
 ### review/posting.py
 

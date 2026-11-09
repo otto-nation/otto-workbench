@@ -4,7 +4,8 @@
 sidecar, resolve the PR's refs and diff, drop findings already posted,
 classify the rest as inline or body comments, and post them in chunks — or
 print the plan on a dry run. `cli.review_post` is the command over this; the
-posting mechanics are `review.posting`, formatting is `review.format`.
+posting mechanics are `review.posting`, inline comments `review.format`'s,
+the body `review.render.comment_body`'s.
 """
 
 # doc-group: publishing
@@ -24,9 +25,10 @@ from core.text import plural
 from review.types import ReviewMeta
 from review.format import (
     CLASS_FILE_LEVEL, CLASS_INLINE,
-    classify_findings, format_body_text, format_inline_comment,
+    classify_findings, format_inline_comment,
     renumber_for_posting, resolve_permalinks,
 )
+from review.render import comment_body
 from gh.pr_data import fetch_pr_data
 from gh.pr_reads import (
     _get_diff,
@@ -34,7 +36,6 @@ from gh.pr_reads import (
 from review.posting import (
     ReviewEvent, _post_and_track, _print_dry_run, event_of,
 )
-from review.sections import ReviewSections
 from review.store import read_review
 
 
@@ -46,7 +47,6 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
         return 1
 
     review_sha = stored.meta.head_sha or None
-    sections = ReviewSections.from_record(stored.record)
     doc = ReviewDocument.from_stored(stored)
     declared = doc.findings
     core.log.info(f"Parsed {len(declared)} findings from review file")
@@ -168,9 +168,9 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     inline, body_findings = renumber_for_posting(inline, body_findings)
 
     inline_comments = [format_inline_comment(f) for f in inline]
-    body_text = format_body_text(
-        body_findings, len(inline) > 0, severity_filter,
-        sections=sections,
+    body_text = comment_body(
+        stored.record, body_findings,
+        has_inline=len(inline) > 0, severity_filter=severity_filter,
     )
 
     if not inline_comments and not body_text:
@@ -201,6 +201,6 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
         inline, body_findings, duplicates,
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
         review_sha=review_sha or head_sha, sha_drifted=sha_drifted,
-        sections=sections,
+        record=stored.record,
     )
     return 0

@@ -18,8 +18,10 @@ if str(LIB_DIR) not in sys.path:
 from pr.state import PostedAs, PostEvent, PostTracking
 from core.proc import CmdResult
 from core.serde import from_dict as serde_from_dict
+import review.dedup
 import review.posting
 from review.posting import ReviewEvent
+from review_record_support import record
 
 # A GitHub outage as gh reports it: nothing on stdout, the status line on
 # stderr. Shared so a failure-path test never has to restate the shape.
@@ -322,6 +324,7 @@ class TestReclassifyAndRetry:
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [body_f],
                 "abc123", 30, {"M", "N"}, False,
+                record=record(),
             )
             assert len(inline) == 1
             assert inline[0].posted_id == "M1"
@@ -349,6 +352,7 @@ class TestReclassifyAndRetry:
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
                 "abc123", 30, {"M"}, False,
+                record=record(),
             )
             assert len(inline_comments) == 0
             assert len(inline) == 0
@@ -374,8 +378,43 @@ class TestReclassifyAndRetry:
             _, _, body, _, _ = rp._reclassify_and_retry(
                 self._make_args(), [inline_f], [skipped_f],
                 "abc123", 30, {"M", "I"}, False,
+                record=record(),
             )
             assert any(f.body == "Good pattern" for f in body)
+
+    def test_a_retry_after_unresolvable_lines_keeps_the_record_prose(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="file.go", line=45,
+            end_line=None, body="Fix", full_path="file.go",
+            classification="inline",
+        )
+        captured = []
+
+        def first_fails_then_captures(*a, **kw):
+            if not captured:
+                captured.append("raised")
+                raise rp.LineResolutionError("unresolvable")
+            captured.append(a[3])
+            return [{"id": 1}]
+
+        rec = record(summary="Clean refactor.", verdict="Request changes — M1 blocks.")
+        with (
+            patch("review.dedup.fetch_bot_reviews", return_value=review.dedup.BotReviews()),
+            patch("review.dedup.check_review_already_posted", return_value=[]),
+            patch("gh.pr_reads._get_diff", return_value=self.DIFF_NEW),
+            patch("review.posting._post_chunked_review", side_effect=first_fails_then_captures),
+            patch("review.posting.write_post_tracking"),
+        ):
+            review.posting._post_and_track(
+                self._make_args(),
+                [{"path": "file.go", "line": 45, "body": "Fix", "side": "RIGHT"}],
+                "initial",
+                [f], [], [],
+                "abc123", "abc123", 30, {"M"},
+                record=rec,
+            )
+        assert "Clean refactor." in captured[1]
+        assert "M1 blocks." in captured[1]
 
 
 class TestHandleChunkFailure:

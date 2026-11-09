@@ -331,6 +331,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   rejects a change it says why in `~/.config/herdr-app/settings.error`.
 - Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/` (and `~/.config/herdr-app-untrusted/mods/` once that exists, so both windows carry the same mods and layouts)
   as a real copy with `_lib/` inside, keeps edits, and a `workbench` layout (main + PR list under agents; `herdr-app do layout.switch --name workbench`).
+  The board refreshes every 3 minutes (remote review listings every 15 s), and Refresh, in its header and in the sidebar, pulls everything now.
   The board has This/All spaces; lanes with no PRs are hidden unless the Empty lanes chip is on; in All spaces a Repo group filters by repository; a click opens the PR in the same pane with its review history and actions:
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.

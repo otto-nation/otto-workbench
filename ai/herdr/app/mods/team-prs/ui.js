@@ -52,6 +52,13 @@ export function placeholder(text) {
 export function caption(text, color) {
   return div().text_size(TEXT.caption).text_color(color ?? theme().dim).child(text);
 }
+// A quiet text action: the sidebar's Refresh and Open board.
+export function link(id, label, onClick, { disabled = false } = {}) {
+  const t = theme();
+  return div().id(id).text_size(TEXT.caption).text_color(disabled ? t.dim : t.muted)
+    .when(!disabled, (e) => e.cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click(() => onClick()))
+    .child(label);
+}
 // The centered, padded pane for an empty or error state.
 export function emptyPane() {
   return v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)

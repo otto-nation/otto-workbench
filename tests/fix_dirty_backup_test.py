@@ -43,6 +43,25 @@ class TestSave:
         assert dest.read_text() == "untracked\n"
         assert result.paths == ("new.py",)
 
+    def test_dirty_symlink_to_outside_file_backed_up_as_symlink(self, tmp_path):
+        wt = _repo(tmp_path, {"a.py": "orig\n"})
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside-secret\n")
+        (wt / "link").symlink_to(outside)
+        artifacts = tmp_path / "art"
+
+        result = _save(wt, artifacts, {"link"})
+
+        dest = artifacts / "dirty-backup" / "link"
+        assert dest.is_symlink()
+        assert dest.readlink() == outside
+        assert result.paths == ("link",)
+        copied = [
+            p for p in (artifacts / "dirty-backup").rglob("*")
+            if p.is_file() and not p.is_symlink()
+        ]
+        assert copied == []
+
     def test_binary_file_backed_up(self, tmp_path):
         wt = _repo(tmp_path, {"a.py": "orig\n"})
         blob = bytes(range(256)) + b"\x00\xff"

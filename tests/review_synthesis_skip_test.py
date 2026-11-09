@@ -3,6 +3,7 @@
 import contextlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,7 +22,9 @@ from review.phases import PhaseResult  # noqa: E402
 from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
-from review.types import FindingOrigin, Group, PreflightData, ReviewMeta  # noqa: E402
+from review.types import (  # noqa: E402
+    ClaimAnswer, FindingOrigin, Group, PreflightData, ReviewMeta,
+)
 from review.verdict import (  # noqa: E402
     BUDGET_SUMMARY, CLEAN_SUMMARY, CLEAN_VERDICT, SETTLED_SUMMARY,
     mechanical_verdict,
@@ -31,6 +34,7 @@ from review_claims_support import claim  # noqa: E402
 from review_convergence_support import finding, merged, review_job  # noqa: E402
 
 CARRIED = finding("S1", "carried from a skipped group", path="a.py", line=3, sid="sids1")
+WRITER = finding("M1", "a real bug", path="b.py", line=1)
 
 
 def _job(tmp_path, prior=None, incremental=True, mode=Mode.SELF):
@@ -52,7 +56,7 @@ def _carried_claim_job(tmp_path, *, path="a.py", sha=None, delta=None, **kwargs)
     job.pr.body = "retries back off"
     if delta is not None:
         job.preflight.delta_files = list(delta)
-    c = claim(verdict=ClaimVerdict.CONTRADICTED)
+    c = claim(verdict=ClaimVerdict.UNSUPPORTED if not path else ClaimVerdict.CONTRADICTED)
     derived = finding(
         "S1", "Claim contradicted: retries back off",
         path=path, origin=FindingOrigin.CLAIM, stable_id=c.key,
@@ -61,6 +65,19 @@ def _carried_claim_job(tmp_path, *, path="a.py", sha=None, delta=None, **kwargs)
     job.prior = StoredReview(
         ReviewRecord(findings=(derived,), claims=(c,)),
         ReviewMeta(head_sha="p" * 40, claims_input_sha=meta_sha),
+    )
+    return job
+
+
+def _answered_claim_job(tmp_path, *, disposition, delta=None):
+    job = _carried_claim_job(tmp_path, delta=delta)
+    derived = replace(job.prior.record.findings[0], disposition=disposition, reason="r")
+    c = job.prior.record.claims[0]
+    job.prior = StoredReview(
+        replace(job.prior.record, findings=(derived,)),
+        replace(job.prior.meta, claim_answers={
+            c.key: ClaimAnswer(disposition, "r", derived.path, "p" * 40),
+        }),
     )
     return job
 
@@ -167,6 +184,24 @@ def test_an_answered_derived_prior_finding_does_not_block_nothing_new(
         ReviewMeta(head_sha="p" * 40),
     )
     assert review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
+
+
+def test_an_expired_answer_on_a_touched_file_needs_the_writer(tmp_path):
+    job = _answered_claim_job(tmp_path, disposition=Disposition.DECLINED, delta=["a.py"])
+    assert not review.steps._nothing_new(
+        job, merged(ReviewRecord(findings=(WRITER,)), fresh=0), [])
+
+
+def test_an_answered_claim_on_an_untouched_file_settles_without_the_writer(tmp_path):
+    job = _answered_claim_job(tmp_path, disposition=Disposition.DECLINED)
+    assert review.steps._nothing_new(
+        job, merged(ReviewRecord(findings=(WRITER,)), fresh=0), [])
+
+
+def test_a_falsified_finding_on_a_touched_file_needs_the_writer(tmp_path):
+    job = _answered_claim_job(tmp_path, disposition=Disposition.FALSIFIED, delta=["a.py"])
+    assert not review.steps._nothing_new(
+        job, merged(ReviewRecord(findings=(WRITER,)), fresh=0), [])
 
 
 def test_nothing_new_with_everything_settled(tmp_path):

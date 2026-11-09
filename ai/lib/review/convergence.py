@@ -62,7 +62,12 @@ def change_set(job: ReviewJob) -> frozenset[str] | None:
 
 
 def untouched(path: str, changed: frozenset[str] | None) -> bool:
-    """A judgement about a file holds while the file is outside the change set."""
+    """A judgement about a file holds while the file is outside the change set.
+
+    An empty path is never untouched. There is no file whose judgement could
+    hold, and callers rely on that — an unanchored open finding forces the
+    writer because this returns False.
+    """
     return bool(path) and changed is not None and path not in changed
 
 

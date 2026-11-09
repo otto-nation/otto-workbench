@@ -330,6 +330,11 @@ def derived_findings(
     return tuple(out)
 
 
+def _expired(path: str, changed: frozenset[str] | None) -> bool:
+    """Whether an anchored path is in this round's change set."""
+    return bool(path) and not review.convergence.untouched(path, changed)
+
+
 def live_answers(
     job: ReviewJob, answers: dict[str, ClaimAnswer],
 ) -> dict[str, ClaimAnswer]:
@@ -344,8 +349,7 @@ def live_answers(
     return {
         key: answer
         for key, answer in answers.items()
-        if not answer.path or answer.head == head
-        or review.convergence.untouched(answer.path, changed)
+        if answer.head == head or not _expired(answer.path, changed)
     }
 
 
@@ -359,8 +363,8 @@ def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ..
     Openness is a visible derived finding whose disposition is not FIXED,
     DECLINED or SKIPPED. UNREACHED is still open (the fix pass never reached
     it). DECLINED and SKIPPED were answered last round; FALSIFIED is not
-    visible. Derived findings are never a prior finding to account for, but
-    an open one still needs the writer to re-judge claims.
+    visible. Derived findings are never a prior finding to account for;
+    whether an open one needs the writer is `writer_must_rejudge`.
     """
     if prior is None:
         return ()
@@ -371,16 +375,25 @@ def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ..
 
 
 def writer_must_rejudge(job: ReviewJob) -> bool:
-    """True when an open claim finding may have moved (D11)."""
+    """True when claims cannot be carried, an open claim finding is
+    unanchored, or a prior derived finding is anchored on a file in
+    this round's change set.
+
+    Known limit: a claim linked to a prior writer finding that was
+    fixed or settled gets its link cleared and may derive OPEN on a
+    non-writer round.
+    """
     open_derived = open_derived_findings(job.prior)
-    if not open_derived:
-        return False
-    if _carryable_claims(job) is None:
+    if open_derived and _carryable_claims(job) is None:
         return True
     changed = review.convergence.change_set(job)
+    if any(not review.convergence.untouched(f.path, changed) for f in open_derived):
+        return True
+    if job.prior is None:
+        return False
     return any(
-        not f.path or not review.convergence.untouched(f.path, changed)
-        for f in open_derived
+        f.derived and _expired(f.path, changed)
+        for f in job.prior.record.findings
     )
 
 

@@ -389,9 +389,10 @@ def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailur
 
     An incremental round, every group reported, the groups that ran produced no
     finding, and no prior finding is left for synthesis to account for. A count
-    nobody took (`fresh` None) is not a zero. An OPEN derived finding blocks
-    only when it may have moved; otherwise the settled path carries it.
-    DECLINED and SKIPPED were answered last round and do not force the writer.
+    nobody took (`fresh` None) is not a zero. An open (OPEN or UNREACHED)
+    derived finding blocks only when it may have moved; otherwise the settled
+    path carries it. DECLINED, SKIPPED and FALSIFIED force the writer when
+    their file is in this round's change set.
     A round that adds nothing does not withdraw what the last one asked for.
     settled False does not skip the disprove gate on this ground.
     """

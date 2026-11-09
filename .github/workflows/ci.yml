@@ -103,6 +103,16 @@ jobs:
       - name: Verify Taskfile parses
         run: task --list
 
+      # The fetch below is the only network call the bats shards make for
+      # themes; restoring the verified tarball skips it. A stale restore is
+      # harmless: the script checks the lock's integrity and refetches.
+      - name: Restore the brand tarball cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.local/state/workbench/herdr-app-themes
+          key: herdr-brand-${{ hashFiles('site/package-lock.json') }}
+          restore-keys: herdr-brand-
+
       # Tests never fetch. This fills the cache so the committed-theme check
       # can resolve brand tokens without hitting the network.
       - name: Cache the pinned brand tokens

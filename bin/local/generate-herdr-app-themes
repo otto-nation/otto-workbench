@@ -45,6 +45,7 @@ import os
 import re
 import sys
 import tarfile
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,10 @@ BRAND = re.compile(r"^brand:([a-z0-9-]+)$")
 DECL = re.compile(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})")
 # tests/herdr_app_theme.bats checks this against HERDR_APP_THEME_SUFFIX.
 SUFFIX = ".generated.json"
+# The hosted runners see transient 5xx, 429 and timeouts from the registry; retry
+# those, never any other 4xx.
+FETCH_ATTEMPTS = 3
+FETCH_BACKOFF = 5.0
 
 
 class PaletteError(Exception):
@@ -154,20 +159,38 @@ def _cached(pin: BrandPin) -> str | None:
     return _tokens_from_tarball(blob)
 
 
-def _fetch(pin: BrandPin) -> str:
-    """Download the pin, verify, atomically cache, and return tokens.css."""
-    from urllib.error import URLError
-    from urllib.parse import urlparse
+def _transient(err: Exception) -> bool:
+    """Whether ERR is a 5xx/429 or a transport failure worth retrying."""
+    from urllib.error import HTTPError
+    if isinstance(err, HTTPError):
+        return err.code >= 500 or err.code == 429
+    return True
+
+
+def _download(url: str) -> bytes | OSError:
+    """One attempt at URL's body, or the error that ended it."""
     from urllib.request import urlopen
     import core.timeouts
+    try:
+        with urlopen(url, timeout=core.timeouts.TRANSFER) as resp:
+            return resp.read()
+    except OSError as err:
+        return err
+
+
+def _fetch(pin: BrandPin) -> str:
+    """Download the pin, verify, atomically cache, and return tokens.css."""
+    from urllib.parse import urlparse
     parsed = urlparse(pin.url)
     if parsed.scheme not in ("https", "file"):
         raise BrandError(f"brand tarball URL scheme {parsed.scheme!r} is not https or file")
-    try:
-        with urlopen(pin.url, timeout=core.timeouts.TRANSFER) as resp:
-            blob = resp.read()
-    except (OSError, URLError) as err:
-        raise BrandError(f"brand tokens unavailable: {err}") from err
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        blob = _download(pin.url)
+        if isinstance(blob, bytes):
+            break
+        if attempt == FETCH_ATTEMPTS or not _transient(blob):
+            raise BrandError(f"brand tokens unavailable: {blob}") from blob
+        time.sleep(FETCH_BACKOFF * attempt)
     if not _verified(blob, pin):
         raise BrandError("brand tarball failed integrity check")
     path = _cache_path(pin)

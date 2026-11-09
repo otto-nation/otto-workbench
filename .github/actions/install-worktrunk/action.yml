@@ -8,6 +8,13 @@ description: >-
 runs:
   using: composite
   steps:
+    # The version in the key must match WORKTRUNK_VERSION below; a cache hit
+    # skips the release download that times out on hosted runners.
+    - name: Restore the worktrunk download cache
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        path: ~/.cache/worktrunk-dl
+        key: worktrunk-${{ runner.os }}-v0.77.0-x86_64-unknown-linux-musl
     - name: Install worktrunk
       shell: bash
       env:
@@ -20,15 +27,18 @@ runs:
         target="x86_64-unknown-linux-musl"
         tarball="worktrunk-${target}.tar.xz"
         base="https://github.com/max-sixty/worktrunk/releases/download/${WORKTRUNK_VERSION}"
-        tmp=$(mktemp -d)
-        cd "$tmp"
+        dl="$HOME/.cache/worktrunk-dl"
+        mkdir -p "$dl"
+        cd "$dl"
         # The published .sha256 names the asset it covers, so the file has to
         # be on disk under that name for -c to find it.
         # Release downloads time out intermittently on the hosted runners, and
         # one failed fetch would otherwise fail the whole shard. Bound each
         # attempt and retry, including on a refused connection.
-        wget -q --tries=5 --timeout=30 --waitretry=10 --retry-connrefused \
-          "$base/$tarball" "$base/$tarball.sha256"
+        if [[ ! -f "$tarball" || ! -f "$tarball.sha256" ]]; then
+          wget -q --tries=5 --timeout=30 --waitretry=10 --retry-connrefused \
+            "$base/$tarball" "$base/$tarball.sha256"
+        fi
         sha256sum -c "$tarball.sha256"
         tar -xJf "$tarball"
         sudo install -m 0755 "worktrunk-${target}/wt" /usr/local/bin/wt

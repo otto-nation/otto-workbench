@@ -220,10 +220,16 @@ class TestCommentBody:
             end_line=None, body="use a constant", posted_id="S1",
             declined=True,
         )
-        body = _comment([must, idiom, declined], False, {"M", "S", "I"})
+        nit = rp.Finding(
+            id="N1", severity="N", seq=1, path="c.py", line=1,
+            end_line=None, body="trailing space", posted_id="N1",
+        )
+        body = _comment([must, idiom, declined, nit], False, {"M", "S", "I", "N"})
         found = {item.body: item.path for item in review.dedup._extract_body_findings(body)}
         assert found["lock never released"] == "a.py"
         assert found["use a constant"] == "b.py"
+        assert found["trailing space"] == "c.py"
+        assert "- **[N1]** `c.py:1` — trailing space" in body
         assert "pattern holds" in body
 
 

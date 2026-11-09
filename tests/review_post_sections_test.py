@@ -59,25 +59,26 @@ _FIXTURES = (
 )
 
 
-class TestReviewSections:
-    REVIEW = record(
-        finding("M1", "missing error check", path="handler.go", line=11),
-        finding("S1", "unused variable", path="handler.go", line=25),
-        summary="Clean refactor with good test coverage.",
-        verdict="Request changes — M1 is a blocker.",
-        static_analysis="### Nesting depth\n1 violation in 1 of 3 files checked",
-    )
+REVIEW = record(
+    finding("M1", "missing error check", path="handler.go", line=11),
+    finding("S1", "unused variable", path="handler.go", line=25),
+    summary="Clean refactor with good test coverage.",
+    verdict="Request changes — M1 is a blocker.",
+    static_analysis="### Nesting depth\n1 violation in 1 of 3 files checked",
+)
 
+
+class TestReviewSections:
     def test_from_record_ignores_severity_headers(self, rp):
-        sections = rp.ReviewSections.from_record(self.REVIEW)
+        sections = rp.ReviewSections.from_record(REVIEW)
         assert sections.get("must_fix") == ""
         assert sections.get("should_fix") == ""
 
     def test_get_returns_empty_for_absent(self, rp):
-        assert rp.ReviewSections.from_record(self.REVIEW).get("nonexistent") == ""
+        assert rp.ReviewSections.from_record(REVIEW).get("nonexistent") == ""
 
     def test_after_findings_returns_passthrough(self, rp):
-        keys = [cfg.key for cfg, _ in rp.ReviewSections.from_record(self.REVIEW).after_findings()]
+        keys = [cfg.key for cfg, _ in rp.ReviewSections.from_record(REVIEW).after_findings()]
         assert "static_analysis" in keys
 
     def test_empty_constructor(self, rp):
@@ -92,14 +93,14 @@ class TestReviewSections:
 
 
 def test_the_comment_carries_summary_verdict_and_static_analysis():
-    body = _comment(TestReviewSections.REVIEW)
+    body = _comment(REVIEW)
     assert "Clean refactor with good test coverage." in body
     assert "M1 is a blocker." in body
     assert "Nesting depth" in body
 
 
 def test_the_summary_comes_before_the_verdict():
-    body = _comment(TestReviewSections.REVIEW)
+    body = _comment(REVIEW)
     assert body.index("## Summary") < body.index("### Verdict")
 
 
@@ -135,7 +136,9 @@ def test_the_comment_omits_the_prior_findings_ledger():
             LedgerLine("S7", PriorDisposition.STILL_OPEN, "b.go"),
         ),
     )
-    assert "Prior findings" not in _comment(rec)
+    body = _comment(rec)
+    assert "Prior findings" not in body
+    assert "[M4]" not in body
 
 
 def test_the_comment_carries_claims_under_the_summary():

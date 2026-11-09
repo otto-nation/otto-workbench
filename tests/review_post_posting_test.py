@@ -349,14 +349,15 @@ class TestReclassifyAndRetry:
             patch("review.posting._post_chunked_review", side_effect=failing_then_succeeding),
             patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
         ):
+            rec = record(summary="Clean refactor.", verdict="Request changes — M1 blocks.")
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
                 "abc123", 30, {"M"}, False,
-                record=record(),
+                record=rec,
             )
-            assert len(inline_comments) == 0
-            assert len(inline) == 0
-            assert results == [{"id": 99}]
+            assert (inline_comments, inline, results) == ([], [], [{"id": 99}])
+            assert "Clean refactor." in body_text
+            assert "M1 blocks." in body_text
 
     def test_reclassify_preserves_skipped_findings_in_body(self, rp):
         inline_f = rp.Finding(

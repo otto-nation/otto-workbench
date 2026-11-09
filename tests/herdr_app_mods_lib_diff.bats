@@ -34,6 +34,18 @@ _js() {
   [ "$output" = '[[],[],[]]' ]
 }
 
+@test "mapFiles numbers pages and reads has_patch" {
+  _js 'd.mapFiles([[{filename:"a",has_patch:true},{filename:"b",has_patch:false}],[{filename:"c",patch:"@@"}]], 2).map(f=>[f.path,f.page,f.hasPatch,f.patch])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["a",1,true,null],["b",1,false,null],["c",2,true,"@@"]]' ]
+}
+
+@test "mapFiles default page size" {
+  _js '(()=>{const f=d.mapFiles(Array.from({length:101},(_, i)=>({filename:String(i)})));return [f[0].page,f[100].page]})()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,2]' ]
+}
+
 @test "diffRows numbers old and new sides from each hunk header" {
   _js 'd.diffRows(["@@ -5,2 +7,3 @@ f","-a"," b","+c","+","\\ No newline"]).map(r=>[r.kind,r.number,r.text])'
   [ "$output" = '[["@",null,"@@ -5,2 +7,3 @@ f"],["-",5,"a"],[" ",7,"b"],["+",8,"c"],["+",9," "],["",null,"\\ No newline"]]' ]
@@ -51,7 +63,8 @@ _js() {
 
 @test "filesArgv puts per_page in the URL so gh does not POST" {
   _js 'g.filesArgv("o/n",7)'
-  [ "$output" = '["api","/repos/o/n/pulls/7/files?per_page=100","--paginate","--slurp"]' ]
+  [[ "$output" == *'"/repos/o/n/pulls/7/files?per_page=100"'* ]]
+  [[ "$output" != *'"-f"'* ]]
 }
 
 @test "parseSwitch reads path and action; bad output is a message" {

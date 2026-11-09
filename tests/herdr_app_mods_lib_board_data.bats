@@ -30,7 +30,7 @@ _bd() {
       if (cmd === 'sh' && args[0] === '-c' && args[1].includes('exec \"\$@\"') && args[2] === 'sh') {
         [cmd, args] = [args[3], args.slice(4)];
       }
-      calls.push({ cmd, args: [...args], cwd: opts && opts.cwd, on: opts && opts.on });
+      calls.push({ cmd, args: [...args], cwd: opts && opts.cwd, on: opts && opts.on, timeout: opts && opts.timeout });
       const key = cmd + ' ' + args.join(' ');
       for (const row of table) {
         if (!key.startsWith(row.prefix)) continue;
@@ -107,6 +107,22 @@ _gql() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'"login":"ada"'* ]]
   [[ "$output" == *'"every":true'* ]]
+}
+
+@test "loadOpenPrs reads one page per line" {
+  _bd '
+    const restA = {number:3,title:"t",user:{login:"ada"},head:{ref:"feat",sha:"abc"},base:{ref:"main"},draft:false,html_url:"https://ex/3",labels:[{name:"bug"}],created_at:"c",updated_at:"u"};
+    const restB = {number:4,title:"t",user:{login:"ada"},head:{ref:"feat",sha:"abc"},base:{ref:"main"},draft:false,html_url:"https://ex/4",labels:[{name:"bug"}],created_at:"c",updated_at:"u"};
+    const table = [
+      { prefix: "gh api /repos/acme/box/pulls", stdout: JSON.stringify([restA]) + "\n" + JSON.stringify([restB]) + "\n" },
+      { prefix: "gh api graphql", stdout: JSON.stringify({ data: { repository: {} } }) },
+    ];
+    const r = await m.loadOpenPrs(exec, ctx, "acme/box", "ada");
+    process.stdout.write(JSON.stringify({ ok: r.ok, nums: r.prs.map(p => p.number) }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ok":true'* ]]
+  [[ "$output" == *'"nums":[3,4]'* ]]
 }
 
 @test "loadOpenPrs maps and merges one batch and passes cwd/on" {
@@ -206,21 +222,34 @@ _gql() {
   [[ "$output" == *'"every":true'* ]]
 }
 
-@test "exec reject with on set is unreachable; on null ENOENT is missing-tool" {
+@test "exec reject with on set is exec with the command; on null ENOENT is missing-tool" {
   _bd '
-    let table = [{ prefix: "gh api /user", reject: { message: "lost", code: "ENOENT" } }];
-    const unreach = pack(await m.loadUser(exec, ctx));
+    let table = [{ prefix: "gh api /user", reject: { message: "`herdr.exec`: hc exec: " } }];
+    const remote = pack(await m.loadUser(exec, ctx));
     calls.length = 0;
     const miss = pack(await m.loadUser(exec, { cwd: "/repo", on: null }));
     process.stdout.write(JSON.stringify({
-      unreach, miss, n: calls.length, onNull: calls[0] && calls[0].on === null,
+      remote, miss, n: calls.length, onNull: calls[0] && calls[0].on === null,
       cwdOk: calls[0] && calls[0].cwd === "/repo",
     }));
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"kind":"unreachable"'* ]]
+  [[ "$output" == *'"kind":"exec"'* ]]
+  [[ "$output" == *'"command":"gh api /user"'* ]]
+  [[ "$output" == *'"message":""'* ]]
   [[ "$output" == *'"kind":"missing-tool"'* ]]
   [[ "$output" == *'"onNull":true'* ]]
+}
+
+@test "a remote exec timeout is kind timeout" {
+  _bd '
+    const table = [{ prefix: "gh api /user", reject: { message: "`herdr.exec`: gh took longer than 30 s on mac and was stopped" } }];
+    const r = await m.loadUser(exec, ctx);
+    process.stdout.write(JSON.stringify(r));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"kind":"timeout"'* ]]
+  [[ "$output" == *'"message":"gh took longer than 30 s on mac and was stopped"'* ]]
 }
 
 @test "bad JSON is kind bad-json" {
@@ -232,6 +261,16 @@ _gql() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'"kind":"bad-json"'* ]]
   [[ "$output" == *'"every":true'* ]]
+}
+
+@test "loadListing asks for a 120 s timeout" {
+  _bd '
+    const table = [{ prefix: "pr review --list", stdout: JSON.stringify({ reviews_root: "/r" }) }];
+    await m.loadListing(exec, ctx);
+    process.stdout.write(JSON.stringify({ t: calls.find(c => c.cmd === "pr").timeout }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"t":120000'* ]]
 }
 
 @test "loadListing ok and missing pr" {
@@ -460,7 +499,7 @@ _gql() {
   [[ "$output" == *'"on":"mac"'* ]]
 }
 
-@test "readReview reject with on is unreachable; without on is failed" {
+@test "readReview reject with on is exec; without on is failed" {
   _rr '
     const readTextFile = async () => { throw new Error("lost"); };
     const withOn = await m.readReview(readTextFile, "/r.md", "mac");
@@ -468,7 +507,7 @@ _gql() {
     process.stdout.write(JSON.stringify({ withOn, noOn }));
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"kind":"unreachable"'* ]]
+  [[ "$output" == *'"kind":"exec"'* ]]
   [[ "$output" == *'"kind":"failed"'* ]]
 }
 
@@ -496,9 +535,11 @@ _gql() {
   [[ "$output" != *"unrecognized option"* ]]
 }
 
-@test "loadFiles maps slurped pages and reports a gh failure" {
+@test "loadFiles maps per-line pages and reports a gh failure" {
   _bd '
-    const table = [{ prefix: "gh api /repos/o/n/pulls/7/files", stdout: JSON.stringify([[{filename:"a.js",status:"added",additions:1,deletions:0,patch:"@@ -0,0 +1 @@\n+x"}]]) }];
+    const a = {filename:"a.js",status:"added",additions:1,deletions:0,patch:"@@ -0,0 +1 @@\n+x"};
+    const b = {filename:"b.js",status:"modified",additions:1,deletions:0};
+    const table = [{ prefix: "gh api /repos/o/n/pulls/7/files", stdout: JSON.stringify([a]) + "\n" + JSON.stringify([b]) + "\n" }];
     const ok = await m.loadFiles(exec, ctx, "o/n", 7);
     const bad = await m.loadFiles(async () => ({ code: 1, stdout: "", stderr: "boom" }), ctx, "o/n", 7);
     process.stdout.write(JSON.stringify([ok.files[0].path, ok.files[0].status, bad.ok, bad.error.message]));
@@ -509,7 +550,7 @@ _gql() {
 
 @test "loadFiles marks files .gitattributes calls generated, and skips that without a checkout" {
   _bd '
-    const pages = JSON.stringify([[{filename:"a.js",status:"modified",additions:1,deletions:0},{filename:"g.json",status:"modified",additions:9,deletions:9}]]);
+    const pages = JSON.stringify([{filename:"a.js",status:"modified",additions:1,deletions:0},{filename:"g.json",status:"modified",additions:9,deletions:9}]) + "\n";
     const table = [
       { prefix: "gh api /repos/o/n/pulls/7/files", stdout: pages },
       { prefix: "git check-attr -z linguist-generated -- a.js g.json", stdout: "a.js\0linguist-generated\0unspecified\0g.json\0linguist-generated\0set\0" },
@@ -520,4 +561,18 @@ _gql() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = '[[false,true],[false,false]]' ]
+}
+
+@test "loadPatch asks for the file's page and maps empty to null" {
+  _bd '
+    const table = [{ prefix: "gh api /repos/o/n/pulls/7/files?per_page=100&page=2", stdout: "@@ -1 +1 @@\n" }];
+    const r1 = await m.loadPatch(exec, ctx, "o/n", 7, {path:"a.js", page:2});
+    exec = async () => ({code:0, stdout:"", stderr:""});
+    const r2 = await m.loadPatch(exec, ctx, "o/n", 7, {path:"a.js", page:2});
+    process.stdout.write(JSON.stringify({a: r1.patch, b: r2.patch, ok: r1.ok && r2.ok}));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"a":"@@ -1 +1 @@"'* ]]
+  [[ "$output" == *'"b":null'* ]]
+  [[ "$output" == *'"ok":true'* ]]
 }

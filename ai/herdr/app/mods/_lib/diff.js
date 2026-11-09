@@ -13,16 +13,20 @@ const DEFAULT_CHAR_PX = 7;
 
 const LETTER = { added: 'A', removed: 'D', renamed: 'R', copied: 'C' };
 
-export function mapFiles(json) {
+// A file list carries has_patch instead of patch; the patch is fetched by page when opened.
+export function mapFiles(json, perPage = 100) {
   const pages = Array.isArray(json) && Array.isArray(json[0]) ? json.flat() : json;
   if (!Array.isArray(pages)) return [];
-  return pages.map((f) => ({
+  return pages.map((f, i) => ({
     path: f.filename ?? '',
     previous: f.previous_filename ?? null,
     status: LETTER[f.status] ?? 'M',
     add: f.additions ?? 0,
     del: f.deletions ?? 0,
     patch: typeof f.patch === 'string' ? f.patch : null,
+    // GitHub fills every page but the last, so the index alone gives the page.
+    page: Math.floor(i / perPage) + 1,
+    hasPatch: typeof f.patch === 'string' || f.has_patch === true,
     generated: false,
   }));
 }

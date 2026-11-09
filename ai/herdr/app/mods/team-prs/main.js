@@ -5,7 +5,7 @@ import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.
 import { renderFileList, renderDiff } from "./files_view.js";
 import { MONO } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
-import { readReview, loadFiles } from "./_lib/board_data.js";
+import { readReview, loadFiles, loadPatch } from "./_lib/board_data.js";
 import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
@@ -203,11 +203,26 @@ export default class TeamPrs extends Board {
     return null;
   }
 
+  // The list carries no patches (a big PR's would pass herdr's exec cap); fetch the opened one.
   pickFile(path) {
     this.openFile = path;
     const f = this.filesByPr.get(this.filesKey(this.detail))?.files?.find((x) => x.path === path);
-    this.diff = f ? patchRows(f.patch, MONO.charPx) : null;
+    this.diff = f && (f.patch != null || !f.hasPatch) ? patchRows(f.patch, MONO.charPx) : null;
+    if (f && f.patch == null && f.hasPatch && !f.loadingPatch) this.fetchPatch(f, path);
     this.acx.notify();
+  }
+
+  fetchPatch(f, path) {
+    const d = this.detail;
+    f.patchError = null;
+    f.loadingPatch = true;
+    this.acx.spawn(async (cx) => {
+      const r = await loadPatch(exec, { cwd: d.cwd, on: d.on }, d.repo, d.number, f);
+      f.loadingPatch = false;
+      if (r.ok) { f.patch = r.patch; f.hasPatch = r.patch != null; } else f.patchError = r.error?.message ?? "Could not load the diff";
+      if (this.openFile === path) this.diff = patchRows(f.patch, MONO.charPx);
+      cx.notify();
+    });
   }
 
   // Check the PR out with the workbench's wt, then land in a space on that worktree.
@@ -274,7 +289,7 @@ export default class TeamPrs extends Board {
       }),
       tab: this.tab,
       onTab: (tab) => { this.tab = tab; this.openFile = null; this.diff = null; this.acx.notify(); },
-      filesBody: file && this.diff
+      filesBody: file && (this.diff || file.loadingPatch)
         ? renderDiff(file, this.diff, { onBack: () => { this.openFile = null; this.diff = null; this.acx.notify(); } })
         : renderFileList(files, { onPick: (path) => this.pickFile(path) }),
       reviewState: openForReviewState(this.detail),

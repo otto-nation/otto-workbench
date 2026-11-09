@@ -539,6 +539,7 @@ pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the
 pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state plus `run_dir`
+pr batch status --list                   # this machine's runs, newest first (JSON)
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
 

@@ -62,3 +62,9 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[{"ok":true,"terminal":"t7"},{"ok":false,"error":{"kind":"missing-tool","message":"command not found"}},{"ok":false,"error":{"kind":"failed","message":"boom"}},"bad-json",{"ok":false,"error":{"kind":"failed","message":"no address in hc reply"}}]' ]
 }
+
+@test "outcomeText maps action and exitCode to level and title" {
+  _js '[m.outcomeText("review",0),m.outcomeText("rerun",0).title,m.outcomeText("recover",1),m.outcomeText("post-approve",null),m.outcomeText("weird",0).title]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"level":"success","title":"Review finished"},"Review finished",{"level":"error","title":"Recovery failed (exit 1)"},{"level":"error","title":"Approval ended unexpectedly"},"Action finished"]' ]
+}

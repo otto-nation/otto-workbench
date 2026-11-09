@@ -65,3 +65,17 @@ export function parseRunReply({ code, stdout, stderr }) {
   }
   return { ok: true, terminal: address };
 }
+
+const DONE = {
+  review: 'Review', rerun: 'Review', recover: 'Recovery',
+  'post-comment': 'Post', 'post-approve': 'Approval', 'post-request-changes': 'Request for changes',
+  dismiss: 'Dismissal',
+};
+
+// Notification text for a finished action terminal; exitCode null means it ended without one.
+export function outcomeText(action, exitCode) {
+  const what = DONE[action] ?? 'Action';
+  if (exitCode === 0) return { level: 'success', title: `${what} finished` };
+  const why = exitCode == null ? 'ended unexpectedly' : `failed (exit ${exitCode})`;
+  return { level: 'error', title: `${what} ${why}` };
+}

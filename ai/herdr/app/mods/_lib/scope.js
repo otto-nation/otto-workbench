@@ -67,7 +67,7 @@ export function mergeStates(states) {
     for (const pr of st.prs) {
       prs.push({
         ...pr, repoSlug: st.repo.slug, host: st.repo.host, viewer: st.me,
-        on: st.repo.on ?? null,
+        on: st.repo.on ?? null, cwd: st.repo.cwd ?? null,
       });
     }
   }

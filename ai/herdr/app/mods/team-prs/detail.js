@@ -49,6 +49,28 @@ function reviewInset(stamp, body) {
     .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar().child(reviewBody(stamp, body));
 }
 
+// Enabled actions as buttons; when none is enabled, the first reason says why. A post action
+// asks first (confirm), because it writes to GitHub.
+export function renderActionBar(actions, { confirm, note, onAction, onConfirm, onCancel }) {
+  const t = theme();
+  if (confirm) {
+    const c = confirm.confirm;
+    return v_flex().flex_none().gap(SP.sm).px(SP.lg).py(SP.md).border_b_1().border_color(t.border)
+      .child(div().text_size(TEXT.small).child(
+        `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`))
+      .child(h_flex().gap(SP.sm).child(button("act-confirm", `Confirm: ${confirm.label}`, onConfirm))
+        .child(button("act-cancel", "Cancel", onCancel)));
+  }
+  const on = actions.filter((a) => a.enabled);
+  const why = actions.find((a) => !a.enabled && a.id !== "cancel" && a.id !== "watch");
+  return h_flex().flex_none().flex_wrap().gap(SP.sm).items_center().px(SP.lg).py(SP.md)
+    .border_b_1().border_color(t.border)
+    .children(on.map((a) => button(`act-${a.id}`, a.label, () => onAction(a))))
+    .when(!on.length && Boolean(why), (e) => e.child(
+      div().text_size(TEXT.caption).text_color(t.dim).child(why.reason)))
+    .when(Boolean(note), (e) => e.child(div().text_size(TEXT.caption).text_color(t.ansi1).child(note)));
+}
+
 export function prUrl(d) {
   return d.url || `https://${d.host || "github.com"}/${d.repo}/pull/${d.number}`;
 }
@@ -93,12 +115,13 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }
 
-export function renderDetail(d, { onClose, onOpenUrl, nowMs, openStamp, bodyFor, onToggle }) {
+export function renderDetail(d, { onClose, onOpenUrl, nowMs, openStamp, bodyFor, onToggle, actionBar }) {
   const t = theme();
   const rows = historyRows(d.runs ?? [], nowMs);
   return v_flex().id("prs-detail").size_full().min_h(0).bg(t.background)
     .text_color(t.foreground).text_size(TEXT.body)
     .child(renderDetailHeader(d, { onClose, onOpenUrl }))
+    .child(actionBar)
     .child(eyebrow("Review history", null, SP.lg))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg).gap(SP.sm)
       .when(!rows.length, (e) => e.child(div().text_color(t.dim).child("No reviews yet")))

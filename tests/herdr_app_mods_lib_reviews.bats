@@ -145,3 +145,21 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[29]' ]
 }
+
+@test "runsForPr returns [] when no row matches" {
+  _js 'm.runsForPr([row({pr_number:8}),row({mode:"self"})],"o/n","github.com",7)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[]' ]
+}
+
+@test "runsForPr returns the matching row then history as raw run objects" {
+  _js 'm.runsForPr([row({head_sha:"b",history:[{head_sha:"a",reviewed_at:"2026-01-01"}]})],"o/n","github.com",7)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"repo":"o/n","mode":"pr","pr_number":7,"host":"github.com","head_sha":"b","post":null,"reviewed_at":"2026-01-02","status":"completed","history":[{"head_sha":"a","reviewed_at":"2026-01-01"}]},{"head_sha":"a","reviewed_at":"2026-01-01"}]' ]
+}
+
+@test "runsForPr ignores other PRs and self; later reviewed_at wins" {
+  _js 'm.runsForPr([row({pr_number:8,head_sha:"x"}),row({mode:"self",head_sha:"y"}),row({reviewed_at:"2026-01-01",head_sha:"a"}),row({reviewed_at:"2026-01-03",head_sha:"c",history:[{head_sha:"h"}]})],"o/n","github.com",7).map(r=>r.head_sha)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["c","h"]' ]
+}

@@ -49,6 +49,12 @@ export function runsFor(row) {
   }));
 }
 
+// The listing rows' runs for one PR, newest first: what a detail window shows after a refresh.
+export function runsForPr(listing, repo, host, number) {
+  const row = pickRow(rowsOf(listing).filter((r) => matchesRepo(r, repo, host) && r.pr_number === number));
+  return row ? runsFor(row).map((r) => r.run) : [];
+}
+
 function pickRow(rows) {
   let best = null;
   for (const row of rows) {

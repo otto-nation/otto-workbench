@@ -199,7 +199,7 @@ export default class TeamPrs extends View {
     const landedPrs = await this.landed(ctx, key, repo, listing.listing, open.prs);
     if (landedPrs == null || !this.same(key)) return;
     this.commit(key, {
-      repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null }, me: login, tools: have,
+      repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null, cwd: ctx.cwd }, me: login, tools: have,
       listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
       openPrs: open.prs, landedPrs,
       prs: assemble({
@@ -325,6 +325,8 @@ export default class TeamPrs extends View {
         branch: pr.branch, ci: pr.ciStatus, decision: pr.reviewDecision, additions: pr.additions,
         deletions: pr.deletions, files: pr.changedFiles, url: pr.url, on: pr.on ?? null,
         runs: (pr.reviewRuns ?? []).map((r) => r.run),
+        cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
+        batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null,
       } },
     });
   }

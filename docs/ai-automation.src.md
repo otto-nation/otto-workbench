@@ -73,7 +73,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   following the system appearance; its colors come from the pinned `@otto-nation/brand` release (`bin/local/dev-deps` fetches it). Every other setting is left alone. A theme file you
   edited in place is kept with a warning; delete it to get the link back. If the app
   rejects a change it says why in `~/.config/herdr-app/settings.error`.
-- Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`; This/All spaces; a click opens a detail window with review history) into `~/.config/herdr-app/mods/` (and `~/.config/herdr-app-untrusted/mods/` once that exists, so both windows carry the same mods and layouts)
+- Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`; This/All spaces; a click opens a detail window with review history and actions: review, re-run, recover, post, dismiss, cancel, watch — each runs `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal) into `~/.config/herdr-app/mods/`
   as a real copy with `_lib/` inside, keeps edits, and a `workbench` layout (main + PR list under agents; `herdr-app do layout.switch --name workbench`).
 - An isolated untrusted window holds agent machines: launch with `herdr-app-untrusted`
   (`HC_SESSION=untrusted`, `~/.config/herdr-app-untrusted`). It refuses a local

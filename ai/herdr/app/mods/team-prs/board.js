@@ -25,7 +25,7 @@ function pill(text, color) {
 function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
-  return v_flex().id(`col-${col.key}`).h_full().min_h(0)
+  return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}55`)
     .when(!empty, (e) => e.flex_1().min_w(COL_MIN).max_w(COL_MAX))
     .when(empty, (e) => e.flex_none().min_w(COL_EMPTY).max_w(COL_EMPTY).overflow_x_hidden())
     .child(eyebrow(col.label, col.items.length, SP.sm))

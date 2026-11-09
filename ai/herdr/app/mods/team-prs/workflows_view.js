@@ -3,13 +3,12 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  STEP_ORDER, LANES, groupLanes, laneCounts, stepIcon, itemTone, stepTone,
-  shortKey, durationText,
+  STEP_ORDER, groupLanes, itemTone, stepTone, shortKey, durationText,
 } from "./_lib/batch.js";
+import { relativeTime } from "./_lib/history.js";
 import { SP, TEXT, LAYOUT, BATCH_COL, RADIUS } from "./_lib/tokens.js";
 import {
-  pill, hoverRow, placeholder, caption, link, emptyPane,
-  scrollBody, segment, segmented, pane, mono, chip,
+  pill, hoverRow, placeholder, caption, link, emptyPane, scrollBody, pane, mono,
 } from "./_ui/ui.js";
 
 function itemColor(t, status) {
@@ -36,9 +35,15 @@ function runColor(t, status) {
   return t.muted;
 }
 
-function stamp(id) {
-  const i = String(id).indexOf("-");
-  return i === -1 ? String(id) : String(id).slice(0, i);
+// What a run's status means to someone reading the header.
+const RUN_WORD = { running: "running", waiting: "waiting", done: "finished", cancelled: "cancelled", interrupted: "interrupted" };
+
+function runWord(status) {
+  return RUN_WORD[status] ?? pretty(status);
+}
+
+function prCount(n) {
+  return n === 1 ? "1 PR" : `${n} PRs`;
 }
 
 function pretty(s) {
@@ -58,33 +63,43 @@ function renderEmpty(loading, error, viewSwitch) {
 
 function renderHeader(state) {
   const t = theme();
-  const { on, runs, runId, doc, viewSwitch, onPickRun, onRefresh } = state;
-  const selected = runId ?? runs[0]?.id;
-  const picked = runs.find((r) => r.id === selected);
+  const { on, runs, runId, doc, viewSwitch, showRuns, nowMs, onPickRun, onToggleRuns, onRefresh } = state;
+  const latest = runId == null || runId === runs[0]?.id;
+  const picked = runs.find((r) => r.id === (runId ?? runs[0]?.id));
   const status = doc?.run?.status ?? picked?.status;
-  const active = Boolean(doc?.run?.active ?? picked?.active);
-  const segs = runs.slice(0, 6).map((r) =>
-    segment(`run-${r.id}`, stamp(r.id), r.id === selected, () => onPickRun(r.id)));
+  const n = doc?.items?.length ?? picked?.items ?? 0;
+  const started = relativeTime(doc?.run?.startedAt ?? picked?.startedAt ?? "", nowMs);
+  const earlier = runs.length - 1;
   return h_flex().id("batch-header").min_h(LAYOUT.headerH).flex_none().flex_wrap()
     .px(SP.lg).py(SP.sm).gap(SP.md).items_center()
     .when(Boolean(viewSwitch), (e) => e.child(viewSwitch))
     .child(div().flex_none().text_size(TEXT.title).font_semibold().child("Workflows"))
     .child(pill(on ?? "This computer"))
-    .when(segs.length > 0, (e) => e.child(segmented(segs)))
-    .when(runs.length > 6, (e) => e.child(caption(`+${runs.length - 6} older`)))
-    .when(Boolean(status), (e) => e.child(pill(pretty(status), runColor(t, status))))
-    .when(active, (e) => e.child(pill("active", t.ansi4)))
+    .child(h_flex().flex_none().gap(SP.xs).items_center().text_size(TEXT.small)
+      .child(div().text_color(t.foreground).child(latest ? "Latest run" : "Earlier run"))
+      .child(div().text_color(t.muted).child(`· started ${started} · ${prCount(n)} ·`))
+      .child(div().text_color(runColor(t, status)).child(runWord(status))))
+    .when(!latest, (e) => e.child(link("wf-latest", "Back to latest", () => onPickRun(null))))
+    .when(earlier > 0, (e) => e.child(link("wf-runs", showRuns ? "Hide earlier runs" : `Earlier runs (${earlier})`, onToggleRuns)))
     .child(div().flex_1().min_w(0))
     .child(link("wf-refresh", "Refresh", onRefresh));
 }
 
-function renderChips(items, filter, onFilter) {
-  const counts = laneCounts(items);
-  const chips = LANES.filter((l) => counts[l.id] > 0)
-    .map((l) => chip(`lane-${l.id}`, `${l.label} ${counts[l.id]}`, filter === l.id, () => onFilter(l.id)));
-  if (!chips.length) return null;
-  return h_flex().flex_none().px(SP.lg).pb(SP.sm).gap(SP.xs).flex_wrap().items_center()
-    .children(chips);
+function renderRunList(state) {
+  const t = theme();
+  const { runs, runId, nowMs, onPickRun } = state;
+  const current = runId ?? runs[0]?.id;
+  return scrollBody().px(SP.md).pb(SP.lg).gap(SP.xs)
+    .children(runs.map((r, i) => hoverRow(`run-${r.id}`).flex().items_center()
+      .px(SP.md).py(SP.sm).gap(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
+      .when(r.id === current, (e) => e.bg(t.selected))
+      .on_click(() => onPickRun(i === 0 ? null : r.id))
+      .child(v_flex().min_w(0).flex_1()
+        .child(div().text_size(TEXT.body).child(`${i === 0 ? "Latest run" : "Run"} · started ${relativeTime(r.startedAt ?? "", nowMs)}`))
+        .child(div().text_size(TEXT.caption).text_color(t.dim).truncate()
+          .child([prCount(r.items), ...(r.repos ?? [])].join(" · ")))
+        .when(Boolean(r.error), (e) => e.child(caption(r.error, t.ansi1))))
+      .child(div().flex_none().text_size(TEXT.small).text_color(runColor(t, r.status)).child(runWord(r.status)))));
 }
 
 // The steps this run was asked for, in pipeline order: a step it never ran gets no column.
@@ -94,10 +109,9 @@ function runSteps(doc) {
   return steps.length ? steps : STEP_ORDER;
 }
 
-function colHead(label, w, center = false) {
+function colHead(label, w) {
   const t = theme();
-  const el = div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(label)
-    .when(center, (e) => e.flex().justify_center());
+  const el = div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(label);
   return w != null ? el.w(w) : el.min_w(0).flex_1();
 }
 
@@ -106,7 +120,7 @@ function renderColumns(steps) {
     .child(h_flex().flex_1().px(SP.md).gap(SP.md).items_center()
       .child(colHead("", BATCH_COL.key))
       .child(colHead("Status", BATCH_COL.status))
-      .children(steps.map((step) => colHead(step, BATCH_COL.step, true)))
+      .children(steps.map((step) => colHead(step, BATCH_COL.step)))
       .child(colHead("Notes")));
 }
 
@@ -114,9 +128,8 @@ function stepMark(item, name) {
   const t = theme();
   const rec = item.steps?.[name] ?? null;
   const color = rec == null ? t.dim : stepColor(t, rec.status);
-  const icon = rec == null ? "·" : stepIcon(rec.status);
-  return div().flex_none().w(BATCH_COL.step).flex().items_center().justify_center()
-    .child(div().text_size(TEXT.title).text_color(color).child(icon));
+  return div().flex_none().w(BATCH_COL.step).truncate().text_size(TEXT.small).text_color(color)
+    .child(rec == null ? "—" : pretty(rec.status));
 }
 
 function notesOf(item) {
@@ -146,8 +159,8 @@ function renderRow(item, repos, steps, onOpenItem) {
 
 function renderLane(lane, state, repos) {
   const t = theme();
-  const { filter, collapsed, onToggleLane, onOpenItem } = state;
-  const open = !collapsed.has(lane.id) || filter === lane.id;
+  const { collapsed, onToggleLane, onOpenItem } = state;
+  const open = !collapsed.has(lane.id);
   return v_flex().id(`lane-${lane.id}`).flex_none().gap(SP.xs)
     .child(hoverRow(`lane-head-${lane.id}`).flex().items_center().px(SP.sm).py(SP.xs).gap(SP.sm)
       .on_click(() => onToggleLane(lane.id))
@@ -159,14 +172,13 @@ function renderLane(lane, state, repos) {
 
 function renderList(items, state) {
   const repos = reposOf(items);
-  const chips = renderChips(items, state.filter, state.onFilter);
+  if (state.showRuns) return v_flex().flex_1().min_h(0).child(renderHeader(state)).child(renderRunList(state));
   return v_flex().flex_1().min_h(0)
     .child(renderHeader(state))
-    .when(Boolean(chips), (e) => e.child(chips))
     .child(renderColumns(runSteps(state.doc)))
     .child(scrollBody().px(SP.md).pb(SP.lg).gap(SP.xs)
       .children(groupLanes(items)
-        .filter((lane) => lane.items.length > 0 && (state.filter == null || state.filter === lane.id))
+        .filter((lane) => lane.items.length > 0)
         .map((lane) => renderLane(lane, state, repos))));
 }
 
@@ -188,7 +200,6 @@ function renderStepRow(item, name, state) {
   if (rec == null) {
     return h_flex().id(`step-${name}`).px(SP.sm).py(SP.xs).rounded(RADIUS.control)
       .gap(SP.sm).items_center()
-      .child(div().text_size(TEXT.title).text_color(t.dim).child("·"))
       .child(div().text_size(TEXT.body).w(BATCH_COL.step).text_color(t.dim).child(name))
       .child(div().text_size(TEXT.caption).text_color(t.dim).child("not in this run"));
   }
@@ -199,7 +210,6 @@ function renderStepRow(item, name, state) {
     .px(SP.sm).py(SP.xs).rounded(RADIUS.control).gap(SP.sm)
     .when(selected, (e) => e.bg(t.selected))
     .on_click(() => state.onStep(name))
-    .child(div().text_size(TEXT.title).text_color(color).child(stepIcon(rec.status)))
     .child(div().text_size(TEXT.body).w(BATCH_COL.step).child(name))
     .child(div().text_size(TEXT.caption).text_color(color).child(pretty(rec.status)))
     .when(Boolean(dur), (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim).child(dur)))

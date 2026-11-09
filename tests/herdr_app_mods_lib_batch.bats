@@ -185,14 +185,6 @@ _parse() {
   jq -e '.running=="busy" and .failed=="attention" and .needs_decision=="attention" and .interrupted=="attention" and .done=="done" and .pending=="muted" and .skipped=="muted" and .unknown=="muted" and .nil=="muted"' <<<"$output"
 }
 
-@test "attentionCount counts a finding-bearing done item" {
-  _js 'm.attentionCount({ok:true,items:[{status:"done",findings:[{reason:"open"}]},{status:"awaiting_decision",findings:[]},{status:"running",findings:[]}]})'
-  [ "$status" -eq 0 ]
-  [ "$output" = '2' ]
-  _js 'm.attentionCount({ok:false,error:{kind:"bad-json",message:"x"}})'
-  [ "$output" = '0' ]
-}
-
 @test "stateChanged true for state.json and runDir, false for report and log" {
   _js 'm.stateChanged(["/r/state.json"], "/r")'
   [ "$output" = 'true' ]
@@ -220,20 +212,6 @@ _parse() {
   jq -e '([.[].id] == ["attention","running","waiting","done","closed"]) and ([.[].label] == ["Needs you","Running","Waiting","Done","Dropped / closed"]) and .[0].items == [] and ([.[1].items[].key] == ["b","d"]) and ([.[2].items[].key] == ["c"]) and ([.[3].items[].key] == ["a"]) and .[4].items == []' <<<"$output"
   _js 'm.groupLanes([])'
   jq -e 'length == 5 and all(.[]; .items == [])' <<<"$output"
-}
-
-@test "laneCounts tallies each lane" {
-  _js 'm.laneCounts([{status:"awaiting_decision"},{status:"done",findings:[{reason:"x"}]},{status:"running"},{status:"queued"},{status:"waiting_admission"},{status:"done"},{status:"dropped"},{status:"mystery"}])'
-  [ "$status" -eq 0 ]
-  jq -e '.attention==2 and .running==1 and .waiting==2 and .done==1 and .closed==2' <<<"$output"
-  _js 'm.laneCounts([])'
-  jq -e '.attention==0 and .running==0 and .waiting==0 and .done==0 and .closed==0' <<<"$output"
-}
-
-@test "stepIcon table" {
-  _js '({done:m.stepIcon("done"),failed:m.stepIcon("failed"),running:m.stepIcon("running"),needs_decision:m.stepIcon("needs_decision"),interrupted:m.stepIcon("interrupted"),pending:m.stepIcon("pending"),skipped:m.stepIcon("skipped"),unknown:m.stepIcon("nope"),nil:m.stepIcon(null)})'
-  [ "$status" -eq 0 ]
-  jq -e '.done=="✓" and .failed=="✗" and .running=="●" and .needs_decision=="!" and .interrupted=="!" and .pending=="○" and .skipped=="–" and .unknown=="·" and .nil=="·"' <<<"$output"
 }
 
 @test "shortKey single repo hashes, otherwise full or empty" {

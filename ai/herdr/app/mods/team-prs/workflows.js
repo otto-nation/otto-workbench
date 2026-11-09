@@ -2,7 +2,7 @@
 import { exec, watchFolder } from "herdr";
 import {
   listArgv, statusArgv, logTailArgv, parseRunList, parseRunDoc, stateChanged,
-  attentionCount, STEP_ORDER,
+  STEP_ORDER,
 } from "./_lib/batch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
 import { renderWorkflows } from "./workflows_view.js";
@@ -40,7 +40,7 @@ export class Workflows {
     this.openKey = null;
     this.step = null;
     this.log = null;
-    this.filter = null;
+    this.showRuns = false;
     this.collapsed = new Set(["closed"]);
     this.inflight = this.again = false;
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
@@ -94,7 +94,7 @@ export class Workflows {
       openKey: this.openKey,
       step: this.step,
       log: this.log,
-      filter: this.filter,
+      showRuns: this.showRuns,
       collapsed: this.collapsed,
       viewSwitch,
       nowMs: Date.now(),
@@ -102,14 +102,10 @@ export class Workflows {
       onOpenItem: (key) => this.openItem(key),
       onBack: () => this.back(),
       onStep: (step) => this.selectStep(step),
-      onFilter: (id) => this.setFilter(id),
+      onToggleRuns: () => this.toggleRuns(),
       onToggleLane: (id) => this.toggleLane(id),
       onRefresh: () => this.refresh(this.acx),
     });
-  }
-
-  attention() {
-    return attentionCount(this.doc);
   }
 
   refresh(cx) {
@@ -203,8 +199,10 @@ export class Workflows {
     return item?.steps?.[this.step]?.status ?? null;
   }
 
+  // `null` is the latest run, whichever that is when the next refresh lands.
   pickRun(id) {
-    if (this.runId === id) return;
+    this.showRuns = false;
+    if (this.runId === id) return this.acx.notify();
     this.runId = id;
     this.openKey = null;
     this.step = null;
@@ -236,8 +234,8 @@ export class Workflows {
     this.acx.notify();
   }
 
-  setFilter(id) {
-    this.filter = this.filter === id ? null : id;
+  toggleRuns() {
+    this.showRuns = !this.showRuns;
     this.acx.notify();
   }
 

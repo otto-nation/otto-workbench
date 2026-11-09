@@ -158,16 +158,6 @@ export function stepTone(status) {
   return 'muted';
 }
 
-export function attentionCount(parsed) {
-  if (!parsed?.ok || !Array.isArray(parsed.items)) return 0;
-  let n = 0;
-  for (const item of parsed.items) {
-    if (itemTone(item.status) === 'attention') n += 1;
-    else if (Array.isArray(item.findings) && item.findings.length > 0) n += 1;
-  }
-  return n;
-}
-
 export function stateChanged(paths, runDir) {
   const dir = String(runDir ?? '').replace(/\/+$/, '');
   if (dir === '') return false;
@@ -202,22 +192,6 @@ export function groupLanes(items) {
   const buckets = Object.fromEntries(LANES.map((l) => [l.id, []]));
   for (const item of items ?? []) buckets[laneOf(item)].push(item);
   return LANES.map((l) => ({ id: l.id, label: l.label, items: buckets[l.id] }));
-}
-
-export function laneCounts(items) {
-  const counts = { attention: 0, running: 0, waiting: 0, done: 0, closed: 0 };
-  for (const item of items ?? []) counts[laneOf(item)] += 1;
-  return counts;
-}
-
-export function stepIcon(status) {
-  if (status === 'done') return '✓';
-  if (status === 'failed') return '✗';
-  if (status === 'running') return '●';
-  if (status === 'needs_decision' || status === 'interrupted') return '!';
-  if (status === 'pending') return '○';
-  if (status === 'skipped') return '–';
-  return '·';
 }
 
 export function shortKey(key, repos) {

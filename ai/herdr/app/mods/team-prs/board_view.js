@@ -120,10 +120,9 @@ export default class TeamPrs extends View {
 
   viewSwitch() {
     const mode = viewModeOf();
-    const n = this.workflows.attention();
     return segmented([
       segment("view-prs", "PRs", mode === "prs", () => setShared("team-prs.view", "prs")),
-      segment("view-workflows", n > 0 ? `Workflows · ${n}` : "Workflows", mode === "workflows", () => setShared("team-prs.view", "workflows")),
+      segment("view-workflows", "Workflows", mode === "workflows", () => setShared("team-prs.view", "workflows")),
     ]);
   }
 

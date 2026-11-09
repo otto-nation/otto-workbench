@@ -127,6 +127,11 @@ or styling work, starting at Do's and Don'ts and Components.
   `bin/local/generate-herdr-app-themes`; mods read colours only through `theme()`.
 - `ai/herdr/app/mods/AGENTS.md` § Design says which file owns each value the
   mods take from the brand.
+- A button or link label is the action and nothing else: no counts, totals or
+  progress (`Start`, not `Start 2 runs`; `Batch`, not `Batch · running 3 of 5`).
+  State goes beside the control as text, and a line that restates what the
+  form already shows is left out. `DESIGN.md` does not say this yet; until it
+  does, this line is the rule.
 
 ## Conventions
 

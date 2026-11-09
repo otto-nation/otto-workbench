@@ -63,6 +63,12 @@ _js() {
   jq -e '.repos==1 and (.prs|length)==0' <<<"$output"
 }
 
+@test "mergeStates: repoSlugs keeps empty-prs repos, first-seen order, one per repoId" {
+  _js 'mergeStates([{repo:{slug:"a/b",host:"github.com",on:null,cwd:"/a"},prs:[{number:1}]},{repo:{slug:"c/d",host:"github.com",on:null,cwd:"/c"},prs:[]},{repo:{slug:"a/b",host:"github.com",on:null,cwd:"/a2"},prs:[{number:9}]}])'
+  [ "$status" -eq 0 ]
+  jq -e '.repos==2 and (.repoSlugs|length)==2 and .repoSlugs[0]=="a/b" and .repoSlugs[1]=="c/d" and (.prs|length)==1' <<<"$output"
+}
+
 @test "mergeStates: missing repo or prs==null is skipped" {
   _js 'mergeStates([{prs:[{number:1}]},{repo:{slug:"a/b"},prs:null},{}])'
   [ "$status" -eq 0 ]

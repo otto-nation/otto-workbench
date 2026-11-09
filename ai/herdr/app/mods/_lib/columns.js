@@ -82,8 +82,10 @@ export function isMine(pr, me) {
   return login === who;
 }
 
-export function filterRepos(prs, repos) {
-  const known = new Set(prs.map((p) => String(p.repoSlug ?? "").toLowerCase()));
+// `loaded` lists every repo the board has loaded, even one with no open PRs; a saved selection
+// naming a repo outside it is ignored. Without it, the repos seen in `prs` stand in.
+export function filterRepos(prs, repos, loaded) {
+  const known = new Set((loaded ?? prs.map((p) => p.repoSlug)).map((r) => String(r ?? "").toLowerCase()));
   const active = new Set(
     [...(repos ?? [])].map((r) => String(r).toLowerCase()).filter((r) => known.has(r)),
   );

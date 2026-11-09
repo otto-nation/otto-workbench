@@ -64,10 +64,12 @@ export function spaceTargets(spaces, panes) {
 }
 
 // Merge per-target states into one PR list: one entry per repo (two spaces on
-// one repo count once), each PR tagged with its repo slug.
+// one repo count once), each PR tagged with its repo slug, plus repoSlugs in
+// first-seen order (one per distinct repoId, even when that repo has no PRs).
 export function mergeStates(states) {
   const seen = new Set();
   const prs = [];
+  const repoSlugs = [];
   let me = '';
   let slug = null;
   for (const st of states) {
@@ -75,6 +77,7 @@ export function mergeStates(states) {
     const id = repoId(st.repo);
     if (seen.has(id)) continue;
     seen.add(id);
+    repoSlugs.push(st.repo.slug);
     slug = slug ?? st.repo.slug;
     me = me || st.me || '';
     for (const pr of st.prs) {
@@ -84,7 +87,7 @@ export function mergeStates(states) {
       });
     }
   }
-  return { prs, me, repos: seen.size, slug };
+  return { prs, me, repos: seen.size, slug, repoSlugs };
 }
 
 export function repoId(repo) {

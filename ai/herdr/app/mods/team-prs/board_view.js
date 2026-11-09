@@ -327,7 +327,7 @@ export default class TeamPrs extends View {
   }
 
   listed(state) {
-    const base = filterRepos(state.prs ?? [], filtersOf().repos);
+    const base = filterRepos(state.prs ?? [], filtersOf().repos, state.repoSlugs);
     const me = state.me ?? "";
     return tabOf() === "mine" ? base.filter((p) => isMine(p, me)) : filterPrs(base, filtersOf(), me);
   }
@@ -401,13 +401,13 @@ export default class TeamPrs extends View {
     // Team view is about teammates: the viewer has the Mine tab.
     const me = String(state.me ?? "").toLowerCase();
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
-    const repos = scopeOf() === "all" ? [...new Set((state.prs ?? []).map((p) => p.repoSlug).filter(Boolean))].sort() : [];
+    const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
     return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
       .child(renderBoard({
-        tab, prs: filterRepos(state.prs ?? [], filters.repos), filters, me: state.me ?? "",
+        tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
       }));

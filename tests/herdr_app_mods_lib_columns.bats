@@ -347,3 +347,16 @@ _filter() {
   [ "$status" -eq 0 ]
   [ "$output" = '["open","landed"]' ]
 }
+
+@test "filterRepos: a selected repo with no PRs shows nothing when it is a loaded repo" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [{ number: 1, repoSlug: 'a/b' }];
+    process.stdout.write(JSON.stringify([
+      filterRepos(prs, ['c/d'], ['a/b', 'c/d']).length,
+      filterRepos(prs, ['x/y'], ['a/b', 'c/d']).length,
+    ]));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "[0,1]" ]
+}

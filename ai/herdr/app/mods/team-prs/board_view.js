@@ -64,6 +64,8 @@ export default class TeamPrs extends View {
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
+    // Each machine's last good listing, which an unchanged answer stands in for.
+    this.listingByOn = new Map();
     this.repoByKey = new Map();
     this.inflight = this.again = this.againListing = false;
     this.watchRoot = this.key = null;
@@ -160,7 +162,13 @@ export default class TeamPrs extends View {
 
   listingFor(ctx, cycle) {
     const k = `listing:${ctx.on ?? ""}`;
-    if (!cycle.has(k)) cycle.set(k, loadListing(exec, ctx));
+    if (!cycle.has(k)) {
+      const onKey = ctx.on ?? "";
+      cycle.set(k, loadListing(exec, ctx, this.listingByOn.get(onKey)).then((r) => {
+        if (r.ok) this.listingByOn.set(onKey, r);
+        return r;
+      }));
+    }
     return cycle.get(k);
   }
 

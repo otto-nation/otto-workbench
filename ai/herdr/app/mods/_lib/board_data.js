@@ -228,13 +228,19 @@ export async function readReview(readTextFile, path, on) {
   }
 }
 
-export async function loadListing(exec, ctx) {
+// `prior` is this machine's last good listing. When it carried a stamp, pr is asked to answer
+// `unchanged` instead of rebuilding every row, and the prior result stands. A pr too old to stamp
+// its document is never sent the flag, so it keeps answering in full.
+export async function loadListing(exec, ctx, prior = null) {
+  const stamp = prior?.listing?.stamp;
   const ran = await invoke(exec, ctx, 'pr', [
     'review', '--list', '--schema-version', '1',
+    ...(typeof stamp === 'string' && stamp !== '' ? ['--if-changed', stamp] : []),
   ], { timeout: LISTING_TIMEOUT_MS });
   if (!ran.ok) return ran;
   const parsed = readJson(ran.stdout);
   if (!parsed.ok) return parsed;
+  if (parsed.value?.unchanged === true && prior != null) return prior;
   return { ok: true, listing: parsed.value, reviewsRoot: parsed.value.reviews_root };
 }
 

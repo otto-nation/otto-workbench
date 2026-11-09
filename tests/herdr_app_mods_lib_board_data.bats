@@ -523,6 +523,30 @@ _gql() {
   [ "$output" = '[{"cmd":"pr","args":["review","--list"]},{"cmd":"gh","args":["api"]},{"cmd":"sh","args":["-c","PATH=\"$HOME/.local/bin:$PATH\"; exec \"$@\"","sh","pr","review","--list"]}]' ]
 }
 
+@test "loadListing sends --if-changed only with a stamped prior and keeps the prior when unchanged" {
+  _bd '
+    const full = { schema_version: 1, reviews_root: "/reviews", stamp: "s1", reviews: [{ repo: "o/n" }] };
+    let table = [{ prefix: "pr review --list --schema-version 1", stdout: JSON.stringify(full) }];
+    const first = await m.loadListing(exec, ctx);
+    const firstArgs = calls.map((c) => c.args.join(" ")).join("|");
+    calls.length = 0;
+    table = [{ prefix: "pr review --list --schema-version 1 --if-changed s1", stdout: JSON.stringify({ schema_version: 1, stamp: "s1", unchanged: true }) }];
+    const second = await m.loadListing(exec, ctx, first);
+    const secondArgs = calls.map((c) => c.args.join(" ")).join("|");
+    calls.length = 0;
+    const unstamped = { ok: true, listing: { schema_version: 1, reviews: [] } };
+    table = [{ prefix: "pr review --list --schema-version 1", stdout: JSON.stringify({ schema_version: 1, reviews: [] }) }];
+    await m.loadListing(exec, ctx, unstamped);
+    const oldArgs = calls.map((c) => c.args.join(" ")).join("|");
+    process.stdout.write(JSON.stringify({
+      firstIf: firstArgs.includes("--if-changed"), secondIf: secondArgs.includes("--if-changed s1"),
+      oldIf: oldArgs.includes("--if-changed"), same: second === first,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"firstIf":false,"secondIf":true,"oldIf":false,"same":true}' ]
+}
+
 @test "a remote pr that is coreutils' pr is named as the wrong pr, not shown as raw usage" {
   _bd '
     const table = [{ prefix: "pr review --list", code: 1, stderr: "pr: unrecognized option \x27--list\x27\nTry \x27pr --help\x27 for more information." }];

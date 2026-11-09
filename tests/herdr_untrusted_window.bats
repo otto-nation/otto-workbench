@@ -88,16 +88,16 @@ _write_json() {
   [ ! -e "$UNTRUSTED" ]
 }
 
-@test "settings copy appearance keys from main, force clipboard_write false, keep zoom" {
+@test "settings copy appearance keys and clipboard_write from main, keep zoom" {
   _seed_main '{"theme":{"light":"paper","dark":"ink"},"font":"MainFont","font_size":16,"zoom":1,"clipboard_write":true,"telemetry":false}'
-  _seed_untrusted '{"theme":"moss","font":"Other","zoom":1.5,"clipboard_write":true}'
+  _seed_untrusted '{"theme":"moss","font":"Other","zoom":1.5,"clipboard_write":false}'
   run _run_step step_herdr_untrusted_window
   [ "$status" -eq 0 ]
   [ "$(jq -c '.theme' "$UNTRUSTED/settings.json")" = '{"light":"paper","dark":"ink"}' ]
   [ "$(jq -r '.font' "$UNTRUSTED/settings.json")" = "MainFont" ]
   [ "$(jq -r '.font_size' "$UNTRUSTED/settings.json")" = "16" ]
   [ "$(jq -r '.zoom' "$UNTRUSTED/settings.json")" = "1.5" ]
-  [ "$(jq -r '.clipboard_write' "$UNTRUSTED/settings.json")" = "false" ]
+  [ "$(jq -r '.clipboard_write' "$UNTRUSTED/settings.json")" = "true" ]
   [ "$(jq -r 'has("telemetry")' "$UNTRUSTED/settings.json")" = "false" ]
 }
 
@@ -275,7 +275,7 @@ _write_json() {
   [ "$status" -eq 0 ]
   [ "$(cat "$OPEN_ARGV")" = "$(printf '%s\n' -n -a Herdr --env "HC_SESSION=$SESSION" --env "HERDR_APP_HOME=$UNTRUSTED")" ]
   [ -d "$UNTRUSTED" ]
-  [ "$(jq -r '.clipboard_write' "$UNTRUSTED/settings.json")" = "false" ]
+  [ "$(jq -r '.clipboard_write' "$UNTRUSTED/settings.json")" = "true" ]
 }
 
 @test "sync warns on a live terminal and still exits 0" {
@@ -288,11 +288,15 @@ _write_json() {
   [[ "$output" == *"will refuse to open"* ]]
 }
 
-@test "clipboard_write true is re-reconciled to false" {
-  _seed_main '{"theme":"paper","clipboard_write":true}'
+@test "clipboard_write follows main in both directions" {
+  _seed_main '{"theme":"paper"}'
   _seed_untrusted '{"theme":"paper","clipboard_write":true,"zoom":2}'
   run _run_step step_herdr_untrusted_window
   [ "$status" -eq 0 ]
-  [ "$(jq -r '.clipboard_write' "$UNTRUSTED/settings.json")" = "false" ]
+  [ "$(jq -r 'has("clipboard_write")' "$UNTRUSTED/settings.json")" = "false" ]
+  _seed_main '{"theme":"paper","clipboard_write":true}'
+  run _run_step step_herdr_untrusted_window
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.clipboard_write' "$UNTRUSTED/settings.json")" = "true" ]
   [ "$(jq -r '.zoom' "$UNTRUSTED/settings.json")" = "2" ]
 }

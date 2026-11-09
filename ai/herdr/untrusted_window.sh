@@ -12,10 +12,9 @@
 # Appearance keys copied from the main window. Derived from herdr-app v0.1.13
 # Person in src/settings.rs: font (L377), font_size (L380), font_ligatures
 # (L382), ui_font (L385), minimum_contrast (L395), appearance (L402), theme
-# (L404), colors (L406). clipboard_write (L391) is forced false rather than
-# copied. zoom, sounds, core, telemetry, pane_scrollbars and option_as_alt
+# (L404), colors (L406), clipboard_write (L391). zoom, sounds, core, telemetry, pane_scrollbars and option_as_alt
 # stay as the untrusted window wrote them.
-_HERDR_UNTRUSTED_APPEARANCE_KEYS='["appearance","colors","font","font_ligatures","font_size","minimum_contrast","theme","ui_font"]'
+_HERDR_UNTRUSTED_APPEARANCE_KEYS='["appearance","clipboard_write","colors","font","font_ligatures","font_size","minimum_contrast","theme","ui_font"]'
 _HERDR_UNTRUSTED_SHARED_SEED='{"frame.welcomed":"skipped","layout":"main"}'
 
 # _herdr_untrusted_state_home — herdr-core's XDG_STATE_HOME: unset or empty
@@ -37,8 +36,8 @@ _herdr_untrusted_is_object() {
   jq -se 'length == 1 and (.[0] | type == "object")' <<< "$1" >/dev/null 2>&1
 }
 
-# _herdr_untrusted_reconcile_settings — appearance keys from main, clipboard_write
-# forced false, every other key kept. Warn and leave when main is missing or not
+# _herdr_untrusted_reconcile_settings — appearance keys and clipboard_write
+# from main, every other key kept. Warn and leave when main is missing or not
 # one JSON object, or when the untrusted file is a symlink: herdr-app's
 # write_atomic follows symlinks (persist.rs:8-22), so a link would let the
 # untrusted window write into main's file.
@@ -70,7 +69,7 @@ _herdr_untrusted_reconcile_settings() {
   desired=$(jq -n --argjson main "$main" --argjson cur "$current" --argjson keys "$_HERDR_UNTRUSTED_APPEARANCE_KEYS" '
     reduce $keys[] as $k ($cur;
       if $main | has($k) then .[$k] = $main[$k] else del(.[$k]) end
-    ) | .clipboard_write = false
+    )
   ') || { warn "Could not derive untrusted settings from $main_file"; return 0; }
   if jq -ne --argjson a "$current" --argjson b "$desired" '$a == $b' >/dev/null; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "herdr-app-untrusted settings follow the main window" || true
@@ -78,7 +77,7 @@ _herdr_untrusted_reconcile_settings() {
   fi
   wb_write_json_file "$file" "$desired" \
     || { warn "Could not write $file — untrusted settings not updated"; return 0; }
-  success "herdr-app-untrusted settings follow the main window (clipboard_write=false)"
+  success "herdr-app-untrusted settings follow the main window"
   return 0
 }
 
@@ -186,29 +185,12 @@ _herdr_untrusted_check_machine_overlap() {
   return 1
 }
 
-_herdr_untrusted_clipboard_off() {
-  local file="$HERDR_UNTRUSTED_APP_DIR/settings.json"
-  [[ -f "$file" && ! -L "$file" ]] || return 1
-  jq -e '.clipboard_write == false' "$file" >/dev/null 2>&1
-}
-
-# _herdr_untrusted_ensure_clipboard — clipboard_write must be false. If it is
-# not, re-reconcile (the app may have rewritten settings.json) and check again.
-_herdr_untrusted_ensure_clipboard() {
-  _herdr_untrusted_clipboard_off && return 0
-  _herdr_untrusted_reconcile_settings
-  _herdr_untrusted_clipboard_off && return 0
-  warn "herdr untrusted window: clipboard_write is not false in $HERDR_UNTRUSTED_APP_DIR/settings.json"
-  return 1
-}
-
 # _herdr_untrusted_preflight — reads state files only, never calls hc. Used by
 # the sync step (warn) and the launcher (refuse).
 _herdr_untrusted_preflight() {
   local failed=0
   _herdr_untrusted_check_terminals || failed=1
   _herdr_untrusted_check_machine_overlap || failed=1
-  _herdr_untrusted_ensure_clipboard || failed=1
   return "$failed"
 }
 

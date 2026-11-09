@@ -26,6 +26,10 @@ _bd() {
     import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
     const calls = [];
     let exec = async (cmd, args, opts) => {
+      // Remote calls are wrapped to put ~/.local/bin on PATH; the table speaks of the inner command.
+      if (cmd === 'sh' && args[0] === '-c' && args[1].includes('exec \"\$@\"') && args[2] === 'sh') {
+        [cmd, args] = [args[3], args.slice(4)];
+      }
       calls.push({ cmd, args: [...args], cwd: opts && opts.cwd, on: opts && opts.on });
       const key = cmd + ' ' + args.join(' ');
       for (const row of table) {
@@ -170,7 +174,7 @@ _gql() {
     let nGql = 0;
     exec = async (cmd, args, opts) => {
       const got = await inner(cmd, args, opts);
-      if (args[1] === "graphql") {
+      if ((cmd === "sh" ? args.slice(4) : args)[1] === "graphql") {
         nGql += 1;
         if (nGql === 2) return { code: 1, stdout: "", stderr: "boom" };
       }
@@ -466,4 +470,28 @@ _gql() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'"kind":"unreachable"'* ]]
   [[ "$output" == *'"kind":"failed"'* ]]
+}
+
+@test "toolCall leaves local calls alone and wraps remote ones with the workbench bin on PATH" {
+  _bd '
+    process.stdout.write(JSON.stringify([
+      m.toolCall({ on: null }, "pr", ["review", "--list"]),
+      m.toolCall({ on: "" }, "gh", ["api"]),
+      m.toolCall({ on: "homelab" }, "pr", ["review", "--list"]),
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"cmd":"pr","args":["review","--list"]},{"cmd":"gh","args":["api"]},{"cmd":"sh","args":["-c","PATH=\"$HOME/.local/bin:$PATH\"; exec \"$@\"","sh","pr","review","--list"]}]' ]
+}
+
+@test "a remote pr that is coreutils' pr is named as the wrong pr, not shown as raw usage" {
+  _bd '
+    const table = [{ prefix: "pr review --list", code: 1, stderr: "pr: unrecognized option \x27--list\x27\nTry \x27pr --help\x27 for more information." }];
+    const r = await m.loadListing(exec, { cwd: "/w", on: "homelab" });
+    process.stdout.write(JSON.stringify(r));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ok":false'* ]]
+  [[ "$output" == *"a different \`pr\` is first on PATH"* ]]
+  [[ "$output" != *"unrecognized option"* ]]
 }

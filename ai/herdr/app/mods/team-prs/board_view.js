@@ -18,7 +18,7 @@ import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, pill, chip, emptyPane, pane } from "./ui.js";
+import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -68,6 +68,7 @@ export default class TeamPrs extends View {
     this.inflight = this.again = this.againListing = false;
     this.watchRoot = this.key = null;
     this.pollListing = false;
+    this.manual = false;
     cx.timer.every(180000, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => {
       if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
@@ -88,6 +89,8 @@ export default class TeamPrs extends View {
       try { await this.pull(cx, listingOnly); }
       finally {
         this.inflight = false;
+        // Clear only on a full pull with no other full pull queued behind it.
+        if (!listingOnly && !(this.again && !this.againListing)) this.manual = false;
         cx.notify();
         if (this.again) {
           const next = this.againListing;
@@ -96,6 +99,17 @@ export default class TeamPrs extends View {
         }
       }
     });
+  }
+
+  // The header's Refresh: a full pull now. `manual` labels it until the pull it asked for lands.
+  refreshNow() {
+    this.manual = true;
+    this.refresh(this.acx);
+    this.acx.notify();
+  }
+
+  refreshButton() {
+    return button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual });
   }
 
   activeTargets() {
@@ -312,6 +326,7 @@ export default class TeamPrs extends View {
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(emptyPane())
         .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
+        .child(this.refreshButton())
         .child(this.scopeToggle());
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
@@ -357,13 +372,13 @@ export default class TeamPrs extends View {
           segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
           segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
         ]))
-        .child(div().id("open-board").text_size(TEXT.caption).text_color(t.muted).cursor_pointer()
-          .on_click(() => {
+        .child(h_flex().gap(SP.md).items_center()
+          .child(link("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
+          .child(link("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
             else run("tab.new", { name: "PRs", mod: "team-prs" });
-          })
-          .child("Open board")));
+          }))));
   }
 
   compactView(state, t, cx) {
@@ -431,6 +446,7 @@ export default class TeamPrs extends View {
           .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
+      .child(this.refreshButton())
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

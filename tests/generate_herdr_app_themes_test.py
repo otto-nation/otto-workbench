@@ -5,9 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import socket
 import tarfile
-from pathlib import Path
 import urllib.error
+from pathlib import Path
 
 import pytest
 from conftest import REPO_ROOT, load_script
@@ -109,3 +110,4 @@ def test_transient_ignores_permanent_oserrors():
     assert not themes._transient(urllib.error.URLError(FileNotFoundError("gone")))
     assert themes._transient(TimeoutError())
     assert themes._transient(urllib.error.URLError(ConnectionResetError()))
+    assert themes._transient(urllib.error.URLError(socket.gaierror(-3, "try again")))

@@ -488,6 +488,11 @@ def _readable_claim_answers(raw) -> dict:
             continue
         if disposition not in CLAIM_ANSWERS:
             continue
+        reason = entry.get("reason", "")
+        path = entry.get("path", "")
+        head = entry.get("head", "")
+        if not isinstance(reason, str) or not isinstance(path, str) or not isinstance(head, str):
+            continue
         kept[key] = entry
     return kept
 

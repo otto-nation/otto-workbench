@@ -297,9 +297,9 @@ def fold_claim_answers(
     """A new answers ledger: `carried`, then this record's derived findings.
 
     Each derived finding with a `stable_id` writes DECLINED/SKIPPED/FALSIFIED
-    (restamping `head`) or drops OPEN/UNREACHED/FIXED. When `record.claims`
-    is not None, keys that are not a remaining claim are dropped.
-    `record.claims is None` keeps every answer. Mutates no argument.
+    (restamping `head`) or drops OPEN/UNREACHED/FIXED. Claim membership does
+    not prune: `()` and a writer round that omits or rewords a claim keep
+    the table. Mutates no argument.
     """
     answers = dict(carried)
     for finding in record.findings:
@@ -312,10 +312,7 @@ def fold_claim_answers(
             )
         else:
             answers.pop(key, None)
-    if record.claims is None:
-        return answers
-    keep = {claim.key for claim in record.claims}
-    return {key: answer for key, answer in answers.items() if key in keep}
+    return answers
 
 
 def _field_dropped(written, loaded, hint) -> bool:

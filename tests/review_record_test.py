@@ -200,6 +200,9 @@ def test_meta_drops_a_claim_answer_it_cannot_read():
             "j": {"disposition": "open"},
             "n": "not-an-object",
             "m": {"disposition": "declined", "reason": "r"},
+            "bad-reason": {"disposition": "declined", "reason": 1},
+            "bad-path": {"disposition": "skipped", "path": 2},
+            "bad-head": {"disposition": "falsified", "head": 3},
         },
     })
     assert meta.repo == "a/b"

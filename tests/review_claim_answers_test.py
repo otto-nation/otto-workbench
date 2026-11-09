@@ -62,14 +62,33 @@ def test_an_open_claim_finding_drops_its_answer(tmp_path, disposition):
     assert c.key not in meta.claim_answers
 
 
-def test_assessed_claims_prune_answers_for_claims_that_are_gone(tmp_path):
+def test_assessed_claims_keep_answers_for_claims_that_are_gone(tmp_path):
     c = claim()
     carried = {
         c.key: ClaimAnswer(Disposition.DECLINED, "r", "a.py", HEAD),
         "deadbeef": ClaimAnswer(Disposition.SKIPPED, "s", "b.py", HEAD),
     }
     meta = _write(tmp_path, record(claims=(c,)), answers=carried)
-    assert set(meta.claim_answers) == {c.key}
+    assert set(meta.claim_answers) == {c.key, "deadbeef"}
+
+
+def test_an_empty_claims_tuple_keeps_the_answers(tmp_path):
+    c = claim()
+    carried = {
+        c.key: ClaimAnswer(Disposition.DECLINED, "r", "a.py", HEAD),
+        "deadbeef": ClaimAnswer(Disposition.SKIPPED, "s", "b.py", HEAD),
+    }
+    meta = _write(tmp_path, record(claims=()), answers=carried)
+    assert set(meta.claim_answers) == {c.key, "deadbeef"}
+
+
+def test_a_round_that_rewords_a_claim_keeps_the_old_answer(tmp_path):
+    old = claim(text="retries back off")
+    new = claim(text="retries no longer back off")
+    carried = {old.key: ClaimAnswer(Disposition.DECLINED, "r", "a.py", HEAD)}
+    meta = _write(tmp_path, record(claims=(new,)), answers=carried)
+    assert old.key != new.key
+    assert old.key in meta.claim_answers
 
 
 def test_unassessed_claims_keep_every_answer(tmp_path):

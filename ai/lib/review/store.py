@@ -91,6 +91,8 @@ def update_review(
         return None
     record = transform(stored.record)
     meta = replace(stored.meta, **meta_changes)
+    # Fold here so the returned sidecar already holds this record's answers.
+    # write_review folds again; that is a no-op on an already-folded table.
     answers = fold_claim_answers(meta.claim_answers, record, meta.head_sha)
     updated = StoredReview(record, replace(meta, claim_answers=answers))
     write_review(review_file, updated.record, updated.meta)

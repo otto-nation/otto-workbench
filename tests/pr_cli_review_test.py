@@ -471,6 +471,28 @@ def test_review_list_does_not_read_the_version_as_a_pr_target(reviews_dir, capsy
     assert doc["reviews"][0]["pr_number"] == 42
 
 
+def test_review_list_if_changed_with_schema_version_exits_0(reviews_dir, capsys):
+    """`--if-changed` is a value-taking flag, so its stamp is not a PR target."""
+    _a_review(reviews_dir, pr_number=42)
+    assert _run_main("review", "--list", "--schema-version", "1",
+                     "--if-changed", "x") in (None, 0)
+    doc = json.loads(capsys.readouterr().out)
+    assert "reviews" in doc
+    assert "stamp" in doc
+
+
+def test_review_list_bare_if_changed_is_a_usage_error_not_an_empty_stamp(capsys):
+    assert _run_main("review", "--list", "--schema-version", "1",
+                     "--if-changed") == cli.pr.EXIT_USAGE
+    assert capsys.readouterr().out == ""
+
+
+def test_review_list_if_changed_without_schema_version_is_usage(capsys):
+    assert _run_main("review", "--list", "--if-changed", "x") == \
+        cli.pr.EXIT_USAGE
+    assert "--if-changed needs --schema-version" in capsys.readouterr().err
+
+
 def test_review_list_records_no_trail(reviews_dir, capsys):
     """The two records a dispatch writes cost more than the listing itself, and
     they land in the file every `otto-log` query then reads. A query that
@@ -541,6 +563,7 @@ def test_review_list_reports_a_missing_root_as_no_reviews(tmp_path, monkeypatch,
     assert json.loads(capsys.readouterr().out) == {
         "schema_version": 1,
         "reviews_root": str(tmp_path / "never-written" / "reviews"),
+        "stamp": review.listing.stamp(),
         "reviews": [],
     }
 

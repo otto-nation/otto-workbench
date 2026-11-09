@@ -35,6 +35,7 @@ from cli.needs import NONE as _NONE
 from cli.needs import NO_LOCK, Need, ReviewMode
 import core.log
 import core.publishing
+from core.tool_parser import EXIT_USAGE
 from core.serde import load_file as serde_load_file
 import pr.context
 from pr.review_sync import sync_review_domain
@@ -201,13 +202,30 @@ def listing(argv: list[str], _ctx: pr.context.ResolvedContext, *,
     declares `ContextDepth.NONE`, so there is no repo, branch, or target here
     and nothing in this function may look for one.
     """
+    if_changed = _if_changed_from_argv(argv)
+    if if_changed is not None and schema_version is None:
+        core.log.error("--if-changed needs --schema-version")
+        return EXIT_USAGE
     if schema_version is None:
         print("\n".join(review.listing.render_table(review.listing.rows())),
               file=sys.stderr)
         return 0
-    json.dump(review.listing.document(schema_version), sys.stdout, indent=2)
+    json.dump(review.listing.document(schema_version, if_changed), sys.stdout,
+              indent=2)
     print()
     return 0
+
+
+def _if_changed_from_argv(argv: Sequence[str]) -> str | None:
+    """The stamp after `--if-changed`, or None when the flag is absent.
+
+    argparse rather than a scan, so a bare `--if-changed` is a usage error
+    instead of an empty stamp that silently reads as "changed".
+    """
+    parser = argparse.ArgumentParser(prog="pr review --list", add_help=False)
+    parser.add_argument("--if-changed")
+    known, _rest = parser.parse_known_args(list(argv))
+    return known.if_changed
 
 
 # The one mode table. `cli.registry` resolves `review`'s need through it,
@@ -258,6 +276,11 @@ def reference_parser(base: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
         "--event", choices=[e.value for e in ReviewEvent],
         help="With --post: what the review says on GitHub (default: comment)",
+    )
+    parser.add_argument(
+        "--if-changed", metavar="stamp",
+        help="With --list --schema-version: answer {\"unchanged\": true} when no "
+             "review changed since the document carrying this stamp",
     )
     return parser
 

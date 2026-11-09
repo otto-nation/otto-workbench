@@ -863,6 +863,7 @@ Takes no flags.
 | `--recover` | Finish a review whose agents failed, at the commit it started from — a mode; excludes the other mode flags. |
 | `--list` | List every review in the user's state root — a mode; excludes the other mode flags. |
 | `--event` `<comment\|approve\|request_changes>` | With --post: what the review says on GitHub (default: comment). |
+| `--if-changed` `<stamp>` | With --list --schema-version: answer {"unchanged": true} when no review changed since the document carrying this stamp. |
 
 **`pr comments`** — Fetch and manage PR review threads
 

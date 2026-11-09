@@ -5,6 +5,7 @@ and the vocabulary as facts, not as whatever the dataclass currently holds.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -376,3 +377,69 @@ def test_a_second_row_reads_usage_from_the_cache(reviews_dir, monkeypatch):
     monkeypatch.setattr(review.paths, "parse_session_log", boom)
     second, = review.listing.rows()
     assert first.cost_usd == second.cost_usd == 0.5
+
+
+# ── stamp / --if-changed ─────────────────────────────────────────────────────
+
+
+def test_stamp_is_equal_across_two_calls(reviews_dir):
+    _review(reviews_dir, repo="acme/widget", pr_number=42)
+    assert review.listing.stamp() == review.listing.stamp()
+
+
+def test_stamp_changes_when_a_file_mtime_changes(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    before = review.listing.stamp()
+    path = d / "review.md"
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    assert review.listing.stamp() != before
+
+
+def test_stamp_changes_when_a_file_is_added(reviews_dir):
+    _review(reviews_dir, repo="acme/widget", pr_number=42)
+    before = review.listing.stamp()
+    (reviews_dir / "extra.txt").write_text("x")
+    assert review.listing.stamp() != before
+
+
+def test_stamp_changes_when_a_file_is_removed(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    extra = d / "notes.txt"
+    extra.write_text("x")
+    before = review.listing.stamp()
+    extra.unlink()
+    assert review.listing.stamp() != before
+
+
+def test_stamp_is_unchanged_when_only_the_usage_cache_is_written(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    before = review.listing.stamp()
+    (d / review.usage_cache.FILENAME_USAGE_CACHE).write_text("{}")
+    assert review.listing.stamp() == before
+
+
+def test_document_if_changed_matching_stamp_skips_rows(reviews_dir, monkeypatch):
+    _review(reviews_dir, repo="acme/widget", pr_number=42)
+    current = review.listing.stamp()
+
+    def boom():
+        raise AssertionError("rows must not run")
+
+    monkeypatch.setattr(review.listing, "rows", boom)
+    doc = review.listing.document(1, if_changed=current)
+    assert doc == {
+        "schema_version": 1,
+        "reviews_root": str(reviews_dir),
+        "stamp": current,
+        "unchanged": True,
+    }
+    assert "reviews" not in doc
+
+
+def test_document_if_changed_mismatch_returns_reviews_and_stamp(reviews_dir):
+    _review(reviews_dir, repo="acme/widget", pr_number=42)
+    doc = review.listing.document(1, if_changed="nope")
+    assert "reviews" in doc
+    assert doc["stamp"] == review.listing.stamp()
+    assert "unchanged" not in doc

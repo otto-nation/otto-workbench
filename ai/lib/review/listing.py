@@ -69,6 +69,11 @@ Rows carry `post` (the latest run's post outcome, including dismissed) and
 `history` (archived runs, newest first, structured where the run archived its
 record). The document carries `reviews_root`.
 
+The document carries `stamp`; `--if-changed STAMP` with the stamp of an earlier
+document answers `{"unchanged": true}` and no `reviews` when nothing under the
+reviews root changed; a consumer that never passes it is unaffected; both are
+optional so the schema does not bump.
+
 **Version policy.** A new *optional* field does not bump `schema_version`. A
 removed field, a renamed field, or a changed type adds a new version.
 Enforcement comes from the supported set being allowed to *shrink* —
@@ -82,6 +87,9 @@ declared and this build agreed to serve, so it cannot go stale on its own.
 
 from __future__ import annotations
 
+import hashlib
+import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -101,7 +109,7 @@ from review.record import load_record
 from review.state import build_failure_detail, read_pipeline_status
 from review.store import StoredReview
 from review.types import SEVERITIES
-from review.usage_cache import UsageCache
+from review.usage_cache import FILENAME_USAGE_CACHE, TEMP_PREFIX, UsageCache
 from review.verdict import open_counts, resolve_review_verdict
 
 # Row-schema versions this build serves, oldest first. See "Version policy" in
@@ -323,20 +331,61 @@ def rows() -> list[ReviewRow]:
     ]
 
 
-def document(schema_version: int) -> dict:
+def stamp(root: Path | None = None) -> str:
+    """Fingerprint of every regular file under the reviews root.
+
+    Each file contributes its relative POSIX path, size and ``st_mtime_ns``.
+    ``usage-cache.json`` and the cache's temp files (names starting
+    ``.usage-cache.json.``) are skipped: the listing writes those itself, so
+    counting them would make every listing look like a change. A deletion
+    changes the stamp because the file set is hashed. A missing root hashes
+    nothing rather than raising.
+    """
+    if root is None:
+        root = core.workbench_paths.reviews_dir()
+    lines = [
+        line
+        for dirpath, _dirnames, filenames in os.walk(root)
+        for name in filenames
+        if (line := _stamp_line(root, Path(dirpath, name))) is not None
+    ]
+    payload = "\n".join(sorted(lines))
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _stamp_line(root: Path, path: Path) -> str | None:
+    """*path*'s relative path, size and mtime as one stamp line, or None for a file it skips."""
+    if path.name == FILENAME_USAGE_CACHE or path.name.startswith(TEMP_PREFIX):
+        return None
+    try:
+        st = path.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    return f"{path.relative_to(root).as_posix()}\0{st.st_size}\0{st.st_mtime_ns}"
+
+
+def document(schema_version: int, if_changed: str | None = None) -> dict:
     """The listing as the versioned document a consumer parses.
 
     The version is echoed back rather than restated from a constant: it is the
     one the caller declared and this build agreed to serve, so a document can
     never claim a version its reader did not ask for.
     """
-    return {
+    # Taken before the rows are read, so a change during the read shows on the
+    # next poll instead of being masked.
+    current = stamp()
+    envelope = {
         "schema_version": schema_version,
         # Where the walk ran, so a consumer can watch it without deriving the
         # path. Optional, so the schema does not bump.
         "reviews_root": str(core.workbench_paths.reviews_dir()),
-        "reviews": [core.serde.to_dict(row) for row in rows()],
+        "stamp": current,
     }
+    if if_changed == current:
+        return {**envelope, "unchanged": True}
+    return {**envelope, "reviews": [core.serde.to_dict(row) for row in rows()]}
 
 
 def render_table(listing: list[ReviewRow]) -> list[str]:

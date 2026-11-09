@@ -3162,6 +3162,11 @@ Rows carry `post` (the latest run's post outcome, including dismissed) and
 `history` (archived runs, newest first, structured where the run archived its
 record). The document carries `reviews_root`.
 
+The document carries `stamp`; `--if-changed STAMP` with the stamp of an earlier
+document answers `{"unchanged": true}` and no `reviews` when nothing under the
+reviews root changed; a consumer that never passes it is unaffected; both are
+optional so the schema does not bump.
+
 **Version policy.** A new *optional* field does not bump `schema_version`. A
 removed field, a renamed field, or a changed type adds a new version.
 Enforcement comes from the supported set being allowed to *shrink* —

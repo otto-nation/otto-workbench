@@ -14,6 +14,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import agent.usage
+import core.log
 import core.trail
 import review.orchestrate
 import review.outcome
@@ -34,9 +35,9 @@ def ledger(tmp_path, monkeypatch):
     return tmp_path / "state" / agent.usage.LEDGER_DIRNAME
 
 
-def _job(tmp_path) -> ReviewJob:
+def _job(tmp_path, pr_number="42") -> ReviewJob:
     return ReviewJob(
-        repo="org/repo", pr_number="42",
+        repo="org/repo", pr_number=pr_number,
         pr=PRMetadata(title="t", body="", head="feat", base="main", head_sha="abc",
                       additions=10, deletions=0, changed_files=1,
                       files=[{"path": "a.py", "additions": 10, "deletions": 0}]),
@@ -47,33 +48,36 @@ def _job(tmp_path) -> ReviewJob:
 
 
 def _row(phase, *, served=None, model=None, thinking=None,
-         invocation=ROOT, repo="org/repo", branch="feat"):
+         invocation=ROOT, repo="org/repo", branch="feat", pr="42"):
     """One ledger row, written by the writer every agent call goes through."""
     agent.usage.record(
         script="review-orchestrate", entry_point="agent", backend="pi", model=model,
         usage=agent.usage.SessionUsage(cost_by_model=served or {}), exit_code=0,
-        repo=repo, pr="42", branch=branch, invocation=invocation, phase=phase,
+        repo=repo, pr=pr, branch=branch, invocation=invocation, phase=phase,
         thinking=thinking,
     )
 
 
 def test_identical_sessions_collapse_in_run_order(tmp_path, ledger):
+    job = _job(tmp_path)
     _row("scout", served={"s": 1})
     _row("group", served={"g": 1}, thinking="low")
     _row("group", served={"g": 1}, thinking="low")
     _row("group", served={"g": 1}, thinking="low")
     _row("synthesis", served={"o": 1}, thinking="high")
     _row("disprove", served={"s": 1})
-    assert review.outcome.models_used(_job(tmp_path)) == (
+    assert review.outcome.models_used(job) == (
         "scout s · group (×3) g (low) · synthesis o (high) · disprove s"
     )
 
 
 def test_only_this_runs_rows_are_read(tmp_path, ledger):
+    job = _job(tmp_path)
     _row("single", served={"m": 1})
     _row("single", served={"m": 1}, invocation="fff000")
     _row("single", served={"m": 1}, branch="other")
     _row("single", served={"m": 1}, repo="org/other")
+    _row("single", served={"m": 1}, pr="43")
     path = ledger / f"{datetime.now(timezone.utc):%Y-%m}.jsonl"
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({
@@ -81,27 +85,56 @@ def test_only_this_runs_rows_are_read(tmp_path, ledger):
             "invocation": ROOT, "repo": "org/repo", "branch": "feat",
             "phase": "single", "model": "old",
         }) + "\n")
-    assert review.outcome.models_used(_job(tmp_path)) == "single m"
+    assert review.outcome.models_used(job) == "single m"
+
+
+# passes-at-base: self-review rows omit pr and already matched without comparing it
+def test_a_self_review_with_no_pr_still_matches(tmp_path, ledger):
+    job = _job(tmp_path, pr_number="")
+    _row("single", served={"m": 1}, pr=None)
+    assert review.outcome.models_used(job) == "single m"
 
 
 def test_the_served_model_wins_over_the_requested_one(tmp_path, ledger):
+    job = _job(tmp_path)
     _row("single", served={"claude-sonnet-5-5": 1}, model="sonnet")
-    assert review.outcome.models_used(_job(tmp_path)) == "single claude-sonnet-5-5"
+    assert review.outcome.models_used(job) == "single claude-sonnet-5-5"
 
 
 def test_a_row_whose_costs_name_two_models_shows_the_requested_one(tmp_path, ledger):
+    job = _job(tmp_path)
     _row("single", served={"a": 1, "b": 1}, model="sonnet")
-    assert review.outcome.models_used(_job(tmp_path)) == "single sonnet"
+    assert review.outcome.models_used(job) == "single sonnet"
 
 
 def test_a_row_naming_no_model_is_left_out(tmp_path, ledger):
+    job = _job(tmp_path)
     _row("single")
     _row("disprove", served={"o": 1})
-    assert review.outcome.models_used(_job(tmp_path)) == "disprove o"
+    assert review.outcome.models_used(job) == "disprove o"
 
 
 def test_no_rows_is_no_line(tmp_path, ledger):
     assert review.outcome.models_used(_job(tmp_path)) == ""
+
+
+def test_a_non_object_ledger_line_is_skipped(tmp_path, ledger):
+    job = _job(tmp_path)
+    _row("single", served={"m": 1})
+    path = ledger / f"{datetime.now(timezone.utc):%Y-%m}.jsonl"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("null\n")
+    assert review.outcome.models_used(job) == "single m"
+
+
+def test_invalid_utf8_in_the_ledger_omits_the_models_line(tmp_path, ledger, monkeypatch):
+    job = _job(tmp_path)
+    warnings = []
+    monkeypatch.setattr(core.log, "warn", warnings.append)
+    ledger.mkdir(parents=True)
+    (ledger / f"{datetime.now(timezone.utc):%Y-%m}.jsonl").write_bytes(b"\xff\xfe not utf-8\n")
+    assert review.outcome.models_used(job) == ""
+    assert len(warnings) == 1
 
 
 def test_the_review_states_its_models_before_the_fix_pass(tmp_path, ledger, monkeypatch):

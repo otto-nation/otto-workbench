@@ -429,6 +429,12 @@ def test_read_ledger_skips_malformed_lines(ledger):
     assert [r["script"] for r in agent.usage.read_ledger()] == ["b"]
 
 
+def test_read_ledger_skips_non_object_lines(ledger):
+    ledger.mkdir(parents=True)
+    (ledger / "2026-08.jsonl").write_text("null\n" + json.dumps({"script": "b"}) + "\n")
+    assert [r["script"] for r in agent.usage.read_ledger()] == ["b"]
+
+
 def _write_month(ledger, month, *records):
     ledger.mkdir(parents=True, exist_ok=True)
     body = "".join(json.dumps(r) + "\n" for r in records)

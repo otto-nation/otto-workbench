@@ -442,6 +442,8 @@ def _ledger_record(line: str, cutoff_ts: str) -> dict | None:
         rec = json.loads(line)
     except json.JSONDecodeError:
         return None
+    if not isinstance(rec, dict):
+        return None
     ts = rec.get("ts", "")
     if cutoff_ts and ts and ts < cutoff_ts:
         return None

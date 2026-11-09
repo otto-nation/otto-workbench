@@ -244,10 +244,19 @@ class TestCommentBody:
                                           models="single m (low)")
         assert body == ""
 
+    # passes-at-base: pins the pre-2b default (no models => byte-identical body)
     def test_no_models_line_when_meta_names_none(self):
         body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
                                           severity_filter={"M"})
         assert "Models:" not in body and "<sub>" not in body
+
+    def test_a_model_id_with_a_newline_stays_one_line(self):
+        body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
+                                          severity_filter={"M"},
+                                          models="single m\nnightly")
+        assert "<sub>Models: single m nightly</sub>" in body
+        inner = body[body.rfind("<sub>"):body.rfind("</sub>")]
+        assert "\n" not in inner
 
 
 class TestCommentBodyDetails:

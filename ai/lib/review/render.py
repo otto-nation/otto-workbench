@@ -238,7 +238,7 @@ def _comment_tail(record: ReviewRecord) -> list[str]:
 
 
 def _models_line(models: str) -> str:
-    return f"Models: {models}"
+    return f"Models: {' '.join(models.split())}"
 
 
 def comment_body(record: ReviewRecord, findings: list[Finding], *,

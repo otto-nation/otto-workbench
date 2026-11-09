@@ -169,14 +169,6 @@ export function stateChanged(paths, runDir) {
   return false;
 }
 
-export const LANES = [
-  { id: 'attention', label: 'Needs you' },
-  { id: 'running', label: 'Running' },
-  { id: 'waiting', label: 'Waiting' },
-  { id: 'done', label: 'Done' },
-  { id: 'closed', label: 'Dropped / closed' },
-];
-
 export function laneOf(item) {
   const status = item?.status;
   if (status === 'running') return 'running';
@@ -186,12 +178,6 @@ export function laneOf(item) {
     return Array.isArray(item.findings) && item.findings.length > 0 ? 'attention' : 'done';
   }
   return 'closed';
-}
-
-export function groupLanes(items) {
-  const buckets = Object.fromEntries(LANES.map((l) => [l.id, []]));
-  for (const item of items ?? []) buckets[laneOf(item)].push(item);
-  return LANES.map((l) => ({ id: l.id, label: l.label, items: buckets[l.id] }));
 }
 
 export function shortKey(key, repos) {

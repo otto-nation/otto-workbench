@@ -5,6 +5,7 @@ import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, 
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import { chip as chipOf, filterGroup, pill, ciMark, addStat, delStat, card, eyebrow, placeholder, scrollBody } from "./_ui/ui.js";
+import { renderCardSteps } from "./workflows_view.js";
 
 const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
 
@@ -19,7 +20,7 @@ function column(col, opts) {
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
-export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, loading }) {
+export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, loading, workflowOf, steps }) {
   const t = theme();
   const mine = tab === "mine";
   const list = mine
@@ -33,7 +34,7 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, 
   if (!shown.length) {
     return board.child(placeholder(loading ? "Loading…" : "No PRs").p(SP.lg));
   }
-  return board.children(shown.map((c) => column(c, { onOpen, spinner, showRepo })));
+  return board.children(shown.map((c) => column(c, { onOpen, spinner, showRepo, workflowOf, steps })));
 }
 
 function badges(pr) {
@@ -49,9 +50,10 @@ function badges(pr) {
   return out;
 }
 
-export function renderCard(pr, { onOpen, spinner, showRepo }) {
+export function renderCard(pr, { onOpen, spinner, showRepo, workflowOf, steps }) {
   const t = theme();
   const mark = pr.ciStatus === "passing" || pr.ciStatus === "failing" || pr.ciStatus === "pending";
+  const item = workflowOf?.(pr);
   return card(cardId(pr)).gap(SP.sm).on_click(() => onOpen(pr))
     .child(div().text_size(TEXT.body).font_medium().max_h(LAYOUT.cardTitleMaxH)
       .overflow_hidden().child(pr.title ?? ""))
@@ -65,7 +67,8 @@ export function renderCard(pr, { onOpen, spinner, showRepo }) {
       .child(div().text_color(t.dim).child(`${pr.changedFiles ?? 0} files`))
       .when(Boolean(mark), (e) => e.child(ciMark(pr.ciStatus)))
       .when(Boolean(pr.reviewing), (e) => e.child(div().text_color(t.working).child(spinner))))
-    .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr)));
+    .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr)))
+    .when(Boolean(item), (e) => e.child(renderCardSteps(item, steps)));
 }
 
 export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {

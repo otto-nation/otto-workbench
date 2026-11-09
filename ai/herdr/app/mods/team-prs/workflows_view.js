@@ -1,14 +1,14 @@
-// Read-only Workflows: grouped list of batch items and a per-item detail page.
+// Batch-run parts for the Mine board and a PR's Workflow tab.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  STEP_ORDER, groupLanes, itemTone, stepTone, shortKey, durationText,
+  STEP_ORDER, itemTone, stepTone, durationText, laneOf,
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
 import { SP, TEXT, LAYOUT, BATCH_COL, RADIUS } from "./_lib/tokens.js";
 import {
-  pill, hoverRow, placeholder, caption, link, emptyPane, scrollBody, pane, mono,
+  pill, hoverRow, placeholder, caption, link, scrollBody, mono,
 } from "./_ui/ui.js";
 
 function itemColor(t, status) {
@@ -50,42 +50,28 @@ function pretty(s) {
   return String(s ?? "").replace(/_/g, " ");
 }
 
-function reposOf(items) {
-  return [...new Set((items ?? []).map((i) => i.repo).filter(Boolean))];
-}
-
-function renderEmpty(loading, error, viewSwitch) {
-  const msg = loading ? "Loading runs…" : (error ? (error.message ?? String(error)) : "No batch runs on this machine");
-  return emptyPane()
-    .when(Boolean(viewSwitch), (e) => e.child(viewSwitch))
-    .child(placeholder(msg));
-}
-
-function renderHeader(state) {
+export function renderRunBar(state) {
   const t = theme();
-  const { on, runs, runId, doc, viewSwitch, showRuns, nowMs, onPickRun, onToggleRuns, onRefresh } = state;
+  const { runs, runId, doc, error, loading, showRuns, nowMs, onPickRun, onToggleRuns } = state;
+  const bar = h_flex().px(SP.lg).py(SP.xs).gap(SP.md).items_center().flex_wrap().flex_none();
+  if (loading && !runs.length) return bar.child(caption("Loading batch runs…"));
+  if (error) return bar.child(caption(error.message ?? String(error), t.dim));
+  if (!runs.length) return bar.child(caption("No batch runs on this machine", t.dim));
   const latest = runId == null || runId === runs[0]?.id;
   const picked = runs.find((r) => r.id === (runId ?? runs[0]?.id));
   const status = doc?.run?.status ?? picked?.status;
   const n = doc?.items?.length ?? picked?.items ?? 0;
   const started = relativeTime(doc?.run?.startedAt ?? picked?.startedAt ?? "", nowMs);
   const earlier = runs.length - 1;
-  return h_flex().id("batch-header").min_h(LAYOUT.headerH).flex_none().flex_wrap()
-    .px(SP.lg).py(SP.sm).gap(SP.md).items_center()
-    .when(Boolean(viewSwitch), (e) => e.child(viewSwitch))
-    .child(div().flex_none().text_size(TEXT.title).font_semibold().child("Workflows"))
-    .child(pill(on ?? "This computer"))
-    .child(h_flex().flex_none().gap(SP.xs).items_center().text_size(TEXT.small)
-      .child(div().text_color(t.foreground).child(latest ? "Latest run" : "Earlier run"))
-      .child(div().text_color(t.muted).child(`· started ${started} · ${prCount(n)} ·`))
-      .child(div().text_color(runColor(t, status)).child(runWord(status))))
+  return bar
+    .child(div().text_size(TEXT.small).text_color(t.foreground).child(latest ? "Latest run" : "Earlier run"))
+    .child(div().text_size(TEXT.small).text_color(t.muted).child(`· started ${started} · ${prCount(n)} ·`))
+    .child(div().text_size(TEXT.small).text_color(runColor(t, status)).child(runWord(status)))
     .when(!latest, (e) => e.child(link("wf-latest", "Back to latest", () => onPickRun(null))))
-    .when(earlier > 0, (e) => e.child(link("wf-runs", showRuns ? "Hide earlier runs" : `Earlier runs (${earlier})`, onToggleRuns)))
-    .child(div().flex_1().min_w(0))
-    .child(link("wf-refresh", "Refresh", onRefresh));
+    .when(earlier > 0, (e) => e.child(link("wf-runs", showRuns ? "Hide earlier runs" : `Earlier runs (${earlier})`, onToggleRuns)));
 }
 
-function renderRunList(state) {
+export function renderRunList(state) {
   const t = theme();
   const { runs, runId, nowMs, onPickRun } = state;
   const current = runId ?? runs[0]?.id;
@@ -103,95 +89,21 @@ function renderRunList(state) {
 }
 
 // The steps this run was asked for, in pipeline order: a step it never ran gets no column.
-function runSteps(doc) {
+export function runSteps(doc) {
   const asked = doc?.run?.steps ?? [];
   const steps = STEP_ORDER.filter((s) => asked.includes(s));
   return steps.length ? steps : STEP_ORDER;
 }
 
-function colHead(label, w) {
+export function renderCardSteps(item, steps) {
   const t = theme();
-  const el = div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(label);
-  return w != null ? el.w(w) : el.min_w(0).flex_1();
-}
-
-function renderColumns(steps) {
-  return h_flex().id("batch-columns").flex_none().px(SP.md)
-    .child(h_flex().flex_1().px(SP.md).gap(SP.md).items_center()
-      .child(colHead("", BATCH_COL.key))
-      .child(colHead("Status", BATCH_COL.status))
-      .children(steps.map((step) => colHead(step, BATCH_COL.step)))
-      .child(colHead("Notes")));
-}
-
-function stepMark(item, name) {
-  const t = theme();
-  const rec = item.steps?.[name] ?? null;
-  const color = rec == null ? t.dim : stepColor(t, rec.status);
-  return div().flex_none().w(BATCH_COL.step).truncate().text_size(TEXT.small).text_color(color)
-    .child(rec == null ? "—" : pretty(rec.status));
-}
-
-function notesOf(item) {
-  const t = theme();
-  const n = item.findings?.length ?? 0;
-  return h_flex().min_w(0).flex_1().gap(SP.xs).items_center()
-    .when(item.headMoved, (e) => e.child(pill("head moved", t.ansi3)))
-    .when(n > 0, (e) => e.child(pill(n === 1 ? "1 finding" : `${n} findings`, t.ansi3)))
-    .when(Boolean(item.waitReason), (e) => e.child(
-      div().min_w(0).truncate().child(caption(item.waitReason, t.muted))));
-}
-
-function renderRow(item, repos, steps, onOpenItem) {
-  const t = theme();
-  return hoverRow(`row-${item.key}`).flex().items_center()
-    .px(SP.md).py(SP.sm).gap(SP.md).rounded(RADIUS.control)
-    .border_1().border_color(t.border).bg(t.background)
-    .on_click(() => onOpenItem(item.key))
-    .child(v_flex().flex_none().w(BATCH_COL.key).min_w(0)
-      .child(div().text_size(TEXT.title).font_medium().child(shortKey(item.key, repos)))
-      .child(div().text_size(TEXT.caption).text_color(t.dim).truncate().child(item.branch ?? "")))
-    .child(h_flex().flex_none().w(BATCH_COL.status)
-      .child(pill(pretty(item.status), itemColor(t, item.status))))
-    .children(steps.map((name) => stepMark(item, name)))
-    .child(notesOf(item));
-}
-
-function renderLane(lane, state, repos) {
-  const t = theme();
-  const { collapsed, onToggleLane, onOpenItem } = state;
-  const open = !collapsed.has(lane.id);
-  return v_flex().id(`lane-${lane.id}`).flex_none().gap(SP.xs)
-    .child(hoverRow(`lane-head-${lane.id}`).flex().items_center().px(SP.sm).py(SP.xs).gap(SP.sm)
-      .on_click(() => onToggleLane(lane.id))
-      .child(div().text_size(TEXT.small).text_color(t.muted).child(open ? "▾" : "▸"))
-      .child(div().text_size(TEXT.small).font_semibold().text_color(t.muted).child(lane.label))
-      .child(caption(String(lane.items.length))))
-    .when(open, (e) => e.children(lane.items.map((item) => renderRow(item, repos, runSteps(state.doc), onOpenItem))));
-}
-
-function renderList(items, state) {
-  const repos = reposOf(items);
-  if (state.showRuns) return v_flex().flex_1().min_h(0).child(renderHeader(state)).child(renderRunList(state));
-  return v_flex().flex_1().min_h(0)
-    .child(renderHeader(state))
-    .child(renderColumns(runSteps(state.doc)))
-    .child(scrollBody().px(SP.md).pb(SP.lg).gap(SP.xs)
-      .children(groupLanes(items)
-        .filter((lane) => lane.items.length > 0)
-        .map((lane) => renderLane(lane, state, repos))));
-}
-
-function renderDetailHeader(item, state) {
-  const t = theme();
-  return h_flex().flex_none().px(SP.lg).py(SP.sm).gap(SP.md).items_center()
-    .border_b_1().border_color(t.border)
-    .child(link("wf-back", "← Workflows", state.onBack))
-    .child(div().min_w(0).text_size(TEXT.title).font_semibold().child(item.key ?? ""))
-    .child(pill(pretty(item.status), itemColor(t, item.status)))
-    .child(div().min_w(0).truncate().child(caption(item.branch ?? "", t.dim)))
-    .child(div().flex_1().min_w(0))
-    .child(link("wf-refresh-detail", "Refresh", state.onRefresh));
+  return h_flex().gap(SP.sm).flex_wrap().items_center().text_size(TEXT.caption)
+    .children((steps ?? []).flatMap((name) => {
+      const rec = item.steps?.[name] ?? null;
+      if (rec == null) return [];
+      return [div().text_color(stepColor(t, rec.status)).child(`${name} ${pretty(rec.status)}`)];
+    }))
+    .when(laneOf(item) === "attention", (e) => e.child(pill("needs you", t.ansi3)));
 }
 
 function renderStepRow(item, name, state) {
@@ -257,33 +169,20 @@ function renderLogPane(item, state) {
     .child(scrollBody().flex_1().px(SP.md).py(SP.sm).child(body));
 }
 
-function renderDetail(item, state) {
+export function renderItemBody(item, state) {
   const t = theme();
   const findings = renderFindings(item);
-  return v_flex().flex_1().min_h(0)
-    .child(renderDetailHeader(item, state))
-    .child(h_flex().flex_1().min_h(0)
-      .child(v_flex().w(LAYOUT.colMin + LAYOUT.colMin).flex_none().min_h(0)
-        .overflow_y_scrollbar().px(SP.lg).py(SP.md).gap(SP.md)
-        .child(v_flex().gap(SP.xs)
-          .when(Boolean(item.worktree), (e) => e.child(
-            caption(item.worktree).font_family(mono())))
-          .when(Boolean(item.waitReason), (e) => e.child(caption(item.waitReason, t.ansi3)))
-          .when(item.headMoved, (e) => e.child(pill("head moved", t.ansi3))))
-        .child(div().text_size(TEXT.small).font_semibold().text_color(t.muted).child("Steps"))
-        .children(runSteps(state.doc).map((name) => renderStepRow(item, name, state)))
-        .when(Boolean(findings), (e) => e.child(findings)))
-      .child(v_flex().flex_1().min_w(0).min_h(0).border_l_1().border_color(t.border)
-        .child(renderLogPane(item, state))));
-}
-
-export function renderWorkflows(state) {
-  const { runs, doc, error, loading, viewSwitch, openKey } = state;
-  if (error) return renderEmpty(false, error, viewSwitch);
-  if (loading && !runs.length) return renderEmpty(true, null, viewSwitch);
-  if (!runs.length) return renderEmpty(false, null, viewSwitch);
-  const items = doc?.items ?? [];
-  const open = openKey ? items.find((i) => i.key === openKey) : null;
-  return pane("workflows").text_size(TEXT.body)
-    .child(open ? renderDetail(open, state) : renderList(items, state));
+  return h_flex().flex_1().min_h(0)
+    .child(v_flex().w(LAYOUT.colMin + LAYOUT.colMin).flex_none().min_h(0)
+      .overflow_y_scrollbar().px(SP.lg).py(SP.md).gap(SP.md)
+      .child(v_flex().gap(SP.xs)
+        .when(Boolean(item.worktree), (e) => e.child(
+          caption(item.worktree).font_family(mono())))
+        .when(Boolean(item.waitReason), (e) => e.child(caption(item.waitReason, t.ansi3)))
+        .when(item.headMoved, (e) => e.child(pill("head moved", t.ansi3))))
+      .child(div().text_size(TEXT.small).font_semibold().text_color(t.muted).child("Steps"))
+      .children(runSteps(state.doc).map((name) => renderStepRow(item, name, state)))
+      .when(Boolean(findings), (e) => e.child(findings)))
+    .child(v_flex().flex_1().min_w(0).min_h(0).border_l_1().border_color(t.border)
+      .child(renderLogPane(item, state)));
 }

@@ -1,7 +1,9 @@
 // team-prs entry: the board, with a PR's detail shown in the same pane when a card is opened.
+import { div } from "gpui-kit";
 import { exec, readTextFile, run, notify, spaces } from "herdr";
 import Board from "./board_view.js";
 import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.js";
+import { renderItemBody } from "./workflows_view.js";
 import { renderFileList, renderDiff } from "./files_view.js";
 import { MONO } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
@@ -271,6 +273,8 @@ export default class TeamPrs extends Board {
       Object.assign(this.detail, { files: sum.files, additions: sum.add, deletions: sum.del, generated: sum.generated });
     }
     const file = this.openFile && files?.files?.find((f) => f.path === this.openFile);
+    const item = this.workflows.itemFor(this.detail.repo, this.detail.number);
+    if (item && this.tab === "workflow") this.workflows.openItem(item.key);
     return renderDetail(this.detail, {
       nowMs: Date.now(),
       openStamp: this.openStamp,
@@ -292,6 +296,7 @@ export default class TeamPrs extends Board {
       filesBody: file && (this.diff || file.loadingPatch)
         ? renderDiff(file, this.diff, { onBack: () => { this.openFile = null; this.diff = null; this.acx.notify(); } })
         : renderFileList(files, { onPick: (path) => this.pickFile(path) }),
+      workflowBody: item ? (this.tab === "workflow" ? renderItemBody(item, this.workflows.bodyState()) : div()) : null,
       reviewState: openForReviewState(this.detail),
       onReview: () => this.openForReview(),
       onClose: () => this.closeDetail(cx),

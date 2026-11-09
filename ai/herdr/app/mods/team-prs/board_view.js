@@ -18,6 +18,7 @@ import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
+import { renderRunBar, renderRunList, runSteps } from "./workflows_view.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
 
@@ -27,10 +28,6 @@ function ctxOf() {
 
 function scopeOf() {
   return shared("team-prs.scope") === "all" ? "all" : "this";
-}
-
-function viewModeOf() {
-  return shared("team-prs.view") === "workflows" ? "workflows" : "prs";
 }
 
 // The checkouts the board reads: the pinned or focused one, or every open space's.
@@ -116,14 +113,6 @@ export default class TeamPrs extends View {
     this.listingByOn.clear();
     this.refresh(this.acx);
     this.acx.notify();
-  }
-
-  viewSwitch() {
-    const mode = viewModeOf();
-    return segmented([
-      segment("view-prs", "PRs", mode === "prs", () => setShared("team-prs.view", "prs")),
-      segment("view-workflows", "Workflows", mode === "workflows", () => setShared("team-prs.view", "workflows")),
-    ]);
   }
 
   refreshButton() {
@@ -327,11 +316,8 @@ export default class TeamPrs extends View {
   }
 
   render(cx) {
-    if (viewModeOf() === "workflows") {
-      this.workflows.show();
-      return this.workflows.view(this.viewSwitch());
-    }
-    this.workflows.hide();
+    if (tabOf() === "mine") this.workflows.show();
+    else this.workflows.hide();
     const t = theme();
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
@@ -393,7 +379,6 @@ export default class TeamPrs extends View {
 
   compactHeader(tab, t) {
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
-      .child(h_flex().child(this.viewSwitch()))
       .child(h_flex().child(this.scopeToggle()))
       .child(h_flex().items_center().justify_between()
         .child(segmented([
@@ -442,11 +427,15 @@ export default class TeamPrs extends View {
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
-      .child(renderBoard({
+      .when(tab === "mine", (e) => e.child(renderRunBar(this.workflows.barState())))
+      .when(tab === "mine" && this.workflows.showRuns, (e) => e.child(renderRunList(this.workflows.barState())))
+      .when(!(tab === "mine" && this.workflows.showRuns), (e) => e.child(renderBoard({
         tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
-      }));
+        workflowOf: tab === "mine" ? (pr) => this.workflows.itemFor(pr.repoSlug, pr.number) : null,
+        steps: runSteps(this.workflows.doc),
+      })));
   }
 
   header(ctx, state, tab, pin, t) {
@@ -459,7 +448,6 @@ export default class TeamPrs extends View {
     const pinned = (e) => e.child(chip("pin", pin ? "pinned" : "pin", Boolean(pin), () => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
-      .child(this.viewSwitch())
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
         .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))

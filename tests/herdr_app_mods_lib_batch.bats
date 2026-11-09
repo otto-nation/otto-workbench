@@ -206,14 +206,6 @@ _parse() {
   jq -e '.running=="running" and .queued=="waiting" and .waiting_admission=="waiting" and .awaiting_decision=="attention" and .needs_session=="attention" and .ready_to_publish=="attention" and .done=="done" and .doneFindings=="attention" and .dropped=="closed" and .skipped_closed=="closed" and .unknown=="closed" and .nil=="closed"' <<<"$output"
 }
 
-@test "groupLanes keeps LANES order, given item order, and empty lanes" {
-  _js 'm.groupLanes([{key:"a",status:"done"},{key:"b",status:"running"},{key:"c",status:"queued"},{key:"d",status:"running"}])'
-  [ "$status" -eq 0 ]
-  jq -e '([.[].id] == ["attention","running","waiting","done","closed"]) and ([.[].label] == ["Needs you","Running","Waiting","Done","Dropped / closed"]) and .[0].items == [] and ([.[1].items[].key] == ["b","d"]) and ([.[2].items[].key] == ["c"]) and ([.[3].items[].key] == ["a"]) and .[4].items == []' <<<"$output"
-  _js 'm.groupLanes([])'
-  jq -e 'length == 5 and all(.[]; .items == [])' <<<"$output"
-}
-
 @test "shortKey single repo hashes, otherwise full or empty" {
   _js 'm.shortKey("o/r#1905", ["o/r"])'
   [ "$status" -eq 0 ]

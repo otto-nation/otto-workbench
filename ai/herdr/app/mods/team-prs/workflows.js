@@ -1,11 +1,10 @@
-// Workflows: a read-only list of `pr batch` runs on the focused space's machine.
+// Workflows: the focused space's machine's `pr batch` runs, shown on Mine and a PR's Workflow tab.
 import { exec, watchFolder } from "herdr";
 import {
   listArgv, statusArgv, logTailArgv, parseRunList, parseRunDoc, stateChanged,
   STEP_ORDER,
 } from "./_lib/batch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
-import { renderWorkflows } from "./workflows_view.js";
 
 function ctxKey(ctx) {
   return String(ctx?.on ?? "");
@@ -41,7 +40,6 @@ export class Workflows {
     this.step = null;
     this.log = null;
     this.showRuns = false;
-    this.collapsed = new Set(["closed"]);
     this.inflight = this.again = false;
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
     // click still starts its own read.
@@ -82,30 +80,35 @@ export class Workflows {
     this.visible = false;
   }
 
-  view(viewSwitch) {
+  itemFor(slug, number) {
+    const want = `${slug}#${number}`.toLowerCase();
+    return this.doc?.items?.find((i) => String(i.key ?? "").toLowerCase() === want) ?? null;
+  }
+
+  barState() {
     const ctx = this.ctxOf();
-    return renderWorkflows({
+    return {
       on: ctx.on,
       runs: this.runs,
       runId: this.runId,
       doc: this.doc,
       error: this.error,
       loading: this.loading,
-      openKey: this.openKey,
-      step: this.step,
-      log: this.log,
       showRuns: this.showRuns,
-      collapsed: this.collapsed,
-      viewSwitch,
       nowMs: Date.now(),
       onPickRun: (id) => this.pickRun(id),
-      onOpenItem: (key) => this.openItem(key),
-      onBack: () => this.back(),
-      onStep: (step) => this.selectStep(step),
       onToggleRuns: () => this.toggleRuns(),
-      onToggleLane: (id) => this.toggleLane(id),
-      onRefresh: () => this.refresh(this.acx),
-    });
+    };
+  }
+
+  bodyState() {
+    return {
+      step: this.step,
+      log: this.log,
+      nowMs: Date.now(),
+      onStep: (s) => this.selectStep(s),
+      doc: this.doc,
+    };
   }
 
   refresh(cx) {
@@ -212,18 +215,12 @@ export class Workflows {
   }
 
   openItem(key) {
+    if (this.openKey === key) return;
     this.openKey = key;
     const item = this.doc?.items?.find((i) => i.key === key);
     this.step = defaultStep(item);
     this.log = null;
     if (this.step) this.loadLog(this.acx);
-    this.acx.notify();
-  }
-
-  back() {
-    this.openKey = null;
-    this.step = null;
-    this.log = null;
     this.acx.notify();
   }
 
@@ -236,12 +233,6 @@ export class Workflows {
 
   toggleRuns() {
     this.showRuns = !this.showRuns;
-    this.acx.notify();
-  }
-
-  toggleLane(id) {
-    if (this.collapsed.has(id)) this.collapsed.delete(id);
-    else this.collapsed.add(id);
     this.acx.notify();
   }
 

@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`team-prs` — Workflows is a view inside the board, switched by PRs | Workflows in its header, `_lib`, …).
+Conventions for the mods under this directory (`team-prs` — Mine shows the machine's latest `pr batch` run (Earlier runs to pick another) and each of your PRs' step states; a PR's detail has a Workflow tab with its steps, findings and the selected step's log, `_lib`, …).
 
 ## Where things live
 

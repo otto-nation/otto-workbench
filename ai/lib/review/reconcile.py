@@ -51,6 +51,7 @@ from pathlib import Path
 import git.client
 import core.log
 import core.serde
+import review.convergence
 from review.grammar import SID_MARKER_RE
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
@@ -436,8 +437,7 @@ def _declined_and_untouched(finding: PriorFinding, changed: frozenset[str] | Non
     "Declined" again is the cost with no answer it could change. Unknown change
     set, or no file named, settles nothing.
     """
-    path = finding.ref.path
-    return finding.declined and bool(path) and changed is not None and path not in changed
+    return finding.declined and review.convergence.untouched(finding.ref.path, changed)
 
 
 def reconcile(

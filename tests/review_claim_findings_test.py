@@ -18,7 +18,7 @@ from review.claim_types import ClaimSource, ClaimVerdict
 from review.record import Disposition
 from review.render import render_body
 from review.store import StoredReview
-from review.types import FindingOrigin, ReviewMeta
+from review.types import ClaimAnswer, FindingOrigin, PreflightData, ReviewMeta
 from review_claims_support import claim
 from review_convergence_support import review_job
 from review_record_support import finding, record
@@ -337,8 +337,19 @@ def _prior_answered(tmp_path, rec, disposition, reason=""):
     job = _settle_job(tmp_path)
     first = review.claims.settle(job, rec)
     derived = next(f for f in first.findings if f.origin is FindingOrigin.CLAIM)
-    answered = replace(derived, disposition=disposition, reason=reason)
-    job.prior = StoredReview(replace(first, findings=(answered,)), ReviewMeta())
+    job.prior = StoredReview(first, ReviewMeta(
+        head_sha="p" * 40,
+        claim_answers={
+            derived.stable_id: ClaimAnswer(
+                disposition, reason, derived.path, "p" * 40,
+            ),
+        },
+    ))
+    job.preflight = PreflightData(
+        diff="", commit_log="", file_contents={}, file_permissions={},
+        instructions_md="", architecture_md="",
+        delta_files=["b.py"], prior_head_sha="p" * 40,
+    )
     return job, derived
 
 
@@ -389,3 +400,16 @@ def test_a_changed_claim_derives_open(tmp_path):
     assert got.disposition is Disposition.OPEN
     assert got.reason == ""
     assert got.stable_id != prior.stable_id
+
+
+def test_a_prior_record_alone_carries_no_answer(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.CONTRADICTED),))
+    job = _settle_job(tmp_path)
+    first = review.claims.settle(job, rec)
+    derived = next(f for f in first.findings if f.origin is FindingOrigin.CLAIM)
+    answered = replace(derived, disposition=Disposition.DECLINED, reason="author's call")
+    job.prior = StoredReview(replace(first, findings=(answered,)), ReviewMeta())
+    out = review.claims.settle(job, rec)
+    got = next(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
+    assert got.disposition is Disposition.OPEN
+    assert got.reason == ""

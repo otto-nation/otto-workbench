@@ -85,6 +85,7 @@ from dataclasses import replace
 
 from core.phases import Mode
 import review.budget
+import review.convergence
 import review.focus
 import review.merge
 import review.verify
@@ -93,7 +94,7 @@ from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerd
 from review.grammar import strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
 from review.record import Disposition, RecordFinding, ReviewRecord
-from review.types import FindingOrigin, ReviewJob
+from review.types import ClaimAnswer, FindingOrigin, ReviewJob
 
 CLAIM_KINDS = frozenset({
     IngestErrorKind.MISSING_CLAIMS,
@@ -316,33 +317,21 @@ def derived_findings(
     return tuple(out)
 
 
-def _prior_derived(job: ReviewJob) -> dict[str, RecordFinding]:
-    if job.prior is None:
-        return {}
+def live_answers(
+    job: ReviewJob, answers: dict[str, ClaimAnswer],
+) -> dict[str, ClaimAnswer]:
+    """Answers that still hold for this run (OD-3)."""
+    # ceiling: an unanchored FALSIFIED answer holds until the claim's wording
+    # changes. Upgrade trigger: once a review is seen suppressing an
+    # unsupported claim the code has since stopped supporting.
+    changed = review.convergence.change_set(job)
+    head = job.pr.head_sha
     return {
-        f.stable_id: f
-        for f in job.prior.record.findings
-        if f.derived and f.stable_id
+        key: answer
+        for key, answer in answers.items()
+        if not answer.path or answer.head == head
+        or review.convergence.untouched(answer.path, changed)
     }
-
-
-def _carry_derived(
-    finding: RecordFinding, prior: dict[str, RecordFinding],
-) -> RecordFinding | None:
-    """Copy a prior DECLINED/SKIPPED, or drop a FALSIFIED same stable_id.
-
-    Empty *prior* (job.prior None) leaves the finding OPEN. A prior derived
-    finding that was FALSIFIED is in findings but not visible; it is not
-    re-derived.
-    """
-    old = prior.get(finding.stable_id)
-    if old is None:
-        return finding
-    if old.disposition is Disposition.FALSIFIED:
-        return None
-    if old.disposition in (Disposition.DECLINED, Disposition.SKIPPED):
-        return replace(finding, disposition=old.disposition, reason=old.reason)
-    return finding
 
 
 def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
@@ -356,15 +345,15 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     len(derived) visible findings. append_findings adds newcomers at the end;
     _rewrite_record keeps claim order and length, so derived_at still lines
     up, and starting after the append keeps rewritten links and evidence.
-    stable_id is not unique per claim — two unsupported claims that share
-    a first line hash alike.
+    Two claims share a stable_id when they share a source and the same
+    collapsed text.
 
-    A derived finding whose stable_id matches a prior derived finding that
-    was DECLINED or SKIPPED carries that disposition and reason. A prior
-    derived finding that was FALSIFIED (in prior.record.findings, not
-    visible) is not re-derived for that stable_id: the claim stays
-    contradicted or unsupported with no finding. job.prior None leaves
-    every derived finding OPEN.
+    Live prior answers (`job.prior.meta.claim_answers`) set a derived
+    finding's disposition: DECLINED or SKIPPED is copied with its reason;
+    FALSIFIED is not re-derived, so the claim stays contradicted or
+    unsupported with no finding. A run without a prior, or without a live
+    answer for that claim key, leaves every derived finding OPEN. A prior
+    record's derived dispositions are not read.
     """
     if record.claims is None:
         return record
@@ -376,7 +365,7 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     derived = derived_findings(claims, checkbox=job.mode is Mode.SELF)
     if not derived:
         return record
-    prior = _prior_derived(job)
+    answers = live_answers(job, job.prior.meta.claim_answers if job.prior else {})
     kept: list[RecordFinding] = []
     kept_at: list[int] = []
     for index, finding in zip(
@@ -384,10 +373,16 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
         derived,
         strict=True,
     ):
-        carried = _carry_derived(finding, prior)
-        if carried is None:
+        answer = answers.get(claims[index].key)
+        if answer is not None and answer.disposition is Disposition.FALSIFIED:
             continue
-        kept.append(carried)
+        if answer is not None and answer.disposition in (
+            Disposition.DECLINED, Disposition.SKIPPED,
+        ):
+            finding = replace(
+                finding, disposition=answer.disposition, reason=answer.reason,
+            )
+        kept.append(finding)
         kept_at.append(index)
     derived = tuple(kept)
     if not derived:

@@ -60,6 +60,11 @@ def change_set(job: ReviewJob) -> frozenset[str] | None:
     return None
 
 
+def untouched(path: str, changed: frozenset[str] | None) -> bool:
+    """A judgement about a file holds while the file is outside the change set."""
+    return bool(path) and changed is not None and path not in changed
+
+
 def anchor_key(path: str, line: int | None) -> str:
     """How a sticky skip names its anchor: `path:line`, with 0 for a line-less finding."""
     return f"{path}:{line or 0}"

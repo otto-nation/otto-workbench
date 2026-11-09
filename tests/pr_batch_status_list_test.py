@@ -84,10 +84,11 @@ def test_list_keeps_a_run_whose_state_does_not_fit_a_run(capsys):
     assert "error" in doc["runs"][1] and "error" not in doc["runs"][0]
 
 
-def test_list_refuses_a_run_id_and_full():
+def test_list_refuses_a_run_id_full_and_offline():
     _minimal_run("r1")
     assert _main(["batch", "status", "--list", "r1"]) == 1
     assert _main(["batch", "status", "--list", "--full"]) == 1
+    assert _main(["batch", "status", "--list", "--offline"]) == 1
 
 
 def test_list_with_no_runs_is_empty(capsys):

@@ -4252,6 +4252,7 @@ Markdown and stdout projections of a session report dict.
 
 Rendered from the JSON only. Filing commands go in a trailing
 "File follow-up issues (only on request)" block, never on the stdout line.
+Each finding renders its reason, detail, files, log path and remedy.
 
 ### batch/requests.py
 

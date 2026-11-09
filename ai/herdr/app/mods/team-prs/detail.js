@@ -4,7 +4,7 @@ import { theme, settings } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
 import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented } from "./ui.js";
+import { segment, segmented, button, pill, inset } from "./ui.js";
 
 // The user's terminal font, so code-like text follows their settings.
 export function mono() {
@@ -12,16 +12,6 @@ export function mono() {
 }
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
-
-// Buttons stop the press so only the bare header drags the window.
-function button(id, label, onClick) {
-  const t = theme();
-  return div().id(id).px(SP.sm).min_h(CONTROL_H.board).flex().items_center()
-    .rounded(RADIUS.control).text_size(TEXT.caption).cursor_pointer()
-    .border_1().border_color(t.border).hover((s) => s.bg(t.hover).border_color(t.dim))
-    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-    .on_click(() => onClick()).child(label);
-}
 
 function postTone(tone) {
   const t = theme();
@@ -42,8 +32,7 @@ function reviewBody(stamp, body) {
 
 function reviewInset(stamp, body) {
   const t = theme();
-  return div().mt(SP.sm).p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
-    .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar().child(reviewBody(stamp, body));
+  return inset().mt(SP.sm).child(reviewBody(stamp, body));
 }
 
 // Enabled actions as buttons; when none is enabled, the first reason says why. A post action
@@ -91,8 +80,7 @@ export function renderOutput(output, { onHide, onTab }) {
       .child(h_flex().gap(SP.sm)
         .child(button("out-tab", "Open as tab", onTab))
         .child(button("out-hide", "Hide", onHide))))
-    .child(v_flex().p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
-      .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar().text_size(TEXT.caption).font_family(mono())
+    .child(inset().flex().flex_col().text_size(TEXT.caption).font_family(mono())
       .when(output.text == null, (e) => e.child(div().text_color(t.dim).child("loading…")))
       .when(output.text != null && !lines.length, (e) => e.child(div().text_color(t.dim).child("no output yet")))
       .children(lines.map((l) => div().child(l === "" ? " " : l))));
@@ -108,10 +96,7 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
     .child(h_flex().gap(SP.sm).flex_wrap().items_center().justify_between()
       .child(button("detail-back", "← Back", () => onClose()))
       .child(h_flex().gap(SP.sm).flex_wrap()
-        .child(reviewState.enabled
-          ? button("detail-review", "Open for Review", () => onReview())
-          : div().px(SP.sm).min_h(CONTROL_H.board).flex().items_center().rounded(RADIUS.control)
-            .text_size(TEXT.caption).text_color(t.dim).border_1().border_color(t.border).child("Open for Review"))
+        .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled }))
         .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))))
     .when(!reviewState.enabled, (e) => e.child(
       div().text_size(TEXT.caption).text_color(t.dim).child(reviewState.reason)))
@@ -128,12 +113,6 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
       .child(div().child(d.decision ? String(d.decision).toLowerCase().replace(/_/g, " ") : "")));
 }
 
-function postPill(post) {
-  const t = theme();
-  return div().px(SP.sm).py(1).rounded(RADIUS.control).border_1().border_color(t.border)
-    .text_size(TEXT.caption).text_color(postTone(post.tone)).child(post.label);
-}
-
 function runCard(r, { openStamp, bodyFor, onToggle }) {
   const t = theme();
   return v_flex().id(`run-${r.stamp}`).p(SP.md).gap(SP.xs).rounded(RADIUS.card).border_1()
@@ -144,7 +123,7 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
       .child(div().text_size(TEXT.caption).text_color(t.dim).child(r.when))
       .child(div().text_size(TEXT.caption).text_color(t.dim).child(r.shortSha)))
     .child(div().text_size(TEXT.small).child(r.findingsText))
-    .child(h_flex().gap(SP.sm).items_center().child(postPill(r.post))
+    .child(h_flex().gap(SP.sm).items_center().child(pill(r.post.label, postTone(r.post.tone)))
       .when(Boolean(r.costText), (e) => e.child(
         div().text_size(TEXT.caption).text_color(t.dim).child(r.costText))))
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));

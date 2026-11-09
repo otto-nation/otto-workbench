@@ -6,6 +6,7 @@ import { theme } from "herdr";
 import { MAX_LINES } from "./_lib/diff.js";
 import { mono } from "./detail.js";
 import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
+import { button } from "./ui.js";
 
 const ROW_H = 20;
 // Monospace glyph width is about 0.62 of its size; the gutter holds five digits.
@@ -64,9 +65,7 @@ export function renderDiff(file, diff, { onBack }) {
   const note = file.patch == null ? "No text diff for this file (binary or too large)" : null;
   return v_flex().id("prs-diff").flex_1().min_h(0)
     .child(h_flex().flex_none().gap(SP.sm).items_center().px(SP.lg).py(SP.sm).border_b_1().border_color(t.border)
-      .child(div().id("diff-back").px(SP.sm).h(24).flex().items_center().rounded(RADIUS.control)
-        .text_size(TEXT.caption).cursor_pointer().border_1().border_color(t.border)
-        .hover((s) => s.bg(t.hover).border_color(t.dim)).on_click(() => onBack()).child("← Files"))
+      .child(button("diff-back", "← Files", onBack))
       .child(div().flex_1().min_w(0).truncate().text_size(TEXT.small).child(file.path)))
     .when(Boolean(note), (e) => e.child(div().p(SP.lg).text_color(t.dim).child(note)))
     .when(!note, (e) => e.child(div().flex_1().min_h(0).relative().font_family(mono()).text_size(TEXT.caption)

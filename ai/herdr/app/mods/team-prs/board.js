@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented } from "./ui.js";
+import { segment, filterGroup, pill } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 const { colMin: COL_MIN, colMax: COL_MAX, titleLh: TITLE_LH } = LAYOUT;
@@ -16,19 +16,12 @@ function ciColor(status) {
   return t.dim;
 }
 
-function pill(text, color) {
-  const t = theme();
-  return div().px(SP.sm).py(1).rounded(RADIUS.control).bg(t.background).border_1().border_color(t.border)
-    .text_size(TEXT.caption).text_color(color ?? t.muted).child(text);
-}
-
 // Lane title: the strongest text on the board after PR titles, and a count pill.
 function columnHeader(label, count) {
   const t = theme();
   return h_flex().flex_none().px(SP.md).py(SP.md).gap(SP.sm).items_center()
     .child(div().min_w(0).truncate().text_size(TEXT.small).font_semibold().text_color(t.foreground).child(label))
-    .child(div().flex_none().px(SP.sm).rounded(RADIUS.control).bg(t.background).text_size(TEXT.caption)
-      .text_color(count > 0 ? t.foreground : t.dim).child(String(count)));
+    .child(pill(String(count), count > 0 ? t.foreground : t.dim));
 }
 
 function column(col, opts) {
@@ -102,20 +95,10 @@ export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
   if (tab !== "mine") showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
   showItems.push(chip("Landed", "landed", Boolean(f.landed)));
   showItems.push(chip("Empty lanes", "empty", Boolean(f.empty)));
-  return h_flex().id("prs-chips").flex_wrap().gap_x(SP.xl).gap_y(SP.sm).items_center()
-    .px(SP.lg).py(SP.sm).flex_none()
-    .bg(t.background)
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(div().text_size(TEXT.caption).text_color(t.dim).child("Show"))
-      .child(segmented(showItems)))
+  return v_flex().id("prs-chips").gap(SP.xs).px(SP.lg).py(SP.sm).flex_none().bg(t.background)
+    .child(filterGroup("Show", showItems))
     .when(repos.length > 1, (e) => e.child(
-      h_flex().gap(SP.sm).items_center()
-        .child(div().text_size(TEXT.caption).text_color(t.dim).child("Repo"))
-        .child(h_flex().flex_wrap().gap(SP.xs).items_center()
-          .children(repos.map((slug) => chip(slug.split("/").pop(), `repo:${slug}`, activeSet.has(slug.toLowerCase())))))))
+      filterGroup("Repo", repos.map((slug) => chip(slug.split("/").pop(), `repo:${slug}`, activeSet.has(slug.toLowerCase()))))))
     .when(tab !== "mine" && authors.length > 0, (e) => e.child(
-      h_flex().gap(SP.sm).items_center()
-        .child(div().text_size(TEXT.caption).text_color(t.dim).child("Author"))
-        .child(h_flex().flex_wrap().gap(SP.xs).items_center()
-          .children(authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase())))))));
+      filterGroup("Author", authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))))));
 }

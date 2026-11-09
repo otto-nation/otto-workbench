@@ -91,15 +91,15 @@ _js() {
 }
 
 @test "live homelab/t7 disables pr actions; cancel and watch target it" {
-  _js '(()=>{const a=m.actionsFor(ctx({live:"homelab/t7",run:done()}));return [a.filter(x=>x.enabled).map(x=>x.id),a.find(x=>x.id==="cancel").command,a.find(x=>x.id==="watch").command];})()'
+  _js '(()=>{const a=m.actionsFor(ctx({live:"homelab/t7",run:done()}));const w=a.find(x=>x.id==="watch");return [a.filter(x=>x.enabled).map(x=>x.id),a.find(x=>x.id==="cancel").command,w.show,w.command];})()'
   [ "$status" -eq 0 ]
-  [ "$output" = '[["cancel","watch"],{"name":"terminal.kill","args":{"terminal":"homelab/t7"}},{"name":"terminal.keep","args":{"terminal":"homelab/t7"}}]' ]
+  [ "$output" = '[["cancel","watch"],{"name":"terminal.kill","args":{"terminal":"homelab/t7"}},"homelab/t7",null]' ]
 }
 
 @test "finished only enables watch; cancel stays off" {
-  _js '[ids({finished:"t9"}),m.actionsFor(ctx({finished:"t9"})).find(a => a.id === "cancel").reason]'
+  _js '[ids({finished:"t9"}),m.actionsFor(ctx({finished:"t9"})).find(a => a.id === "cancel").reason,m.actionsFor(ctx({finished:"t9"})).find(a => a.id === "watch").show]'
   [ "$status" -eq 0 ]
-  [ "$output" = '[["review","watch"],"Nothing running"]' ]
+  [ "$output" = '[["review","watch"],"Nothing running","t9"]' ]
 }
 
 @test "confirm sha is 7 chars and event matches" {

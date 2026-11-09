@@ -102,7 +102,7 @@ export function actionsFor(ctx) {
       action.command = terminalCommand('terminal.kill', live);
     }
     if (id === 'watch' && (live ?? finished)) {
-      action.command = terminalCommand('terminal.keep', live ?? finished);
+      action.show = live ?? finished;
     }
     const event = POST_EVENTS[id];
     if (event && run?.head_sha) {

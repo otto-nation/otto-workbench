@@ -2,6 +2,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
+import { tailLines } from "./_lib/output.js";
 import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
 import { eyebrow } from "./ui.js";
 
@@ -74,6 +75,24 @@ export function detailOf(pr) {
   };
 }
 
+// The run's text, read-only, inside the pane. The terminal itself can open as a tab for anything
+// interactive.
+export function renderOutput(output, { onHide, onTab }) {
+  const t = theme();
+  const lines = tailLines(output.text ?? "", 80);
+  return v_flex().flex_none().gap(SP.sm).px(SP.lg).py(SP.md).border_b_1().border_color(t.border)
+    .child(h_flex().gap(SP.sm).items_center().justify_between()
+      .child(div().text_size(TEXT.caption).text_color(t.dim).child(output.live ? "Run output · live" : "Run output"))
+      .child(h_flex().gap(SP.sm)
+        .child(button("out-tab", "Open as tab", onTab))
+        .child(button("out-hide", "Hide", onHide))))
+    .child(v_flex().p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
+      .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar().text_size(TEXT.caption).font_family("Menlo")
+      .when(output.text == null, (e) => e.child(div().text_color(t.dim).child("loading…")))
+      .when(output.text != null && !lines.length, (e) => e.child(div().text_color(t.dim).child("no output yet")))
+      .children(lines.map((l) => div().child(l === "" ? " " : l))));
+}
+
 export function prUrl(d) {
   return d.url || `https://${d.host || "github.com"}/${d.repo}/pull/${d.number}`;
 }
@@ -118,13 +137,14 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }
 
-export function renderDetail(d, { onClose, onOpenUrl, nowMs, openStamp, bodyFor, onToggle, actionBar }) {
+export function renderDetail(d, { onClose, onOpenUrl, nowMs, openStamp, bodyFor, onToggle, actionBar, outputPanel }) {
   const t = theme();
   const rows = historyRows(d.runs ?? [], nowMs);
   return v_flex().id("prs-detail").size_full().min_h(0).bg(t.background)
     .text_color(t.foreground).text_size(TEXT.body)
     .child(renderDetailHeader(d, { onClose, onOpenUrl }))
     .child(actionBar)
+    .when(Boolean(outputPanel), (e) => e.child(outputPanel))
     .child(eyebrow("Review history", null, SP.lg))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg).gap(SP.sm)
       .when(!rows.length, (e) => e.child(div().text_color(t.dim).child("No reviews yet")))

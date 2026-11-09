@@ -1,7 +1,7 @@
 // team-prs entry: the board, with a PR's detail shown in the same pane when a card is opened.
 import { exec, readTextFile, run, notify } from "herdr";
 import Board from "./board_view.js";
-import { renderDetail, renderActionBar, detailOf } from "./detail.js";
+import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.js";
 import { actionsFor } from "./_lib/actions.js";
 import { readReview } from "./_lib/board_data.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
@@ -17,6 +17,7 @@ export default class TeamPrs extends Board {
     this.liveAction = null;
     this.finishedId = null;
     this.note = null;
+    this.output = null;
     this.reviews = new Map();
     super.init(p, cx);
   }
@@ -80,6 +81,13 @@ export default class TeamPrs extends Board {
   // Kill and watch are core commands; the rest start a labelled background terminal through hc
   // (its --bg reply is immediate, so the 30 s exec limit never applies to the pr run itself).
   launch(action, cx) {
+    if (action.show) {
+      // Watch toggles the in-pane output; a second click hides it.
+      this.output = this.output?.terminal === action.show ? null : { terminal: action.show, text: null };
+      if (this.output) this.readOutput(action.show);
+      this.acx.notify();
+      return;
+    }
     if (action.command) {
       run(action.command.name, action.command.args);
       return;
@@ -110,6 +118,19 @@ export default class TeamPrs extends Board {
     this.acx.notify();
   }
 
+  readOutput(id) {
+    this.acx.spawn(async () => {
+      let text = null;
+      try {
+        const ran = await exec("hc", ["read", id, "--lines", "80"], {});
+        text = ran.code === 0 ? ran.stdout : "";
+      } catch { text = ""; }
+      if (this.output?.terminal !== id) return;
+      this.output = { terminal: id, text };
+      this.acx.notify();
+    });
+  }
+
   // Until the terminal leaves "live", look again every 3 s: bounded by the run, and only while
   // this window is open.
   watch(cx) {
@@ -121,6 +142,7 @@ export default class TeamPrs extends Board {
         const ran = await exec("hc", getArgv(id), {});
         entry = terminalsOf(ran.code === 0 ? [JSON.parse(ran.stdout)] : null)[0] ?? null;
       } catch { entry = null; }
+      if (this.output?.terminal === id) this.readOutput(id);
       if (entry?.state === "live") { this.watch(cx); return; }
       this.finish(id, entry, cx);
     });
@@ -131,6 +153,7 @@ export default class TeamPrs extends Board {
     const outcome = outcomeText(this.liveAction, entry?.exitCode ?? null);
     this.finishedId = id;
     this.live = null;
+    if (this.output?.terminal === id) this.readOutput(id);
     notify({ title: outcome.title, body: `#${d.number} ${d.title ?? ""}`, level: outcome.level });
     // The card, its runs and the head-moved flag come from the board's own refresh.
     this.refresh(cx, { listingOnly: true });
@@ -143,6 +166,7 @@ export default class TeamPrs extends Board {
     this.detail = detailOf(pr);
     if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
       this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
+      this.output = null;
     }
     return renderDetail(this.detail, {
       nowMs: Date.now(),
@@ -155,6 +179,10 @@ export default class TeamPrs extends Board {
         onAction: (a) => this.onAction(a, cx),
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },
         onCancel: () => { this.confirm = null; this.acx.notify(); },
+      }),
+      outputPanel: this.output && renderOutput({ ...this.output, live: this.live === this.output.terminal }, {
+        onHide: () => { this.output = null; this.acx.notify(); },
+        onTab: () => run("terminal.keep", { terminal: this.output.terminal }),
       }),
       onClose: () => this.closeDetail(cx),
       // The browser is on this Mac even when the PR's repo is on a remote machine.

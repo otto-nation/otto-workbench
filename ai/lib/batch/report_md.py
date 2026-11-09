@@ -2,6 +2,7 @@
 
 Rendered from the JSON only. Filing commands go in a trailing
 "File follow-up issues (only on request)" block, never on the stdout line.
+Each finding renders its reason, detail, files, log path and remedy.
 """
 
 # doc-group: batch
@@ -41,15 +42,32 @@ def stdout_lines(report: dict) -> str:
     return "\n".join(rows)
 
 
+def _finding_lines(findings: list[dict]) -> list[str]:
+    if not findings:
+        return ["findings: (none)"]
+    lines = ["findings:"]
+    for f in findings:
+        reason = f.get("reason", "")
+        detail = " ".join(str(f.get("detail") or "").split())
+        lines.append(f"- {reason}: {detail}" if detail else f"- {reason}")
+        if f.get("files"):
+            lines.append(f"  - files: {', '.join(f['files'])}")
+        if f.get("log"):
+            lines.append(f"  - log: {f['log']}")
+        remedy = (f.get("data") or {}).get("remedy")
+        if remedy:
+            lines.append(f"  - remedy: {remedy}")
+    return lines
+
+
 def _session_lines(session: dict, filing_block: list[str]) -> list[str]:
     findings = session.get("findings") or []
-    reasons = ", ".join(f.get("reason", "") for f in findings if f.get("reason"))
     lines = [
         f"## {session.get('pr', '')}",
         "",
         f"state: {session.get('state', '')} · severity: {session.get('severity', '')}",
         f"branch: {session.get('branch', '')}",
-        f"findings: {reasons or '(none)'}",
+        *_finding_lines(findings),
         "",
     ]
     for note in session.get("notes") or []:

@@ -42,8 +42,9 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
     `pr ci`: the `pr` dispatcher fetches into the repo's shared `.git` before the
     command starts, and a CI step that waits on GitHub must hold no git lock.
 
-    A stacked child's rebase whose parent was rewritten in this run passes
-    `--fork-point` so only the child's unique commits replay; never `--force`.
+    *fork_point* adds ``--fork-point``; the scheduler passes none. A stacked
+    child whose parent squash-landed is refused by ``pr rebase``, and
+    ``report.md`` prints the fork point as the remedy. Never ``--force``.
     Only the review step takes *focus*.
 
     *ai* defaults True. False drops `--fix` from rebase and CI; the CLI's

@@ -4252,6 +4252,7 @@ Markdown and stdout projections of a session report dict.
 
 Rendered from the JSON only. Filing commands go in a trailing
 "File follow-up issues (only on request)" block, never on the stdout line.
+Each finding renders its reason, detail, files, log path and remedy.
 
 ### batch/requests.py
 
@@ -6602,10 +6603,12 @@ Three signals, in the order `check` tries them, none of them sufficient alone:
 `pr rebase` asks it: whether a *prefix* of the branch is upstream while the
 rest is not. All three signals here are all-or-nothing — they report the
 branch's work present or absent — so a branch six of whose seven commits have
-landed reads to every one of them as a branch that landed nothing. It is kept
-apart from `check`'s ladder because it is not evidence the work is done: it is
-evidence that replaying the branch whole would reapply the landed part on top
-of itself, which is a different finding with a different remedy.
+landed reads to every one of them as a branch that landed nothing. A squash of
+a stacked parent is the same shape: the prefix's tip tree is already on the
+target, with no per-commit equivalent. It is kept apart from `check`'s ladder
+because it is not evidence the work is done: it is evidence that replaying the
+branch whole would reapply the landed part on top of itself, which is a
+different finding with a different remedy.
 
 Every one of them answers "no" rather than raising when it cannot ask: a ref
 that does not resolve, a base that was never fetched, a `gh` that is absent,
@@ -6702,11 +6705,13 @@ somewhere else, and ``resolve`` answers for those first:
   is the authenticated account: refused. Otherwise the repository, as usual.
 * ``gh repo create OWNER/NAME`` is OWNER; a bare NAME is the authenticated
   account: refused. ``gh repo fork`` lands in ``--org`` or the authenticated
-  account: refused without ``--org``.
+  account: refused without ``--org``. Fork without ``--org`` stays refused
+  because naming the logged-in account would need a network call or hosts.yml
+  read, and a personal login is not a listed owner anyway.
 * ``gh repo edit|delete|archive|unarchive|sync [REPO]`` is REPO when it is
-  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Every positional that
-  reads as one counts, so a flag value that looks like a repository fails
-  toward refusal. Without one, the repository as usual.
+  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Values of gh's own
+  value-taking options are skipped; an unknown option's value still counts.
+  Without a repository positional, the repository as usual.
 
 ``None`` means the usual repository resolution applies.
 

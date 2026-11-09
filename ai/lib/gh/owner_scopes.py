@@ -12,11 +12,13 @@ somewhere else, and ``resolve`` answers for those first:
   is the authenticated account: refused. Otherwise the repository, as usual.
 * ``gh repo create OWNER/NAME`` is OWNER; a bare NAME is the authenticated
   account: refused. ``gh repo fork`` lands in ``--org`` or the authenticated
-  account: refused without ``--org``.
+  account: refused without ``--org``. Fork without ``--org`` stays refused
+  because naming the logged-in account would need a network call or hosts.yml
+  read, and a personal login is not a listed owner anyway.
 * ``gh repo edit|delete|archive|unarchive|sync [REPO]`` is REPO when it is
-  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Every positional that
-  reads as one counts, so a flag value that looks like a repository fails
-  toward refusal. Without one, the repository as usual.
+  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Values of gh's own
+  value-taking options are skipped; an unknown option's value still counts.
+  Without a repository positional, the repository as usual.
 
 ``None`` means the usual repository resolution applies.
 """
@@ -38,6 +40,19 @@ _ACCOUNT_REASON = (
     " name, so it cannot be checked against our owners — {fix}")
 _REPO_URL_RE = re.compile(r"^https?://([^/\s]+)/([^/\s]+)/[^/\s]+/?$", re.IGNORECASE)
 _REPO_POSITIONAL_VERBS = frozenset({"edit", "delete", "archive", "unarchive", "sync"})
+_REPO_VALUE_FLAGS = {
+    "create": frozenset({
+        "-d", "--description", "-g", "--gitignore", "-h", "--homepage",
+        "-l", "--license", "-r", "--remote", "-s", "--source", "-t",
+        "--team", "-p", "--template",
+    }),
+    "edit": frozenset({
+        "-d", "--description", "--add-topic", "--remove-topic",
+        "--default-branch", "-h", "--homepage",
+        "--squash-merge-commit-message", "--visibility",
+    }),
+    "sync": frozenset({"-b", "--branch", "-s", "--source"}),
+}
 
 
 @dataclass(frozen=True)
@@ -77,7 +92,7 @@ def _has_flag(args: Sequence[str], short: str, long: str) -> bool:
     return any(word in (short, long) for word in args)
 
 
-def _positionals(args: Sequence[str]) -> list[str]:
+def _positionals(args: Sequence[str], value_flags: frozenset[str] = frozenset()) -> list[str]:
     """The words after gh's group and verb that are not options, ``-R`` values excluded."""
     words: list[str] = []
     i = 0
@@ -85,6 +100,9 @@ def _positionals(args: Sequence[str]) -> list[str]:
         _, nxt = gh.write_shapes.take_repo_flag(args, i)
         if nxt != i:
             i = nxt
+            continue
+        if args[i] in value_flags:
+            i += 2
             continue
         if not args[i].startswith("-"):
             words.append(args[i])
@@ -131,7 +149,10 @@ def _repo(verb: str, args: Sequence[str], host: str) -> Scoped | None:
         if not orgs:
             return _account("gh repo fork without --org")
         return _named([(config.github_owners.owner(host, o), f"--org {o}") for o in orgs])
-    named = [(o, w) for w in _positionals(args) if (o := _repo_spec_owner(w, host)) is not None]
+    named = [
+        (o, w) for w in _positionals(args, _REPO_VALUE_FLAGS.get(verb, frozenset()))
+        if (o := _repo_spec_owner(w, host)) is not None
+    ]
     if verb == "create":
         return _named(named) if named else _account("gh repo create without OWNER/NAME")
     if verb in _REPO_POSITIONAL_VERBS and named:

@@ -2,7 +2,7 @@
  * Label contract for herdr PR terminals. PR 6/7 depend on it.
  */
 
-import { classifyCode, readJson } from './board_data.js';
+import { classifyCode, readJson, toolCall } from './board_data.js';
 
 export const LABEL_PR = 'otto.pr';
 export const LABEL_ACTION = 'otto.action';
@@ -39,6 +39,8 @@ export function machineOf(id) {
 
 export function hcRunArgv({ repo, number, action, cwd, on, argv }) {
   const args = ['run', '--bg', '--json', '--cwd', cwd];
+  // A terminal started on another machine has no login PATH either, so `pr` would be coreutils'.
+  const run = toolCall({ on }, argv[0], argv.slice(1));
   if (on) {
     args.push('--on', on);
   }
@@ -50,7 +52,8 @@ export function hcRunArgv({ repo, number, action, cwd, on, argv }) {
     '--label',
     `${LABEL_APP}=${APP_NAME}`,
     '--',
-    ...argv,
+    run.cmd,
+    ...run.args,
   );
   return args;
 }

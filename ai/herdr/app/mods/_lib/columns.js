@@ -82,15 +82,26 @@ export function isMine(pr, me) {
   return login === who;
 }
 
+// `loaded` lists every repo the board has loaded, even one with no open PRs; a saved selection
+// naming a repo outside it is ignored. Without it, the repos seen in `prs` stand in.
+export function filterRepos(prs, repos, loaded) {
+  const known = new Set((loaded ?? prs.map((p) => p.repoSlug)).map((r) => String(r ?? "").toLowerCase()));
+  const active = new Set(
+    [...(repos ?? [])].map((r) => String(r).toLowerCase()).filter((r) => known.has(r)),
+  );
+  if (active.size === 0) return prs;
+  return prs.filter((p) => active.has(String(p.repoSlug ?? "").toLowerCase()));
+}
+
 export function filterPrs(prs, filters, me) {
   const drafts = Boolean(filters?.drafts);
   const landed = Boolean(filters?.landed);
-  const mine = Boolean(filters?.mine);
   const authors = Array.isArray(filters?.authors) ? filters.authors : [];
-  const authorSet = new Set(authors.map((a) => String(a).toLowerCase()));
+  // The viewer is never an author filter: Team excludes them by design, and the Mine tab is theirs.
+  const who = String(me ?? '').toLowerCase();
+  const authorSet = new Set(authors.map((a) => String(a).toLowerCase()).filter((a) => a !== who));
   return prs.filter((pr) => {
     const login = String(pr.author ?? '').toLowerCase();
-    if (mine && !isMine(pr, me)) return false;
     if (!drafts && pr.isDraft) return false;
     if (!landed && teamColumn(pr) === 'landed') return false;
     if (authorSet.size > 0 && !authorSet.has(login)) return false;
@@ -107,4 +118,8 @@ export function groupColumns(prs, colOf, columns) {
     if (buckets[key]) buckets[key].push(pr);
   }
   return columns.map((c) => ({ ...c, items: buckets[c.key] ?? [] }));
+}
+
+export function visibleColumns(cols, showEmpty) {
+  return showEmpty ? cols : cols.filter(c => c.items.length > 0);
 }

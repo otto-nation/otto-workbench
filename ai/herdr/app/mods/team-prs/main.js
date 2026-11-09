@@ -1,9 +1,13 @@
 // team-prs entry: the board, with a PR's detail shown in the same pane when a card is opened.
-import { exec, readTextFile, run, notify } from "herdr";
+import { exec, readTextFile, run, notify, spaces } from "herdr";
 import Board from "./board_view.js";
 import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.js";
+import { renderFileList, renderDiff } from "./files_view.js";
+import { MONO } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
-import { readReview } from "./_lib/board_data.js";
+import { readReview, loadFiles } from "./_lib/board_data.js";
+import { patchRows, summarize } from "./_lib/diff.js";
+import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 
@@ -21,6 +25,11 @@ export default class TeamPrs extends Board {
     this.watching = new Set();
     this.actionOf = new Map();
     this.reviews = new Map();
+    this.tab = "history";
+    this.filesByPr = new Map();
+    this.openFile = null;
+    this.diff = null;
+    this.opening = false;
     super.init(p, cx);
   }
 
@@ -171,14 +180,82 @@ export default class TeamPrs extends Board {
     cx.notify();
   }
 
+  filesKey(d) {
+    return `${d.on ?? ""}\0${d.repo}#${d.number}@${d.sha}`;
+  }
+
+  // Loaded once per PR head; a new head is a new key.
+  ensureFiles(d) {
+    const key = this.filesKey(d);
+    if (this.filesByPr.has(key)) return this.filesByPr.get(key);
+    if (this.filesByPr.size >= 10) this.filesByPr.delete(this.filesByPr.keys().next().value);
+    this.filesByPr.set(key, null);
+    this.acx.spawn(async (cx) => {
+      let result;
+      try {
+        result = await loadFiles(exec, { cwd: d.cwd, on: d.on }, d.repo, d.number);
+      } catch (err) {
+        result = { ok: false, error: { message: String(err?.message ?? err) } };
+      }
+      this.filesByPr.set(key, result);
+      cx.notify();
+    });
+    return null;
+  }
+
+  pickFile(path) {
+    this.openFile = path;
+    const f = this.filesByPr.get(this.filesKey(this.detail))?.files?.find((x) => x.path === path);
+    this.diff = f ? patchRows(f.patch, MONO.charPx) : null;
+    this.acx.notify();
+  }
+
+  // Check the PR out with the workbench's wt, then land in a space on that worktree.
+  openForReview() {
+    const d = this.detail;
+    if (this.opening || !openForReviewState(d).enabled) return;
+    this.opening = true;
+    this.note = "Checking out…";
+    this.acx.spawn(async (cx) => {
+      let note = null;
+      try {
+        const ran = await exec("wt", switchArgv(d.number), { cwd: d.cwd });
+        const got = ran.code === 0
+          ? parseSwitch(ran.stdout ?? "")
+          : { ok: false, message: (ran.stderr ?? "").trim().split("\n").pop() || "wt failed" };
+        if (!got.ok) {
+          note = got.message;
+        } else {
+          const id = spaceFor(spaces(), got.path);
+          if (id) run("space.select", { id });
+          else run("space.new", { folder: got.path, name: `#${d.number}`, argv: ["pi"] });
+        }
+      } catch (err) {
+        note = String(err?.message ?? err);
+      }
+      if (this.detail?.repo !== d.repo || this.detail?.number !== d.number) return cx.notify();
+      this.opening = false;
+      this.note = note;
+      cx.notify();
+    });
+    this.acx.notify();
+  }
+
   // Switching PRs starts a clean slate for the transient action state.
   detailView(pr, cx) {
     const prev = this.detail;
     this.detail = detailOf(pr);
     if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
       this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
-      this.output = null;
+      this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
     }
+    const files = this.ensureFiles(this.detail);
+    // The header counts what people wrote: once the files are known, generated ones drop out.
+    if (files?.ok) {
+      const sum = summarize(files.files);
+      Object.assign(this.detail, { files: sum.files, additions: sum.add, deletions: sum.del, generated: sum.generated });
+    }
+    const file = this.openFile && files?.files?.find((f) => f.path === this.openFile);
     return renderDetail(this.detail, {
       nowMs: Date.now(),
       openStamp: this.openStamp,
@@ -195,6 +272,13 @@ export default class TeamPrs extends Board {
         onHide: () => { this.output = null; this.acx.notify(); },
         onTab: () => run("terminal.keep", { terminal: this.output.terminal }),
       }),
+      tab: this.tab,
+      onTab: (tab) => { this.tab = tab; this.openFile = null; this.diff = null; this.acx.notify(); },
+      filesBody: file && this.diff
+        ? renderDiff(file, this.diff, { onBack: () => { this.openFile = null; this.diff = null; this.acx.notify(); } })
+        : renderFileList(files, { onPick: (path) => this.pickFile(path) }),
+      reviewState: openForReviewState(this.detail),
+      onReview: () => this.openForReview(),
       onClose: () => this.closeDetail(cx),
       // The browser is on this Mac even when the PR's repo is on a remote machine.
       onOpenUrl: (url) => exec("open", [url]),

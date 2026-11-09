@@ -234,10 +234,10 @@ _filter() {
   jq -e '.a and .b' <<<"$output"
 }
 
-@test "filterPrs: mine author compare is case-insensitive" {
-  _filter '[{"number":1,"author":"Alice","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"mine":true}' 'alice'
+@test "filterPrs: the viewer is dropped from the authors filter, case-insensitively" {
+  _filter '[{"number":1,"author":"Alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":["alice"]}' 'ALICE'
   [ "$status" -eq 0 ]
-  [ "$output" = "[1]" ]
+  [ "$output" = "[1,2]" ]
 }
 
 @test "filterPrs: drafts hidden by default" {
@@ -276,8 +276,87 @@ _filter() {
   [ "$output" = "[1,2]" ]
 }
 
-@test "filterPrs: mine filter keeps only own PRs" {
-  _filter '[{"number":1,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"mine":true}' 'alice'
+@test "filterPrs: a teammate author filter still narrows when the viewer is also listed" {
+  _filter '[{"number":1,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":["alice","bob"]}' 'alice'
   [ "$status" -eq 0 ]
-  [ "$output" = "[1]" ]
+  [ "$output" = "[2]" ]
+}
+
+@test "visibleColumns: drops empty columns when showEmpty is false" {
+  run node --input-type=module -e "
+    const { visibleColumns } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const cols = [
+      { key: 'open', items: [{}] },
+      { key: 'landed', items: [] },
+    ];
+    process.stdout.write(JSON.stringify(visibleColumns(cols, false).map((c) => c.key)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '["open"]' ]
+}
+
+@test "filterRepos: keeps only selected repos case-insensitively" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [
+      { number: 1, repoSlug: 'Owner/One' },
+      { number: 2, repoSlug: 'owner/two' },
+      { number: 3, repoSlug: 'owner/one' },
+    ];
+    process.stdout.write(JSON.stringify(filterRepos(prs, ['OWNER/ONE']).map((p) => p.number)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,3]' ]
+}
+
+@test "filterRepos: ignores a selection naming no known repo" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [
+      { number: 1, repoSlug: 'owner/one' },
+      { number: 2, repoSlug: 'owner/two' },
+    ];
+    process.stdout.write(JSON.stringify(filterRepos(prs, ['missing/repo']).map((p) => p.number)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,2]' ]
+}
+
+@test "filterRepos: empty selection returns all" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [
+      { number: 1, repoSlug: 'owner/one' },
+      { number: 2, repoSlug: 'owner/two' },
+    ];
+    process.stdout.write(JSON.stringify(filterRepos(prs, []).map((p) => p.number)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,2]' ]
+}
+
+@test "visibleColumns: keeps all columns when showEmpty is true" {
+  run node --input-type=module -e "
+    const { visibleColumns } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const cols = [
+      { key: 'open', items: [{}] },
+      { key: 'landed', items: [] },
+    ];
+    process.stdout.write(JSON.stringify(visibleColumns(cols, true).map((c) => c.key)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '["open","landed"]' ]
+}
+
+@test "filterRepos: a selected repo with no PRs shows nothing when it is a loaded repo" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [{ number: 1, repoSlug: 'a/b' }];
+    process.stdout.write(JSON.stringify([
+      filterRepos(prs, ['c/d'], ['a/b', 'c/d']).length,
+      filterRepos(prs, ['x/y'], ['a/b', 'c/d']).length,
+    ]));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "[0,1]" ]
 }

@@ -1,40 +1,25 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
+import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
-import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
-import { segment, eyebrow } from "./ui.js";
+import { SP, TEXT, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
+import { chip as chipOf, filterGroup, pill, ciMark, addStat, delStat, card, eyebrow, placeholder, scrollBody } from "./ui.js";
 
-const CI = { passing: "✓", failing: "✗", pending: "…" };
-const { colMin: COL_MIN, colMax: COL_MAX, colEmpty: COL_EMPTY, titleLh: TITLE_LH } = LAYOUT;
-
-function ciColor(status) {
-  const t = theme();
-  if (status === "passing") return t.ansi2;
-  if (status === "failing") return t.ansi1;
-  return t.dim;
-}
-
-function pill(text, color) {
-  const t = theme();
-  return div().px(SP.sm).py(1).rounded(RADIUS.control).bg(t.background).border_1().border_color(t.border)
-    .text_size(TEXT.caption).text_color(color ?? t.muted).child(text);
-}
+const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
 
 function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
-  return v_flex().id(`col-${col.key}`).h_full().min_h(0)
-    .when(!empty, (e) => e.flex_1().min_w(COL_MIN).max_w(COL_MAX))
-    .when(empty, (e) => e.flex_none().min_w(COL_EMPTY).max_w(COL_EMPTY).overflow_x_hidden())
-    .child(eyebrow(col.label, col.items.length, SP.sm))
-    .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.sm).pb(SP.sm).gap(SP.sm)
-      .when(empty, (e) => e.child(div().px(SP.md).text_size(TEXT.caption).text_color(t.dim).child("none")))
+  return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}${FILL.lane}`)
+    .flex_1().min_w(COL_MIN).max_w(COL_MAX)
+    .child(eyebrow(col.label, col.items.length, SP.md, { strong: true }))
+    .child(scrollBody().p(SP.sm).gap(SP.sm)
+      .when(empty, (e) => e.child(placeholder("none").px(SP.md).text_size(TEXT.caption)))
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
-export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo }) {
+export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, loading }) {
   const t = theme();
   const mine = tab === "mine";
   const list = mine
@@ -42,9 +27,13 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo }
     : filterPrs(prs, filters, me);
   const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
   const cols = groupColumns(list, mine ? mineColumn : teamColumn, spec);
-  return h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
-    .bg(t.background).text_color(t.foreground).text_size(TEXT.body).overflow_x_scrollbar()
-    .children(cols.map((c) => column(c, { onOpen, spinner, showRepo })));
+  const shown = visibleColumns(cols, Boolean(filters?.empty));
+  const board = h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
+    .bg(t.background).text_color(t.foreground).text_size(TEXT.body).overflow_x_scrollbar();
+  if (!shown.length) {
+    return board.child(placeholder(loading ? "Loading…" : "No PRs").p(SP.lg));
+  }
+  return board.children(shown.map((c) => column(c, { onOpen, spinner, showRepo })));
 }
 
 function badges(pr) {
@@ -62,33 +51,37 @@ function badges(pr) {
 
 export function renderCard(pr, { onOpen, spinner, showRepo }) {
   const t = theme();
-  const mark = CI[pr.ciStatus] ?? "";
-  return v_flex().id(cardId(pr)).p(SP.md).gap(SP.sm).rounded(RADIUS.card).border_1().border_color(t.border)
-    .cursor_pointer().hover((s) => s.bg(t.hover).border_color(t.dim)).on_click(() => onOpen(pr))
-    .child(div().text_size(TEXT.body).font_medium().max_h(TITLE_LH * 2)
+  const mark = pr.ciStatus === "passing" || pr.ciStatus === "failing" || pr.ciStatus === "pending";
+  return card(cardId(pr)).gap(SP.sm).on_click(() => onOpen(pr))
+    .child(div().text_size(TEXT.body).font_medium().max_h(LAYOUT.cardTitleMaxH)
       .overflow_hidden().child(pr.title ?? ""))
     .child(h_flex().gap(SP.sm).items_center().text_size(TEXT.caption).text_color(t.dim)
       .child(div().flex_none().child(showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`))
       .child(div().min_w(0).truncate().child(pr.author ?? ""))
       .child(div().flex_1().min_w(0).truncate().child(pr.branch ?? "")))
     .child(h_flex().gap(SP.sm).items_center().text_size(TEXT.caption)
-      .child(div().text_color(t.ansi2).child(`+${pr.additions ?? 0}`))
-      .child(div().text_color(t.ansi1).child(`-${pr.deletions ?? 0}`))
+      .child(addStat(pr.additions ?? 0))
+      .child(delStat(pr.deletions ?? 0))
       .child(div().text_color(t.dim).child(`${pr.changedFiles ?? 0} files`))
-      .when(Boolean(mark), (e) => e.child(div().text_color(ciColor(pr.ciStatus)).child(mark)))
+      .when(Boolean(mark), (e) => e.child(ciMark(pr.ciStatus)))
       .when(Boolean(pr.reviewing), (e) => e.child(div().text_color(t.working).child(spinner))))
     .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr)));
 }
 
-export function renderChips(filters, authors, { onToggle }) {
+export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
   const t = theme();
   const f = filters ?? {};
   const set = new Set((f.authors ?? []).map((a) => String(a).toLowerCase()));
-  const chip = (label, name, on) => segment(`chip-${name}`, label, on, () => onToggle(name));
-  return h_flex().id("prs-chips").gap(SP.sm).items_center().px(SP.lg).py(SP.sm).flex_none().flex_wrap()
-    .bg(t.background)
-    .child(chip("Mine", "mine", Boolean(f.mine)))
-    .child(chip("Drafts", "drafts", Boolean(f.drafts)))
-    .child(chip("Landed", "landed", Boolean(f.landed)))
-    .children(authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))));
+  const activeSet = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
+  const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => onToggle(name));
+  const showItems = [];
+  if (tab !== "mine") showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
+  showItems.push(chip("Landed", "landed", Boolean(f.landed)));
+  showItems.push(chip("Empty lanes", "empty", Boolean(f.empty)));
+  return v_flex().id("prs-chips").gap(SP.xs).px(SP.lg).py(SP.sm).flex_none().bg(t.background)
+    .child(filterGroup("Show", showItems))
+    .when(repos.length > 1, (e) => e.child(
+      filterGroup("Repo", repos.map((slug) => chip(slug.split("/").pop(), `repo:${slug}`, activeSet.has(slug.toLowerCase()))))))
+    .when(tab !== "mine" && authors.length > 0, (e) => e.child(
+      filterGroup("Author", authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))))));
 }

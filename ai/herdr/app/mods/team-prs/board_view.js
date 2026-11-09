@@ -7,17 +7,18 @@ import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, theme, layout, run, props,
 } from "herdr";
 import { locate } from "./_lib/location.js";
+import { boardTabId } from "./_lib/tabs.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
-import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
+import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, isMine, groupColumns } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
-import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented } from "./ui.js";
+import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
+import { segment, segmented, pill, chip, emptyPane, pane } from "./ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -30,7 +31,7 @@ function scopeOf() {
 // The checkouts the board reads: the pinned or focused one, or every open space's.
 function targetsOf() {
   if (scopeOf() === "all") {
-    const all = spaceTargets(spaces());
+    const all = spaceTargets(spaces(), panes());
     if (all.length) return all;
   }
   const c = ctxOf();
@@ -43,7 +44,7 @@ function ctxKey(ctx) {
 
 function filtersOf() {
   const f = shared("team-prs.filters") ?? {};
-  return { mine: !!f.mine, drafts: !!f.drafts, landed: !!f.landed, authors: [...(f.authors ?? [])] };
+  return { drafts: !!f.drafts, landed: !!f.landed, empty: !!f.empty, authors: [...(f.authors ?? [])], repos: [...(f.repos ?? [])] };
 }
 
 function tabOf() {
@@ -172,7 +173,7 @@ export default class TeamPrs extends View {
       else await this.pullFull(ctx, key, cx, cycle);
       cx.notify();
     }));
-    const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces()).map(ctxKey)];
+    const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces(), panes()).map(ctxKey)];
     for (const k of staleKeys(this.cache.keys(), keep)) {
       this.cache.delete(k);
       this.repoByKey.delete(k);
@@ -265,10 +266,18 @@ export default class TeamPrs extends View {
 
   toggleChip(name, cx) {
     const f = filtersOf();
-    if (name === "mine" || name === "drafts" || name === "landed") {
+    if (name === "drafts" || name === "landed" || name === "empty") {
       f[name] = !f[name];
       setShared("team-prs.filters", f);
       if (name === "landed" && f.landed) this.refresh(cx);
+      return;
+    }
+    if (name.startsWith("repo:")) {
+      const slug = name.slice(5).toLowerCase();
+      const set = new Set(f.repos.map((r) => String(r).toLowerCase()));
+      if (set.has(slug)) set.delete(slug); else set.add(slug);
+      f.repos = [...set];
+      setShared("team-prs.filters", f);
       return;
     }
     if (!name.startsWith("author:")) return;
@@ -301,14 +310,12 @@ export default class TeamPrs extends View {
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (mode === "rail" && view.repos === 0 && !view.loading) return this.railView(view);
     if (view.repos === 0 && view.errors.length && !view.loading) {
-      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
-        .bg(t.background).text_size(TEXT.body))
+      return note(emptyPane())
         .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
         .child(this.scopeToggle());
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
-      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
-        .bg(t.background).text_size(TEXT.body))
+      return note(emptyPane())
         .child(div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child("No open space is in a GitHub repository"))
         .child(this.scopeToggle());
     }
@@ -318,8 +325,9 @@ export default class TeamPrs extends View {
   }
 
   listed(state) {
-    const prs = state.prs ?? [], me = state.me ?? "";
-    return tabOf() === "mine" ? prs.filter((p) => isMine(p, me)) : filterPrs(prs, filtersOf(), me);
+    const base = filterRepos(state.prs ?? [], filtersOf().repos, state.repoSlugs);
+    const me = state.me ?? "";
+    return tabOf() === "mine" ? base.filter((p) => isMine(p, me)) : filterPrs(base, filtersOf(), me);
   }
 
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
@@ -350,7 +358,11 @@ export default class TeamPrs extends View {
           segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
         ]))
         .child(div().id("open-board").text_size(TEXT.caption).text_color(t.muted).cursor_pointer()
-          .on_click(() => run("tab.new", { name: "PRs", mod: "team-prs" }))
+          .on_click(() => {
+            const id = boardTabId(spaces(), "PRs");
+            if (id) run("tab.select", { id });
+            else run("tab.new", { name: "PRs", mod: "team-prs" });
+          })
           .child("Open board")));
   }
 
@@ -358,7 +370,7 @@ export default class TeamPrs extends View {
     const mine = tabOf() === "mine";
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
-    return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+    return pane("prs")
       .text_size(TEXT.small)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(tabOf(), t))
@@ -384,15 +396,19 @@ export default class TeamPrs extends View {
 
   boardView(cx, ctx, state, t) {
     const filters = filtersOf(), tab = tabOf(), pin = shared("team-prs.pin");
-    const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter(Boolean))].sort();
-    return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
+    // Team view is about teammates: the viewer has the Mine tab.
+    const me = String(state.me ?? "").toLowerCase();
+    const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
+    const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
+    return pane("prs")
+      .text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
-      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx) }))
+      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
       .child(renderBoard({
-        tab, prs: state.prs ?? [], filters, me: state.me ?? "",
+        tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
-        spinner: "⠋", showRepo: scopeOf() === "all",
+        spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
       }));
   }
 
@@ -403,18 +419,13 @@ export default class TeamPrs extends View {
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "loading…" : (state.slug ?? "no repo"));
     const note = all ? (loading ? "loading…" : `${state.repos} repos`) : null;
-    const pinned = (e) => e.child(div().id("pin").px(SP.sm).h(CONTROL_H.compact).flex().items_center()
-      .rounded(RADIUS.control).text_size(TEXT.caption).cursor_pointer().border_1().border_color(t.border)
-      .hover((s) => s.border_color(t.dim))
-      .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
-      .child(pin ? "pinned" : "pin"));
+    const pinned = (e) => e.child(chip("pin", pin ? "pinned" : "pin", Boolean(pin), () => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
-    return h_flex().id("prs-header").h(LAYOUT.headerH).flex_none().px(SP.lg).gap(SP.md).items_center()
+    return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
         .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))
-        .when(!all && ctx?.on != null, (e) => e.child(div().flex_none().px(SP.sm).py(1).rounded(RADIUS.control)
-          .border_1().border_color(t.border).text_size(TEXT.caption).text_color(t.muted).child(String(ctx.on))))
+        .when(!all && ctx?.on != null, (e) => e.child(pill(String(ctx.on), t.muted)))
         .when(nFail && !all, (e) => e
           .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
           .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))

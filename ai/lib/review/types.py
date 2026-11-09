@@ -228,7 +228,7 @@ class ClaimAnswer:
     Only DECLINED, SKIPPED and FALSIFIED persist (`CLAIM_ANSWERS`). `path`
     is the cited file when the answer was given. `head` is the last reviewed
     head at which the answer was re-asserted — the fold restamps it — so a
-    later round can expire it once that file has changed (OD-3). An empty
+    later round can expire it once that file has changed. An empty
     `path` never expires on a file change.
     """
 
@@ -368,7 +368,7 @@ class ReviewMeta:
     sticky_skips: dict[str, StickySkip] = field(default_factory=dict)
     # Answers for derived claim findings, keyed by `ClaimEntry.key`. Folded by
     # `store.write_review` from the record's derived findings, and carried by
-    # `_review_meta` through `live_answers` (OD-3) the way `sticky_skips` is —
+    # `_review_meta` through `live_answers` the way `sticky_skips` is —
     # the document is rewritten every round, so the adjudication has to live
     # here or it is lost. Only DECLINED, SKIPPED and FALSIFIED persist.
     claim_answers: dict[str, ClaimAnswer] = field(default_factory=dict)

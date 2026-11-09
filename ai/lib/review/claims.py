@@ -365,7 +365,7 @@ def _expired(path: str, changed: frozenset[str] | None) -> bool:
 def live_answers(
     job: ReviewJob, answers: dict[str, ClaimAnswer],
 ) -> dict[str, ClaimAnswer]:
-    """Answers that still hold for this run (OD-3)."""
+    """Answers that still hold for this run."""
     if not answers:
         return {}
     # ceiling: an unanchored FALSIFIED answer holds until the claim's wording
@@ -465,7 +465,7 @@ def _relinked(
 
 
 def carried(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
-    """Re-settle prior claims onto a round that did not run the writer (D10).
+    """Re-settle prior claims onto a round that did not run the writer.
 
     No-op when this record already assessed claims, or when the prior claims
     cannot be carried. Otherwise relinks writer findings by identity, then

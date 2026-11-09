@@ -187,6 +187,7 @@ export default class TeamPrs extends Board {
   ensureFiles(d) {
     const key = this.filesKey(d);
     if (this.filesByPr.has(key)) return this.filesByPr.get(key);
+    if (this.filesByPr.size >= 10) this.filesByPr.delete(this.filesByPr.keys().next().value);
     this.filesByPr.set(key, null);
     this.acx.spawn(async (cx) => {
       let result;
@@ -231,6 +232,7 @@ export default class TeamPrs extends Board {
       } catch (err) {
         note = String(err?.message ?? err);
       }
+      if (this.detail?.repo !== d.repo || this.detail?.number !== d.number) return cx.notify();
       this.opening = false;
       this.note = note;
       cx.notify();

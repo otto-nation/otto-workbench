@@ -3,6 +3,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
 import { theme } from "herdr";
+import { MAX_LINES } from "./_lib/diff.js";
 import { mono } from "./detail.js";
 import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
 
@@ -74,5 +75,5 @@ export function renderDiff(file, diff, { onBack }) {
           (i) => String(i), (range) => diff.rows.slice(range.start, range.end).map(diffLine)).size_full())))
       .child(Scrollbar.vertical("pr-diff").viewport_from_layout().absolute().inset_0())))
     .when(diff.truncated, (e) => e.child(div().flex_none().px(SP.lg).py(SP.xs).text_size(TEXT.caption)
-      .text_color(t.dim).child("Showing the first 1,500 lines")));
+      .text_color(t.dim).child(`Showing the first ${MAX_LINES.toLocaleString("en-US")} lines`)));
 }

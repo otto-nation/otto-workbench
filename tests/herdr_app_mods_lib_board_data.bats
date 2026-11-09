@@ -369,6 +369,18 @@ _gql() {
   [[ "$output" == *'"t":"t7"'* ]]
 }
 
+@test "assemble without running leaves PRs not reviewing" {
+  _bd '
+    const out = m.assemble({
+      openPrs: [{ number: 7, headSha: "a", requestedReviewers: [], latestReviews: [] }],
+      listing: { reviews: [] }, slug: "o/n", host: "github.com", login: "me", busy: new Set(),
+    });
+    process.stdout.write(JSON.stringify({ r: out[0].reviewing }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"r":false'* ]]
+}
+
 @test "loadTerminals lists by app label then reads each with hc get" {
   _rr '
     const ctx = { cwd: "/repo" };

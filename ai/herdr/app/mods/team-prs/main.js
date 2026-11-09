@@ -39,13 +39,13 @@ export default class TeamPrs extends Board {
     return hit.result;
   }
 
-  onToggle(stamp, cx) {
+  onToggle(stamp) {
     this.openStamp = this.openStamp === stamp ? null : stamp;
-    if (this.openStamp) this.loadReview(this.openStamp, cx);
+    if (this.openStamp) this.loadReview(this.openStamp);
     this.acx.notify();
   }
 
-  loadReview(stamp, cx) {
+  loadReview(stamp) {
     const run = this.runOf(stamp);
     if (!run) return;
     const key = this.cacheKey(run);
@@ -106,12 +106,16 @@ export default class TeamPrs extends Board {
         res = { ok: false, error: { message: String(err?.message ?? err) } };
       }
       this.launching = false;
+      if (this.detail !== d && (this.detail?.repo !== d.repo || this.detail?.number !== d.number)) {
+        cx.notify();
+        return;
+      }
       if (!res.ok) this.note = res.error.message;
       else {
         this.live = res.terminal;
         this.liveAction = action.id;
         this.finishedId = null;
-        this.watch(cx);
+        this.watch(cx, res.terminal, d);
       }
       cx.notify();
     });
@@ -132,24 +136,22 @@ export default class TeamPrs extends Board {
   }
 
   // Until the terminal leaves "live", look again every 3 s: bounded by the run, and only while
-  // this window is open.
-  watch(cx) {
+  // this window is open. The chain is tied to the terminal it was started for.
+  watch(cx, id, pr) {
     cx.timer.after(3000, async (cx) => {
-      const id = this.live;
-      if (id == null) return;
+      if (this.live !== id) return;
       let entry = null;
       try {
         const ran = await exec("hc", getArgv(id), {});
         entry = terminalsOf(ran.code === 0 ? [JSON.parse(ran.stdout)] : null)[0] ?? null;
       } catch { entry = null; }
       if (this.output?.terminal === id) this.readOutput(id);
-      if (entry?.state === "live") { this.watch(cx); return; }
-      this.finish(id, entry, cx);
+      if (entry?.state === "live") { this.watch(cx, id, pr); return; }
+      this.finish(id, entry, pr, cx);
     });
   }
 
-  finish(id, entry, cx) {
-    const d = this.detail;
+  finish(id, entry, d, cx) {
     const outcome = outcomeText(this.liveAction, entry?.exitCode ?? null);
     this.finishedId = id;
     this.live = null;
@@ -172,7 +174,7 @@ export default class TeamPrs extends Board {
       nowMs: Date.now(),
       openStamp: this.openStamp,
       bodyFor: (stamp) => this.bodyFor(stamp),
-      onToggle: (stamp) => this.onToggle(stamp, cx),
+      onToggle: (stamp) => this.onToggle(stamp),
       actionBar: renderActionBar(this.actions(), {
         confirm: this.confirm,
         note: this.launching ? "Starting…" : this.note,

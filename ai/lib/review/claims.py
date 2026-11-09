@@ -90,7 +90,7 @@ import review.merge
 import review.verify
 from review.artifacts import ReviewArtifact
 from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerdict
-from review.grammar import FindingIdentity, strip_line_suffix
+from review.grammar import strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.types import FindingOrigin, ReviewJob
@@ -309,7 +309,7 @@ def derived_findings(
             line=None,
             body=body,
             evidence=evidence,
-            stable_id=FindingIdentity.of_fields(path, None, body).stable_id,
+            stable_id=claim.key,
             checkbox=checkbox,
             origin=FindingOrigin.CLAIM,
         ))

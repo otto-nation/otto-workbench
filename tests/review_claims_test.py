@@ -1,5 +1,6 @@
 """Claims as data: types, ingest kinds, the writer's caps, check, and fingerprint."""
 
+import hashlib
 import json
 import sys
 from dataclasses import replace
@@ -25,6 +26,20 @@ def test_a_claim_entry_coerces_its_enums():
     entry = ClaimEntry("C1", "ticket", "t", "unsupported", "e")
     assert entry.source is ClaimSource.TICKET
     assert entry.verdict is ClaimVerdict.UNSUPPORTED
+
+
+def test_a_claim_key_hashes_source_and_collapsed_text():
+    entry = claim(source=ClaimSource.DESCRIPTION, text="Retries  back\noff")
+    assert entry.key == hashlib.sha256(
+        b"claim\0description\0retries back off",
+    ).hexdigest()[:8]
+
+
+def test_a_claim_key_ignores_case_and_wrapping():
+    compact = claim(text="retries back off")
+    wrapped = claim(text="Retries  back\noff")
+    shouted = claim(text="RETRIES BACK OFF")
+    assert compact.key == wrapped.key == shouted.key
 
 
 def test_the_verdicts_are_the_four_on_disk_values():

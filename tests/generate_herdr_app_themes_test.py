@@ -6,6 +6,7 @@ import base64
 import hashlib
 import io
 import tarfile
+from pathlib import Path
 import urllib.error
 
 import pytest
@@ -101,3 +102,10 @@ def test_timeout_then_success(monkeypatch, tmp_path):
     assert "#112233" in text
     assert sleeps == [themes.FETCH_BACKOFF]
     assert len(calls) == 2
+
+
+def test_transient_ignores_permanent_oserrors():
+    assert not themes._transient(FileNotFoundError("gone"))
+    assert not themes._transient(urllib.error.URLError(FileNotFoundError("gone")))
+    assert themes._transient(TimeoutError())
+    assert themes._transient(urllib.error.URLError(ConnectionResetError()))

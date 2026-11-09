@@ -27,7 +27,7 @@ runs:
         target="x86_64-unknown-linux-musl"
         tarball="worktrunk-${target}.tar.xz"
         base="https://github.com/max-sixty/worktrunk/releases/download/${WORKTRUNK_VERSION}"
-        dl="$HOME/.cache/worktrunk-dl"
+        dl="$HOME/.cache/worktrunk-dl/${WORKTRUNK_VERSION}"
         mkdir -p "$dl"
         cd "$dl"
         # The published .sha256 names the asset it covers, so the file has to

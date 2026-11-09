@@ -161,10 +161,12 @@ def _cached(pin: BrandPin) -> str | None:
 
 def _transient(err: Exception) -> bool:
     """Whether ERR is a 5xx/429 or a transport failure worth retrying."""
-    from urllib.error import HTTPError
+    from urllib.error import HTTPError, URLError
     if isinstance(err, HTTPError):
         return err.code >= 500 or err.code == 429
-    return True
+    if isinstance(err, URLError) and isinstance(err.reason, OSError):
+        err = err.reason
+    return isinstance(err, (TimeoutError, ConnectionError))
 
 
 def _download(url: str) -> bytes | OSError:

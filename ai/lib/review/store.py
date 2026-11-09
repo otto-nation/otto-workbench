@@ -89,7 +89,10 @@ def update_review(
     stored = read_review(review_file)
     if stored is None:
         return None
-    updated = StoredReview(transform(stored.record), replace(stored.meta, **meta_changes))
+    record = transform(stored.record)
+    meta = replace(stored.meta, **meta_changes)
+    answers = fold_claim_answers(meta.claim_answers, record, meta.head_sha)
+    updated = StoredReview(record, replace(meta, claim_answers=answers))
     write_review(review_file, updated.record, updated.meta)
     return updated
 

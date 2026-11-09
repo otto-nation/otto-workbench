@@ -101,7 +101,18 @@ def test_an_update_review_records_a_fix_pass_answer(tmp_path):
             findings=(replace(record.findings[0], disposition=Disposition.SKIPPED, reason="needs a person"),),
         )
 
-    update_review(tmp_path / "review.md", skip)
-    assert read_review_meta(tmp_path).claim_answers[c.key] == ClaimAnswer(
-        Disposition.SKIPPED, "needs a person", "a.py", HEAD,
+    stored = update_review(tmp_path / "review.md", skip)
+    want = ClaimAnswer(Disposition.SKIPPED, "needs a person", "a.py", HEAD)
+    assert stored.meta.claim_answers[c.key] == want
+    assert stored.meta.claim_answers == read_review_meta(tmp_path).claim_answers
+
+
+def test_an_empty_stable_id_is_not_folded(tmp_path):
+    rec = record(
+        finding(
+            "S1", "x", origin=FindingOrigin.CLAIM, stable_id="",
+            path="a.py", disposition=Disposition.DECLINED, reason="r",
+        ),
+        claims=None,
     )
+    assert _write(tmp_path, rec).claim_answers == {}

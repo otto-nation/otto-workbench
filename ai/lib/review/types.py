@@ -225,9 +225,9 @@ class StickySkip:
 class ClaimAnswer:
     """What answered a derived claim finding, keyed by `ClaimEntry.key`.
 
-    `path` and `head` are the cited file and the reviewed commit when the
-    answer was given, so a later round can expire it once that file has
-    changed (OD-3).
+    `path` is the cited file when the answer was given. `head` is the last
+    reviewed head at which the answer was re-asserted — the fold restamps
+    it — so a later round can expire it once that file has changed (OD-3).
     """
 
     disposition: Disposition

@@ -198,6 +198,7 @@ def test_meta_drops_a_claim_answer_it_cannot_read():
         "claim_answers": {
             "k": {"disposition": "exploded"},
             "j": {"disposition": "open"},
+            "n": "not-an-object",
             "m": {"disposition": "declined", "reason": "r"},
         },
     })
@@ -205,6 +206,9 @@ def test_meta_drops_a_claim_answer_it_cannot_read():
     assert set(meta.claim_answers) == {"m"}
     assert meta.claim_answers["m"].disposition is Disposition.DECLINED
     assert meta.claim_answers["m"].reason == "r"
+    garbled = review_meta_from_dict({"repo": "a/b", "claim_answers": ["not", "a", "dict"]})
+    assert garbled.repo == "a/b"
+    assert garbled.claim_answers == {}
 
 
 def test_a_legacy_meta_loads_with_no_claim_answers():

@@ -12,6 +12,7 @@ import { busyPrs } from './batch.js';
 import { busyMap, getArgv, lsArgv, terminalsOf } from './busy.js';
 import {
   batches,
+  filesArgv,
   graphqlArgv,
   landedArgv,
   mapGraphql,
@@ -19,6 +20,7 @@ import {
   pullsArgv,
   userArgv,
 } from './github.js';
+import { mapFiles } from './diff.js';
 import { hostOf, remoteSlug } from './location.js';
 import { joinReviews, keepLanded, landedCandidates } from './reviews.js';
 
@@ -203,6 +205,14 @@ export async function loadListing(exec, ctx) {
   const parsed = readJson(ran.stdout);
   if (!parsed.ok) return parsed;
   return { ok: true, listing: parsed.value, reviewsRoot: parsed.value.reviews_root };
+}
+
+export async function loadFiles(exec, ctx, slug, number) {
+  const ran = await invoke(exec, ctx, 'gh', filesArgv(slug, number));
+  if (!ran.ok) return ran;
+  const parsed = readJson(ran.stdout);
+  if (!parsed.ok) return parsed;
+  return { ok: true, files: mapFiles(parsed.value) };
 }
 
 export async function loadBatchDoc(exec, ctx) {

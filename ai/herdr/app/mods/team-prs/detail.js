@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
 import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
-import { eyebrow } from "./ui.js";
+import { segment, segmented } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 
@@ -71,7 +71,7 @@ export function detailOf(pr) {
     deletions: pr.deletions, files: pr.changedFiles, url: pr.url, on: pr.on ?? null,
     runs: (pr.reviewRuns ?? []).map((r) => r.run),
     cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
-    batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null,
+    batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null, sha: pr.headSha ?? "",
   };
 }
 
@@ -97,12 +97,19 @@ export function prUrl(d) {
   return d.url || `https://${d.host || "github.com"}/${d.repo}/pull/${d.number}`;
 }
 
-export function renderDetailHeader(d, { onClose, onOpenUrl }) {
+export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }) {
   const t = theme();
   return v_flex().flex_none().gap(SP.sm).p(SP.lg).border_b_1().border_color(t.border)
     .child(h_flex().gap(SP.sm).items_center().justify_between()
       .child(button("detail-back", "← Back", () => onClose()))
-      .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d)))))
+      .child(h_flex().gap(SP.sm)
+        .child(reviewState.enabled
+          ? button("detail-review", "Open for Review", () => onReview())
+          : div().px(SP.sm).h(CONTROL_H.board).flex().items_center().rounded(RADIUS.control)
+            .text_size(TEXT.caption).text_color(t.dim).border_1().border_color(t.border).child("Open for Review"))
+        .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))))
+    .when(!reviewState.enabled, (e) => e.child(
+      div().text_size(TEXT.caption).text_color(t.dim).child(reviewState.reason)))
     .child(div().min_w(0).text_size(TEXT.title).font_semibold().max_h(LAYOUT.titleMaxH)
       .overflow_hidden().child(`#${d.number} ${d.title ?? ""}`))
     .child(h_flex().gap_x(SP.md).gap_y(SP.xs).flex_wrap().items_center()
@@ -137,16 +144,24 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }
 
-export function renderDetail(d, { onClose, onOpenUrl, nowMs, openStamp, bodyFor, onToggle, actionBar, outputPanel }) {
+export function renderDetail(d, {
+  onClose, onOpenUrl, onReview, reviewState, nowMs, openStamp, bodyFor, onToggle, actionBar, outputPanel,
+  tab, onTab, filesBody,
+}) {
   const t = theme();
   const rows = historyRows(d.runs ?? [], nowMs);
   return v_flex().id("prs-detail").size_full().min_h(0).bg(t.background)
     .text_color(t.foreground).text_size(TEXT.body)
-    .child(renderDetailHeader(d, { onClose, onOpenUrl }))
+    .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }))
     .child(actionBar)
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))
-    .child(eyebrow("Review history", null, SP.lg))
-    .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg).gap(SP.sm)
-      .when(!rows.length, (e) => e.child(div().text_color(t.dim).child("No reviews yet")))
-      .children(rows.map((r) => runCard(r, { openStamp, bodyFor, onToggle }))));
+    .child(h_flex().flex_none().px(SP.lg).pt(SP.md).child(segmented([
+      segment("tab-history", "Review history", tab === "history", () => onTab("history")),
+      segment("tab-files", `Files ${d.files ?? ""}`.trim(), tab === "files", () => onTab("files")),
+    ])))
+    .when(tab === "files", (e) => e.child(filesBody))
+    .when(tab !== "files", (e) => e.child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg)
+      .pt(SP.sm).gap(SP.sm)
+      .when(!rows.length, (x) => x.child(div().text_color(t.dim).child("No reviews yet")))
+      .children(rows.map((r) => runCard(r, { openStamp, bodyFor, onToggle })))));
 }

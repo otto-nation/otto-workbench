@@ -495,3 +495,14 @@ _gql() {
   [[ "$output" == *"a different \`pr\` is first on PATH"* ]]
   [[ "$output" != *"unrecognized option"* ]]
 }
+
+@test "loadFiles maps slurped pages and reports a gh failure" {
+  _bd '
+    const table = [{ prefix: "gh api /repos/o/n/pulls/7/files", stdout: JSON.stringify([[{filename:"a.js",status:"added",additions:1,deletions:0,patch:"@@ -0,0 +1 @@\n+x"}]]) }];
+    const ok = await m.loadFiles(exec, ctx, "o/n", 7);
+    const bad = await m.loadFiles(async () => ({ code: 1, stdout: "", stderr: "boom" }), ctx, "o/n", 7);
+    process.stdout.write(JSON.stringify([ok.files[0].path, ok.files[0].status, bad.ok, bad.error.message]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["a.js","A",false,"boom"]' ]
+}

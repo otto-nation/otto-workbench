@@ -32,6 +32,11 @@ export function pullsArgv(repo) {
   ];
 }
 
+// The PR's files with their patches. The page size rides in the URL: `-f` would make gh POST.
+export function filesArgv(repo, number) {
+  return ['api', `/repos/${repo}/pulls/${number}/files?per_page=100`, '--paginate', '--slurp'];
+}
+
 function intNums(numbers) {
   return (numbers ?? []).filter((n) => Number.isInteger(n));
 }

@@ -28,7 +28,7 @@ class UsageCache:
     def __init__(self, review_dir: Path) -> None:
         self._dir = review_dir
         self._path = review_dir / FILENAME_USAGE_CACHE
-        self._logs: dict = {}
+        self._logs: dict[str, dict] = {}
         self._dirty = False
         # The cache is only an optimization; a bad one is rebuilt.
         try:

@@ -46,7 +46,7 @@ export function segment(id, label, active, onClick, size = TEXT.caption) {
 // A row of segments on a hairline-bordered track.
 export function segmented(items) {
   const t = theme();
-  return h_flex().flex_none().flex_wrap().p(2).gap(2).rounded(RADIUS.control + 2).border_1().border_color(t.border)
+  return h_flex().flex_none().flex_wrap().p(2).gap(2).rounded(RADIUS.card).border_1().border_color(t.border)
     .children(items);
 }
 
@@ -72,4 +72,22 @@ export function eyebrow(label, count, px = SP.md) {
   return h_flex().px(px).pt(SP.md).pb(SP.xs).gap(SP.sm).items_center().flex_none()
     .child(div().text_size(TEXT.caption).font_medium().text_color(t.muted).child(label))
     .when(count != null, (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim).child(String(count))));
+}
+
+const CI = { passing: "✓", failing: "✗", pending: "…" };
+
+export function ciMark(status) {
+  const t = theme();
+  let color = t.dim;
+  if (status === "passing") color = t.ansi2;
+  else if (status === "failing") color = t.ansi1;
+  return div().flex_none().text_color(color).child(CI[status] ?? "");
+}
+
+export function addStat(n) {
+  return div().text_color(theme().ansi2).child(`+${n}`);
+}
+
+export function delStat(n) {
+  return div().text_color(theme().ansi1).child(`-${n}`);
 }

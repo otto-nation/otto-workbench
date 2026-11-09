@@ -3,15 +3,13 @@ import { v_flex, h_flex, TextView } from "gpui-base";
 import { theme, settings } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
-import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, button, pill, inset } from "./ui.js";
+import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
+import { segment, segmented, button, pill, inset, ciMark, addStat, delStat } from "./ui.js";
 
 // The user's terminal font, so code-like text follows their settings.
 export function mono() {
   return settings().font_family ?? "Menlo";
 }
-
-const CI = { passing: "✓", failing: "✗", pending: "…" };
 
 function postTone(tone) {
   const t = theme();
@@ -105,11 +103,11 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
     .child(h_flex().gap_x(SP.md).gap_y(SP.xs).flex_wrap().items_center()
       .text_size(TEXT.caption).text_color(t.dim)
       .child(div().child(d.author ?? "")).child(div().truncate().child(d.branch ?? ""))
-      .child(div().text_color(t.ansi2).child(`+${d.additions ?? 0}`))
-      .child(div().text_color(t.ansi1).child(`-${d.deletions ?? 0}`))
+      .child(addStat(d.additions ?? 0))
+      .child(delStat(d.deletions ?? 0))
       .child(div().child(`${d.files ?? 0} files`))
       .when(d.generated > 0, (e) => e.child(div().child(`excl. ${d.generated} generated`)))
-      .child(div().child(CI[d.ci] ?? ""))
+      .child(ciMark(d.ci))
       .child(div().child(d.decision ? String(d.decision).toLowerCase().replace(/_/g, " ") : "")));
 }
 

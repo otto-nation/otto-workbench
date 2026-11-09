@@ -3,18 +3,10 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
-import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
-import { chip as chipOf, filterGroup, pill } from "./ui.js";
+import { SP, TEXT, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
+import { chip as chipOf, filterGroup, pill, ciMark, addStat, delStat } from "./ui.js";
 
-const CI = { passing: "✓", failing: "✗", pending: "…" };
 const { colMin: COL_MIN, colMax: COL_MAX, titleLh: TITLE_LH } = LAYOUT;
-
-function ciColor(status) {
-  const t = theme();
-  if (status === "passing") return t.ansi2;
-  if (status === "failing") return t.ansi1;
-  return t.dim;
-}
 
 // Lane title: the strongest text on the board after PR titles, and a count pill.
 function columnHeader(label, count) {
@@ -27,7 +19,7 @@ function columnHeader(label, count) {
 function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
-  return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}55`)
+  return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}${FILL.lane}`)
     .flex_1().min_w(COL_MIN).max_w(COL_MAX)
     .child(columnHeader(col.label, col.items.length))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().p(SP.sm).gap(SP.sm)
@@ -67,7 +59,7 @@ function badges(pr) {
 
 export function renderCard(pr, { onOpen, spinner, showRepo }) {
   const t = theme();
-  const mark = CI[pr.ciStatus] ?? "";
+  const mark = pr.ciStatus === "passing" || pr.ciStatus === "failing" || pr.ciStatus === "pending";
   return v_flex().id(cardId(pr)).p(SP.md).gap(SP.sm).rounded(RADIUS.card).border_1().border_color(t.border)
     .cursor_pointer().hover((s) => s.bg(t.hover).border_color(t.dim)).on_click(() => onOpen(pr))
     .child(div().text_size(TEXT.body).font_medium().max_h(TITLE_LH * 2)
@@ -77,10 +69,10 @@ export function renderCard(pr, { onOpen, spinner, showRepo }) {
       .child(div().min_w(0).truncate().child(pr.author ?? ""))
       .child(div().flex_1().min_w(0).truncate().child(pr.branch ?? "")))
     .child(h_flex().gap(SP.sm).items_center().text_size(TEXT.caption)
-      .child(div().text_color(t.ansi2).child(`+${pr.additions ?? 0}`))
-      .child(div().text_color(t.ansi1).child(`-${pr.deletions ?? 0}`))
+      .child(addStat(pr.additions ?? 0))
+      .child(delStat(pr.deletions ?? 0))
       .child(div().text_color(t.dim).child(`${pr.changedFiles ?? 0} files`))
-      .when(Boolean(mark), (e) => e.child(div().text_color(ciColor(pr.ciStatus)).child(mark)))
+      .when(Boolean(mark), (e) => e.child(ciMark(pr.ciStatus)))
       .when(Boolean(pr.reviewing), (e) => e.child(div().text_color(t.working).child(spinner))))
     .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr)));
 }

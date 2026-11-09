@@ -57,6 +57,17 @@ _js() {
   [ "$output" = '[20,1]' ]
 }
 
+@test "pulls --jq filter tolerates null labels" {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/github.js');
+    const a = m.pullsArgv('o/n'); process.stdout.write(a[a.indexOf('--jq')+1]);
+  "
+  [ "$status" -eq 0 ]
+  run jq -c "$output" <<<'[{"number":1,"labels":null}]'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"labels":[]'* ]]
+}
+
 _rest() {
   printf '%s' '{"number":3,"title":"t","user":{"login":"ada"},"head":{"ref":"feat","sha":"abc"},"base":{"ref":"main"},"draft":false,"html_url":"https://ex/3","labels":[{"name":"bug"}],"created_at":"c","updated_at":"u"}'
 }

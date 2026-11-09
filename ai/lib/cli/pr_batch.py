@@ -168,6 +168,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("run_id", nargs="?", help=f"Run to show (default: {_DEFAULT_RUN})")
     s.add_argument("--full", action="store_true",
                    help="Print the raw run state instead of the report")
+    s.add_argument("--list", action="store_true",
+                   help="List this machine's runs, newest first, instead of one run's report")
     cli.pr_batch_views.offline(s)
 
     p = sub.add_parser("report", help="Print per-PR session commands for a run")

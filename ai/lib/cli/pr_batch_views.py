@@ -43,8 +43,31 @@ def report(run: Run, active: bool, github: dict | None = None,
                               github=github, sessions=sessions)
 
 
+def run_list() -> dict:
+    """Every saved run on this machine, newest first: what a picker needs, not the runs themselves."""
+    runs = []
+    for run_id in reversed(batch.store.run_ids()):
+        entry = {"id": run_id, "run_dir": str(batch.store.run_dir(run_id))}
+        try:
+            run = batch.store.load(run_id)
+        except (batch.store.RunNotFound, ValueError, TypeError) as err:
+            # A state file that vanished, no longer parses, or no longer fits the Run shape is still a
+            # run directory; say so rather than dropping it from the list.
+            runs.append({**entry, "error": str(err) or type(err).__name__})
+            continue
+        runs.append({**entry, "started_at": run.started_at, "status": run.status.value,
+                     "active": cli.pr_batch_common.is_active(run_id),
+                     "items": len(run.items), "repos": sorted({i.repo for i in run.items})})
+    return {"schema_version": 2, "runs": runs}
+
+
 def cmd_status(args) -> int:
     """`status`: the run report, or the raw state with `--full`."""
+    if args.list:
+        if args.run_id or args.full:
+            return cli.pr_batch_common.fail("--list takes no run id and no --full")
+        core.report.emit_json(run_list())
+        return EXIT_OK
     run_id = cli.pr_batch_common.resolve_run_id(args.run_id)
     if not run_id:
         return cli.pr_batch_common.fail("no batch runs yet")

@@ -913,12 +913,14 @@ assessed empty, and entries are the list. Groups write it unchecked;
 the cap. Writers (single, synthesis) are checked: `has_behaviour_source`
 is the hint filter, `behaviours_problems` is the check, `behaviours_of`
 numbers reports `B1…` after it. `merged_behaviours` concatenates group
-lists and yields `None` if any is `None`. A group gap makes the merged
-list `None`; skipped groups contribute prior entries whose paths all lie
-in those groups' files (`carried_behaviours`). There is no claims-style
-carry and no sidecar: groups write the list on every round, and
-behaviours derive no finding, so there is nothing to answer. `_publish`
-verifies each cited test. Render never says "tested".
+lists and yields `None` if any is `None`, and `None` when there are no
+groups. A group gap makes the merged list `None`. `_phase_merge` sets
+`()` when every group was skipped (no records and no gaps) so carried
+entries concatenate. Skipped groups contribute prior entries whose paths
+all lie in those groups' files (`carried_behaviours`). There is no
+claims-style carry and no sidecar: groups write the list on every round,
+and behaviours derive no finding, so there is nothing to answer.
+`_publish` verifies each cited test. Render never says "tested".
 
 ### review/budget.py
 

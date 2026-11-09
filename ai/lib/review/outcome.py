@@ -113,7 +113,9 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
              total_groups: int = 0, status: ReviewStatus | None = None) -> None:
     """Write `record` and this run's sidecar, and render review.md from both.
 
-    Every review leaves with the run's areas, covered or not.
+    Every review leaves with the run's areas, covered or not. Cited tests
+    are verified here: a miss or an unsafe `test_cited` is cleared with a
+    fixed note.
     """
     record = with_run_focus(record, job.focus)
     if record.claims is None and not review.claims.has_claim_source(job):
@@ -254,6 +256,8 @@ def _carried_record(prior: StoredReview) -> ReviewRecord:
 
     The claims ledger is carried because the no-op gate proved their inputs
     unchanged. Derived findings ride with the claims they came from.
+    Behaviours stay as the prior round left them, so a legacy `None` stays
+    not assessed until a writer round runs.
     """
     return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
                    static_analysis="", focus=())

@@ -89,7 +89,8 @@ export default class TeamPrs extends View {
       try { await this.pull(cx, listingOnly); }
       finally {
         this.inflight = false;
-        if (!listingOnly) this.manual = false;
+        // Clear only on a full pull with no other full pull queued behind it.
+        if (!listingOnly && !(this.again && !this.againListing)) this.manual = false;
         cx.notify();
         if (this.again) {
           const next = this.againListing;
@@ -105,6 +106,10 @@ export default class TeamPrs extends View {
     this.manual = true;
     this.refresh(this.acx);
     this.acx.notify();
+  }
+
+  refreshButton() {
+    return button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual });
   }
 
   activeTargets() {
@@ -321,7 +326,7 @@ export default class TeamPrs extends View {
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(emptyPane())
         .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
-        .child(button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
+        .child(this.refreshButton())
         .child(this.scopeToggle());
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
@@ -441,7 +446,7 @@ export default class TeamPrs extends View {
           .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
-      .child(button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
+      .child(this.refreshButton())
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

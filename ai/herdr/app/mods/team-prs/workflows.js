@@ -1,27 +1,12 @@
-// Workflows: the focused space's machine's `pr batch` runs, shown on Mine and a PR's Workflow tab.
+// Workflows: the focused space's machine's `pr batch` runs, shown from the Batch button and a PR's Batch tab.
 import { exec, watchFolder } from "herdr";
 import {
   listArgv, statusArgv, logTailArgv, parseRunList, parseRunDoc, stateChanged,
-  STEP_ORDER,
 } from "./_lib/batch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
 
 function ctxKey(ctx) {
   return String(ctx?.on ?? "");
-}
-
-const HOT_STEP = new Set(["failed", "running", "needs_decision", "interrupted"]);
-
-function defaultStep(item) {
-  const steps = item?.steps ?? {};
-  for (const name of STEP_ORDER) {
-    if (HOT_STEP.has(steps[name]?.status)) return name;
-  }
-  let last = null;
-  for (const name of STEP_ORDER) {
-    if (steps[name]?.logPath) last = name;
-  }
-  return last;
 }
 
 export class Workflows {
@@ -101,7 +86,7 @@ export class Workflows {
     };
   }
 
-  bodyState() {
+  tabState() {
     return {
       step: this.step,
       log: this.log,
@@ -217,14 +202,18 @@ export class Workflows {
   openItem(key) {
     if (this.openKey === key) return;
     this.openKey = key;
-    const item = this.doc?.items?.find((i) => i.key === key);
-    this.step = defaultStep(item);
+    this.step = null;
     this.log = null;
-    if (this.step) this.loadLog(this.acx);
     this.acx.notify();
   }
 
   selectStep(step) {
+    if (this.step === step) {
+      this.step = null;
+      this.log = null;
+      this.acx.notify();
+      return;
+    }
     this.step = step;
     this.log = null;
     this.loadLog(this.acx);

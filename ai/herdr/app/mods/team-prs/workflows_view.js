@@ -1,41 +1,39 @@
-// Batch-run parts for the Mine board and a PR's Workflow tab.
+// Batch-run parts for the board header, a PR card, and a PR's Batch tab.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  STEP_ORDER, itemTone, stepTone, durationText, laneOf,
+  STEP_ORDER, durationText, laneOf, cardState,
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
-import { SP, TEXT, LAYOUT, BATCH_COL, RADIUS } from "./_lib/tokens.js";
+import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
 import {
-  pill, hoverRow, placeholder, caption, link, scrollBody, mono,
+  hoverRow, card, inset, scrollBody, mono,
 } from "./_ui/ui.js";
 
-function itemColor(t, status) {
-  const tone = itemTone(status);
-  if (tone === "busy") return t.ansi4;
-  if (tone === "attention") return t.ansi3;
-  if (tone === "done") return t.ansi2;
-  return t.dim;
-}
-
-function stepColor(t, status) {
-  const tone = stepTone(status);
-  if (tone === "busy") return t.ansi4;
-  if (tone === "attention") return status === "failed" ? t.ansi1 : t.ansi3;
-  if (tone === "done") return t.ansi2;
-  return t.dim;
-}
-
 function runColor(t, status) {
-  if (status === "running") return t.ansi4;
-  if (status === "waiting") return t.ansi3;
-  if (status === "done") return t.ansi2;
+  if (status === "done") return t.done;
+  if (status === "running" || status === "waiting") return t.working;
   if (status === "cancelled" || status === "interrupted") return t.ansi1;
   return t.muted;
 }
 
-// What a run's status means to someone reading the header.
+function stepColor(t, status) {
+  if (status === "failed") return t.ansi1;
+  if (status === "needs_decision" || status === "interrupted") return t.ansi3;
+  if (status === "running") return t.working;
+  if (status === "done") return t.done;
+  return t.muted;
+}
+
+function stateColor(t, tone) {
+  if (tone === "failed") return t.ansi1;
+  if (tone === "attention") return t.ansi3;
+  if (tone === "busy") return t.working;
+  if (tone === "done") return t.done;
+  return t.muted;
+}
+
 const RUN_WORD = { running: "running", waiting: "waiting", done: "finished", cancelled: "cancelled", interrupted: "interrupted" };
 
 function runWord(status) {
@@ -50,42 +48,63 @@ function pretty(s) {
   return String(s ?? "").replace(/_/g, " ");
 }
 
-export function renderRunBar(state) {
+function sectionLabel(text) {
   const t = theme();
-  const { runs, runId, doc, error, loading, showRuns, nowMs, onPickRun, onToggleRuns } = state;
-  const bar = h_flex().px(SP.lg).py(SP.xs).gap(SP.md).items_center().flex_wrap().flex_none();
-  if (loading && !runs.length) return bar.child(caption("Loading batch runs…"));
-  if (error) return bar.child(caption(error.message ?? String(error), t.dim));
-  if (!runs.length) return bar.child(caption("No batch runs on this machine", t.dim));
+  return div().font_family(mono()).text_size(TEXT.caption).text_color(t.muted).child(text);
+}
+
+function cardShell(id) {
+  const t = theme();
+  return v_flex().id(id).p(SP.md).rounded(RADIUS.card).border_1().border_color(t.border);
+}
+
+export function batchButtonLabel(state) {
+  const { runs, runId, doc, error, loading, nowMs } = state;
+  if (error) return "Batch · unavailable";
+  if (loading && !runs.length) return "Batch · loading…";
+  if (!runs.length) return "Batch · none";
   const latest = runId == null || runId === runs[0]?.id;
   const picked = runs.find((r) => r.id === (runId ?? runs[0]?.id));
   const status = doc?.run?.status ?? picked?.status;
-  const n = doc?.items?.length ?? picked?.items ?? 0;
-  const started = relativeTime(doc?.run?.startedAt ?? picked?.startedAt ?? "", nowMs);
-  const earlier = runs.length - 1;
-  return bar
-    .child(div().text_size(TEXT.small).text_color(t.foreground).child(latest ? "Latest run" : "Earlier run"))
-    .child(div().text_size(TEXT.small).text_color(t.muted).child(`· started ${started} · ${prCount(n)} ·`))
-    .child(div().text_size(TEXT.small).text_color(runColor(t, status)).child(runWord(status)))
-    .when(!latest, (e) => e.child(link("wf-latest", "Back to latest", () => onPickRun(null))))
-    .when(earlier > 0, (e) => e.child(link("wf-runs", showRuns ? "Hide earlier runs" : `Earlier runs (${earlier})`, onToggleRuns)));
+  const when = relativeTime(doc?.run?.startedAt ?? picked?.startedAt ?? "", nowMs);
+  const word = runWord(status);
+  // The run records when it started, not when it ended, so the time leads and the state follows.
+  const tail = when ? `${when} · ${word}` : word;
+  return latest ? `Batch · ${tail}` : `Batch · earlier run · ${tail}`;
 }
 
-export function renderRunList(state) {
+export function renderRunPanel(state) {
   const t = theme();
-  const { runs, runId, nowMs, onPickRun } = state;
+  const { on, runs, runId, error, nowMs, onPickRun } = state;
+  const where = String(on ?? "this computer").toUpperCase();
+  const panel = v_flex().px(SP.lg).py(SP.sm).gap(SP.xs).flex_none()
+    .border_b_1().border_color(t.border)
+    .child(sectionLabel(`BATCH RUNS · ${where}`));
+  if (error) {
+    return panel.child(div().text_size(TEXT.small).text_color(t.muted).child(error.message ?? String(error)));
+  }
+  if (!runs.length) {
+    return panel.child(div().text_size(TEXT.small).text_color(t.muted).child("No batch runs on this machine"));
+  }
   const current = runId ?? runs[0]?.id;
-  return scrollBody().px(SP.md).pb(SP.lg).gap(SP.xs)
-    .children(runs.map((r, i) => hoverRow(`run-${r.id}`).flex().items_center()
-      .px(SP.md).py(SP.sm).gap(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
-      .when(r.id === current, (e) => e.bg(t.selected))
-      .on_click(() => onPickRun(i === 0 ? null : r.id))
-      .child(v_flex().min_w(0).flex_1()
-        .child(div().text_size(TEXT.body).child(`${i === 0 ? "Latest run" : "Run"} · started ${relativeTime(r.startedAt ?? "", nowMs)}`))
-        .child(div().text_size(TEXT.caption).text_color(t.dim).truncate()
-          .child([prCount(r.items), ...(r.repos ?? [])].join(" · ")))
-        .when(Boolean(r.error), (e) => e.child(caption(r.error, t.ansi1))))
-      .child(div().flex_none().text_size(TEXT.small).text_color(runColor(t, r.status)).child(runWord(r.status)))));
+  return panel.children(runs.map((r, i) => hoverRow(`run-${r.id}`).flex().items_center()
+    .px(SP.sm).py(SP.xs).rounded(RADIUS.control).gap(SP.md)
+    .when(r.id === current, (e) => e.bg(t.selected))
+    .on_click(() => onPickRun(i === 0 ? null : r.id))
+    .child(div().text_size(TEXT.small).text_color(t.foreground).child(i === 0 ? "Latest" : relativeTime(r.startedAt ?? "", nowMs)))
+    .child(div().text_size(TEXT.small).text_color(t.muted).child(`${prCount(r.items)} · ${(r.repos ?? []).join(", ")}`))
+    .when(Boolean(r.error), (e) => e.child(div().text_size(TEXT.small).text_color(t.ansi1).child(r.error)))
+    .child(div().flex_1())
+    .child(div().text_size(TEXT.small).text_color(runColor(t, r.status)).child(runWord(r.status)))));
+}
+
+export function cardStateLine(item) {
+  const t = theme();
+  const state = cardState(item);
+  if (state == null) return null;
+  return h_flex().gap(SP.xxs).text_size(TEXT.caption)
+    .child(div().text_color(t.muted).child("Batch · "))
+    .child(div().text_color(stateColor(t, state.tone)).child(state.text));
 }
 
 // The steps this run was asked for, in pipeline order: a step it never ran gets no column.
@@ -95,94 +114,80 @@ export function runSteps(doc) {
   return steps.length ? steps : STEP_ORDER;
 }
 
-export function renderCardSteps(item, steps) {
-  const t = theme();
-  return h_flex().gap(SP.sm).flex_wrap().items_center().text_size(TEXT.caption)
-    .children((steps ?? []).flatMap((name) => {
-      const rec = item.steps?.[name] ?? null;
-      if (rec == null) return [];
-      return [div().text_color(stepColor(t, rec.status)).child(`${name} ${pretty(rec.status)}`)];
-    }))
-    .when(laneOf(item) === "attention", (e) => e.child(pill("needs you", t.ansi3)));
-}
-
-function renderStepRow(item, name, state) {
-  const t = theme();
-  const rec = item.steps?.[name] ?? null;
-  if (rec == null) {
-    return h_flex().id(`step-${name}`).px(SP.sm).py(SP.xs).rounded(RADIUS.control)
-      .gap(SP.sm).items_center()
-      .child(div().text_size(TEXT.body).w(BATCH_COL.step).text_color(t.dim).child(name))
-      .child(div().text_size(TEXT.caption).text_color(t.dim).child("not in this run"));
-  }
-  const color = stepColor(t, rec.status);
-  const selected = state.step === name;
-  const dur = durationText(rec.startedAt, rec.endedAt, state.nowMs);
-  return hoverRow(`step-${name}`).flex().items_center()
-    .px(SP.sm).py(SP.xs).rounded(RADIUS.control).gap(SP.sm)
-    .when(selected, (e) => e.bg(t.selected))
-    .on_click(() => state.onStep(name))
-    .child(div().text_size(TEXT.body).w(BATCH_COL.step).child(name))
-    .child(div().text_size(TEXT.caption).text_color(color).child(pretty(rec.status)))
-    .when(Boolean(dur), (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim).child(dur)))
-    .when(rec.exitCode != null, (e) => e.child(
-      div().text_size(TEXT.caption)
-        .text_color(rec.exitCode !== 0 ? t.ansi1 : t.dim)
-        .child(`exit ${rec.exitCode}`)));
-}
-
-function renderFindings(item) {
+function renderNotes(item) {
   const t = theme();
   const findings = item.findings ?? [];
-  if (!findings.length) return null;
-  return v_flex().flex_none().gap(SP.sm)
-    .child(div().text_size(TEXT.small).font_semibold().text_color(t.muted).child("Findings"))
+  const wait = item.waitReason;
+  const moved = item.headMoved;
+  if (!findings.length && !wait && !moved) return null;
+  const title = laneOf(item) === "attention" ? "Needs you" : "Notes";
+  return card("batch-notes").gap(SP.xs)
+    .child(div().text_size(TEXT.title).font_semibold().child(title))
     .children(findings.map((f, i) => {
       const files = (f.files ?? []).join(", ");
-      return v_flex().id(`finding-${i}`).px(SP.sm).py(SP.xs)
-        .border_1().border_color(t.border).rounded(RADIUS.control).gap(SP.xxs)
-        .child(div().text_size(TEXT.body).font_medium().child(pretty(f.reason)))
-        .child(caption(`step · ${f.step ?? ""}`))
+      return v_flex().id(`finding-${i}`).gap(SP.xxs)
+        .child(div().text_size(TEXT.small).text_color(t.foreground).child(pretty(f.reason)))
         .when(Boolean(f.detail), (e) => e.child(
           div().text_size(TEXT.small).text_color(t.muted).child(f.detail)))
-        .when(Boolean(files), (e) => e.child(caption(files)));
-    }));
+        .when(Boolean(files), (e) => e.child(
+          div().text_size(TEXT.caption).text_color(t.muted).child(files)));
+    }))
+    .when(Boolean(wait), (e) => e.child(
+      div().text_size(TEXT.small).text_color(t.ansi3).child(wait)))
+    .when(moved, (e) => e.child(
+      div().text_size(TEXT.small).text_color(t.ansi3).child("head moved since the run")));
 }
 
-function renderLogPane(item, state) {
+function renderLog(state) {
   const t = theme();
-  if (!state.step) return placeholder("Pick a step to see its log").p(SP.md);
-  const path = item.steps?.[state.step]?.logPath;
   const log = state.log;
-  let body;
-  if (log == null) body = placeholder("Loading log…");
-  else if (log.error) body = placeholder(log.error);
-  else {
-    const lines = String(log.text ?? "").split("\n");
-    body = v_flex().children(lines.map((l) =>
-      div().font_family(mono()).text_size(TEXT.small).child(l === "" ? " " : l)));
+  if (log == null) {
+    return div().text_size(TEXT.small).text_color(t.muted).child("Loading log…");
   }
-  return v_flex().flex_1().min_h(0).min_w(0)
-    .child(h_flex().flex_none().px(SP.md).py(SP.xs).gap(SP.sm).items_center()
-      .child(div().flex_none().text_size(TEXT.small).font_semibold().child(`${state.step} log`))
-      .child(div().min_w(0).truncate().child(caption(path ?? "", t.dim))))
-    .child(scrollBody().flex_1().px(SP.md).py(SP.sm).child(body));
+  if (log.error) {
+    return div().text_size(TEXT.small).text_color(t.muted).child(log.error);
+  }
+  const lines = String(log.text ?? "").split("\n");
+  return inset().font_family(mono()).text_size(TEXT.caption).text_color(t.foreground)
+    .children(lines.map((l) => div().child(l === "" ? " " : l)));
 }
 
-export function renderItemBody(item, state) {
+function renderStepCard(item, name, state) {
   const t = theme();
-  const findings = renderFindings(item);
-  return h_flex().flex_1().min_h(0)
-    .child(v_flex().w(LAYOUT.colMin + LAYOUT.colMin).flex_none().min_h(0)
-      .overflow_y_scrollbar().px(SP.lg).py(SP.md).gap(SP.md)
-      .child(v_flex().gap(SP.xs)
-        .when(Boolean(item.worktree), (e) => e.child(
-          caption(item.worktree).font_family(mono())))
-        .when(Boolean(item.waitReason), (e) => e.child(caption(item.waitReason, t.ansi3)))
-        .when(item.headMoved, (e) => e.child(pill("head moved", t.ansi3))))
-      .child(div().text_size(TEXT.small).font_semibold().text_color(t.muted).child("Steps"))
-      .children(runSteps(state.doc).map((name) => renderStepRow(item, name, state)))
-      .when(Boolean(findings), (e) => e.child(findings)))
-    .child(v_flex().flex_1().min_w(0).min_h(0).border_l_1().border_color(t.border)
-      .child(renderLogPane(item, state)));
+  const rec = item.steps?.[name] ?? null;
+  if (rec == null) return null;
+  const dur = durationText(rec.startedAt, rec.endedAt, state.nowMs);
+  const head = h_flex().gap(SP.sm).items_center()
+    .child(div().text_size(TEXT.title).font_semibold().child(name))
+    .child(div().text_size(TEXT.small).text_color(stepColor(t, rec.status)).child(pretty(rec.status)))
+    .when(Boolean(dur), (e) => e.child(div().text_size(TEXT.small).text_color(t.muted).child(dur)))
+    .when(rec.exitCode != null, (e) => e.child(
+      div().text_size(TEXT.small)
+        .text_color(rec.exitCode !== 0 ? t.ansi1 : t.muted)
+        .child(`exit ${rec.exitCode}`)));
+  if (!rec.logPath) {
+    return cardShell(`step-${name}`).gap(SP.xs)
+      .child(head)
+      .child(div().text_size(TEXT.small).text_color(t.muted).child("no log"));
+  }
+  return card(`step-${name}`).gap(SP.xs)
+    .on_click(() => state.onStep(name))
+    .child(head)
+    .when(state.step === name, (e) => e.child(renderLog(state)));
+}
+
+export function renderBatchTab(item, state) {
+  const t = theme();
+  const body = scrollBody().px(SP.lg).pb(SP.lg).pt(SP.sm).gap(SP.sm);
+  if (item == null) {
+    return body.child(div().text_size(TEXT.small).text_color(t.muted)
+      .child("This PR was not in the selected batch run"));
+  }
+  const notes = renderNotes(item);
+  return body
+    .when(Boolean(notes), (e) => e.child(notes))
+    .children(runSteps(state.doc).flatMap((name) => {
+      const el = renderStepCard(item, name, state);
+      return el == null ? [] : [el];
+    }));
 }

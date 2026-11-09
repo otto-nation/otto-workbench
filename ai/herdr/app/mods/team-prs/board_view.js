@@ -18,7 +18,7 @@ import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
-import { renderRunBar, renderRunList, runSteps } from "./workflows_view.js";
+import { batchButtonLabel, renderRunPanel } from "./workflows_view.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
 
@@ -316,8 +316,7 @@ export default class TeamPrs extends View {
   }
 
   render(cx) {
-    if (tabOf() === "mine") this.workflows.show();
-    else this.workflows.hide();
+    this.workflows.show();
     const t = theme();
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
@@ -387,6 +386,7 @@ export default class TeamPrs extends View {
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .child(link("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
+          .child(link("batch", batchButtonLabel(this.workflows.barState()), () => this.workflows.toggleRuns()))
           .child(link("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
@@ -402,6 +402,7 @@ export default class TeamPrs extends View {
       .text_size(TEXT.small)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(tabOf(), t))
+      .when(this.workflows.showRuns, (e) => e.child(renderRunPanel(this.workflows.barState())))
       .child(renderCompact({
         sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
         width: this.size?.width,
@@ -426,16 +427,14 @@ export default class TeamPrs extends View {
       .text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
+      .when(this.workflows.showRuns, (e) => e.child(renderRunPanel(this.workflows.barState())))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
-      .when(tab === "mine", (e) => e.child(renderRunBar(this.workflows.barState())))
-      .when(tab === "mine" && this.workflows.showRuns, (e) => e.child(renderRunList(this.workflows.barState())))
-      .when(!(tab === "mine" && this.workflows.showRuns), (e) => e.child(renderBoard({
+      .child(renderBoard({
         tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
-        workflowOf: tab === "mine" ? (pr) => this.workflows.itemFor(pr.repoSlug, pr.number) : null,
-        steps: runSteps(this.workflows.doc),
-      })));
+        workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
+      }));
   }
 
   header(ctx, state, tab, pin, t) {
@@ -450,14 +449,15 @@ export default class TeamPrs extends View {
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
-        .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))
+        .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.muted).child(note)))
         .when(!all && ctx?.on != null, (e) => e.child(pill(String(ctx.on), t.muted)))
         .when(nFail && !all, (e) => e
           .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
-          .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
+          .child(div().min_w(0).text_size(TEXT.caption).text_color(t.muted).truncate().child(errorText(first.error, ctx))))
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
       .child(this.refreshButton())
+      .child(button("batch", batchButtonLabel(this.workflows.barState()), () => this.workflows.toggleRuns()))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

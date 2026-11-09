@@ -346,7 +346,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
   A Files tab lists the PR's changed files (from `gh api …/pulls/N/files`) and shows a file's diff inline (first 1,500 lines); files marked `linguist-generated` in `.gitattributes` sort last and are left out of the header's file and line counts; Open for Review checks the PR out with `wt switch pr:N` and selects, or opens, a space on that worktree (this machine only).
-  Mine shows the machine's latest `pr batch` run (Earlier runs to pick another) and each of your PRs' step states; a PR's detail has a Workflow tab with its steps, findings and the selected step's log.
+  The Batch button in the board header names the machine's latest `pr batch` run and opens the list of runs; a PR card in the run shows its batch state (a failed step, needs you, running, done); a PR's detail has a Batch tab with its notes, steps and each step's log.
 - An isolated untrusted window holds agent machines: launch with `herdr-app-untrusted`
   (`HC_SESSION=untrusted`, `~/.config/herdr-app-untrusted`). It refuses a local
   terminal or `afar` grant. Sync copies appearance keys and `clipboard_write` from the main window, links keys/themes, seeds `shared.json` once. Edit

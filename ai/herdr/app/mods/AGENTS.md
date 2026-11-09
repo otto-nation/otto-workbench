@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`team-prs` — Mine shows the machine's latest `pr batch` run (Earlier runs to pick another) and each of your PRs' step states; a PR's detail has a Workflow tab with its steps, findings and the selected step's log, `_lib`, …).
+Conventions for the mods under this directory (`team-prs` — the Batch button in the board header names the machine's latest `pr batch` run and opens the list of runs; a PR card in the run shows its batch state (a failed step, needs you, running, done); a PR's detail has a Batch tab with its notes, steps and each step's log, `_lib`, …).
 
 ## Where things live
 

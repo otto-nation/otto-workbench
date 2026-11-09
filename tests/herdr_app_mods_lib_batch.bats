@@ -206,6 +206,32 @@ _parse() {
   jq -e '.running=="running" and .queued=="waiting" and .waiting_admission=="waiting" and .awaiting_decision=="attention" and .needs_session=="attention" and .ready_to_publish=="attention" and .done=="done" and .doneFindings=="attention" and .dropped=="closed" and .skipped_closed=="closed" and .unknown=="closed" and .nil=="closed"' <<<"$output"
 }
 
+@test "cardState null, closed, failed, attention, running, queued, done" {
+  _js 'm.cardState(null)'
+  [ "$status" -eq 0 ]
+  [ "$output" = 'null' ]
+  _js 'm.cardState({status:"dropped"})'
+  [ "$output" = 'null' ]
+  _js 'm.cardState({status:"skipped_closed"})'
+  [ "$output" = 'null' ]
+  _js 'm.cardState({status:"running",steps:{rebase:{status:"failed"},ci:{status:"failed"}}})'
+  jq -e '.text=="rebase failed" and .tone=="failed"' <<<"$output"
+  _js 'm.cardState({status:"awaiting_decision",steps:{}})'
+  jq -e '.text=="needs you" and .tone=="attention"' <<<"$output"
+  _js 'm.cardState({status:"done",findings:[{reason:"open"}],steps:{}})'
+  jq -e '.text=="needs you" and .tone=="attention"' <<<"$output"
+  _js 'm.cardState({status:"running",steps:{rebase:{status:"done"},ci:{status:"running"}}})'
+  jq -e '.text=="running ci" and .tone=="busy"' <<<"$output"
+  _js 'm.cardState({status:"running",steps:{}})'
+  jq -e '.text=="running" and .tone=="busy"' <<<"$output"
+  _js 'm.cardState({status:"queued",steps:{}})'
+  jq -e '.text=="queued" and .tone=="busy"' <<<"$output"
+  _js 'm.cardState({status:"waiting_admission",steps:{}})'
+  jq -e '.text=="queued" and .tone=="busy"' <<<"$output"
+  _js 'm.cardState({status:"done",findings:[],steps:{}})'
+  jq -e '.text=="done" and .tone=="done"' <<<"$output"
+}
+
 @test "shortKey single repo hashes, otherwise full or empty" {
   _js 'm.shortKey("o/r#1905", ["o/r"])'
   [ "$status" -eq 0 ]

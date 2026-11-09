@@ -188,6 +188,23 @@ export function shortKey(key, repos) {
   return key;
 }
 
+export function cardState(item) {
+  if (item == null || laneOf(item) === 'closed') return null;
+  for (const step of STEP_ORDER) {
+    if (item.steps?.[step]?.status === 'failed') {
+      return { text: `${step} failed`, tone: 'failed' };
+    }
+  }
+  if (laneOf(item) === 'attention') return { text: 'needs you', tone: 'attention' };
+  if (item.status === 'running') {
+    const running = STEP_ORDER.find((s) => item.steps?.[s]?.status === 'running');
+    return { text: running ? `running ${running}` : 'running', tone: 'busy' };
+  }
+  if (laneOf(item) === 'waiting') return { text: 'queued', tone: 'busy' };
+  if (item.status === 'done') return { text: 'done', tone: 'done' };
+  return null;
+}
+
 export function durationText(startedAt, endedAt, nowMs) {
   if (!startedAt) return '';
   const start = Date.parse(startedAt);

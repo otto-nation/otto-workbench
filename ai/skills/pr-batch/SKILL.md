@@ -123,7 +123,9 @@ on the PR is § A Branch With an Open PR Is Shared. This section only maps them
 onto batch state.
 
 Nothing is pushed unless `--auto-publish ff`, which never force-pushes, so a
-rebase always ends with the push still owed. The batch request counts as the user's rebase request for every item, so no per-PR prompt is needed (`--no-push` withholds it):
+rebase always ends with the push still owed. A run the user asked for with the
+`rebase` step counts as their rebase request for every item it rebased, so no
+per-PR prompt is needed; only the user saying not to push withholds it:
 
 - **The lease** — the item's full 40-char `remote_sha` from
   `pr batch status --full`. Never a short SHA, never a push without `--expect`.

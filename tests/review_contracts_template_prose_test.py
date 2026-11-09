@@ -419,9 +419,8 @@ def test_claim_findings_are_filed_by_the_harness_as_a_should_fix(path):
 
 _NOTES_SENTENCE = (
     "A finding states a defect. Put what you checked and found sound in `verified`, never in "
-    "`findings` as \"acceptable\" or \"not a defect\". Put in `questions` only what the author's "
-    "intent, or context the diff does not show, can answer; a question whose answer could reveal "
-    "a defect is a finding."
+    "`findings` as \"acceptable\" or \"not a defect\". If any plausible answer would make the "
+    "code wrong, file a finding that names that case; ask only what no answer would turn into a defect."
 )
 
 

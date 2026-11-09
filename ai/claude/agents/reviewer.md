@@ -98,7 +98,7 @@ When the prompt's Output section has a `behaviours` field, fill `behaviours` wit
 
 ### 0d. Questions and verified
 
-When the prompt's Output section has a `questions` field, fill `questions` and `verified`. A finding states a defect. Put what you checked and found sound in `verified`, never in `findings` as "acceptable" or "not a defect". Put in `questions` only what the author's intent, or context the diff does not show, can answer; a question whose answer could reveal a defect is a finding. On synthesis, merge the groups' lists.
+When the prompt's Output section has a `questions` field, use `questions` and `verified` only when there is something to say. A finding states a defect. Put what you checked and found sound in `verified`, never in `findings` as "acceptable" or "not a defect". If any plausible answer would make the code wrong, file a finding that names that case; ask only what no answer would turn into a defect. On synthesis, merge the groups' lists.
 
 ### 1. Context
 - If the repo's instructions file (AGENTS.md, or a legacy CLAUDE.md) is provided in pre-collected data, use it directly. Otherwise read it (and any sub-files it references). Use project-specific rules as review criteria throughout
@@ -384,7 +384,7 @@ Only for a review no prompt gave an `## Output` section to. Inside the pipeline 
     {
       "path": "pkg/client.go",
       "line": 12,
-      "body": "Should a 429 from the upstream count against the retry budget, or only 5xx responses?"
+      "body": "Is the retry helper meant for the batch jobs too, or only request handlers?"
     }
   ],
   "verified": [
@@ -397,7 +397,7 @@ Only for a review no prompt gave an `## Output` section to. Inside the pipeline 
 }
 ```
 
-- `summary` — markdown, 3–5 sentences: your assessment of the change — its overall quality and its top risk, citing finding IDs; say what the change does only where the assessment needs it; no verdict words (approve, request changes). On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself
+- `summary` — markdown, 3–5 sentences: your assessment of the change — its overall quality and its top risk (when there is one), citing finding IDs; say what the change does only where the assessment needs it; no verdict words (approve, request changes). On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself
 - `questions` — see 0d
 - `verified` — see 0d
 - `findings[].id` — M (must fix), S (should fix), N (nit), I (idiom) and a number from 1, sequential per severity

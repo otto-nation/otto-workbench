@@ -65,7 +65,7 @@ def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:
 
 
 # Coverage bookkeeping and machine-generated output, not prior reviewer claims.
-# Questions are the round's own (#1895 shows the prior round's on purpose).
+# Questions are the round's own (until #1895 adds them).
 _PRIOR_EXCLUDED_SECTIONS = NON_FINDING_SECTIONS | {
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
 }

@@ -302,7 +302,7 @@ def _verified_comment(record: ReviewRecord) -> list[str]:
 
 
 def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
-    """Every section the record holds, in spec §2's order, with today's Claims, Test evidence and harness sections slotted in (PR 2c plan, Layout)."""
+    """Every section the record holds, in spec §2's order, with today's Claims, Test evidence and harness sections slotted in: File Triage, Agent Failures, Summary, Focus, Questions, Claims, Test evidence, findings, Verified, Prior findings, extra, Static Analysis, Verdict."""
     sections: list[ProseSection] = []
     if record.triage is not None:
         sections.append(ProseSection(SECTION_FILE_TRIAGE, "\n".join(triage_line(e) for e in record.triage)))

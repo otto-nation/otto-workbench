@@ -57,13 +57,13 @@ _LEDGER_NOTE = (
     "finding shown there; [] otherwise"
 )
 _QUESTIONS_NOTE = (
-    "what only the author can answer — intent, or context the diff does not show; "
-    f"at most {MAX_QUESTIONS}; usually []. A question whose answer could reveal a defect is a finding")
+    "what only the author can answer — intent; "
+    f"at most {MAX_QUESTIONS}; usually []. If any plausible answer would make the code wrong, file a finding that names that case; ask only what no answer would turn into a defect")
 _VERIFIED_NOTE = (
     f"what you checked and found sound, one entry each; at most {MAX_VERIFIED}; [] when none. "
     "Never a finding that ends \"acceptable\" or \"not a defect\"")
 _SUMMARY_NOTE = (
-    "markdown, 3–5 sentences: your assessment of the change — its overall quality and its top risk, citing finding IDs; say what the change does only where the assessment needs it; no verdict words (approve, request changes)")
+    "markdown, 3–5 sentences: your assessment of the change — its overall quality and its top risk (when there is one), citing finding IDs; say what the change does only where the assessment needs it; no verdict words (approve, request changes)")
 
 FIELD_NOTES: dict[type, dict[str, str]] = {
     AgentFinding: {

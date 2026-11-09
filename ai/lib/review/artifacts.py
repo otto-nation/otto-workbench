@@ -616,7 +616,7 @@ _EXAMPLE_BEHAVIOURS = (BehaviourReport(
 ),)
 _EXAMPLE_QUESTIONS = (AgentQuestion(
     "pkg/client.go", 12,
-    "Should a 429 from the upstream count against the retry budget, or only 5xx responses?"),)
+    "Is the retry helper meant for the batch jobs too, or only request handlers?"),)
 _EXAMPLE_VERIFIED = (VerifiedNote(
     "pkg/client.go", 30,
     "`fetch` closes the response body on every retry path, the last failure included."),)

@@ -96,7 +96,7 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 
 ## Branch Completion
 
-- When implementation is complete, create a PR — never present a menu of completion options (see PR Creation for the full invocation)
+- When implementation is complete, create a PR — never present a menu of completion options, and never ask whether to create a draft PR (see PR Creation for the full invocation)
 - When the user states a specific next step ("merge this", "push it", "just keep it"), execute it directly. If it fails, debug the failure — don't fall back to an options menu
 - Open the PR when the work is done, not when it is nearly done. Opening one is a claim that the branch is finished, and it is acted on as such: a reviewer reads it, marks it ready, and merges. Anything still on your list — a test you meant to add, a finding you meant to fix — belongs in the branch before the PR exists, or in a follow-up PR after it
 

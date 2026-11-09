@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`team-prs` — the Batch button in the board header names the machine's latest `pr batch` run and opens the list of runs; a PR card in the run shows its batch state (a failed step, needs you, running, done); a PR's detail has a Batch tab with its notes, steps and each step's log, `_lib`, …).
+Conventions for the mods under this directory (`team-prs` — Mine's Run batch selects your PRs and steps (Options: AI per step, push clean fast-forwards), launching one `pr batch run` per repo as a labelled terminal; while runs are active a strip lists each with progress, Log, Cancel and Kill; cards show their batch state; a PR's detail has a Batch tab; Last batch opens earlier runs, `_lib`, …).
 
 ## Where things live
 

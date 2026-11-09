@@ -18,7 +18,10 @@ import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
-import { batchButtonLabel, renderRunPanel } from "./workflows_view.js";
+import { BatchLauncher } from "./batch_launcher.js";
+import {
+  lastBatchLabel, renderRunPanel, renderRunStrip, renderSelectionBar, renderPrStepChips,
+} from "./workflows_view.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
 
@@ -57,6 +60,10 @@ function errorText(err, ctx) {
   return friendlyError(err, ctx?.on, scopeOf());
 }
 
+function mineOpen(state) {
+  return (state.prs ?? []).filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED");
+}
+
 
 export default class TeamPrs extends View {
   // Handlers run after the render that built them; a redraw or task requested through that render's
@@ -64,6 +71,7 @@ export default class TeamPrs extends View {
   init(_props, cx) {
     this.acx = cx;
     this.workflows = new Workflows(cx, () => this.activeTargets());
+    this.launcher = new BatchLauncher(cx, this.workflows);
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
@@ -376,7 +384,8 @@ export default class TeamPrs extends View {
 
   onSize(size, cx) { this.size = size; cx.notify(); }
 
-  compactHeader(tab, t) {
+  compactHeader(tab, t, state) {
+    const mine = mineOpen(state);
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
       .child(h_flex().child(this.scopeToggle()))
       .child(h_flex().items_center().justify_between()
@@ -386,7 +395,8 @@ export default class TeamPrs extends View {
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .child(link("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
-          .child(link("batch", batchButtonLabel(this.workflows.barState()), () => this.workflows.toggleRuns()))
+          .when(tab === "mine" && !this.launcher.selecting, (e) => e.child(
+            link("run-batch", "Run batch", () => this.launcher.start(mine))))
           .child(link("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
@@ -395,14 +405,17 @@ export default class TeamPrs extends View {
   }
 
   compactView(state, t, cx) {
-    const mine = tabOf() === "mine";
+    const tab = tabOf(), mine = tab === "mine";
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
+    const strip = mine ? renderRunStrip({ launcher: this.launcher, workflows: this.workflows }) : null;
     return pane("prs")
       .text_size(TEXT.small)
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(this.compactHeader(tabOf(), t))
-      .when(this.workflows.showRuns, (e) => e.child(renderRunPanel(this.workflows.barState())))
+      .child(this.compactHeader(tab, t, state))
+      .when(Boolean(strip), (e) => e.child(strip))
+      .when(mine && this.launcher.selecting, (e) => e.child(
+        renderSelectionBar({ launcher: this.launcher, prs: mineOpen(state) })))
       .child(renderCompact({
         sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
         width: this.size?.width,
@@ -423,21 +436,30 @@ export default class TeamPrs extends View {
     const me = String(state.me ?? "").toLowerCase();
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
     const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
+    const mine = mineOpen(state);
+    const selecting = tab === "mine" && this.launcher.selecting;
+    const strip = tab === "mine" ? renderRunStrip({ launcher: this.launcher, workflows: this.workflows }) : null;
     return pane("prs")
       .text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
-      .when(this.workflows.showRuns, (e) => e.child(renderRunPanel(this.workflows.barState())))
-      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
+      .when(Boolean(strip), (e) => e.child(strip))
+      .when(selecting, (e) => e.child(renderSelectionBar({ launcher: this.launcher, prs: mine })))
+      .when(!selecting, (e) => e.child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos })))
+      .when(tab === "mine" && this.workflows.showRuns, (e) => e.child(renderRunPanel(this.workflows.barState())))
       .child(renderBoard({
         tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
+        selecting, isSelected: (pr) => this.launcher.selected.has(`${pr.repoSlug}#${pr.number}`),
+        onToggleSelect: (pr) => this.launcher.toggle(`${pr.repoSlug}#${pr.number}`),
+        stepChips: (pr) => renderPrStepChips(pr, this.launcher),
       }));
   }
 
   header(ctx, state, tab, pin, t) {
+    const mine = mineOpen(state);
     const loading = state.loading && !state.repos;
     const nFail = state.errors?.length ?? 0;
     const first = state.errors?.[0];
@@ -457,7 +479,10 @@ export default class TeamPrs extends View {
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
       .child(this.refreshButton())
-      .child(button("batch", batchButtonLabel(this.workflows.barState()), () => this.workflows.toggleRuns()))
+      .when(tab === "mine" && !this.launcher.selecting, (e) => e.child(
+        button("run-batch", "Run batch", () => this.launcher.start(mine))))
+      .when(tab === "mine", (e) => e.child(
+        link("last-batch", lastBatchLabel(this.workflows.barState()), () => this.workflows.toggleRuns())))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

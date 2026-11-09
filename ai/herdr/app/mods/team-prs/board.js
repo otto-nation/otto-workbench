@@ -5,7 +5,7 @@ import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, 
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import { chip as chipOf, filterGroup, pill, ciMark, addStat, delStat, card, eyebrow, placeholder, scrollBody } from "./_ui/ui.js";
-import { cardStateLine } from "./workflows_view.js";
+import { cardStateLine, cardCheckbox } from "./workflows_view.js";
 
 const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
 
@@ -20,7 +20,10 @@ function column(col, opts) {
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
-export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, loading, workflowOf }) {
+export function renderBoard({
+  tab, prs, filters, me, onOpen, spinner, showRepo, loading, workflowOf,
+  selecting, isSelected, onToggleSelect, stepChips,
+}) {
   const t = theme();
   const mine = tab === "mine";
   const list = mine
@@ -34,7 +37,9 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, 
   if (!shown.length) {
     return board.child(placeholder(loading ? "Loading…" : "No PRs").p(SP.lg));
   }
-  return board.children(shown.map((c) => column(c, { onOpen, spinner, showRepo, workflowOf })));
+  return board.children(shown.map((c) => column(c, {
+    onOpen, spinner, showRepo, workflowOf, selecting, isSelected, onToggleSelect, stepChips,
+  })));
 }
 
 function badges(pr, { hideBusy } = {}) {
@@ -50,14 +55,25 @@ function badges(pr, { hideBusy } = {}) {
   return out;
 }
 
-export function renderCard(pr, { onOpen, spinner, showRepo, workflowOf }) {
+export function renderCard(pr, {
+  onOpen, spinner, showRepo, workflowOf, selecting, isSelected, onToggleSelect, stepChips,
+}) {
   const t = theme();
   const mark = pr.ciStatus === "passing" || pr.ciStatus === "failing" || pr.ciStatus === "pending";
   const item = workflowOf?.(pr);
   const stateLine = item ? cardStateLine(item) : null;
-  return card(cardId(pr)).gap(SP.sm).on_click(() => onOpen(pr))
-    .child(div().text_size(TEXT.body).font_medium().max_h(LAYOUT.cardTitleMaxH)
-      .overflow_hidden().child(pr.title ?? ""))
+  const selected = Boolean(selecting && isSelected?.(pr));
+  return card(cardId(pr)).gap(SP.sm).on_click(() => {
+    if (selecting) {
+      if (pr.cwd) onToggleSelect?.(pr);
+      return;
+    }
+    onOpen(pr);
+  })
+    .child(h_flex().gap(SP.sm).items_center()
+      .when(Boolean(selecting), (e) => e.child(cardCheckbox(selected)))
+      .child(div().flex_1().min_w(0).text_size(TEXT.body).font_medium().max_h(LAYOUT.cardTitleMaxH)
+        .overflow_hidden().child(pr.title ?? "")))
     .child(h_flex().gap(SP.sm).items_center().text_size(TEXT.caption).text_color(t.muted)
       .child(div().flex_none().child(showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`))
       .child(div().min_w(0).truncate().child(pr.author ?? ""))
@@ -69,6 +85,9 @@ export function renderCard(pr, { onOpen, spinner, showRepo, workflowOf }) {
       .when(Boolean(mark), (e) => e.child(ciMark(pr.ciStatus)))
       .when(Boolean(pr.reviewing), (e) => e.child(div().text_color(t.working).child(spinner))))
     .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr, { hideBusy: Boolean(stateLine) })))
+    .when(Boolean(selecting && !pr.cwd), (e) => e.child(
+      div().text_size(TEXT.caption).text_color(t.muted).child("no checkout of this repo on its machine")))
+    .when(Boolean(selected && stepChips), (e) => e.child(stepChips(pr)))
     .when(Boolean(stateLine), (e) => e.child(stateLine));
 }
 

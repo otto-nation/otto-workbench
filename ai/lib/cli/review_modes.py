@@ -35,8 +35,8 @@ from cli.needs import NONE as _NONE
 from cli.needs import NO_LOCK, Need, ReviewMode
 import core.log
 import core.publishing
-from core.tool_parser import EXIT_USAGE
 from core.serde import load_file as serde_load_file
+from core.tool_parser import EXIT_USAGE
 import pr.context
 from pr.review_sync import sync_review_domain
 from pr.state import PostedAs, PostEvent, PostTracking
@@ -222,7 +222,8 @@ def _if_changed_from_argv(argv: Sequence[str]) -> str | None:
     argparse rather than a scan, so a bare `--if-changed` is a usage error
     instead of an empty stamp that silently reads as "changed".
     """
-    parser = argparse.ArgumentParser(prog="pr review --list", add_help=False)
+    parser = argparse.ArgumentParser(prog="pr review --list", add_help=False,
+                                     allow_abbrev=False)
     parser.add_argument("--if-changed")
     known, _rest = parser.parse_known_args(list(argv))
     return known.if_changed

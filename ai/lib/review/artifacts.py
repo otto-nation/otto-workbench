@@ -13,7 +13,7 @@ conversion, and `as_group_artifact` is its inverse for the one prompt that
 shows a merged record back to an agent (synthesis).
 
 A finding's severity is its ID's first letter, so the two cannot disagree.
-`TriageEntry` and `LedgerLine` are the record's own types: what an agent
+`TriageEntry`, `LedgerLine` and `VerifiedNote` are the record's own types: what an agent
 writes there is exactly what the record keeps.
 """
 
@@ -32,10 +32,11 @@ from core.phases import Mode
 from pr.domains import ReviewVerdict
 from review.behaviour_types import BehaviourReport
 from review.grammar import SEVERITY_KEY, FindingIdentity, strip_line_suffix
-from review.budget import DERIVED_AREA_RESERVE_BYTES
+from review.budget import DERIVED_AREA_RESERVE_BYTES, MAX_QUESTIONS, MAX_VERIFIED
 from review.claim_types import ClaimReport, ClaimSource, ClaimVerdict
 from review.ingest import IngestError, IngestErrorKind
-from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord, TriageEntry
+from review.record import Disposition, LedgerLine, Question, RecordFinding, ReviewRecord, TriageEntry
+from review.record import VerifiedNote, numbered_questions
 from review.store import StoredReview
 from review.types import SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, PriorDisposition
 
@@ -150,6 +151,40 @@ class AgentFinding:
         )
 
 
+@dataclass(frozen=True)
+class AgentQuestion:
+    """One question for the author as an agent writes it. The harness numbers it."""
+
+    path: str | None = None
+    line: int | None = None
+    body: str = ""
+
+
+def _notes_problems(notes: tuple[AgentQuestion | VerifiedNote, ...], at: str) -> list[IngestError]:
+    out: list[IngestError] = []
+    for i, n in enumerate(notes):
+        out += _location_problems(n.path, n.line, None, f"{at}[{i}]")
+        if not n.body.strip():
+            out.append(_empty(f"{at}[{i}].body", "a body"))
+    return out
+
+
+def _capped(notes: tuple, cap: int, what: str) -> tuple:
+    """The first `cap` of `notes`; the field note states the cap, so more is the agent's overrun."""
+    if len(notes) > cap:
+        core.log.warn(f"{len(notes)} {what} written; keeping the first {cap}")
+    return notes[:cap]
+
+
+def _record_questions(questions: tuple[AgentQuestion, ...]) -> tuple[Question, ...]:
+    asked = _capped(questions, MAX_QUESTIONS, "questions")
+    return numbered_questions(Question("", q.path, q.line, q.body.strip()) for q in asked)
+
+
+def _record_verified(verified: tuple[VerifiedNote, ...]) -> tuple[VerifiedNote, ...]:
+    return tuple(replace(v, body=v.body.strip()) for v in _capped(verified, MAX_VERIFIED, "verified notes"))
+
+
 def _findings_problems(findings: tuple[AgentFinding, ...], at: str) -> list[IngestError]:
     out: list[IngestError] = []
     for i, f in enumerate(findings):
@@ -182,13 +217,16 @@ class GroupArtifact:
     findings: tuple[AgentFinding, ...] = ()
     prior_findings: tuple[LedgerLine, ...] = ()
     behaviours: tuple[BehaviourReport, ...] | None = None
+    questions: tuple[AgentQuestion, ...] = ()
+    verified: tuple[VerifiedNote, ...] = ()
 
     def problems(self) -> tuple[IngestError, ...]:
         return tuple(
             _triage_problems(self.triage, "$.triage")
             + _findings_problems(self.findings, "$.findings")
             + _ledger_problems(self.prior_findings, "$.prior_findings")
-        )
+            + _notes_problems(self.questions, "$.questions")
+            + _notes_problems(self.verified, "$.verified"))
 
     def to_record(self, *, declinable: frozenset[str]) -> ReviewRecord:
         """The group's record. A group writes no checkboxes; the review's are synthesis's."""
@@ -202,13 +240,14 @@ class GroupArtifact:
                     {"path": f.path, "additions": 1}
                     for f in self.findings if f.path
                 ],
-            ),
-        )
+            ), questions=_record_questions(self.questions),
+            verified=_record_verified(self.verified))
 
     @classmethod
     def example(cls, mode: Mode) -> GroupArtifact:
         return cls(triage=_EXAMPLE_TRIAGE, findings=_EXAMPLE_FINDINGS,
-                   prior_findings=_EXAMPLE_LEDGER, behaviours=_EXAMPLE_BEHAVIOURS)
+                   prior_findings=_EXAMPLE_LEDGER, behaviours=_EXAMPLE_BEHAVIOURS,
+                   questions=_EXAMPLE_QUESTIONS, verified=_EXAMPLE_VERIFIED)
 
 
 @dataclass(frozen=True)
@@ -223,6 +262,8 @@ class ReviewArtifact:
     focus: tuple[FocusReport, ...] = ()
     claims: tuple[ClaimReport, ...] | None = None
     behaviours: tuple[BehaviourReport, ...] | None = None
+    questions: tuple[AgentQuestion, ...] = ()
+    verified: tuple[VerifiedNote, ...] = ()
 
     def problems(self) -> tuple[IngestError, ...]:
         summary = [] if self.summary.strip() else [_empty("$.summary", "the summary")]
@@ -232,7 +273,8 @@ class ReviewArtifact:
             + _findings_problems(self.findings, "$.findings")
             + _ledger_problems(self.prior_findings, "$.prior_findings")
             + _focus_report_problems(self.focus, "$.focus")
-        )
+            + _notes_problems(self.questions, "$.questions")
+            + _notes_problems(self.verified, "$.verified"))
 
     def to_record(self, *, checkbox: bool, declinable: frozenset[str]) -> ReviewRecord:
         """The review's record. `checkbox` is the mode's: a self-review is a checklist."""
@@ -241,8 +283,8 @@ class ReviewArtifact:
             findings=tuple(f.to_record(checkbox=checkbox, declinable=declinable) for f in self.findings),
             triage=self.triage or None,
             ledger=self.prior_findings,
-            verdict=self.verdict.strip(),
-        )
+            verdict=self.verdict.strip(), questions=_record_questions(self.questions),
+            verified=_record_verified(self.verified))
 
     @classmethod
     def example(cls, mode: Mode) -> ReviewArtifact:
@@ -250,8 +292,8 @@ class ReviewArtifact:
             summary=_EXAMPLE_SUMMARY, findings=_EXAMPLE_FINDINGS, triage=_EXAMPLE_TRIAGE,
             prior_findings=_EXAMPLE_LEDGER, verdict=_EXAMPLE_VERDICT,
             focus=_EXAMPLE_FOCUS_REPORT, claims=_EXAMPLE_CLAIMS,
-            behaviours=_EXAMPLE_BEHAVIOURS,
-        )
+            behaviours=_EXAMPLE_BEHAVIOURS, questions=_EXAMPLE_QUESTIONS,
+            verified=_EXAMPLE_VERIFIED)
         return full if mode is Mode.PR else replace(full, triage=(), verdict="")
 
 
@@ -265,7 +307,7 @@ def _agent_finding(f: RecordFinding) -> AgentFinding:
 
 
 def as_group_artifact(record: ReviewRecord) -> GroupArtifact:
-    """`record`'s visible findings, triage and ledger as the artifact a group writes.
+    """`record`'s visible findings, triage, ledger, questions and verified notes as a group writes.
 
     What synthesis is shown of the merged groups, so it copies JSON forward
     rather than translating markdown. Each finding carries a `sid` — the one it
@@ -279,7 +321,8 @@ def as_group_artifact(record: ReviewRecord) -> GroupArtifact:
         prior_findings=record.ledger,
         behaviours=None if record.behaviours is None else tuple(
             BehaviourReport(b.text, b.test_cited, b.paths) for b in record.behaviours),
-    )
+        questions=tuple(AgentQuestion(q.path, q.line, q.body) for q in record.questions),
+        verified=record.verified)
 
 
 def declinable_sids(prior: StoredReview | None) -> frozenset[str]:
@@ -572,3 +615,9 @@ _EXAMPLE_BEHAVIOURS = (BehaviourReport(
     "Failed fetches back off exponentially.",
     test_cited="pkg/client_test.go::TestFetchBackoff", paths=("pkg/client.go",),
 ),)
+_EXAMPLE_QUESTIONS = (AgentQuestion(
+    "pkg/client.go", 12,
+    "Should a 429 from the upstream count against the retry budget, or only 5xx responses?"),)
+_EXAMPLE_VERIFIED = (VerifiedNote(
+    "pkg/client.go", 30,
+    "`fetch` closes the response body on every retry path, the last failure included."),)

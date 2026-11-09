@@ -20,14 +20,14 @@ from review.artifact_format import (
     EXAMPLE_LEAVES_EMPTY, FIELD_NOTES, _nested_dataclass, output_format,
 )
 from review.artifacts import (
-    AgentFinding, DisproveArtifact, GroupArtifact,
+    AgentFinding, AgentQuestion, DisproveArtifact, GroupArtifact,
     HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint,
     as_group_artifact, declinable_sids,
 )
 from review.behaviour_types import BehaviourReport
-from review.budget import DERIVED_AREA_RESERVE_BYTES
+from review.budget import DERIVED_AREA_RESERVE_BYTES, MAX_QUESTIONS, MAX_VERIFIED
 from review.ingest import IngestErrorKind
-from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
+from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord, VerifiedNote
 from review.store import StoredReview
 from review.types import SEVERITIES, PriorDisposition, ReviewMeta
 from review_behaviours_support import BEHAVIOUR_DOC
@@ -140,6 +140,9 @@ def _group(**finding) -> dict:
     ({"prior_findings": [{"id": "M1\n", "disposition": "Fixed"}]},
      IngestErrorKind.UNKNOWN_SEVERITY, "$.prior_findings[0].id"),
     (_group(declined="documented"), IngestErrorKind.BAD_CARRY, "$.findings[0].declined"),
+    ({"questions": [{"body": " "}]}, IngestErrorKind.EMPTY_FIELD, "$.questions[0].body"),
+    ({"questions": [{"path": "a.py:3", "body": "q"}]}, IngestErrorKind.LINE_IN_PATH, "$.questions[0].path"),
+    ({"verified": [{"line": 3, "body": "v"}]}, IngestErrorKind.BAD_LOCATION, "$.verified[0].line"),
 ])
 def test_each_group_rejection_names_its_kind_and_place(doc, kind, at):
     problems = load_strict(GroupArtifact, doc).problems()
@@ -383,3 +386,39 @@ def test_a_group_record_keeps_its_behaviours_and_shows_them_back():
     rec = GroupArtifact(behaviours=(report,)).to_record(declinable=frozenset())
     assert rec.behaviours[0].id == "B1"
     assert as_group_artifact(rec).behaviours == (report,)
+
+
+def test_questions_are_numbered_and_capped(capsys):
+    rec = ReviewArtifact(
+        summary="s", questions=tuple(AgentQuestion(body=" q ") for _ in range(7)),
+    ).to_record(checkbox=False, declinable=NONE)
+    assert [q.id for q in rec.questions] == [f"Q{i}" for i in range(1, 6)]
+    assert all(q.body == "q" for q in rec.questions)
+    assert "7 questions" in capsys.readouterr().err
+    rec = ReviewArtifact(
+        summary="s", verified=tuple(VerifiedNote(body="v") for _ in range(9)),
+    ).to_record(checkbox=False, declinable=NONE)
+    assert len(rec.verified) == 8
+
+
+def test_a_group_record_keeps_its_questions_and_shows_them_back():
+    rec = GroupArtifact.example(Mode.PR).to_record(declinable=frozenset({"3f9a2c1d"}))
+    assert rec.questions[0].id == "Q1" and rec.verified
+    shown = as_group_artifact(rec)
+    assert shown.questions[0].body == rec.questions[0].body
+    loaded = load_strict(GroupArtifact, json.loads(example_json(shown)))
+    assert loaded.problems() == ()
+    assert loaded.questions == shown.questions and loaded.verified == shown.verified
+
+
+def test_the_format_explains_question_and_verified_fields():
+    text = output_format(ReviewArtifact, Mode.PR, rereview=False)
+    assert "`questions[].body`" in text and "`verified[].body`" in text
+    assert str(MAX_QUESTIONS) in FIELD_NOTES[ReviewArtifact]["questions"]
+    assert str(MAX_VERIFIED) in FIELD_NOTES[ReviewArtifact]["verified"]
+
+
+def test_a_pre_2c_document_loads_with_no_questions():
+    review = load_strict(ReviewArtifact, {"summary": "s"})
+    group = load_strict(GroupArtifact, {"findings": []})
+    assert review.questions == review.verified == group.questions == group.verified == ()

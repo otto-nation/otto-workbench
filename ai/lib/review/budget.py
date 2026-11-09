@@ -202,6 +202,12 @@ CLAIM_TURN_ALLOWANCE = 6
 MAX_BEHAVIOURS = 12
 # Each behaviour field is bounded so the document stays reviewable.
 MAX_BEHAVIOUR_BYTES = 512
+# Questions are for what only the author can answer, so a handful is plenty;
+# past it the reviewer is filing findings as questions.
+MAX_QUESTIONS = 5
+# Verified notes are reassurance, collapsed in the comment; bounded so they do
+# not become a second findings list.
+MAX_VERIFIED = 8
 
 # How many paths either file list in the delta section spells out before it
 # summarises the rest. A list is orientation, not content — the diff above it is

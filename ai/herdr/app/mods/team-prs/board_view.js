@@ -395,7 +395,7 @@ export default class TeamPrs extends View {
     return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
-      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx) }))
+      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab }))
       .child(renderBoard({
         tab, prs: state.prs ?? [], filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),

@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
-import { segment } from "./ui.js";
+import { segment, segmented } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 const { colMin: COL_MIN, colMax: COL_MAX, titleLh: TITLE_LH } = LAYOUT;
@@ -92,15 +92,24 @@ export function renderCard(pr, { onOpen, spinner, showRepo }) {
     .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr)));
 }
 
-export function renderChips(filters, authors, { onToggle }) {
+export function renderChips(filters, authors, { onToggle, tab }) {
   const t = theme();
   const f = filters ?? {};
   const set = new Set((f.authors ?? []).map((a) => String(a).toLowerCase()));
   const chip = (label, name, on) => segment(`chip-${name}`, label, on, () => onToggle(name));
-  return h_flex().id("prs-chips").gap(SP.sm).items_center().px(SP.lg).py(SP.sm).flex_none().flex_wrap()
+  const showItems = [];
+  if (tab !== "mine") showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
+  showItems.push(chip("Landed", "landed", Boolean(f.landed)));
+  showItems.push(chip("Empty lanes", "empty", Boolean(f.empty)));
+  return h_flex().id("prs-chips").flex_wrap().gap_x(SP.xl).gap_y(SP.sm).items_center()
+    .px(SP.lg).py(SP.sm).flex_none()
     .bg(t.background)
-    .child(chip("Drafts", "drafts", Boolean(f.drafts)))
-    .child(chip("Landed", "landed", Boolean(f.landed)))
-    .child(chip("Empty lanes", "empty", Boolean(f.empty)))
-    .children(authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))));
+    .child(h_flex().gap(SP.sm).items_center()
+      .child(div().text_size(TEXT.caption).text_color(t.dim).child("Show"))
+      .child(segmented(showItems)))
+    .when(tab !== "mine" && authors.length > 0, (e) => e.child(
+      h_flex().gap(SP.sm).items_center()
+        .child(div().text_size(TEXT.caption).text_color(t.dim).child("Author"))
+        .child(h_flex().flex_wrap().gap(SP.xs).items_center()
+          .children(authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase())))))));
 }

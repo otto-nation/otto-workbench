@@ -9,4 +9,4 @@ export const RADIUS = { control: 6, card: 8 };
 export const CONTROL_H = { board: 28, compact: 24 };
 export const ROW_H = { sidebar: 40, sidebarTitleOnly: 28 };
 export const BREAKPOINT = { rail: 160, compact: 560 };
-export const LAYOUT = { colMin: 260, colMax: 400, colEmpty: 140, titleLh: 18, headerH: 52, msgMaxW: 480, bodyMaxH: 420, titleMaxH: 40 };
+export const LAYOUT = { colMin: 260, colMax: 400, colEmpty: 210, titleLh: 18, headerH: 52, msgMaxW: 480, bodyMaxH: 420, titleMaxH: 40 };

@@ -3,13 +3,13 @@
  *
  * mapFiles(json) -> [{ path, previous, status, add, del, patch }]; `status` is one letter
  * (A added, D removed, M modified, R renamed, C copied) and `patch` is null when GitHub sent none
- * (binary or too large). patchRows(patch) -> { rows, truncated, width }: rows are numbered once so a
+ * (binary or too large). patchRows(patch, charPx) -> { rows, truncated, width }: rows are numbered once so a
  * frame only draws the ones on screen.
  */
 
 export const MAX_LINES = 1500;
 export const MAX_LINE_CHARS = 4000;
-const CHAR_PX = 7;
+const DEFAULT_CHAR_PX = 7;
 
 const LETTER = { added: 'A', removed: 'D', renamed: 'R', copied: 'C' };
 
@@ -48,13 +48,14 @@ export function diffRows(lines) {
   });
 }
 
-export function patchRows(patch) {
+// charPx is the width of one monospace glyph at the size the rows are drawn in.
+export function patchRows(patch, charPx = DEFAULT_CHAR_PX) {
   if (patch == null) return { rows: [], truncated: false, width: 0 };
   const all = patch.replace(/\n$/, '').split('\n');
   const lines = all.slice(0, MAX_LINES).map((l) =>
     l.length > MAX_LINE_CHARS ? `${l.slice(0, MAX_LINE_CHARS)}… (line truncated)` : l,
   );
-  const width = Math.max(300, ...lines.map((l) => l.length * CHAR_PX + 50));
+  const width = Math.max(300, ...lines.map((l) => l.length * charPx + 50));
   return { rows: diffRows(lines), truncated: all.length > MAX_LINES, width };
 }
 

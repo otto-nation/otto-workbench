@@ -1,17 +1,22 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { theme } from "herdr";
+import { theme, settings } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
 import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented } from "./ui.js";
+
+// The user's terminal font, so code-like text follows their settings.
+export function mono() {
+  return settings().font_family ?? "Menlo";
+}
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 
 // Buttons stop the press so only the bare header drags the window.
 function button(id, label, onClick) {
   const t = theme();
-  return div().id(id).px(SP.sm).h(CONTROL_H.board).flex().items_center()
+  return div().id(id).px(SP.sm).min_h(CONTROL_H.board).flex().items_center()
     .rounded(RADIUS.control).text_size(TEXT.caption).cursor_pointer()
     .border_1().border_color(t.border).hover((s) => s.bg(t.hover).border_color(t.dim))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -87,7 +92,7 @@ export function renderOutput(output, { onHide, onTab }) {
         .child(button("out-tab", "Open as tab", onTab))
         .child(button("out-hide", "Hide", onHide))))
     .child(v_flex().p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
-      .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar().text_size(TEXT.caption).font_family("Menlo")
+      .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar().text_size(TEXT.caption).font_family(mono())
       .when(output.text == null, (e) => e.child(div().text_color(t.dim).child("loading…")))
       .when(output.text != null && !lines.length, (e) => e.child(div().text_color(t.dim).child("no output yet")))
       .children(lines.map((l) => div().child(l === "" ? " " : l))));
@@ -100,12 +105,12 @@ export function prUrl(d) {
 export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }) {
   const t = theme();
   return v_flex().flex_none().gap(SP.sm).p(SP.lg).border_b_1().border_color(t.border)
-    .child(h_flex().gap(SP.sm).items_center().justify_between()
+    .child(h_flex().gap(SP.sm).flex_wrap().items_center().justify_between()
       .child(button("detail-back", "← Back", () => onClose()))
-      .child(h_flex().gap(SP.sm)
+      .child(h_flex().gap(SP.sm).flex_wrap()
         .child(reviewState.enabled
           ? button("detail-review", "Open for Review", () => onReview())
-          : div().px(SP.sm).h(CONTROL_H.board).flex().items_center().rounded(RADIUS.control)
+          : div().px(SP.sm).min_h(CONTROL_H.board).flex().items_center().rounded(RADIUS.control)
             .text_size(TEXT.caption).text_color(t.dim).border_1().border_color(t.border).child("Open for Review"))
         .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))))
     .when(!reviewState.enabled, (e) => e.child(

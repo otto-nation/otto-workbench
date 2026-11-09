@@ -8,7 +8,7 @@ import { SP, TEXT, RADIUS, CONTROL_H } from "./_lib/tokens.js";
 // A pill-shaped choice inside a segmented group; the active one lifts onto the selected surface.
 export function segment(id, label, active, onClick, size = TEXT.caption) {
   const t = theme();
-  return div().id(id).px(SP.sm).h(CONTROL_H.compact).flex().items_center().rounded(RADIUS.control)
+  return div().id(id).px(SP.sm).min_h(CONTROL_H.compact).flex().items_center().rounded(RADIUS.control)
     .text_size(size).font_medium().cursor_pointer()
     .when(active, (e) => e.bg(t.selected).text_color(t.foreground))
     .when(!active, (e) => e.text_color(t.muted).hover((s) => s.bg(t.hover)))

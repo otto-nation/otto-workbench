@@ -78,3 +78,8 @@ _js() {
   _js 'd.summarize(d.markGenerated([{path:"a",add:3,del:1},{path:"g",add:100,del:50},{path:"b",add:2,del:0}],new Set(["g"])))'
   [ "$output" = '{"files":2,"add":5,"del":1,"generated":1}' ]
 }
+
+@test "patchRows width follows the glyph width it is given" {
+  _js '[d.patchRows("+"+"x".repeat(100),7).width, d.patchRows("+"+"x".repeat(100),10).width]'
+  [ "$output" = '[757,1060]' ]
+}

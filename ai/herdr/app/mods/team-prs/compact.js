@@ -25,7 +25,7 @@ export function renderCompact({ sections, onOpen, showRepo, width }) {
     const title = div().min_w(0).flex_1().truncate().text_size(TEXT.body).font_medium().child(pr.title ?? "");
     const ci = div().flex_none().text_color(ciColor(pr.ciStatus)).child(CI[pr.ciStatus] ?? "");
     const meta = `${numOf(pr, showRepo)} · ${pr.author ?? ""}`;
-    return v_flex().id(cardId(pr)).h(two ? ROW_H.sidebar : ROW_H.sidebarTitleOnly)
+    return v_flex().id(cardId(pr)).min_h(two ? ROW_H.sidebar : ROW_H.sidebarTitleOnly)
       .flex_none().px(SP.md).mx(SP.xs).justify_center().rounded(RADIUS.control)
       .cursor_pointer().hover((e) => e.bg(t.hover)).on_click(() => onOpen(pr))
       .child(h_flex().gap(SP.sm).items_center().child(title).when(two, (e) => e.child(ci)))

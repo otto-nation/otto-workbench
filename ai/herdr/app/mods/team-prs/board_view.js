@@ -410,13 +410,13 @@ export default class TeamPrs extends View {
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "loading…" : (state.slug ?? "no repo"));
     const note = all ? (loading ? "loading…" : `${state.repos} repos`) : null;
-    const pinned = (e) => e.child(div().id("pin").px(SP.sm).h(CONTROL_H.compact).flex().items_center()
+    const pinned = (e) => e.child(div().id("pin").px(SP.sm).min_h(CONTROL_H.compact).flex().items_center()
       .rounded(RADIUS.control).text_size(TEXT.caption).cursor_pointer().border_1().border_color(t.border)
       .hover((s) => s.border_color(t.dim))
       .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
       .child(pin ? "pinned" : "pin"));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
-    return h_flex().id("prs-header").h(LAYOUT.headerH).flex_none().px(SP.lg).gap(SP.md).items_center()
+    return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
         .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))

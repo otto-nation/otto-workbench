@@ -3,9 +3,13 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
 import { theme } from "herdr";
+import { mono } from "./detail.js";
 import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
 
 const ROW_H = 20;
+// Monospace glyph width is about 0.62 of its size; the gutter holds five digits.
+export const CHAR_PX = Math.ceil(TEXT.caption * 0.62);
+const GUTTER = CHAR_PX * 5;
 
 function statusColor(t, s) {
   if (s === "A") return t.ansi2;
@@ -49,7 +53,7 @@ function diffLine({ kind, number, text }) {
   }
   return h_flex().w_full().h(ROW_H).flex_none().gap(SP.md)
     .when(kind === "+", (e) => e.bg(`${t.ansi2}18`)).when(kind === "-", (e) => e.bg(`${t.ansi1}18`))
-    .child(div().w(30).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
+    .child(div().w(GUTTER).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
     .child(div().flex_1().min_w(0).truncate().child(text));
 }
 
@@ -64,7 +68,7 @@ export function renderDiff(file, diff, { onBack }) {
         .hover((s) => s.bg(t.hover).border_color(t.dim)).on_click(() => onBack()).child("← Files"))
       .child(div().flex_1().min_w(0).truncate().text_size(TEXT.small).child(file.path)))
     .when(Boolean(note), (e) => e.child(div().p(SP.lg).text_color(t.dim).child(note)))
-    .when(!note, (e) => e.child(div().flex_1().min_h(0).relative().font_family("Menlo").text_size(11)
+    .when(!note, (e) => e.child(div().flex_1().min_h(0).relative().font_family(mono()).text_size(TEXT.caption)
       .child(div().id("diff-x").size_full().overflow_x_scrollbar()
         .child(div().w_full().min_w(diff.width).h_full().child(v_virtual_list("pr-diff", diff.rows.length, ROW_H,
           (i) => String(i), (range) => diff.rows.slice(range.start, range.end).map(diffLine)).size_full())))

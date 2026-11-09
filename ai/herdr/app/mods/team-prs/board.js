@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
-import { segment, eyebrow } from "./ui.js";
+import { segment } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 const { colMin: COL_MIN, colMax: COL_MAX, colEmpty: COL_EMPTY, titleLh: TITLE_LH } = LAYOUT;
@@ -22,14 +22,23 @@ function pill(text, color) {
     .text_size(TEXT.caption).text_color(color ?? t.muted).child(text);
 }
 
+// Lane title: the strongest text on the board after PR titles, and a count pill.
+function columnHeader(label, count) {
+  const t = theme();
+  return h_flex().flex_none().px(SP.md).py(SP.md).gap(SP.sm).items_center()
+    .child(div().min_w(0).truncate().text_size(TEXT.small).font_semibold().text_color(t.foreground).child(label))
+    .child(div().flex_none().px(SP.sm).rounded(RADIUS.control).bg(t.background).text_size(TEXT.caption)
+      .text_color(count > 0 ? t.foreground : t.dim).child(String(count)));
+}
+
 function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
   return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}55`)
     .when(!empty, (e) => e.flex_1().min_w(COL_MIN).max_w(COL_MAX))
     .when(empty, (e) => e.flex_none().min_w(COL_EMPTY).max_w(COL_EMPTY).overflow_x_hidden())
-    .child(eyebrow(col.label, col.items.length, SP.sm))
-    .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.sm).pb(SP.sm).gap(SP.sm)
+    .child(columnHeader(col.label, col.items.length))
+    .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().p(SP.sm).gap(SP.sm)
       .when(empty, (e) => e.child(div().px(SP.md).text_size(TEXT.caption).text_color(t.dim).child("none")))
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }

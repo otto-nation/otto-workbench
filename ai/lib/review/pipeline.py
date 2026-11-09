@@ -240,7 +240,10 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     # Runs after the out-of-delta nit drop and before disprove; order matters (see review.claims docstring).
     record = review.claims.settle(job, record)
     if _should_disprove(job, disprove):
-        record = _phase_disprove(job, record).record
+        run = _phase_disprove(job, record)
+        record = run.record
+        if run.result.log:
+            _write_session_log(job, [job.session_log, run.result.log])
     _post_process_review(job, record)
 
 
@@ -273,9 +276,12 @@ def _consolidate_logs(
         all_logs.append(synthesis_log)
     if disprove_log:
         all_logs.append(disprove_log)
+    _write_session_log(job, all_logs)
 
+
+def _write_session_log(job: ReviewJob, log_paths: list[str]) -> None:
     try:
-        Path(job.session_log).write_text(_read_existing_logs(all_logs))
+        Path(job.session_log).write_text(_read_existing_logs(log_paths))
     except OSError:
         pass
 

@@ -589,8 +589,7 @@ _EXAMPLE_LEDGER = (
     LedgerLine("M2", PriorDisposition.FIXED, "pkg/old.go", "the guard now runs before the call"),
 )
 _EXAMPLE_SUMMARY = (
-    "Moves retry handling into one helper. Sound overall; the top risk is M1, "
-    "a dropped query error on the hot path."
+    "Sound overall: one helper replaces three copies of the retry loop, so every caller now backs off the same way. The top risk is M1: a failed query reads as an empty result on the hot path. S1's fixed retry budget is a documented tradeoff and stays declined."
 )
 _EXAMPLE_VERDICT = f"{ReviewVerdict.CHANGES_REQUESTED.prose} — M1 loses query failures."
 _EXAMPLE_FOCUS = (

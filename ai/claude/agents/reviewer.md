@@ -96,6 +96,10 @@ When the prompt's Output section has a `claims` field, fill `claims` from the De
 
 When the prompt's Output section has a `behaviours` field, fill `behaviours` with each behaviour change, citing in `test_cited` the test that exercises it. Cite only a test you read; leave it "" otherwise. The harness checks the cited test exists. On synthesis, fill `behaviours` from the merged groups' lists: merge duplicates, keep each `test_cited`, add any cross-group behaviour.
 
+### 0d. Questions and verified
+
+When the prompt's Output section has a `questions` field, fill `questions` and `verified`. A finding states a defect. Put what you checked and found sound in `verified`, never in `findings` as "acceptable" or "not a defect". Put in `questions` only what the author's intent, or context the diff does not show, can answer; a question whose answer could reveal a defect is a finding. On synthesis, merge the groups' lists.
+
 ### 1. Context
 - If the repo's instructions file (AGENTS.md, or a legacy CLAUDE.md) is provided in pre-collected data, use it directly. Otherwise read it (and any sub-files it references). Use project-specific rules as review criteria throughout
 - Read the PR description and commit messages — what is the intent?
@@ -315,7 +319,7 @@ Only for a review no prompt gave an `## Output` section to. Inside the pipeline 
 
 ```json
 {
-  "summary": "Moves retry handling into one helper. Sound overall; the top risk is M1, a dropped query error on the hot path.",
+  "summary": "Sound overall: one helper replaces three copies of the retry loop, so every caller now backs off the same way. The top risk is M1: a failed query reads as an empty result on the hot path. S1's fixed retry budget is a documented tradeoff and stays declined.",
   "findings": [
     {
       "id": "M1",
@@ -375,11 +379,27 @@ Only for a review no prompt gave an `## Output` section to. Inside the pipeline 
       "test_cited": "pkg/client_test.go::TestFetchBackoff",
       "paths": ["pkg/client.go"]
     }
+  ],
+  "questions": [
+    {
+      "path": "pkg/client.go",
+      "line": 12,
+      "body": "Should a 429 from the upstream count against the retry budget, or only 5xx responses?"
+    }
+  ],
+  "verified": [
+    {
+      "path": "pkg/client.go",
+      "line": 30,
+      "body": "`fetch` closes the response body on every retry path, the last failure included."
+    }
   ]
 }
 ```
 
-- `summary` is one sentence on what the change does and overall quality. On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself
+- `summary` — markdown, 3–5 sentences: your assessment of the change — its overall quality and its top risk, citing finding IDs; say what the change does only where the assessment needs it; no verdict words (approve, request changes). On a re-review, do not count the prior findings here ("13 of 19 fixed") — `prior_findings` is the record of what became of them, and a tally written twice is a tally that can disagree with itself
+- `questions` — see 0d
+- `verified` — see 0d
 - `findings[].id` — M (must fix), S (should fix), N (nit), I (idiom) and a number from 1, sequential per severity
 - `path` — relative to the repository root, with no `:line`; null for a finding about the PR as a whole. The line goes in `line` and `end_line`
 - `body` — markdown; the first line states the defect

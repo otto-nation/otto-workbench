@@ -28,7 +28,7 @@ from core.phases import PhaseShape  # noqa: E402
 # per-phase instructional prose out in full. The copies are kept honest here
 # instead.
 _SUMMARY_CONTRACT_RE = re.compile(
-    r"(?m)(?:^## Summary\b|Write ## Summary|Write `summary`|`summary` is one sentence)"
+    r"(?m)(?:^## Summary\b|Write ## Summary|Write `summary`|`summary` is |`summary` — )"
 )
 
 # A tally of prior findings in the Summary is prose no one computes: the
@@ -415,3 +415,55 @@ def test_claim_findings_are_filed_by_the_harness_as_a_should_fix(path):
     assert "filed by the harness as a should-fix" in text
     if path.name in {"self-review.md", "self-review-synthesis.md", "reviewer.md"}:
         assert "toward the verdict" not in text
+
+
+_NOTES_SENTENCE = (
+    "A finding states a defect. Put what you checked and found sound in `verified`, never in "
+    "`findings` as \"acceptable\" or \"not a defect\". Put in `questions` only what the author's "
+    "intent, or context the diff does not show, can answer; a question whose answer could reveal "
+    "a defect is a finding."
+)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        TEMPLATE_DIR / "group.md",
+        TEMPLATE_DIR / "single-agent.md",
+        TEMPLATE_DIR / "self-review.md",
+        TEMPLATE_DIR / "synthesis.md",
+        TEMPLATE_DIR / "self-review-synthesis.md",
+        AGENTS_DIR / "reviewer.md",
+    ],
+    ids=lambda p: p.name,
+)
+def test_the_notes_instruction_is_identical_across_copies(path):
+    assert _NOTES_SENTENCE in path.read_text()
+
+
+def test_the_synthesis_notes_step_states_the_caps():
+    from review.budget import MAX_QUESTIONS, MAX_VERIFIED
+
+    expected = f"at most {MAX_QUESTIONS} questions and {MAX_VERIFIED} verified notes"
+    for name in ("synthesis.md", "self-review-synthesis.md"):
+        assert expected in (TEMPLATE_DIR / name).read_text()
+
+
+def test_no_template_restates_the_old_summary():
+    forbidden = (
+        "overall quality assessment",
+        "what the change does and its overall quality",
+        "one sentence on what the change",
+    )
+    paths = [
+        TEMPLATE_DIR / "group.md",
+        TEMPLATE_DIR / "single-agent.md",
+        TEMPLATE_DIR / "self-review.md",
+        TEMPLATE_DIR / "synthesis.md",
+        TEMPLATE_DIR / "self-review-synthesis.md",
+        AGENTS_DIR / "reviewer.md",
+    ]
+    for path in paths:
+        text = path.read_text()
+        for phrase in forbidden:
+            assert phrase not in text, f"{path.name} restates the old summary: {phrase!r}"

@@ -378,6 +378,25 @@ def test_the_reviewer_protocol_gates_claims_on_the_output_shape():
     assert "When the prompt's Output section has a `claims` field" in section
 
 
+def test_the_reviewer_protocol_explains_questions_and_verified():
+    text = (AGENTS / "reviewer.md").read_text()
+    section = text[text.index("### 0d. Questions and verified"):text.index("### 1. Context")]
+    assert "When the prompt's Output section has a `questions` field" in section
+    docs = [json.loads(b) for b in _JSON_BLOCK.findall(text)]
+    assert docs, "reviewer.md shows no JSON artifact"
+    for key in ("questions", "verified"):
+        loaded = [load_strict(ReviewArtifact, d) for d in docs if key in d]
+        assert loaded and all(a.problems() == () for a in loaded)
+
+
+def test_the_reviewer_protocol_quotes_the_summary_note():
+    from review.artifact_format import _SUMMARY_NOTE
+    text = (AGENTS / "reviewer.md").read_text()
+    assert _SUMMARY_NOTE in text
+    assert json.loads(_JSON_BLOCK.findall(text)[0])["summary"] == (
+        ReviewArtifact.example(Mode.PR).summary)
+
+
 def test_the_interactive_example_comes_after_the_whole_protocol():
     """reviewer.md is the single, holistic and synthesis system prompt; their own shape must not read as overridden."""
     text = (AGENTS / "reviewer.md").read_text()

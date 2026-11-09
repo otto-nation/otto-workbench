@@ -62,6 +62,8 @@ _QUESTIONS_NOTE = (
 _VERIFIED_NOTE = (
     f"what you checked and found sound, one entry each; at most {MAX_VERIFIED}; [] when none. "
     "Never a finding that ends \"acceptable\" or \"not a defect\"")
+_SUMMARY_NOTE = (
+    "markdown, 3–5 sentences: your assessment of the change — its overall quality and its top risk, citing finding IDs; say what the change does only where the assessment needs it; no verdict words (approve, request changes)")
 
 FIELD_NOTES: dict[type, dict[str, str]] = {
     AgentFinding: {
@@ -100,7 +102,7 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "questions": _QUESTIONS_NOTE, "verified": _VERIFIED_NOTE,
     },
     ReviewArtifact: {
-        "summary": "markdown: what the change does and its overall quality",
+        "summary": _SUMMARY_NOTE,
         "findings": "every finding, any severity, in any order",
         "triage": "a PR review: one entry per changed file; a self-review: []",
         "prior_findings": _LEDGER_NOTE,

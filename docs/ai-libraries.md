@@ -1626,7 +1626,8 @@ Where a review's record, sidecar and rendered view are written — together.
 
 `write_review` is the one writer of `review.md`: it renders into a local first,
 then saves `review.json`, then `meta.json`, then writes `review.md`, each
-atomically. A render failure leaves the directory unchanged. A caller that
+atomically. The writer keeps the sidecar's claim answers in step with the
+record. A render failure leaves the directory unchanged. A caller that
 changes a review loads it with `read_review`, transforms the record, and writes
 it back — `update_review` is that loop. Nothing edits `review.md`.
 

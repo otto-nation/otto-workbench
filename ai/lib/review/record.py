@@ -33,7 +33,10 @@ import core.log
 import core.serde
 from review.claim_types import ClaimEntry
 from review.paths import FILENAME_RECORD
-from review.types import SEVERITIES, Disposition, Finding, FindingOrigin, FindingRef, PriorDisposition
+from review.types import (
+    CLAIM_ANSWERS, SEVERITIES, ClaimAnswer, Disposition, Finding, FindingOrigin,
+    FindingRef, PriorDisposition,
+)
 
 SCHEMA_VERSION = 2
 
@@ -284,6 +287,35 @@ class ReviewRecord:
         if not done:
             raise KeyError(finding_id)
         return replace(self, findings=tuple(out))
+
+
+def fold_claim_answers(
+    carried: dict[str, ClaimAnswer],
+    record: ReviewRecord,
+    head: str,
+) -> dict[str, ClaimAnswer]:
+    """A new answers ledger: `carried`, then this record's derived findings.
+
+    Each derived finding with a `stable_id` writes DECLINED/SKIPPED/FALSIFIED
+    or drops OPEN/UNREACHED/FIXED. When `record.claims` is not None, keys that
+    are not a remaining claim are dropped. `record.claims is None` keeps every
+    answer.
+    """
+    answers = dict(carried)
+    for finding in record.findings:
+        if not finding.derived or not finding.stable_id:
+            continue
+        key = finding.stable_id
+        if finding.disposition in CLAIM_ANSWERS:
+            answers[key] = ClaimAnswer(
+                finding.disposition, finding.reason, finding.path, head,
+            )
+        else:
+            answers.pop(key, None)
+    if record.claims is None:
+        return answers
+    keep = {claim.key for claim in record.claims}
+    return {key: answer for key, answer in answers.items() if key in keep}
 
 
 def _field_dropped(written, loaded, hint) -> bool:

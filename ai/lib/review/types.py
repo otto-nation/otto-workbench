@@ -222,6 +222,24 @@ class StickySkip:
 
 
 @dataclass(frozen=True)
+class ClaimAnswer:
+    """What answered a derived claim finding, keyed by `ClaimEntry.key`.
+
+    `path` and `head` are the cited file and the reviewed commit when the
+    answer was given, so a later round can expire it once that file has
+    changed (OD-3).
+    """
+
+    disposition: Disposition
+    reason: str = ""
+    path: str = ""
+    head: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "disposition", Disposition(self.disposition))
+
+
+@dataclass(frozen=True)
 class FixInterruption:
     """A fix pass stopped before it landed, and the edits it left behind.
 
@@ -346,6 +364,11 @@ class ReviewMeta:
     # round — and pruned at publish once the anchor file no longer hashes to the
     # recorded blob. See `review.convergence.apply_sticky_skips`.
     sticky_skips: dict[str, StickySkip] = field(default_factory=dict)
+    # Answers for derived claim findings, keyed by `ClaimEntry.key`. Folded by
+    # `store.write_review` from the record's derived findings, and carried by
+    # `_review_meta` the way `sticky_skips` is — the document is rewritten every
+    # round, so the adjudication has to live here or it is lost.
+    claim_answers: dict[str, ClaimAnswer] = field(default_factory=dict)
     # What the rendered header states about the run beyond attribution. They
     # live here because the record holds what the review says and the sidecar
     # holds what the run was; `review.md`'s header is rendered from these.
@@ -419,6 +442,7 @@ def review_meta_from_dict(d) -> ReviewMeta:
         k: v for k, v in d.items()
         if k not in _META_VOCABULARIES or meta_enum(_META_VOCABULARIES[k], v)
     }
+    normalised["claim_answers"] = _readable_claim_answers(normalised.get("claim_answers"))
     return core.serde.from_dict(ReviewMeta, normalised)
 
 
@@ -438,6 +462,29 @@ class Disposition(StrEnum):
     UNREACHED = "unreached"
     # The disprove gate refuted it. Kept, never rendered.
     FALSIFIED = "falsified"
+
+
+CLAIM_ANSWERS = frozenset({
+    Disposition.DECLINED, Disposition.SKIPPED, Disposition.FALSIFIED,
+})
+
+
+def _readable_claim_answers(raw) -> dict:
+    """Entries that are objects with a persistable claim disposition; else {}."""
+    if not isinstance(raw, dict):
+        return {}
+    kept = {}
+    for key, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            disposition = Disposition(entry.get("disposition"))
+        except (TypeError, ValueError):
+            continue
+        if disposition not in CLAIM_ANSWERS:
+            continue
+        kept[key] = entry
+    return kept
 
 
 class FindingOrigin(StrEnum):

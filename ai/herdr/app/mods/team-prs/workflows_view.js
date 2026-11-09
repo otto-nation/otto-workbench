@@ -9,7 +9,7 @@ import { STEP_NAMES } from "./_lib/batch_launch.js";
 import { relativeTime } from "./_lib/history.js";
 import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
 import {
-  hoverRow, card, inset, scrollBody, mono, chip, button, link,
+  hoverRow, card, inset, scrollBody, mono, chip, button, solidButton, filterGroup,
 } from "./_ui/ui.js";
 
 function runColor(t, status) {
@@ -109,30 +109,38 @@ function shortRepo(slug) {
 
 export function renderSelectionBar({ launcher: L, prs }) {
   const t = theme();
-  const n = L.selected.size;
   const selected = (prs ?? []).filter((p) => L.selected.has(`${p.repoSlug}#${p.number}`));
+  const n = selected.length;
   const repos = [...new Set(selected.map((p) => shortRepo(p.repoSlug)).filter(Boolean))];
-  const runLabel = L.launching ? "Starting…" : `Run on ${n} PR${n === 1 ? "" : "s"}`;
+  const r = [...new Set(selected.map((p) => p.repoSlug).filter(Boolean))].length;
+  const stepsInOrder = STEP_ORDER.filter((s) => L.steps.has(s));
+  const runLabel = L.launching
+    ? "Starting…"
+    : `Run ${stepsInOrder.join(" · ")} on ${n} PR${n === 1 ? "" : "s"}${r > 1 ? ` · ${r} runs` : ""}`;
   const disabled = n === 0 || L.steps.size === 0 || L.launching;
+  const reason = L.launching ? null
+    : n === 0 ? "Select at least one PR"
+    : L.steps.size === 0 ? "Turn on at least one step"
+    : null;
   return v_flex().px(SP.lg).py(SP.sm).gap(SP.xs).flex_none()
     .border_b_1().border_color(t.border)
     .child(h_flex().gap(SP.md).items_center().flex_wrap()
       .child(div().text_size(TEXT.small).text_color(t.foreground).child(`${n} selected`))
-      .child(link("sel-all", "All", () => L.selectAll(prs)))
-      .child(link("sel-none", "None", () => L.selectNone()))
-      .child(div().text_size(TEXT.small).text_color(t.muted).child("|"))
-      .children(STEP_NAMES.map((s) => chip(`step-${s}`, s, L.steps.has(s), () => L.toggleStep(s))))
-      .child(link("sel-options", L.options ? "Hide options" : "Options", () => L.toggleOptions()))
+      .child(button("sel-all", "Select all", () => L.selectAll(prs)))
+      .child(button("sel-none", "Select none", () => L.selectNone()))
+      .child(button("sel-options", L.options ? "Options ▴" : "Options ▾", () => L.toggleOptions()))
       .child(div().flex_1())
       .when(Boolean(L.note), (e) => e.child(
         div().text_size(TEXT.small).text_color(t.ansi1).child(L.note)))
-      .child(button("batch-run", runLabel, () => L.launch(prs), { disabled }))
-      .child(link("sel-cancel", "Cancel", () => L.stop())))
+      .when(Boolean(reason), (e) => e.child(
+        div().text_size(TEXT.small).text_color(t.muted).child(reason)))
+      .child(solidButton("batch-run", runLabel, () => L.launch(prs), { disabled }))
+      .child(button("sel-cancel", "Cancel", () => L.stop())))
+    .child(filterGroup("Steps", STEP_NAMES.map((s) => chip(`step-${s}`, s, L.steps.has(s), () => L.toggleStep(s)))))
     .when(repos.length > 1, (e) => e.child(
       div().text_size(TEXT.small).text_color(t.muted).child(`One run per repo: ${repos.join(", ")}`)))
     .when(L.options, (e) => e.child(h_flex().gap(SP.sm).items_center().flex_wrap()
-      .child(div().text_size(TEXT.small).text_color(t.muted).child("Use AI for"))
-      .children(["rebase", "ci", "comments"].map((s) => chip(`ai-${s}`, s, L.withAi.has(s), () => L.toggleAi(s))))
+      .child(filterGroup("AI for", ["rebase", "ci", "comments"].map((s) => chip(`ai-${s}`, s, L.withAi.has(s), () => L.toggleAi(s)))))
       .child(chip("auto-publish", "Push clean fast-forwards", L.autoPublish, () => L.toggleAutoPublish()))));
 }
 
@@ -164,13 +172,11 @@ export function renderRunStrip({ launcher: L, workflows }) {
       .child(div().text_size(TEXT.small).text_color(t.muted).child(`${progress.done} of ${progress.total} done`))
       .child(div().flex_1())
       .when(Boolean(terminal), (e) => e.child(
-        link(`log-${killKey}`, "Log", () => run("terminal.keep", { terminal }))))
-      .child(link(`cancel-${killKey}`, "Cancel", () => { void L.cancel(on, id, false); }))
-      .child(div().id(`kill-${killKey}`).text_size(TEXT.caption)
-        .text_color(confirm ? t.ansi1 : t.muted).cursor_pointer()
-        .hover((s) => s.text_color(t.foreground))
-        .on_click(() => { void L.cancel(on, id, true); })
-        .child(confirm ? "Confirm kill" : "Kill"));
+        button(`log-${killKey}`, "Log", () => run("terminal.keep", { terminal }))))
+      .child(button(`cancel-${killKey}`, "Cancel", () => { void L.cancel(on, id, false); }))
+      .when(confirm, (e) => e.child(
+        div().text_size(TEXT.small).text_color(t.ansi1).child("Kills the run's processes")))
+      .child(button(`kill-${killKey}`, confirm ? "Confirm kill" : "Kill", () => { void L.cancel(on, id, true); }));
   }));
 }
 

@@ -23,7 +23,7 @@ import {
   lastBatchLabel, renderRunPanel, renderRunStrip, renderSelectionBar, renderPrStepChips,
 } from "./workflows_view.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
+import { segment, segmented, pill, chip, emptyPane, pane, button } from "./_ui/ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -49,7 +49,14 @@ function ctxKey(ctx) {
 
 function filtersOf() {
   const f = shared("team-prs.filters") ?? {};
-  return { drafts: !!f.drafts, landed: !!f.landed, empty: !!f.empty, authors: [...(f.authors ?? [])], repos: [...(f.repos ?? [])] };
+  return {
+    drafts: !!f.drafts,
+    mineDrafts: f.mineDrafts !== false,
+    landed: !!f.landed,
+    empty: !!f.empty,
+    authors: [...(f.authors ?? [])],
+    repos: [...(f.repos ?? [])],
+  };
 }
 
 function tabOf() {
@@ -61,7 +68,10 @@ function errorText(err, ctx) {
 }
 
 function mineOpen(state) {
-  return (state.prs ?? []).filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED");
+  const filters = filtersOf();
+  return filterRepos(state.prs ?? [], filters.repos, state.repoSlugs)
+    .filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED")
+    .filter((p) => filters.mineDrafts !== false || !p.isDraft);
 }
 
 
@@ -301,7 +311,7 @@ export default class TeamPrs extends View {
 
   toggleChip(name, cx) {
     const f = filtersOf();
-    if (name === "drafts" || name === "landed" || name === "empty") {
+    if (name === "drafts" || name === "mineDrafts" || name === "landed" || name === "empty") {
       f[name] = !f[name];
       setShared("team-prs.filters", f);
       if (name === "landed" && f.landed) this.refresh(cx);
@@ -360,9 +370,13 @@ export default class TeamPrs extends View {
   }
 
   listed(state) {
-    const base = filterRepos(state.prs ?? [], filtersOf().repos, state.repoSlugs);
+    const filters = filtersOf();
+    const base = filterRepos(state.prs ?? [], filters.repos, state.repoSlugs);
     const me = state.me ?? "";
-    return tabOf() === "mine" ? base.filter((p) => isMine(p, me)) : filterPrs(base, filtersOf(), me);
+    if (tabOf() === "mine") {
+      return base.filter((p) => isMine(p, me) && (filters.mineDrafts !== false || !p.isDraft));
+    }
+    return filterPrs(base, filters, me);
   }
 
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
@@ -394,10 +408,10 @@ export default class TeamPrs extends View {
           segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
         ]))
         .child(h_flex().gap(SP.md).items_center()
-          .child(link("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
+          .child(button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
           .when(tab === "mine" && !this.launcher.selecting, (e) => e.child(
-            link("run-batch", "Run batch", () => this.launcher.start(mine))))
-          .child(link("open-board", "Open board", () => {
+            button("run-batch", "Run batch", () => this.launcher.start(mine))))
+          .child(button("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
             else run("tab.new", { name: "PRs", mod: "team-prs" });
@@ -444,8 +458,8 @@ export default class TeamPrs extends View {
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
       .when(Boolean(strip), (e) => e.child(strip))
+      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
       .when(selecting, (e) => e.child(renderSelectionBar({ launcher: this.launcher, prs: mine })))
-      .when(!selecting, (e) => e.child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos })))
       .when(tab === "mine" && this.workflows.showRuns, (e) => e.child(renderRunPanel(this.workflows.barState())))
       .child(renderBoard({
         tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
@@ -482,7 +496,7 @@ export default class TeamPrs extends View {
       .when(tab === "mine" && !this.launcher.selecting, (e) => e.child(
         button("run-batch", "Run batch", () => this.launcher.start(mine))))
       .when(tab === "mine", (e) => e.child(
-        link("last-batch", lastBatchLabel(this.workflows.barState()), () => this.workflows.toggleRuns())))
+        button("last-batch", lastBatchLabel(this.workflows.barState()), () => this.workflows.toggleRuns())))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

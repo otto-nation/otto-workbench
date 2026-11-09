@@ -1,10 +1,10 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`team-prs` — Mine's Run batch selects your PRs and steps (Options: AI per step, push clean fast-forwards), launching one `pr batch run` per repo as a labelled terminal; while runs are active a strip lists each with progress, Log, Cancel and Kill; cards show their batch state; a PR's detail has a Batch tab; Last batch opens earlier runs, `_lib`, …).
+Conventions for the mods under this directory (`team-prs` — Mine filters (Drafts, Landed, Empty lanes, Repo); Mine's Run batch selects the visible PRs and steps (Options: AI per step, push clean fast-forwards), launching one `pr batch run` per repo as a labelled terminal; while runs are active a strip lists each with progress, Log, Cancel and Kill; cards show their batch state; a PR's detail has a Batch tab; Last batch opens earlier runs, `_lib`, …).
 
 ## Where things live
 
-- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button`, `chip`, `pill`, `inset`, `segment`/`segmented`, `filterGroup`, `eyebrow`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `ciMark`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
+- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `chip`, `pill`, `inset`, `segment`/`segmented`, `filterGroup`, `eyebrow`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `ciMark`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
 - Every top-level `_*/` directory under `mods/` is a shared tree installed into every mod, so only put real libraries there (no scratch dirs like `_tmp/`)
 - Sizes, spacing, fills and breakpoints: `_lib/tokens.js`. Colours come only from `theme()`. No literal pixel or colour values in views
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`

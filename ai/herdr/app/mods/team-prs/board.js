@@ -27,7 +27,7 @@ export function renderBoard({
   const t = theme();
   const mine = tab === "mine";
   const list = mine
-    ? prs.filter((p) => isMine(p, me))
+    ? prs.filter((p) => isMine(p, me) && (filters?.mineDrafts !== false || !p.isDraft))
     : filterPrs(prs, filters, me);
   const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
   const cols = groupColumns(list, mine ? mineColumn : teamColumn, spec);
@@ -98,7 +98,8 @@ export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
   const activeSet = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
   const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => onToggle(name));
   const showItems = [];
-  if (tab !== "mine") showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
+  if (tab === "mine") showItems.push(chip("Drafts", "mineDrafts", f.mineDrafts !== false));
+  else showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
   showItems.push(chip("Landed", "landed", Boolean(f.landed)));
   showItems.push(chip("Empty lanes", "empty", Boolean(f.empty)));
   return v_flex().id("prs-chips").gap(SP.xs).px(SP.lg).py(SP.sm).flex_none().bg(t.background)

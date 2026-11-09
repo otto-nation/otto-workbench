@@ -21,7 +21,7 @@ export function userArgv() {
 // --jq runs per page, so gh prints one JSON array per page, one per line (see readPages).
 const PULLS_JQ =
   '[.[] | {number, title, user: {login: .user.login}, head: {ref: .head.ref, sha: .head.sha}, ' +
-  'base: {ref: .base.ref}, draft, html_url, labels: [.labels[] | {name}], created_at, updated_at}]';
+  'base: {ref: .base.ref}, draft, html_url, labels: [(.labels // [])[] | {name}], created_at, updated_at}]';
 
 export function pullsArgv(repo) {
   // gh switches to POST when -f is used without --method GET

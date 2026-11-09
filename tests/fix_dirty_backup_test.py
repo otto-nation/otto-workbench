@@ -46,8 +46,7 @@ class TestSave:
     def test_dirty_symlink_to_outside_file_backed_up_as_symlink(self, tmp_path):
         wt = _repo(tmp_path, {"a.py": "orig\n"})
         outside = tmp_path / "outside.txt"
-        secret = "outside-secret\n"
-        outside.write_text(secret)
+        outside.write_text("outside-secret\n")
         (wt / "link").symlink_to(outside)
         artifacts = tmp_path / "art"
 

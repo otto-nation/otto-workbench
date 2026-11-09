@@ -273,7 +273,9 @@ def test_single_agent_disprove_sees_the_filtered_record(tmp_path, monkeypatch):
     monkeypatch.setattr(review.pipeline, "_should_disprove", lambda *a: True)
     monkeypatch.setattr(
         review.pipeline, "_phase_disprove",
-        lambda j, record: seen.update(record=record) or SimpleNamespace(record=record),
+        lambda j, record: seen.update(record=record) or SimpleNamespace(
+            record=record, result=SimpleNamespace(log=""),
+        ),
     )
     monkeypatch.setattr(review.pipeline, "_post_process_review", lambda *a, **k: None)
     review.pipeline.run_single_agent(job)

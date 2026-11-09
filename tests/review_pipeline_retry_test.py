@@ -19,6 +19,7 @@ import review.types
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Phase
 import core.log
+from review.paths import aggregate_session_usage
 from review.record import Disposition, load_record
 from review.store import StoredReview
 from review.types import FindingOrigin, ReviewMeta
@@ -573,7 +574,9 @@ def test_the_single_agent_derives_claim_findings_before_disprove(tmp_path, monke
     monkeypatch.setattr(review.phases, "run_agent", _agent)
     monkeypatch.setattr(
         review.pipeline, "_phase_disprove",
-        lambda _j, rec: seen.update(record=rec) or SimpleNamespace(record=rec),
+        lambda _j, rec: seen.update(record=rec) or SimpleNamespace(
+            record=rec, result=SimpleNamespace(log=""),
+        ),
     )
     review.pipeline.run_single_agent(job, disprove=True)
     assert any(f.origin is FindingOrigin.CLAIM for f in seen["record"].findings)
@@ -623,3 +626,52 @@ def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         review.pipeline.run_single_agent(job, disprove=False)
     assert not Path(job.review_file).exists()
+
+
+_WRITER_COST = 1.1
+_DISPROVE_COST = 0.4
+
+
+def _run_single_agent_with_phase_costs(tmp_path, monkeypatch, *, disprove: bool):
+    """Writer and disprove each emit a session log with a known cost."""
+    job = _make_job(tmp_path)
+    writer = json.dumps({
+        "summary": "Looks fine.",
+        "findings": [{
+            "id": "M1", "path": "a.py", "line": 1,
+            "body": "bug", "evidence": "x = 1",
+        }],
+        "focus": DERIVED_FOCUS,
+    })
+    gate = json.dumps({
+        "verdicts": [{"id": "M1", "outcome": "survives", "reason": "still wrong"}],
+    })
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        if inv.phase == str(Phase.DISPROVE):
+            Path(inv.output_path).write_text(gate)
+            Path(inv.session_log).write_text(
+                _result("success", total_cost_usd=_DISPROVE_COST) + "\n")
+        else:
+            Path(inv.output_path).write_text(writer)
+            Path(inv.session_log).write_text(
+                _result("success", total_cost_usd=_WRITER_COST) + "\n")
+        return 0
+
+    monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=disprove)
+    return job
+
+
+def test_single_agent_disprove_spend_is_in_the_reported_cost(tmp_path, monkeypatch):
+    job = _run_single_agent_with_phase_costs(tmp_path, monkeypatch, disprove=True)
+    usage = aggregate_session_usage(Path(job.review_file).parent)
+    assert usage.cost == pytest.approx(_WRITER_COST + _DISPROVE_COST)
+
+
+def test_single_agent_skipped_disprove_cost_is_the_writers_alone(tmp_path, monkeypatch):
+    job = _run_single_agent_with_phase_costs(tmp_path, monkeypatch, disprove=False)
+    usage = aggregate_session_usage(Path(job.review_file).parent)
+    assert usage.cost == pytest.approx(_WRITER_COST)

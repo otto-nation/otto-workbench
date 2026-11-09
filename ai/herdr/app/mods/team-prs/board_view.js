@@ -112,6 +112,13 @@ export default class TeamPrs extends View {
     this.acx.notify();
   }
 
+  // The pr-batch tab: selected when one is open, else opened.
+  openWorkflows() {
+    const id = boardTabId(spaces(), "Workflows");
+    if (id) run("tab.select", { id });
+    else run("tab.new", { name: "Workflows", mod: "pr-batch" });
+  }
+
   refreshButton() {
     return button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual });
   }
@@ -386,7 +393,8 @@ export default class TeamPrs extends View {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
             else run("tab.new", { name: "PRs", mod: "team-prs" });
-          }))));
+          }))
+          .child(link("open-workflows", "Workflows", () => this.openWorkflows()))));
   }
 
   compactView(state, t, cx) {
@@ -449,6 +457,7 @@ export default class TeamPrs extends View {
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
       .child(this.refreshButton())
+      .child(button("workflows", "Workflows", () => this.openWorkflows()))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

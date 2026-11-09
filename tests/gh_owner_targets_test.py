@@ -366,6 +366,7 @@ def test_sudo_unions_an_inherited_gh_repo_it_may_keep(tmp_path, monkeypatch):
     (["gh", "project", "item-add", "1", "--owner", "@me"], "--owner"),
     (["gh", "secret", "set", "T", "--user"], "authenticated GitHub account"),
     (["gh", "repo", "create", "newname"], "OWNER/NAME"),
+    (["gh", "repo", "create", "newname", "--description", "ours/x"], "OWNER/NAME"),
     (["gh", "repo", "fork", "ours/svc"], "--org"),
 ])
 def test_a_write_owned_by_the_authenticated_account_is_unresolvable(tmp_path, words, reason):
@@ -384,11 +385,24 @@ def test_a_write_owned_by_the_authenticated_account_is_unresolvable(tmp_path, wo
     (["gh", "repo", "delete", "acme/widget", "--yes"], "acme"),
     (["gh", "repo", "edit", "https://github.com/acme/widget", "-d", "x"], "acme"),
     (["gh", "repo", "sync", "ghe.corp/acme/widget"], "ghe.corp/acme"),
+    (["gh", "repo", "edit", "--template", "stranger/lib"], "stranger"),
 ])
 def test_a_scoped_write_names_its_own_owner_over_the_cwd(tmp_path, words, expected):
     ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
     resolution = _resolve(words, ours)
     assert resolution.ok and resolution.target.owners == (_owner(expected),)
+
+
+@pytest.mark.parametrize("words", [
+    ["gh", "repo", "edit", "--description", "a/b tool"],
+    ["gh", "repo", "edit", "-d", "stranger/lib"],
+    ["gh", "repo", "edit", "-h", "https://github.com/stranger/lib"],
+    ["gh", "repo", "sync", "ours/svc", "--source", "stranger/lib"],
+])
+def test_a_repo_flag_value_is_not_a_repository_target(tmp_path, words):
+    ours = remote_repo(tmp_path / "o", "git@github.com:ours/svc.git")
+    resolution = _resolve(words, ours)
+    assert resolution.ok and resolution.target.owners == (_owner("ours"),)
 
 
 def test_a_repo_verb_without_a_repository_falls_back_to_the_cwd(tmp_path):

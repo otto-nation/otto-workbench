@@ -6703,11 +6703,13 @@ somewhere else, and ``resolve`` answers for those first:
   is the authenticated account: refused. Otherwise the repository, as usual.
 * ``gh repo create OWNER/NAME`` is OWNER; a bare NAME is the authenticated
   account: refused. ``gh repo fork`` lands in ``--org`` or the authenticated
-  account: refused without ``--org``.
+  account: refused without ``--org``. Fork without ``--org`` stays refused
+  because naming the logged-in account would need a network call or hosts.yml
+  read, and a personal login is not a listed owner anyway.
 * ``gh repo edit|delete|archive|unarchive|sync [REPO]`` is REPO when it is
-  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Every positional that
-  reads as one counts, so a flag value that looks like a repository fails
-  toward refusal. Without one, the repository as usual.
+  given, as ``OWNER/REPO``, ``HOST/OWNER/REPO`` or a URL. Values of gh's own
+  value-taking options are skipped; an unknown option's value still counts.
+  Without a repository positional, the repository as usual.
 
 ``None`` means the usual repository resolution applies.
 

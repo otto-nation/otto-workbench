@@ -1,17 +1,15 @@
-// team-prs entry: the board, or a detail window when props().detail is set. A pane copy may have
-// no props, so detail is read null-safely. The window copy never starts the board's timers.
-import { exec, props, closeOverlay, readTextFile, run, notify } from "herdr";
+// team-prs entry: the board, with a PR's detail shown in the same pane when a card is opened.
+import { exec, readTextFile, run, notify } from "herdr";
 import Board from "./board_view.js";
-import { renderDetail, renderActionBar } from "./detail.js";
+import { renderDetail, renderActionBar, detailOf } from "./detail.js";
 import { actionsFor } from "./_lib/actions.js";
-import { readReview, loadListing } from "./_lib/board_data.js";
+import { readReview } from "./_lib/board_data.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
-import { runsForPr } from "./_lib/reviews.js";
 
 export default class TeamPrs extends Board {
   init(p, cx) {
-    this.detail = props()?.detail ?? null;
+    this.detail = null;
     this.openStamp = null;
     this.confirm = null;
     this.launching = false;
@@ -20,11 +18,6 @@ export default class TeamPrs extends Board {
     this.finishedId = null;
     this.note = null;
     this.reviews = new Map();
-    if (this.detail) {
-      // A run the board already saw: follow it to its end like one launched here.
-      if (this.detail.live) { this.live = this.detail.live; this.watch(cx); }
-      return;
-    }
     super.init(p, cx);
   }
 
@@ -129,29 +122,28 @@ export default class TeamPrs extends Board {
         entry = terminalsOf(ran.code === 0 ? [JSON.parse(ran.stdout)] : null)[0] ?? null;
       } catch { entry = null; }
       if (entry?.state === "live") { this.watch(cx); return; }
-      await this.finish(id, entry, cx);
+      this.finish(id, entry, cx);
     });
   }
 
-  async finish(id, entry, cx) {
+  finish(id, entry, cx) {
     const d = this.detail;
-    const action = this.liveAction;
-    const outcome = outcomeText(action, entry?.exitCode ?? null);
+    const outcome = outcomeText(this.liveAction, entry?.exitCode ?? null);
     this.finishedId = id;
     this.live = null;
     notify({ title: outcome.title, body: `#${d.number} ${d.title ?? ""}`, level: outcome.level });
-    const listing = await loadListing(exec, { cwd: d.cwd, on: d.on });
-    const reviewed = ["review", "rerun", "recover"].includes(action) && outcome.level === "success";
-    this.detail = {
-      ...d,
-      runs: listing.ok ? runsForPr(listing.listing, d.repo, d.host, d.number) : d.runs,
-      headMoved: reviewed ? false : d.headMoved,
-    };
+    // The card, its runs and the head-moved flag come from the board's own refresh.
+    this.refresh(cx, { listingOnly: true });
     cx.notify();
   }
 
-  render(cx) {
-    if (!this.detail) return super.render(cx);
+  // Switching PRs starts a clean slate for the transient action state.
+  detailView(pr, cx) {
+    const prev = this.detail;
+    this.detail = detailOf(pr);
+    if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
+      this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
+    }
     return renderDetail(this.detail, {
       nowMs: Date.now(),
       openStamp: this.openStamp,
@@ -164,7 +156,7 @@ export default class TeamPrs extends Board {
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); cx.notify(); },
         onCancel: () => { this.confirm = null; cx.notify(); },
       }),
-      onClose: () => closeOverlay(props().overlay),
+      onClose: () => this.closeDetail(cx),
       // The browser is on this Mac even when the PR's repo is on a remote machine.
       onOpenUrl: (url) => exec("open", [url]),
     });

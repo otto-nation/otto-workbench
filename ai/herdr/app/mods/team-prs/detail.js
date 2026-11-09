@@ -17,15 +17,6 @@ function button(id, label, onClick) {
     .on_click(() => onClick()).child(label);
 }
 
-function closeButton(onClick) {
-  const t = theme();
-  return div().id("detail-close").h(CONTROL_H.board).w(CONTROL_H.board).flex()
-    .items_center().justify_center().rounded(RADIUS.control).text_size(TEXT.caption)
-    .cursor_pointer().border_1().border_color(t.border).hover((s) => s.bg(t.hover).border_color(t.dim))
-    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-    .on_click(() => onClick()).child("×");
-}
-
 function postTone(tone) {
   const t = theme();
   if (tone === "success") return t.ansi2;
@@ -71,6 +62,18 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
     .when(Boolean(note), (e) => e.child(div().text_size(TEXT.caption).text_color(t.ansi1).child(note)));
 }
 
+// What the detail view needs from a board card.
+export function detailOf(pr) {
+  return {
+    repo: pr.repoSlug, host: pr.host, number: pr.number, title: pr.title, author: pr.author,
+    branch: pr.branch, ci: pr.ciStatus, decision: pr.reviewDecision, additions: pr.additions,
+    deletions: pr.deletions, files: pr.changedFiles, url: pr.url, on: pr.on ?? null,
+    runs: (pr.reviewRuns ?? []).map((r) => r.run),
+    cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
+    batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null,
+  };
+}
+
 export function prUrl(d) {
   return d.url || `https://${d.host || "github.com"}/${d.repo}/pull/${d.number}`;
 }
@@ -78,11 +81,11 @@ export function prUrl(d) {
 export function renderDetailHeader(d, { onClose, onOpenUrl }) {
   const t = theme();
   return v_flex().flex_none().gap(SP.sm).p(SP.lg).border_b_1().border_color(t.border)
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(div().flex_1().min_w(0).text_size(TEXT.title).font_semibold().max_h(LAYOUT.titleMaxH)
-        .overflow_hidden().child(`#${d.number} ${d.title ?? ""}`))
-      .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))
-      .child(closeButton(() => onClose())))
+    .child(h_flex().gap(SP.sm).items_center().justify_between()
+      .child(button("detail-back", "← Back", () => onClose()))
+      .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d)))))
+    .child(div().min_w(0).text_size(TEXT.title).font_semibold().max_h(LAYOUT.titleMaxH)
+      .overflow_hidden().child(`#${d.number} ${d.title ?? ""}`))
     .child(h_flex().gap_x(SP.md).gap_y(SP.xs).flex_wrap().items_center()
       .text_size(TEXT.caption).text_color(t.dim)
       .child(div().child(d.author ?? "")).child(div().truncate().child(d.branch ?? ""))

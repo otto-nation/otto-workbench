@@ -7,6 +7,7 @@ import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, theme, layout, run, props,
 } from "herdr";
 import { locate } from "./_lib/location.js";
+import { boardTabId } from "./_lib/tabs.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
@@ -350,7 +351,11 @@ export default class TeamPrs extends View {
           segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
         ]))
         .child(div().id("open-board").text_size(TEXT.caption).text_color(t.muted).cursor_pointer()
-          .on_click(() => run("tab.new", { name: "PRs", mod: "team-prs" }))
+          .on_click(() => {
+            const id = boardTabId(spaces(), "PRs");
+            if (id) run("tab.select", { id });
+            else run("tab.new", { name: "PRs", mod: "team-prs" });
+          })
           .child("Open board")));
   }
 

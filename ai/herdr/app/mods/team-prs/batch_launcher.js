@@ -1,6 +1,6 @@
 // Starts `pr batch run` from Mine: form state, per-repo hc terminals, cancel/kill.
 import { exec } from "herdr";
-import { groupByRepo, runArgv } from "./_lib/batch_launch.js";
+import { groupByRepo, runArgv, filterForm } from "./_lib/batch_launch.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
 
 function termKey(on, repo) {
@@ -16,6 +16,8 @@ export class BatchLauncher {
     this.acx = acx;
     this.workflows = workflows;
     this.selected = new Set();
+    this.repoFilter = new Set();
+    this.labelFilter = new Set();
     this.steps = new Set(["rebase", "ci", "comments"]);
     this.withAi = new Set();
     this.autoPublish = false;
@@ -57,6 +59,30 @@ export class BatchLauncher {
     this.acx.notify();
   }
 
+  toggleRepoFilter(slug) {
+    const key = [...this.repoFilter].find((r) => r.toLowerCase() === String(slug).toLowerCase());
+    if (key != null) this.repoFilter.delete(key);
+    else this.repoFilter.add(slug);
+    this.acx.notify();
+  }
+
+  toggleLabelFilter(name) {
+    const key = [...this.labelFilter].find((n) => n.toLowerCase() === String(name).toLowerCase());
+    if (key != null) this.labelFilter.delete(key);
+    else this.labelFilter.add(name);
+    this.acx.notify();
+  }
+
+  clearFilters() {
+    this.repoFilter.clear();
+    this.labelFilter.clear();
+    this.acx.notify();
+  }
+
+  shown(prs) {
+    return filterForm(prs, { repos: [...this.repoFilter], labels: [...this.labelFilter] });
+  }
+
   reset() {
     this.selected.clear();
     this.note = null;
@@ -71,7 +97,7 @@ export class BatchLauncher {
     this.acx.spawn(async (cx) => {
       const errors = [];
       try {
-        const selectedPrs = (prs ?? []).filter((p) => this.selected.has(prKey(p.repoSlug, p.number)));
+        const selectedPrs = this.shown(prs).filter((p) => this.selected.has(prKey(p.repoSlug, p.number)));
         const { groups } = groupByRepo(selectedPrs);
         for (const g of groups) {
           try {

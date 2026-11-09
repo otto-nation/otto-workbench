@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`team-prs` — Mine filters (Drafts, Landed, Empty lanes, Repo); Mine's Batch button (shows running progress) opens a Batch page: Running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, steps, AI and push options, a summary of the runs it starts — one pr batch run per repo), and Recent runs to look back; cards show their batch state and a PR's detail has a Batch tab, `_lib`, …).
+Conventions for the mods under this directory (`team-prs` — Mine filters (Drafts, Landed, Empty lanes, Repo); Mine's Batch button (shows running progress) opens a Batch page: Running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, steps, AI and push options, a summary of the runs it starts — one pr batch run per repo; the Start form can be filtered by repo and by PR label), and Recent runs to look back; cards show their batch state and a PR's detail has a Batch tab, `_lib`, …).
 
 ## Where things live
 

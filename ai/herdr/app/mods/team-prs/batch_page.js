@@ -2,10 +2,10 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { groupByRepo, STEP_NAMES, STEP_HELP, planSummary } from "./_lib/batch_launch.js";
+import { groupByRepo, STEP_NAMES, STEP_HELP, planSummary, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, TEXT } from "./_lib/tokens.js";
-import { scrollBody, mono, button, solidButton, pane, paneBar } from "./_ui/ui.js";
+import { scrollBody, mono, button, solidButton, pane, paneBar, chip as chipOf, filterGroup } from "./_ui/ui.js";
 import { renderRunPanel } from "./workflows_view.js";
 
 function shortRepo(slug) {
@@ -92,16 +92,44 @@ function prRow(pr, L, t) {
       .child("no checkout of this repo on its machine"));
 }
 
+function renderFormFilters(L, prs) {
+  const facets = formFacets(prs);
+  const repoOn = new Set([...L.repoFilter].map((r) => r.toLowerCase()));
+  const labelOn = new Set([...L.labelFilter].map((n) => n.toLowerCase()));
+  const any = L.repoFilter.size > 0 || L.labelFilter.size > 0;
+  if (facets.repos.length <= 1 && facets.labels.length === 0 && !any) return null;
+  const out = v_flex().gap(SP.xs);
+  if (facets.repos.length > 1) {
+    out.child(filterGroup("Repo", facets.repos.map((slug) => chipOf(
+      `chip-repo:${slug}`, shortRepo(slug), repoOn.has(slug.toLowerCase()),
+      () => L.toggleRepoFilter(slug)))));
+  }
+  if (facets.labels.length > 0) {
+    out.child(filterGroup("Label", facets.labels.map((name) => chipOf(
+      `chip-label:${name}`, name, labelOn.has(name.toLowerCase()),
+      () => L.toggleLabelFilter(name)))));
+  }
+  if (any) out.child(button("batch-filters-clear", "Clear filters", () => L.clearFilters()));
+  return out;
+}
+
 function renderPrs(L, prs, t) {
+  const shown = L.shown(prs);
   if (!prs.length) {
     return v_flex().gap(SP.sm)
       .child(sectionLabel("PRs"))
       .child(div().text_size(TEXT.small).text_color(t.muted)
         .child("No open PRs of yours match the filters"));
   }
+  if (!shown.length) {
+    return v_flex().gap(SP.sm)
+      .child(sectionLabel("PRs"))
+      .child(div().text_size(TEXT.small).text_color(t.muted)
+        .child("No PRs match these filters"));
+  }
   return v_flex().gap(SP.sm)
     .child(sectionLabel("PRs"))
-    .children(groupPrs(prs).map((g) => {
+    .children(groupPrs(shown).map((g) => {
       const keys = g.prs.filter((p) => p.cwd).map((p) => prKey(p.repoSlug, p.number));
       const allOn = keys.length > 0 && keys.every((k) => L.selected.has(k));
       return v_flex().id(`repo-${g.on ?? ""}-${g.repo}`).gap(SP.xs)
@@ -127,7 +155,11 @@ function checkLine(id, on, label, extra, onToggle, { strong = false } = {}) {
 
 function renderForm({ launcher: L, prs }) {
   const t = theme();
-  const selectedPrs = (prs ?? []).filter((p) => L.selected.has(prKey(p.repoSlug, p.number)));
+  const all = prs ?? [];
+  const shown = L.shown(all);
+  const selectedPrs = shown.filter((p) => L.selected.has(prKey(p.repoSlug, p.number)));
+  const hiddenSelected = all.filter((p) => L.selected.has(prKey(p.repoSlug, p.number))).length
+    - selectedPrs.length;
   const { groups } = groupByRepo(selectedPrs);
   const steps = STEP_NAMES.filter((s) => L.steps.has(s));
   const r = groups.length;
@@ -137,9 +169,11 @@ function renderForm({ launcher: L, prs }) {
     : L.steps.size === 0 ? "Turn on at least one step"
     : null;
   const summary = reason ?? planSummary(groups, steps);
+  const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
     .child(sectionLabel("START A BATCH"))
-    .child(renderPrs(L, prs ?? [], t))
+    .when(Boolean(filters), (e) => e.child(filters))
+    .child(renderPrs(L, all, t))
     .child(v_flex().gap(SP.sm)
       .child(sectionLabel("Steps"))
       .children(STEP_NAMES.map((s) => checkLine(`step-${s}`, L.steps.has(s), s, STEP_HELP[s] ?? "", () => L.toggleStep(s), { strong: true }))))
@@ -150,6 +184,9 @@ function renderForm({ launcher: L, prs }) {
       .child(checkLine("auto-publish", L.autoPublish, "Push clean fast-forwards", "", () => L.toggleAutoPublish())))
     .child(v_flex().gap(SP.sm)
       .child(div().text_size(TEXT.small).text_color(reason ? t.muted : t.foreground).child(summary ?? ""))
+      .when(hiddenSelected > 0, (e) => e.child(
+        div().text_size(TEXT.small).text_color(t.muted)
+          .child(`${hiddenSelected} selected PR(s) hidden by filters won't run`)))
       .when(Boolean(L.note), (e) => e.child(
         div().text_size(TEXT.small).text_color(t.ansi1).child(L.note)))
       .child(h_flex().gap(SP.md).items_center()

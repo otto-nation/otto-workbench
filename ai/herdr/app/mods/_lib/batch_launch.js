@@ -37,6 +37,56 @@ export function groupByRepo(prs) {
   return { groups, unrunnable };
 }
 
+function fold(s) {
+  return String(s ?? '').toLowerCase();
+}
+
+/** Distinct repo slugs (first-seen) and label names (case-insensitive sort) on the Start form. */
+export function formFacets(prs) {
+  const repos = [];
+  const seenRepos = new Set();
+  const labels = [];
+  const seenLabels = new Set();
+  for (const pr of prs ?? []) {
+    const slug = pr?.repoSlug;
+    if (slug) {
+      const key = fold(slug);
+      if (!seenRepos.has(key)) {
+        seenRepos.add(key);
+        repos.push(slug);
+      }
+    }
+    for (const name of pr?.labels ?? []) {
+      if (!name) continue;
+      const key = fold(name);
+      if (!seenLabels.has(key)) {
+        seenLabels.add(key);
+        labels.push(name);
+      }
+    }
+  }
+  labels.sort((a, b) => fold(a).localeCompare(fold(b)));
+  return { repos, labels };
+}
+
+/** Keep PRs matching repo AND label chips; empty or stale chips match everything. */
+export function filterForm(prs, { repos = [], labels = [] } = {}) {
+  const list = prs ?? [];
+  const facets = formFacets(list);
+  const knownRepos = new Set(facets.repos.map(fold));
+  const knownLabels = new Set(facets.labels.map(fold));
+  const repoSet = new Set((repos ?? []).map(fold).filter((r) => knownRepos.has(r)));
+  const labelSet = new Set((labels ?? []).map(fold).filter((l) => knownLabels.has(l)));
+  return list.filter((pr) => {
+    if (repoSet.size > 0 && !repoSet.has(fold(pr.repoSlug))) return false;
+    if (labelSet.size > 0) {
+      const names = (pr.labels ?? []).map(fold);
+      if (!names.some((n) => labelSet.has(n))) return false;
+    }
+    return true;
+  });
+}
+
 /** Argv after `pr` for `batch run` of one checkout group. */
 export function runArgv({
   keys,

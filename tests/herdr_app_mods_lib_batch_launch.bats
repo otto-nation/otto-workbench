@@ -148,6 +148,24 @@ _throws() {
   [ "$output" = '["","",""]' ]
 }
 
+@test "formFacets repos first-seen order, labels sorted case-insensitively, deduped" {
+  _js 'm.formFacets([{repoSlug:"b/two",labels:["Zebra","alpha"]},{repoSlug:"a/one",labels:["ALPHA","bug"]},{repoSlug:"b/two",labels:["gamma"]},{repoSlug:"B/Two",labels:["bug"]}])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"repos":["b/two","a/one"],"labels":["alpha","bug","gamma","Zebra"]}' ]
+}
+
+@test "formFacets empty list and missing labels" {
+  _js '[m.formFacets([]),m.formFacets(null),m.formFacets([{repoSlug:"a/one"}])]' 
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"repos":[],"labels":[]},{"repos":[],"labels":[]},{"repos":["a/one"],"labels":[]}]' ]
+}
+
+@test "filterForm empty, repo, labels OR, repo AND label, stale ignored, unlabeled hidden" {
+  _js '(() => { const prs = [{n:1,repoSlug:"a/one",labels:["bug"]},{n:2,repoSlug:"b/two",labels:["docs"]},{n:3,repoSlug:"a/one",labels:[]},{n:4,repoSlug:"A/One",labels:["BUG"]},{n:5,repoSlug:"c/three",labels:["help"]},{n:6,repoSlug:"c/three"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}),ids({repos:[],labels:[]}),ids({repos:["A/ONE"]}),ids({labels:["BUG","docs"]}),ids({repos:["a/one"],labels:["bug"]}),ids({repos:["gone/x"]}),ids({repos:["gone/x","b/two"]}),ids({labels:["nope"]}),ids({labels:["nope","help"]})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2,3,4,5,6],[1,2,3,4,5,6],[1,3,4],[1,2,4],[1,4],[1,2,3,4,5,6],[2],[1,2,3,4,5,6],[5]]' ]
+}
+
 @test "batchButtonText none, running, and zero total" {
   _js '[m.batchButtonText([]),m.batchButtonText([{progress:{done:1,total:3}},{progress:{done:2,total:2}}]),m.batchButtonText([{progress:{done:0,total:0}}]),m.batchButtonText(null)]'
   [ "$status" -eq 0 ]

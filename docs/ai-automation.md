@@ -331,7 +331,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   rejects a change it says why in `~/.config/herdr-app/settings.error`.
 - Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/` (and `~/.config/herdr-app-untrusted/mods/` once that exists, so both windows carry the same mods and layouts)
   as a real copy with `_lib/` inside, keeps edits, and a `workbench` layout (main + PR list under agents; `herdr-app do layout.switch --name workbench`).
-  The board has This/All spaces; lanes with no PRs are hidden unless the Empty lanes chip is on; a click opens the PR in the same pane with its review history and actions:
+  The board has This/All spaces; lanes with no PRs are hidden unless the Empty lanes chip is on; in All spaces a Repo group filters by repository; a click opens the PR in the same pane with its review history and actions:
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
   A Files tab lists the PR's changed files (from `gh api …/pulls/N/files`) and shows a file's diff inline (first 1,500 lines); files marked `linguist-generated` in `.gitattributes` sort last and are left out of the header's file and line counts; Open for Review checks the PR out with `wt switch pr:N` and selects, or opens, a space on that worktree (this machine only).

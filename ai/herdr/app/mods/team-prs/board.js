@@ -92,10 +92,11 @@ export function renderCard(pr, { onOpen, spinner, showRepo }) {
     .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr)));
 }
 
-export function renderChips(filters, authors, { onToggle, tab }) {
+export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
   const t = theme();
   const f = filters ?? {};
   const set = new Set((f.authors ?? []).map((a) => String(a).toLowerCase()));
+  const activeSet = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
   const chip = (label, name, on) => segment(`chip-${name}`, label, on, () => onToggle(name));
   const showItems = [];
   if (tab !== "mine") showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
@@ -107,6 +108,11 @@ export function renderChips(filters, authors, { onToggle, tab }) {
     .child(h_flex().gap(SP.sm).items_center()
       .child(div().text_size(TEXT.caption).text_color(t.dim).child("Show"))
       .child(segmented(showItems)))
+    .when(repos.length > 1, (e) => e.child(
+      h_flex().gap(SP.sm).items_center()
+        .child(div().text_size(TEXT.caption).text_color(t.dim).child("Repo"))
+        .child(h_flex().flex_wrap().gap(SP.xs).items_center()
+          .children(repos.map((slug) => chip(slug.split("/").pop(), `repo:${slug}`, activeSet.has(slug.toLowerCase())))))))
     .when(tab !== "mine" && authors.length > 0, (e) => e.child(
       h_flex().gap(SP.sm).items_center()
         .child(div().text_size(TEXT.caption).text_color(t.dim).child("Author"))

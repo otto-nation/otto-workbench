@@ -13,7 +13,7 @@ import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
-import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
+import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, isMine, groupColumns } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
@@ -44,7 +44,7 @@ function ctxKey(ctx) {
 
 function filtersOf() {
   const f = shared("team-prs.filters") ?? {};
-  return { drafts: !!f.drafts, landed: !!f.landed, empty: !!f.empty, authors: [...(f.authors ?? [])] };
+  return { drafts: !!f.drafts, landed: !!f.landed, empty: !!f.empty, authors: [...(f.authors ?? [])], repos: [...(f.repos ?? [])] };
 }
 
 function tabOf() {
@@ -272,6 +272,14 @@ export default class TeamPrs extends View {
       if (name === "landed" && f.landed) this.refresh(cx);
       return;
     }
+    if (name.startsWith("repo:")) {
+      const slug = name.slice(5).toLowerCase();
+      const set = new Set(f.repos.map((r) => String(r).toLowerCase()));
+      if (set.has(slug)) set.delete(slug); else set.add(slug);
+      f.repos = [...set];
+      setShared("team-prs.filters", f);
+      return;
+    }
     if (!name.startsWith("author:")) return;
     const login = name.slice(7).toLowerCase();
     const set = new Set(f.authors.map((a) => String(a).toLowerCase()));
@@ -319,8 +327,9 @@ export default class TeamPrs extends View {
   }
 
   listed(state) {
-    const prs = state.prs ?? [], me = state.me ?? "";
-    return tabOf() === "mine" ? prs.filter((p) => isMine(p, me)) : filterPrs(prs, filtersOf(), me);
+    const base = filterRepos(state.prs ?? [], filtersOf().repos);
+    const me = state.me ?? "";
+    return tabOf() === "mine" ? base.filter((p) => isMine(p, me)) : filterPrs(base, filtersOf(), me);
   }
 
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
@@ -392,12 +401,13 @@ export default class TeamPrs extends View {
     // Team view is about teammates: the viewer has the Mine tab.
     const me = String(state.me ?? "").toLowerCase();
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
+    const repos = scopeOf() === "all" ? [...new Set((state.prs ?? []).map((p) => p.repoSlug).filter(Boolean))].sort() : [];
     return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
-      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab }))
+      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
       .child(renderBoard({
-        tab, prs: state.prs ?? [], filters, me: state.me ?? "",
+        tab, prs: filterRepos(state.prs ?? [], filters.repos), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
       }));

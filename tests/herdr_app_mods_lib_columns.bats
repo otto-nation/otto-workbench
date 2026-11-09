@@ -295,6 +295,46 @@ _filter() {
   [ "$output" = '["open"]' ]
 }
 
+@test "filterRepos: keeps only selected repos case-insensitively" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [
+      { number: 1, repoSlug: 'Owner/One' },
+      { number: 2, repoSlug: 'owner/two' },
+      { number: 3, repoSlug: 'owner/one' },
+    ];
+    process.stdout.write(JSON.stringify(filterRepos(prs, ['OWNER/ONE']).map((p) => p.number)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,3]' ]
+}
+
+@test "filterRepos: ignores a selection naming no known repo" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [
+      { number: 1, repoSlug: 'owner/one' },
+      { number: 2, repoSlug: 'owner/two' },
+    ];
+    process.stdout.write(JSON.stringify(filterRepos(prs, ['missing/repo']).map((p) => p.number)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,2]' ]
+}
+
+@test "filterRepos: empty selection returns all" {
+  run node --input-type=module -e "
+    const { filterRepos } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const prs = [
+      { number: 1, repoSlug: 'owner/one' },
+      { number: 2, repoSlug: 'owner/two' },
+    ];
+    process.stdout.write(JSON.stringify(filterRepos(prs, []).map((p) => p.number)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,2]' ]
+}
+
 @test "visibleColumns: keeps all columns when showEmpty is true" {
   run node --input-type=module -e "
     const { visibleColumns } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');

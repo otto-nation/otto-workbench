@@ -82,6 +82,15 @@ export function isMine(pr, me) {
   return login === who;
 }
 
+export function filterRepos(prs, repos) {
+  const known = new Set(prs.map((p) => String(p.repoSlug ?? "").toLowerCase()));
+  const active = new Set(
+    [...(repos ?? [])].map((r) => String(r).toLowerCase()).filter((r) => known.has(r)),
+  );
+  if (active.size === 0) return prs;
+  return prs.filter((p) => active.has(String(p.repoSlug ?? "").toLowerCase()));
+}
+
 export function filterPrs(prs, filters, me) {
   const drafts = Boolean(filters?.drafts);
   const landed = Boolean(filters?.landed);

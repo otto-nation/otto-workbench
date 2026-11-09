@@ -336,11 +336,12 @@ _state_has_new_items() {
 #
 # Reads only. Deciding to ask the question is not an answer to it, so the saved
 # selection stays until `state_add_to_list` adds what the user actually chose.
-# Clearing here instead left the record empty from the moment the menu opened, and nothing between there and the end of the install put it back: a
-# declined menu exits 0, a failing step exits non-zero under `set -e`, and either
-# way the next sync reads an empty list and skips every tool it names. That is
-# how a machine stopped syncing Claude — `ai.tools` was emptied to ask about a
-# newly added tool and never refilled.
+# Clearing here instead left the record empty from the
+# moment the menu opened, and nothing between there and the end of the install
+# put it back: a declined menu exits 0, a failing step exits non-zero under
+# `set -e`, and either way the next sync reads an empty list and skips every
+# tool it names. That is how a machine stopped syncing Claude — `ai.tools` was
+# emptied to ask about a newly added tool and never refilled.
 state_load_selections() {
   local state_key="$1" script_dir="$2"
   local -n __selections=$3

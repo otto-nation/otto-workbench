@@ -142,7 +142,8 @@ COMMANDS_MAINTENANCE=(
 
 cmd_install() {
   # If running from Homebrew Cellar, clone the full repo and re-exec from there.
-  if [[ "$WORKBENCH_DIR" == */Cellar/* ]]; then
+  # --remove only edits state, so it needs no clone.
+  if [[ "$WORKBENCH_DIR" == */Cellar/* && " $* " != *" --remove "* ]]; then
     _clone_workbench_repo
     exec "$WORKBENCH_REPO_DIR/bin/otto-workbench" install "$@"
   fi

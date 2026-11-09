@@ -45,15 +45,32 @@ function classifyCode(result) {
   ) {
     return { kind: 'auth', message: stderr };
   }
+  // coreutils' `pr` answers the workbench's flags this way: it is first on PATH, not the workbench's.
+  if (/^pr: unrecognized option/m.test(stderr)) {
+    return {
+      kind: 'failed',
+      message: "a different `pr` is first on PATH, not the workbench's (try `otto-workbench sync`)",
+    };
+  }
   if (result.code !== 0) {
     return { kind: 'failed', message: stderr || `exit ${result.code}` };
   }
   return null;
 }
 
+// A command exec'd on another machine runs without a login shell, so ~/.local/bin (the workbench's
+// `pr`) is missing from PATH and `pr` resolves to coreutils' pagination tool of the same name.
+// Prefixing the workbench bin dir for remote calls makes the right `pr` win; local calls keep the
+// app's own PATH.
+export function toolCall(ctx, cmd, args) {
+  if (ctx.on == null || ctx.on === '') return { cmd, args };
+  return { cmd: 'sh', args: ['-c', 'PATH="$HOME/.local/bin:$PATH"; exec "$@"', 'sh', cmd, ...args] };
+}
+
 async function invoke(exec, ctx, cmd, args) {
   try {
-    const result = await exec(cmd, args, { cwd: ctx.cwd, on: ctx.on });
+    const call = toolCall(ctx, cmd, args);
+    const result = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on });
     const error = classifyCode(result);
     if (error) return { ok: false, error };
     return { ok: true, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -150,7 +167,8 @@ export async function loadUser(exec, ctx) {
 export async function loadOpenPrs(exec, ctx, slug) {
   let ran;
   try {
-    ran = await exec('gh', pullsArgv(slug), { cwd: ctx.cwd, on: ctx.on });
+    const call = toolCall(ctx, 'gh', pullsArgv(slug));
+    ran = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on });
   } catch (err) {
     return { ok: false, error: classifyCaught(err, ctx.on) };
   }
@@ -189,10 +207,8 @@ export async function loadListing(exec, ctx) {
 export async function loadBatchDoc(exec, ctx) {
   let ran;
   try {
-    ran = await exec('pr', ['batch', 'status', '--full', '--offline'], {
-      cwd: ctx.cwd,
-      on: ctx.on,
-    });
+    const call = toolCall(ctx, 'pr', ['batch', 'status', '--full', '--offline']);
+    ran = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on });
   } catch {
     return { ok: true, doc: null };
   }

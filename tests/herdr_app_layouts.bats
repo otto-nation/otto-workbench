@@ -57,6 +57,7 @@ _run_step() {
     HERDR_APP_LAYOUTS_SRC_DIR="$2"
     HERDR_UNTRUSTED_APP_DIR="$3"
     HERDR_APP_LAYOUTS_MANIFEST="$4"
+    HERDR_UNTRUSTED_APP_LAYOUTS_MANIFEST="$4.untrusted"
     step_herdr_app_layouts
   ' _ "$REPO_ROOT" "$SRC" "$UNTRUSTED" "$MANIFEST"
 }
@@ -206,6 +207,9 @@ _run_step() {
   [ "$status" -eq 0 ]
   [ "$(cat "$UNTRUSTED/layouts/KEEP")" = keep ]
   cmp "$APP/layouts/workbench.json" "$UNTRUSTED/layouts/workbench.json"
+  grep -q $'^workbench\t' "$MANIFEST.untrusted"
+  [ "$(grep -c . "$MANIFEST")" -eq "$(grep -c . "$MANIFEST.untrusted")" ]
+  ! cmp -s "$MANIFEST" "$MANIFEST.untrusted" || [ "$MANIFEST" != "$MANIFEST.untrusted" ]
 }
 
 @test "step does not create the untrusted app dir" {

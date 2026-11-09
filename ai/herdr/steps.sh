@@ -213,7 +213,7 @@ step_herdr_app_layouts() {
     break
   done
   [[ -d "$HERDR_UNTRUSTED_APP_DIR" ]] \
-    && _herdr_app_install_layouts "$HERDR_UNTRUSTED_APP_DIR" "$HERDR_APP_LAYOUTS_MANIFEST.untrusted"
+    && _herdr_app_install_layouts "$HERDR_UNTRUSTED_APP_DIR" "$HERDR_UNTRUSTED_APP_LAYOUTS_MANIFEST"
   return 0
 }
 

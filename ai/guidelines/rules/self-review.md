@@ -8,7 +8,10 @@ Before creating a PR (via `pr create`, `gh pr create`, or any method):
 2. Read the review file from `~/.local/state/workbench/reviews/` and present what the fix
    pass did — findings fixed, findings left open, and the reason each was skipped
 3. Work through whatever it left open as the user directs
-4. Only proceed to PR creation when the user is satisfied
+4. When the pass left nothing open that needs a decision, create the draft PR without asking
+   — a draft is not a claim the work is finished and costs nothing to close. Stop and ask
+   only when findings remain open, or the fix pass committed something that changes the
+   branch's intent
 
 Do not act on a finding before step 2. The fix pass is working the same list you are,
 and a finding you fix or file while it runs is duplicated work at best — at worst you

@@ -69,7 +69,7 @@ unset _terminal
 # others. Removal is `otto-workbench install terminals --remove <name>`. A replay
 # writes nothing, and until this line the previous selection is what sync reads.
 if [[ "$_replaying" != true ]]; then
-  state_add_to_list "$_STATE_KEY" "${SELECTED_TERMINALS[@]}"
+  state_select_tools "$_STATE_KEY" "${SELECTED_TERMINALS[@]}"
 fi
 unset _replaying
 

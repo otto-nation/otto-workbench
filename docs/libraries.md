@@ -552,7 +552,7 @@ Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires
 | `select_core_components RESULT_ARRAY DIRS_ARRAY DESCS_ARRAY` | presents selection menu for core components. Reads INSTALL_ALL, INSTALL_TARGETED, INSTALL_TARGETS from caller. |
 | `run_core_component COMPONENT` | runs the install or sync function for a core component. |
 | `parse_install_flags ARGS...` | parses --all, --remove NAME and component targets. Sets INSTALL_ALL, INSTALL_TARGETS, INSTALL_TARGETED and INSTALL_REMOVE in caller's scope. --remove is repeatable. |
-| `remove_selected_tools COMPONENT NAME...` | drops each NAME from COMPONENT's recorded tool selection (`<component>.tools`) so sync stops setting it up. Files the tool already installed stay where they are. Refuses, changing nothing, when any NAME is not in that selection. |
+| `remove_selected_tools COMPONENT NAME...` | drops each NAME from COMPONENT's recorded tool selection (`<component>.tools`) so sync stops setting it up. The removal is remembered, so a later install does not offer it as a new tool. Files the tool already installed stay where they are. Refuses, changing nothing, when any NAME is not in that selection. |
 | `print_install_summary` | prints the final "All done" screen with a consolidated file listing, editable configs, and per-component summaries. |
 
 ### maintenance.sh
@@ -1035,6 +1035,9 @@ state_file_exists           # returns 0 if state file exists
 | `state_list_contains KEY VALUE` | returns 0 when VALUE is an entry of the list at KEY, compared whole rather than by substring. |
 | `state_add_to_list KEY [VALUE...]` | adds each VALUE not already in the list at KEY, keeping the saved entries and their order. This is how an install records what was picked: choosing a subset of tools sets those up without dropping the ones installed before. Removal is `state_remove_from_list`, never a re-pick. |
 | `state_remove_from_list KEY [VALUE...]` | drops each VALUE from the list at KEY, leaving every other entry in its saved order. The one way a tool leaves a component's selection. |
+| `state_removed_key KEY` | the sibling list recording tools removed from the selection at KEY: `ai.tools` → `ai.removed`. |
+| `state_select_tools KEY NAME...` | records NAMEs as picked: added to the selection at KEY and taken off its removed list. Every installer menu records its answer through this, so a pick never drops a tool picked before. |
+| `state_deselect_tools KEY NAME...` | records NAMEs as removed: dropped from the selection at KEY and added to its removed list, which drift detection in `state_load_selections` reads so a removed tool is not offered again as new. |
 | `state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]` | Loads saved selections from YAML, validates each against SCRIPT_DIR. When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in the saved list — forces a fresh menu so the user can opt in to them. |
 
 Loaded via `ui.sh`.

@@ -297,16 +297,45 @@ state_remove_from_list() {
   local key="$1"
   shift
   local -a kept=()
-  local _item _drop _keep
+  local _item _drop _keep _dropped=false
   while IFS= read -r _item; do
     [[ -n "$_item" ]] || continue
     _keep=true
     for _drop in "$@"; do
-      if [[ "$_item" == "$_drop" ]]; then _keep=false; break; fi
+      if [[ "$_item" == "$_drop" ]]; then _keep=false; _dropped=true; break; fi
     done
     if [[ "$_keep" == true ]]; then kept+=("$_item"); fi
   done < <(state_get_list "$key")
+  # Nothing named was there: leave the file alone rather than writing an empty
+  # list under a key that never existed.
+  if [[ "$_dropped" == false ]]; then return 0; fi
   state_set_list "$key" "${kept[@]}"
+}
+
+# state_removed_key KEY — the sibling list recording tools removed from the
+# selection at KEY: `ai.tools` → `ai.removed`.
+state_removed_key() {
+  echo "${1%.*}.removed"
+}
+
+# state_select_tools KEY NAME... — records NAMEs as picked: added to the
+# selection at KEY and taken off its removed list. Every installer menu records
+# its answer through this, so a pick never drops a tool picked before.
+state_select_tools() {
+  local key="$1"
+  shift
+  state_add_to_list "$key" "$@"
+  state_remove_from_list "$(state_removed_key "$key")" "$@"
+}
+
+# state_deselect_tools KEY NAME... — records NAMEs as removed: dropped from the
+# selection at KEY and added to its removed list, which drift detection in
+# `state_load_selections` reads so a removed tool is not offered again as new.
+state_deselect_tools() {
+  local key="$1"
+  shift
+  state_remove_from_list "$key" "$@"
+  state_add_to_list "$(state_removed_key "$key")" "$@"
 }
 
 # _state_has_new_items SAVED_ARRAY AVAILABLE_ARRAY NEW_ARRAY
@@ -335,13 +364,16 @@ _state_has_new_items() {
 # Returns 1 (fresh) if interactive, no valid saves, or drift detected.
 #
 # Reads only. Deciding to ask the question is not an answer to it, so the saved
-# selection stays until `state_add_to_list` adds what the user actually chose.
-# Clearing here instead left the record empty from the
-# moment the menu opened, and nothing between there and the end of the install
-# put it back: a declined menu exits 0, a failing step exits non-zero under
-# `set -e`, and either way the next sync reads an empty list and skips every
-# tool it names. That is how a machine stopped syncing Claude — `ai.tools` was
-# emptied to ask about a newly added tool and never refilled.
+# selection stays until `state_select_tools` adds what the user actually chose.
+# Clearing here instead left the record empty from the moment the menu opened,
+# and nothing between there and the end of the install put it back: a declined
+# menu exits 0, a failing step exits non-zero under `set -e`, and either way the
+# next sync reads an empty list and skips every tool it names. That is how a
+# machine stopped syncing Claude — `ai.tools` was emptied to ask about a newly
+# added tool and never refilled.
+#
+# A tool on its removed list (`state_deselect_tools`) is not new: the operator
+# already answered for it, so it does not reopen the menu.
 state_load_selections() {
   local state_key="$1" script_dir="$2"
   local -n __selections=$3
@@ -372,8 +404,11 @@ state_load_selections() {
   fi
 
   # Drift detection: new tools on disk that aren't in saved state
-  local _new_tools=()
-  if [[ "$_has_available" == true ]] && _state_has_new_items __selections __available _new_tools; then
+  local _new_tools=() _known=("${__selections[@]}")
+  while IFS= read -r _item; do
+    if [[ -n "$_item" ]]; then _known+=("$_item"); fi
+  done < <(state_get_list "$(state_removed_key "$state_key")")
+  if [[ "$_has_available" == true ]] && _state_has_new_items _known __available _new_tools; then
     info "New tools available: ${_new_tools[*]}"
     __selections=()
     return 1

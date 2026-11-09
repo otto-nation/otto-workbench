@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # Tests for how a component's tool selection is recorded: picks only add
-# (state_add_to_list), removal is explicit (state_remove_from_list, reached from
-# `otto-workbench install COMPONENT --remove NAME`), and the menus mark what is
-# already installed.
+# (state_select_tools), removal is explicit and remembered (state_deselect_tools,
+# reached from `otto-workbench install COMPONENT --remove NAME`), and the menus
+# mark what is already installed.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -80,10 +80,36 @@ _list() {
   [[ "$output" == *"--remove requires a tool name"* ]]
 }
 
-@test "remove_selected_tools drops a selected tool" {
+@test "remove_selected_tools drops a selected tool and remembers the removal" {
   run _in_workbench 'state_set_list ai.tools herdr claude; remove_selected_tools ai herdr'
   [ "$status" -eq 0 ]
   [ "$(_list)" = "claude" ]
+  [ "$(yq '.components.ai.removed | join(" ")' "$STATE_YML")" = "herdr" ]
+}
+
+@test "a removed tool is not offered again as new" {
+  mkdir -p "$TMPDIR/ai/claude" "$TMPDIR/ai/herdr"
+  run _in_workbench "state_set_list ai.tools herdr claude
+    state_deselect_tools ai.tools herdr
+    avail=(claude herdr); picked=()
+    state_load_selections ai.tools '$TMPDIR/ai' picked avail
+    echo \"replay:\${picked[*]}\""
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "replay:claude" ]
+}
+
+@test "picking a removed tool again restores it and clears the removal" {
+  run _in_workbench 'state_set_list ai.tools claude; state_deselect_tools ai.tools herdr
+    state_select_tools ai.tools herdr'
+  [ "$status" -eq 0 ]
+  [ "$(_list)" = "claude herdr" ]
+  [ "$(yq '.components.ai.removed | (. // []) | length' "$STATE_YML")" = "0" ]
+}
+
+@test "selecting tools writes no removed list where none existed" {
+  run _in_workbench 'state_select_tools ai.tools claude'
+  [ "$status" -eq 0 ]
+  [ "$(yq '.components.ai | has("removed")' "$STATE_YML")" = "false" ]
 }
 
 @test "remove_selected_tools refuses a name not in the selection and changes nothing" {
@@ -108,13 +134,13 @@ _list() {
 
 # A component installer that writes its menu answer with state_set_list drops
 # every tool the operator did not re-pick. Each one must record through
-# state_add_to_list instead.
+# state_select_tools instead.
 @test "no component installer replaces its recorded selection" {
   local f
   for f in ai/setup.sh editors/setup.sh terminals/setup.sh; do
     run grep -n 'state_set_list' "$REPO_ROOT/$f"
     [ "$status" -eq 1 ]
-    run grep -c 'state_add_to_list "$_STATE_KEY"' "$REPO_ROOT/$f"
+    run grep -c 'state_select_tools "$_STATE_KEY"' "$REPO_ROOT/$f"
     [ "$output" = "1" ]
   done
 }

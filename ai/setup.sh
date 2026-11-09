@@ -155,7 +155,7 @@ run_steps
 # third. Removal is `otto-workbench install ai --remove <tool>`. Until this line
 # the previous selection is still what sync reads.
 state_record "ai"
-state_add_to_list "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
+state_select_tools "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
 
 # ─── GitHub token file ────────────────────────────────────────────────────
 

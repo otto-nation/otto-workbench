@@ -383,7 +383,8 @@ parse_install_flags() {
 
 # remove_selected_tools COMPONENT NAME... — drops each NAME from COMPONENT's
 # recorded tool selection (`<component>.tools`) so sync stops setting it up.
-# Files the tool already installed stay where they are. Refuses, changing
+# The removal is remembered, so a later install does not offer it as a new
+# tool. Files the tool already installed stay where they are. Refuses, changing
 # nothing, when any NAME is not in that selection.
 remove_selected_tools() {
   local component="$1"
@@ -397,7 +398,7 @@ remove_selected_tools() {
       return 1
     fi
   done
-  state_remove_from_list "$key" "$@"
+  state_deselect_tools "$key" "$@"
   success "Removed from $component: $*"
 }
 

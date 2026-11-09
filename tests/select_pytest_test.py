@@ -97,6 +97,23 @@ def test_a_bare_bootstrap_root_is_not_a_dependency():
     assert _refs('LIB_DIR = REPO_ROOT / "ai" / "lib"') == set()
 
 
+def test_a_globbed_bootstrap_root_is_the_subject():
+    """A tree walk of ai/ is covering ai/, not merely importing from it."""
+    assert _refs(
+        'AI = Path(__file__).resolve().parent.parent / "ai"\n'
+        'fs = AI.rglob("*")'
+    ) == {"ai"}
+    assert _refs('x = (REPO_ROOT / "ai" / "lib").rglob("*.py")') == {"ai/lib"}
+    assert _refs(
+        'import os\n'
+        'for d in os.walk(REPO_ROOT / "lib"): pass'
+    ) == {"lib"}
+
+
+def test_walking_the_repo_root_is_not_a_dependency():
+    assert _refs('x = REPO_ROOT.rglob("*")') == set()
+
+
 def test_a_path_under_a_bootstrap_root_is_a_dependency():
     """The exemption is for the root itself, not for everything beneath it."""
     assert "ai/lib/core/proc.py" in _refs(
@@ -170,6 +187,15 @@ def test_a_package_init_resolves_its_own_relative_imports():
     assert sp._package_of("wiki", "ai/lib/wiki/__init__.py") == "wiki"
     assert sp._package_of("wiki.create", "ai/lib/wiki/create.py") == "wiki"
     assert sp._package_of("ui", "lib/ui.py") == ""
+
+
+def test_a_tree_scanning_test_selects_when_the_scanned_tree_changes():
+    mapping = sp.dependency_map()
+    assert sp._selects(
+        "tests/serde_test.py",
+        mapping["tests/serde_test.py"],
+        ["ai/lib/fix/dirty_backup.py"],
+    )
 
 
 def test_a_change_to_a_package_module_selects_the_tests_that_use_it():

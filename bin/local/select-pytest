@@ -7,7 +7,7 @@ pytest file names it as an *import*, so the same question is answered by the
 AST instead — and answered better, because an import graph closes transitively
 without any of the pattern-matching the bash version needs.
 
-Three signals map a test file to the sources it covers:
+Four signals map a test file to the sources it covers:
 
   1. ``from core.proc import run`` → ``ai/lib/core/proc.py``, then closed over
      that module's own imports, so a test reaching ``pr.fix`` is selected when
@@ -17,6 +17,9 @@ Three signals map a test file to the sources it covers:
      graph never sees them.
   3. ``REPO_ROOT / "bin" / "local" / "validate-ceiling"`` → that path. This is
      what catches the tests whose subject is a *script* rather than a module.
+  4. ``AI.rglob("*")`` / ``os.walk(REPO_ROOT / "lib")`` → the scanned root.
+     A bootstrap root that is itself globbed/walked IS the subject: the test
+     covers that tree, not merely imports from it. The repo root never counts.
 
 The third signal is read from the AST rather than by regex, because a test
 rarely spells the whole path at the point of use: it assigns
@@ -92,6 +95,7 @@ FULL_SUITE_TRIGGER_DIRS = ("tests/fixtures/",)
 # LIB_DIR = REPO_ROOT / "ai" / "lib" is saying where imports come from, not
 # what it covers.
 BOOTSTRAP_REFS = {"ai/lib", "lib", "ai", "bin", "tests", ".git", "ai/bin"}
+_SCAN_METHODS = frozenset({"glob", "rglob", "iterdir", "walk"})
 
 # Tests with no resolvable deps — they always run. Each entry names why, because
 # an entry added without one is how a test quietly becomes unselectable. Kept in
@@ -355,6 +359,28 @@ def _is_path_of_dunder_file(call: ast.Call) -> bool:
                for arg in call.args)
 
 
+def _scan_root(node: ast.Call, aliases: dict[str, str]) -> str | None:
+    """Repo-relative path a glob/rglob/iterdir/os.walk call scans, or None.
+
+    The repo root (empty string) never counts: walking everything would
+    select the test for any change.
+    """
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr not in _SCAN_METHODS:
+        return None
+    receiver = func.value
+    walk_os = (
+        isinstance(receiver, ast.Name)
+        and receiver.id == "os"
+        and func.attr == "walk"
+    )
+    if walk_os and not node.args:
+        return None
+    if walk_os:
+        receiver = node.args[0]
+    return _joined_path(receiver, aliases) or None
+
+
 def _joined_path(node: ast.AST, aliases: dict[str, str]) -> str | None:
     """The repo-relative path a ``root / "a" / "b"`` expression builds, or None.
 
@@ -403,11 +429,12 @@ def _grow_aliases(tree: ast.AST, aliases: dict[str, str]) -> bool:
 def _path_refs(tree: ast.AST) -> set[str]:
     """Repo-relative paths the source names, bootstrap roots aside.
 
-    Two passes, because an alias is routinely defined further down the file
-    than something built from it and Python only cares about runtime order.
-    The first records every ``NAME = <root> / ...`` assignment it can resolve,
-    repeating while the table keeps growing; the second reads every ``/``
-    expression in the file through it.
+    Two alias passes, because an alias is routinely defined further down the
+    file than something built from it and Python only cares about runtime
+    order. The first records every ``NAME = <root> / ...`` assignment it can
+    resolve, repeating while the table keeps growing; the second reads every
+    ``/`` expression in the file through it. A third pass then keeps every
+    glob/rglob/iterdir/walk root, bootstrap roots included.
     """
     aliases: dict[str, str] = {}
     while _grow_aliases(tree, aliases):
@@ -433,6 +460,14 @@ def _path_refs(tree: ast.AST) -> set[str]:
         ref = _joined_path(node, aliases)
         if ref and ref not in BOOTSTRAP_REFS:
             refs.add(ref)
+    # A bootstrap root that is itself globbed/walked is the subject, so it
+    # is kept even when BOOTSTRAP_REFS would drop the same path as a ref.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        scan = _scan_root(node, aliases)
+        if scan:
+            refs.add(scan)
     return refs
 
 

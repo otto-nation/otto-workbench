@@ -704,6 +704,8 @@ def _phase_merge(
             extra=record.extra + (ProseSection("Review gaps", listed),),
             behaviours=None,
         )
+    elif not ingested.records:
+        record = replace(record, behaviours=())
     # A rejection ingest added, that the caller did not already count as a
     # failed group, is not a counted zero — `_nothing_new` must not settle.
     ingest_gaps = {g.group for g in ingested.gaps} - {f.group for f in failed_groups}

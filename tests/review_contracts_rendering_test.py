@@ -43,6 +43,8 @@ from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import PRReport  # noqa: E402
 from pr.triage_round import TriagedRound  # noqa: E402
+from review.artifacts import GroupArtifact  # noqa: E402
+from review.paths import phase_output_path  # noqa: E402
 from review.types import PreflightData, ReviewJob  # noqa: E402
 from review.record import FocusSource  # noqa: E402
 from review_focus_support import area  # noqa: E402
@@ -675,6 +677,19 @@ class TestPromptBudgetAccounting:
             Phase.GROUP, job, max_turns=15, **extra,
         )
 
+    def _group_once(self, files_formatted: str, focus=()) -> str:
+        """One render of `_prompt_group`, no `fit_rendered_prompt` re-plan."""
+        job, extra = self._group_setup(files_formatted, focus)
+        extra["artifact"] = GroupArtifact
+        common = review.prompt.build_common_sections(
+            job, max_turns=15, budget_bytes=MAX_PROMPT_BYTES,
+        )
+        out = phase_output_path(job.review_file, Phase.GROUP, extra["group_idx"])
+        built = review.prompt._prompt_group(job, common, extra, out)
+        template = PHASES[Phase.GROUP].template_for(job.mode)
+        assert built.builder.vars, "group builder produced no template vars"
+        return agent.templates.render(template, **built.builder.vars)
+
     def test_large_section_shrinks_the_diff_instead_of_the_prompt_budget(self):
         filler = "- filler.py\n" * 2000
         small = self._group_prompt("- a.py")
@@ -691,14 +706,16 @@ class TestPromptBudgetAccounting:
 
     def test_the_focus_section_is_never_cut(self):
         filler = "x" * 40_000
-        small = self._group_prompt(
-            "- a.py", focus=(area(id="F1", title="a", source=FocusSource.USER),),
-        )
-        large = self._group_prompt(
-            "- a.py",
-            focus=(area(id="F1", title="a", rationale=filler, source=FocusSource.USER),),
-        )
+        small_focus = (area(id="F1", title="a", source=FocusSource.USER),)
+        large_focus = (area(
+            id="F1", title="a", rationale=filler, source=FocusSource.USER,
+        ),)
+        small = self._group_prompt("- a.py", focus=small_focus)
+        large = self._group_prompt("- a.py", focus=large_focus)
         assert len(small.encode()) <= MAX_PROMPT_BYTES
         assert len(large.encode()) <= MAX_PROMPT_BYTES
         assert filler in large
-        assert len(large) - len(small) < len(filler) // 2
+        once_small = self._group_once("- a.py", focus=small_focus)
+        once_large = self._group_once("- a.py", focus=large_focus)
+        assert filler in once_large
+        assert len(once_large) - len(once_small) < len(filler) // 2

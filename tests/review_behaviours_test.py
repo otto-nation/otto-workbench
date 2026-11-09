@@ -321,6 +321,7 @@ def test_a_writer_missing_behaviours_gets_a_repair_turn(ro, tmp_path, monkeypatc
     assert len(prompts) == 2
     assert "missing_behaviours" in prompts[1]
     assert "was read" in prompts[1]
+    assert [e.id for e in load_record(tmp_path).behaviours] == ["B1"]
 
 
 def test_a_second_behaviours_miss_publishes_not_assessed(
@@ -440,6 +441,15 @@ def test_a_skipped_group_carries_its_prior_behaviours():
     none_carried = _carry_forward_prior_findings(none_prior, groups, {1})
     assert none_carried.record.behaviours is None
     assert Merged(fresh).carry(none_carried.record).record.behaviours is None
+
+
+def test_an_all_skipped_merge_carries_prior_behaviours():
+    merged = _phase_merge([], [], (), declinable=frozenset())
+    assert merged.record.behaviours == ()
+    prior = record(behaviours=(behaviour(id="B9", text="kept", paths=("a.py",)),))
+    folded = merged.carry(prior)
+    assert [e.id for e in folded.record.behaviours] == ["B1"]
+    assert [e.text for e in folded.record.behaviours] == ["kept"]
 
 
 def test_an_over_cap_behaviour_list_degrades(ro, tmp_path, monkeypatch):

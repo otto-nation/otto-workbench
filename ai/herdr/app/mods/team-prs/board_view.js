@@ -4,9 +4,9 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme, layout, run, props,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, layout, run, props,
 } from "herdr";
-import { locate, isUntrustedHome } from "./_lib/location.js";
+import { locate } from "./_lib/location.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {

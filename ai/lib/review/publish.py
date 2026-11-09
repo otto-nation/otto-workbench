@@ -25,7 +25,7 @@ import core.publishing
 from core.serde import load_file as serde_load_file, to_dict as serde_to_dict
 import gh.client
 from pr.state import PostTracking
-from review.paths import FILENAME_POST_SESSION
+from review.paths import FILENAME_POST_SESSION, FILENAME_RECORD
 
 
 @dataclass(frozen=True)
@@ -147,7 +147,7 @@ def resolve(
 
     if not core.prompt.confirm("Satisfied with the review?"):
         return PostResult(False, False, "", (
-            f"Edit the review:  $EDITOR {review_file}",
+            f"Edit the record:  $EDITOR {review_dir / FILENAME_RECORD}",
             _HINT_POST,
         ))
 

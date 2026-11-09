@@ -47,6 +47,7 @@ function renderHeader({ on, runs, runId, doc, onPickRun }) {
     .px(SP.lg).py(SP.sm).gap(SP.md).items_center()
     .child(div().flex_none().text_size(TEXT.small).child(on ?? "This computer"))
     .when(segs.length > 0, (e) => e.child(segmented(segs)))
+    .when(runs.length > 6, (e) => e.child(caption(`+${runs.length - 6} older`)))
     .when(Boolean(status), (e) => e.child(pill(String(status))))
     .when(active, (e) => e.child(pill("active")))
     .child(caption(`${n} items · ${need} need attention`))

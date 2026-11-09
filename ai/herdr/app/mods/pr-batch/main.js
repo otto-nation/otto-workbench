@@ -8,6 +8,8 @@ import {
 import { invoke, readJson } from "./_lib/board_data.js";
 import { renderPrBatch } from "./grid_view.js";
 
+// Follows the focused space only; the team-prs pin is deliberately ignored, so this mod may show a
+// different machine than the board.
 function ctxOf() {
   return locate(spaces(), panes(), focused());
 }
@@ -29,6 +31,7 @@ export default class PrBatch extends View {
     this.cell = null;
     this.log = null;
     this.inflight = this.again = false;
+    this.logInflight = false;
     this.watchRoot = null;
     this.key = ctxKey(ctxOf());
     cx.timer.every(15000, (cx) => {
@@ -92,6 +95,8 @@ export default class PrBatch extends View {
     if (!body.ok) return this.fail(body.error);
     const doc = parseRunDoc(body.value);
     if (!doc.ok) return this.fail(doc.error);
+    // A run picked mid-pull supersedes this answer; the re-run via `again` fetches the new one.
+    if (this.runId !== null && this.runId !== id) return;
     this.doc = doc;
     this.error = null;
     this.loading = false;
@@ -168,9 +173,14 @@ export default class PrBatch extends View {
       cx.notify();
       return;
     }
+    if (this.logInflight) return;
     const argv = logTailArgv(path);
+    const ctx = ctxOf();
+    this.logInflight = true;
     cx.spawn(async (cx) => {
-      const ran = await invoke(exec, ctxOf(), argv[0], argv.slice(1));
+      let ran;
+      try { ran = await invoke(exec, ctx, argv[0], argv.slice(1)); }
+      finally { this.logInflight = false; }
       if (!this.cell || this.cell.key !== cell.key || this.cell.step !== cell.step) return;
       this.log = ran.ok ? { text: ran.stdout ?? "" } : { error: ran.error.message };
       cx.notify();

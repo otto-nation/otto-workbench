@@ -28,7 +28,7 @@ from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
 from review.convergence import change_set, drop_out_of_delta_nits, prior_ids
 from review.prompt_sections import _is_incremental
-from review.document import SECTION_CLAIMS, SECTION_FOCUS, ReviewDocument
+from review.document import SECTION_CLAIMS, SECTION_FOCUS, SECTION_TEST_EVIDENCE, ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
     GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
@@ -116,7 +116,7 @@ class Merged:
     @property
     def text(self) -> str:
         shown = f"```json\n{example_json(as_group_artifact(self._for_synthesis()))}\n```"
-        harness = render_body(ReviewRecord(extra=self.record.extra, claims=())).strip()
+        harness = render_body(ReviewRecord(extra=self.record.extra, claims=(), behaviours=())).strip()
         return f"{shown}\n\n{harness}" if harness else shown
 
     def carry(self, record: ReviewRecord) -> "Merged":
@@ -607,7 +607,7 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
                        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
                        review_content=render_body(
                            record, evidence=True,
-                           omit=frozenset({SECTION_FOCUS, SECTION_CLAIMS}),
+                           omit=frozenset({SECTION_FOCUS, SECTION_CLAIMS, SECTION_TEST_EVIDENCE}),
                        ))
     if result.artifact is None:
         return DisproveRun(result, record)

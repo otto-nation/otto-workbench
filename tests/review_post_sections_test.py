@@ -18,6 +18,7 @@ from review.record import LedgerLine, ProseSection, TriageEntry  # noqa: E402
 from review.types import PriorDisposition  # noqa: E402
 
 from review.record import FocusSource  # noqa: E402
+from review_behaviours_support import behaviour  # noqa: E402
 from review_claims_support import claim  # noqa: E402
 from review_focus_support import area, user_area  # noqa: E402
 from review_record_support import finding, record  # noqa: E402
@@ -117,6 +118,12 @@ class TestReviewSections:
         assert "a.py" not in body
         assert "[C1]" not in body
         assert body.index("### Claims") < body.index("---")
+
+    def test_the_comment_carries_test_evidence(self, rp):
+        rec = record(summary="looked", behaviours=(behaviour(),))
+        body = format_body_text([], False, set(), rp.ReviewSections.from_record(rec))
+        assert body.index("## Summary") < body.index("### Test evidence") < body.index("---")
+        assert "[B1]" not in body
 
     def test_the_comment_carries_unassessed_claims(self, rp):
         body = format_body_text(

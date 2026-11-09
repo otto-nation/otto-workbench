@@ -21,6 +21,7 @@ from pathlib import Path
 
 import core.log
 import git.client
+import review.behaviours
 import review.claims
 from core.phases import Mode
 from pr.domains import ReviewStatus
@@ -42,7 +43,7 @@ from review.verdict import (
     NO_RUN_VERDICT, PARTIAL_VERDICT, SETTLED_SUMMARY, build_mechanical_record,
     states_verdict,
 )
-from review.verify import post_process_record
+from review.verify import post_process_record, verified_behaviours
 
 
 def _job_meta(job: ReviewJob) -> ReviewMeta:
@@ -117,6 +118,10 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
     record = with_run_focus(record, job.focus)
     if record.claims is None and not review.claims.has_claim_source(job):
         record = replace(record, claims=())
+    if record.behaviours is None and not review.behaviours.has_behaviour_source(job):
+        record = replace(record, behaviours=())
+    record = replace(record, behaviours=verified_behaviours(
+        record.behaviours, job.wt_path, [f["path"] for f in job.pr.files]))
     meta = _review_meta(job, skipped_groups=skipped_groups, total_groups=total_groups,
                         status=status)
     sticky = apply_sticky_skips(record, meta.sticky_skips, job.wt_path)

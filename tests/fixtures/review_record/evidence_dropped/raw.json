@@ -40,6 +40,7 @@
   "verified": [],
   "focus": [],
   "claims": [],
+  "behaviours": [],
   "triage": [
     {
       "path": "src/app.py",

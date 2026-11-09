@@ -20,6 +20,7 @@ from review.behaviours import (
     has_behaviour_source, merged_behaviours,
 )
 from review.claims import input_sha, open_derived_findings, writer_must_rejudge
+from review.verify import verified_behaviours
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
 from review.record import Disposition, ReviewRecord, fold_claim_answers
 from review.store import StoredReview
@@ -180,3 +181,24 @@ def test_a_behaviour_origin_finding_never_reaches_the_claim_ledger(tmp_path):
         ),
     )
     assert writer_must_rejudge(job) is False
+
+
+def test_a_missing_cited_test_is_cleared_with_a_note(tmp_path):
+    test_file = tmp_path / "tests" / "a_test.py"
+    test_file.parent.mkdir()
+    test_file.write_text("def test_backoff():\n    pass\n")
+    cited = "tests/a_test.py::test_backoff"
+    entries = (
+        behaviour(id="B1", test_cited=cited),
+        behaviour(id="B2", test_cited="tests/a_test.py::test_other"),
+        behaviour(id="B3", test_cited="tests/none_test.py"),
+    )
+    got = verified_behaviours(entries, str(tmp_path), [])
+    assert got[0].test_cited == cited
+    assert got[1].test_cited == ""
+    assert got[1].note
+    assert got[2].test_cited == ""
+    assert "not found" in got[2].note
+    none = verified_behaviours(entries, "", [])
+    assert all(e.test_cited == "" for e in none)
+    assert all("no worktree" in e.note for e in none)

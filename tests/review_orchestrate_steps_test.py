@@ -22,6 +22,7 @@ from review.store import StoredReview
 from review.types import PriorDisposition, ReviewMeta
 from review.verdict import FALLBACK_SUMMARY, MECHANICAL_NOTE
 from review.verify import PostProcessed
+from review_behaviours_support import behaviour
 from review_claims_support import claim
 from review_focus_support import DERIVED_FOCUS
 from review_record_support import finding, record
@@ -712,7 +713,7 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
         )["unaccounted_prior"] == []
 
 
-def test_disprove_is_never_shown_focus_or_claims(ro, tmp_path, monkeypatch):
+def test_disprove_is_never_shown_focus_claims_or_test_evidence(ro, tmp_path, monkeypatch):
     seen = {}
 
     def capture(*_a, review_content="", **_k):
@@ -724,8 +725,9 @@ def test_disprove_is_never_shown_focus_or_claims(ro, tmp_path, monkeypatch):
         finding("M1", "a"), finding("M2", "b"), finding("M3", "c"),
         summary="s",
         focus=(FocusArea(id="F1", title="locks", source=FocusSource.USER),),
-        claims=(claim(),),
+        claims=(claim(),), behaviours=(behaviour(),),
     )
     _phase_disprove(TestPhaseSynthesis()._make_job(ro, tmp_path), rec)
     assert "## Focus" not in seen["body"]
     assert "## Claims" not in seen["body"]
+    assert "## Test evidence" not in seen["body"]

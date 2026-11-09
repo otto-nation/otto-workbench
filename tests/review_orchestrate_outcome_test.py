@@ -13,6 +13,7 @@ import cli.review_orchestrate  # noqa: F401
 
 import review.claims
 from review.record import FocusSource, ReviewRecord, TriageEntry, load_record
+from review_behaviours_support import behaviour
 from review_claims_support import claim
 from review_focus_support import area, user_area
 from review_record_support import finding, record
@@ -521,6 +522,21 @@ def test_a_review_with_no_claim_source_publishes_no_claims_section(ro, tmp_path)
     rec = load_record(tmp_path)
     assert rec.claims == ()
     assert "## Claims" not in Path(job.review_file).read_text()
+
+
+def test_a_review_with_no_behaviour_source_publishes_no_test_evidence(ro, tmp_path):
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    ro._publish(job, record(behaviours=None))
+    rec = load_record(tmp_path)
+    assert rec.behaviours == ()
+    assert "## Test evidence" not in Path(job.review_file).read_text()
+
+
+def test_publish_verifies_cited_tests(ro, tmp_path):
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    ro._publish(job, record(behaviours=(behaviour(test_cited="tests/none_test.py"),)))
+    rec = load_record(tmp_path)
+    assert rec.behaviours[0].test_cited == ""
 
 
 def test_a_review_with_a_source_and_no_writer_says_not_assessed(ro, tmp_path):

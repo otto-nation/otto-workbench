@@ -30,7 +30,7 @@ import core.serde
 
 from review.document import (
     SECTION_CLAIMS, SECTION_FILE_TRIAGE, SECTION_FOCUS, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS,
+    SECTION_STATIC_ANALYSIS, SECTION_TEST_EVIDENCE,
 )
 from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
 from review.record import LedgerLine, RecordFinding, ReviewRecord
@@ -69,6 +69,7 @@ _PRIOR_EXCLUDED_SECTIONS = frozenset({
     SECTION_FILE_TRIAGE,
     SECTION_FOCUS,
     SECTION_CLAIMS,
+    SECTION_TEST_EVIDENCE,
     SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 })

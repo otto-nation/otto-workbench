@@ -23,10 +23,12 @@ Three signals, in the order `check` tries them, none of them sufficient alone:
 `pr rebase` asks it: whether a *prefix* of the branch is upstream while the
 rest is not. All three signals here are all-or-nothing — they report the
 branch's work present or absent — so a branch six of whose seven commits have
-landed reads to every one of them as a branch that landed nothing. It is kept
-apart from `check`'s ladder because it is not evidence the work is done: it is
-evidence that replaying the branch whole would reapply the landed part on top
-of itself, which is a different finding with a different remedy.
+landed reads to every one of them as a branch that landed nothing. A squash of
+a stacked parent is the same shape: the prefix's tip tree is already on the
+target, with no per-commit equivalent. It is kept apart from `check`'s ladder
+because it is not evidence the work is done: it is evidence that replaying the
+branch whole would reapply the landed part on top of itself, which is a
+different finding with a different remedy.
 
 Every one of them answers "no" rather than raising when it cannot ask: a ref
 that does not resolve, a base that was never fetched, a `gh` that is absent,
@@ -331,6 +333,10 @@ def partial_landing(
     Merge commits are excluded, as they are from `git cherry`, so a branch
     carrying one has it counted on neither side.
 
+    A squash of a stacked parent is a third signal: the longest proper prefix
+    whose tip tree equals a tree already in ``base..target_ref``. A squash
+    leaves no per-commit equivalent and a subject that does not match.
+
     Returns None unless both sides are non-empty. Everything landed is
     `by_git`'s finding, not this one, and nothing landed is the ordinary
     rebase.
@@ -357,10 +363,40 @@ def partial_landing(
             target_ref=target_ref,
         )
         if not match:
-            return _partial(fork, landed=index, unlanded=len(commits) - index)
+            landed = max(index, _squashed_prefix(
+                cwd, base=base, target_ref=target_ref, rev=rev,
+                total=len(commits),
+            ))
+            fork = commits[landed - 1] if landed else None
+            return _partial(fork, landed=landed, unlanded=len(commits) - landed)
         previous_upstream = match
         fork = commit
     return None
+
+
+# ceiling: tree equality misses a squash made after the target moved.
+# Upgrade trigger: if a stacked child still replays its squash-landed parent,
+# switch to a range patch-id.
+def _squashed_prefix(
+    cwd: str | Path, *, base: str, target_ref: str, rev: str, total: int,
+) -> int:
+    """Length of the longest proper prefix whose tip tree is a tree in
+    base..target_ref, else 0."""
+    upstream = set(git.client.lines(
+        "log", "--format=%T", f"{base}..{target_ref}", cwd=cwd,
+    ))
+    if not upstream:
+        return 0
+    trees = git.client.lines(
+        "log", "--reverse", "--no-merges", "--format=%T",
+        f"{target_ref}..{rev}", cwd=cwd,
+    )
+    if len(trees) != total:
+        return 0
+    for length in range(total - 1, 0, -1):
+        if trees[length - 1] in upstream:
+            return length
+    return 0
 
 
 def _partial(

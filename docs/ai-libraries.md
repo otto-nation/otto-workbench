@@ -6603,10 +6603,12 @@ Three signals, in the order `check` tries them, none of them sufficient alone:
 `pr rebase` asks it: whether a *prefix* of the branch is upstream while the
 rest is not. All three signals here are all-or-nothing — they report the
 branch's work present or absent — so a branch six of whose seven commits have
-landed reads to every one of them as a branch that landed nothing. It is kept
-apart from `check`'s ladder because it is not evidence the work is done: it is
-evidence that replaying the branch whole would reapply the landed part on top
-of itself, which is a different finding with a different remedy.
+landed reads to every one of them as a branch that landed nothing. A squash of
+a stacked parent is the same shape: the prefix's tip tree is already on the
+target, with no per-commit equivalent. It is kept apart from `check`'s ladder
+because it is not evidence the work is done: it is evidence that replaying the
+branch whole would reapply the landed part on top of itself, which is a
+different finding with a different remedy.
 
 Every one of them answers "no" rather than raising when it cannot ask: a ref
 that does not resolve, a base that was never fetched, a `gh` that is absent,

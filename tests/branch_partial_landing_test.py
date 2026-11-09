@@ -283,3 +283,51 @@ class TestPatchIdsStillCarryThePrefixWhereTheyCan:
         assert partial.landed == 2
         assert partial.unlanded == 1
         assert partial.fork_subject == "feat: two"
+
+
+class TestASquashMergedParentIsALandedPrefix:
+    """A squash of the stacked parent is a landed prefix of the child."""
+
+    def _stacked(self, tmp_path) -> tuple[Path, str]:
+        repo = init_repo(tmp_path / "repo")
+        (repo / "shared.txt").write_text("l1\nl2\nl3\n")
+        git_in(repo, "add", "shared.txt")
+        git_in(repo, "commit", "-q", "-m", "chore: root")
+
+        git_in(repo, "checkout", "-q", "-b", "base")
+        for n, subject in enumerate(("feat: b1", "feat: b2", "feat: b3"), start=1):
+            (repo / "shared.txt").write_text(f"b{n}\nl2\nl3\n")
+            git_in(repo, "commit", "-q", "-am", subject)
+        b3 = git_out(repo, "rev-parse", "HEAD").strip()
+
+        git_in(repo, "checkout", "-q", "-b", "child")
+        _commit(repo, "c.txt", "c1\n", "feat: c1")
+        _commit(repo, "c.txt", "c2\n", "feat: c2")
+        return repo, b3
+
+    def test_a_squash_merged_parent_is_the_landed_prefix(self, tmp_path):
+        repo, b3 = self._stacked(tmp_path)
+        git_in(repo, "checkout", "-q", "main")
+        git_in(repo, "merge", "--squash", "base")
+        git_in(repo, "commit", "-q", "-m", "feat: base (#1)")
+        git_in(repo, "checkout", "-q", "child")
+
+        partial = gh.landed.partial_landing(str(repo), target_ref="main")
+        assert partial is not None
+        assert partial.landed == 3
+        assert partial.unlanded == 2
+        assert partial.fork_point == b3
+        assert partial.fork_subject == "feat: b3"
+
+        git_in(repo, "rebase", "--onto", "main", partial.fork_point)
+        subjects = git_out(repo, "log", "--format=%s", "main..HEAD").splitlines()
+        assert subjects == ["feat: c2", "feat: c1"]
+
+    def test_a_squash_of_the_whole_branch_is_not_partial(self, tmp_path):
+        repo, _ = self._stacked(tmp_path)
+        git_in(repo, "checkout", "-q", "main")
+        git_in(repo, "merge", "--squash", "base")
+        git_in(repo, "commit", "-q", "-m", "feat: base (#1)")
+        git_in(repo, "checkout", "-q", "base")
+
+        assert gh.landed.partial_landing(str(repo), target_ref="main") is None

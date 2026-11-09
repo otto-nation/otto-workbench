@@ -234,10 +234,10 @@ _filter() {
   jq -e '.a and .b' <<<"$output"
 }
 
-@test "filterPrs: mine author compare is case-insensitive" {
-  _filter '[{"number":1,"author":"Alice","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"mine":true}' 'alice'
+@test "filterPrs: the viewer is dropped from the authors filter, case-insensitively" {
+  _filter '[{"number":1,"author":"Alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":["alice"]}' 'ALICE'
   [ "$status" -eq 0 ]
-  [ "$output" = "[1]" ]
+  [ "$output" = "[1,2]" ]
 }
 
 @test "filterPrs: drafts hidden by default" {
@@ -276,8 +276,8 @@ _filter() {
   [ "$output" = "[1,2]" ]
 }
 
-@test "filterPrs: mine filter keeps only own PRs" {
-  _filter '[{"number":1,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"mine":true}' 'alice'
+@test "filterPrs: a teammate author filter still narrows when the viewer is also listed" {
+  _filter '[{"number":1,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":["alice","bob"]}' 'alice'
   [ "$status" -eq 0 ]
-  [ "$output" = "[1]" ]
+  [ "$output" = "[2]" ]
 }

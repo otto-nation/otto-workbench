@@ -87,7 +87,6 @@ export function renderChips(filters, authors, { onToggle }) {
   const chip = (label, name, on) => segment(`chip-${name}`, label, on, () => onToggle(name));
   return h_flex().id("prs-chips").gap(SP.sm).items_center().px(SP.lg).py(SP.sm).flex_none().flex_wrap()
     .bg(t.background)
-    .child(chip("Mine", "mine", Boolean(f.mine)))
     .child(chip("Drafts", "drafts", Boolean(f.drafts)))
     .child(chip("Landed", "landed", Boolean(f.landed)))
     .children(authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))));

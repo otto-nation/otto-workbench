@@ -43,7 +43,7 @@ function ctxKey(ctx) {
 
 function filtersOf() {
   const f = shared("team-prs.filters") ?? {};
-  return { mine: !!f.mine, drafts: !!f.drafts, landed: !!f.landed, authors: [...(f.authors ?? [])] };
+  return { drafts: !!f.drafts, landed: !!f.landed, authors: [...(f.authors ?? [])] };
 }
 
 function tabOf() {
@@ -265,7 +265,7 @@ export default class TeamPrs extends View {
 
   toggleChip(name, cx) {
     const f = filtersOf();
-    if (name === "mine" || name === "drafts" || name === "landed") {
+    if (name === "drafts" || name === "landed") {
       f[name] = !f[name];
       setShared("team-prs.filters", f);
       if (name === "landed" && f.landed) this.refresh(cx);
@@ -384,7 +384,9 @@ export default class TeamPrs extends View {
 
   boardView(cx, ctx, state, t) {
     const filters = filtersOf(), tab = tabOf(), pin = shared("team-prs.pin");
-    const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter(Boolean))].sort();
+    // Team view is about teammates: the viewer has the Mine tab.
+    const me = String(state.me ?? "").toLowerCase();
+    const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
     return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))

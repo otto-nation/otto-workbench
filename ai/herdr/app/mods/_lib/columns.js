@@ -85,12 +85,12 @@ export function isMine(pr, me) {
 export function filterPrs(prs, filters, me) {
   const drafts = Boolean(filters?.drafts);
   const landed = Boolean(filters?.landed);
-  const mine = Boolean(filters?.mine);
   const authors = Array.isArray(filters?.authors) ? filters.authors : [];
-  const authorSet = new Set(authors.map((a) => String(a).toLowerCase()));
+  // The viewer is never an author filter: Team excludes them by design, and the Mine tab is theirs.
+  const who = String(me ?? '').toLowerCase();
+  const authorSet = new Set(authors.map((a) => String(a).toLowerCase()).filter((a) => a !== who));
   return prs.filter((pr) => {
     const login = String(pr.author ?? '').toLowerCase();
-    if (mine && !isMine(pr, me)) return false;
     if (!drafts && pr.isDraft) return false;
     if (!landed && teamColumn(pr) === 'landed') return false;
     if (authorSet.size > 0 && !authorSet.has(login)) return false;

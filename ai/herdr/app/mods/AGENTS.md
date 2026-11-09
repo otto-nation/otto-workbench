@@ -15,7 +15,8 @@ Conventions for the mods under this directory (`team-prs`, `_lib`, …).
 Read the brand's `DESIGN.md` before changing a view (root `AGENTS.md` § UI and
 styling says where). The mods draw with herdr's `theme()`, which
 `ai/herdr/app/palettes/otto.toml` fills from the brand tokens, so use the field
-that carries the token's role:
+that carries the token's role. The table is a guide; `otto.toml` owns the
+mapping, so if they disagree the palette wins and this table needs fixing:
 
 | Brand token | `theme()` field | Use in a view |
 | --- | --- | --- |

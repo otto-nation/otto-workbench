@@ -2,7 +2,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { groupByRepo, STEP_NAMES, STEP_HELP, planSummary, formFacets } from "./_lib/batch_launch.js";
+import { STEP_NAMES, STEP_HELP, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, TEXT } from "./_lib/tokens.js";
 import { scrollBody, mono, button, solidButton, pane, paneBar, chip as chipOf, filterGroup } from "./_ui/ui.js";
@@ -160,15 +160,11 @@ function renderForm({ launcher: L, prs }) {
   const selectedPrs = shown.filter((p) => L.selected.has(prKey(p.repoSlug, p.number)));
   const hiddenSelected = all.filter((p) => L.selected.has(prKey(p.repoSlug, p.number))).length
     - selectedPrs.length;
-  const { groups } = groupByRepo(selectedPrs);
-  const steps = STEP_NAMES.filter((s) => L.steps.has(s));
-  const r = groups.length;
   const disabled = L.launching || selectedPrs.length === 0 || L.steps.size === 0;
   const reason = L.launching ? null
     : selectedPrs.length === 0 ? "Select at least one PR"
     : L.steps.size === 0 ? "Turn on at least one step"
     : null;
-  const summary = reason ?? planSummary(groups, steps);
   const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
     .child(sectionLabel("START A BATCH"))
@@ -183,7 +179,7 @@ function renderForm({ launcher: L, prs }) {
         `ai-${s}`, L.withAi.has(s), `Use AI for ${s}`, "", () => L.toggleAi(s))))
       .child(checkLine("auto-publish", L.autoPublish, "Push clean fast-forwards", "", () => L.toggleAutoPublish())))
     .child(v_flex().gap(SP.sm)
-      .child(div().text_size(TEXT.small).text_color(reason ? t.muted : t.foreground).child(summary ?? ""))
+      .when(Boolean(reason), (e) => e.child(div().text_size(TEXT.small).text_color(t.muted).child(reason)))
       .when(hiddenSelected > 0, (e) => e.child(
         div().text_size(TEXT.small).text_color(t.muted)
           .child(`${hiddenSelected} selected PR(s) hidden by filters won't run`)))
@@ -192,7 +188,7 @@ function renderForm({ launcher: L, prs }) {
       .child(h_flex().gap(SP.md).items_center()
         .child(solidButton(
           "batch-start",
-          L.launching ? "Starting…" : `Start ${r} run${r === 1 ? "" : "s"}`,
+          L.launching ? "Starting…" : "Start",
           () => L.launch(prs),
           { disabled },
         ))

@@ -124,30 +124,6 @@ _throws() {
   [ "$output" = '["rebase","ci","comments","review"]' ]
 }
 
-@test "planSummary one group" {
-  _js 'm.planSummary([{repo:"otto-nation/otto-workbench",keys:["a#1"]}], ["rebase"])'
-  [ "$status" -eq 0 ]
-  [ "$output" = '"Starts 1 run: otto-workbench (1 PR) — rebase"' ]
-}
-
-@test "planSummary two groups" {
-  _js 'm.planSummary([{repo:"otto-nation/otto-workbench",keys:["a#1","a#2","a#3"]},{repo:"otto-nation/homelab",keys:["b#1"]}], ["rebase","ci"])'
-  [ "$status" -eq 0 ]
-  [ "$output" = '"Starts 2 runs: otto-workbench (3 PRs) and homelab (1 PR) — rebase, ci"' ]
-}
-
-@test "planSummary three groups" {
-  _js 'm.planSummary([{repo:"a/one",keys:["a#1"]},{repo:"a/two",keys:["b#1"]},{repo:"a/three",keys:["c#1"]}], ["rebase"])'
-  [ "$status" -eq 0 ]
-  [ "$output" = '"Starts 3 runs: one (1 PR), two (1 PR) and three (1 PR) — rebase"' ]
-}
-
-@test "planSummary empty groups or steps is empty" {
-  _js '[m.planSummary([], ["rebase"]),m.planSummary([{repo:"a/one",keys:["a#1"]}], []),m.planSummary(null, ["rebase"])]'
-  [ "$status" -eq 0 ]
-  [ "$output" = '["","",""]' ]
-}
-
 @test "formFacets repos first-seen order, labels sorted case-insensitively, deduped" {
   _js 'm.formFacets([{repoSlug:"b/two",labels:["Zebra","alpha"]},{repoSlug:"a/one",labels:["ALPHA","bug"]},{repoSlug:"b/two",labels:["gamma"]},{repoSlug:"B/Two",labels:["bug"]}])'
   [ "$status" -eq 0 ]
@@ -166,8 +142,3 @@ _throws() {
   [ "$output" = '[[1,2,3,4,5,6],[1,2,3,4,5,6],[1,3,4],[1,2,4],[1,4],[1,2,3,4,5,6],[2],[1,2,3,4,5,6],[5]]' ]
 }
 
-@test "batchButtonText none, running, and zero total" {
-  _js '[m.batchButtonText([]),m.batchButtonText([{progress:{done:1,total:3}},{progress:{done:2,total:2}}]),m.batchButtonText([{progress:{done:0,total:0}}]),m.batchButtonText(null)]'
-  [ "$status" -eq 0 ]
-  [ "$output" = '["Batch","Batch · running 3 of 5","Batch · running","Batch"]' ]
-}

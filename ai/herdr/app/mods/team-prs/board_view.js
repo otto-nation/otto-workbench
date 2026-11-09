@@ -20,7 +20,6 @@ import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
-import { batchButtonText } from "./_lib/batch_launch.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, pill, chip, emptyPane, pane, button } from "./_ui/ui.js";
 
@@ -405,6 +404,14 @@ export default class TeamPrs extends View {
   // The selector (main.js) supplies the view; the plain board has none.
   detailView() { return null; }
 
+  // The label names the action only; that runs are going shows beside it, not inside it.
+  batchControl() {
+    const running = this.workflows.activeRuns().length > 0;
+    return h_flex().gap(SP.sm).items_center()
+      .child(button("batch", "Batch", () => { this.batchOpen = true; this.acx.notify(); }))
+      .when(running, (e) => e.child(div().text_size(TEXT.small).text_color(theme().working).child("running")));
+  }
+
   onSize(size, cx) { this.size = size; cx.notify(); }
 
   compactHeader(tab) {
@@ -418,9 +425,7 @@ export default class TeamPrs extends View {
         .child(h_flex().gap(SP.md).items_center()
           .child(button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
           .when(tab === "mine", (e) => e.child(
-            button("batch", batchButtonText(this.workflows.activeRuns()), () => {
-              this.batchOpen = true; this.acx.notify();
-            })))
+            this.batchControl()))
           .child(button("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
@@ -490,9 +495,7 @@ export default class TeamPrs extends View {
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
       .child(this.refreshButton())
       .when(tab === "mine", (e) => e.child(
-        button("batch", batchButtonText(this.workflows.activeRuns()), () => {
-          this.batchOpen = true; this.acx.notify();
-        })))
+        this.batchControl()))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

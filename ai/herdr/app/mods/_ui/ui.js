@@ -52,7 +52,7 @@ export function placeholder(text) {
 export function caption(text, color) {
   return div().text_size(TEXT.caption).text_color(color ?? theme().dim).child(text);
 }
-// A quiet text action: the sidebar's Refresh and Open board.
+// A quiet text action: the compact panel's Refresh and Open board.
 export function link(id, label, onClick, { disabled = false } = {}) {
   const t = theme();
   return div().id(id).text_size(TEXT.caption).text_color(disabled ? t.dim : t.muted)

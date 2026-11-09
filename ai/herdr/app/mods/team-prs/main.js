@@ -6,7 +6,7 @@ import { renderDetail, renderActionBar } from "./detail.js";
 import { actionsFor } from "./_lib/actions.js";
 import { readReview, loadListing } from "./_lib/board_data.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
-import { lsArgv, terminalsOf } from "./_lib/busy.js";
+import { getArgv, terminalsOf } from "./_lib/busy.js";
 import { runsForPr } from "./_lib/reviews.js";
 
 export default class TeamPrs extends Board {
@@ -125,8 +125,8 @@ export default class TeamPrs extends Board {
       if (id == null) return;
       let entry = null;
       try {
-        const ran = await exec("hc", lsArgv(), {});
-        entry = terminalsOf(ran.code === 0 ? JSON.parse(ran.stdout) : null).find((e) => e.id === id) ?? null;
+        const ran = await exec("hc", getArgv(id), {});
+        entry = terminalsOf(ran.code === 0 ? [JSON.parse(ran.stdout)] : null)[0] ?? null;
       } catch { entry = null; }
       if (entry?.state === "live") { this.watch(cx); return; }
       await this.finish(id, entry, cx);

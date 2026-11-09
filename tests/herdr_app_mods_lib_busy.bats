@@ -30,10 +30,10 @@ _js() {
   "
 }
 
-@test "lsArgv is hc ls --all --json" {
-  _js 'm.lsArgv()'
+@test "lsArgv lists only live terminals carrying the app label; getArgv reads one" {
+  _js '[m.lsArgv(), m.getArgv("homelab/t7")]'
   [ "$status" -eq 0 ]
-  [ "$output" = '["ls","--all","--json"]' ]
+  [ "$output" = '[["ls","--json","--label","otto.app=pr"],["get","homelab/t7","--json"]]' ]
 }
 
 @test "terminalsOf empty on null, object, and string; skips malformed" {

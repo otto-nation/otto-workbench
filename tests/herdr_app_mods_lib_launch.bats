@@ -36,13 +36,13 @@ _js() {
 @test "hcRunArgv local exact" {
   _js 'm.hcRunArgv({repo:"o/n",number:7,action:"review",cwd:"/w",argv:["pr","review"]})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["run","--bg","--json","--cwd","/w","--label","otto.pr=o/n#7","--label","otto.action=review","--","pr","review"]' ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--label","otto.pr=o/n#7","--label","otto.action=review","--label","otto.app=pr","--","pr","review"]' ]
 }
 
 @test "hcRunArgv with on places --on right after --cwd value and labels have no prefix" {
   _js 'm.hcRunArgv({repo:"o/n",number:7,action:"review",cwd:"/w",on:"homelab",argv:["pr","review"]})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.pr=o/n#7","--label","otto.action=review","--","pr","review"]' ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.pr=o/n#7","--label","otto.action=review","--label","otto.app=pr","--","pr","review"]' ]
 }
 
 @test "machineOf splits host prefix and returns null without one" {

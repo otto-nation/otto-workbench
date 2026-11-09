@@ -6,6 +6,9 @@ import { classifyCode, readJson } from './board_data.js';
 
 export const LABEL_PR = 'otto.pr';
 export const LABEL_ACTION = 'otto.action';
+// Constant on every terminal the PR surfaces start: the one label `hc ls --label` can select on.
+export const LABEL_APP = 'otto.app';
+export const APP_NAME = 'pr';
 
 export function prKey(repo, n) {
   return `${repo}#${n}`;
@@ -44,6 +47,8 @@ export function hcRunArgv({ repo, number, action, cwd, on, argv }) {
     `${LABEL_PR}=${prKey(repo, number)}`,
     '--label',
     `${LABEL_ACTION}=${action}`,
+    '--label',
+    `${LABEL_APP}=${APP_NAME}`,
     '--',
     ...argv,
   );

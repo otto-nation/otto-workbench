@@ -369,23 +369,30 @@ _gql() {
   [[ "$output" == *'"t":"t7"'* ]]
 }
 
-@test "loadTerminals ok, code 1, throw, and not json" {
+@test "loadTerminals lists by app label then reads each with hc get" {
   _rr '
     const ctx = { cwd: "/repo" };
-    const live = { terminals: [{ address: "t7", state: "live", labels: { "otto.pr": "o/n#7" } }] };
-    const ok = await m.loadTerminals(async () => ({ code: 0, stdout: JSON.stringify(live) }), ctx);
+    const calls = [];
+    const fake = async (cmd, args) => {
+      calls.push(args.join(" "));
+      if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ terminals: [{ address: "t7" }, { address: "homelab/t8" }] }) };
+      const id = args[1];
+      if (id === "t7") return { code: 0, stdout: JSON.stringify({ address: id, state: "live", labels: { "otto.pr": "o/n#7" } }) };
+      return { code: 1, stdout: "", stderr: "gone" };
+    };
+    const ok = await m.loadTerminals(fake, ctx);
     const fail = await m.loadTerminals(async () => ({ code: 1, stdout: "", stderr: "no" }), ctx);
     const threw = await m.loadTerminals(async () => { throw new Error("lost"); }, ctx);
     const bad = await m.loadTerminals(async () => ({ code: 0, stdout: "not json" }), ctx);
     process.stdout.write(JSON.stringify({
-      ok: ok.ok, n: ok.entries.length, id: ok.entries[0] && ok.entries[0].id,
+      ids: ok.entries.map((e) => e.id), pr: ok.entries[0].labels["otto.pr"], calls,
       fail, threw, badOk: bad.ok, badN: bad.entries.length,
     }));
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"ok":true'* ]]
-  [[ "$output" == *'"n":1'* ]]
-  [[ "$output" == *'"id":"t7"'* ]]
+  [[ "$output" == *'"ids":["t7"]'* ]]
+  [[ "$output" == *'"pr":"o/n#7"'* ]]
+  [[ "$output" == *'"calls":["ls --json --label otto.app=pr","get t7 --json","get homelab/t8 --json"]'* ]]
   [[ "$output" == *'"fail":{"ok":false,"entries":[]}'* ]]
   [[ "$output" == *'"threw":{"ok":false,"entries":[]}'* ]]
   [[ "$output" == *'"badOk":true'* ]]

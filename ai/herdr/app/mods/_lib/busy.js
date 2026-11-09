@@ -1,11 +1,18 @@
 /**
- * Liveness of labelled herdr PR terminals from `hc ls --all --json`.
+ * Liveness of the labelled PR terminals this app started (see launch.js for the labels).
  */
 
-import { parsePrKey, machineOf } from './launch.js';
+import { parsePrKey, machineOf, LABEL_APP, APP_NAME } from './launch.js';
 
+// `hc ls --json` omits labels, so the live terminals this app started are found by the
+// constant app label and each is then read with `hc get --json`, which carries labels,
+// state and exit_code. Without --all only live terminals are listed.
 export function lsArgv() {
-  return ['ls', '--all', '--json'];
+  return ['ls', '--json', '--label', `${LABEL_APP}=${APP_NAME}`];
+}
+
+export function getArgv(id) {
+  return ['get', id, '--json'];
 }
 
 function labelsOf(raw) {

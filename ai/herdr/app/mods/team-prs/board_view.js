@@ -56,7 +56,10 @@ function errorText(err, ctx) {
 
 
 export default class TeamPrs extends View {
+  // Handlers run after the render that built them; a redraw or task requested through that render's
+  // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
+    this.acx = cx;
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
@@ -325,12 +328,12 @@ export default class TeamPrs extends View {
   openDetail(pr, cx) {
     this.selectedId = cardId(pr);
     this.selectedPr = pr;
-    cx.notify();
+    this.acx.notify();
   }
 
   closeDetail(cx) {
     this.selectedId = this.selectedPr = null;
-    cx.notify();
+    this.acx.notify();
   }
 
   // The selector (main.js) supplies the view; the plain board has none.

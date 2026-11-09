@@ -93,7 +93,7 @@ _js() {
 @test "live homelab/t7 disables pr actions; cancel and watch target it" {
   _js '(()=>{const a=m.actionsFor(ctx({live:"homelab/t7",run:done()}));return [a.filter(x=>x.enabled).map(x=>x.id),a.find(x=>x.id==="cancel").command,a.find(x=>x.id==="watch").command];})()'
   [ "$status" -eq 0 ]
-  [ "$output" = '[["cancel","watch"],{"name":"terminal.kill","args":{"terminal":"homelab/t7"}},{"name":"terminal.peek","args":{"terminal":"homelab/t7"}}]' ]
+  [ "$output" = '[["cancel","watch"],{"name":"terminal.kill","args":{"terminal":"homelab/t7"}},{"name":"terminal.keep","args":{"terminal":"homelab/t7"}}]' ]
 }
 
 @test "finished only enables watch; cancel stays off" {

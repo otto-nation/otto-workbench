@@ -41,7 +41,7 @@ export default class TeamPrs extends Board {
   onToggle(stamp, cx) {
     this.openStamp = this.openStamp === stamp ? null : stamp;
     if (this.openStamp) this.loadReview(this.openStamp, cx);
-    cx.notify();
+    this.acx.notify();
   }
 
   loadReview(stamp, cx) {
@@ -52,7 +52,7 @@ export default class TeamPrs extends Board {
     if (hit && hit.stamp === stamp && hit.result !== undefined && hit.result.ok !== false) return;
     if (hit && hit.stamp !== stamp) this.reviews.delete(key);
     this.reviews.set(key, { stamp, result: undefined });
-    cx.spawn(async (cx) => {
+    this.acx.spawn(async (cx) => {
       const result = await readReview(readTextFile, run.reviewFile, this.detail.on);
       const cur = this.reviews.get(key);
       if (!cur || cur.stamp !== stamp) return;
@@ -74,7 +74,7 @@ export default class TeamPrs extends Board {
   onAction(action, cx) {
     if (action.confirm) this.confirm = action;
     else this.launch(action, cx);
-    cx.notify();
+    this.acx.notify();
   }
 
   // Kill and watch are core commands; the rest start a labelled background terminal through hc
@@ -87,7 +87,7 @@ export default class TeamPrs extends Board {
     const d = this.detail;
     this.launching = true;
     this.note = null;
-    cx.spawn(async (cx) => {
+    this.acx.spawn(async (cx) => {
       let res;
       try {
         const argv = hcRunArgv({
@@ -107,7 +107,7 @@ export default class TeamPrs extends Board {
       }
       cx.notify();
     });
-    cx.notify();
+    this.acx.notify();
   }
 
   // Until the terminal leaves "live", look again every 3 s: bounded by the run, and only while
@@ -153,8 +153,8 @@ export default class TeamPrs extends Board {
         confirm: this.confirm,
         note: this.launching ? "Starting…" : this.note,
         onAction: (a) => this.onAction(a, cx),
-        onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); cx.notify(); },
-        onCancel: () => { this.confirm = null; cx.notify(); },
+        onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },
+        onCancel: () => { this.confirm = null; this.acx.notify(); },
       }),
       onClose: () => this.closeDetail(cx),
       // The browser is on this Mac even when the PR's repo is on a remote machine.

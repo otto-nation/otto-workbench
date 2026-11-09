@@ -397,23 +397,28 @@ def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ..
 
 def writer_must_rejudge(job: ReviewJob) -> bool:
     """True when claims cannot be carried, an open claim finding is
-    unanchored, or a prior derived finding is anchored on a file in
-    this round's change set.
+    unanchored, a FIXED or open derived finding is anchored on a file
+    in this round's change set, or live answers would drop an entry.
 
-    Known limit: a claim linked to a prior writer finding that was
-    fixed or settled gets its link cleared and may derive OPEN on a
-    non-writer round.
+    Answered claims (DECLINED, SKIPPED, FALSIFIED) expire through
+    `live_answers` reading the sidecar, not the prior record — a clean
+    round leaves no derived findings on disk. Known limit: a claim
+    linked to a prior writer finding that was fixed or settled gets
+    its link cleared and may derive OPEN on a non-writer round.
     """
+    if job.prior is None:
+        return False
     open_derived = open_derived_findings(job.prior)
     if open_derived and _carryable_claims(job) is None:
         return True
     changed = review.convergence.change_set(job)
     if any(not review.convergence.untouched(f.path, changed) for f in open_derived):
         return True
-    if job.prior is None:
-        return False
+    answers = job.prior.meta.claim_answers
+    if answers.keys() - live_answers(job, answers).keys():
+        return True
     return any(
-        f.derived and _expired(f.path, changed)
+        f.derived and f.disposition is Disposition.FIXED and _expired(f.path, changed)
         for f in job.prior.record.findings
     )
 

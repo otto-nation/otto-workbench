@@ -200,6 +200,17 @@ def test_an_answered_claim_on_an_untouched_file_settles_without_the_writer(tmp_p
 
 def test_a_falsified_finding_on_a_touched_file_needs_the_writer(tmp_path):
     job = _answered_claim_job(tmp_path, disposition=Disposition.FALSIFIED, delta=["a.py"])
+    job.prior = StoredReview(
+        replace(job.prior.record, findings=()),
+        job.prior.meta,
+    )
+    assert not review.steps._nothing_new(
+        job, merged(ReviewRecord(findings=(WRITER,)), fresh=0), [])
+
+
+def test_a_sidecar_answer_with_an_empty_prior_record_needs_the_writer(tmp_path):
+    job = _answered_claim_job(tmp_path, disposition=Disposition.DECLINED, delta=["a.py"])
+    job.prior = StoredReview(ReviewRecord(), job.prior.meta)
     assert not review.steps._nothing_new(
         job, merged(ReviewRecord(findings=(WRITER,)), fresh=0), [])
 

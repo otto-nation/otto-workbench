@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
@@ -17,6 +19,7 @@ from review.record import Disposition, ReviewRecord
 from review.state import PipelineState
 from review.store import StoredReview, read_review
 from review.types import ClaimAnswer, FindingOrigin, PreflightData, ReviewMeta
+from review.phases import PhaseResult
 from review.verdict import mechanical_verdict
 from review_claims_support import claim
 from review_convergence_support import merged, review_job
@@ -200,3 +203,28 @@ def test_a_degraded_writer_round_carries_the_prior_claims(tmp_path):
     derived = [f for f in stored.record.visible if f.origin is FindingOrigin.CLAIM]
     assert len(derived) == 1
     assert stored.record.claims[0].finding == derived[0].id
+
+
+@pytest.mark.parametrize("disposition", [
+    Disposition.DECLINED, Disposition.SKIPPED, Disposition.FALSIFIED,
+])
+def test_an_expired_sidecar_answer_does_not_write_a_clean_review(
+    tmp_path, monkeypatch, disposition,
+):
+    c = claim(verdict=ClaimVerdict.CONTRADICTED)
+    job = _job(
+        tmp_path, findings=(),
+        answers={c.key: ClaimAnswer(disposition, "r", "a.py", PRIOR_HEAD)},
+        delta=("a.py",),
+    )
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_write_clean_review",
+                        lambda *a, **k: pytest.fail("clean review dropped the expired answer"))
+    ran = []
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: ran.append(True) or PhaseResult())
+    groups = merged(fresh=0)
+    review.steps._run_synthesis_or_fallback(
+        job, _state(), "", 2, groups, [], 0, 0.0, 20.0,
+        settled=review.steps._nothing_new(job, groups, []))
+    assert ran

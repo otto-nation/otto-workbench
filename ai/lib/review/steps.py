@@ -287,7 +287,8 @@ def _run_synthesis_or_fallback(
     all_groups_failed = bool(failed_groups) and len(failed_groups) == group_count
 
     if (not merged.record.visible and not failed_groups
-            and not review.claims.open_derived_findings(job.prior)):
+            and not review.claims.open_derived_findings(job.prior)
+            and not review.claims.writer_must_rejudge(job)):
         core.log.info("No findings from any group — writing clean review")
         _write_clean_review(
             job, group_count, merged.record, skipped_groups=n_skipped,

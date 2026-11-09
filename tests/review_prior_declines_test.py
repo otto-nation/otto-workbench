@@ -49,6 +49,15 @@ def test_an_unknown_change_set_settles_nothing_from_the_prior():
     assert not rec.decided
 
 
+def test_a_prior_decline_with_no_file_settles_nothing():
+    (rec,) = reconcile(
+        _prior(finding("S1", "uses a module global", path="",
+                       disposition=Disposition.DECLINED, reason="by design")),
+        ReviewRecord(), changed=frozenset(),
+    ).records
+    assert not rec.decided
+
+
 def test_an_open_prior_finding_is_not_settled_by_its_own_record():
     (rec,) = reconcile(_prior(finding("S1", "x", path="a.py", line=3)), ReviewRecord(),
                        changed=frozenset()).records

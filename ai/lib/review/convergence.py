@@ -30,7 +30,8 @@ from review.document import covers
 from review.paths import read_review_meta, write_review_meta
 from review.record import Disposition, RecordFinding, ReviewRecord
 from review.types import (
-    SEVERITY_IDIOMS, SEVERITY_NIT, Finding, FixInterruption, ReviewJob, StickySkip,
+    SEVERITY_IDIOMS, SEVERITY_NIT, Finding, FindingOrigin, FixInterruption,
+    ReviewJob, StickySkip,
 )
 from review.worktree_delta import uncommitted_files
 
@@ -60,6 +61,16 @@ def change_set(job: ReviewJob) -> frozenset[str] | None:
     return None
 
 
+def untouched(path: str, changed: frozenset[str] | None) -> bool:
+    """A judgement about a file holds while the file is outside the change set.
+
+    An empty path is never untouched. There is no file whose judgement could
+    hold, and callers rely on that — an unanchored open finding forces the
+    writer because this returns False.
+    """
+    return bool(path) and changed is not None and path not in changed
+
+
 def anchor_key(path: str, line: int | None) -> str:
     """How a sticky skip names its anchor: `path:line`, with 0 for a line-less finding."""
     return f"{path}:{line or 0}"
@@ -87,11 +98,14 @@ def apply_sticky_skips(
 
     A mark is live while its anchor file still hashes to the recorded blob. A
     stale mark is dropped from what is returned, so the sidecar sheds it on the
-    write that follows and the next round's finding there is open again.
+    write that follows and the next round's finding there is open again. A
+    derived finding is never relabelled.
     """
     live = {key: mark for key, mark in marks.items()
             if mark.blob and blob_of(wt_path, key.rsplit(":", 1)[0]) == mark.blob}
     for f in record.visible:
+        if f.derived:
+            continue
         mark = live.get(anchor_key(f.path, f.line))
         if mark and f.disposition is Disposition.OPEN and mark.severity == f.severity:
             record = record.with_finding(f.id, disposition=Disposition.SKIPPED,
@@ -110,7 +124,8 @@ def mark_skips(
     earlier round — is not a skip and gets no mark. None for a finding whose
     file is in *committed*, the pass's own commit scope: that file changed in
     this very pass, so the change a mark waits for has already happened, and
-    the blob it would record is one nobody reviewed.
+    the blob it would record is one nobody reviewed. A finding whose origin is
+    not WRITER is never marked.
     """
     marks: dict[str, StickySkip] = {}
     for outcome in outcomes:
@@ -120,6 +135,8 @@ def mark_skips(
         if not f.skipped:
             continue
         if f.path in committed:
+            continue
+        if f.origin is not FindingOrigin.WRITER:
             continue
         marks[anchor_key(f.path, f.line)] = StickySkip(
             blob_of(wt_path, f.path), f.severity, outcome.reason or "needs a person")

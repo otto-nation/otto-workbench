@@ -33,24 +33,12 @@ import core.log
 import core.serde
 from review.claim_types import ClaimEntry
 from review.paths import FILENAME_RECORD
-from review.types import SEVERITIES, Finding, FindingOrigin, FindingRef, PriorDisposition
+from review.types import (
+    CLAIM_ANSWERS, SEVERITIES, ClaimAnswer, Disposition, Finding, FindingOrigin,
+    FindingRef, PriorDisposition,
+)
 
 SCHEMA_VERSION = 2
-
-
-class Disposition(StrEnum):
-    """What became of a finding. Values are on disk; keep them stable."""
-
-    OPEN = "open"
-    FIXED = "fixed"
-    DECLINED = "declined"
-    # The fix pass handed it to a person (`FixOutcome.NEEDS_HUMAN`).
-    SKIPPED = "skipped"
-    # The fix pass never reached it (`FixOutcome.DEFERRED`). Still open, and
-    # written as nothing on the page — the line reads as it did.
-    UNREACHED = "unreached"
-    # The disprove gate refuted it. Kept, never rendered.
-    FALSIFIED = "falsified"
 
 
 class FocusSource(StrEnum):
@@ -299,6 +287,32 @@ class ReviewRecord:
         if not done:
             raise KeyError(finding_id)
         return replace(self, findings=tuple(out))
+
+
+def fold_claim_answers(
+    carried: dict[str, ClaimAnswer],
+    record: ReviewRecord,
+    head: str,
+) -> dict[str, ClaimAnswer]:
+    """A new answers ledger: `carried`, then this record's derived findings.
+
+    Each derived finding with a `stable_id` writes DECLINED/SKIPPED/FALSIFIED
+    (restamping `head`) or drops OPEN/UNREACHED/FIXED. Claim membership does
+    not prune: `()` and a writer round that omits or rewords a claim keep
+    the table. Mutates no argument.
+    """
+    answers = dict(carried)
+    for finding in record.findings:
+        if not finding.derived or not finding.stable_id:
+            continue
+        key = finding.stable_id
+        if finding.disposition in CLAIM_ANSWERS:
+            answers[key] = ClaimAnswer(
+                finding.disposition, finding.reason, finding.path, head,
+            )
+        else:
+            answers.pop(key, None)
+    return answers
 
 
 def _field_dropped(written, loaded, hint) -> bool:

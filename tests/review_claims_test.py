@@ -1,5 +1,6 @@
 """Claims as data: types, ingest kinds, the writer's caps, check, and fingerprint."""
 
+import hashlib
 import json
 import sys
 from dataclasses import replace
@@ -25,6 +26,20 @@ def test_a_claim_entry_coerces_its_enums():
     entry = ClaimEntry("C1", "ticket", "t", "unsupported", "e")
     assert entry.source is ClaimSource.TICKET
     assert entry.verdict is ClaimVerdict.UNSUPPORTED
+
+
+def test_a_claim_key_hashes_source_and_collapsed_text():
+    entry = claim(source=ClaimSource.DESCRIPTION, text="Retries  back\noff")
+    assert entry.key == hashlib.sha256(
+        b"claim\0description\0retries back off",
+    ).hexdigest()[:8]
+
+
+def test_a_claim_key_ignores_case_and_wrapping():
+    compact = claim(text="retries back off")
+    wrapped = claim(text="Retries  back\noff")
+    shouted = claim(text="RETRIES BACK OFF")
+    assert compact.key == wrapped.key == shouted.key
 
 
 def test_the_verdicts_are_the_four_on_disk_values():
@@ -102,7 +117,7 @@ def _job(*, body="", issue_link="", issue_context=""):
     return SimpleNamespace(
         pr=SimpleNamespace(body=body),
         issue_link=issue_link,
-        issue_context=issue_context,
+        issue_context=issue_context, prior=None,
     )
 
 
@@ -154,15 +169,24 @@ MISSING_COVERAGE = IngestError(IngestErrorKind.MISSING_COVERAGE, 0, "d", at="$.f
 
 def test_check_warning():
     import review.focus
+    job = _job()
     only_claim = (BAD_CLAIM,)
-    assert check_warning(only_claim) == (
+    assert check_warning(only_claim, job) == (
         f"{BAD_CLAIM.render()} — claims are published as not assessed"
     )
     mixed = (MISSING_COVERAGE, BAD_CLAIM)
-    warning = check_warning(mixed)
+    warning = check_warning(mixed, job)
     assert "published as not assessed; claims are published as not assessed" in warning
     only_focus = (MISSING_COVERAGE,)
-    assert check_warning(only_focus) == review.focus.check_warning(only_focus)
+    assert check_warning(only_focus, job) == review.focus.check_warning(only_focus)
+    carryable = _job(body="x")
+    carryable.prior = SimpleNamespace(
+        record=SimpleNamespace(claims=(claim(),)),
+        meta=SimpleNamespace(claims_input_sha=input_sha(carryable)),
+    )
+    assert check_warning(only_claim, carryable) == (
+        f"{BAD_CLAIM.render()} — prior claims are carried"
+    )
 
 
 def test_claims_of():

@@ -51,6 +51,7 @@ from pathlib import Path
 import git.client
 import core.log
 import core.serde
+import review.convergence
 from review.grammar import SID_MARKER_RE
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
@@ -83,27 +84,6 @@ def _record_ledger(record: ReviewRecord) -> list[LedgerLine]:
 def _held_open(finding: RecordFinding) -> bool:
     """Whether a visible finding is still held — not Disposition.FIXED."""
     return finding.disposition is not Disposition.FIXED
-
-
-# Answered last round: the writer does not have to re-judge these derived findings.
-_ANSWERED_DERIVED = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPED)
-
-
-def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
-    """Derived findings the prior still held open.
-
-    Openness is a visible derived finding whose disposition is not FIXED,
-    DECLINED or SKIPPED. UNREACHED is still open (the fix pass never reached
-    it). DECLINED and SKIPPED were answered last round; FALSIFIED is not
-    visible. Derived findings are never a prior finding to account for, but
-    an open one still needs the writer to re-judge claims.
-    """
-    if prior is None:
-        return ()
-    return tuple(
-        f for f in prior.record.visible
-        if f.derived and f.disposition not in _ANSWERED_DERIVED
-    )
 
 
 def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
@@ -436,8 +416,7 @@ def _declined_and_untouched(finding: PriorFinding, changed: frozenset[str] | Non
     "Declined" again is the cost with no answer it could change. Unknown change
     set, or no file named, settles nothing.
     """
-    path = finding.ref.path
-    return finding.declined and bool(path) and changed is not None and path not in changed
+    return finding.declined and review.convergence.untouched(finding.ref.path, changed)
 
 
 def reconcile(

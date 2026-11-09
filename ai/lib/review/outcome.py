@@ -86,16 +86,18 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
                  status: ReviewStatus | None = None) -> ReviewMeta:
     """This run's sidecar, header facts included — the one thing review.md's header renders from.
 
-    Built from the job, except `static_declined` and `sticky_skips`. Those
-    accumulate across rounds — they carry every earlier decline and skip
-    mark — so they are read from the sidecar already on disk. Rebuilding
-    them from the job alone erased every earlier decline before
-    `_inject_static_analysis_section` could read it. `covered_sha` is not
-    carried: a new review does not inherit a prior pass's coverage.
+    Built from the job, except `static_declined`, `sticky_skips` and
+    `claim_answers`. Those accumulate across rounds — they carry every
+    earlier decline and skip mark — so they are read from the sidecar
+    already on disk. Rebuilding them from the job alone erased every
+    earlier decline before `_inject_static_analysis_section` could read
+    it. `covered_sha` is not carried: a new review does not inherit a
+    prior pass's coverage.
     """
     carried = read_review_meta(Path(job.artifact_dir))
     meta = replace(_job_meta(job), static_declined=dict(carried.static_declined),
                    sticky_skips=dict(carried.sticky_skips),
+                   claim_answers=review.claims.live_answers(job, carried.claim_answers),
                    covered_sha="")
     if meta.review_type != ReviewType.INCREMENTAL:
         return replace(meta, date=date.today().isoformat(), status=status)
@@ -228,6 +230,9 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
 
 
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    # Before reconciliation and verification, which treat the carried findings
+    # like this round's.
+    record = review.claims.carried(job, record)
     # Before post-processing clears the sids: a carried finding is known by
     # its sid, and only this record still has them (D13).
     job.new_nits = new_nit_ids(record, prior_ids(job)) if _is_incremental(job) else frozenset()

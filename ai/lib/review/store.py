@@ -2,7 +2,8 @@
 
 `write_review` is the one writer of `review.md`: it renders into a local first,
 then saves `review.json`, then `meta.json`, then writes `review.md`, each
-atomically. A render failure leaves the directory unchanged. A caller that
+atomically. The writer keeps the sidecar's claim answers in step with the
+record. A render failure leaves the directory unchanged. A caller that
 changes a review loads it with `read_review`, transforms the record, and writes
 it back — `update_review` is that loop. Nothing edits `review.md`.
 
@@ -29,7 +30,7 @@ from review.paths import (
     FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD,
     read_review_meta, write_review_meta,
 )
-from review.record import ReviewRecord, load_record, save_record
+from review.record import ReviewRecord, fold_claim_answers, load_record, save_record
 from review.render import render_review
 from review.types import ReviewMeta
 
@@ -57,6 +58,7 @@ def _write_text(path: Path, text: str) -> None:
 
 def write_review(review_file: Path, record: ReviewRecord, meta: ReviewMeta) -> None:
     """Save `record` and `meta` beside `review_file`, and render `review_file` from them."""
+    meta = replace(meta, claim_answers=fold_claim_answers(meta.claim_answers, record, meta.head_sha))
     text = render_review(record, meta)
     review_dir = review_file.parent
     review_dir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +89,12 @@ def update_review(
     stored = read_review(review_file)
     if stored is None:
         return None
-    updated = StoredReview(transform(stored.record), replace(stored.meta, **meta_changes))
+    record = transform(stored.record)
+    meta = replace(stored.meta, **meta_changes)
+    # Fold here so the returned sidecar already holds this record's answers.
+    # write_review folds again; that is a no-op on an already-folded table.
+    answers = fold_claim_answers(meta.claim_answers, record, meta.head_sha)
+    updated = StoredReview(record, replace(meta, claim_answers=answers))
     write_review(review_file, updated.record, updated.meta)
     return updated
 

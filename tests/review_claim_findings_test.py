@@ -1,6 +1,5 @@
 """Derived should-fix findings from verified contradicted or unsupported claims."""
 
-import hashlib
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -16,11 +15,10 @@ import review.claims
 import review.merge
 import review.verify
 from review.claim_types import ClaimSource, ClaimVerdict
-from review.grammar import FindingIdentity
 from review.record import Disposition
 from review.render import render_body
 from review.store import StoredReview
-from review.types import FindingOrigin, ReviewMeta
+from review.types import ClaimAnswer, FindingOrigin, PreflightData, ReviewMeta
 from review_claims_support import claim
 from review_convergence_support import review_job
 from review_record_support import finding, record
@@ -120,21 +118,32 @@ def test_the_same_claim_derives_the_same_identity():
     second = review.claims.derived_findings(claims, checkbox=False)
     assert first[0].stable_id == second[0].stable_id
     assert first[0].stable_id
-    f = first[0]
-    assert f.stable_id == FindingIdentity.of_fields(f.path, None, f.body).stable_id
-    desc = f.body.split("\n", 1)[0].lstrip()[:80].strip()
-    key = f"{f.path.strip().lower()}:{desc.lower()}"
-    assert f.stable_id == hashlib.sha256(key.encode()).hexdigest()[:8]
+    assert first[0].stable_id == claims[0].key
+    unsupported_claim = claim(verdict=ClaimVerdict.UNSUPPORTED)
     unsupported = review.claims.derived_findings(
-        (claim(verdict=ClaimVerdict.UNSUPPORTED),), checkbox=False,
+        (unsupported_claim,), checkbox=False,
     )[0]
     assert unsupported.path == ""
-    assert unsupported.stable_id == FindingIdentity.of_fields(
-        "", None, unsupported.body,
-    ).stable_id
-    desc = unsupported.body.split("\n", 1)[0].lstrip()[:80].strip()
-    key = f":{desc.lower()}"
-    assert unsupported.stable_id == hashlib.sha256(key.encode()).hexdigest()[:8]
+    assert unsupported.stable_id == unsupported_claim.key
+
+
+def test_a_description_and_a_ticket_claim_with_one_wording_derive_two_identities():
+    desc = claim(verdict=ClaimVerdict.UNSUPPORTED, source=ClaimSource.DESCRIPTION)
+    ticket = claim(
+        id="C2", verdict=ClaimVerdict.UNSUPPORTED, source=ClaimSource.TICKET,
+    )
+    findings = review.claims.derived_findings((desc, ticket), checkbox=False)
+    assert findings[0].stable_id != findings[1].stable_id
+    assert findings[0].stable_id == desc.key
+    assert findings[1].stable_id == ticket.key
+
+
+def test_a_verdict_flip_keeps_a_claim_finding_s_identity():
+    contradicted = claim(verdict=ClaimVerdict.CONTRADICTED)
+    unsupported = claim(verdict=ClaimVerdict.UNSUPPORTED)
+    a = review.claims.derived_findings((contradicted,), checkbox=False)[0]
+    b = review.claims.derived_findings((unsupported,), checkbox=False)[0]
+    assert a.stable_id == b.stable_id
 
 
 def test_checkbox_follows_the_mode():
@@ -328,8 +337,19 @@ def _prior_answered(tmp_path, rec, disposition, reason=""):
     job = _settle_job(tmp_path)
     first = review.claims.settle(job, rec)
     derived = next(f for f in first.findings if f.origin is FindingOrigin.CLAIM)
-    answered = replace(derived, disposition=disposition, reason=reason)
-    job.prior = StoredReview(replace(first, findings=(answered,)), ReviewMeta())
+    job.prior = StoredReview(first, ReviewMeta(
+        head_sha="p" * 40,
+        claim_answers={
+            derived.stable_id: ClaimAnswer(
+                disposition, reason, derived.path, "p" * 40,
+            ),
+        },
+    ))
+    job.preflight = PreflightData(
+        diff="", commit_log="", file_contents={}, file_permissions={},
+        instructions_md="", architecture_md="",
+        delta_files=["b.py"], prior_head_sha="p" * 40,
+    )
     return job, derived
 
 
@@ -380,3 +400,16 @@ def test_a_changed_claim_derives_open(tmp_path):
     assert got.disposition is Disposition.OPEN
     assert got.reason == ""
     assert got.stable_id != prior.stable_id
+
+
+def test_a_prior_record_alone_carries_no_answer(tmp_path):
+    rec = record(claims=(claim(verdict=ClaimVerdict.CONTRADICTED),))
+    job = _settle_job(tmp_path)
+    first = review.claims.settle(job, rec)
+    derived = next(f for f in first.findings if f.origin is FindingOrigin.CLAIM)
+    answered = replace(derived, disposition=Disposition.DECLINED, reason="author's call")
+    job.prior = StoredReview(replace(first, findings=(answered,)), ReviewMeta())
+    out = review.claims.settle(job, rec)
+    got = next(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
+    assert got.disposition is Disposition.OPEN
+    assert got.reason == ""

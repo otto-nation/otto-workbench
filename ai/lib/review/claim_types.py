@@ -13,6 +13,7 @@ the record stores, with harness numbering.
 
 # doc-group: findings
 
+import hashlib
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -62,3 +63,15 @@ class ClaimEntry:
     def __post_init__(self) -> None:
         object.__setattr__(self, "source", ClaimSource(self.source))
         object.__setattr__(self, "verdict", ClaimVerdict(self.verdict))
+
+    @property
+    def key(self) -> str:
+        """Eight-hex identity: source and collapsed lower-cased text.
+
+        Verdict, path, snippet and evidence are left out so a verdict flip or a
+        re-cited snippet is the same claim. A wording edit is a new claim.
+        """
+        payload = (
+            f"claim\0{self.source.value}\0{' '.join(self.text.split()).lower()}"
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()[:8]

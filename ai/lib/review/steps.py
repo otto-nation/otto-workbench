@@ -55,7 +55,7 @@ from review.phases import (
 from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scoped, _prior_view
-from review.reconcile import open_derived_findings, passed_over
+from review.reconcile import passed_over
 from review.record import (
     Disposition, ProseSection, RecordFinding, ReviewRecord, SeveritySection,
 )
@@ -269,11 +269,6 @@ def _run_group_phase(
     return GroupPhaseResult(outputs=group_outputs, failures=failed_groups, cost=cost)
 
 
-def _writer_must_rejudge(job: ReviewJob) -> bool:
-    """The prior holds claim findings only the writer can re-judge."""
-    return bool(open_derived_findings(job.prior))
-
-
 def _run_synthesis_or_fallback(
     job: ReviewJob, state: PipelineState,
     holistic_content: str, group_count: int,
@@ -292,7 +287,8 @@ def _run_synthesis_or_fallback(
     all_groups_failed = bool(failed_groups) and len(failed_groups) == group_count
 
     if (not merged.record.visible and not failed_groups
-            and not _writer_must_rejudge(job)):
+            and not review.claims.open_derived_findings(job.prior)
+            and not review.claims.writer_must_rejudge(job)):
         core.log.info("No findings from any group — writing clean review")
         _write_clean_review(
             job, group_count, merged.record, skipped_groups=n_skipped,
@@ -394,16 +390,16 @@ def _nothing_new(job: ReviewJob, merged: Merged, failed_groups: list[GroupFailur
 
     An incremental round, every group reported, the groups that ran produced no
     finding, and no prior finding is left for synthesis to account for. A count
-    nobody took (`fresh` None) is not a zero. An OPEN derived finding on the
-    prior is not settled here: those are re-derived from this round's claims,
-    so this returns False and the writer re-judges them. DECLINED and SKIPPED
-    were answered last round and do not force the writer. A round that adds
-    nothing does not withdraw what the last one asked for.
+    nobody took (`fresh` None) is not a zero. An open (OPEN or UNREACHED)
+    derived finding blocks only when it may have moved; otherwise the settled
+    path carries it. DECLINED, SKIPPED and FALSIFIED force the writer when
+    their file is in this round's change set.
+    A round that adds nothing does not withdraw what the last one asked for.
     settled False does not skip the disprove gate on this ground.
     """
     if not _is_incremental(job) or failed_groups or merged.fresh != 0:
         return False
-    if _writer_must_rejudge(job):
+    if review.claims.writer_must_rejudge(job):
         return False
     return not _unaccounted(job, merged.record)
 
@@ -499,7 +495,7 @@ def _phase_synthesis(
     )
     if outcome.ok:
         if outcome.errors:
-            core.log.warn(review.claims.check_warning(outcome.errors))
+            core.log.warn(review.claims.check_warning(outcome.errors, job))
         record = replace(
             outcome.artifact.to_record(
                 checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),

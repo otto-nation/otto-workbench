@@ -192,6 +192,32 @@ class TestMetaHeaderFields:
         assert review_meta_from_dict({}).claims_input_sha == ""
 
 
+def test_meta_drops_a_claim_answer_it_cannot_read():
+    meta = review_meta_from_dict({
+        "repo": "a/b",
+        "claim_answers": {
+            "k": {"disposition": "exploded"},
+            "j": {"disposition": "open"},
+            "n": "not-an-object",
+            "m": {"disposition": "declined", "reason": "r"},
+            "bad-reason": {"disposition": "declined", "reason": 1},
+            "bad-path": {"disposition": "skipped", "path": 2},
+            "bad-head": {"disposition": "falsified", "head": 3},
+        },
+    })
+    assert meta.repo == "a/b"
+    assert set(meta.claim_answers) == {"m"}
+    assert meta.claim_answers["m"].disposition is Disposition.DECLINED
+    assert meta.claim_answers["m"].reason == "r"
+    garbled = review_meta_from_dict({"repo": "a/b", "claim_answers": ["not", "a", "dict"]})
+    assert garbled.repo == "a/b"
+    assert garbled.claim_answers == {}
+
+
+def test_a_legacy_meta_loads_with_no_claim_answers():
+    assert review_meta_from_dict({"repo": "a/b"}).claim_answers == {}
+
+
 # A record as `save_record` wrote it at schema 1: a finding's location as the
 # agent typed it (`lead`), evidence still in its blockquote and fence, triage as
 # whole list items, and the non-empty ledger `_write_clean_review` stored, the

@@ -222,6 +222,26 @@ class StickySkip:
 
 
 @dataclass(frozen=True)
+class ClaimAnswer:
+    """What answered a derived claim finding, keyed by `ClaimEntry.key`.
+
+    Only DECLINED, SKIPPED and FALSIFIED persist (`CLAIM_ANSWERS`). `path`
+    is the cited file when the answer was given. `head` is the last reviewed
+    head at which the answer was re-asserted — the fold restamps it — so a
+    later round can expire it once that file has changed. An empty
+    `path` never expires on a file change.
+    """
+
+    disposition: Disposition
+    reason: str = ""
+    path: str = ""
+    head: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "disposition", Disposition(self.disposition))
+
+
+@dataclass(frozen=True)
 class FixInterruption:
     """A fix pass stopped before it landed, and the edits it left behind.
 
@@ -346,6 +366,12 @@ class ReviewMeta:
     # round — and pruned at publish once the anchor file no longer hashes to the
     # recorded blob. See `review.convergence.apply_sticky_skips`.
     sticky_skips: dict[str, StickySkip] = field(default_factory=dict)
+    # Answers for derived claim findings, keyed by `ClaimEntry.key`. Folded by
+    # `store.write_review` from the record's derived findings, and carried by
+    # `_review_meta` through `live_answers` the way `sticky_skips` is —
+    # the document is rewritten every round, so the adjudication has to live
+    # here or it is lost. Only DECLINED, SKIPPED and FALSIFIED persist.
+    claim_answers: dict[str, ClaimAnswer] = field(default_factory=dict)
     # What the rendered header states about the run beyond attribution. They
     # live here because the record holds what the review says and the sidecar
     # holds what the run was; `review.md`'s header is rendered from these.
@@ -419,10 +445,56 @@ def review_meta_from_dict(d) -> ReviewMeta:
         k: v for k, v in d.items()
         if k not in _META_VOCABULARIES or meta_enum(_META_VOCABULARIES[k], v)
     }
+    normalised["claim_answers"] = _readable_claim_answers(normalised.get("claim_answers"))
     return core.serde.from_dict(ReviewMeta, normalised)
 
 
 # ── Findings ─────────────────────────────────────────────────────────────────
+
+
+class Disposition(StrEnum):
+    """What became of a finding. Values are on disk; keep them stable."""
+
+    OPEN = "open"
+    FIXED = "fixed"
+    DECLINED = "declined"
+    # The fix pass handed it to a person (`FixOutcome.NEEDS_HUMAN`).
+    SKIPPED = "skipped"
+    # The fix pass never reached it (`FixOutcome.DEFERRED`). Still open, and
+    # written as nothing on the page — the line reads as it did.
+    UNREACHED = "unreached"
+    # The disprove gate refuted it. Kept, never rendered.
+    FALSIFIED = "falsified"
+
+
+# Dispositions that persist as a claim answer. OPEN, UNREACHED and FIXED drop
+# the key at the fold; anything else is dropped on read.
+CLAIM_ANSWERS = frozenset({
+    Disposition.DECLINED, Disposition.SKIPPED, Disposition.FALSIFIED,
+})
+
+
+def _readable_claim_answers(raw) -> dict:
+    """Entries that are objects with a persistable claim disposition; else {}."""
+    if not isinstance(raw, dict):
+        return {}
+    kept = {}
+    for key, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            disposition = Disposition(entry.get("disposition"))
+        except (TypeError, ValueError):
+            continue
+        if disposition not in CLAIM_ANSWERS:
+            continue
+        reason = entry.get("reason", "")
+        path = entry.get("path", "")
+        head = entry.get("head", "")
+        if not isinstance(reason, str) or not isinstance(path, str) or not isinstance(head, str):
+            continue
+        kept[key] = entry
+    return kept
 
 
 class FindingOrigin(StrEnum):

@@ -58,6 +58,13 @@ def test_the_module_constant_is_gone():
     assert not hasattr(review.types, "MULTI_PHASE_LINE_THRESHOLD")
 
 
+def test_disposition_is_one_enum_in_both_modules():
+    import review.record
+
+    assert review.record.Disposition is review.types.Disposition
+    assert review.types.Disposition("falsified") is review.types.Disposition.FALSIFIED
+
+
 class TestReplyStateIsAStringOnTheWire:
     """`ReplyState` keys thread dicts and their per-state tally.
 

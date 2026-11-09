@@ -6,16 +6,20 @@ run-context check composed with focus coverage, turning a writer's reports
 into record entries after the check, the degraded-check warning, and
 `settle`. Renderers take claims off the record and never import it.
 
-The record is tri-state. `None` is not assessed — a writer that did not run, a
-check that degraded, or a legacy `review.json`. `()` is assessed with nothing
+The record is tri-state. `None` is not assessed — a writer that did not run
+and whose claims could not be carried, or a legacy `review.json`. A check
+that degraded still starts as `None`; `carried` then re-settles the prior
+claims when the fingerprint matches. `()` is assessed with nothing
 checkable, or no claim source. Entries are the assessed ledger.
 
 Writers are the single agent and synthesis only. Scout, holistic and group get
-no claims fields. Agentless paths — clean, settled, `--no-synthesis`,
-low-effort, a budget cut, all-groups-failed, mechanical fallback, `--repair`
-rebuild — record `None`. When a description or ticket existed, that renders
-"*Not assessed this round.*" A multi-phase run that never reaches synthesis
-therefore shows Not assessed; that is the honest result.
+no claims fields. Agentless paths that never re-settle claims — clean,
+all-groups-failed, `--repair` rebuild — record `None`. So does any path whose
+claim inputs changed, or that has no prior claims to carry. When a description
+or ticket existed, that renders "*Not assessed this round.*" Settled,
+`--no-synthesis`, a budget cut, mechanical fallback, and a degraded writer
+check re-settle the prior claims when the fingerprint still matches, so those
+rounds keep the ledger rather than dropping it.
 
 The check rides ingest `check=` with one repair turn. Caps (12 claims, 512
 bytes per `text` / `evidence` / `snippet`) live inside the check, so an
@@ -25,42 +29,67 @@ fails `problems()` or schema never runs the claims check, so the repair prompt
 does not mention claims and the second load degrades without that turn having
 named them.
 
-`settle` verifies claims, then derives, then appends, then links each source
-claim by position. A dangling link (names no visible finding) is treated as
-no link, so that claim derives. A linked claim derives nothing, so settle is
-idempotent on a record it already linked. A no-op carried round never
-derives twice because that path never calls settle. It runs at both writer
-sites before disprove, so the record disprove reads already holds those
-findings. Disprove clears the link when it falsifies the finding. The
-evidence gate in post_process_record can drop, and disprove can falsify, a
-WRITER finding a claim links to; the link is then cleared and nothing
-re-derives that round.
+`settle` verifies claims, then derives, then applies live answers, then
+appends, then links each source claim by position. A dangling link (names no
+visible finding) is treated as no link, so that claim derives. A linked claim
+derives nothing, so settle is idempotent on a record it already linked. A
+true no-op round never derives twice because that path never calls settle.
+It runs at both writer sites before disprove, so the record disprove reads
+already holds those findings, and from `carried` on every path through
+`_reconcile_and_verify`. On the degraded single-agent path `carried` runs
+after disprove, so those re-derived claim findings skip the gate that round.
+Disprove clears the link when it falsifies the finding. The evidence gate in
+post_process_record can drop, and disprove can falsify, a WRITER finding a
+claim links to; the link is then cleared and nothing re-derives that round.
 Verification uses the same evidence matcher findings use: a supported or
 contradicted claim whose snippet is not in its file becomes unverifiable,
 with a note, and derives nothing.
 
 Derived findings are should-fix, never must-fix: a false statement about the
 change hits maintainability, reliability, or developer experience, not
-correctness, security, or data integrity (D1). The body is three lines: the
+correctness, security, or data integrity. The body is three lines: the
 collapsed claim text under `Claim contradicted:` or `Claim unsupported:`,
 the evidence prose, and `Source: description` or `Source: ticket`. The last
 line is always that `Source:` line so a derived body never ends in a
-non-defect phrase (D11).
+non-defect phrase.
 
-A prior round's derived findings (`origin` other than writer) are never
-shown in the prior prompt and never accounted for. The writer re-judges
-the claims and settle re-derives. A DECLINED or SKIPPED derived finding
-keeps its disposition from one writer round to the next, matched by
-stable_id (path plus the first 80 characters of the first line;
-description and ticket claims with the same wording collide). After a
-round that settles or ends clean without the writer — the merged record
-never holds derived findings — that answer is lost, and the next writer
-round re-derives the finding OPEN. A FALSIFIED derived finding is not
-re-derived the round after it was falsified, but a later round re-derives
-it. A true no-op round carries them with their claims. An OPEN or
-UNREACHED prior derived finding stops a round being treated as clean or
-settled, so the writer re-judges (`reconcile.open_derived_findings`,
-`steps._writer_must_rejudge`).
+Answers live in `ReviewMeta.claim_answers`, keyed by `ClaimEntry.key` (source
+plus collapsed lower-cased text). `store.write_review` folds them from the
+record's derived findings on every write. An answer holds while its claim
+key is unchanged and, when anchored, its file has not changed since the
+commit the answer was given at; `live_answers` is that filter.
+Unanchored answers never expire until the wording changes. The table is not
+pruned by this round's claims: an empty tuple or a writer that omits or
+rewords a claim keeps every answer. A key leaves only when this record
+re-asserts that claim OPEN, UNREACHED or FIXED.
+
+`settle` is the only reader of those answers. Sticky skips neither mark
+nor skip derived findings, so the ledger is the only carry for them. A
+run without `--prior-review` applies none.
+
+A round that publishes without the writer re-settles the prior claims when
+the fingerprint still matches (`carried`): settled, `--no-synthesis`,
+budget-cut, synthesis-fallback, and a degraded writer check. Clean and
+all-groups-failed do not; they keep claims `None`, and answers still persist
+in the sidecar.
+
+The writer is forced when claims cannot be carried, an open claim finding is
+unanchored, a FIXED or open derived finding is anchored on a file in this
+round's change set, or `live_answers` would drop a sidecar entry. The
+forcing check reads the sidecar for answered claims, because a clean round
+leaves no derived findings on the record. An open claim finding the writer
+is not forced to re-judge never reaches a clean review; an expired sidecar
+answer does not either.
+
+D19 still owns writer-finding declines: an ingest-time belief check on a
+decline an agent restated. Derived findings are never shown to an agent, so
+there is nothing for D19 to believe. Writer declines do not share the ledger.
+A claim linked to a prior writer finding that was fixed or settled
+gets its link cleared and may derive OPEN on a non-writer round.
+
+A derived finding answered before claim keys included the source re-raises
+OPEN once on the next writer round: those records keep the old `stable_id`
+and their sidecars carry no `claim_answers`.
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,
@@ -85,15 +114,17 @@ from dataclasses import replace
 
 from core.phases import Mode
 import review.budget
+import review.convergence
 import review.focus
 import review.merge
 import review.verify
 from review.artifacts import ReviewArtifact
 from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerdict
-from review.grammar import FindingIdentity, strip_line_suffix
+from review.grammar import strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
 from review.record import Disposition, RecordFinding, ReviewRecord
-from review.types import FindingOrigin, ReviewJob
+from review.store import StoredReview
+from review.types import ClaimAnswer, FindingOrigin, ReviewJob
 
 CLAIM_KINDS = frozenset({
     IngestErrorKind.MISSING_CLAIMS,
@@ -138,6 +169,11 @@ def input_sha(job: ReviewJob) -> str:
     if not job.pr.body and not issue:
         return ""
     return hashlib.sha256((job.pr.body + "\0" + issue).encode()).hexdigest()
+
+
+def inputs_unchanged(job: ReviewJob) -> bool:
+    """Whether this run's description and ticket match the prior sidecar's."""
+    return job.prior is not None and job.prior.meta.claims_input_sha == input_sha(job)
 
 
 def claims_problems(
@@ -257,16 +293,21 @@ def claims_of(
     )
 
 
-def check_warning(errors: Sequence[IngestError]) -> str:
+def check_warning(errors: Sequence[IngestError], job: ReviewJob) -> str:
     """Warning after a writer's second failed check, with a claims clause.
 
     `errors` are the ingest errors left after the repair turn. When any is a
-    claims kind, the warning adds that claims are published as not assessed.
+    claims kind, the warning adds that prior claims are carried, or that
+    claims are published as not assessed when they cannot be.
     """
-    more = (
-        ("claims are published as not assessed",)
-        if any(e.kind in CLAIM_KINDS for e in errors) else ()
-    )
+    more = ()
+    if any(e.kind in CLAIM_KINDS for e in errors):
+        clause = (
+            "prior claims are carried"
+            if _carryable_claims(job) is not None
+            else "claims are published as not assessed"
+        )
+        more = (clause,)
     return review.focus.check_warning(errors, more=more)
 
 
@@ -309,62 +350,159 @@ def derived_findings(
             line=None,
             body=body,
             evidence=evidence,
-            stable_id=FindingIdentity.of_fields(path, None, body).stable_id,
+            stable_id=claim.key,
             checkbox=checkbox,
             origin=FindingOrigin.CLAIM,
         ))
     return tuple(out)
 
 
-def _prior_derived(job: ReviewJob) -> dict[str, RecordFinding]:
-    if job.prior is None:
+def _expired(path: str, changed: frozenset[str] | None) -> bool:
+    """Whether an anchored path is in this round's change set."""
+    return bool(path) and not review.convergence.untouched(path, changed)
+
+
+def live_answers(
+    job: ReviewJob, answers: dict[str, ClaimAnswer],
+) -> dict[str, ClaimAnswer]:
+    """Answers that still hold for this run."""
+    if not answers:
         return {}
+    # ceiling: an unanchored FALSIFIED answer holds until the claim's wording
+    # changes. Upgrade trigger: once a review is seen suppressing an
+    # unsupported claim the code has since stopped supporting.
+    changed = review.convergence.change_set(job)
+    head = job.pr.head_sha
     return {
-        f.stable_id: f
-        for f in job.prior.record.findings
-        if f.derived and f.stable_id
+        key: answer
+        for key, answer in answers.items()
+        if answer.head == head or not _expired(answer.path, changed)
     }
 
 
-def _carry_derived(
-    finding: RecordFinding, prior: dict[str, RecordFinding],
-) -> RecordFinding | None:
-    """Copy a prior DECLINED/SKIPPED, or drop a FALSIFIED same stable_id.
+# Answered last round: the writer does not have to re-judge these derived findings.
+_ANSWERED_DERIVED = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPED)
 
-    Empty *prior* (job.prior None) leaves the finding OPEN. A prior derived
-    finding that was FALSIFIED is in findings but not visible; it is not
-    re-derived.
+
+def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
+    """Derived findings the prior still held open.
+
+    Openness is a visible derived finding whose disposition is not FIXED,
+    DECLINED or SKIPPED. UNREACHED is still open (the fix pass never reached
+    it). DECLINED and SKIPPED were answered last round; FALSIFIED is not
+    visible. Derived findings are never a prior finding to account for;
+    whether an open one needs the writer is `writer_must_rejudge`.
     """
-    old = prior.get(finding.stable_id)
-    if old is None:
-        return finding
-    if old.disposition is Disposition.FALSIFIED:
+    if prior is None:
+        return ()
+    return tuple(
+        f for f in prior.record.visible
+        if f.derived and f.disposition not in _ANSWERED_DERIVED
+    )
+
+
+def writer_must_rejudge(job: ReviewJob) -> bool:
+    """True when claims cannot be carried, an open claim finding is
+    unanchored, a FIXED or open derived finding is anchored on a file
+    in this round's change set, or live answers would drop an entry.
+
+    Answered claims (DECLINED, SKIPPED, FALSIFIED) expire through
+    `live_answers` reading the sidecar, not the prior record — a clean
+    round leaves no derived findings on disk. Known limit: a claim
+    linked to a prior writer finding that was fixed or settled gets
+    its link cleared and may derive OPEN on a non-writer round.
+    """
+    if job.prior is None:
+        return False
+    open_derived = open_derived_findings(job.prior)
+    if open_derived and _carryable_claims(job) is None:
+        return True
+    changed = review.convergence.change_set(job)
+    if any(not review.convergence.untouched(f.path, changed) for f in open_derived):
+        return True
+    answers = job.prior.meta.claim_answers
+    if answers.keys() - live_answers(job, answers).keys():
+        return True
+    return any(
+        f.derived and f.disposition is Disposition.FIXED and _expired(f.path, changed)
+        for f in job.prior.record.findings
+    )
+
+
+def _carryable_claims(job: ReviewJob) -> tuple[ClaimEntry, ...] | None:
+    if not inputs_unchanged(job) or job.prior.record.claims is None:
         return None
-    if old.disposition in (Disposition.DECLINED, Disposition.SKIPPED):
-        return replace(finding, disposition=old.disposition, reason=old.reason)
-    return finding
+    return job.prior.record.claims
+
+
+def _identities(finding: RecordFinding) -> set[str]:
+    return {token for token in (finding.stable_id, finding.sid) if token}
+
+
+def _writer_id_in(record: ReviewRecord, prior: RecordFinding) -> str:
+    ids = _identities(prior)
+    for finding in record.visible:
+        if finding.origin is not FindingOrigin.WRITER:
+            continue
+        if not (ids & _identities(finding)):
+            continue
+        return finding.id
+    return ""
+
+
+def _relinked(
+    prior: ReviewRecord, record: ReviewRecord, claims: tuple[ClaimEntry, ...],
+) -> tuple[ClaimEntry, ...]:
+    by_id = {f.id: f for f in prior.findings}
+    out: list[ClaimEntry] = []
+    for claim in claims:
+        linked = by_id.get(claim.finding) if claim.finding else None
+        if linked is None or linked.origin is not FindingOrigin.WRITER:
+            out.append(replace(claim, finding=""))
+            continue
+        out.append(replace(claim, finding=_writer_id_in(record, linked)))
+    return tuple(out)
+
+
+def carried(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    """Re-settle prior claims onto a round that did not run the writer.
+
+    No-op when this record already assessed claims, or when the prior claims
+    cannot be carried. Otherwise relinks writer findings by identity, then
+    calls `settle` so verification, answers and derived findings apply here.
+    """
+    if record.claims is not None:
+        return record
+    claims = _carryable_claims(job)
+    if claims is None:
+        return record
+    claims = _relinked(job.prior.record, record, claims)
+    return settle(job, replace(record, claims=claims))
 
 
 def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     """Verify claims, derive findings, append them, and link each source claim.
 
-    Runs at both writer sites before disprove. A claim whose cited code did
-    not verify becomes unverifiable and derives nothing. A finding link that
-    names no visible finding is cleared first, so a dangling link is no link
-    and the claim derives. Linking is by position, not stable_id: the claims
-    that consume an id are the post-append claims, zipped with the last
-    len(derived) visible findings. append_findings adds newcomers at the end;
-    _rewrite_record keeps claim order and length, so derived_at still lines
-    up, and starting after the append keeps rewritten links and evidence.
-    stable_id is not unique per claim — two unsupported claims that share
-    a first line hash alike.
+    Runs at both writer sites before disprove, and from `carried` on every
+    path through `_reconcile_and_verify`. On the degraded single-agent path
+    that is after disprove, so carried claim findings skip the gate there.
+    A claim whose cited code did not verify becomes unverifiable and derives
+    nothing. A finding link that names no visible finding is cleared first,
+    so a dangling link is no link and the claim derives. Linking is by
+    position, not `ClaimEntry.key`: the claims that consume an id are the
+    post-append claims, zipped with the last len(derived) visible findings.
+    append_findings adds newcomers at the end; _rewrite_record keeps claim
+    order and length, so derived_at still lines up, and starting after the
+    append keeps rewritten links and evidence. Identity is `ClaimEntry.key`:
+    source plus collapsed lower-cased text, which is also the derived
+    finding's `stable_id`.
 
-    A derived finding whose stable_id matches a prior derived finding that
-    was DECLINED or SKIPPED carries that disposition and reason. A prior
-    derived finding that was FALSIFIED (in prior.record.findings, not
-    visible) is not re-derived for that stable_id: the claim stays
-    contradicted or unsupported with no finding. job.prior None leaves
-    every derived finding OPEN.
+    Live prior answers (`job.prior.meta.claim_answers`) set a derived
+    finding's disposition: DECLINED or SKIPPED is copied with its reason;
+    FALSIFIED is not re-derived, so the claim stays contradicted or
+    unsupported with no finding. A run without a prior, or without a live
+    answer for that claim key, leaves every derived finding OPEN. A prior
+    record's derived dispositions are not read.
     """
     if record.claims is None:
         return record
@@ -376,7 +514,7 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
     derived = derived_findings(claims, checkbox=job.mode is Mode.SELF)
     if not derived:
         return record
-    prior = _prior_derived(job)
+    answers = live_answers(job, job.prior.meta.claim_answers if job.prior else {})
     kept: list[RecordFinding] = []
     kept_at: list[int] = []
     for index, finding in zip(
@@ -384,10 +522,16 @@ def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
         derived,
         strict=True,
     ):
-        carried = _carry_derived(finding, prior)
-        if carried is None:
+        answer = answers.get(claims[index].key)
+        if answer is not None and answer.disposition is Disposition.FALSIFIED:
             continue
-        kept.append(carried)
+        if answer is not None and answer.disposition in (
+            Disposition.DECLINED, Disposition.SKIPPED,
+        ):
+            finding = replace(
+                finding, disposition=answer.disposition, reason=answer.reason,
+            )
+        kept.append(finding)
         kept_at.append(index)
     derived = tuple(kept)
     if not derived:

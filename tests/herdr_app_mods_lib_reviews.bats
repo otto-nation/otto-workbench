@@ -26,12 +26,6 @@ _js() {
   "
 }
 
-@test "reviewLabel format" {
-  _js 'm.reviewLabel("o/n", 7)'
-  [ "$status" -eq 0 ]
-  [ "$output" = '"otto.pr=o/n#7"' ]
-}
-
 @test "joinReviews matches repo exactly" {
   _js 'm.joinReviews([{number:7,headSha:"a"}],[row({repo:"o/nn"}),row({repo:"p/n"}),row({repo:"o/n-x"})],"o/n","github.com","me")[0].reviewRuns'
   [ "$status" -eq 0 ]

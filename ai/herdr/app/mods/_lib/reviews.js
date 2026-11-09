@@ -5,10 +5,6 @@
  * Derivations follow ui-code `toTeamPrInfo` with workbench post event names.
  */
 
-export function reviewLabel(repo, n) {
-  return `otto.pr=${repo}#${n}`;
-}
-
 export const POST_STATE_BY_EVENT = {
   approve: 'APPROVED',
   requested_changes: 'CHANGES_REQUESTED',

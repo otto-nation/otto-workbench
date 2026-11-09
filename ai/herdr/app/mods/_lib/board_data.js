@@ -33,7 +33,7 @@ function classifyCaught(err, on) {
   return { kind, message: messageOf(err) };
 }
 
-function classifyCode(result) {
+export function classifyCode(result) {
   const stderr = result.stderr ?? '';
   if (result.code === 127) {
     return { kind: 'missing-tool', message: stderr || 'command not found' };
@@ -62,7 +62,7 @@ async function invoke(exec, ctx, cmd, args) {
   }
 }
 
-function readJson(text) {
+export function readJson(text) {
   try {
     return { ok: true, value: JSON.parse(text) };
   } catch (err) {

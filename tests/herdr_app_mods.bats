@@ -191,15 +191,22 @@ _cksum() {
   [ ! -e "$APP" ]
 }
 
-@test "untrusted app dir is left untouched" {
+@test "step installs the same mods into an existing untrusted app dir" {
   _stub_app
   mkdir -p "$UNTRUSTED/mods"
   printf '%s\n' keep > "$UNTRUSTED/mods/KEEP"
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(cat "$UNTRUSTED/mods/KEEP")" = keep ]
-  [ ! -e "$UNTRUSTED/mods/team-prs" ]
-  [ -f "$APP/mods/team-prs/.workbench-install" ]
+  [ -f "$UNTRUSTED/mods/team-prs/.workbench-install" ]
+  cmp "$APP/mods/team-prs/main.js" "$UNTRUSTED/mods/team-prs/main.js"
+}
+
+@test "step does not create the untrusted app dir" {
+  _stub_app
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$UNTRUSTED" ]
 }
 
 @test "step prints the key-binding suggestion on first install only" {

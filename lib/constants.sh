@@ -290,6 +290,8 @@ HERDR_APP_MODS_SRC_DIR="$WORKBENCH_DIR/ai/herdr/app/mods"
 HERDR_APP_LAYOUTS_DIR="$HERDR_APP_DIR/layouts"
 HERDR_APP_LAYOUTS_SRC_DIR="$WORKBENCH_DIR/ai/herdr/app/layouts"
 HERDR_APP_LAYOUTS_MANIFEST="$WORKBENCH_STATE_DIR/herdr-app-layouts.manifest"
+# Same derivation tracked separately for the untrusted app dir.
+HERDR_UNTRUSTED_APP_LAYOUTS_MANIFEST="$HERDR_APP_LAYOUTS_MANIFEST.untrusted"
 # Suffix of the files bin/local/generate-herdr-app-themes writes there. Sync links
 # <name>$HERDR_APP_THEME_SUFFIX as <name>.json: herdr-app names a theme by its file stem.
 HERDR_APP_THEME_SUFFIX=".generated.json"

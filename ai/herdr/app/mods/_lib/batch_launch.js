@@ -101,3 +101,46 @@ export function runProgress(parsed) {
   }
   return { done, total: items.length };
 }
+
+/** One-line help for each launchable step. */
+export const STEP_HELP = {
+  rebase: 'Rebase onto the base branch',
+  ci: 'Fix failing checks',
+  comments: 'Answer review threads',
+  review: 'Run a self-review',
+};
+
+function shortRepo(slug) {
+  return String(slug ?? '').split('/').pop();
+}
+
+function joinAnd(parts) {
+  if (parts.length <= 1) return parts[0] ?? '';
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** Human summary of the runs a launch would start. */
+export function planSummary(groups, steps) {
+  if (!groups?.length || !steps?.length) return '';
+  const n = groups.length;
+  const names = groups.map((g) => {
+    const count = g.keys?.length ?? 0;
+    const prs = count === 1 ? '1 PR' : `${count} PRs`;
+    return `${shortRepo(g.repo)} (${prs})`;
+  });
+  return `Starts ${n} run${n === 1 ? '' : 's'}: ${joinAnd(names)} — ${steps.join(', ')}`;
+}
+
+/** Mine header label: idle or summed progress across active runs. */
+export function batchButtonText(active) {
+  if (!active?.length) return 'Batch';
+  let done = 0;
+  let total = 0;
+  for (const entry of active) {
+    done += entry.progress?.done ?? 0;
+    total += entry.progress?.total ?? 0;
+  }
+  if (total === 0) return 'Batch · running';
+  return `Batch · running ${done} of ${total}`;
+}

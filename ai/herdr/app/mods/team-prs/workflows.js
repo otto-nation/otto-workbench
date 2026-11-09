@@ -34,7 +34,6 @@ export class Workflows {
     this.visible = false;
     this.pinned = null;
     this.openKey = this.step = this.log = null;
-    this.showRuns = false;
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
     // click still starts its own read.
     this.logInflight = null;
@@ -222,7 +221,6 @@ export class Workflows {
   unpin() { this.setPin(null); }
 
   pickFromAll(id) {
-    this.showRuns = false;
     if (id == null) return this.unpin();
     const run = this.allRuns().find((r) => r.id === id);
     if (run) this.pin(run.on, run.id);
@@ -254,10 +252,8 @@ export class Workflows {
       doc: (run && m && m.docs.get(run.id)) || null,
       error,
       loading: this.keys == null || (this.machines.size > 0 && !loaded),
-      showRuns: this.showRuns,
       nowMs: Date.now(),
       onPickRun: (id) => this.pickFromAll(id),
-      onToggleRuns: () => this.toggleRuns(),
     };
   }
 
@@ -293,11 +289,6 @@ export class Workflows {
     this.step = step;
     this.log = null;
     this.loadLog(this.acx);
-    this.acx.notify();
-  }
-
-  toggleRuns() {
-    this.showRuns = !this.showRuns;
     this.acx.notify();
   }
 

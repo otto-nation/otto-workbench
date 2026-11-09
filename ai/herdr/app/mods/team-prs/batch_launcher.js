@@ -1,4 +1,4 @@
-// Starts `pr batch run` from Mine: selection, per-repo hc terminals, cancel/kill.
+// Starts `pr batch run` from Mine: form state, per-repo hc terminals, cancel/kill.
 import { exec } from "herdr";
 import { groupByRepo, runArgv } from "./_lib/batch_launch.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
@@ -15,33 +15,14 @@ export class BatchLauncher {
   constructor(acx, workflows) {
     this.acx = acx;
     this.workflows = workflows;
-    this.selecting = false;
     this.selected = new Set();
     this.steps = new Set(["rebase", "ci", "comments"]);
     this.withAi = new Set();
     this.autoPublish = false;
-    this.options = false;
-    this.perPr = new Map();
     this.launching = false;
     this.note = null;
     this.terminals = new Map();
     this.confirmKill = null;
-  }
-
-  start(prs) {
-    this.selecting = true;
-    this.selected = new Set();
-    for (const p of prs ?? []) {
-      if (p.cwd) this.selected.add(prKey(p.repoSlug, p.number));
-    }
-    this.perPr = new Map();
-    this.note = null;
-    this.acx.notify();
-  }
-
-  stop() {
-    this.selecting = false;
-    this.acx.notify();
   }
 
   toggle(key) {
@@ -50,15 +31,12 @@ export class BatchLauncher {
     this.acx.notify();
   }
 
-  selectAll(prs) {
-    for (const p of prs ?? []) {
-      if (p.cwd) this.selected.add(prKey(p.repoSlug, p.number));
+  toggleRepo(keys) {
+    const all = keys.length > 0 && keys.every((k) => this.selected.has(k));
+    for (const k of keys) {
+      if (all) this.selected.delete(k);
+      else this.selected.add(k);
     }
-    this.acx.notify();
-  }
-
-  selectNone() {
-    this.selected.clear();
     this.acx.notify();
   }
 
@@ -79,23 +57,13 @@ export class BatchLauncher {
     this.acx.notify();
   }
 
-  toggleOptions() {
-    this.options = !this.options;
+  reset() {
+    this.selected.clear();
+    this.note = null;
     this.acx.notify();
   }
 
-  togglePrStep(key, s) {
-    let set = this.perPr.get(key);
-    if (!set) {
-      set = new Set(this.steps);
-      this.perPr.set(key, set);
-    }
-    if (set.has(s)) set.delete(s);
-    else set.add(s);
-    this.acx.notify();
-  }
-
-  launch(prs) {
+  launch(prs, onDone) {
     if (this.launching) return;
     this.launching = true;
     this.note = null;
@@ -106,10 +74,6 @@ export class BatchLauncher {
         const selectedPrs = (prs ?? []).filter((p) => this.selected.has(prKey(p.repoSlug, p.number)));
         const { groups } = groupByRepo(selectedPrs);
         for (const g of groups) {
-          const selects = {};
-          for (const key of g.keys) {
-            if (this.perPr.has(key)) selects[key] = [...this.perPr.get(key)];
-          }
           try {
             const argv = ["pr", ...runArgv({
               checkout: g.cwd,
@@ -117,7 +81,6 @@ export class BatchLauncher {
               steps: [...this.steps],
               withAi: [...this.withAi],
               autoPublish: this.autoPublish,
-              selects,
             })];
             const res = parseRunReply(await exec("hc", hcBatchArgv({
               repo: g.repo, cwd: g.cwd, on: g.on, argv,
@@ -134,9 +97,11 @@ export class BatchLauncher {
       } finally {
         this.launching = false;
       }
-      // A failure keeps the bar open on the repos that did not start, with the reason.
       if (errors.length) this.note = errors.join("; ");
-      else this.stop();
+      else {
+        this.reset();
+        onDone?.();
+      }
       this.workflows.refresh(this.acx);
       cx.notify();
     });

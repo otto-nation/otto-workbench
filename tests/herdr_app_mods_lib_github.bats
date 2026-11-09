@@ -23,13 +23,15 @@ _js() {
   [ "$output" = '["api","/user","--jq",".login"]' ]
 }
 
-@test "pullsArgv contains --method GET, --paginate, --slurp, repo path" {
+@test "pullsArgv pages with a --jq field list and no --slurp" {
   _js 'm.pullsArgv("acme/box")'
   [ "$status" -eq 0 ]
   [[ "$output" == *'"--method","GET"'* ]]
   [[ "$output" == *'"--paginate"'* ]]
-  [[ "$output" == *'"--slurp"'* ]]
   [[ "$output" == *'"/repos/acme/box/pulls"'* ]]
+  [[ "$output" == *'"--jq"'* ]]
+  [[ "$output" == *'html_url'* ]]
+  [[ "$output" != *'"--slurp"'* ]]
 }
 
 @test "graphqlArgv drops non-integer numbers and aliases each number" {

@@ -15,7 +15,13 @@ export function friendlyError(err, on, scope = 'this') {
   if (!err) return '';
   const where = on != null ? String(on) : 'this Mac';
   if (err.kind === 'auth') return `run gh auth login on ${where}`;
-  if (err.kind === 'unreachable') return `${where} is unreachable`;
+  const what = err.command || 'a command';
+  if (err.kind === 'timeout') return `${what} took too long on ${where}`;
+  if (err.kind === 'exec') {
+    // herdr's exec throws with no reason when output passes its size cap.
+    if (!err.message) return `${what} failed on ${where} with no reason from herdr (often output over its size limit)`;
+    return `${what} failed on ${where}: ${err.message}`;
+  }
   if (err.kind === 'missing-tool') {
     if (Array.isArray(err.tools) && err.tools.length) {
       return `install ${err.tools.join(', ')} on ${where}`;

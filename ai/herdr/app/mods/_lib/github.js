@@ -16,22 +16,31 @@ export function userArgv() {
   return ['api', '/user', '--jq', '.login'];
 }
 
+// Only the fields mapPulls reads. A busy repo's full REST payload passes herdr's exec output cap
+// (384 open PRs come to 8.3 MB, and exec throws with no reason), trimmed it is about 160 KB.
+// --jq runs per page, so gh prints one JSON array per page, one per line (see readPages).
+const PULLS_JQ =
+  '[.[] | {number, title, user: {login: .user.login}, head: {ref: .head.ref, sha: .head.sha}, ' +
+  'base: {ref: .base.ref}, draft, html_url, labels: [.labels[] | {name}], created_at, updated_at}]';
+
 export function pullsArgv(repo) {
   // gh switches to POST when -f is used without --method GET
   return [
     'api',
     `/repos/${repo}/pulls`,
     '--paginate',
-    '--slurp',
     '--method',
     'GET',
     '-f',
     'state=open',
     '-f',
     'per_page=100',
+    '--jq',
+    PULLS_JQ,
   ];
 }
 
+// ceiling: --slurp with patches can pass herdr's exec output cap on a very large PR; page it (or drop patches) if a PR's Files tab fails to load.
 // The PR's files with their patches. The page size rides in the URL: `-f` would make gh POST.
 export function filesArgv(repo, number) {
   return ['api', `/repos/${repo}/pulls/${number}/files?per_page=100`, '--paginate', '--slurp'];

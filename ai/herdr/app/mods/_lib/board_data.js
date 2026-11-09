@@ -2,10 +2,11 @@
  * Fetch and join team-PR board data through `exec`.
  *
  * `exec(cmd, args, {cwd, on})` returns `Promise<{code, stdout, stderr}>`
- * and rejects when the machine is unreachable. Every exported loader
- * takes `exec` first and `ctx = {cwd, on}`; none throw. Failures are
+ * and rejects on a timeout, a program that cannot start, or an unreachable
+ * machine. Every exported loader takes `exec` first and `ctx = {cwd, on}`;
+ * none throw. Failures are
  * `{ok:false, error:{kind, message}}` with kind `missing-tool`,
- * `unreachable`, `auth`, `failed`, or `bad-json`.
+ * `timeout`, `exec`, `auth`, `failed`, or `bad-json`.
  */
 
 import { busyPrs } from './batch.js';
@@ -24,6 +25,9 @@ import { attrArgvs, generatedPaths, mapFiles, markGenerated } from './diff.js';
 import { hostOf, remoteSlug } from './location.js';
 import { joinReviews, keepLanded, landedCandidates } from './reviews.js';
 
+// pr review --list reads every review on the machine; on a busy one it takes ~15 s, half the exec default.
+const LISTING_TIMEOUT_MS = 120000;
+
 function messageOf(err) {
   if (err == null) return '';
   if (typeof err === 'string') return err;
@@ -31,9 +35,20 @@ function messageOf(err) {
   return String(err);
 }
 
-function classifyCaught(err, on) {
-  const kind = on != null && on !== '' ? 'unreachable' : 'missing-tool';
-  return { kind, message: messageOf(err) };
+// herdr prefixes its exec errors; over its output cap it throws a bare `hc exec:`.
+function execReason(err) {
+  return messageOf(err).replace(/^`herdr\.exec`:\s*/, '').replace(/^hc exec:\s*$/, '').trim();
+}
+
+function labelOf(cmd, args) {
+  return [cmd, ...args.slice(0, 2)].join(' ');
+}
+
+function classifyCaught(err, on, command) {
+  if (on == null || on === '') return { kind: 'missing-tool', message: messageOf(err) };
+  const message = execReason(err);
+  const kind = /took longer than/i.test(message) ? 'timeout' : 'exec';
+  return { kind, command, message };
 }
 
 export function classifyCode(result) {
@@ -70,15 +85,15 @@ export function toolCall(ctx, cmd, args) {
   return { cmd: 'sh', args: ['-c', 'PATH="$HOME/.local/bin:$PATH"; exec "$@"', 'sh', cmd, ...args] };
 }
 
-async function invoke(exec, ctx, cmd, args) {
+async function invoke(exec, ctx, cmd, args, opts = {}) {
   try {
     const call = toolCall(ctx, cmd, args);
-    const result = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on });
+    const result = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...opts });
     const error = classifyCode(result);
     if (error) return { ok: false, error };
     return { ok: true, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
   } catch (err) {
-    return { ok: false, error: classifyCaught(err, ctx.on) };
+    return { ok: false, error: classifyCaught(err, ctx.on, labelOf(cmd, args)) };
   }
 }
 
@@ -88,6 +103,18 @@ export function readJson(text) {
   } catch (err) {
     return { ok: false, error: { kind: 'bad-json', message: messageOf(err) } };
   }
+}
+
+// gh --paginate with --jq prints one JSON value per page, one per line.
+export function readPages(text) {
+  const pages = [];
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    const parsed = readJson(line);
+    if (!parsed.ok) return parsed;
+    pages.push(parsed.value);
+  }
+  return { ok: true, value: pages };
 }
 
 function emptyEnrich() {
@@ -173,11 +200,11 @@ export async function loadOpenPrs(exec, ctx, slug) {
     const call = toolCall(ctx, 'gh', pullsArgv(slug));
     ran = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on });
   } catch (err) {
-    return { ok: false, error: classifyCaught(err, ctx.on) };
+    return { ok: false, error: classifyCaught(err, ctx.on, labelOf('gh', pullsArgv(slug))) };
   }
   const coded = classifyCode(ran);
   if (coded) return { ok: false, error: coded };
-  const parsed = readJson(ran.stdout ?? '');
+  const parsed = readPages(ran.stdout ?? '');
   if (!parsed.ok) return parsed;
   const pulls = mapPulls(parsed.value);
   const numbers = pulls.map((p) => p.number);
@@ -192,15 +219,17 @@ export async function readReview(readTextFile, path, on) {
     const text = await readTextFile(path, { on });
     return { ok: true, text: text ?? null };
   } catch (err) {
-    const kind = on != null && on !== '' ? 'unreachable' : 'failed';
-    return { ok: false, error: { kind, message: messageOf(err) } };
+    if (on != null && on !== '') {
+      return { ok: false, error: { kind: 'exec', command: 'read review', message: execReason(err) } };
+    }
+    return { ok: false, error: { kind: 'failed', message: messageOf(err) } };
   }
 }
 
 export async function loadListing(exec, ctx) {
   const ran = await invoke(exec, ctx, 'pr', [
     'review', '--list', '--schema-version', '1',
-  ]);
+  ], { timeout: LISTING_TIMEOUT_MS });
   if (!ran.ok) return ran;
   const parsed = readJson(ran.stdout);
   if (!parsed.ok) return parsed;

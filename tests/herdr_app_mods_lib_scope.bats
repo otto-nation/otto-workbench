@@ -15,10 +15,10 @@ _js() {
   " -- "$1"
 }
 
-@test "friendlyError: null, auth, unreachable" {
-  _js '({a:friendlyError(null),b:friendlyError({kind:"auth"}),c:friendlyError({kind:"auth"},"m"),d:friendlyError({kind:"unreachable"},"m")})'
+@test "friendlyError: null, auth, timeout, exec" {
+  _js '({a:friendlyError(null),b:friendlyError({kind:"auth"}),c:friendlyError({kind:"auth"},"m"),d:friendlyError({kind:"timeout",command:"pr review --list"},"m"),e:friendlyError({kind:"exec",command:"gh api /repos/o/n/pulls",message:""},"m"),f:friendlyError({kind:"exec",command:"git remote get-url",message:"boom"},"m")})'
   [ "$status" -eq 0 ]
-  jq -e '.a=="" and .b=="run gh auth login on this Mac" and .c=="run gh auth login on m" and .d=="m is unreachable"' <<<"$output"
+  jq -e '.a=="" and .b=="run gh auth login on this Mac" and .c=="run gh auth login on m" and .d=="pr review --list took too long on m" and .e=="gh api /repos/o/n/pulls failed on m with no reason from herdr (often output over its size limit)" and .f=="git remote get-url failed on m: boom"' <<<"$output"
 }
 
 @test "friendlyError: not-a-repo, no-folder, unknown failed" {
@@ -99,8 +99,8 @@ _js() {
   jq -e '(.a|test("All spaces")|not) and (.b|test("All spaces"))' <<<"$output"
 }
 
-@test "skippable: three skip messages, not auth/unreachable/missing-tool/exit 1" {
-  _js '({a:skippable({kind:"failed",message:"fatal: not a git repository"}),b:skippable({kind:"failed",message:"Not in a repository"}),c:skippable({kind:"failed",message:"origin is not a GitHub remote"}),d:skippable({kind:"auth"}),e:skippable({kind:"unreachable"}),f:skippable({kind:"missing-tool"}),g:skippable({kind:"failed",message:"exit 1"})})'
+@test "skippable: three skip messages, not auth/exec/missing-tool/exit 1" {
+  _js '({a:skippable({kind:"failed",message:"fatal: not a git repository"}),b:skippable({kind:"failed",message:"Not in a repository"}),c:skippable({kind:"failed",message:"origin is not a GitHub remote"}),d:skippable({kind:"auth"}),e:skippable({kind:"exec",message:"not a git repository"}),f:skippable({kind:"missing-tool"}),g:skippable({kind:"failed",message:"exit 1"})})'
   [ "$status" -eq 0 ]
   jq -e '.a and .b and .c and (.d|not) and (.e|not) and (.f|not) and (.g|not)' <<<"$output"
 }

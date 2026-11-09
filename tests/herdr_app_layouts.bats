@@ -69,6 +69,29 @@ _run_step() {
   jq -e '[.. | objects | select(.id? == "prs") | .content.props.view] == ["sidebar"]' <<< "$output"
 }
 
+@test "jq adds the board to panel-body after files and changes" {
+  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
+  [ "$status" -eq 0 ]
+  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["files","changes","prs-panel"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["team-prs"]' <<< "$output"
+}
+
+@test "jq wraps the tab bar in a row with the PRs toggle" {
+  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
+  [ "$status" -eq 0 ]
+  jq -e '[.. | objects | select(.id? == "work") | .children | map(.id) | .[0]] == ["tabs-row"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs-row") | .children | map(.id)] == [["tabs","prs-button"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs-row") | .size] == [{"px":42}]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "prs-button") | .content.mod] == ["prs-button"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs") | .size] == [{"weight":1}]' <<< "$output"
+}
+
+@test "jq errors when panel-body is missing" {
+  input=$(jq 'walk(if type == "object" and has("children") then .children |= map(select(.id? != "panel-body")) else . end)' "$FIXTURE")
+  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$input"
+  [ "$status" -ne 0 ]
+}
+
 @test "jq is idempotent on its own output" {
   once=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE")
   twice=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$once")

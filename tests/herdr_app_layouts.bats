@@ -62,22 +62,42 @@ _run_step() {
   ' _ "$REPO_ROOT" "$SRC" "$UNTRUSTED" "$MANIFEST"
 }
 
-@test "jq puts prs third under sidebar-lists with sidebar view" {
+@test "jq leaves sidebar-lists as herdr ships it" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
-  jq -e '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)] == [["spaces","agents","prs"]]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "prs") | .content.props.view] == ["sidebar"]' <<< "$output"
+  expected=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)]' "$FIXTURE")
+  actual=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)]' <<< "$output")
+  [ "$expected" = "$actual" ]
+  jq -e '[.. | objects | select(.id? == "prs")] | length == 0' <<< "$output"
+}
+
+@test "jq adds the board to panel-body after files and changes" {
+  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
+  [ "$status" -eq 0 ]
+  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["files","changes","prs-panel"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["team-prs"]' <<< "$output"
+}
+
+@test "jq wraps the tab bar in a row with the PRs toggle" {
+  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
+  [ "$status" -eq 0 ]
+  jq -e '[.. | objects | select(.id? == "work") | .children | map(.id) | .[0]] == ["tabs-row"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs-row") | .children | map(.id)] == [["tabs","prs-button"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs-row") | .size] == [{"px":42}]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "prs-button") | .content.mod] == ["prs-button"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs") | .size] == [{"weight":1}]' <<< "$output"
+}
+
+@test "jq errors when panel-body is missing" {
+  input=$(jq 'walk(if type == "object" and has("children") then .children |= map(select(.id? != "panel-body")) else . end)' "$FIXTURE")
+  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$input"
+  [ "$status" -ne 0 ]
 }
 
 @test "jq is idempotent on its own output" {
   once=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE")
   twice=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$once")
   [ "$once" = "$twice" ]
-}
-
-@test "jq errors when sidebar-lists is missing" {
-  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< '{"id":"root"}'
-  [ "$status" -ne 0 ]
 }
 
 @test "fresh install writes the layout and a manifest line" {
@@ -123,7 +143,7 @@ _run_step() {
   [[ "$output" == *"start herdr-app once"* ]]
 }
 
-@test "main.json without sidebar-lists warns and writes nothing" {
+@test "main.json without panel-body warns and writes nothing" {
   mkdir -p "$APP/layouts"
   printf '%s\n' '{"id":"root"}' > "$APP/layouts/main.json"
   run _run
@@ -223,7 +243,7 @@ _run_step() {
   _seed_main
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *'herdr-app: show the workbench layout (PR list under agents) with: herdr-app do layout.switch --name workbench'* ]]
+  [[ "$output" == *'herdr-app: show the workbench layout (a PRs toggle beside Files/Changes opens the board) with: herdr-app do layout.switch --name workbench'* ]]
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *'layout.switch --name workbench'* ]]

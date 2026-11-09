@@ -11,23 +11,15 @@ _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/compact.js');
     const { groupColumns } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
-    const { findNode, isRail, viewOf, compactSections } = m;
-    const tree268 = {id:'root', children:[{id:'sidebar', size:{px:268}}]};
-    const tree120 = {id:'root', children:[{id:'sidebar', size:{px:120}}]};
+    const { viewOf, compactSections } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
 
-@test "viewOf: sidebar compact/rail; pane width compact/board" {
-  _js '({a:viewOf({view:"sidebar"},268,tree268),b:viewOf({view:"sidebar"},268,tree120),c:viewOf({},400,null),d:viewOf({},900,null),e:viewOf({view:"sidebar"},70,tree268)})'
+@test "viewOf: narrow is compact, wide is board" {
+  _js '({a:viewOf(400),b:viewOf(900),c:viewOf(undefined)})'
   [ "$status" -eq 0 ]
-  jq -e '.a=="compact" and .b=="rail" and .c=="compact" and .d=="board" and .e=="rail"' <<<"$output"
-}
-
-@test "findNode: nested id, missing is null" {
-  _js '({a:findNode({id:"root",children:[{id:"a",children:[{id:"nested"}]}]},"nested")?.id,b:findNode({id:"root"},"x")})'
-  [ "$status" -eq 0 ]
-  jq -e '.a=="nested" and .b==null' <<<"$output"
+  jq -e '.a=="compact" and .b=="board" and .c=="board"' <<<"$output"
 }
 
 @test "compactSections: drops empty groups" {

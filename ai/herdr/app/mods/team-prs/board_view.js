@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, layout, run, props,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run,
 } from "herdr";
 import { locate } from "./_lib/location.js";
 import { boardTabId } from "./_lib/tabs.js";
@@ -16,7 +16,7 @@ import {
 import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, isMine, groupColumns } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
-import { renderCompact, renderRail } from "./compact.js";
+import { renderCompact } from "./compact.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
 
@@ -330,9 +330,8 @@ export default class TeamPrs extends View {
       ? (view.prs.find((p) => cardId(p) === this.selectedId) ?? this.selectedPr) : null;
     const open = picked ? this.detailView(picked, cx) : null;
     if (open) return open;
-    const mode = viewOf(props(), this.size?.width, layout());
+    const mode = viewOf(this.size?.width);
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
-    if (mode === "rail" && view.repos === 0 && !view.loading) return this.railView(view);
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(emptyPane())
         .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
@@ -344,7 +343,6 @@ export default class TeamPrs extends View {
         .child(div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child("No open space is in a GitHub repository"))
         .child(this.scopeToggle());
     }
-    if (mode === "rail") return this.railView(view);
     if (mode === "compact") return this.compactView(view, t, cx);
     return this.boardView(cx, targets[0], view, t);
   }
@@ -403,12 +401,6 @@ export default class TeamPrs extends View {
         sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
         width: this.size?.width,
       }));
-  }
-
-  railView(state) {
-    return v_flex().id("prs").size_full()
-      .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(renderRail({ count: this.listed(state).length }));
   }
 
   scopeToggle() {

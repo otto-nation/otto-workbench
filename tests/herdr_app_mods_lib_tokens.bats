@@ -12,5 +12,5 @@ teardown() { common_teardown; }
     process.stdout.write(JSON.stringify({b:t.BREAKPOINT,l:t.LAYOUT,d:typeof t.densityOf}));
   "
   [ "$status" -eq 0 ]
-  jq -e '.b.rail==160 and .b.compact==560 and .l.colMin==260 and .l.headerH==52 and .d=="undefined"' <<<"$output"
+  jq -e '.b.compact==560 and .l.colMin==260 and .l.headerH==52 and .d=="undefined"' <<<"$output"
 }

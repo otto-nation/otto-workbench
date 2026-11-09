@@ -49,9 +49,9 @@ Branches get the reframed text. The critic in Step 4 judges against the
 
 ## Step 3: Diverge
 
-Pick 3 frames by default (up to 5 if the user asks for a wider run). Take two
-from the engineering frames and one from the wild ones. Vary the pick between
-runs.
+Pick 3 frames by default (up to 5 if the user asks for a wider run). Always include
+the wild frame when running 3 or more; fill the rest from the engineering
+frames. Vary which engineering frames you pick between runs.
 
 | Frame | Instruction |
 |---|---|
@@ -71,7 +71,11 @@ Spawn one branch per frame **in parallel**. Each branch gets only:
 
 Never pass one branch's output to another.
 
-Restrict each branch to read-only tools (`read`, `grep`, `find`, `ls`).
+Restrict each branch to read-only tools (`read`, `grep`, `find`, `ls`) and
+give it the generator prompt as its system prompt, using whatever parameters
+the `subagent` tool offers. If the harness has no per-call tool restriction or
+system prompt (e.g. Claude Code's Agent tool), put both instructions at the top
+of the task text and tell the user the restriction is best-effort.
 Branches share the filesystem, and they inherit the parent's context files, so
 the system prompt must say the repository's conventions are not its concern.
 

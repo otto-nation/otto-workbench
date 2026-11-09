@@ -106,6 +106,7 @@ export default class TeamPrs extends View {
   // The header's Refresh: a full pull now. `manual` labels it until the pull it asked for lands.
   refreshNow() {
     this.manual = true;
+    this.listingByOn.clear(); // a manual pull must not trust a stale stamp
     this.refresh(this.acx);
     this.acx.notify();
   }

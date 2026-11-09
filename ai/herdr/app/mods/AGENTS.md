@@ -10,6 +10,26 @@ Conventions for the mods under this directory (`team-prs`, `_lib`, …).
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`
 - Handlers use the long-lived context saved in `init` (`this.acx`), never the render's `cx`, for notify and spawn
 
+## Design
+
+Read the brand's `DESIGN.md` before changing a view (root `AGENTS.md` § UI and
+styling says where), and apply its Do's and Don'ts, Elevation, Shapes and
+Components. Each value has one owner, so this section names the owners and
+restates none of their contents:
+
+- Colour: `theme()`, which `ai/herdr/app/palettes/otto.toml` fills from the
+  brand tokens. To find the field for a brand role, read the palette's
+  `[themes.*.colors]` and `ansi` entries for both schemes. Text takes a field
+  the palette maps to ink or ink-muted in both, never one mapped to outline,
+  which the brand defines as a non-text boundary. Prefer a named field to an
+  `ansiN` slot when one carries the role in both schemes.
+- Size, spacing and radius: `_lib/tokens.js`, whose comments say which brand
+  value each token stands for.
+- Shape of a control, card or label: `_ui/ui.js`.
+
+Where `DESIGN.md` is silent, keep to those owners rather than inventing a value,
+and record the gap in otto-nation/otto-nation.github.io's issue tracker.
+
 ## Checking and installing
 
 - Check an assembled copy, not the source tree: `_herdr_app_install_mods "$tmp"` then `herdr-app check "$tmp/mods/team-prs"` (source `lib/ui.sh`, `lib/constants.sh` and `ai/herdr/steps.sh` first)

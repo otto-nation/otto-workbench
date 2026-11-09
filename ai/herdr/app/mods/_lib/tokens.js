@@ -3,8 +3,13 @@
  * Density: compact < 560 ≤ board.
  */
 
+// The brand's DESIGN.md is written in Tailwind classes; these are the app's pixel stand-ins.
+// SP follows its 4px spacing base (xs..xl are spacing 1, 2, 3, 4, 6).
 export const SP = { hair: 1, xxs: 2, xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
+// title is text-sm (card titles), small is text-xs (card body, code), caption the nearest step to
+// its 10px eyebrow; body sits between for dense list text, which the brand does not size.
 export const TEXT = { caption: 11, small: 12, body: 13, title: 14 };
+// control is rounded-md (buttons), card is rounded-lg (cards).
 export const RADIUS = { control: 6, card: 8 };
 // hex alpha suffixes appended to a theme colour
 export const FILL = { lane: "55", add: "18", del: "18" };

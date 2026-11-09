@@ -171,6 +171,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     body_text = comment_body(
         stored.record, body_findings,
         has_inline=len(inline) > 0, severity_filter=severity_filter,
+        models=stored.meta.models,
     )
 
     if not inline_comments and not body_text:
@@ -201,6 +202,6 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
         inline, body_findings, duplicates,
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
         review_sha=review_sha or head_sha, sha_drifted=sha_drifted,
-        record=stored.record,
+        record=stored.record, models=stored.meta.models,
     )
     return 0

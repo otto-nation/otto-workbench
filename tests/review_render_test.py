@@ -63,6 +63,17 @@ def test_prompt_text_omits_the_banner():
     assert BANNER not in rendered
 
 
+def test_the_models_line_follows_the_banner():
+    meta = ReviewMeta(repo="a/b", pr_number=1, models="single m (low)")
+    rendered = render_review(record(summary="x"), meta)
+    assert f"{BANNER}\n\nModels: single m (low)\n\n## Summary" in rendered
+
+
+def test_prompt_text_omits_the_models_line():
+    meta = ReviewMeta(repo="a/b", pr_number=1, models="single m (low)")
+    assert "Models:" not in render_review(record(summary="x"), meta, banner=False)
+
+
 def test_the_header_is_meta_json_s():
     """D6: a key an agent typed into its header is not on the rendered page."""
     meta = ReviewMeta(repo="a/b", pr_number=1, head_sha="abc")

@@ -324,7 +324,7 @@ class TestReclassifyAndRetry:
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [body_f],
                 "abc123", 30, {"M", "N"}, False,
-                record=record(),
+                record=record(), models="",
             )
             assert len(inline) == 1
             assert inline[0].posted_id == "M1"
@@ -353,7 +353,7 @@ class TestReclassifyAndRetry:
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
                 "abc123", 30, {"M"}, False,
-                record=rec,
+                record=rec, models="",
             )
             assert (inline_comments, inline, results) == ([], [], [{"id": 99}])
             assert "Clean refactor." in body_text
@@ -379,7 +379,7 @@ class TestReclassifyAndRetry:
             _, _, body, _, _ = rp._reclassify_and_retry(
                 self._make_args(), [inline_f], [skipped_f],
                 "abc123", 30, {"M", "I"}, False,
-                record=record(),
+                record=record(), models="",
             )
             assert any(f.body == "Good pattern" for f in body)
 
@@ -412,10 +412,11 @@ class TestReclassifyAndRetry:
                 "initial",
                 [f], [], [],
                 "abc123", "abc123", 30, {"M"},
-                record=rec,
+                record=rec, models="single m (low)",
             )
         assert "Clean refactor." in captured[1]
         assert "M1 blocks." in captured[1]
+        assert "<sub>Models: single m (low)</sub>" in captured[1]
 
 
 class TestHandleChunkFailure:

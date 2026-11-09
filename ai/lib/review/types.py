@@ -322,6 +322,13 @@ class ReviewMeta:
     # `ReviewEntry.reviewed_at` for what answers "when" in that case.
     started_at: str = ""
     reviewed_at: str = ""
+    # The agents the review ran, as its `Models:` line states them: phase,
+    # served model and thinking, identical sessions collapsed. Read once from
+    # the usage ledger when the review's phases finish
+    # (`review.outcome.models_used`). Empty when the ledger had no row for the
+    # run, and in a sidecar written before the field; neither says which
+    # models ran.
+    models: str = ""
     # The fix pass's commit, and what became of its push. Recorded here rather
     # than in the PR's state because a self-review need not have a PR, while the
     # review directory exists for every run — and because the commit is a fact

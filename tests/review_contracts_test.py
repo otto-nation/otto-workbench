@@ -164,6 +164,11 @@ class TestReviewMeta:
         assert written["host"] == "ghe.acme.com"
         assert core.serde.from_dict(review.types.ReviewMeta, written).host == "ghe.acme.com"
 
+    def test_the_models_line_survives_a_write_and_read(self):
+        """What `review-post` depends on: it reads the line from the file, never the ledger."""
+        written = core.serde.to_dict(review.types.ReviewMeta(models="single m (low)"))
+        assert core.serde.from_dict(review.types.ReviewMeta, written).models == "single m (low)"
+
 
 # ── 1c. TestPhaseSkipFlags ───────────────────────────────────────────────────
 

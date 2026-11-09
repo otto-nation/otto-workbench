@@ -92,6 +92,50 @@ print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read
   printf '%s\n' "{\"packages\": {\"node_modules/@otto-nation/brand\": {\"version\": \"1.2.0\", \"resolved\": \"file://${tgz}\", \"integrity\": \"${integrity}\"}}}" > "$BATS_TEST_TMPDIR/site/package-lock.json"
 }
 
+_terminal_dir() {
+  local dir="$BATS_TEST_TMPDIR/terminal"
+  mkdir -p "$dir"
+  python3 - "$dir" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+
+def theme(bg, fg):
+    return {
+        "background": bg,
+        "foreground": fg,
+        "selection": "#222222",
+        "cursor": "#333333",
+        "ansi": [f"#{i:02x}{i:02x}{i:02x}" for i in range(16)],
+    }
+
+(root / "otto-light.json").write_text(json.dumps(theme("#aaaaaa", "#111111"), indent=2) + "\n")
+(root / "otto-dark.json").write_text(json.dumps(theme("#010101", "#fefefe"), indent=2) + "\n")
+PY
+}
+
+_terminal_palette() {
+  cat > "$PAL/test.toml" <<'EOF'
+[palette]
+canvas = "brand:ow-canvas"
+
+[schemes]
+sample-light = "light"
+sample-dark = "dark"
+
+[themes.sample-light]
+terminal = "brand"
+
+[themes.sample-light.colors]
+accent = "canvas"
+
+[themes.sample-dark]
+terminal = "brand"
+
+[themes.sample-dark.colors]
+accent = "canvas"
+EOF
+}
+
 @test "committed theme files match their palettes" {
   run "$GEN" --check
   [ "$status" -eq 0 ]
@@ -257,7 +301,7 @@ print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
   [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
-  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
 }
 
 @test "a second --offline run succeeds from cache after the tarball is gone" {
@@ -293,7 +337,7 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   _brand_palette
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
-  printf 'nope' > "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz"
+  printf 'nope' > "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz"
   rm -f "$OUT"/*.generated.json
   run "$GEN" --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
@@ -309,7 +353,7 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   run "$GEN" --check --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
   [[ "$output" == *"bin/local/dev-deps"* ]]
-  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
 }
 
 @test "--resolve-brand --offline exits 3 on an empty cache and 0 from cache after a fetch" {
@@ -318,12 +362,12 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   _brand_palette
   run "$GEN" --resolve-brand --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
-  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
   run "$GEN" --resolve-brand --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
   [ "$output" = "fetched" ]
-  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/brand.tgz" ]
+  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
   run "$GEN" --resolve-brand --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
@@ -379,4 +423,54 @@ print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
   [[ "$output" == *"package/src/tokens.css"* ]]
+}
+
+@test "terminal = brand fills light and dark from --terminal DIR" {
+  sandbox_state_dir
+  _tokens
+  _terminal_dir
+  _terminal_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css" --terminal "$BATS_TEST_TMPDIR/terminal"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#aaaaaa" ]
+  [ "$(jq -r .foreground "$OUT/sample-light.generated.json")" = "#111111" ]
+  [ "$(jq -r .selection "$OUT/sample-light.generated.json")" = "#222222" ]
+  [ "$(jq -r .cursor "$OUT/sample-light.generated.json")" = "#333333" ]
+  [ "$(jq -r .colors.accent "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
+  [ "$(jq -r .background "$OUT/sample-dark.generated.json")" = "#010101" ]
+  [ "$(jq -r .foreground "$OUT/sample-dark.generated.json")" = "#fefefe" ]
+  [ "$(jq -r '.ansi | length' "$OUT/sample-light.generated.json")" = "16" ]
+  [ "$(jq -r .ansi[0] "$OUT/sample-light.generated.json")" = "#000000" ]
+}
+
+@test "terminal = brand with a filled key exits 2 without writing" {
+  sandbox_state_dir
+  _tokens
+  _terminal_dir
+  _terminal_palette
+  python3 - "$PAL/test.toml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+needle = '[themes.sample-light]\nterminal = "brand"'
+insert = needle + '\nbackground = "canvas"'
+text = p.read_text()
+if needle not in text:
+    raise SystemExit('theme table not found')
+p.write_text(text.replace(needle, insert, 1))
+PY
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css" --terminal "$BATS_TEST_TMPDIR/terminal"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"terminal = \"brand\" cannot set background"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
+}
+
+@test "terminal = brand without terminal files exits 2 without writing" {
+  sandbox_state_dir
+  _tokens
+  _terminal_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"needs @otto-nation/brand ≥ 1.3.0"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
 }

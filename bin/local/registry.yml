@@ -242,7 +242,7 @@ tools:
   - name: generate-herdr-app-themes
     permission: false
     visibility: brief
-    description: "Generates the herdr-app theme JSON files from the palettes in ai/herdr/app/palettes"
+    description: "Generates the herdr-app theme JSON files from the palettes in ai/herdr/app/palettes (--terminal DIR)"
 
   - name: generate-public-surface
     permission: false

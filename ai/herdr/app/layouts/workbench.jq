@@ -4,10 +4,11 @@ def prs: {id: "prs", type: "block", size: {weight: 1}, min: 90,
 # The board is a panel-body child the PRs toggle selects.
 def prs_panel: {id: "prs-panel", type: "block", content: {mod: "team-prs"}};
 # Herdr's tabs mod hard-codes Files/Changes, so the PRs toggle is a sibling block.
+# prs-button width: 2*px 8 + icon 14 + gap 5 + "PRs" label + pr(SP.sm); 72 leaves slack.
 def tabs_row:
   {id: "tabs-row", type: "row", size: .size, children: [
     (.size = {weight: 1}),
-    {id: "prs-button", type: "block", size: {px: 64}, content: {mod: "prs-button"}}
+    {id: "prs-button", type: "block", size: {px: 72}, content: {mod: "prs-button"}}
   ]};
 
 if ([.. | objects | select(.id? == "sidebar-lists")] | length) != 1

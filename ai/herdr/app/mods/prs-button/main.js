@@ -20,8 +20,7 @@ function find(node, id) {
 }
 
 export default class PrsButton extends View {
-  init(_props, cx) {
-    this.acx = cx;
+  init(_props, _cx) {
     // herdr's tabs mod remembers each space's panel only among `workspace.panels`; without the
     // board listed there, switching spaces closes it.
     const enabled = shared("workspace.panels") ?? ["files", "changes"];

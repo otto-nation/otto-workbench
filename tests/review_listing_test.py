@@ -16,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
 import pr.domains  # noqa: E402
 import review.listing  # noqa: E402
 import review.types  # noqa: E402
+import review.usage_cache  # noqa: E402
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
@@ -358,3 +359,20 @@ def test_history_serialises_nested(reviews_dir):
     _archive_current(d, "20260101-120000")
     run, = review.listing.document(1)["reviews"][0]["history"]
     assert set(run) == set(review.listing.ReviewRun.__dataclass_fields__)
+
+
+def test_a_second_row_reads_usage_from_the_cache(reviews_dir, monkeypatch):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    (d / "session.jsonl").write_text(
+        '{"type": "result", "total_cost_usd": 0.5, "usage": {"input_tokens": 7}}\n'
+    )
+    first, = review.listing.rows()
+
+    def boom(_path):
+        raise AssertionError("session log re-parsed")
+
+    # Both parsers: a listing that bypassed the cache would read through paths'.
+    monkeypatch.setattr(review.usage_cache, "parse_session_log", boom)
+    monkeypatch.setattr(review.paths, "parse_session_log", boom)
+    second, = review.listing.rows()
+    assert first.cost_usd == second.cost_usd == 0.5

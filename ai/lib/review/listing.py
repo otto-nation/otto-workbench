@@ -101,6 +101,7 @@ from review.record import load_record
 from review.state import build_failure_detail, read_pipeline_status
 from review.store import StoredReview
 from review.types import SEVERITIES
+from review.usage_cache import UsageCache
 from review.verdict import open_counts, resolve_review_verdict
 
 # Row-schema versions this build serves, oldest first. See "Version policy" in
@@ -227,14 +228,14 @@ def _post_from(path: Path) -> RunPost | None:
                    review_id=tracking.review_id, sha_drifted=tracking.sha_drifted)
 
 
-def _run_for(review_dir: Path, stamp: str) -> ReviewRun:
+def _run_for(review_dir: Path, stamp: str, cache: UsageCache) -> ReviewRun:
     """One archived run, read the way `row_for` reads the live one."""
     archive = archives_dir(review_dir)
     record = load_record(archive, f"{stamp}{ARCHIVE_RECORD_EXT}")
     meta = read_review_meta(archive, f"{stamp}{ARCHIVE_META_EXT}")
     doc = ReviewDocument.from_stored(StoredReview(record, meta)) if record else None
     verdict = resolve_review_verdict(doc, mode=meta.mode) if doc else None
-    usage = archived_session_usage(review_dir, stamp)
+    usage = archived_session_usage(review_dir, stamp, cache)
     return ReviewRun(
         stamp=stamp,
         review_file=str(archived_file(review_dir, stamp, ARCHIVE_REVIEW_EXT)),
@@ -268,7 +269,10 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
 
     doc = ReviewDocument.read(review_file)
     verdict = resolve_review_verdict(doc, mode=meta.mode)
-    usage = aggregate_session_usage(entry.path)
+    cache = UsageCache(entry.path)
+    usage = aggregate_session_usage(entry.path, cache)
+    history = [_run_for(entry.path, stamp, cache) for stamp in archived_stamps(entry.path)]
+    cache.save()
 
     return ReviewRow(
         repo=meta.repo,
@@ -295,14 +299,14 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
         cache_write_tokens=usage.cache_write_tokens,
         duration_ms=usage.duration_ms,
         post=_post_from(entry.path / FILENAME_POST_SESSION),
-        history=[_run_for(entry.path, stamp) for stamp in archived_stamps(entry.path)],
+        history=history,
     )
 
 
-# ceiling: every row reads each archived run's session log for usage, which is
-# the listing's main cost. Upgrade trigger: if `pr review --list` takes over 3 s
-# on a real reviews root, add a `--repo OWNER/NAME` filter so a consumer reads
-# only the rows it shows.
+# ceiling: each row still loads every live and archived record and sidecar;
+# session-log usage is cached (review.usage_cache). Upgrade trigger: if
+# `pr review --list` takes over 3 s on a real reviews root once the cache is
+# warm, cache each finished row by its source files' mtimes.
 def rows() -> list[ReviewRow]:
     """Every review at the reviews root, in the walk's order.
 

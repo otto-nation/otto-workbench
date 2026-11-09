@@ -13,6 +13,13 @@ teardown() {
   common_teardown
 }
 
+_rr() {
+  run node --input-type=module -e "
+    import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
+    $1
+  "
+}
+
 # $1 = JS statements; table, exec, ctx, calls, pack, m are in scope.
 _bd() {
   run node --input-type=module -e "
@@ -409,13 +416,6 @@ _gql() {
   [[ "$output" == *'"threw":{"ok":false,"entries":[]}'* ]]
   [[ "$output" == *'"badOk":true'* ]]
   [[ "$output" == *'"badN":0'* ]]
-}
-
-_rr() {
-  run node --input-type=module -e "
-    import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
-    $1
-  "
 }
 
 @test "checkTools parses present and missing by basename" {

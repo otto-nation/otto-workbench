@@ -24,6 +24,7 @@ export function mapFiles(json, perPage = 100) {
     add: f.additions ?? 0,
     del: f.deletions ?? 0,
     patch: typeof f.patch === 'string' ? f.patch : null,
+    // GitHub fills every page but the last, so the index alone gives the page.
     page: Math.floor(i / perPage) + 1,
     hasPatch: typeof f.patch === 'string' || f.has_patch === true,
     generated: false,

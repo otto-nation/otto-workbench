@@ -3187,9 +3187,8 @@ posting mechanics are `review.posting`, formatting is `review.format`.
 
 High-level posting orchestration for review-post.
 
-Handles chunked review submission, SHA-drift re-verification,
-reclassification after LineResolutionError, dry-run display,
-and post-tracking metadata.
+Handles chunked review submission, reclassification after LineResolutionError,
+dry-run display, and post-tracking metadata.
 
 ### review/publish.py
 

@@ -1,8 +1,7 @@
 """High-level posting orchestration for review-post.
 
-Handles chunked review submission, SHA-drift re-verification,
-reclassification after LineResolutionError, dry-run display,
-and post-tracking metadata.
+Handles chunked review submission, reclassification after LineResolutionError,
+dry-run display, and post-tracking metadata.
 """
 
 # doc-group: publishing
@@ -18,7 +17,6 @@ from enum import StrEnum
 from pathlib import Path
 
 import gh.client
-import git.client
 import core.proc
 import review.dedup
 import review.format
@@ -30,7 +28,6 @@ from gh.client import LineResolutionError
 from pr.state import PostedAs, PostEvent, PostTracking
 from gh.pr_data import PRData
 from review.types import Finding
-from core.text import plural
 from core.serde import to_dict as serde_to_dict
 
 
@@ -216,107 +213,6 @@ def write_post_tracking(review_file: str, entry: PostTracking):
             f.write("\n")
     except OSError as e:
         core.log.warn(f"Failed to write post tracking ({post_file}): {e}")
-
-
-# ── SHA-drift fallback ──────────────────────────────────────────────────────
-
-def _format_comment_body(
-    findings: list[Finding], severity_filter: set[str],
-    review_sha: str, head_sha: str, drift: gh.pr_reads.NewCommits,
-    sections: ReviewSections | None = None,
-) -> str:
-    """Format findings as a single comment body for stale-SHA posting."""
-    _, body_findings = review.format.renumber_for_posting([], findings)
-    body = review.format.format_body_text(
-        body_findings, False, severity_filter,
-        sections=sections,
-    )
-
-    # "0 new commits" is what an uncounted drift used to render as, which reads
-    # to a human as "the branch has not moved" — the opposite of the warning
-    # this banner exists to give.
-    moved = (
-        f"({drift.count} new commit{plural(drift.count)})" if drift.counted
-        else "(the count of new commits could not be read)"
-    )
-    header = (
-        f"> **Note:** This review was written against commit "
-        f"`{git.client.abbrev(review_sha)}`. "
-        f"PR HEAD has since moved to `{git.client.abbrev(head_sha)}` "
-        f"{moved}. "
-        f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
-    )
-    return f"{header}\n{body}"
-
-
-def _post_as_comment(
-    args: argparse.Namespace,
-    findings: list[Finding], severity_filter: set[str],
-    review_sha: str, head_sha: str,
-    head_ref: str, base_ref: str,
-    pr_data: PRData | None = None,
-    sections: ReviewSections | None = None,
-):
-    """Post review as a single PR comment when SHA has drifted."""
-    verdict = sections.get("verdict") if sections else ""
-    kept, deduped = review.dedup.dedup_against_posted(findings, args.repo, args.pr, pr_data)
-    if deduped:
-        core.log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
-    findings = kept
-
-    if not findings:
-        core.log.warn("No findings to post after dedup")
-        write_post_tracking(args.review_file, PostTracking(
-            posted_as=PostedAs.COMMENT.value, status=PostEvent.COMMENT.value,
-            commit_id=head_sha, skipped_count=len(deduped),
-            submitted=True,
-            review_sha=review_sha, head_sha_at_post=head_sha,
-            sha_drifted=True, verdict=verdict,
-        ))
-        return
-
-    diff_text = gh.pr_reads._get_diff(args.repo, args.pr)
-    # `main` stamps both onto `args` from the sidecar, which is the only thing
-    # that knows the forge here: this process is spawned with a review file and
-    # never reads a remote.
-    #
-    # `getattr` rather than `args.host`, unlike the slug beside it: `host` is
-    # not an argparse argument and so is not on the namespace parsing produces
-    # — only `main` puts it there. A caller that builds its own `args`, which
-    # every test of this function does, would otherwise raise instead of
-    # rendering the public-GitHub default this path had before the host existed.
-    review.format.resolve_permalinks(
-        findings, args.repo, diff_text, head_ref, base_ref, getattr(args, "host", ""))
-
-    drift = gh.pr_reads._count_new_commits(args.repo, args.pr, review_sha, pr_data)
-    body = _format_comment_body(
-        findings, severity_filter, review_sha, head_sha, drift,
-        sections=sections,
-    )
-
-    result = gh.client.api_json(
-        f"repos/{args.repo}/issues/{args.pr}/comments",
-        method="POST",
-        input_text=json.dumps({"body": body}, ensure_ascii=False),
-    )
-
-    if result is None:
-        core.log.error("Failed to post review as comment")
-        sys.exit(1)
-
-    comment_id = result.get("id", 0)
-    core.log.info(
-        f"Review posted as comment #{comment_id} "
-        f"(SHA drifted: {git.client.abbrev(review_sha)} → {git.client.abbrev(head_sha)})"
-    )
-
-    write_post_tracking(args.review_file, PostTracking(
-        posted_as=PostedAs.COMMENT.value, status=PostEvent.COMMENT.value,
-        review_ids=[comment_id], commit_id=head_sha,
-        body_count=len(findings), submitted=True,
-        review_sha=review_sha, head_sha_at_post=head_sha,
-        sha_drifted=True, verdict=verdict,
-    ))
 
 
 # ── Reclassification after line-resolution failure ──────────────────────────

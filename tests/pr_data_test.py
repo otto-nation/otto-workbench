@@ -122,36 +122,6 @@ class TestPendingReviewId:
         assert pd.pending_review_id is None
 
 
-# ── new_commit_count ──────────────────────────────────────────────────────────
-
-class TestNewCommitCount:
-    def test_no_commits(self):
-        pd = _make_pr_data()
-        assert pd.new_commit_count("abc123") == 0
-
-    def test_sha_found_exact(self):
-        pd = _make_pr_data(commits=[
-            _make_commit(oid="aaa111"),
-            _make_commit(oid="bbb222"),
-            _make_commit(oid="ccc333"),
-        ])
-        assert pd.new_commit_count("bbb222") == 1
-
-    def test_sha_found_prefix(self):
-        pd = _make_pr_data(commits=[
-            _make_commit(oid="aaa111full"),
-            _make_commit(oid="bbb222full"),
-        ])
-        assert pd.new_commit_count("bbb222") == 0
-
-    def test_sha_not_found(self):
-        pd = _make_pr_data(commits=[
-            _make_commit(oid="aaa111"),
-            _make_commit(oid="bbb222"),
-        ])
-        assert pd.new_commit_count("zzz999") == 2
-
-
 # ── bot_reviews_visible ──────────────────────────────────────────────────────
 
 class TestBotReviewsVisible:
@@ -486,7 +456,7 @@ class TestFetchPrData:
 
     @patch("gh.client.graphql")
     def test_truncated_commits_are_warned_about(self, mock_gql, capsys):
-        """`new_commit_count` scans these, and the headlines feed the review prompt."""
+        """The headlines feed the review prompt."""
         mock_gql.return_value = CmdResult(0, self._graphql_response(
             commits={"totalCount": 212, "nodes": [
                 {"commit": {"oid": "deadbeef", "messageHeadline": "feat: x"}},

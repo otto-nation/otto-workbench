@@ -122,13 +122,6 @@ class PRData:
                 return r.get("databaseId") or None
         return None
 
-    def new_commit_count(self, review_sha: str) -> int:
-        for i, c in enumerate(self.commits):
-            sha = c.get("commit", {}).get("oid", "")
-            if sha.startswith(review_sha) or review_sha.startswith(sha):
-                return len(self.commits) - i - 1
-        return len(self.commits)
-
     def bot_reviews_visible(self, bot_login: str) -> list[dict]:
         """Non-PENDING, non-DISMISSED, non-minimized reviews from bot_login."""
         bot_lower = bot_login.lower()

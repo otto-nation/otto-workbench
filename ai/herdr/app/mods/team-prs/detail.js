@@ -2,7 +2,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
-import { SP, TEXT, RADIUS, CONTROL_H } from "./_lib/tokens.js";
+import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
 import { eyebrow } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
@@ -46,7 +46,7 @@ function reviewBody(stamp, body) {
 function reviewInset(stamp, body) {
   const t = theme();
   return div().mt(SP.sm).p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
-    .max_h(420).overflow_y_scrollbar().child(reviewBody(stamp, body));
+    .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar().child(reviewBody(stamp, body));
 }
 
 export function prUrl(d) {
@@ -57,7 +57,7 @@ export function renderDetailHeader(d, { onClose, onOpenUrl }) {
   const t = theme();
   return v_flex().flex_none().gap(SP.sm).p(SP.lg).border_b_1().border_color(t.border)
     .child(h_flex().gap(SP.sm).items_center()
-      .child(div().flex_1().min_w(0).text_size(TEXT.title).font_semibold().max_h(40)
+      .child(div().flex_1().min_w(0).text_size(TEXT.title).font_semibold().max_h(LAYOUT.titleMaxH)
         .overflow_hidden().child(`#${d.number} ${d.title ?? ""}`))
       .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))
       .child(closeButton(() => onClose())))

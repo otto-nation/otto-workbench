@@ -26,6 +26,7 @@ from review.types import (
     FindingOrigin, FindingRef, PriorDisposition, ReviewMeta, ReviewType,
     review_meta_from_dict,
 )
+from review_behaviours_support import behaviour
 from review_claims_support import claim
 from review_record_support import copy_tree, finding, record
 
@@ -398,3 +399,21 @@ def test_claims_round_trip(tmp_path):
     assert load_record(tmp_path) == rec
     save_record(tmp_path, ReviewRecord(claims=()))
     assert load_record(tmp_path).claims == ()
+
+
+def test_a_record_without_behaviours_loads_as_not_assessed(tmp_path, capsys):
+    save_record(tmp_path, ReviewRecord())
+    path = tmp_path / FILENAME_RECORD
+    payload = json.loads(path.read_text())
+    del payload["behaviours"]
+    path.write_text(json.dumps(payload))
+    assert load_record(tmp_path).behaviours is None
+    assert "dropped" not in capsys.readouterr().err
+
+
+def test_behaviours_round_trip(tmp_path):
+    rec = ReviewRecord(behaviours=(behaviour(),))
+    save_record(tmp_path, rec)
+    assert load_record(tmp_path) == rec
+    save_record(tmp_path, ReviewRecord(behaviours=()))
+    assert load_record(tmp_path).behaviours == ()

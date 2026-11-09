@@ -31,6 +31,7 @@ from typing import get_args, get_origin, get_type_hints
 
 import core.log
 import core.serde
+from review.behaviour_types import BehaviourEntry
 from review.claim_types import ClaimEntry
 from review.paths import FILENAME_RECORD
 from review.types import (
@@ -249,6 +250,8 @@ class ReviewRecord:
     # None: not assessed (no writer, a degraded check, or a legacy record).
     # (): assessed with nothing checkable, or no claim source. entries: assessed.
     claims: tuple[ClaimEntry, ...] | None = None
+    # None: not assessed. (): no source or nothing listed. entries: assessed.
+    behaviours: tuple[BehaviourEntry, ...] | None = None
     # None: no File Triage section. (): the heading with nothing under it.
     triage: tuple[TriageEntry, ...] | None = None
     static_analysis: str = ""
@@ -294,16 +297,16 @@ def fold_claim_answers(
     record: ReviewRecord,
     head: str,
 ) -> dict[str, ClaimAnswer]:
-    """A new answers ledger: `carried`, then this record's derived findings.
+    """A new answers ledger: `carried`, then this record's claim findings.
 
-    Each derived finding with a `stable_id` writes DECLINED/SKIPPED/FALSIFIED
+    Each claim finding with a `stable_id` writes DECLINED/SKIPPED/FALSIFIED
     (restamping `head`) or drops OPEN/UNREACHED/FIXED. Claim membership does
     not prune: `()` and a writer round that omits or rewords a claim keep
     the table. Mutates no argument.
     """
     answers = dict(carried)
     for finding in record.findings:
-        if not finding.derived or not finding.stable_id:
+        if finding.origin is not FindingOrigin.CLAIM or not finding.stable_id:
             continue
         key = finding.stable_id
         if finding.disposition in CLAIM_ANSWERS:

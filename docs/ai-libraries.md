@@ -903,6 +903,17 @@ a script the host shells out to. That distinction is the whole security story �
 running a fenced block out of a public PR comment would be arbitrary code
 execution as the operator, with their credentials and their network.
 
+### review/behaviours.py
+
+The behaviours ledger: source filter, writer check, record entries, merge.
+
+`has_behaviour_source` is the hint filter. `behaviours_problems` is the
+writer check. `behaviours_of` numbers reports `B1…` after the check.
+`merged_behaviours` concatenates group lists (`None` if any is `None`).
+`from_group` drops empty-text and empty-path reports and truncates past
+the cap. `carried_behaviours` keeps prior entries whose paths all lie in
+the skipped groups' files.
+
 ### review/budget.py
 
 Every bound on what a prompt may carry, and the one fit that spends them.
@@ -1746,6 +1757,16 @@ shows a merged record back to an agent (synthesis).
 A finding's severity is its ID's first letter, so the two cannot disagree.
 `TriageEntry` and `LedgerLine` are the record's own types: what an agent
 writes there is exactly what the record keeps.
+
+### review/behaviour_types.py
+
+Behaviours are what a change does, listed with the test that holds each.
+
+A writer reports each with an optional cited test and the source paths it
+covers, and the harness numbers them `B1…`. `note` is harness-owned: why a
+cited test was cleared. This module is a leaf: it imports nothing from
+`review`. `BehaviourReport` is what an agent writes; `BehaviourEntry` is
+what the record stores, with harness numbering.
 
 ### review/claim_types.py
 

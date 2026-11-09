@@ -198,6 +198,10 @@ MAX_CLAIMS = 12
 MAX_CLAIM_BYTES = 512
 # Turns are D12's proxy: half of MAX_CLAIMS, claims batched two to a turn.
 CLAIM_TURN_ALLOWANCE = 6
+# The writer's list is bounded so the document stays reviewable.
+MAX_BEHAVIOURS = 12
+# Each behaviour field is bounded so the document stays reviewable.
+MAX_BEHAVIOUR_BYTES = 512
 
 # How many paths either file list in the delta section spells out before it
 # summarises the rest. A list is orientation, not content — the diff above it is

@@ -385,30 +385,30 @@ _ANSWERED_DERIVED = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPE
 
 
 def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
-    """Derived findings the prior still held open.
+    """Claim findings the prior still held open.
 
-    Openness is a visible derived finding whose disposition is not FIXED,
+    Openness is a visible claim finding whose disposition is not FIXED,
     DECLINED or SKIPPED. UNREACHED is still open (the fix pass never reached
     it). DECLINED and SKIPPED were answered last round; FALSIFIED is not
-    visible. Derived findings are never a prior finding to account for;
+    visible. Claim findings are never a prior finding to account for;
     whether an open one needs the writer is `writer_must_rejudge`.
     """
     if prior is None:
         return ()
     return tuple(
         f for f in prior.record.visible
-        if f.derived and f.disposition not in _ANSWERED_DERIVED
+        if f.origin is FindingOrigin.CLAIM and f.disposition not in _ANSWERED_DERIVED
     )
 
 
 def writer_must_rejudge(job: ReviewJob) -> bool:
     """True when claims cannot be carried, an open claim finding is
-    unanchored, a FIXED or open derived finding is anchored on a file
+    unanchored, a FIXED or open claim finding is anchored on a file
     in this round's change set, or live answers would drop an entry.
 
     Answered claims (DECLINED, SKIPPED, FALSIFIED) expire through
     `live_answers` reading the sidecar, not the prior record — a clean
-    round leaves no derived findings on disk. Known limit: a claim
+    round leaves no claim findings on disk. Known limit: a claim
     linked to a prior writer finding that was fixed or settled gets
     its link cleared and may derive OPEN on a non-writer round.
     """
@@ -424,7 +424,7 @@ def writer_must_rejudge(job: ReviewJob) -> bool:
     if answers.keys() - live_answers(job, answers).keys():
         return True
     return any(
-        f.derived and f.disposition is Disposition.FIXED and _expired(f.path, changed)
+        f.origin is FindingOrigin.CLAIM and f.disposition is Disposition.FIXED and _expired(f.path, changed)
         for f in job.prior.record.findings
     )
 

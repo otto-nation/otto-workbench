@@ -44,6 +44,11 @@ The brand's rules, as they apply here:
   most one label per row; a row of tags reads as noise.
 - Amarillo is never text on the light canvas; rosa is never inline prose.
 
+Where `DESIGN.md` is silent (type sizes, interaction states, a danger colour, a
+third text tier, status glyphs), keep to `_lib/tokens.js` and the existing
+`_ui/ui.js` components rather than inventing a new value, and add the gap to
+otto-nation/otto-nation.github.io#23, which collects what the file lacks for app UI.
+
 ## Checking and installing
 
 - Check an assembled copy, not the source tree: `_herdr_app_install_mods "$tmp"` then `herdr-app check "$tmp/mods/team-prs"` (source `lib/ui.sh`, `lib/constants.sh` and `ai/herdr/steps.sh` first)

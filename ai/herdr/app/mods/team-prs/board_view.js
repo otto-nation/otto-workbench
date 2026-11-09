@@ -16,6 +16,8 @@ import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, 
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
+import { SP, TEXT } from "./_lib/tokens.js";
+import { segment, segmented } from "./ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -326,16 +328,16 @@ export default class TeamPrs extends View {
   onSize(size, cx) { this.size = size; cx.notify(); }
 
   compactHeader(tab, t) {
-    const btn = (name, label) => div().id(`tab-${name}`).px(8).py(4).rounded(6).text_size(11)
-      .cursor_pointer().when(tab === name, (e) => e.bg(t.selected).text_color(t.foreground))
-      .when(tab !== name, (e) => e.text_color(t.muted))
-      .on_click(() => setShared("team-prs.tab", name)).child(label);
-    return h_flex().h(28).flex_none().px(8).gap(4).items_center()
+    return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
       .child(this.scopeToggle(t))
-      .child(h_flex().gap(4).child(btn("team", "Team")).child(btn("mine", "Mine")))
-      .child(div().id("open-board").px(8).py(4).rounded(6).text_size(11).cursor_pointer()
-        .on_click(() => run("tab.new", { name: "PRs", mod: "team-prs" }))
-        .child("Open board"));
+      .child(h_flex().items_center().justify_between()
+        .child(segmented([
+          segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
+          segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
+        ]))
+        .child(div().id("open-board").text_size(TEXT.caption).text_color(t.muted).cursor_pointer()
+          .on_click(() => run("tab.new", { name: "PRs", mod: "team-prs" }))
+          .child("Open board")));
   }
 
   compactView(state, t) {
@@ -343,9 +345,13 @@ export default class TeamPrs extends View {
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
     return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+      .text_size(TEXT.small)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(tabOf(), t))
-      .child(renderCompact({ sections, onOpen: (pr) => this.openDetail(pr), showRepo: scopeOf() === "all" }));
+      .child(renderCompact({
+        sections, onOpen: (pr) => this.openDetail(pr), showRepo: scopeOf() === "all",
+        width: this.size?.width,
+      }));
   }
 
   railView(state) {
@@ -354,13 +360,12 @@ export default class TeamPrs extends View {
       .child(renderRail({ count: this.listed(state).length }));
   }
 
-  scopeToggle(t) {
+  scopeToggle(_t) {
     const scope = scopeOf();
-    const btn = (name, label) => div().id(`scope-${name}`).px(8).py(4).rounded(6).text_size(11)
-      .cursor_pointer().when(scope === name, (e) => e.bg(t.selected).text_color(t.foreground))
-      .when(scope !== name, (e) => e.text_color(t.muted))
-      .on_click(() => setShared("team-prs.scope", name)).child(label);
-    return h_flex().gap(4).child(btn("this", "This space")).child(btn("all", "All spaces"));
+    return segmented([
+      segment("scope-this", "This space", scope === "this", () => setShared("team-prs.scope", "this")),
+      segment("scope-all", "All spaces", scope === "all", () => setShared("team-prs.scope", "all")),
+    ]);
   }
 
   boardView(cx, ctx, state, t) {

@@ -96,6 +96,7 @@ from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimReport, ClaimVerd
 from review.grammar import strip_line_suffix
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
 from review.record import Disposition, RecordFinding, ReviewRecord
+from review.store import StoredReview
 from review.types import ClaimAnswer, FindingOrigin, ReviewJob
 
 CLAIM_KINDS = frozenset({
@@ -346,6 +347,41 @@ def live_answers(
         if not answer.path or answer.head == head
         or review.convergence.untouched(answer.path, changed)
     }
+
+
+# Answered last round: the writer does not have to re-judge these derived findings.
+_ANSWERED_DERIVED = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPED)
+
+
+def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
+    """Derived findings the prior still held open.
+
+    Openness is a visible derived finding whose disposition is not FIXED,
+    DECLINED or SKIPPED. UNREACHED is still open (the fix pass never reached
+    it). DECLINED and SKIPPED were answered last round; FALSIFIED is not
+    visible. Derived findings are never a prior finding to account for, but
+    an open one still needs the writer to re-judge claims.
+    """
+    if prior is None:
+        return ()
+    return tuple(
+        f for f in prior.record.visible
+        if f.derived and f.disposition not in _ANSWERED_DERIVED
+    )
+
+
+def writer_must_rejudge(job: ReviewJob) -> bool:
+    """True when an open claim finding may have moved (D11)."""
+    open_derived = open_derived_findings(job.prior)
+    if not open_derived:
+        return False
+    if _carryable_claims(job) is None:
+        return True
+    changed = review.convergence.change_set(job)
+    return any(
+        not f.path or not review.convergence.untouched(f.path, changed)
+        for f in open_derived
+    )
 
 
 def _carryable_claims(job: ReviewJob) -> tuple[ClaimEntry, ...] | None:

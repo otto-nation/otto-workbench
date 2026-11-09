@@ -12,9 +12,9 @@ if LIB_DIR not in sys.path:
 from core.phases import Phase
 from review.phases import PhaseResult
 from review.prompt_prior import _build_prior_section, _scoped
+from review.claims import open_derived_findings
 from review.reconcile import (
-    _prior_findings, open_derived_findings, passed_over, reconcile,
-    record_prior_findings,
+    _prior_findings, passed_over, reconcile, record_prior_findings,
 )
 from review.record import Disposition, LedgerLine, SeveritySection
 from review.render import BANNER

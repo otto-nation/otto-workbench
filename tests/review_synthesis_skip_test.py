@@ -10,10 +10,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import review.claims  # noqa: E402
 import review.outcome  # noqa: E402
 import review.phases  # noqa: E402
 import review.pipeline  # noqa: E402
 import review.steps  # noqa: E402
+from review.claim_types import ClaimVerdict  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
 from review.phases import PhaseResult  # noqa: E402
 from review.record import Disposition, ReviewRecord  # noqa: E402
@@ -25,6 +27,7 @@ from review.verdict import (  # noqa: E402
     mechanical_verdict,
 )
 from review.verify import PostProcessed  # noqa: E402
+from review_claims_support import claim  # noqa: E402
 from review_convergence_support import finding, merged, review_job  # noqa: E402
 
 CARRIED = finding("S1", "carried from a skipped group", path="a.py", line=3, sid="sids1")
@@ -42,6 +45,24 @@ def _job(tmp_path, prior=None, incremental=True, mode=Mode.SELF):
 def _state():
     return PipelineState(head_sha="h" * 40, group_names=["g1", "g2"],
                          done={Phase.HOLISTIC}, groups_done=[1])
+
+
+def _carried_claim_job(tmp_path, *, path="a.py", sha=None, delta=None, **kwargs):
+    job = _job(tmp_path, **kwargs)
+    job.pr.body = "retries back off"
+    if delta is not None:
+        job.preflight.delta_files = list(delta)
+    c = claim(verdict=ClaimVerdict.CONTRADICTED)
+    derived = finding(
+        "S1", "Claim contradicted: retries back off",
+        path=path, origin=FindingOrigin.CLAIM, stable_id=c.key,
+    )
+    meta_sha = review.claims.input_sha(job) if sha is None else sha
+    job.prior = StoredReview(
+        ReviewRecord(findings=(derived,), claims=(c,)),
+        ReviewMeta(head_sha="p" * 40, claims_input_sha=meta_sha),
+    )
+    return job
 
 
 def test_nothing_new_needs_an_incremental_round(tmp_path):
@@ -94,6 +115,29 @@ def test_an_open_derived_prior_finding_still_needs_synthesis(tmp_path):
     assert not review.steps._nothing_new(_job(tmp_path, prior), merged(fresh=0), [])
 
 
+def test_an_untouched_claim_finding_settles_without_the_writer(tmp_path):
+    job = _carried_claim_job(tmp_path)
+    assert review.steps._nothing_new(job, merged(fresh=0), [])
+
+
+# passes-at-base: pins a case that must still force the writer
+def test_an_unanchored_claim_finding_still_needs_the_writer(tmp_path):
+    job = _carried_claim_job(tmp_path, path="")
+    assert not review.steps._nothing_new(job, merged(fresh=0), [])
+
+
+# passes-at-base: pins a case that must still force the writer
+def test_a_touched_claim_finding_still_needs_the_writer(tmp_path):
+    job = _carried_claim_job(tmp_path, delta=["a.py"])
+    assert not review.steps._nothing_new(job, merged(fresh=0), [])
+
+
+# passes-at-base: pins a case that must still force the writer
+def test_changed_claim_inputs_still_need_the_writer(tmp_path):
+    job = _carried_claim_job(tmp_path, sha="x")
+    assert not review.steps._nothing_new(job, merged(fresh=0), [])
+
+
 def test_a_fixed_derived_prior_finding_does_not_block_nothing_new(tmp_path):
     prior = StoredReview(
         ReviewRecord(findings=(
@@ -136,6 +180,26 @@ def test_a_rejected_group_is_not_a_counted_zero(tmp_path):
     out = review.steps._phase_merge([str(path)], [], ("g1",), declinable=frozenset())
     assert out.fresh is None
     assert not review.steps._nothing_new(_job(tmp_path), out, [])
+
+
+def test_an_untouched_open_claim_finding_is_never_a_clean_review(
+    tmp_path, monkeypatch,
+):
+    job = _carried_claim_job(tmp_path, mode=Mode.PR)
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_inject_failures_and_status", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_write_clean_review",
+                        lambda *a, **k: pytest.fail("clean review dropped the derived finding"))
+    wrote = []
+    monkeypatch.setattr(review.steps, "_write_settled_review",
+                        lambda *a, **k: wrote.append("settled"))
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: pytest.fail("writer ran for an untouched claim finding"))
+    groups = merged(fresh=0)
+    review.steps._run_synthesis_or_fallback(
+        job, _state(), "", 2, groups, [], 0,
+        0.0, 20.0, settled=review.steps._nothing_new(job, groups, []))
+    assert wrote == ["settled"]
 
 
 def test_an_open_derived_prior_finding_does_not_write_a_clean_review(

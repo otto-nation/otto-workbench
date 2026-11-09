@@ -75,7 +75,7 @@ from review.grammar import (
     SEVERITY_KEY,
     DedupKey, FindingIdentity,
 )
-from review.record import LedgerLine, RecordFinding, ReviewRecord, SeveritySection
+from review.record import LedgerLine, RecordFinding, ReviewRecord, SeveritySection, numbered_questions
 from review.types import SEVERITIES
 
 # ── Renumbering ──────────────────────────────────────────────────────────────
@@ -224,6 +224,8 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRe
         extra=tuple(replace(e, body=renumbering.rewrite(e.body)) for e in record.extra),
         focus=tuple(replace(a, coverage=renumbering.rewrite(a.coverage)) for a in record.focus),
         claims=claims,
+        questions=tuple(replace(q, body=renumbering.rewrite(q.body)) for q in record.questions),
+        verified=tuple(replace(v, body=renumbering.rewrite(v.body)) for v in record.verified),
     )
 
 
@@ -355,6 +357,8 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
     triage: list = []
     ledgers: list[LedgerLine] = []
     notes: list[SeveritySection] = []
+    questions: list = []
+    verified: list = []
     for group in groups:
         shifted = _shift_record(group, offsets)
         triage += [e for e in (shifted.triage or ()) if e.path]
@@ -366,6 +370,8 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
         # `_None._` / `---` lines that landed in a finding body are stripped
         # the way the text merge stripped them from the section as a whole.
         findings += [replace(f, body=_clean_section_text(f.body)) for f in shifted.findings]
+        questions += shifted.questions
+        verified += shifted.verified
     by_severity = sorted(findings, key=lambda f: [s.key for s in SEVERITIES].index(f.severity))
     deduped = _dedup_records(by_severity)
     seen_paths: set[str] = set()
@@ -380,5 +386,6 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
         severity_sections=tuple(notes),
         ledger=_dedup_ledger(ledgers),
         behaviours=review.behaviours.merged_behaviours(groups),
+        questions=numbered_questions(questions), verified=tuple(verified),
     )
     return renumber_record(merged, deduped.merged_into)

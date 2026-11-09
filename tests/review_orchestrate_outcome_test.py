@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 import review.claims
-from review.record import FocusSource, ReviewRecord, TriageEntry, load_record
+from review.record import FocusSource, Question, ReviewRecord, TriageEntry, load_record
 from review_behaviours_support import behaviour
 from review_claims_support import claim
 from review_focus_support import area, user_area
@@ -513,6 +513,19 @@ def test_an_unchanged_review_does_not_carry_last_round_s_coverage(ro, tmp_path):
     ro.write_unchanged_review(job)
     rec = load_record(tmp_path)
     assert [(a.title, a.coverage) for a in rec.focus] == [("A", "")]
+
+
+def test_an_unchanged_review_keeps_last_round_s_questions(ro, tmp_path):
+    from review.store import StoredReview
+    from review.types import ReviewMeta
+    job = TestWriteReviewSidecar._make_job(ro, tmp_path)
+    job.prior = StoredReview(
+        record(questions=(Question("Q1", None, None, "why?"),)),
+        ReviewMeta(),
+    )
+    ro.write_unchanged_review(job)
+    rec = load_record(tmp_path)
+    assert rec.questions[0].body == "why?"
 
 
 def test_a_review_with_no_claim_source_publishes_no_claims_section(ro, tmp_path):

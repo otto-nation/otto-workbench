@@ -64,8 +64,8 @@ def run_list() -> dict:
 def cmd_status(args) -> int:
     """`status`: the run report, or the raw state with `--full`."""
     if args.list:
-        if args.run_id or args.full:
-            return cli.pr_batch_common.fail("--list takes no run id and no --full")
+        if args.run_id or args.full or args.offline:
+            return cli.pr_batch_common.fail("--list takes no run id, no --full and no --offline")
         core.report.emit_json(run_list())
         return EXIT_OK
     run_id = cli.pr_batch_common.resolve_run_id(args.run_id)

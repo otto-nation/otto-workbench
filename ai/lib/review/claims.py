@@ -113,6 +113,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 
 from core.phases import Mode
+import review.behaviours
 import review.budget
 import review.convergence
 import review.focus
@@ -254,11 +255,12 @@ def without_vanished_links(record: ReviewRecord) -> ReviewRecord:
 def writer_check(
     job: ReviewJob,
 ) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:
-    """Focus coverage then claims, as the writer's `check=` callable.
+    """The writer's whole run-context `check=`: focus, claims, and behaviours.
 
     `job` supplies the requested focus, whether derived areas are required,
-    and whether a claim source exists. Caps and cite rules live in
-    `claims_problems`, so an over-cap list degrades rather than rejects.
+    and whether a claim or behaviour source exists. Caps and cite rules live
+    in `claims_problems` and `behaviours_problems`, so an over-cap list
+    degrades rather than rejects.
     """
     def check(artifact: ReviewArtifact) -> tuple[IngestError, ...]:
         return review.focus.coverage_problems(
@@ -266,6 +268,9 @@ def writer_check(
         ) + claims_problems(
             artifact.claims, {f.id for f in artifact.findings},
             has_claim_source=has_claim_source(job),
+        ) + review.behaviours.behaviours_problems(
+            artifact.behaviours,
+            has_behaviour_source=review.behaviours.has_behaviour_source(job),
         )
     return check
 
@@ -294,20 +299,23 @@ def claims_of(
 
 
 def check_warning(errors: Sequence[IngestError], job: ReviewJob) -> str:
-    """Warning after a writer's second failed check, with a claims clause.
+    """Warning after a writer's second failed check, with claims and behaviours clauses.
 
     `errors` are the ingest errors left after the repair turn. When any is a
     claims kind, the warning adds that prior claims are carried, or that
-    claims are published as not assessed when they cannot be.
+    claims are published as not assessed when they cannot be. When any is a
+    behaviours kind, it adds that behaviours are published as not assessed.
     """
-    more = ()
+    more = []
     if any(e.kind in CLAIM_KINDS for e in errors):
         clause = (
             "prior claims are carried"
             if _carryable_claims(job) is not None
             else "claims are published as not assessed"
         )
-        more = (clause,)
+        more.append(clause)
+    if any(e.kind in review.behaviours.BEHAVIOUR_KINDS for e in errors):
+        more.append("behaviours are published as not assessed")
     return review.focus.check_warning(errors, more=more)
 
 

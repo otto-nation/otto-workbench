@@ -1,5 +1,6 @@
 """Behaviours as data: types, ingest kinds, the writer's caps, and check."""
 
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -12,6 +13,8 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import cli.review_orchestrate  # noqa: F401
+from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Mode
 import core.log
 from review.behaviour_types import BehaviourReport
@@ -19,15 +22,23 @@ from review.behaviours import (
     behaviours_of, behaviours_problems, carried_behaviours, from_group,
     has_behaviour_source, merged_behaviours,
 )
-from review.claims import input_sha, open_derived_findings, writer_must_rejudge
+from review.budget import MAX_BEHAVIOURS
+from review.claims import (
+    check_warning, input_sha, open_derived_findings, writer_must_rejudge,
+)
+from review.merge import merge_records
 from review.render import behaviours_body
-from review.verify import verified_behaviours
+from review.retry import GroupFailure
+from review.steps import Merged, _carry_forward_prior_findings, _phase_merge
+from review.verify import PostProcessed, verified_behaviours
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
-from review.record import Disposition, ReviewRecord, fold_claim_answers
+from review.record import Disposition, ReviewRecord, fold_claim_answers, load_record
 from review.store import StoredReview
-from review.types import FindingOrigin, PreflightData, ReviewMeta
+from review.types import FindingOrigin, Group, PreflightData, ReviewMeta
 from review_behaviours_support import BEHAVIOUR_DOC, behaviour
+from review_claims_support import claim
 from review_convergence_support import review_job
+from review_focus_support import DERIVED_FOCUS
 from review_record_support import finding, record
 
 _OK = BehaviourReport(**BEHAVIOUR_DOC)
@@ -253,3 +264,194 @@ def test_a_cited_test_note_echoes_nothing_from_the_agent(tmp_path):
     assert got[0].note == "cited test not found"
     body = behaviours_body(got)
     assert not any(ln.startswith("## Must fix") for ln in body.splitlines())
+
+
+_WRITER = {"summary": "s", "verdict": "Approve", "focus": DERIVED_FOCUS}
+BAD_CLAIM = IngestError(IngestErrorKind.BAD_CLAIM, 0, "d", at="$.claims")
+
+
+def _writer_job(ro, tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir(exist_ok=True)
+    (wt / "a.py").write_text("delay *= 2\n")
+    return ro.ReviewJob(
+        repo="org/repo", pr_number="42",
+        pr=ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc123",
+            additions=1, deletions=0, changed_files=1,
+            files=[{"path": "a.py", "additions": 1, "deletions": 0}],
+        ),
+        ctx=ro.PRContext(), wt_path=str(wt),
+        review_file=str(tmp_path / "review.md"),
+        session_log=str(tmp_path / "session.jsonl"),
+        mode=ro.Mode("pr"), focus=(),
+    )
+
+
+def _patch_writer(monkeypatch, run_agent):
+    import agent.retry
+    import review.outcome
+    import review.phases
+    import review.steps
+    monkeypatch.setattr(review.steps, "build_prompt", lambda *a, **kw: "mock prompt")
+    monkeypatch.setattr(
+        review.outcome, "post_process_record",
+        lambda rec, *a, **kw: PostProcessed(rec, None),
+    )
+    monkeypatch.setattr(review.phases, "run_agent", run_agent)
+    monkeypatch.setattr(agent.retry, "try_recover_output", lambda *a, **k: False)
+
+
+def test_a_writer_missing_behaviours_gets_a_repair_turn(ro, tmp_path, monkeypatch):
+    job = _writer_job(ro, tmp_path)
+    prompts = []
+
+    def mock_invoke(inv, **kwargs):
+        prompts.append(inv.prompt)
+        doc = {**_WRITER, "behaviours": [BEHAVIOUR_DOC]}
+        if "Your output was rejected" not in inv.prompt:
+            doc = _WRITER
+        Path(inv.output_path).write_text(json.dumps(doc))
+        Path(inv.session_log).write_text("")
+        return 0
+
+    _patch_writer(monkeypatch, mock_invoke)
+    result = ro._phase_synthesis(job, "", 3, Merged(record()))
+    assert result.diagnosis is None
+    assert len(prompts) == 2
+    assert "missing_behaviours" in prompts[1]
+    assert "was read" in prompts[1]
+
+
+def test_a_second_behaviours_miss_publishes_not_assessed(
+    ro, tmp_path, monkeypatch, capsys,
+):
+    job = _writer_job(ro, tmp_path)
+
+    def mock_invoke(inv, **kwargs):
+        Path(inv.output_path).write_text(json.dumps(_WRITER))
+        Path(inv.session_log).write_text("")
+        return 0
+
+    _patch_writer(monkeypatch, mock_invoke)
+    result = ro._phase_synthesis(job, "", 3, Merged(record()))
+    assert result.diagnosis is None
+    rec = load_record(tmp_path)
+    assert rec.behaviours is None
+    assert "*Not assessed this round.*" in Path(job.review_file).read_text()
+    err = capsys.readouterr().err
+    assert " — behaviours are published as not assessed" in err
+
+
+def test_check_warning_names_behaviours():
+    job = SimpleNamespace(
+        pr=SimpleNamespace(body=""), issue_link="", issue_context="", prior=None,
+    )
+    only = (BAD_BEHAVIOUR,)
+    assert check_warning(only, job) == (
+        f"{BAD_BEHAVIOUR.render()} — behaviours are published as not assessed"
+    )
+    carryable = SimpleNamespace(
+        pr=SimpleNamespace(body="x"), issue_link="", issue_context="", prior=None,
+    )
+    carryable.prior = SimpleNamespace(
+        record=SimpleNamespace(claims=(claim(),)),
+        meta=SimpleNamespace(claims_input_sha=input_sha(carryable)),
+    )
+    warning = check_warning((BAD_CLAIM, BAD_BEHAVIOUR), carryable)
+    assert warning.endswith(
+        "prior claims are carried; behaviours are published as not assessed"
+    )
+
+
+def test_the_mechanical_fallback_publishes_group_behaviours(
+    ro, tmp_path, monkeypatch,
+):
+    job = _writer_job(ro, tmp_path)
+    tests = Path(job.wt_path) / "tests"
+    tests.mkdir()
+    (tests / "a_test.py").write_text("def test_backoff():\n    pass\n")
+    (Path(job.wt_path) / "b.py").write_text("y = 1\n")
+    job.pr.files.append({"path": "b.py", "additions": 1, "deletions": 0})
+    g1 = record(behaviours=(behaviour(id="B9", text="one", paths=("a.py",)),))
+    g2 = record(behaviours=(behaviour(
+        id="B2", text="two", test_cited="tests/a_test.py::test_backoff",
+        paths=("b.py",),
+    ),))
+    merged = merge_records([g1, g2])
+
+    def mock_invoke(inv, **kwargs):
+        Path(inv.session_log).write_text("")
+        return 1
+
+    _patch_writer(monkeypatch, mock_invoke)
+    ro._phase_synthesis(job, "", 2, Merged(merged))
+    rec = load_record(tmp_path)
+    assert [e.id for e in rec.behaviours] == ["B1", "B2"]
+    assert rec.behaviours[1].test_cited == "tests/a_test.py::test_backoff"
+
+
+def test_a_pre_upgrade_group_leaves_behaviours_unassessed_on_fallback(
+    ro, tmp_path, monkeypatch,
+):
+    job = _writer_job(ro, tmp_path)
+
+    def mock_invoke(inv, **kwargs):
+        Path(inv.session_log).write_text("")
+        return 1
+
+    _patch_writer(monkeypatch, mock_invoke)
+    ro._phase_synthesis(job, "", 1, Merged(record(behaviours=None)))
+    rec = load_record(tmp_path)
+    assert rec.behaviours is None
+    assert "*Not assessed this round.*" in Path(job.review_file).read_text()
+
+
+def test_a_group_gap_leaves_merged_behaviours_unassessed(tmp_path):
+    good = tmp_path / "group-1.json"
+    good.write_text(json.dumps({
+        "findings": [{"id": "N1", "path": "a.py", "line": 1, "body": "x"}],
+        "behaviours": [BEHAVIOUR_DOC],
+    }))
+    failed = GroupFailure("g2", Diagnosis(DiagnosisKind.OUTPUT_MISSING))
+    merged = _phase_merge(
+        [str(good), str(tmp_path / "group-2.json")],
+        [failed], ("g1", "g2"), declinable=frozenset(),
+    )
+    assert merged.record.behaviours is None
+
+
+def test_a_skipped_group_carries_its_prior_behaviours():
+    prior = StoredReview(
+        record(behaviours=(
+            behaviour(id="B1", text="kept", paths=("a.py",)),
+            behaviour(id="B2", text="rerun", paths=("b.py",)),
+        )),
+        ReviewMeta(),
+    )
+    groups = [Group("g1", ["a.py"], 1), Group("g2", ["b.py"], 1)]
+    carried = _carry_forward_prior_findings(prior, groups, {1})
+    assert [e.text for e in carried.record.behaviours] == ["kept"]
+    fresh = record(behaviours=(behaviour(id="B9", text="fresh", paths=("b.py",)),))
+    folded = Merged(fresh).carry(carried.record)
+    assert [e.id for e in folded.record.behaviours] == ["B1", "B2"]
+    assert [e.text for e in folded.record.behaviours] == ["fresh", "kept"]
+    none_prior = StoredReview(ReviewRecord(behaviours=None), ReviewMeta())
+    none_carried = _carry_forward_prior_findings(none_prior, groups, {1})
+    assert none_carried.record.behaviours is None
+    assert Merged(fresh).carry(none_carried.record).record.behaviours is None
+
+
+def test_an_over_cap_behaviour_list_degrades(ro, tmp_path, monkeypatch):
+    job = _writer_job(ro, tmp_path)
+    over = {**_WRITER, "behaviours": [BEHAVIOUR_DOC] * (MAX_BEHAVIOURS + 1)}
+
+    def mock_invoke(inv, **kwargs):
+        Path(inv.output_path).write_text(json.dumps(over))
+        Path(inv.session_log).write_text("")
+        return 0
+
+    _patch_writer(monkeypatch, mock_invoke)
+    result = ro._phase_synthesis(job, "", 3, Merged(record()))
+    assert result.diagnosis is None
+    assert load_record(tmp_path).behaviours is None

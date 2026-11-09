@@ -70,6 +70,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
+import review.behaviours
 from review.grammar import (
     SEVERITY_KEY,
     DedupKey, FindingIdentity,
@@ -378,5 +379,6 @@ def merge_records(groups: list[ReviewRecord]) -> ReviewRecord:
         triage=tuple(unique_triage), findings=deduped.findings,
         severity_sections=tuple(notes),
         ledger=_dedup_ledger(ledgers),
+        behaviours=review.behaviours.merged_behaviours(groups),
     )
     return renumber_record(merged, deduped.merged_into)

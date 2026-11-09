@@ -33,6 +33,7 @@ from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
     GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
 )
+import review.behaviours
 import review.claims
 from review.budget import CLAIM_TURN_ALLOWANCE
 from review.focus import covered
@@ -125,6 +126,7 @@ class Merged:
             replace(
                 append_findings(self.record, record.findings),
                 severity_sections=notes,
+                behaviours=review.behaviours.merged_behaviours((self.record, record)),
             ),
             fresh=self.fresh,
         )
@@ -506,6 +508,7 @@ def _phase_synthesis(
             focus=covered(job.focus, outcome.artifact.focus,
                           [f["path"] for f in job.pr.files]),
             claims=review.claims.claims_of(job, outcome),
+            behaviours=review.behaviours.behaviours_of(job, outcome),
         )
         record = _restore_held_findings(merged.record, record)
         if _is_incremental(job):
@@ -562,7 +565,11 @@ def _carry_forward_prior_findings(
                 findings=carried.findings + scoped.findings,
                 severity_sections=carried.severity_sections + notes,
             )
-    return Merged(carried) if carried.findings else None
+    files = [p for i, g in enumerate(groups, 1) if i in skip_indices for p in g.files]
+    carried = replace(carried, behaviours=review.behaviours.carried_behaviours(
+        prior.record.behaviours, files,
+    ))
+    return Merged(carried) if carried.findings or carried.behaviours != () else None
 
 
 def _identify_incremental_skips(
@@ -692,7 +699,11 @@ def _phase_merge(
     if ingested.gaps:
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
             f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
-        record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
+        record = replace(
+            record,
+            extra=record.extra + (ProseSection("Review gaps", listed),),
+            behaviours=None,
+        )
     # A rejection ingest added, that the caller did not already count as a
     # failed group, is not a counted zero — `_nothing_new` must not settle.
     ingest_gaps = {g.group for g in ingested.gaps} - {f.group for f in failed_groups}

@@ -41,6 +41,7 @@ from pathlib import Path
 import git.client
 import core.job_slots
 import core.log
+import review.behaviours
 import review.claims
 import review.focus
 from agent.diagnosis import Diagnosis, DiagnosisKind
@@ -232,6 +233,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         focus=review.focus.covered(
             job.focus, outcome.artifact.focus, [f["path"] for f in job.pr.files]),
         claims=review.claims.claims_of(job, outcome),
+        behaviours=review.behaviours.behaviours_of(job, outcome),
     )
     if _is_incremental(job):
         record = drop_out_of_delta_nits(record, job.preflight.delta_files, prior_ids(job)).record

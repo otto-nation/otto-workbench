@@ -139,6 +139,8 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
                 and not existing.meta.claims_input_sha
                 else None
             ),
+            # No worktree to check cited tests.
+            behaviours=None,
         )
         # Dated today and carrying no status: a rebuild cannot attest to how the
         # pipeline run ended — this is not one. write_review also writes

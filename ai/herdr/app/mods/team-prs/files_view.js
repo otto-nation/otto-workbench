@@ -5,7 +5,7 @@ import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
 import { theme } from "herdr";
 import { MAX_LINES } from "./_lib/diff.js";
 import { SP, TEXT, ROW_H, LAYOUT, CONTROL_H, FILL, MONO } from "./_lib/tokens.js";
-import { button, addStat, delStat, hoverRow, placeholder, caption, scrollBody, mono } from "./ui.js";
+import { button, addStat, delStat, hoverRow, placeholder, caption, scrollBody, mono } from "./_ui/ui.js";
 
 function statusColor(t, s) {
   if (s === "A") return t.ansi2;

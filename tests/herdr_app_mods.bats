@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for _herdr_app_install_mods — copy herdr-app mods with a per-file manifest.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/team-prs/* lib/constants.sh lib/files.sh
+# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/team-prs/* lib/constants.sh lib/files.sh
 
 setup() {
   load 'test_helper'
@@ -124,6 +124,18 @@ _cksum() {
   [ ! -e "$APP/mods/_lib" ]
 }
 
+@test "every shared _* dir is copied into each mod and none is installed as a mod" {
+  mkdir -p "$SRC/_extra"
+  printf 'export const x = 1;\n' > "$SRC/_extra/x.js"
+  run _run
+  [ "$status" -eq 0 ]
+  cmp -s "$SRC/_ui/ui.js" "$APP/mods/team-prs/_ui/ui.js"
+  cmp -s "$SRC/_extra/x.js" "$APP/mods/team-prs/_extra/x.js"
+  grep -q $'^_ui/ui.js\t' "$APP/mods/team-prs/.workbench-install"
+  [ ! -e "$APP/mods/_ui" ]
+  [ ! -e "$APP/mods/_extra" ]
+}
+
 @test "source file deleted upstream is removed from the target" {
   run _run
   [ "$status" -eq 0 ]
@@ -140,6 +152,7 @@ _cksum() {
   mkdir -p "$APP/mods"
   cp -R "$SRC/team-prs" "$APP/mods/team-prs"
   cp -R "$SRC/_lib" "$APP/mods/team-prs/_lib"
+  cp -R "$SRC/_ui" "$APP/mods/team-prs/_ui"
   before_main=$(_cksum "$APP/mods/team-prs/main.js")
   run _run
   [ "$status" -eq 0 ]

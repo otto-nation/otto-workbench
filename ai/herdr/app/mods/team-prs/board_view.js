@@ -329,7 +329,7 @@ export default class TeamPrs extends View {
 
   compactHeader(tab, t) {
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
-      .child(this.scopeToggle(t))
+      .child(h_flex().child(this.scopeToggle(t)))
       .child(h_flex().items_center().justify_between()
         .child(segmented([
           segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

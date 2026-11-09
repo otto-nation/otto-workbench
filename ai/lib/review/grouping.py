@@ -7,7 +7,7 @@ a group by the paths it holds.
 
 The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
-it can afford to carry.
+it can afford to carry. The same lexical rules feed the review's test hint.
 """
 
 # doc-group: pipeline
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,7 +119,7 @@ def _split_large_dir(name: str, files: list[str], file_lines: dict[str, int]) ->
 _TEST_ROOTS = frozenset({"tests", "test", "spec", "__tests__"})
 
 
-def _is_test_file(path: str) -> bool:
+def is_test_file(path: str) -> bool:
     """Whether ``path`` is a test by name or by sitting under a test root.
 
     Lexical on purpose: grouping runs on arbitrary PRs in arbitrary repos,
@@ -136,11 +136,11 @@ def _is_test_file(path: str) -> bool:
     return False
 
 
-def _subject_stem(path: str) -> str:
+def subject_stem(path: str) -> str:
     """The source stem a test file is named for, else the file's own stem.
 
     Strips one test affix, so a compound name keeps whatever else it carries:
-    ``review_grouping_test.py`` yields ``review.grouping``, which no source
+    ``review_grouping_test.py`` yields ``review_grouping``, which no source
     stem matches, and the file falls back to its own top-level directory. That
     is the accepted cost of staying lexical — resolving it needs the import
     graph, which does not generalise past this repo.
@@ -157,6 +157,57 @@ def _subject_stem(path: str) -> str:
     if stem.endswith("_test") and len(stem) > 5:
         return stem[:-5]
     return stem
+
+
+NON_SOURCE_SUFFIXES = frozenset({
+    ".md", ".rst", ".txt", ".adoc", ".yml", ".yaml", ".json",
+    ".toml", ".ini", ".cfg", ".lock", ".svg", ".png",
+})
+
+
+def pairs_with(test_stem: str, source_stem: str) -> bool:
+    """Whether ``test_stem`` is named for ``source_stem`` on a name boundary.
+
+    Equal stems pair, and so does a test stem that ends with ``_`` plus the
+    source stem, so ``review_grouping`` pairs with ``grouping`` while
+    ``review_merge`` does not pair with ``emerge``.
+    """
+    return test_stem == source_stem or test_stem.endswith("_" + source_stem)
+
+
+def hint_subjects(files: Sequence[dict]) -> list[str]:
+    """Changed source paths that can earn a test hint.
+
+    A path is a subject when it is not a test, not generated (tier 3), not a
+    documented non-source suffix, and has additions.
+    """
+    subjects: list[str] = []
+    for entry in files:
+        path = entry["path"]
+        if is_test_file(path):
+            continue
+        if classify_tier(path) == 3:
+            continue
+        if Path(path).suffix.lower() in NON_SOURCE_SUFFIXES:
+            continue
+        if entry.get("additions", 0) <= 0:
+            continue
+        subjects.append(path)
+    return subjects
+
+
+def unpaired_subjects(files: Sequence[dict]) -> list[str]:
+    """``hint_subjects`` that no test file in the same diff pairs with."""
+    test_stems = [
+        subject_stem(entry["path"]) for entry in files if is_test_file(entry["path"])
+    ]
+    unpaired: list[str] = []
+    for path in hint_subjects(files):
+        source = subject_stem(path)
+        if any(pairs_with(stem, source) for stem in test_stems):
+            continue
+        unpaired.append(path)
+    return unpaired
 
 
 def group_files(pr: PRMetadata) -> list[Group]:
@@ -200,7 +251,7 @@ def group_files(pr: PRMetadata) -> list[Group]:
 
     tests: list[str] = []
     for f in tiers[2]:
-        if _is_test_file(f):
+        if is_test_file(f):
             tests.append(f)
             continue
         # Repo-root files have no directory component; share one bucket so
@@ -208,15 +259,15 @@ def group_files(pr: PRMetadata) -> list[Group]:
         d = f.split("/")[0] if "/" in f else "."
         _bucket(d, f)
 
-    # Source files contribute their own stem — _subject_stem strips a test
+    # Source files contribute their own stem — subject_stem strips a test
     # affix only when there is one, so the call is a no-op on the files here.
     stem_owner: dict[str, str] = {}
     for d in dir_order:
         for f in dir_files[d]:
-            stem_owner.setdefault(_subject_stem(f), d)
+            stem_owner.setdefault(subject_stem(f), d)
 
     for f in tests:
-        owner = stem_owner.get(_subject_stem(f))
+        owner = stem_owner.get(subject_stem(f))
         if owner is not None:
             _bucket(owner, f)
             continue

@@ -1220,7 +1220,7 @@ a group by the paths it holds.
 
 The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
-it can afford to carry.
+it can afford to carry. The same lexical rules feed the review's test hint.
 
 ### review/invoke.py
 

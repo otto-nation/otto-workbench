@@ -140,9 +140,6 @@ def _group(**finding) -> dict:
     ({"prior_findings": [{"id": "M1\n", "disposition": "Fixed"}]},
      IngestErrorKind.UNKNOWN_SEVERITY, "$.prior_findings[0].id"),
     (_group(declined="documented"), IngestErrorKind.BAD_CARRY, "$.findings[0].declined"),
-    ({"questions": [{"body": " "}]}, IngestErrorKind.EMPTY_FIELD, "$.questions[0].body"),
-    ({"questions": [{"path": "a.py:3", "body": "q"}]}, IngestErrorKind.LINE_IN_PATH, "$.questions[0].path"),
-    ({"verified": [{"line": 3, "body": "v"}]}, IngestErrorKind.BAD_LOCATION, "$.verified[0].line"),
 ])
 def test_each_group_rejection_names_its_kind_and_place(doc, kind, at):
     problems = load_strict(GroupArtifact, doc).problems()
@@ -399,6 +396,30 @@ def test_questions_are_numbered_and_capped(capsys):
         summary="s", verified=tuple(VerifiedNote(body="v") for _ in range(9)),
     ).to_record(checkbox=False, declinable=NONE)
     assert len(rec.verified) == 8
+
+
+@pytest.mark.parametrize("doc, field, at, needle", [
+    ({"questions": [{"path": "a.py:3", "body": "q"}, {"body": "keep"}]},
+     "questions", "$.questions[0].path", "a.py:3"),
+    ({"questions": [{"body": " "}, {"body": "keep"}]},
+     "questions", "$.questions[0].body", "empty"),
+    ({"verified": [{"line": 3, "body": "v"}, {"body": "keep"}]},
+     "verified", "$.verified[0].line", "path"),
+])
+def test_a_malformed_note_is_dropped_with_a_warning(capsys, doc, field, at, needle):
+    art = load_strict(ReviewArtifact, {"summary": "s", **doc})
+    assert art.problems() == ()
+    rec = art.to_record(checkbox=False, declinable=NONE)
+    held = rec.questions if field == "questions" else rec.verified
+    assert [n.body for n in held] == ["keep"]
+    err = capsys.readouterr().err
+    assert f"dropped {at}" in err and needle in err
+
+
+def test_an_unknown_id_key_on_a_question_is_still_a_schema_rejection():
+    with pytest.raises(SchemaRejected) as exc:
+        load_strict(GroupArtifact, {"questions": [{"id": "Q1", "body": "q"}]})
+    assert any(v.at.endswith(".id") for v in exc.value.violations)
 
 
 def test_a_group_record_keeps_its_questions_and_shows_them_back():

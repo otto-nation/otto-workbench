@@ -233,12 +233,15 @@ class ReviewTask:
 
         exit_code = _run_orchestrate(repo_dir, review_file, opts)
         findings, usage = parse_review_output(review_file, session_log)
-
+        rec = getattr(ReviewDocument.read(review_file), "record", None)
+        qn = 0 if rec is None else len(rec.questions)
+        vn = 0 if rec is None else len(rec.verified)
         return RunArtifacts(
             exit_code=exit_code,
             usage=usage,
             temp_dirs=[repo_dir, artifact_dir],
-            data={"findings": findings, "summary": f"findings: {len(findings)}"},
+            data={"findings": findings,
+                  "summary": f"findings: {len(findings)}; questions: {qn}; verified: {vn}"},
             outcome=outcome_for(usage),
         )
 

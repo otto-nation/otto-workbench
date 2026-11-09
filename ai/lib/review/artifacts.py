@@ -160,13 +160,15 @@ class AgentQuestion:
     body: str = ""
 
 
-def _notes_problems(notes: tuple[AgentQuestion | VerifiedNote, ...], at: str) -> list[IngestError]:
-    out: list[IngestError] = []
+def _kept_notes(notes: tuple, at: str) -> tuple:
+    kept, dropped = [], []
     for i, n in enumerate(notes):
-        out += _location_problems(n.path, n.line, None, f"{at}[{i}]")
-        if not n.body.strip():
-            out.append(_empty(f"{at}[{i}].body", "a body"))
-    return out
+        why = _location_problems(n.path, n.line, None, f"{at}[{i}]") or (
+            [_empty(f"{at}[{i}].body", "a body")] if not n.body.strip() else [])
+        (dropped if why else kept).append(why[0] if why else n)
+    if dropped:
+        core.log.warn("; ".join(f"dropped {e.at}: {e.detail}" for e in dropped))
+    return tuple(kept)
 
 
 def _capped(notes: tuple, cap: int, what: str) -> tuple:
@@ -177,12 +179,13 @@ def _capped(notes: tuple, cap: int, what: str) -> tuple:
 
 
 def _record_questions(questions: tuple[AgentQuestion, ...]) -> tuple[Question, ...]:
-    asked = _capped(questions, MAX_QUESTIONS, "questions")
+    asked = _capped(_kept_notes(questions, "$.questions"), MAX_QUESTIONS, "questions")
     return numbered_questions(Question("", q.path, q.line, q.body.strip()) for q in asked)
 
 
 def _record_verified(verified: tuple[VerifiedNote, ...]) -> tuple[VerifiedNote, ...]:
-    return tuple(replace(v, body=v.body.strip()) for v in _capped(verified, MAX_VERIFIED, "verified notes"))
+    kept = _capped(_kept_notes(verified, "$.verified"), MAX_VERIFIED, "verified notes")
+    return tuple(replace(v, body=v.body.strip()) for v in kept)
 
 
 def _findings_problems(findings: tuple[AgentFinding, ...], at: str) -> list[IngestError]:
@@ -224,9 +227,7 @@ class GroupArtifact:
         return tuple(
             _triage_problems(self.triage, "$.triage")
             + _findings_problems(self.findings, "$.findings")
-            + _ledger_problems(self.prior_findings, "$.prior_findings")
-            + _notes_problems(self.questions, "$.questions")
-            + _notes_problems(self.verified, "$.verified"))
+            + _ledger_problems(self.prior_findings, "$.prior_findings"))
 
     def to_record(self, *, declinable: frozenset[str]) -> ReviewRecord:
         """The group's record. A group writes no checkboxes; the review's are synthesis's."""
@@ -272,9 +273,7 @@ class ReviewArtifact:
             + _triage_problems(self.triage, "$.triage")
             + _findings_problems(self.findings, "$.findings")
             + _ledger_problems(self.prior_findings, "$.prior_findings")
-            + _focus_report_problems(self.focus, "$.focus")
-            + _notes_problems(self.questions, "$.questions")
-            + _notes_problems(self.verified, "$.verified"))
+            + _focus_report_problems(self.focus, "$.focus"))
 
     def to_record(self, *, checkbox: bool, declinable: frozenset[str]) -> ReviewRecord:
         """The review's record. `checkbox` is the mode's: a self-review is a checklist."""

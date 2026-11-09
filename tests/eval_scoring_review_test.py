@@ -398,6 +398,28 @@ class TestReviewTask:
             for path in artifacts.temp_dirs:
                 shutil.rmtree(path, ignore_errors=True)
 
+    def test_the_run_summary_names_questions_and_verified(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(eval.scoring_review, "_run_orchestrate", lambda *a, **kw: 0)
+        monkeypatch.setattr(
+            eval.scoring_review, "parse_review_output",
+            lambda *a: ([_finding()], SessionUsage(cost=0.1)))
+
+        class _Rec:
+            questions = (object(),)
+            verified = (object(), object())
+
+        monkeypatch.setattr(
+            eval.scoring_review.ReviewDocument, "read",
+            lambda *a, **k: type("D", (), {"record": _Rec()})())
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.go").write_text("package main\n")
+        artifacts = ReviewTask().run(tmp_path, RunOptions())
+        try:
+            assert artifacts.data["summary"] == "findings: 1; questions: 1; verified: 2"
+        finally:
+            for path in artifacts.temp_dirs:
+                shutil.rmtree(path, ignore_errors=True)
+
     def test_the_outcome_reaches_the_score(self):
         artifacts = RunArtifacts(outcome=RunOutcome.NOT_RUN)
         assert ReviewTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN

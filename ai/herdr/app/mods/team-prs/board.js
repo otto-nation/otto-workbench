@@ -9,7 +9,8 @@ import { segment, eyebrow } from "./ui.js";
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 const COL_MIN = 260;
 const COL_EMPTY = 140;
-const TITLE_LH = 16;
+const TITLE_LH = 18;
+const COL_MAX = 400;
 
 function ciColor(status) {
   const t = theme();
@@ -28,7 +29,7 @@ function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
   return v_flex().id(`col-${col.key}`).h_full().min_h(0)
-    .when(!empty, (e) => e.flex_1().min_w(COL_MIN))
+    .when(!empty, (e) => e.flex_1().min_w(COL_MIN).max_w(COL_MAX))
     .when(empty, (e) => e.flex_none().min_w(COL_EMPTY).max_w(COL_EMPTY).overflow_x_hidden())
     .child(eyebrow(col.label, col.items.length))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.sm).pb(SP.sm).gap(SP.sm)
@@ -67,7 +68,7 @@ export function renderCard(pr, { onOpen, spinner, showRepo }) {
   const mark = CI[pr.ciStatus] ?? "";
   return v_flex().id(cardId(pr)).p(SP.md).gap(SP.sm).rounded(RADIUS.card).border_1().border_color(t.border)
     .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => onOpen(pr))
-    .child(div().text_size(TEXT.body).font_medium().line_height(TITLE_LH).max_h(TITLE_LH * 2)
+    .child(div().text_size(TEXT.body).font_medium().max_h(TITLE_LH * 2)
       .overflow_hidden().child(pr.title ?? ""))
     .child(h_flex().gap(SP.sm).items_center().text_size(TEXT.caption).text_color(t.dim)
       .child(div().flex_none().child(showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`))

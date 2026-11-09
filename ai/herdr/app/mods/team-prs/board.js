@@ -4,26 +4,18 @@ import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
-import { chip as chipOf, filterGroup, pill, ciMark, addStat, delStat } from "./ui.js";
+import { chip as chipOf, filterGroup, pill, ciMark, addStat, delStat, card, eyebrow, placeholder, scrollBody } from "./ui.js";
 
-const { colMin: COL_MIN, colMax: COL_MAX, titleLh: TITLE_LH } = LAYOUT;
-
-// Lane title: the strongest text on the board after PR titles, and a count pill.
-function columnHeader(label, count) {
-  const t = theme();
-  return h_flex().flex_none().px(SP.md).py(SP.md).gap(SP.sm).items_center()
-    .child(div().min_w(0).truncate().text_size(TEXT.small).font_semibold().text_color(t.foreground).child(label))
-    .child(pill(String(count), count > 0 ? t.foreground : t.dim));
-}
+const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
 
 function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
   return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}${FILL.lane}`)
     .flex_1().min_w(COL_MIN).max_w(COL_MAX)
-    .child(columnHeader(col.label, col.items.length))
-    .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().p(SP.sm).gap(SP.sm)
-      .when(empty, (e) => e.child(div().px(SP.md).text_size(TEXT.caption).text_color(t.dim).child("none")))
+    .child(eyebrow(col.label, col.items.length, SP.md, { strong: true }))
+    .child(scrollBody().p(SP.sm).gap(SP.sm)
+      .when(empty, (e) => e.child(placeholder("none").px(SP.md).text_size(TEXT.caption)))
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
@@ -39,7 +31,7 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, 
   const board = h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
     .bg(t.background).text_color(t.foreground).text_size(TEXT.body).overflow_x_scrollbar();
   if (!shown.length) {
-    return board.child(div().p(SP.lg).text_color(t.dim).child(loading ? "Loading…" : "No PRs"));
+    return board.child(placeholder(loading ? "Loading…" : "No PRs").p(SP.lg));
   }
   return board.children(shown.map((c) => column(c, { onOpen, spinner, showRepo })));
 }
@@ -60,9 +52,8 @@ function badges(pr) {
 export function renderCard(pr, { onOpen, spinner, showRepo }) {
   const t = theme();
   const mark = pr.ciStatus === "passing" || pr.ciStatus === "failing" || pr.ciStatus === "pending";
-  return v_flex().id(cardId(pr)).p(SP.md).gap(SP.sm).rounded(RADIUS.card).border_1().border_color(t.border)
-    .cursor_pointer().hover((s) => s.bg(t.hover).border_color(t.dim)).on_click(() => onOpen(pr))
-    .child(div().text_size(TEXT.body).font_medium().max_h(TITLE_LH * 2)
+  return card(cardId(pr)).gap(SP.sm).on_click(() => onOpen(pr))
+    .child(div().text_size(TEXT.body).font_medium().max_h(LAYOUT.cardTitleMaxH)
       .overflow_hidden().child(pr.title ?? ""))
     .child(h_flex().gap(SP.sm).items_center().text_size(TEXT.caption).text_color(t.dim)
       .child(div().flex_none().child(showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`))

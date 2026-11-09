@@ -17,8 +17,8 @@ import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRe
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
-import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented } from "./ui.js";
+import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
+import { segment, segmented, pill, chip, emptyPane, pane } from "./ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -310,14 +310,12 @@ export default class TeamPrs extends View {
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (mode === "rail" && view.repos === 0 && !view.loading) return this.railView(view);
     if (view.repos === 0 && view.errors.length && !view.loading) {
-      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
-        .bg(t.background).text_size(TEXT.body))
+      return note(emptyPane())
         .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
         .child(this.scopeToggle());
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
-      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
-        .bg(t.background).text_size(TEXT.body))
+      return note(emptyPane())
         .child(div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child("No open space is in a GitHub repository"))
         .child(this.scopeToggle());
     }
@@ -372,7 +370,7 @@ export default class TeamPrs extends View {
     const mine = tabOf() === "mine";
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
-    return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+    return pane("prs")
       .text_size(TEXT.small)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(tabOf(), t))
@@ -402,7 +400,8 @@ export default class TeamPrs extends View {
     const me = String(state.me ?? "").toLowerCase();
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
     const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
-    return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
+    return pane("prs")
+      .text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
@@ -420,18 +419,13 @@ export default class TeamPrs extends View {
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "loading…" : (state.slug ?? "no repo"));
     const note = all ? (loading ? "loading…" : `${state.repos} repos`) : null;
-    const pinned = (e) => e.child(div().id("pin").px(SP.sm).min_h(CONTROL_H.compact).flex().items_center()
-      .rounded(RADIUS.control).text_size(TEXT.caption).cursor_pointer().border_1().border_color(t.border)
-      .hover((s) => s.border_color(t.dim))
-      .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
-      .child(pin ? "pinned" : "pin"));
+    const pinned = (e) => e.child(chip("pin", pin ? "pinned" : "pin", Boolean(pin), () => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
         .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))
-        .when(!all && ctx?.on != null, (e) => e.child(div().flex_none().px(SP.sm).py(1).rounded(RADIUS.control)
-          .border_1().border_color(t.border).text_size(TEXT.caption).text_color(t.muted).child(String(ctx.on))))
+        .when(!all && ctx?.on != null, (e) => e.child(pill(String(ctx.on), t.muted)))
         .when(nFail && !all, (e) => e
           .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
           .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))

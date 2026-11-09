@@ -1,15 +1,10 @@
 import { div } from "gpui-kit";
-import { v_flex, h_flex, TextView } from "gpui-base";
-import { theme, settings } from "herdr";
+import { h_flex, TextView } from "gpui-base";
+import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
-import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, button, pill, inset, ciMark, addStat, delStat } from "./ui.js";
-
-// The user's terminal font, so code-like text follows their settings.
-export function mono() {
-  return settings().font_family ?? "Menlo";
-}
+import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
+import { segment, segmented, button, pill, inset, ciMark, addStat, delStat, card, placeholder, caption, paneBar, scrollBody, pane, mono } from "./ui.js";
 
 function postTone(tone) {
   const t = theme();
@@ -20,16 +15,13 @@ function postTone(tone) {
 }
 
 function reviewBody(stamp, body) {
-  const t = theme();
-  const dim = (s) => div().text_color(t.dim).child(s);
-  if (body == null) return dim("loading…");
-  if (body.ok === false) return dim(body.error?.message ?? "");
-  if (body.text == null) return dim("review file not found — it may have been pruned");
+  if (body == null) return placeholder("loading…");
+  if (body.ok === false) return placeholder(body.error?.message ?? "");
+  if (body.text == null) return placeholder("review file not found — it may have been pruned");
   return TextView.markdown("review-" + stamp, body.text).selectable();
 }
 
 function reviewInset(stamp, body) {
-  const t = theme();
   return inset().mt(SP.sm).child(reviewBody(stamp, body));
 }
 
@@ -39,7 +31,7 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
   const t = theme();
   if (confirm) {
     const c = confirm.confirm;
-    return v_flex().flex_none().gap(SP.sm).px(SP.lg).py(SP.md).border_b_1().border_color(t.border)
+    return paneBar()
       .child(div().text_size(TEXT.small).child(
         `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`))
       .child(h_flex().gap(SP.sm).child(button("act-confirm", `Confirm: ${confirm.label}`, onConfirm))
@@ -50,9 +42,8 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
   return h_flex().flex_none().flex_wrap().gap(SP.sm).items_center().px(SP.lg).py(SP.md)
     .border_b_1().border_color(t.border)
     .children(on.map((a) => button(`act-${a.id}`, a.label, () => onAction(a))))
-    .when(!on.length && Boolean(why), (e) => e.child(
-      div().text_size(TEXT.caption).text_color(t.dim).child(why.reason)))
-    .when(Boolean(note), (e) => e.child(div().text_size(TEXT.caption).text_color(t.ansi1).child(note)));
+    .when(!on.length && Boolean(why), (e) => e.child(caption(why.reason)))
+    .when(Boolean(note), (e) => e.child(caption(note, t.ansi1)));
 }
 
 // What the detail view needs from a board card.
@@ -70,17 +61,16 @@ export function detailOf(pr) {
 // The run's text, read-only, inside the pane. The terminal itself can open as a tab for anything
 // interactive.
 export function renderOutput(output, { onHide, onTab }) {
-  const t = theme();
   const lines = tailLines(output.text ?? "", 80);
-  return v_flex().flex_none().gap(SP.sm).px(SP.lg).py(SP.md).border_b_1().border_color(t.border)
+  return paneBar()
     .child(h_flex().gap(SP.sm).items_center().justify_between()
-      .child(div().text_size(TEXT.caption).text_color(t.dim).child(output.live ? "Run output · live" : "Run output"))
+      .child(caption(output.live ? "Run output · live" : "Run output"))
       .child(h_flex().gap(SP.sm)
         .child(button("out-tab", "Open as tab", onTab))
         .child(button("out-hide", "Hide", onHide))))
     .child(inset().flex().flex_col().text_size(TEXT.caption).font_family(mono())
-      .when(output.text == null, (e) => e.child(div().text_color(t.dim).child("loading…")))
-      .when(output.text != null && !lines.length, (e) => e.child(div().text_color(t.dim).child("no output yet")))
+      .when(output.text == null, (e) => e.child(placeholder("loading…")))
+      .when(output.text != null && !lines.length, (e) => e.child(placeholder("no output yet")))
       .children(lines.map((l) => div().child(l === "" ? " " : l))));
 }
 
@@ -90,14 +80,13 @@ export function prUrl(d) {
 
 export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }) {
   const t = theme();
-  return v_flex().flex_none().gap(SP.sm).p(SP.lg).border_b_1().border_color(t.border)
+  return paneBar().p(SP.lg)
     .child(h_flex().gap(SP.sm).flex_wrap().items_center().justify_between()
       .child(button("detail-back", "← Back", () => onClose()))
       .child(h_flex().gap(SP.sm).flex_wrap()
         .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled }))
         .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))))
-    .when(!reviewState.enabled, (e) => e.child(
-      div().text_size(TEXT.caption).text_color(t.dim).child(reviewState.reason)))
+    .when(!reviewState.enabled, (e) => e.child(caption(reviewState.reason)))
     .child(div().min_w(0).text_size(TEXT.title).font_semibold().max_h(LAYOUT.titleMaxH)
       .overflow_hidden().child(`#${d.number} ${d.title ?? ""}`))
     .child(h_flex().gap_x(SP.md).gap_y(SP.xs).flex_wrap().items_center()
@@ -112,18 +101,15 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
 }
 
 function runCard(r, { openStamp, bodyFor, onToggle }) {
-  const t = theme();
-  return v_flex().id(`run-${r.stamp}`).p(SP.md).gap(SP.xs).rounded(RADIUS.card).border_1()
-    .border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover).border_color(t.dim))
+  return card(`run-${r.stamp}`).gap(SP.xs)
     .on_click(() => onToggle(r.stamp))
     .child(h_flex().gap(SP.sm).items_center()
       .child(div().text_size(TEXT.body).font_medium().child(r.verdict || "review"))
-      .child(div().text_size(TEXT.caption).text_color(t.dim).child(r.when))
-      .child(div().text_size(TEXT.caption).text_color(t.dim).child(r.shortSha)))
+      .child(caption(r.when))
+      .child(caption(r.shortSha)))
     .child(div().text_size(TEXT.small).child(r.findingsText))
     .child(h_flex().gap(SP.sm).items_center().child(pill(r.post.label, postTone(r.post.tone)))
-      .when(Boolean(r.costText), (e) => e.child(
-        div().text_size(TEXT.caption).text_color(t.dim).child(r.costText))))
+      .when(Boolean(r.costText), (e) => e.child(caption(r.costText))))
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }
 
@@ -131,10 +117,9 @@ export function renderDetail(d, {
   onClose, onOpenUrl, onReview, reviewState, nowMs, openStamp, bodyFor, onToggle, actionBar, outputPanel,
   tab, onTab, filesBody,
 }) {
-  const t = theme();
   const rows = historyRows(d.runs ?? [], nowMs);
-  return v_flex().id("prs-detail").size_full().min_h(0).bg(t.background)
-    .text_color(t.foreground).text_size(TEXT.body)
+  return pane("prs-detail")
+    .text_size(TEXT.body)
     .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }))
     .child(actionBar)
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))
@@ -143,8 +128,8 @@ export function renderDetail(d, {
       segment("tab-files", "Files", tab === "files", () => onTab("files")),
     ])))
     .when(tab === "files", (e) => e.child(filesBody))
-    .when(tab !== "files", (e) => e.child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg)
+    .when(tab !== "files", (e) => e.child(scrollBody().px(SP.lg).pb(SP.lg)
       .pt(SP.sm).gap(SP.sm)
-      .when(!rows.length, (x) => x.child(div().text_color(t.dim).child("No reviews yet")))
+      .when(!rows.length, (x) => x.child(placeholder("No reviews yet")))
       .children(rows.map((r) => runCard(r, { openStamp, bodyFor, onToggle })))));
 }

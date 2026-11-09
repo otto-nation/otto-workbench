@@ -2,7 +2,8 @@
 import { exec, readTextFile, run, notify, spaces } from "herdr";
 import Board from "./board_view.js";
 import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.js";
-import { renderFileList, renderDiff, CHAR_PX } from "./files_view.js";
+import { renderFileList, renderDiff } from "./files_view.js";
+import { MONO } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
 import { readReview, loadFiles } from "./_lib/board_data.js";
 import { patchRows, summarize } from "./_lib/diff.js";
@@ -205,7 +206,7 @@ export default class TeamPrs extends Board {
   pickFile(path) {
     this.openFile = path;
     const f = this.filesByPr.get(this.filesKey(this.detail))?.files?.find((x) => x.path === path);
-    this.diff = f ? patchRows(f.patch, CHAR_PX) : null;
+    this.diff = f ? patchRows(f.patch, MONO.charPx) : null;
     this.acx.notify();
   }
 

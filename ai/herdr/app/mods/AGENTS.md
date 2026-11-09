@@ -21,13 +21,14 @@ mapping, so if they disagree the palette wins and this table needs fixing:
 | Brand token | `theme()` field | Use in a view |
 | --- | --- | --- |
 | canvas | `background` | Pane background |
-| surface | `surface`, `raised` | A panel set apart from the canvas |
+| surface | `surface` | A panel set apart from the canvas |
 | ink | `foreground` | Body copy, titles |
 | ink-muted | `muted` | Secondary copy, eyebrows, meta lines |
 | hairline | `border` | Card edges, dividers |
-| outline | `dim`, `input` | Control boundary only. Non-text (3:1): never body copy |
+| outline | `dim` | Control boundary only. Non-text (3:1): never body copy |
 | done | `done` | Success, as text |
-| warn | `working` | Warning or in progress, as text |
+| warn | `ansi3` | Warning, as text |
+| warn (light) / amarillo (dark) | `working` | In progress |
 | rosa (light) / amarillo (dark) | `accent` | UI accents and large text only |
 | anil | `ansi4` | Links |
 

@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -117,6 +117,16 @@ Diagnose and fix GitHub Actions CI failures with run-aware progression tracking:
 **Output schema:** `pr ci --tool-schema`
 **Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
 **Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
+
+### `/diverge`
+
+Generate options from isolated parallel branches, then critique them in a separate pass — for a decision where the first answer is likely an anchor. Runs only when named. TRIGGER when: user types /diverge or asks to run diverge on a problem. SKIP: any request that does not name it; one-canonical-answer questions; bugs with a known root cause; choosing between options the user already listed.
+
+```
+/diverge
+```
+**Trigger:** Use when the user explicitly invokes /diverge or asks to run diverge on an open-ended design, naming or strategy question.
+**Skip:** Do not use unless the user names it; do not use for questions with one canonical answer, bugs with a known root cause, or a choice between options already on the table.
 
 ### `/dream`
 

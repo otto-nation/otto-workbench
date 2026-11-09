@@ -359,6 +359,32 @@ def test_claims_instruction_is_identical_across_copies(path):
     assert _CLAIMS_SENTENCE in path.read_text()
 
 
+_BEHAVIOUR_CAP_SENTENCE = "at most 12; fold related behaviours together"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        TEMPLATE_DIR / "synthesis.md",
+        TEMPLATE_DIR / "self-review-synthesis.md",
+    ],
+    ids=lambda p: p.name,
+)
+def test_behaviour_cap_instruction_is_identical_across_copies(path):
+    assert _BEHAVIOUR_CAP_SENTENCE in path.read_text()
+
+
+def test_behaviour_cap_is_in_the_review_artifact_field_note():
+    from review.artifact_format import FIELD_NOTES
+    from review.artifacts import ReviewArtifact
+    from review.budget import MAX_BEHAVIOURS
+
+    assert _BEHAVIOUR_CAP_SENTENCE == (
+        f"at most {MAX_BEHAVIOURS}; fold related behaviours together"
+    )
+    assert _BEHAVIOUR_CAP_SENTENCE in FIELD_NOTES[ReviewArtifact]["behaviours"]
+
+
 @pytest.mark.parametrize("name", ["single-agent.md", "synthesis.md"])
 def test_pr_writer_templates_say_derived_claims_count_toward_the_verdict(name):
     text = (TEMPLATE_DIR / name).read_text()

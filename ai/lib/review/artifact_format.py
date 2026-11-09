@@ -103,7 +103,8 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
                    "acceptance criteria) makes that the code could confirm or refute; [] "
                    "when nothing there is checkable",
         "behaviours": "every behaviour change in the PR — on synthesis, the merged groups' "
-                       "lists with duplicates merged; [] when nothing changes behaviour",
+                       "lists with duplicates merged; at most 12; fold related behaviours "
+                       "together; [] when nothing changes behaviour",
     },
     Lead: {
         "path": "the file the lead is about",

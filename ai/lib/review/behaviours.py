@@ -45,7 +45,7 @@ def _error(kind: IngestErrorKind, at: str, detail: str) -> IngestError:
 
 
 def _has_bad_chars(value: str) -> bool:
-    return any(ch.isspace() or not ch.isprintable() for ch in value)
+    return any(ch == "`" or not ch.isprintable() for ch in value)
 
 
 def has_behaviour_source(job: ReviewJob) -> bool:
@@ -104,7 +104,7 @@ def _behaviour_problems(entry: BehaviourReport, index: int) -> list[IngestError]
     ):
         out.append(_error(
             IngestErrorKind.BAD_BEHAVIOUR, f"{at}.test_cited",
-            "test_cited is empty-sided or has whitespace or control characters",
+            "test_cited is empty-sided or has a backtick or control characters",
         ))
     elif strip_line_suffix(cited_path) != cited_path:
         out.append(_error(
@@ -115,7 +115,7 @@ def _behaviour_problems(entry: BehaviourReport, index: int) -> list[IngestError]
         if not path or _has_bad_chars(path):
             out.append(_error(
                 IngestErrorKind.BAD_BEHAVIOUR, f"{at}.paths",
-                "path is empty or has whitespace or control characters",
+                "path is empty or has a backtick or control characters",
             ))
         elif strip_line_suffix(path) != path:
             out.append(_error(
@@ -163,13 +163,18 @@ def merged_behaviours(
 
 def from_group(
     reports: Sequence[BehaviourReport] | None,
+    *,
+    files: Sequence[dict] | None = None,
 ) -> tuple[BehaviourEntry, ...] | None:
     """Group reports as record entries; `None` passes through.
 
     Empty-text and empty-`paths` reports are dropped. Past `MAX_BEHAVIOURS`
-    the list is truncated with a warning rather than rejected.
+    the list is truncated with a warning rather than rejected. Omitted on a
+    group with no behaviour source becomes `()` so the round is not poisoned.
     """
     if reports is None:
+        if files is not None and not review.grouping.hint_subjects(files):
+            return ()
         return None
     kept = [r for r in reports if r.text.strip() and r.paths]
     cap = review.budget.MAX_BEHAVIOURS

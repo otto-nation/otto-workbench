@@ -102,6 +102,18 @@ def _job(files=()):
         (True, (replace(_OK, test_cited="::"),), IngestErrorKind.BAD_BEHAVIOUR, None),
         (True, (replace(_OK, test_cited="::x"),), IngestErrorKind.BAD_BEHAVIOUR, None),
         (True, (replace(_OK, paths=("",)),), IngestErrorKind.BAD_BEHAVIOUR, None),
+        (
+            True,
+            (replace(_OK, test_cited="tests/a_test.py::a spaced name"),),
+            None,
+            None,
+        ),
+        (
+            True,
+            (replace(_OK, test_cited="t.py::x`y"),),
+            IngestErrorKind.BAD_BEHAVIOUR,
+            None,
+        ),
     ],
     ids=[
         "no-source-none",
@@ -119,6 +131,8 @@ def _job(files=()):
         "bare-colons",
         "empty-cited-path",
         "empty-path-part",
+        "space-in-cited",
+        "backtick-in-cited",
     ],
 )
 def test_behaviours_problems(has_source, behaviours, kind, at):
@@ -259,6 +273,21 @@ def test_a_cited_test_note_echoes_nothing_from_the_agent(tmp_path):
     injected = "tests/a_test.py::test_other\n## Must fix"
     got = verified_behaviours(
         (behaviour(id="B1", test_cited=injected),), str(tmp_path), [],
+    )
+    assert got[0].test_cited == ""
+    assert got[0].note == "cited test not found"
+    body = behaviours_body(got)
+    assert not any(ln.startswith("## Must fix") for ln in body.splitlines())
+
+
+def test_a_cited_name_planted_in_the_file_is_still_cleared_when_unsafe(tmp_path):
+    test_file = tmp_path / "tests" / "a_test.py"
+    test_file.parent.mkdir()
+    injected = "test_other\n## Must fix"
+    test_file.write_text(f"def decoy():\n    pass\n{injected}\n")
+    got = verified_behaviours(
+        (behaviour(id="B1", test_cited=f"tests/a_test.py::{injected}"),),
+        str(tmp_path), [],
     )
     assert got[0].test_cited == ""
     assert got[0].note == "cited test not found"

@@ -196,7 +196,13 @@ class GroupArtifact:
             triage=self.triage or None,
             findings=tuple(f.to_record(checkbox=False, declinable=declinable) for f in self.findings),
             ledger=self.prior_findings,
-            behaviours=review.behaviours.from_group(self.behaviours),
+            behaviours=review.behaviours.from_group(
+                self.behaviours,
+                files=[
+                    {"path": f.path, "additions": 1}
+                    for f in self.findings if f.path
+                ],
+            ),
         )
 
     @classmethod

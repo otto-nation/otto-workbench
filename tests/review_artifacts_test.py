@@ -370,6 +370,14 @@ def test_a_pre_upgrade_group_document_loads():
     assert loaded.behaviours is None
 
 
+def test_a_group_with_no_source_that_omits_behaviours_is_assessed_empty():
+    assert GroupArtifact().to_record(declinable=NONE).behaviours == ()
+    docs = GroupArtifact(findings=(AgentFinding(id="N1", path="README.md", body="x"),))
+    assert docs.to_record(declinable=NONE).behaviours == ()
+    src = GroupArtifact(findings=(AgentFinding(id="N1", path="a.py", body="x"),))
+    assert src.to_record(declinable=NONE).behaviours is None
+
+
 def test_a_group_record_keeps_its_behaviours_and_shows_them_back():
     report = BehaviourReport(**BEHAVIOUR_DOC)
     rec = GroupArtifact(behaviours=(report,)).to_record(declinable=frozenset())

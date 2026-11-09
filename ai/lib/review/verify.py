@@ -330,6 +330,8 @@ def _verified_behaviour(
 ) -> BehaviourEntry:
     if not entry.test_cited:
         return entry
+    if any(ch == "`" or not ch.isprintable() for ch in entry.test_cited):
+        return replace(entry, test_cited="", note="cited test not found")
     if not wt_path:
         return replace(entry, test_cited="", note="no worktree to check the cited test")
     path, _, name = entry.test_cited.partition("::")

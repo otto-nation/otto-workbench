@@ -50,3 +50,9 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '["a","b"]' ]
 }
+
+@test "OSC sequences are stripped and lone CR keeps the last redraw" {
+  _js 'm.tailLines("\x1b]0;title\x07a\x1b]8;;http://x\x1b\\link\nfoo\r bar\rdone")'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["alink","done"]' ]
+}

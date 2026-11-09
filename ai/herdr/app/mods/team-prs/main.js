@@ -14,10 +14,12 @@ export default class TeamPrs extends Board {
     this.confirm = null;
     this.launching = false;
     this.live = null;
-    this.liveAction = null;
     this.finishedId = null;
     this.note = null;
     this.output = null;
+    // Terminals being followed to their end, whichever PR is open, and the action each ran.
+    this.watching = new Set();
+    this.actionOf = new Map();
     this.reviews = new Map();
     super.init(p, cx);
   }
@@ -106,16 +108,20 @@ export default class TeamPrs extends Board {
         res = { ok: false, error: { message: String(err?.message ?? err) } };
       }
       this.launching = false;
-      if (this.detail !== d && (this.detail?.repo !== d.repo || this.detail?.number !== d.number)) {
-        cx.notify();
-        return;
-      }
-      if (!res.ok) this.note = res.error.message;
-      else {
-        this.live = res.terminal;
-        this.liveAction = action.id;
-        this.finishedId = null;
-        this.watch(cx, res.terminal, d);
+      if (!res.ok) {
+        this.note = res.error.message;
+      } else {
+        // The run is followed to its end even if another PR was opened meanwhile; only the
+        // open PR's own controls track it.
+        this.actionOf.set(res.terminal, action.id);
+        if (this.detail?.repo === d.repo && this.detail?.number === d.number) {
+          this.live = res.terminal;
+          this.finishedId = null;
+        }
+        if (!this.watching.has(res.terminal)) {
+          this.watching.add(res.terminal);
+          this.watch(cx, res.terminal, d);
+        }
       }
       cx.notify();
     });
@@ -139,7 +145,7 @@ export default class TeamPrs extends Board {
   // this window is open. The chain is tied to the terminal it was started for.
   watch(cx, id, pr) {
     cx.timer.after(3000, async (cx) => {
-      if (this.live !== id) return;
+      if (!this.watching.has(id)) return;
       let entry = null;
       try {
         const ran = await exec("hc", getArgv(id), {});
@@ -152,9 +158,12 @@ export default class TeamPrs extends Board {
   }
 
   finish(id, entry, d, cx) {
-    const outcome = outcomeText(this.liveAction, entry?.exitCode ?? null);
-    this.finishedId = id;
-    this.live = null;
+    const outcome = outcomeText(this.actionOf.get(id), entry?.exitCode ?? null);
+    this.watching.delete(id);
+    if (this.live === id) {
+      this.finishedId = id;
+      this.live = null;
+    }
     if (this.output?.terminal === id) this.readOutput(id);
     notify({ title: outcome.title, body: `#${d.number} ${d.title ?? ""}`, level: outcome.level });
     // The card, its runs and the head-moved flag come from the board's own refresh.

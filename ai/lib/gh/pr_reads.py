@@ -1,7 +1,7 @@
 """The review system's single-call reads of a PR.
 
 The PR's own metadata, its surrounding conversation, its refs, the diff, the
-pending-review check and the new-commit count. Used by the pipeline before any
+pending-review check. Used by the pipeline before any
 agent runs, and by review.posting after. Each accepts the consolidated
 `gh.pr_data.PRData` where it has one and answers from it without a call.
 
@@ -209,38 +209,3 @@ def _check_existing_pending(
         if review.get("state") == gh.pr_data.REVIEW_STATE_PENDING:
             return PendingReview(int(review.get("id", 0)) or None)
     return PendingReview()
-
-
-@dataclass(frozen=True)
-class NewCommits:
-    """How far the branch moved since the review, as the lookup found it.
-
-    ``counted`` separates "nothing new since the review" from "we could not
-    ask", which were both 0. Only the warning told them apart, and a warning is
-    not something the code rendering the drift banner can read.
-    """
-
-    count: int = 0
-    counted: bool = True
-
-
-def _count_new_commits(
-    repo: str, pr: str, review_sha: str, pr_data: gh.pr_data.PRData | None = None,
-) -> NewCommits:
-    """Commits on the PR since the review SHA, and whether we managed to count."""
-    if pr_data is not None:
-        return NewCommits(pr_data.new_commit_count(review_sha))
-    r = gh.client.api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
-    if not r.ok:
-        core.log.warn(core.proc.failure_message(f"Could not count new commits on {repo}#{pr}", r))
-        return NewCommits(counted=False)
-    try:
-        commits = json.loads(r.stdout)
-    except (json.JSONDecodeError, TypeError):
-        core.log.warn(f"Could not parse {repo}#{pr}'s commits — the drift count is unknown")
-        return NewCommits(counted=False)
-    for i, c in enumerate(commits):
-        sha = c.get("sha", "")
-        if sha.startswith(review_sha) or review_sha.startswith(sha):
-            return NewCommits(len(commits) - i - 1)
-    return NewCommits(len(commits))

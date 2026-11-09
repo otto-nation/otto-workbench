@@ -1,4 +1,4 @@
-"""Rendering a review record — `review.md` today, the GitHub comment from PR 2."""
+"""Rendering a review record — `review.md` and the PR comment body."""
 
 # doc-group: findings
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from core.markdown import escape_cell
+from pr.domains import VERDICT_PROSE_PREFIX_RE
 from review.behaviour_types import BehaviourEntry
 from review.claim_types import ClaimEntry
 from review.document import (
@@ -14,12 +15,12 @@ from review.document import (
     SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
     SECTION_TEST_EVIDENCE, SECTION_VERDICT, ReviewHeader, review_title,
 )
-from review.grammar import finding_tag, location_ref, sid_marker
+from review.grammar import finding_tag, location_ref, posted_finding_tag, sid_marker
 from review.record import (
     AgentFailure, Disposition, FocusArea, FocusSource, LedgerLine, ProseSection,
     RecordFinding, ReviewRecord, TriageEntry,
 )
-from review.types import SEVERITIES, ReviewMeta
+from review.types import SEVERITIES, Finding, ReviewMeta, severity_by_key
 
 # The line every rendered review.md carries. Agents write JSON, so nothing
 # parses review.md; the banner tells a human the file is generated and that
@@ -164,6 +165,92 @@ def failures_body(failures: tuple[AgentFailure, ...]) -> str:
     if any(f.recoverable for f in failures):
         lines += ["", f"{RECOVER_HINT} to retry failed agents."]
     return "\n".join(lines)
+
+
+def _comment_finding_line(f: Finding, *, label: bool = True) -> str:
+    """One posted body finding. `review.dedup` reads this shape back off earlier posts."""
+    tag = posted_finding_tag(f.posted_id, f.severity) if label else finding_tag(f.posted_id)
+    where = f" {location_ref(f.path, f.line, f.end_line)} —" if f.path else ""
+    return f"- {tag}{where} {f.body}"
+
+
+def _by_place(f: Finding) -> tuple[bool, str, int]:
+    return (not f.path, f.path or "", f.line or 0)
+
+
+def _comment_prose(record: ReviewRecord) -> list[str]:
+    """The Summary and its subsections; a rule closes them when there is a summary."""
+    summary = record.summary.strip()
+    lines = [f"## {SECTION_SUMMARY}", "", summary, ""] if summary else []
+    for heading, body in (
+        (SECTION_FOCUS, focus_comment(record.focus)),
+        (SECTION_CLAIMS, claims_comment(record.claims) if record.claims != () else ""),
+        (SECTION_TEST_EVIDENCE, behaviours_comment(record.behaviours) if record.behaviours != () else ""),
+        (SECTION_VERDICT, record.verdict),
+    ):
+        text = body.strip()
+        if not text:
+            continue
+        # The heading carries the verdict word, so the prose keeps only the rationale.
+        if heading == SECTION_VERDICT:
+            text = VERDICT_PROSE_PREFIX_RE.sub("", text, count=1)
+        lines += [f"### {heading}", "", text, ""]
+    return [*lines, "---", ""] if summary else lines
+
+
+def _comment_findings(findings: list[Finding], has_inline: bool) -> list[str]:
+    declined = [f for f in findings if f.declined]
+    by_sev: dict[str, list[Finding]] = {}
+    by_file: dict[str, list[Finding]] = {}
+    for f in findings:
+        if f.declined:
+            continue
+        bucket = by_file if severity_by_key(f.severity).body_group == "by_file" else by_sev
+        bucket.setdefault(f.severity, []).append(f)
+    lines: list[str] = []
+    if by_sev:
+        lines += ["", "**Findings outside the diff:**", ""] if has_inline else [""]
+        order = [s.key for s in SEVERITIES if s.body_group == "by_severity" and s.key in by_sev]
+        headers = len(order) > 1 or bool(by_file)
+        for sev in order:
+            lines += [f"### {severity_by_key(sev).section}", ""] if headers else []
+            lines += [_comment_finding_line(f) for f in by_sev[sev]] + [""]
+    if by_file:
+        lines.append("")
+        for sev in (s.key for s in SEVERITIES if s.body_group == "by_file" and s.key in by_file):
+            items = sorted(by_file[sev], key=_by_place)
+            head = f"<summary>{severity_by_key(sev).section} ({len(items)})</summary>"
+            lines += ["<details open>", head, "",
+                      *(_comment_finding_line(f, label=False) for f in items), "", "</details>", ""]
+    if declined:
+        lines += ["", "**Declined — considered and not carried forward:**", "",
+                  *(_comment_finding_line(f) for f in sorted(declined, key=_by_place)), ""]
+    return lines
+
+
+def _comment_tail(record: ReviewRecord) -> list[str]:
+    static = record.static_analysis.strip()
+    chunks: list[tuple[str, str]] = [("", static)] if static else []
+    if record.failures:
+        chunks.append((f"## {SECTION_FAILURES}", failures_body(record.failures)))
+    chunks += [(f"## {s.heading}", s.body.strip()) for s in record.extra if s.body.strip()]
+    return [p for h, b in chunks for p in (["", h, "", b] if h else ["", b])]
+
+
+def comment_body(record: ReviewRecord, findings: list[Finding], *,
+                 has_inline: bool, severity_filter: set[str]) -> str:
+    """The PR review comment's body: the record's prose around the body findings.
+
+    `findings` are the ones `review.format` placed in the body, already
+    renumbered for posting. A declined finding is stated in a block of its own.
+    """
+    labels = ", ".join(s.label for s in SEVERITIES if s.key in severity_filter)
+    lines = _comment_prose(record)
+    if has_inline:
+        lines.append(f"Have some comments marked as {labels}.")
+    elif findings:
+        lines.append(f"Review findings ({labels}):")
+    return "\n".join(lines + _comment_findings(findings, has_inline) + _comment_tail(record)).rstrip("\n")
 
 
 def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:

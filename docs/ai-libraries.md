@@ -1508,11 +1508,6 @@ get is `review.budget`'s. What a prompt says about the *prior* review — the
 scoped findings, the ledger instruction, the thread annotations — is
 `review.prompt_prior`'s.
 
-Not to be confused with `review.sections`, which is the posting pipeline's
-config-driven registry of sections already written to a review document —
-that module reads what an agent wrote, this one decides what an agent is
-shown before it writes anything.
-
 ### review/prompt_stats.py
 
 Each rendered prompt's exact input-token count is appended to `prompt-stats.json`
@@ -1609,13 +1604,6 @@ Phase 1 runs one of two scans over the whole PR. Its agent writes a
 it never read that file: they read the block rendered here, which every group
 prompt embeds and synthesis is shown. Each block opens with its own heading, so
 a reader needs no sentinel to tell the two apart.
-
-### review/sections.py
-
-Config-driven section registry with auto-discovery for review posting.
-
-Defines section configs declaratively and extracts them from the review record.
-Replaces per-section parameter threading across the posting pipeline.
 
 ### review/state.py
 
@@ -1861,10 +1849,11 @@ during a review, and a fix pass needs only a finished review file to work from.
 
 ### review/format.py
 
-Diff classification, renumbering for posting, comment formatting, and permalinks.
+Diff classification, renumbering for posting, inline comments, and permalinks.
 
 Classifies findings as inline/file-level/skipped based on the PR diff,
-renumbers them for posted order, and formats as GitHub review comments.
+renumbers them for posted order, and formats inline review comments; the body is
+`review.render.comment_body`'s.
 
 Reading the diff is part of that classification, so `parse_diff_hunks` lives
 here: which lines a hunk covers is the same question as whether a finding can
@@ -2057,7 +2046,7 @@ stable IDs its posted comments carry.
 
 ### review/render.py
 
-Rendering a review record — `review.md` today, the GitHub comment from PR 2.
+Rendering a review record — `review.md` and the PR comment body.
 
 ### review/reply_threads.py
 
@@ -2305,7 +2294,7 @@ transport — running gh, timeouts, the rate-limit ladder — is `gh.client`.
 The review system's single-call reads of a PR.
 
 The PR's own metadata, its surrounding conversation, its refs, the diff, the
-pending-review check and the new-commit count. Used by the pipeline before any
+pending-review check. Used by the pipeline before any
 agent runs, and by review.posting after. Each accepts the consolidated
 `gh.pr_data.PRData` where it has one and answers from it without a call.
 
@@ -3181,15 +3170,15 @@ Post one review file to its PR: parse, check positions, renumber, and post as a 
 sidecar, resolve the PR's refs and diff, drop findings already posted,
 classify the rest as inline or body comments, and post them in chunks — or
 print the plan on a dry run. `cli.review_post` is the command over this; the
-posting mechanics are `review.posting`, formatting is `review.format`.
+posting mechanics are `review.posting`, inline comments `review.format`'s,
+the body `review.render.comment_body`'s.
 
 ### review/posting.py
 
 High-level posting orchestration for review-post.
 
-Handles chunked review submission, SHA-drift re-verification,
-reclassification after LineResolutionError, dry-run display,
-and post-tracking metadata.
+Handles chunked review submission, reclassification after LineResolutionError,
+dry-run display, and post-tracking metadata.
 
 ### review/publish.py
 

@@ -9,11 +9,6 @@ Which sections a phase asks for is `review.prompt`'s, and how much room they
 get is `review.budget`'s. What a prompt says about the *prior* review — the
 scoped findings, the ledger instruction, the thread annotations — is
 `review.prompt_prior`'s.
-
-Not to be confused with `review.sections`, which is the posting pipeline's
-config-driven registry of sections already written to a review document —
-that module reads what an agent wrote, this one decides what an agent is
-shown before it writes anything.
 """
 
 # doc-group: pipeline

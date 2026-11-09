@@ -27,7 +27,6 @@ import gh.pr_reads
 import review.paths
 import review.post_file
 import review.posting
-import review.sections
 
 # Most of what follows is never referenced in this file. The names are re-exported
 # so a test can reach them at `review_post.<name>` and patch one, which the proxy
@@ -44,17 +43,15 @@ from review.paths import read_review_meta
 from core.text import plural
 from review.types import Finding, ReviewMeta, SEVERITIES
 from review.format import (
-    CLASS_FILE_LEVEL, CLASS_INLINE,
-    classify_findings, format_body_text, format_inline_comment,
-    renumber_for_posting, resolve_permalinks,
-    _format_path_ref, _format_finding_line, resolve_path, _hunk_end,
+    CLASS_FILE_LEVEL, CLASS_INLINE, classify_findings, format_inline_comment,
+    renumber_for_posting, resolve_permalinks, resolve_path, _hunk_end,
     _build_permalink,
 )
 from gh.client import LineResolutionError
 from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import (
     _fetch_pr_refs, _get_diff,
-    _check_existing_pending, _count_new_commits,
+    _check_existing_pending,
 )
 from review.dedup import (
     word_set, jaccard, _extract_body_findings, _fetch_bot_comments,
@@ -64,12 +61,11 @@ from review.dedup import (
 from review.posting import (
     DEFAULT_CHUNK_SIZE, _CHUNK_PATTERN,
     ReviewEvent, event_of,
-    _post_and_track, _post_as_comment, _print_dry_run,
+    _post_and_track, _print_dry_run,
     _chunk_comments, _post_chunked_review, post_review,
     _submit_review, write_post_tracking, _format_submit_command,
     _reclassify_and_retry,
 )
-from review.sections import ReviewSections
 
 # The binary a user runs and the trail records, which is not this module's own
 # name. Spelled out rather than derived, so the shim can be renamed only by
@@ -77,7 +73,7 @@ from review.sections import ReviewSections
 SCRIPT = "review-post"
 
 _SUBMODULES = (
-    gh.client, review.dedup, review.format, gh.pr_data, gh.pr_reads, review.paths, review.post_file, review.posting, review.sections, git.client, core.log, core.module_proxy, core.proc,
+    gh.client, review.dedup, review.format, gh.pr_data, gh.pr_reads, review.paths, review.post_file, review.posting, git.client, core.log, core.module_proxy, core.proc,
 )
 
 core.module_proxy.install(__name__, _SUBMODULES)

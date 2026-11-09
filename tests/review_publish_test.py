@@ -142,7 +142,8 @@ def test_an_unsatisfying_review_is_not_posted_but_is_still_reported(
     assert posts == []
     assert result.posted is False
     assert result.post_session_log == ""
-    assert any("$EDITOR" in h for h in result.hints)
+    hint = next(h for h in result.hints if "$EDITOR" in h)
+    assert hint.endswith("review.json")
 
 
 def test_declining_the_post_prompt_returns_the_same_way(review_file, posts, monkeypatch):

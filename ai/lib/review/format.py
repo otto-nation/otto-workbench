@@ -1,7 +1,8 @@
-"""Diff classification, renumbering for posting, comment formatting, and permalinks.
+"""Diff classification, renumbering for posting, inline comments, and permalinks.
 
 Classifies findings as inline/file-level/skipped based on the PR diff,
-renumbers them for posted order, and formats as GitHub review comments.
+renumbers them for posted order, and formats inline review comments; the body is
+`review.render.comment_body`'s.
 
 Reading the diff is part of that classification, so `parse_diff_hunks` lives
 here: which lines a hunk covers is the same question as whether a finding can
@@ -18,9 +19,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 
 import pr.target
-from pr.domains import VERDICT_PROSE_PREFIX_RE
-from review.grammar import finding_tag, location_ref, posted_finding_tag, sid_marker
-from review.sections import ReviewSections, SectionConfig
+from review.grammar import posted_finding_tag, sid_marker
 from review.types import SEVERITIES, Finding, severity_by_key
 
 
@@ -31,8 +30,8 @@ CLASS_FILE_LEVEL = "file_level"
 CLASS_SKIPPED = "skipped"
 
 # Why a declined finding is held out of the actionable comments. Read by
-# `format_body_text` to gather them into their own block, so the classification
-# and the rendering agree on which findings are the adjudicated ones.
+# `review.render.comment_body` to gather them into their own block, so the
+# classification and the rendering agree on which findings are the adjudicated ones.
 SKIP_DECLINED = "declined"
 
 DIFF_SIDE_RIGHT = "RIGHT"
@@ -124,9 +123,9 @@ def classify_findings(
     considered and rejected, so posting it as an inline or file-level comment
     asks for work the review already decided against — but it is still a
     judgement worth stating, which is why it is skipped rather than dropped:
-    `format_body_text` gathers the skipped declines into their own block. This
-    is checked first so a retry through `_reclassify_and_retry` cannot promote
-    one back to inline on a diff that happens to cover its line.
+    `review.render.comment_body` gathers the skipped declines into their own
+    block. This is checked first so a retry through `_reclassify_and_retry`
+    cannot promote one back to inline on a diff that happens to cover its line.
     """
     hunks = parse_diff_hunks(diff_text)
     inline, file_level, skipped = [], [], []
@@ -237,186 +236,6 @@ def format_inline_comment(f: Finding) -> dict:
         comment["line"] = f.line
 
     return comment
-
-
-def _format_path_ref(f: Finding) -> str:
-    """Format a finding's path as a backtick-wrapped reference."""
-    return location_ref(f.path, f.line, f.end_line)
-
-
-def _format_finding_line(f: Finding, include_label: bool = True) -> str:
-    """Format a single body finding as a markdown list item."""
-    if include_label:
-        tag = posted_finding_tag(f.posted_id, f.severity)
-    else:
-        tag = finding_tag(f.posted_id)
-    if f.path:
-        return f"- {tag} {_format_path_ref(f)} — {f.body}"
-    return f"- {tag} {f.body}"
-
-
-def _append_details_findings(
-    parts: list[str], severity_key: str, findings: list[Finding],
-) -> None:
-    """Wrap body-only severity findings in a collapsible <details open> block."""
-    config = severity_by_key(severity_key)
-    count = len(findings)
-    parts.append("<details open>")
-    parts.append(f"<summary>{config.section} ({count})</summary>")
-    parts.append("")
-    sorted_findings = sorted(findings, key=lambda f: (not f.path, f.path or "", f.line or 0))
-    for f in sorted_findings:
-        parts.append(_format_finding_line(f, include_label=False))
-    parts.append("")
-    parts.append("</details>")
-    parts.append("")
-
-
-def _append_demoted_findings(
-    parts: list[str], by_sev: dict[str, list[Finding]],
-    has_inline: bool, has_body_only: bool,
-) -> None:
-    """Append by-severity findings (demoted must-fix/should-fix) to body."""
-    parts.append("")
-    if has_inline:
-        parts.append("**Findings outside the diff:**")
-        parts.append("")
-
-    sev_order = [s.key for s in SEVERITIES if s.body_group == "by_severity"]
-    active_sevs = [s for s in sev_order if s in by_sev]
-    needs_sev_headers = len(active_sevs) > 1 or has_body_only
-
-    for sev in active_sevs:
-        if needs_sev_headers:
-            parts.append(f"### {severity_by_key(sev).section}")
-            parts.append("")
-        for f in by_sev[sev]:
-            parts.append(_format_finding_line(f))
-        parts.append("")
-
-
-def _append_body_only_findings(
-    parts: list[str], by_file: dict[str, list[Finding]],
-) -> None:
-    """Append body-only severity findings (nits/idioms) as details blocks."""
-    parts.append("")
-    sev_order = [s.key for s in SEVERITIES if s.body_group == "by_file"]
-    for sev in sev_order:
-        if sev in by_file:
-            _append_details_findings(parts, sev, by_file[sev])
-
-
-def _append_declined_findings(
-    parts: list[str], findings: list[Finding],
-) -> None:
-    """Append the findings the review declined, stated rather than asked for."""
-    parts.append("")
-    parts.append("**Declined — considered and not carried forward:**")
-    parts.append("")
-    for f in sorted(findings, key=lambda f: (not f.path, f.path or "", f.line or 0)):
-        parts.append(_format_finding_line(f))
-    parts.append("")
-
-
-def _render_before_findings(
-    parts: list[str],
-    before: list[tuple[SectionConfig, str]],
-) -> None:
-    current_parent: str = ""
-    for cfg, content in before:
-        parent = cfg.subsection_of or cfg.key
-        prev = next((c for c, _ in before if c.key == current_parent), None)
-        if current_parent and parent != current_parent and prev and prev.trailing_separator:
-            parts.extend(("---", ""))
-        current_parent = parent
-        if cfg.heading:
-            parts.extend((cfg.heading, ""))
-        if cfg.strip_action:
-            content = VERDICT_PROSE_PREFIX_RE.sub("", content, count=1)
-        parts.extend((content, ""))
-    last_cfg = next((c for c, _ in before if c.key == current_parent), None)
-    if last_cfg and last_cfg.trailing_separator:
-        parts.extend(("---", ""))
-
-
-def _render_after_findings(
-    parts: list[str],
-    after: list[tuple[SectionConfig, str]],
-) -> None:
-    for cfg, content in after:
-        parts.append("")
-        if cfg.heading:
-            parts.extend((cfg.heading, ""))
-        parts.append(content)
-
-
-def format_body_text(
-    body_findings: list[Finding],
-    has_inline: bool,
-    severity_filter: set[str],
-    sections: ReviewSections | None = None,
-) -> str:
-    """Format the review body text with body/skipped findings.
-
-    Findings the review declined are stated in a block of their own rather than
-    listed among the ones it is asking for. Partitioned off `Finding.declined`
-    rather than taken as an argument, so every caller renders them the same way
-    without having to carry the split — `classify_findings` is what put them in
-    the body set to begin with.
-    """
-    if sections is None:
-        sections = ReviewSections()
-
-    parts: list[str] = []
-
-    before = sections.before_findings()
-    if before:
-        _render_before_findings(parts, before)
-
-    labels = [s.label for s in SEVERITIES if s.key in severity_filter]
-
-    # The lead-in introduces findings, so a review with none says nothing here:
-    # "Review findings (must-fix):" above a clean verdict reads as a list that
-    # failed to render.
-    if has_inline:
-        parts.append(f"Have some comments marked as {', '.join(labels)}.")
-    elif body_findings:
-        parts.append(f"Review findings ({', '.join(labels)}):")
-
-    after = sections.after_findings()
-
-    if not body_findings and not after:
-        return "\n".join(parts)
-
-    if not body_findings:
-        _render_after_findings(parts, after)
-        return "\n".join(parts).rstrip("\n")
-
-    declined = [f for f in body_findings if f.declined]
-    by_sev: dict[str, list[Finding]] = {}
-    by_file: dict[str, list[Finding]] = {}
-
-    for f in body_findings:
-        if f.declined:
-            continue
-        config = severity_by_key(f.severity)
-        if config.body_group == "by_file":
-            by_file.setdefault(f.severity, []).append(f)
-        else:
-            by_sev.setdefault(f.severity, []).append(f)
-
-    if by_sev:
-        _append_demoted_findings(parts, by_sev, has_inline, bool(by_file))
-
-    if by_file:
-        _append_body_only_findings(parts, by_file)
-
-    if declined:
-        _append_declined_findings(parts, declined)
-
-    _render_after_findings(parts, after)
-
-    return "\n".join(parts).rstrip("\n")
 
 
 # ── Permalink resolution ────────────────────────────────────────────────────

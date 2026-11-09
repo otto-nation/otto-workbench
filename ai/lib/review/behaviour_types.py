@@ -1,10 +1,11 @@
 """Behaviours are what a change does, listed with the test that holds each.
 
-A writer reports each with an optional cited test and the source paths it
-covers, and the harness numbers them `B1…`. `note` is harness-owned: why a
-cited test was cleared. This module is a leaf: it imports nothing from
-`review`. `BehaviourReport` is what an agent writes; `BehaviourEntry` is
-what the record stores, with harness numbering.
+A writer reports each with an optional cited test (`path` or `path::name`)
+and the source paths it covers, and the harness numbers them `B1…`.
+`note` is harness-owned: why a cited test was cleared, in fixed text that
+echoes nothing from the agent. This module is a leaf: it imports nothing
+from `review`. `BehaviourReport` is what an agent writes; `BehaviourEntry`
+is what the record stores, with harness numbering.
 """
 
 # doc-group: findings

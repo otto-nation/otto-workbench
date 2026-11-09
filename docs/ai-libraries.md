@@ -907,12 +907,18 @@ execution as the operator, with their credentials and their network.
 
 The behaviours ledger: source filter, writer check, record entries, merge.
 
-`has_behaviour_source` is the hint filter. `behaviours_problems` is the
-writer check. `behaviours_of` numbers reports `B1…` after the check.
-`merged_behaviours` concatenates group lists (`None` if any is `None`).
+The field is tri-state like claims: `None` is not assessed, `()` is
+assessed empty, and entries are the list. Groups write it unchecked;
 `from_group` drops empty-text and empty-path reports and truncates past
-the cap. `carried_behaviours` keeps prior entries whose paths all lie in
-the skipped groups' files.
+the cap. Writers (single, synthesis) are checked: `has_behaviour_source`
+is the hint filter, `behaviours_problems` is the check, `behaviours_of`
+numbers reports `B1…` after it. `merged_behaviours` concatenates group
+lists and yields `None` if any is `None`. A group gap makes the merged
+list `None`; skipped groups contribute prior entries whose paths all lie
+in those groups' files (`carried_behaviours`). There is no claims-style
+carry and no sidecar: groups write the list on every round, and
+behaviours derive no finding, so there is nothing to answer. `_publish`
+verifies each cited test. Render never says "tested".
 
 ### review/budget.py
 
@@ -957,6 +963,8 @@ This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
 into record entries after the check, the degraded-check warning, and
 `settle`. Renderers take claims off the record and never import it.
+`writer_check` and `check_warning` also cover behaviours: they are checked
+and warned here, but owned by `review/behaviours.py`.
 
 The record is tri-state. `None` is not assessed — a writer that did not run
 and whose claims could not be carried, or a legacy `review.json`. A check
@@ -1007,7 +1015,7 @@ non-defect phrase.
 
 Answers live in `ReviewMeta.claim_answers`, keyed by `ClaimEntry.key` (source
 plus collapsed lower-cased text). `store.write_review` folds them from the
-record's derived findings on every write. An answer holds while its claim
+record's claim findings on every write. An answer holds while its claim
 key is unchanged and, when anchored, its file has not changed since the
 commit the answer was given at; `live_answers` is that filter.
 Unanchored answers never expire until the wording changes. The table is not
@@ -1231,7 +1239,10 @@ a group by the paths it holds.
 
 The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
-it can afford to carry. The same lexical rules feed the review's test hint.
+it can afford to carry. The same lexical rules feed the review's advisory test
+hint: `unpaired_subjects` are changed source files with no test in the same
+diff whose stem `pairs_with` theirs on a name boundary. The hint does not
+change how files are grouped.
 
 ### review/invoke.py
 
@@ -1762,11 +1773,12 @@ writes there is exactly what the record keeps.
 
 Behaviours are what a change does, listed with the test that holds each.
 
-A writer reports each with an optional cited test and the source paths it
-covers, and the harness numbers them `B1…`. `note` is harness-owned: why a
-cited test was cleared. This module is a leaf: it imports nothing from
-`review`. `BehaviourReport` is what an agent writes; `BehaviourEntry` is
-what the record stores, with harness numbering.
+A writer reports each with an optional cited test (`path` or `path::name`)
+and the source paths it covers, and the harness numbers them `B1…`.
+`note` is harness-owned: why a cited test was cleared, in fixed text that
+echoes nothing from the agent. This module is a leaf: it imports nothing
+from `review`. `BehaviourReport` is what an agent writes; `BehaviourEntry`
+is what the record stores, with harness numbering.
 
 ### review/claim_types.py
 

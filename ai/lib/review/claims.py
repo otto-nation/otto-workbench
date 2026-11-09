@@ -5,6 +5,8 @@ This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
 into record entries after the check, the degraded-check warning, and
 `settle`. Renderers take claims off the record and never import it.
+`writer_check` and `check_warning` also cover behaviours: they are checked
+and warned here, but owned by `review/behaviours.py`.
 
 The record is tri-state. `None` is not assessed — a writer that did not run
 and whose claims could not be carried, or a legacy `review.json`. A check
@@ -55,7 +57,7 @@ non-defect phrase.
 
 Answers live in `ReviewMeta.claim_answers`, keyed by `ClaimEntry.key` (source
 plus collapsed lower-cased text). `store.write_review` folds them from the
-record's derived findings on every write. An answer holds while its claim
+record's claim findings on every write. An answer holds while its claim
 key is unchanged and, when anchored, its file has not changed since the
 commit the answer was given at; `live_answers` is that filter.
 Unanchored answers never expire until the wording changes. The table is not

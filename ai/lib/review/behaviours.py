@@ -1,11 +1,17 @@
 """The behaviours ledger: source filter, writer check, record entries, merge.
 
-`has_behaviour_source` is the hint filter. `behaviours_problems` is the
-writer check. `behaviours_of` numbers reports `B1…` after the check.
-`merged_behaviours` concatenates group lists (`None` if any is `None`).
+The field is tri-state like claims: `None` is not assessed, `()` is
+assessed empty, and entries are the list. Groups write it unchecked;
 `from_group` drops empty-text and empty-path reports and truncates past
-the cap. `carried_behaviours` keeps prior entries whose paths all lie in
-the skipped groups' files.
+the cap. Writers (single, synthesis) are checked: `has_behaviour_source`
+is the hint filter, `behaviours_problems` is the check, `behaviours_of`
+numbers reports `B1…` after it. `merged_behaviours` concatenates group
+lists and yields `None` if any is `None`. A group gap makes the merged
+list `None`; skipped groups contribute prior entries whose paths all lie
+in those groups' files (`carried_behaviours`). There is no claims-style
+carry and no sidecar: groups write the list on every round, and
+behaviours derive no finding, so there is nothing to answer. `_publish`
+verifies each cited test. Render never says "tested".
 """
 
 # doc-group: pipeline

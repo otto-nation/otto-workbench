@@ -7,7 +7,10 @@ a group by the paths it holds.
 
 The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
-it can afford to carry. The same lexical rules feed the review's test hint.
+it can afford to carry. The same lexical rules feed the review's advisory test
+hint: `unpaired_subjects` are changed source files with no test in the same
+diff whose stem `pairs_with` theirs on a name boundary. The hint does not
+change how files are grouped.
 """
 
 # doc-group: pipeline

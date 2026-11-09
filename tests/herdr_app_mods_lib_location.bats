@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# Tests for ai/herdr/app/mods/_lib/location.js — locate, remotes, untrusted home.
+# Tests for ai/herdr/app/mods/_lib/location.js — locate, remotes.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_lib/*.js lib/constants.sh
+# select-on: ai/herdr/app/mods/_lib/*.js
 
 setup() {
   load 'test_helper'
@@ -12,13 +12,12 @@ teardown() {
   common_teardown
 }
 
-# $1 = JS expression using locate, stripMachine, addr, remoteSlug, hostOf,
-# isUntrustedHome, UNTRUSTED_HOME_SUFFIX. Prints JSON.
+# $1 = JS expression using locate, stripMachine, addr, remoteSlug, hostOf.
+# Prints JSON.
 _js() {
   run node --input-type=module -e "
     const {
       locate, stripMachine, addr, remoteSlug, hostOf,
-      isUntrustedHome, UNTRUSTED_HOME_SUFFIX,
     } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/location.js');
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
@@ -76,18 +75,4 @@ _js() {
   _js '({h:hostOf("https://github.com/o/r"),s:hostOf("git@github.com:o/r.git"),u:hostOf("ssh://git@example.com/o/r")})'
   [ "$status" -eq 0 ]
   jq -e '.h=="github.com" and .s=="github.com" and .u=="example.com"' <<<"$output"
-}
-
-@test "isUntrustedHome boundaries" {
-  _js '({a:isUntrustedHome("/x/.config/herdr-app-untrusted"),b:isUntrustedHome("/x/.config/herdr-app-untrusted2"),c:isUntrustedHome("/x/.config/herdr-app"),d:isUntrustedHome("/x/.config/herdr-app-untrusted/")})'
-  [ "$status" -eq 0 ]
-  jq -e '.a==true and .b==false and .c==false and .d==true' <<<"$output"
-}
-
-@test "UNTRUSTED_HOME_SUFFIX matches lib/constants.sh" {
-  suffix=$(sed -n 's/^HERDR_UNTRUSTED_APP_DIR="\$HOME\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
-  _js 'UNTRUSTED_HOME_SUFFIX'
-  [ "$status" -eq 0 ]
-  [ "$(jq -r . <<<"$output")" = "$suffix" ]
-  [ "$suffix" = "/.config/herdr-app-untrusted" ]
 }

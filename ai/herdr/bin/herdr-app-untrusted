@@ -2,7 +2,7 @@
 # Launch an isolated Herdr window for agent machines (HC_SESSION=untrusted).
 #
 # Creates ~/.config/herdr-app-untrusted if missing, copies appearance settings
-# from the main window, forces clipboard_write off, and refuses to open when
+# from the main window (clipboard_write included), and refuses to open when
 # the untrusted session holds a local terminal or an afar grant. Never starts
 # hc.
 #

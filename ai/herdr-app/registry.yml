@@ -12,4 +12,4 @@ tools:
   - name: herdr-app-untrusted
     permission: false
     visibility: brief
-    description: "Launch an isolated Herdr window (HC_SESSION=untrusted) with no local terminals and clipboard write off. Operator tool"
+    description: "Launch an isolated Herdr window (HC_SESSION=untrusted) with no local terminals. Operator tool"

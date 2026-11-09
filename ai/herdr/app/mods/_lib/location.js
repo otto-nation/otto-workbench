@@ -1,6 +1,5 @@
 /**
- * Location helpers for herdr-app: operator machine/cwd, git remote identity,
- * and untrusted-home detection. Pure values; no imports.
+ * Location helpers for herdr-app: operator machine/cwd and git remote identity. Pure values; no imports.
  */
 
 export function locate(spaces, panes, focused) {
@@ -61,12 +60,4 @@ export function remoteSlug(url) {
 
 export function hostOf(url) {
   return parseRemote(url).host;
-}
-
-// Mirrors HERDR_UNTRUSTED_APP_DIR in lib/constants.sh (shell owns it).
-export const UNTRUSTED_HOME_SUFFIX = '/.config/herdr-app-untrusted';
-
-export function isUntrustedHome(appHome) {
-  const s = String(appHome ?? '').replace(/\/+$/, '');
-  return s.endsWith(UNTRUSTED_HOME_SUFFIX);
 }

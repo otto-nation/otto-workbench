@@ -4,9 +4,9 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, appHome, theme, layout, run, props, openOverlay,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, layout, run, props, openOverlay,
 } from "herdr";
-import { locate, isUntrustedHome } from "./_lib/location.js";
+import { locate } from "./_lib/location.js";
 import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
@@ -64,7 +64,6 @@ export default class TeamPrs extends View {
     this.inflight = this.again = this.againListing = false;
     this.watchRoot = this.key = null;
     this.pollListing = false;
-    if (isUntrustedHome(appHome())) return;
     cx.timer.every(180000, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => {
       if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
@@ -73,7 +72,6 @@ export default class TeamPrs extends View {
   }
 
   refresh(cx, opts = {}) {
-    if (isUntrustedHome(appHome())) return;
     const listingOnly = Boolean(opts.listingOnly);
     if (this.inflight) {
       if (!this.again) this.againListing = listingOnly;
@@ -271,12 +269,6 @@ export default class TeamPrs extends View {
 
   render(cx) {
     const t = theme();
-    // Running gh/pr from the window that also holds agent machines is the exposure the untrusted-window split exists to prevent.
-    if (isUntrustedHome(appHome())) {
-      return v_flex().id("prs").size_full().items_center().justify_center().p(SP.xl).bg(t.background)
-        .text_size(TEXT.body)
-        .child(div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child("PR board is disabled in the untrusted window"));
-    }
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
     if (this.key !== scopeKey) {

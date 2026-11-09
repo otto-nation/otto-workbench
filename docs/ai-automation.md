@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, finishing-a-development-branch, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -117,16 +117,6 @@ Diagnose and fix GitHub Actions CI failures with run-aware progression tracking:
 **Output schema:** `pr ci --tool-schema`
 **Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
 **Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
-
-### `/diverge`
-
-Generate options from isolated parallel branches, then critique them in a separate pass — for a decision where the first answer is likely an anchor. Runs only when named. TRIGGER when: user types /diverge or asks to run diverge on a problem. SKIP: any request that does not name it; one-canonical-answer questions; bugs with a known root cause; choosing between options the user already listed.
-
-```
-/diverge
-```
-**Trigger:** Use when the user explicitly invokes /diverge or asks to run diverge on an open-ended design, naming or strategy question.
-**Skip:** Do not use unless the user names it; do not use for questions with one canonical answer, bugs with a known root cause, or a choice between options already on the table.
 
 ### `/dream`
 
@@ -340,8 +330,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   edited in place is kept with a warning; delete it to get the link back. If the app
   rejects a change it says why in `~/.config/herdr-app/settings.error`.
 - Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/` (and `~/.config/herdr-app-untrusted/mods/` once that exists, so both windows carry the same mods and layouts)
-  as a real copy with `_lib/` inside, keeps edits, and a `workbench` layout (main + PR list under agents; `herdr-app do layout.switch --name workbench`).
-  The board refreshes every 3 minutes (remote review listings every 15 s), and Refresh, in its header and in the sidebar, pulls everything now.
+  as a real copy with `_lib/` inside, keeps edits, and a `workbench` layout (main + a PRs toggle beside Files/Changes that opens the board as a right panel; `herdr-app do layout.switch --name workbench`).
   The board has This/All spaces; lanes with no PRs are hidden unless the Empty lanes chip is on; in All spaces a Repo group filters by repository; a click opens the PR in the same pane with its review history and actions:
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
@@ -805,7 +794,6 @@ pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the
 pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
 pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
 pr batch status [RUN_ID] --full          # the raw run state plus `run_dir`
-pr batch status --list                   # this machine's runs, newest first (JSON)
 pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
 ```
 

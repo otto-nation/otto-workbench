@@ -62,11 +62,13 @@ _run_step() {
   ' _ "$REPO_ROOT" "$SRC" "$UNTRUSTED" "$MANIFEST"
 }
 
-@test "jq puts prs third under sidebar-lists with sidebar view" {
+@test "jq leaves sidebar-lists as herdr ships it" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
-  jq -e '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)] == [["spaces","agents","prs"]]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "prs") | .content.props.view] == ["sidebar"]' <<< "$output"
+  expected=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)]' "$FIXTURE")
+  actual=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)]' <<< "$output")
+  [ "$expected" = "$actual" ]
+  jq -e '[.. | objects | select(.id? == "prs")] | length == 0' <<< "$output"
 }
 
 @test "jq adds the board to panel-body after files and changes" {
@@ -96,11 +98,6 @@ _run_step() {
   once=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE")
   twice=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$once")
   [ "$once" = "$twice" ]
-}
-
-@test "jq errors when sidebar-lists is missing" {
-  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< '{"id":"root"}'
-  [ "$status" -ne 0 ]
 }
 
 @test "fresh install writes the layout and a manifest line" {

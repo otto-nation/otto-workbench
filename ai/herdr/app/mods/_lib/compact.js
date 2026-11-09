@@ -1,29 +1,11 @@
 /**
- * Compact / rail view selection for the team-prs board.
+ * Compact view selection for the team-prs board.
  */
 import { BREAKPOINT } from "./tokens.js";
 
-export function findNode(tree, id) {
-  if (tree == null || typeof tree !== "object") return null;
-  if (tree.id === id) return tree;
-  for (const child of tree.children ?? []) {
-    const found = findNode(child, id);
-    if (found) return found;
-  }
-  return null;
-}
-
-export function isRail(tree) {
-  return (findNode(tree, "sidebar")?.size?.px ?? Infinity) < BREAKPOINT.rail;
-}
-
-// Props say where the copy lives; width says how much room a board pane has.
-export function viewOf(props, width, tree) {
-  // The block's own measured width is the live signal: a runtime resize does not
-  // rewrite the layout tree, so the tree alone would miss a collapsed sidebar.
-  if (props?.view === "sidebar") return (width ?? Infinity) < BREAKPOINT.rail || isRail(tree) ? "rail" : "compact";
-  if ((width ?? Infinity) < BREAKPOINT.compact) return "compact";
-  return "board";
+// The block's measured width picks the density: a narrow panel gets the compact list.
+export function viewOf(width) {
+  return (width ?? Infinity) < BREAKPOINT.compact ? "compact" : "board";
 }
 
 export function compactSections(groups) {

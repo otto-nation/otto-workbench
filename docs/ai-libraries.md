@@ -988,38 +988,44 @@ with a note, and derives nothing.
 
 Derived findings are should-fix, never must-fix: a false statement about the
 change hits maintainability, reliability, or developer experience, not
-correctness, security, or data integrity (D1). The body is three lines: the
+correctness, security, or data integrity. The body is three lines: the
 collapsed claim text under `Claim contradicted:` or `Claim unsupported:`,
 the evidence prose, and `Source: description` or `Source: ticket`. The last
 line is always that `Source:` line so a derived body never ends in a
-non-defect phrase (D11).
+non-defect phrase.
 
 Answers live in `ReviewMeta.claim_answers`, keyed by `ClaimEntry.key` (source
 plus collapsed lower-cased text). `store.write_review` folds them from the
 record's derived findings on every write. An answer holds while its claim
 key is unchanged and, when anchored, its file has not changed since the
-commit the answer was given at (OD-3); `live_answers` is that filter.
-Unanchored answers never expire until the wording changes.
+commit the answer was given at; `live_answers` is that filter.
+Unanchored answers never expire until the wording changes. The table is not
+pruned by this round's claims: an empty tuple or a writer that omits or
+rewords a claim keeps every answer. A key leaves only when this record
+re-asserts that claim OPEN, UNREACHED or FIXED.
 
-`settle` is the only reader of those answers (D4). Sticky skips neither mark
-nor skip derived findings (D5), so the ledger is the only carry for them. A
+`settle` is the only reader of those answers. Sticky skips neither mark
+nor skip derived findings, so the ledger is the only carry for them. A
 run without `--prior-review` applies none.
 
 A round that publishes without the writer re-settles the prior claims when
-the fingerprint still matches (`carried`, D10): settled, `--no-synthesis`,
+the fingerprint still matches (`carried`): settled, `--no-synthesis`,
 budget-cut, synthesis-fallback, and a degraded writer check. Clean and
 all-groups-failed do not; they keep claims `None`, and answers still persist
 in the sidecar.
 
 The writer is forced when claims cannot be carried, an open claim finding is
-unanchored, or a prior derived finding — including answered and falsified —
-is anchored on a file in this round's change set (D11). An open claim
-finding the writer is not forced to re-judge never reaches a clean review.
+unanchored, a FIXED or open derived finding is anchored on a file in this
+round's change set, or `live_answers` would drop a sidecar entry. The
+forcing check reads the sidecar for answered claims, because a clean round
+leaves no derived findings on the record. An open claim finding the writer
+is not forced to re-judge never reaches a clean review; an expired sidecar
+answer does not either.
 
 D19 still owns writer-finding declines: an ingest-time belief check on a
 decline an agent restated. Derived findings are never shown to an agent, so
-there is nothing for D19 to believe. Writer declines do not share the ledger
-(D6). A claim linked to a prior writer finding that was fixed or settled
+there is nothing for D19 to believe. Writer declines do not share the ledger.
+A claim linked to a prior writer finding that was fixed or settled
 gets its link cleared and may derive OPEN on a non-writer round.
 
 A derived finding answered before claim keys included the source re-raises

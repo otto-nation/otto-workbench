@@ -69,7 +69,7 @@ class ClaimEntry:
         """Eight-hex identity: source and collapsed lower-cased text.
 
         Verdict, path, snippet and evidence are left out so a verdict flip or a
-        re-cited snippet is the same claim (D3). A wording edit is a new claim.
+        re-cited snippet is the same claim. A wording edit is a new claim.
         """
         payload = (
             f"claim\0{self.source.value}\0{' '.join(self.text.split()).lower()}"

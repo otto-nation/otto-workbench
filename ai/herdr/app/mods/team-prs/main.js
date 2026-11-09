@@ -5,7 +5,7 @@ import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.
 import { renderFileList, renderDiff } from "./files_view.js";
 import { actionsFor } from "./_lib/actions.js";
 import { readReview, loadFiles } from "./_lib/board_data.js";
-import { patchRows } from "./_lib/diff.js";
+import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
@@ -247,6 +247,11 @@ export default class TeamPrs extends Board {
       this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
     }
     const files = this.ensureFiles(this.detail);
+    // The header counts what people wrote: once the files are known, generated ones drop out.
+    if (files?.ok) {
+      const sum = summarize(files.files);
+      Object.assign(this.detail, { files: sum.files, additions: sum.add, deletions: sum.del, generated: sum.generated });
+    }
     const file = this.openFile && files?.files?.find((f) => f.path === this.openFile);
     return renderDetail(this.detail, {
       nowMs: Date.now(),

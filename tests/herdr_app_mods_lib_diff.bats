@@ -68,3 +68,13 @@ _js() {
   _js '[w.spaceFor([{id:"a",folder:"/p",machine:"m"},{id:"b",folder:"/p",machine:null}],"/p"), w.spaceFor([],"/p")]'
   [ "$output" = '["b",null]' ]
 }
+
+@test "attrArgvs chunks paths and generatedPaths reads set and true only" {
+  _js '(()=>{const fs=Array.from({length:450},(_,i)=>({path:"f"+i}));const a=d.attrArgvs(fs);return [a.length,a[0].slice(0,4),a[2].length,[...d.generatedPaths("a\0linguist-generated\0set\0b\0linguist-generated\0unspecified\0c\0linguist-generated\0true\0d\0linguist-generated\0unset\0")]]})()'
+  [ "$output" = '[3,["check-attr","-z","linguist-generated","--"],54,["a","c"]]' ]
+}
+
+@test "summarize leaves generated files out of every count and reports them apart" {
+  _js 'd.summarize(d.markGenerated([{path:"a",add:3,del:1},{path:"g",add:100,del:50},{path:"b",add:2,del:0}],new Set(["g"])))'
+  [ "$output" = '{"files":2,"add":5,"del":1,"generated":1}' ]
+}

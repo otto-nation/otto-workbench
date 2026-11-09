@@ -118,6 +118,7 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
       .child(div().text_color(t.ansi2).child(`+${d.additions ?? 0}`))
       .child(div().text_color(t.ansi1).child(`-${d.deletions ?? 0}`))
       .child(div().child(`${d.files ?? 0} files`))
+      .when(d.generated > 0, (e) => e.child(div().child(`excl. ${d.generated} generated`)))
       .child(div().child(CI[d.ci] ?? ""))
       .child(div().child(d.decision ? String(d.decision).toLowerCase().replace(/_/g, " ") : "")));
 }
@@ -157,7 +158,7 @@ export function renderDetail(d, {
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))
     .child(h_flex().flex_none().px(SP.lg).pt(SP.md).child(segmented([
       segment("tab-history", "Review history", tab === "history", () => onTab("history")),
-      segment("tab-files", `Files ${d.files ?? ""}`.trim(), tab === "files", () => onTab("files")),
+      segment("tab-files", "Files", tab === "files", () => onTab("files")),
     ])))
     .when(tab === "files", (e) => e.child(filesBody))
     .when(tab !== "files", (e) => e.child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg)

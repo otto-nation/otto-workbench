@@ -20,7 +20,7 @@ import {
   pullsArgv,
   userArgv,
 } from './github.js';
-import { mapFiles } from './diff.js';
+import { attrArgvs, generatedPaths, mapFiles, markGenerated } from './diff.js';
 import { hostOf, remoteSlug } from './location.js';
 import { joinReviews, keepLanded, landedCandidates } from './reviews.js';
 
@@ -212,7 +212,17 @@ export async function loadFiles(exec, ctx, slug, number) {
   if (!ran.ok) return ran;
   const parsed = readJson(ran.stdout);
   if (!parsed.ok) return parsed;
-  return { ok: true, files: mapFiles(parsed.value) };
+  const files = mapFiles(parsed.value);
+  // Which files .gitattributes calls generated is git's to answer, from the checkout. Without a
+  // checkout, or when git cannot say, nothing is marked and the counts stay whole.
+  if (ctx.cwd == null) return { ok: true, files };
+  const generated = new Set();
+  for (const argv of attrArgvs(files)) {
+    const attr = await invoke(exec, ctx, 'git', argv);
+    if (!attr.ok) return { ok: true, files };
+    for (const p of generatedPaths(attr.stdout)) generated.add(p);
+  }
+  return { ok: true, files: markGenerated(files, generated) };
 }
 
 export async function loadBatchDoc(exec, ctx) {

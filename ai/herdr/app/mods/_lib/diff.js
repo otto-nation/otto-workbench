@@ -23,6 +23,7 @@ export function mapFiles(json) {
     add: f.additions ?? 0,
     del: f.deletions ?? 0,
     patch: typeof f.patch === 'string' ? f.patch : null,
+    generated: false,
   }));
 }
 
@@ -55,4 +56,40 @@ export function patchRows(patch) {
   );
   const width = Math.max(300, ...lines.map((l) => l.length * CHAR_PX + 50));
   return { rows: diffRows(lines), truncated: all.length > MAX_LINES, width };
+}
+
+const CHUNK = 200;
+
+// `git check-attr -z` argv lists, one per chunk so a big PR stays under the argument limit.
+export function attrArgvs(files) {
+  const out = [];
+  for (let i = 0; i < files.length; i += CHUNK) {
+    out.push(['check-attr', '-z', 'linguist-generated', '--', ...files.slice(i, i + CHUNK).map((f) => f.path)]);
+  }
+  return out;
+}
+
+// Paths `check-attr -z` reports as generated: `path\0attr\0value\0` triples; "set" and "true" count.
+export function generatedPaths(stdout) {
+  const parts = (stdout ?? '').split('\0');
+  const out = new Set();
+  for (let i = 0; i + 2 < parts.length; i += 3) {
+    if (parts[i + 2] === 'set' || parts[i + 2] === 'true') out.add(parts[i]);
+  }
+  return out;
+}
+
+export function markGenerated(files, generated) {
+  return files.map((f) => ({ ...f, generated: generated.has(f.path) }));
+}
+
+// Counts for the header: generated files are left out of every number and reported apart.
+export function summarize(files) {
+  const own = files.filter((f) => !f.generated);
+  return {
+    files: own.length,
+    add: own.reduce((n, f) => n + f.add, 0),
+    del: own.reduce((n, f) => n + f.del, 0),
+    generated: files.length - own.length,
+  };
 }

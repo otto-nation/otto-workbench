@@ -20,9 +20,10 @@ function fileRow(f, onPick) {
   return h_flex().id(`file-${f.path}`).h(28).flex_none().px(SP.sm).gap(SP.sm).items_center()
     .rounded(RADIUS.control).cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => onPick(f.path))
     .child(div().w(14).text_size(TEXT.caption).text_color(statusColor(t, f.status)).child(f.status))
-    .child(h_flex().flex_1().min_w(0)
+    .child(h_flex().flex_1().min_w(0).when(f.generated, (e) => e.text_color(t.dim))
       .child(div().text_color(t.dim).truncate().child(parts.length ? `${parts.join("/")}/` : ""))
       .child(div().min_w(0).truncate().child(name)))
+    .when(f.generated, (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim).child("generated")))
     .when(f.add > 0, (e) => e.child(div().text_size(TEXT.caption).text_color(t.ansi2).child(`+${f.add}`)))
     .when(f.del > 0, (e) => e.child(div().text_size(TEXT.caption).text_color(t.ansi1).child(`-${f.del}`)));
 }
@@ -35,7 +36,8 @@ export function renderFileList(files, { onPick }) {
     if (files == null) return dim("Loading changed files…");
     if (files.ok === false) return dim(files.error?.message ?? "Could not load changed files");
     if (!files.files.length) return dim("No changed files");
-    return v_flex().gap(2).children(files.files.map((f) => fileRow(f, onPick)));
+    return v_flex().gap(2).children([...files.files.filter((f) => !f.generated), ...files.files.filter((f) => f.generated)]
+      .map((f) => fileRow(f, onPick)));
   })();
   return v_flex().id("prs-files").flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg).child(body);
 }

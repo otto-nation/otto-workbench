@@ -506,3 +506,18 @@ _gql() {
   [ "$status" -eq 0 ]
   [ "$output" = '["a.js","A",false,"boom"]' ]
 }
+
+@test "loadFiles marks files .gitattributes calls generated, and skips that without a checkout" {
+  _bd '
+    const pages = JSON.stringify([[{filename:"a.js",status:"modified",additions:1,deletions:0},{filename:"g.json",status:"modified",additions:9,deletions:9}]]);
+    const table = [
+      { prefix: "gh api /repos/o/n/pulls/7/files", stdout: pages },
+      { prefix: "git check-attr -z linguist-generated -- a.js g.json", stdout: "a.js\0linguist-generated\0unspecified\0g.json\0linguist-generated\0set\0" },
+    ];
+    const withCwd = await m.loadFiles(exec, ctx, "o/n", 7);
+    const none = await m.loadFiles(exec, { cwd: null, on: null }, "o/n", 7);
+    process.stdout.write(JSON.stringify([withCwd.files.map(f=>f.generated), none.files.map(f=>f.generated)]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[false,true],[false,false]]' ]
+}

@@ -181,7 +181,7 @@ def test_a_full_review_expires_anchored_answers(tmp_path):
 def _round_job(tmp_path, review_dir, *, claims_text="retries back off"):
     job = review_job(
         tmp_path, review_dir, files=("a.py",), head_sha=HEAD,
-        prior=read_prior(review_dir), preflight=_preflight(["b.py"], HEAD),
+        prior=read_prior(review_dir), preflight=_preflight(["b.py"], PRIOR_HEAD),
     )
     job.issue_context = claims_text
     return job
@@ -197,7 +197,7 @@ def test_a_declined_claim_finding_survives_a_clean_round(tmp_path):
         claims=(c,),
     )
     review_dir = tmp_path / "review"
-    write_review(review_dir / "review.md", rec, ReviewMeta(head_sha=HEAD))
+    write_review(review_dir / "review.md", rec, ReviewMeta(head_sha=PRIOR_HEAD))
     archive_prior(review_dir)
     (tmp_path / "a.py").write_text("delay *= 2\n")
     review.outcome._write_clean_review(_round_job(tmp_path, review_dir), 1, ReviewRecord())
@@ -211,6 +211,7 @@ def test_a_declined_claim_finding_survives_a_clean_round(tmp_path):
     got = next(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
     assert got.disposition is Disposition.DECLINED
     assert got.reason == "author's call"
+    assert out.claims[0].finding == got.id
 
 
 def test_a_falsified_claim_finding_stays_falsified_after_a_settled_round(tmp_path):
@@ -223,7 +224,7 @@ def test_a_falsified_claim_finding_stays_falsified_after_a_settled_round(tmp_pat
         claims=(c,),
     )
     review_dir = tmp_path / "review"
-    write_review(review_dir / "review.md", rec, ReviewMeta(head_sha=HEAD))
+    write_review(review_dir / "review.md", rec, ReviewMeta(head_sha=PRIOR_HEAD))
     archive_prior(review_dir)
     (tmp_path / "a.py").write_text("delay *= 2\n")
     review.outcome._write_settled_review(_round_job(tmp_path, review_dir), 1, ReviewRecord())
@@ -237,3 +238,36 @@ def test_a_falsified_claim_finding_stays_falsified_after_a_settled_round(tmp_pat
     assert not any(f.origin is FindingOrigin.CLAIM for f in out.findings)
     assert out.claims[0].finding == ""
     assert out.claims[0].verdict is ClaimVerdict.CONTRADICTED
+
+
+def test_a_falsified_claim_leaves_its_sibling_linked(tmp_path):
+    (tmp_path / "a.py").write_text("delay *= 2\n")
+    suppressed = claim(id="C1", verdict=ClaimVerdict.CONTRADICTED)
+    sibling = claim(
+        id="C2", verdict=ClaimVerdict.CONTRADICTED, text="timeouts are gone",
+    )
+    answers = {
+        suppressed.key: ClaimAnswer(Disposition.FALSIFIED, "gate", "a.py", PRIOR_HEAD),
+    }
+    job = _delta_job(
+        tmp_path, ["b.py"],
+        prior=StoredReview(
+            record(), ReviewMeta(head_sha=PRIOR_HEAD, claim_answers=answers),
+        ),
+    )
+    out = review.claims.settle(job, record(claims=(suppressed, sibling)))
+    got = next(f for f in out.findings if f.origin is FindingOrigin.CLAIM)
+    assert out.claims[0].finding == ""
+    assert out.claims[1].finding == got.id
+    assert got.stable_id == sibling.key
+
+
+def test_live_answers_does_not_measure_a_change_set_without_answers(
+        tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        review.convergence, "change_set",
+        lambda job: seen.append(job) or frozenset(),
+    )
+    assert review.claims.live_answers(_delta_job(tmp_path, ["a.py"]), {}) == {}
+    assert seen == []

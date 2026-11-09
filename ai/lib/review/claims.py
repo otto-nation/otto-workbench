@@ -321,6 +321,8 @@ def live_answers(
     job: ReviewJob, answers: dict[str, ClaimAnswer],
 ) -> dict[str, ClaimAnswer]:
     """Answers that still hold for this run (OD-3)."""
+    if not answers:
+        return {}
     # ceiling: an unanchored FALSIFIED answer holds until the claim's wording
     # changes. Upgrade trigger: once a review is seen suppressing an
     # unsupported claim the code has since stopped supporting.

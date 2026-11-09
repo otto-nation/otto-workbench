@@ -5,6 +5,8 @@ This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
 into record entries after the check, the degraded-check warning, and
 `settle`. Renderers take claims off the record and never import it.
+`writer_check` and `check_warning` also cover behaviours: they are checked
+and warned here, but owned by `review/behaviours.py`.
 
 The record is tri-state. `None` is not assessed — a writer that did not run
 and whose claims could not be carried, or a legacy `review.json`. A check
@@ -55,7 +57,7 @@ non-defect phrase.
 
 Answers live in `ReviewMeta.claim_answers`, keyed by `ClaimEntry.key` (source
 plus collapsed lower-cased text). `store.write_review` folds them from the
-record's derived findings on every write. An answer holds while its claim
+record's claim findings on every write. An answer holds while its claim
 key is unchanged and, when anchored, its file has not changed since the
 commit the answer was given at; `live_answers` is that filter.
 Unanchored answers never expire until the wording changes. The table is not
@@ -113,6 +115,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 
 from core.phases import Mode
+import review.behaviours
 import review.budget
 import review.convergence
 import review.focus
@@ -254,11 +257,12 @@ def without_vanished_links(record: ReviewRecord) -> ReviewRecord:
 def writer_check(
     job: ReviewJob,
 ) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:
-    """Focus coverage then claims, as the writer's `check=` callable.
+    """The writer's whole run-context `check=`: focus, claims, and behaviours.
 
     `job` supplies the requested focus, whether derived areas are required,
-    and whether a claim source exists. Caps and cite rules live in
-    `claims_problems`, so an over-cap list degrades rather than rejects.
+    and whether a claim or behaviour source exists. Caps and cite rules live
+    in `claims_problems` and `behaviours_problems`, so an over-cap list
+    degrades rather than rejects.
     """
     def check(artifact: ReviewArtifact) -> tuple[IngestError, ...]:
         return review.focus.coverage_problems(
@@ -266,6 +270,9 @@ def writer_check(
         ) + claims_problems(
             artifact.claims, {f.id for f in artifact.findings},
             has_claim_source=has_claim_source(job),
+        ) + review.behaviours.behaviours_problems(
+            artifact.behaviours,
+            has_behaviour_source=review.behaviours.has_behaviour_source(job),
         )
     return check
 
@@ -294,20 +301,23 @@ def claims_of(
 
 
 def check_warning(errors: Sequence[IngestError], job: ReviewJob) -> str:
-    """Warning after a writer's second failed check, with a claims clause.
+    """Warning after a writer's second failed check, with claims and behaviours clauses.
 
     `errors` are the ingest errors left after the repair turn. When any is a
     claims kind, the warning adds that prior claims are carried, or that
-    claims are published as not assessed when they cannot be.
+    claims are published as not assessed when they cannot be. When any is a
+    behaviours kind, it adds that behaviours are published as not assessed.
     """
-    more = ()
+    more = []
     if any(e.kind in CLAIM_KINDS for e in errors):
         clause = (
             "prior claims are carried"
             if _carryable_claims(job) is not None
             else "claims are published as not assessed"
         )
-        more = (clause,)
+        more.append(clause)
+    if any(e.kind in review.behaviours.BEHAVIOUR_KINDS for e in errors):
+        more.append("behaviours are published as not assessed")
     return review.focus.check_warning(errors, more=more)
 
 
@@ -385,30 +395,30 @@ _ANSWERED_DERIVED = (Disposition.FIXED, Disposition.DECLINED, Disposition.SKIPPE
 
 
 def open_derived_findings(prior: StoredReview | None) -> tuple[RecordFinding, ...]:
-    """Derived findings the prior still held open.
+    """Claim findings the prior still held open.
 
-    Openness is a visible derived finding whose disposition is not FIXED,
+    Openness is a visible claim finding whose disposition is not FIXED,
     DECLINED or SKIPPED. UNREACHED is still open (the fix pass never reached
     it). DECLINED and SKIPPED were answered last round; FALSIFIED is not
-    visible. Derived findings are never a prior finding to account for;
+    visible. Claim findings are never a prior finding to account for;
     whether an open one needs the writer is `writer_must_rejudge`.
     """
     if prior is None:
         return ()
     return tuple(
         f for f in prior.record.visible
-        if f.derived and f.disposition not in _ANSWERED_DERIVED
+        if f.origin is FindingOrigin.CLAIM and f.disposition not in _ANSWERED_DERIVED
     )
 
 
 def writer_must_rejudge(job: ReviewJob) -> bool:
     """True when claims cannot be carried, an open claim finding is
-    unanchored, a FIXED or open derived finding is anchored on a file
+    unanchored, a FIXED or open claim finding is anchored on a file
     in this round's change set, or live answers would drop an entry.
 
     Answered claims (DECLINED, SKIPPED, FALSIFIED) expire through
     `live_answers` reading the sidecar, not the prior record — a clean
-    round leaves no derived findings on disk. Known limit: a claim
+    round leaves no claim findings on disk. Known limit: a claim
     linked to a prior writer finding that was fixed or settled gets
     its link cleared and may derive OPEN on a non-writer round.
     """
@@ -424,7 +434,7 @@ def writer_must_rejudge(job: ReviewJob) -> bool:
     if answers.keys() - live_answers(job, answers).keys():
         return True
     return any(
-        f.derived and f.disposition is Disposition.FIXED and _expired(f.path, changed)
+        f.origin is FindingOrigin.CLAIM and f.disposition is Disposition.FIXED and _expired(f.path, changed)
         for f in job.prior.record.findings
     )
 

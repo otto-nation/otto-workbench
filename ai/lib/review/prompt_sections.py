@@ -29,7 +29,7 @@ from gh.types import FILE_STAT_FMT, PRContext, PRMetadata
 from core.phases import Effort
 from review.budget import (
     FileFit, MAX_DELTA_LIST_ENTRIES, MAX_ISSUE_CONTEXT_BYTES,
-    MAX_REVIEW_BODY_LEN, MIN_DELTA_DIFF_BYTES,
+    MAX_REVIEW_BODY_LEN, MAX_TEST_HINT_BYTES, MIN_DELTA_DIFF_BYTES,
 )
 from review.collect import scope_diff, truncate_diff
 from review.record import FocusArea, FocusSource
@@ -521,6 +521,37 @@ def _build_focus_section(
             "a `rationale`, and the `paths` it concerns (`[]` when it spans the PR)."
         )
     return "\n".join(lines)
+
+
+def _build_test_hint_section(paths: Sequence[str]) -> str:
+    """The advisory ``## Test hint`` listing unpaired source paths.
+
+    Empty when there is nothing to list. Capped at ``MAX_TEST_HINT_BYTES`` so
+    the hint never crowds the diff; the tail becomes ``- …and N more``.
+    """
+    if not paths:
+        return ""
+    head = [
+        "",
+        "## Test hint",
+        "From file names only: these changed files have no test in this PR "
+        "whose name pairs with theirs. Not a finding by itself.",
+    ]
+    included: list[str] = []
+    omitted = 0
+    for i, path in enumerate(paths):
+        rest = len(paths) - i - 1
+        line = f"- `{path}`"
+        suffix = [f"- …and {rest} more"] if rest else []
+        trial = "\n".join([*head, *included, line, *suffix])
+        if len(trial.encode()) <= MAX_TEST_HINT_BYTES:
+            included.append(line)
+            continue
+        omitted = len(paths) - i
+        break
+    if omitted:
+        included.append(f"- …and {omitted} more")
+    return "\n".join([*head, *included])
 
 
 def _build_issue_section(issue_link: str, issue_context: str) -> str:

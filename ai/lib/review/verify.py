@@ -65,15 +65,15 @@ from pathlib import Path
 
 import core.log
 import git.client
+import review.behaviours
 from pr.domains import ReviewVerdict
+from review.behaviour_types import BehaviourEntry
 from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimVerdict
 from review.format import resolve_path
 from review.merge import renumber_record
 from review.artifacts import DisproveArtifact, DisproveOutcome
 from review.record import Disposition, ReviewRecord
-from review.types import (
-    SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key,
-)
+from review.types import SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key
 from review.verdict import counts_prose, verdict_from_counts
 from core.text import plural
 
@@ -321,6 +321,42 @@ def verified_claims(
     if tracked is None:
         tracked = functools.cache(lambda: _tracked_files(wt_path))
     return tuple(_verified_claim(c, wt_path, tracked, changed) for c in claims)
+
+
+def _verified_behaviour(
+    entry: BehaviourEntry, wt_path: str,
+    tracked: Callable[[], Collection[str]], changed: Collection[str],
+) -> BehaviourEntry:
+    if not entry.test_cited:
+        return entry
+    if review.behaviours.has_unsafe_citation_text(entry.test_cited):
+        return replace(entry, test_cited="", note="cited test not found")
+    if not wt_path:
+        return replace(entry, test_cited="", note="no worktree to check the cited test")
+    path, _, name = entry.test_cited.partition("::")
+    resolved = _locate(path, wt_path, tracked, changed)
+    if resolved is None:
+        return replace(entry, test_cited="", note="cited test not found")
+    if name:
+        try:
+            text = resolved.read_text()
+        except (OSError, UnicodeDecodeError):
+            return replace(entry, test_cited="", note="cited test not found")
+        if not re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text):
+            return replace(entry, test_cited="", note="cited test not found")
+    return replace(entry, note="") if entry.note else entry
+
+
+def verified_behaviours(
+    behaviours: tuple[BehaviourEntry, ...] | None, wt_path: str,
+    changed: Collection[str], *, tracked: Callable[[], Collection[str]] | None = None,
+) -> tuple[BehaviourEntry, ...] | None:
+    """None and () pass through; a miss clears test_cited and sets note."""
+    if not behaviours:
+        return behaviours
+    if tracked is None:
+        tracked = functools.cache(lambda: _tracked_files(wt_path))
+    return tuple(_verified_behaviour(b, wt_path, tracked, changed) for b in behaviours)
 
 
 # ── Reconciling prose against dropped findings ───────────────────────────────

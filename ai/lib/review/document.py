@@ -31,6 +31,7 @@ from review.types import SEVERITIES, Finding, ReviewMeta, ReviewType
 SECTION_SUMMARY = "Summary"
 SECTION_FOCUS = "Focus"
 SECTION_CLAIMS = "Claims"
+SECTION_TEST_EVIDENCE = "Test evidence"
 SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"

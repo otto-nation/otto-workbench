@@ -85,6 +85,7 @@ def record(*findings, **fields):
     """A review record holding `findings`, and any other `ReviewRecord` field by keyword."""
     from review.record import ReviewRecord
     fields.setdefault("claims", ())
+    fields.setdefault("behaviours", ())
     return ReviewRecord(findings=tuple(findings), **fields)
 
 

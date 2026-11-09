@@ -24,6 +24,7 @@ from review.render import (
 from review.types import PriorDisposition, ReviewMeta
 
 from review.claim_types import ClaimVerdict
+from review_behaviours_support import behaviour
 from review_claims_support import claim
 from review_focus_support import area, user_area
 from review_record_support import (
@@ -277,3 +278,30 @@ def test_a_claim_line_names_its_finding():
 
 def test_a_claim_with_no_path_has_no_code_line():
     assert "Code:" not in claim_line(claim(path=""))
+
+
+def test_test_evidence_renders_after_claims():
+    body = render_body(record(
+        finding("M1", "x"),
+        summary="s",
+        claims=(claim(),),
+        behaviours=(
+            behaviour(),
+            behaviour(id="B2", test_cited=""),
+        ),
+    ))
+    assert body.index("## Claims") < body.index("## Test evidence") < body.index("## Must fix")
+    section = body.split("## Test evidence", 1)[1].split("## ", 1)[0]
+    assert "test cited:" in section
+    assert "no test found" in section
+    assert "tested" not in body
+
+
+def test_unassessed_behaviours_say_so():
+    body = render_body(record(summary="s", behaviours=None))
+    assert "## Test evidence" in body
+    assert "*Not assessed this round.*" in body.split("## Test evidence", 1)[1]
+
+
+def test_assessed_empty_behaviours_render_nothing():
+    assert "## Test evidence" not in render_body(record(summary="s", behaviours=()))

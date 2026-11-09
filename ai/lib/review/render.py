@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from core.markdown import escape_cell
+from review.behaviour_types import BehaviourEntry
 from review.claim_types import ClaimEntry
 from review.document import (
     SECTION_CLAIMS, SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS,
     SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
-    SECTION_VERDICT, ReviewHeader, review_title,
+    SECTION_TEST_EVIDENCE, SECTION_VERDICT, ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, location_ref, sid_marker
 from review.record import (
@@ -120,6 +121,31 @@ def claims_comment(claims: tuple[ClaimEntry, ...] | None) -> str:
     return "\n".join(lines)
 
 
+def _behaviour_citation(b: BehaviourEntry) -> str:
+    cited = f"test cited: `{b.test_cited}`" if b.test_cited else "no test found"
+    note = f" *({b.note})*" if b.note else ""
+    return f"{_continued(b.text)} — {cited}{note}"
+
+
+def behaviour_line(b: BehaviourEntry) -> str:
+    """One `## Test evidence` list item for review.md."""
+    return f"- **[{b.id}]** {_behaviour_citation(b)}"
+
+
+def behaviours_body(behaviours: tuple[BehaviourEntry, ...] | None) -> str:
+    """The Test evidence section body: unassessed prose, or one line per entry."""
+    if behaviours is None:
+        return "*Not assessed this round.*"
+    return "\n".join(behaviour_line(b) for b in behaviours)
+
+
+def behaviours_comment(behaviours: tuple[BehaviourEntry, ...] | None) -> str:
+    """The GitHub-comment Test evidence lines: text and citation; no B ids."""
+    if behaviours is None:
+        return "*Not assessed this round.*"
+    return "\n".join(f"- {_behaviour_citation(b)}" for b in behaviours)
+
+
 def focus_comment(areas: Sequence[FocusArea]) -> str:
     """The GitHub-comment Focus lines: title, requested mark, coverage."""
     lines = []
@@ -167,6 +193,8 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSec
         ))
     if record.claims is None or record.claims:
         sections.append(ProseSection(SECTION_CLAIMS, claims_body(record.claims)))
+    if record.behaviours is None or record.behaviours:
+        sections.append(ProseSection(SECTION_TEST_EVIDENCE, behaviours_body(record.behaviours)))
     sections += _severity_sections(record, sids, evidence)
     if record.ledger:
         sections.append(ProseSection(SECTION_PRIOR_FINDINGS, "\n".join(ledger_line(e) for e in record.ledger)))

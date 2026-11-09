@@ -21,6 +21,7 @@ from pathlib import Path
 
 import core.log
 import git.client
+import review.behaviours
 import review.claims
 from core.phases import Mode
 from pr.domains import ReviewStatus
@@ -42,7 +43,7 @@ from review.verdict import (
     NO_RUN_VERDICT, PARTIAL_VERDICT, SETTLED_SUMMARY, build_mechanical_record,
     states_verdict,
 )
-from review.verify import post_process_record
+from review.verify import post_process_record, verified_behaviours
 
 
 def _job_meta(job: ReviewJob) -> ReviewMeta:
@@ -112,11 +113,17 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
              total_groups: int = 0, status: ReviewStatus | None = None) -> None:
     """Write `record` and this run's sidecar, and render review.md from both.
 
-    Every review leaves with the run's areas, covered or not.
+    Every review leaves with the run's areas, covered or not. Cited tests
+    are verified here: a miss or an unsafe `test_cited` is cleared with a
+    fixed note.
     """
     record = with_run_focus(record, job.focus)
     if record.claims is None and not review.claims.has_claim_source(job):
         record = replace(record, claims=())
+    if record.behaviours is None and not review.behaviours.has_behaviour_source(job):
+        record = replace(record, behaviours=())
+    record = replace(record, behaviours=verified_behaviours(
+        record.behaviours, job.wt_path, [f["path"] for f in job.pr.files]))
     meta = _review_meta(job, skipped_groups=skipped_groups, total_groups=total_groups,
                         status=status)
     sticky = apply_sticky_skips(record, meta.sticky_skips, job.wt_path)
@@ -249,6 +256,8 @@ def _carried_record(prior: StoredReview) -> ReviewRecord:
 
     The claims ledger is carried because the no-op gate proved their inputs
     unchanged. Derived findings ride with the claims they came from.
+    Behaviours stay as the prior round left them, so a legacy `None` stays
+    not assessed until a writer round runs.
     """
     return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
                    static_analysis="", focus=())

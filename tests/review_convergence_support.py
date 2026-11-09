@@ -75,6 +75,8 @@ def single_agent_record(monkeypatch, record: ReviewRecord) -> None:
 
     import review.pipeline
     from review.ingest import ArtifactOutcome
-    artifact = SimpleNamespace(to_record=lambda **_: record, focus=(), claims=None)
+    artifact = SimpleNamespace(
+        to_record=lambda **_: record, focus=(), claims=None, behaviours=None,
+    )
     monkeypatch.setattr(review.pipeline, "ingest_artifact",
                         lambda *a, **k: ArtifactOutcome(artifact))

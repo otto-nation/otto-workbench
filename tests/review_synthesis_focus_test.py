@@ -11,6 +11,7 @@ import cli.review_orchestrate  # noqa: F401
 from review.record import FocusSource, load_record
 from review.steps import Merged
 from review.verify import PostProcessed
+from review_behaviours_support import behaviour
 from review_focus_support import DERIVED_FOCUS, user_area
 from review_record_support import record
 
@@ -119,3 +120,7 @@ class TestSynthesisFocus:
 
 def test_merged_text_does_not_carry_claims():
     assert "## Claims" not in Merged(record()).text
+
+
+def test_merged_text_does_not_carry_test_evidence():
+    assert "## Test evidence" not in Merged(record(behaviours=(behaviour(),))).text

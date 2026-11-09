@@ -28,11 +28,12 @@ from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
 from review.convergence import change_set, drop_out_of_delta_nits, prior_ids
 from review.prompt_sections import _is_incremental
-from review.document import SECTION_CLAIMS, SECTION_FOCUS, ReviewDocument
+from review.document import SECTION_CLAIMS, SECTION_FOCUS, SECTION_TEST_EVIDENCE, ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
     GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
 )
+import review.behaviours
 import review.claims
 from review.budget import CLAIM_TURN_ALLOWANCE
 from review.focus import covered
@@ -116,7 +117,7 @@ class Merged:
     @property
     def text(self) -> str:
         shown = f"```json\n{example_json(as_group_artifact(self._for_synthesis()))}\n```"
-        harness = render_body(ReviewRecord(extra=self.record.extra, claims=())).strip()
+        harness = render_body(ReviewRecord(extra=self.record.extra, claims=(), behaviours=())).strip()
         return f"{shown}\n\n{harness}" if harness else shown
 
     def carry(self, record: ReviewRecord) -> "Merged":
@@ -125,6 +126,7 @@ class Merged:
             replace(
                 append_findings(self.record, record.findings),
                 severity_sections=notes,
+                behaviours=review.behaviours.merged_behaviours((self.record, record)),
             ),
             fresh=self.fresh,
         )
@@ -506,6 +508,7 @@ def _phase_synthesis(
             focus=covered(job.focus, outcome.artifact.focus,
                           [f["path"] for f in job.pr.files]),
             claims=review.claims.claims_of(job, outcome),
+            behaviours=review.behaviours.behaviours_of(job, outcome),
         )
         record = _restore_held_findings(merged.record, record)
         if _is_incremental(job):
@@ -562,7 +565,11 @@ def _carry_forward_prior_findings(
                 findings=carried.findings + scoped.findings,
                 severity_sections=carried.severity_sections + notes,
             )
-    return Merged(carried) if carried.findings else None
+    files = [p for i, g in enumerate(groups, 1) if i in skip_indices for p in g.files]
+    carried = replace(carried, behaviours=review.behaviours.carried_behaviours(
+        prior.record.behaviours, files,
+    ))
+    return Merged(carried) if carried.findings or carried.behaviours != () else None
 
 
 def _identify_incremental_skips(
@@ -602,12 +609,12 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
         return DisproveRun(PhaseResult(), record)
     # The gate reads the record rendered with its evidence: the findings it
     # challenges, their locations, and the code each one quotes. Disprove judges
-    # truth, not where to look, so Focus and Claims are omitted.
+    # truth, not where to look, so Focus, Claims and Test evidence are omitted.
     result = run_phase(job, Phase.DISPROVE,
                        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
                        review_content=render_body(
                            record, evidence=True,
-                           omit=frozenset({SECTION_FOCUS, SECTION_CLAIMS}),
+                           omit=frozenset({SECTION_FOCUS, SECTION_CLAIMS, SECTION_TEST_EVIDENCE}),
                        ))
     if result.artifact is None:
         return DisproveRun(result, record)
@@ -692,7 +699,13 @@ def _phase_merge(
     if ingested.gaps:
         listed = "The following file groups were not reviewed due to agent failure:\n" + "\n".join(
             f"- {f.group}: {f.diagnosis.message}" for f in ingested.gaps)
-        record = replace(record, extra=record.extra + (ProseSection("Review gaps", listed),))
+        record = replace(
+            record,
+            extra=record.extra + (ProseSection("Review gaps", listed),),
+            behaviours=None,
+        )
+    elif not ingested.records:
+        record = replace(record, behaviours=())
     # A rejection ingest added, that the caller did not already count as a
     # failed group, is not a counted zero — `_nothing_new` must not settle.
     ingest_gaps = {g.group for g in ingested.gaps} - {f.group for f in failed_groups}

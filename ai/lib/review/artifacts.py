@@ -27,8 +27,10 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 import core.log
+import review.behaviours
 from core.phases import Mode
 from pr.domains import ReviewVerdict
+from review.behaviour_types import BehaviourReport
 from review.grammar import SEVERITY_KEY, FindingIdentity, strip_line_suffix
 from review.budget import DERIVED_AREA_RESERVE_BYTES
 from review.claim_types import ClaimReport, ClaimSource, ClaimVerdict
@@ -179,6 +181,7 @@ class GroupArtifact:
     triage: tuple[TriageEntry, ...] = ()
     findings: tuple[AgentFinding, ...] = ()
     prior_findings: tuple[LedgerLine, ...] = ()
+    behaviours: tuple[BehaviourReport, ...] | None = None
 
     def problems(self) -> tuple[IngestError, ...]:
         return tuple(
@@ -193,11 +196,19 @@ class GroupArtifact:
             triage=self.triage or None,
             findings=tuple(f.to_record(checkbox=False, declinable=declinable) for f in self.findings),
             ledger=self.prior_findings,
+            behaviours=review.behaviours.from_group(
+                self.behaviours,
+                files=[
+                    {"path": f.path, "additions": 1}
+                    for f in self.findings if f.path
+                ],
+            ),
         )
 
     @classmethod
     def example(cls, mode: Mode) -> GroupArtifact:
-        return cls(triage=_EXAMPLE_TRIAGE, findings=_EXAMPLE_FINDINGS, prior_findings=_EXAMPLE_LEDGER)
+        return cls(triage=_EXAMPLE_TRIAGE, findings=_EXAMPLE_FINDINGS,
+                   prior_findings=_EXAMPLE_LEDGER, behaviours=_EXAMPLE_BEHAVIOURS)
 
 
 @dataclass(frozen=True)
@@ -211,6 +222,7 @@ class ReviewArtifact:
     verdict: str = ""
     focus: tuple[FocusReport, ...] = ()
     claims: tuple[ClaimReport, ...] | None = None
+    behaviours: tuple[BehaviourReport, ...] | None = None
 
     def problems(self) -> tuple[IngestError, ...]:
         summary = [] if self.summary.strip() else [_empty("$.summary", "the summary")]
@@ -238,6 +250,7 @@ class ReviewArtifact:
             summary=_EXAMPLE_SUMMARY, findings=_EXAMPLE_FINDINGS, triage=_EXAMPLE_TRIAGE,
             prior_findings=_EXAMPLE_LEDGER, verdict=_EXAMPLE_VERDICT,
             focus=_EXAMPLE_FOCUS_REPORT, claims=_EXAMPLE_CLAIMS,
+            behaviours=_EXAMPLE_BEHAVIOURS,
         )
         return full if mode is Mode.PR else replace(full, triage=(), verdict="")
 
@@ -264,6 +277,8 @@ def as_group_artifact(record: ReviewRecord) -> GroupArtifact:
         triage=tuple(e for e in record.triage or () if e.path),
         findings=tuple(_agent_finding(f) for f in record.visible),
         prior_findings=record.ledger,
+        behaviours=None if record.behaviours is None else tuple(
+            BehaviourReport(b.text, b.test_cited, b.paths) for b in record.behaviours),
     )
 
 
@@ -553,3 +568,7 @@ _EXAMPLE_CLAIMS = (
         path="pkg/client.go", snippet="delay *= 2",
     ),
 )
+_EXAMPLE_BEHAVIOURS = (BehaviourReport(
+    "Failed fetches back off exponentially.",
+    test_cited="pkg/client_test.go::TestFetchBackoff", paths=("pkg/client.go",),
+),)

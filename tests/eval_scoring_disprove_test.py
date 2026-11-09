@@ -152,6 +152,7 @@ class TestPrompt:
         findings = parse_findings(json.loads((CASES[0] / "manifest.json").read_text()))
         prompt = build_prompt(findings, "/tmp/out/disprove.json", 15)
         assert "## Claims" not in prompt
+        assert "## Test evidence" not in prompt
 
 
 class TestTask:

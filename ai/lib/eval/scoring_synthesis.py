@@ -109,6 +109,7 @@ def build_prompt(planted: list[Planted], output_path: str, repo_dir: str, max_tu
         state_context="", reviews_section="", reply_threads="", prior_section="",
         preflight_data="", delta_section="", issue_section="",
         focus_section=_build_focus_section((), derive=True),
+        test_hint_section="",
         holistic_content=_HOLISTIC, merged_content=merged.text,
         group_count="2", verdict_options=VERDICT_OPTIONS, wt_path=repo_dir,
         execution_claim_guard=agent.templates.build_execution_claim_guard(8),

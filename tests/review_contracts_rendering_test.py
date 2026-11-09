@@ -706,14 +706,16 @@ class TestPromptBudgetAccounting:
 
     def test_the_focus_section_is_never_cut(self):
         filler = "x" * 40_000
-        small = self._group_once(
-            "- a.py", focus=(area(id="F1", title="a", source=FocusSource.USER),),
-        )
-        large = self._group_once(
-            "- a.py",
-            focus=(area(id="F1", title="a", rationale=filler, source=FocusSource.USER),),
-        )
+        small_focus = (area(id="F1", title="a", source=FocusSource.USER),)
+        large_focus = (area(
+            id="F1", title="a", rationale=filler, source=FocusSource.USER,
+        ),)
+        small = self._group_prompt("- a.py", focus=small_focus)
+        large = self._group_prompt("- a.py", focus=large_focus)
         assert len(small.encode()) <= MAX_PROMPT_BYTES
         assert len(large.encode()) <= MAX_PROMPT_BYTES
         assert filler in large
-        assert len(large) - len(small) < len(filler) // 2
+        once_small = self._group_once("- a.py", focus=small_focus)
+        once_large = self._group_once("- a.py", focus=large_focus)
+        assert filler in once_large
+        assert len(once_large) - len(once_small) < len(filler) // 2

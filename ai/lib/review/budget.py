@@ -190,12 +190,18 @@ MAX_ISSUE_CONTEXT_BYTES = 8_192
 MAX_FOCUS_BYTES = 4096
 MAX_FOCUS_AREAS = 5
 DERIVED_AREA_RESERVE_BYTES = 512
+# Bounded so the hint never crowds the diff.
+MAX_TEST_HINT_BYTES = 4096
 # The writer's list is bounded so the document stays reviewable.
 MAX_CLAIMS = 12
 # Each claim field is bounded so the document stays reviewable.
 MAX_CLAIM_BYTES = 512
 # Turns are D12's proxy: half of MAX_CLAIMS, claims batched two to a turn.
 CLAIM_TURN_ALLOWANCE = 6
+# The writer's list is bounded so the document stays reviewable.
+MAX_BEHAVIOURS = 12
+# Each behaviour field is bounded so the document stays reviewable.
+MAX_BEHAVIOUR_BYTES = 512
 
 # How many paths either file list in the delta section spells out before it
 # summarises the rest. A list is orientation, not content — the diff above it is

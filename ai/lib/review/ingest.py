@@ -47,6 +47,10 @@ class IngestErrorKind(StrEnum):
     CLAIM_COUNT = "claim_count"
     CLAIM_SIZE = "claim_size"
     BAD_CLAIM = "bad_claim"
+    MISSING_BEHAVIOURS = "missing_behaviours"
+    BEHAVIOUR_COUNT = "behaviour_count"
+    BEHAVIOUR_SIZE = "behaviour_size"
+    BAD_BEHAVIOUR = "bad_behaviour"
 
 
 @dataclass(frozen=True)

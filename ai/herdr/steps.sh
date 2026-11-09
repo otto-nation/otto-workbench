@@ -180,8 +180,9 @@ step_herdr_app_theme() {
   return 0
 }
 
-# step_herdr_app_mods — copies workbench herdr-app mods into HERDR_APP_DIR/mods.
-# No-op when herdr-app is not installed. Never writes HERDR_UNTRUSTED_APP_DIR.
+# step_herdr_app_mods — copies workbench herdr-app mods into HERDR_APP_DIR/mods
+# and, once the launcher has created it, HERDR_UNTRUSTED_APP_DIR/mods, so both
+# windows carry the same mods. No-op when herdr-app is not installed.
 # Prints a keys.json binding suggestion the first time team-prs is installed;
 # never edits keys.json. Non-fatal: always returns 0.
 step_herdr_app_mods() {
@@ -193,12 +194,14 @@ step_herdr_app_mods() {
     info 'herdr-app: bind a key to open the PR board by adding to keys.json: "<key>": {"command": "tab.new", "args": {"name": "PRs", "mod": "team-prs"}}'
     break
   done
+  [[ -d "$HERDR_UNTRUSTED_APP_DIR" ]] && _herdr_app_install_mods "$HERDR_UNTRUSTED_APP_DIR"
   return 0
 }
 
 # step_herdr_app_layouts — derives workbench herdr-app layouts from main.json.
-# No-op when herdr-app is not installed. Never writes HERDR_UNTRUSTED_APP_DIR.
-# Prints a layout.switch hint the first time workbench is installed.
+# Also derives them in HERDR_UNTRUSTED_APP_DIR once the launcher has created it,
+# from that window's own main.json, tracked in its own manifest.
+# No-op when herdr-app is not installed. Prints a layout.switch hint the first time workbench is installed.
 # Non-fatal: always returns 0.
 step_herdr_app_layouts() {
   _herdr_app_present || return 0
@@ -209,6 +212,8 @@ step_herdr_app_layouts() {
     info 'herdr-app: show the workbench layout (PR list under agents) with: herdr-app do layout.switch --name workbench'
     break
   done
+  [[ -d "$HERDR_UNTRUSTED_APP_DIR" ]] \
+    && _herdr_app_install_layouts "$HERDR_UNTRUSTED_APP_DIR" "$HERDR_APP_LAYOUTS_MANIFEST.untrusted"
   return 0
 }
 

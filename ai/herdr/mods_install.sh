@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # herdr-app mod install — sourced by ai/herdr/steps.sh. Copies workbench mods
 # into HERDR_APP_DIR/mods as real directories with a per-file checksum
-# manifest. Never installs into HERDR_UNTRUSTED_APP_DIR.
+# manifest. The step installs into HERDR_UNTRUSTED_APP_DIR too, so both
+# windows carry identical mods.
 
 # _herdr_mod_cksum FILE — POSIX cksum field 1 of FILE, or empty when FILE is missing.
 _herdr_mod_cksum() {

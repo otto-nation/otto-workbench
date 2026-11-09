@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # herdr-app layout install — sourced by ai/herdr/steps.sh. Derives personal
 # layouts from Herdr's installed main.json via committed jq programs in
-# HERDR_APP_LAYOUTS_SRC_DIR. Never installs into HERDR_UNTRUSTED_APP_DIR.
+# HERDR_APP_LAYOUTS_SRC_DIR. The step installs into
+# HERDR_UNTRUSTED_APP_DIR too, so both windows carry the same layouts.
 
 # _herdr_layout_cksum FILE — POSIX cksum field 1 of FILE, or empty when missing.
 _herdr_layout_cksum() {

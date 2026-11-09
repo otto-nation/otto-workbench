@@ -197,15 +197,22 @@ _run_step() {
   [ ! -e "$APP" ]
 }
 
-@test "untrusted app dir is left untouched" {
+@test "step derives the same layouts in an existing untrusted app dir" {
   _seed_main
   mkdir -p "$UNTRUSTED/layouts"
+  cp "$FIXTURE" "$UNTRUSTED/layouts/main.json"
   printf '%s\n' keep > "$UNTRUSTED/layouts/KEEP"
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(cat "$UNTRUSTED/layouts/KEEP")" = keep ]
-  [ ! -e "$UNTRUSTED/layouts/workbench.json" ]
-  [ -f "$APP/layouts/workbench.json" ]
+  cmp "$APP/layouts/workbench.json" "$UNTRUSTED/layouts/workbench.json"
+}
+
+@test "step does not create the untrusted app dir" {
+  _seed_main
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$UNTRUSTED" ]
 }
 
 @test "step prints the layout.switch hint on first install only" {

@@ -472,8 +472,10 @@ next write overwrites the edit; nothing reads it back.
 - `pr review --dismiss` records the latest run as dismissed, with no GitHub
   call. Refused for a run already posted.
 - `pr review --list --schema-version 1` rows carry `post` and `history`, and
-  the document carries `reviews_root`. `review.archive_keep` (default 3) is
-  how many earlier runs `history` keeps.
+  the document carries `reviews_root` and `stamp`. `--if-changed STAMP` answers
+  `{"unchanged": true}` with no `reviews` when nothing under the reviews root
+  changed since the document that carried that stamp. `review.archive_keep`
+  (default 3) is how many earlier runs `history` keeps.
 
 ### How self-review rounds converge
 

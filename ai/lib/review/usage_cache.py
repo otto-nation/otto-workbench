@@ -19,6 +19,8 @@ import core.serde
 from agent.usage import SessionUsage, parse_session_log
 
 FILENAME_USAGE_CACHE = "usage-cache.json"
+# Every temp file `save` writes starts with this, so a reader can skip them.
+TEMP_PREFIX = f".{FILENAME_USAGE_CACHE}."
 _CACHE_VERSION = 1
 
 
@@ -76,7 +78,7 @@ class UsageCache:
         self._logs = kept
         if not self._dirty:
             return
-        tmp = self._dir / f".usage-cache.json.{os.getpid()}.tmp"
+        tmp = self._dir / f"{TEMP_PREFIX}{os.getpid()}.tmp"
         try:
             tmp.write_text(json.dumps({"version": _CACHE_VERSION, "logs": self._logs}))
             mtimes = [entry["stat"][1] for entry in self._logs.values()]

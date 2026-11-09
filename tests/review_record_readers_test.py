@@ -18,7 +18,7 @@ from review.document import ReviewDocument
 from review.paths import FILENAME_RECORD
 from review.record import load_record
 from review.recover import read_review_sha
-from review.sections import ReviewSections
+import review.render
 from review.summary import build_review_summary
 from review.types import ReviewMeta
 
@@ -60,10 +60,11 @@ def test_posting_sections_come_from_the_record(tmp_path):
     path = store_record(
         tmp_path / "review.md", fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"),
     )
-    sections = ReviewSections.from_record(ReviewDocument.read(path).record)
-    assert sections.get("summary").startswith("Adds speech-to-text")
-    assert sections.get("verdict").startswith("**Approve.**")
-    assert "disprove" in sections.get("agent_failures")
+    body = review.render.comment_body(
+        ReviewDocument.read(path).record, [], has_inline=False, severity_filter=set())
+    assert "Adds speech-to-text" in body
+    assert body.split("### Verdict", 1)[1].strip().startswith("**Approve.**")
+    assert "disprove" in body.split("## Agent Failures", 1)[1]
 
 
 def test_batch_plan_calls_a_stale_self_review_stale(tmp_path):

@@ -1,6 +1,6 @@
-"""Tests for the review body `review.format` renders — `format_body_text`, the
-finding lines and path references it writes, the permalinks it resolves, and
-what it leaves out for a finding the fix pass declined.
+"""Tests for the review body `review.render.comment_body` writes — finding
+lines, the permalinks `review.format` resolves, and what the body leaves out
+for a finding the fix pass declined.
 """
 
 import sys
@@ -13,33 +13,22 @@ if str(LIB_DIR) not in sys.path:
 # The module the `rp` fixture returns, imported so bin/local/select-pytest maps
 # this suite to the code it reaches through `rp`.
 import cli.review_post  # noqa: E402,F401
+import review.dedup  # noqa: E402
+import review.render  # noqa: E402
+
+from review_record_support import record  # noqa: E402
 
 
-def _make_sections(rp, **kwargs):
-    """Build a ReviewSections from keyword args for test convenience."""
-    entries = {}
-    configs = {}
-    order = []
-    for key, content in kwargs.items():
-        if not content:
-            continue
-        matched = [c for c in rp.KNOWN_SECTIONS if c.key == key]
-        cfg = matched[0] if matched else rp.SectionConfig(
-            key=key, header=key, position=rp.POSITION_AFTER,
-        )
-        entries[key] = content
-        configs[key] = cfg
-        order.append(key)
-    known_order = [c.key for c in rp.KNOWN_SECTIONS]
-    order.sort(key=lambda k: (
-        known_order.index(k) if k in known_order else len(known_order), k,
-    ))
-    return rp.ReviewSections(entries=entries, configs=configs, order=order)
+def _comment(findings, has_inline, severity_filter, **fields):
+    return review.render.comment_body(
+        record(**fields), findings, has_inline=has_inline,
+        severity_filter=severity_filter,
+    )
 
 
-class TestFormatBodyText:
-    def test_with_inline_shows_have_some_comments(self, rp):
-        result = rp.format_body_text([], has_inline=True, severity_filter={"M", "S", "N"})
+class TestCommentBody:
+    def test_with_inline_shows_have_some_comments(self):
+        result = _comment([], True, {"M", "S", "N"})
         assert "Have some comments" in result
 
     def test_without_inline_shows_review_findings(self, rp):
@@ -47,34 +36,34 @@ class TestFormatBodyText:
             id="M1", severity="M", seq=1, path="handler.go", line=42,
             end_line=None, body="Fix it", posted_id="M1",
         )
-        result = rp.format_body_text([f], has_inline=False, severity_filter={"M", "S", "N"})
+        result = _comment([f], False, {"M", "S", "N"})
         assert "Review findings" in result
 
-    def test_no_findings_at_all_drops_the_lead_in(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=False, severity_filter={"M", "S", "N"},
-            sections=_make_sections(rp, summary="Clean.", static_analysis="### Nesting depth"),
+    def test_no_findings_at_all_drops_the_lead_in(self):
+        result = _comment(
+            [], False, {"M", "S", "N"},
+            summary="Clean.", static_analysis="### Nesting depth",
         )
         assert "Review findings" not in result
         assert "Have some comments" not in result
         assert "Clean." in result
         assert "### Nesting depth" in result
 
-    def test_no_findings_and_no_sections_is_empty(self, rp):
-        assert rp.format_body_text([], has_inline=False, severity_filter={"M"}) == ""
+    def test_no_findings_and_no_sections_is_empty(self):
+        assert _comment([], False, {"M"}) == ""
 
     def test_body_findings_listed_with_path_refs(self, rp):
         f = rp.Finding(
             id="M1", severity="M", seq=1, path="handler.go", line=42,
             end_line=None, body="Fix it", full_path="pkg/handler.go", posted_id="M1",
         )
-        result = rp.format_body_text([f], has_inline=True, severity_filter={"M"})
+        result = _comment([f], True, {"M"})
         assert "**[M1] [must-fix]**" in result
         assert "`handler.go:42`" in result
         assert "Fix it" in result
 
-    def test_no_body_findings_single_line(self, rp):
-        text = rp.format_body_text([], has_inline=True, severity_filter={"M", "S"})
+    def test_no_body_findings_single_line(self):
+        text = _comment([], True, {"M", "S"})
         assert len(text.strip().split("\n")) == 1
 
     def test_pathless_finding_omits_backticks(self, rp):
@@ -82,7 +71,7 @@ class TestFormatBodyText:
             id="I1", severity="I", seq=1, path="", line=None,
             end_line=None, body="Good pattern across files.", posted_id="I1",
         )
-        result = rp.format_body_text([f], has_inline=True, severity_filter={"I"})
+        result = _comment([f], True, {"I"})
         assert "``" not in result
         assert "**[I1]** Good pattern" in result
         assert "<details open>" in result
@@ -96,7 +85,7 @@ class TestFormatBodyText:
             rp.Finding(id="S2", severity="S", seq=2, path="c.go", line=30,
                        end_line=None, body="Another should", posted_id="S2"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"S", "N"})
+        result = _comment(findings, True, {"S", "N"})
         assert "### Should fix" in result
         assert "<summary>Nit (1)</summary>" in result
         s_idx = result.index("### Should fix")
@@ -112,17 +101,16 @@ class TestFormatBodyText:
             rp.Finding(id="N2", severity="N", seq=2, path="b.go", line=20,
                        end_line=None, body="Nit two", posted_id="N2"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        result = _comment(findings, True, {"N"})
         assert "<details open>" in result
         assert "<summary>Nit (2)</summary>" in result
         assert "</details>" in result
         assert "N1" in result
         assert "N2" in result
 
-    def test_summary_and_verdict_prepended(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,summary="Clean refactor.", verdict="Approve."),
+    def test_summary_and_verdict_prepended(self):
+        result = _comment(
+            [], True, {"M"}, summary="Clean refactor.", verdict="Approve.",
         )
         assert result.startswith("## Summary")
         assert "Clean refactor." in result
@@ -132,69 +120,61 @@ class TestFormatBodyText:
         assert result.index("## Summary") < result.index("---")
         assert result.index("---") < result.index("Have some comments")
 
-    def test_verdict_action_prefix_stripped(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,summary="Summary text.",
-                                    verdict="Request changes — M1 and M2 are blockers."),
+    def test_verdict_action_prefix_stripped(self):
+        result = _comment(
+            [], True, {"M"}, summary="Summary text.",
+            verdict="Request changes — M1 and M2 are blockers.",
         )
         assert "### Verdict" in result
         assert "M1 and M2 are blockers." in result
         assert "Request changes" not in result
 
-    def test_verdict_approve_prefix_stripped(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,summary="Summary text.",
-                                    verdict="Approve — clean code."),
+    def test_verdict_approve_prefix_stripped(self):
+        result = _comment(
+            [], True, {"M"}, summary="Summary text.",
+            verdict="Approve — clean code.",
         )
         assert "### Verdict" in result
         assert "clean code." in result
         assert "Approve" not in result
 
-    def test_verdict_action_prefix_stripped_plain_hyphen(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,summary="Summary text.",
-                                    verdict="Needs discussion - looks good."),
+    def test_verdict_action_prefix_stripped_plain_hyphen(self):
+        result = _comment(
+            [], True, {"M"}, summary="Summary text.",
+            verdict="Needs discussion - looks good.",
         )
         assert "### Verdict" in result
         assert "looks good." in result
         assert "Needs discussion" not in result
 
-    def test_verdict_bold_action_prefix_stripped(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,summary="Summary text.",
-                                    verdict="**Request changes** — M1 and M2 are blockers."),
+    def test_verdict_bold_action_prefix_stripped(self):
+        result = _comment(
+            [], True, {"M"}, summary="Summary text.",
+            verdict="**Request changes** — M1 and M2 are blockers.",
         )
         assert "### Verdict" in result
         assert "M1 and M2 are blockers." in result
         assert "Request changes" not in result
 
-    def test_verdict_without_action_prefix_unchanged(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,summary="Summary text.", verdict="Looks good overall."),
+    def test_verdict_without_action_prefix_unchanged(self):
+        result = _comment(
+            [], True, {"M"}, summary="Summary text.",
+            verdict="Looks good overall.",
         )
         assert "### Verdict" in result
         assert "Looks good overall." in result
 
-    def test_summary_without_verdict(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,summary="Clean refactor."),
-        )
+    def test_summary_without_verdict(self):
+        result = _comment([], False, {"M"}, summary="Clean refactor.")
         assert result.startswith("## Summary")
         assert "Clean refactor." in result
         assert "### Verdict" not in result
         assert "---" in result
         assert result.index("## Summary") < result.index("---")
+        assert result.endswith("---")
 
-    def test_empty_summary_omitted(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-        )
+    def test_empty_summary_omitted(self):
+        result = _comment([], True, {"M"})
         assert "## Summary" not in result
         assert "### Verdict" not in result
         assert "---" not in result
@@ -204,7 +184,7 @@ class TestFormatBodyText:
             rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
                        end_line=None, body="Should fix", posted_id="S1"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"S"})
+        result = _comment(findings, True, {"S"})
         assert "**Findings outside the diff:**" in result
         assert "Findings not in the diff" not in result
 
@@ -213,7 +193,7 @@ class TestFormatBodyText:
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
                        end_line=None, body="Nit issue", posted_id="N1"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        result = _comment(findings, True, {"N"})
         assert "Findings outside the diff" not in result
         assert "<details open>" in result
 
@@ -222,12 +202,32 @@ class TestFormatBodyText:
             id="N1", severity="N", seq=1, path="a.go", line=10,
             end_line=None, body="Style issue", posted_id="N1",
         )
-        result = rp.format_body_text([f], has_inline=True, severity_filter={"N"})
+        result = _comment([f], True, {"N"})
         assert "**[N1]**" in result
         assert "[nit]" not in result
 
+    def test_body_findings_read_back_through_the_dedup_reader(self, rp):
+        must = rp.Finding(
+            id="M1", severity="M", seq=1, path="a.py", line=3,
+            end_line=None, body="lock never released", posted_id="M1",
+        )
+        idiom = rp.Finding(
+            id="I1", severity="I", seq=1, path="", line=None,
+            end_line=None, body="pattern holds", posted_id="I1",
+        )
+        declined = rp.Finding(
+            id="S1", severity="S", seq=1, path="b.py", line=12,
+            end_line=None, body="use a constant", posted_id="S1",
+            declined=True,
+        )
+        body = _comment([must, idiom, declined], False, {"M", "S", "I"})
+        found = {item.body: item.path for item in review.dedup._extract_body_findings(body)}
+        assert found["lock never released"] == "a.py"
+        assert found["use a constant"] == "b.py"
+        assert "pattern holds" in body
 
-class TestFormatBodyTextDetails:
+
+class TestCommentBodyDetails:
     def test_nits_sorted_by_path_then_line(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
@@ -237,7 +237,7 @@ class TestFormatBodyTextDetails:
             rp.Finding(id="N3", severity="N", seq=3, path="a.go", line=10,
                        end_line=None, body="Style issue", posted_id="N3"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        result = _comment(findings, True, {"N"})
         assert "<summary>Nit (3)</summary>" in result
         assert result.index("Style issue") < result.index("Another style")
         assert result.index("Another style") < result.index("Naming issue")
@@ -249,7 +249,7 @@ class TestFormatBodyTextDetails:
             rp.Finding(id="N2", severity="N", seq=2, path="a.go", line=10,
                        end_line=None, body="Earlier", posted_id="N2"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        result = _comment(findings, True, {"N"})
         assert result.index("Earlier") < result.index("Later")
 
     def test_mixed_severity_body_shows_severity_then_details(self, rp):
@@ -259,7 +259,7 @@ class TestFormatBodyTextDetails:
             rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
                        end_line=None, body="Nit issue", posted_id="N1"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"S", "N"})
+        result = _comment(findings, True, {"S", "N"})
         assert "### Should fix" in result
         assert "<summary>Nit (1)</summary>" in result
         assert result.index("### Should fix") < result.index("<details open>")
@@ -271,7 +271,7 @@ class TestFormatBodyTextDetails:
             rp.Finding(id="I1", severity="I", seq=1, path="a.go", line=20,
                        end_line=None, body="Idiom", posted_id="I1"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N", "I"})
+        result = _comment(findings, True, {"N", "I"})
         assert "<summary>Nit (1)</summary>" in result
         assert "<summary>Idioms (1)</summary>" in result
         assert "Nit" in result
@@ -284,7 +284,7 @@ class TestFormatBodyTextDetails:
             rp.Finding(id="I1", severity="I", seq=1, path="", line=None,
                        end_line=None, body="General pattern", posted_id="I1"),
         ]
-        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N", "I"})
+        result = _comment(findings, True, {"N", "I"})
         assert "<summary>Nit (1)</summary>" in result
         assert "<summary>Idioms (1)</summary>" in result
         nit_idx = result.index("<summary>Nit")
@@ -297,27 +297,19 @@ class TestFormatBodyTextDetails:
                        end_line=None, body="Nit", posted_id="N1"),
         ]
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked\n\n- **`scripts/deploy.sh:42`** — depth 5 exceeds limit 4 (in main())"
-        result = rp.format_body_text(
-            findings, has_inline=True, severity_filter={"N"},
-            sections=_make_sections(rp,static_analysis=sa),
-        )
+        result = _comment(findings, True, {"N"}, static_analysis=sa)
         assert "### Nesting depth" in result
         assert "depth 5 exceeds limit 4" in result
         assert result.index("Nit") < result.index("Nesting depth")
 
-    def test_static_analysis_with_no_findings(self, rp):
+    def test_static_analysis_with_no_findings(self):
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked"
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-            sections=_make_sections(rp,static_analysis=sa),
-        )
+        result = _comment([], True, {"M"}, static_analysis=sa)
         assert "Have some comments" in result
         assert "### Nesting depth" in result
 
-    def test_static_analysis_empty_string_omitted(self, rp):
-        result = rp.format_body_text(
-            [], has_inline=True, severity_filter={"M"},
-        )
+    def test_static_analysis_empty_string_omitted(self):
+        result = _comment([], True, {"M"})
         assert "Static Analysis" not in result
 
 
@@ -341,7 +333,7 @@ class TestFormatFindingLine:
             id="M1", severity="M", seq=1, path="file.go", line=42,
             end_line=None, body="Fix bug", posted_id="M1",
         )
-        result = rp._format_finding_line(f)
+        result = review.render._comment_finding_line(f)
         assert "**[M1] [must-fix]**" in result
         assert "`file.go:42`" in result
         assert "Fix bug" in result
@@ -352,7 +344,7 @@ class TestFormatFindingLine:
             id="S1", severity="S", seq=1, path="file.go", line=None,
             end_line=None, body="Refactor", posted_id="S1",
         )
-        result = rp._format_finding_line(f)
+        result = review.render._comment_finding_line(f)
         assert "`file.go`" in result
         assert "Refactor" in result
 
@@ -361,7 +353,7 @@ class TestFormatFindingLine:
             id="I1", severity="I", seq=1, path="", line=None,
             end_line=None, body="Good pattern across files.", posted_id="I1",
         )
-        result = rp._format_finding_line(f)
+        result = review.render._comment_finding_line(f)
         assert "**[I1] [idiom]**" in result
         assert "Good pattern across files." in result
         assert "`" not in result.split("**")[-1]
@@ -497,7 +489,7 @@ class TestDeclinedFindingsAreNotAskedFor:
             id="S2", severity="S", seq=2, path="file.go", line=90, end_line=None,
             body="real bug", posted_id="S2",
         )
-        text = rp.format_body_text([demoted, declined], False, {"S"})
+        text = _comment([demoted, declined], False, {"S"})
         heading = "**Declined — considered and not carried forward:**"
         assert heading in text
         assert text.index("real bug") < text.index(heading), \
@@ -507,6 +499,6 @@ class TestDeclinedFindingsAreNotAskedFor:
     def test_a_decline_alone_still_renders_its_block(self, rp):
         declined = self._declined(rp)
         declined.posted_id = "S1"
-        text = rp.format_body_text([declined], False, {"S"})
+        text = _comment([declined], False, {"S"})
         assert "**Declined — considered and not carried forward:**" in text
         assert "use a constant" in text

@@ -2057,7 +2057,7 @@ stable IDs its posted comments carry.
 
 ### review/render.py
 
-Rendering a review record — `review.md` today, the GitHub comment from PR 2.
+Rendering a review record — `review.md` and the PR comment body.
 
 ### review/reply_threads.py
 

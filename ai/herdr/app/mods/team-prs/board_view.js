@@ -16,7 +16,7 @@ import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, 
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
-import { SP, TEXT } from "./_lib/tokens.js";
+import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
 import { segment, segmented } from "./ui.js";
 
 function ctxOf() {
@@ -273,8 +273,9 @@ export default class TeamPrs extends View {
     const t = theme();
     // Running gh/pr from the window that also holds agent machines is the exposure the untrusted-window split exists to prevent.
     if (isUntrustedHome(appHome())) {
-      return v_flex().id("prs").size_full().items_center().justify_center().bg(t.background)
-        .child(div().text_color(t.dim).child("PR board is disabled in the untrusted window"));
+      return v_flex().id("prs").size_full().items_center().justify_center().p(SP.xl).bg(t.background)
+        .text_size(TEXT.body)
+        .child(div().max_w(480).text_color(t.muted).child("PR board is disabled in the untrusted window"));
     }
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
@@ -292,13 +293,15 @@ export default class TeamPrs extends View {
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (mode === "rail" && view.repos === 0 && !view.loading) return this.railView(view);
     if (view.repos === 0 && view.errors.length && !view.loading) {
-      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background))
-        .children(view.errors.slice(0, 3).map((e) => div().text_color(t.dim).child(errLine(e))))
+      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
+        .bg(t.background).text_size(TEXT.body))
+        .children(view.errors.slice(0, 3).map((e) => div().max_w(480).text_color(t.muted).child(errLine(e))))
         .child(this.scopeToggle(t));
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
-      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(8).bg(t.background))
-        .child(div().text_color(t.dim).child("No open space is in a GitHub repository"))
+      return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
+        .bg(t.background).text_size(TEXT.body))
+        .child(div().max_w(480).text_color(t.muted).child("No open space is in a GitHub repository"))
         .child(this.scopeToggle(t));
     }
     if (mode === "rail") return this.railView(view);
@@ -371,7 +374,7 @@ export default class TeamPrs extends View {
   boardView(cx, ctx, state, t) {
     const filters = filtersOf(), tab = tabOf(), pin = shared("team-prs.pin");
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter(Boolean))].sort();
-    return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13)
+    return v_flex().id("prs").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx) }))
@@ -383,29 +386,29 @@ export default class TeamPrs extends View {
   }
 
   header(ctx, state, tab, pin, t) {
-    const btn = (name, label) => div().id(`tab-${name}`).px(8).py(4).rounded(6).text_size(11)
-      .cursor_pointer().when(tab === name, (e) => e.bg(t.selected).text_color(t.foreground))
-      .when(tab !== name, (e) => e.text_color(t.muted))
-      .on_click(() => setShared("team-prs.tab", name)).child(label);
     const loading = state.loading && !state.repos;
     const nFail = state.errors?.length ?? 0;
     const first = state.errors?.[0];
-    return h_flex().id("prs-header").h(42).flex_none().px(14).gap(8).items_center()
+    return h_flex().id("prs-header").h(48).flex_none().px(SP.lg).gap(SP.sm).items_center()
       .child(this.scopeToggle(t))
-      .when(scopeOf() === "all", (e) => e.child(div().text_size(11).text_color(t.dim)
+      .when(scopeOf() === "all", (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim)
         .child(loading ? "loading…" : `${state.repos} repos`)))
-      .when(scopeOf() !== "all", (e) => e.child(div().font_semibold().child(loading ? "loading…" : (state.slug ?? "no repo"))))
-      .when(scopeOf() !== "all" && ctx?.on != null, (e) => e.child(div().text_size(11).text_color(t.dim).child(String(ctx.on))))
-      .child(h_flex().gap(4).child(btn("team", "Team")).child(btn("mine", "Mine")))
-      .when(scopeOf() !== "all", (e) => e.child(div().id("pin").px(8).py(4).rounded(6).text_size(11).cursor_pointer()
-        .border_1().border_color(t.border)
+      .when(scopeOf() !== "all", (e) => e.child(div().font_semibold().text_size(TEXT.body)
+        .child(loading ? "loading…" : (state.slug ?? "no repo"))))
+      .when(scopeOf() !== "all" && ctx?.on != null, (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim).child(String(ctx.on))))
+      .child(segmented([
+        segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
+        segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
+      ]))
+      .when(scopeOf() !== "all", (e) => e.child(div().id("pin").px(SP.sm).py(SP.xs).rounded(RADIUS.control)
+        .text_size(TEXT.caption).cursor_pointer().border_1().border_color(t.border)
         .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
         .child(pin ? "pinned" : "pin")))
       .when(nFail && scopeOf() !== "all", (e) => e
-        .child(div().text_size(11).text_color(t.ansi1).child("stale"))
-        .child(div().text_size(11).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
+        .child(div().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
+        .child(div().text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
       .when(nFail && scopeOf() === "all", (e) => e
-        .child(div().text_size(11).text_color(t.ansi1).truncate()
+        .child(div().text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`)));
   }
 }

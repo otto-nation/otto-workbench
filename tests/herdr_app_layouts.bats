@@ -143,7 +143,7 @@ _run_step() {
   [[ "$output" == *"start herdr-app once"* ]]
 }
 
-@test "main.json without sidebar-lists warns and writes nothing" {
+@test "main.json without panel-body warns and writes nothing" {
   mkdir -p "$APP/layouts"
   printf '%s\n' '{"id":"root"}' > "$APP/layouts/main.json"
   run _run
@@ -243,7 +243,7 @@ _run_step() {
   _seed_main
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *'herdr-app: show the workbench layout (PRs toggle opens the team board panel) with: herdr-app do layout.switch --name workbench'* ]]
+  [[ "$output" == *'herdr-app: show the workbench layout (a PRs toggle beside Files/Changes opens the board) with: herdr-app do layout.switch --name workbench'* ]]
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *'layout.switch --name workbench'* ]]

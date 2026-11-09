@@ -26,12 +26,6 @@ _js() {
   "
 }
 
-@test "reviewLabel format" {
-  _js 'm.reviewLabel("o/n", 7)'
-  [ "$status" -eq 0 ]
-  [ "$output" = '"otto.pr=o/n#7"' ]
-}
-
 @test "joinReviews matches repo exactly" {
   _js 'm.joinReviews([{number:7,headSha:"a"}],[row({repo:"o/nn"}),row({repo:"p/n"}),row({repo:"o/n-x"})],"o/n","github.com","me")[0].reviewRuns'
   [ "$status" -eq 0 ]
@@ -110,6 +104,18 @@ _js() {
   [ "$output" = 'false' ]
 }
 
+@test "joinReviews with no 6th arg leaves reviewing false and reviewTerminal null" {
+  _js '(()=>{const p=m.joinReviews([{number:7,headSha:"a"}],[row()],"o/n","github.com","me")[0];return [p.reviewing,p.reviewTerminal]})()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[false,null]' ]
+}
+
+@test "joinReviews 6th arg sets reviewing on the matching PR only" {
+  _js 'm.joinReviews([{number:7,headSha:"a"},{number:8,headSha:"b"}],[],"o/n","github.com","me",new Map([[7,{terminal:"t7",action:"review"}]])).map(p=>({n:p.number,r:p.reviewing,t:p.reviewTerminal}))'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"n":7,"r":true,"t":"t7"},{"n":8,"r":false,"t":null}]' ]
+}
+
 @test "health Partial, Error, and ok" {
   _js '[m.joinReviews([{number:7,headSha:"a"}],[row({status:"partial"})],"o/n","github.com","me")[0].health,m.joinReviews([{number:7,headSha:"a"}],[row({status:"error"})],"o/n","github.com","me")[0].health,m.joinReviews([{number:7,headSha:"a"}],[row()],"o/n","github.com","me")[0].health,m.joinReviews([{number:7,headSha:"a"}],[],"o/n","github.com","me")[0].health]'
   [ "$status" -eq 0 ]
@@ -138,4 +144,22 @@ _js() {
   _js '(()=>{const now=Date.parse("2026-06-15T00:00:00.000Z"),day=86400000,iso=d=>new Date(d).toISOString();return m.keepLanded([{n:29,mergedAt:iso(now-29*day)},{n:31,mergedAt:iso(now-31*day)},{n:"missing"},{n:"unmerged",mergedAt:null},{n:"empty",mergedAt:""}],now).map(e=>e.n)})()'
   [ "$status" -eq 0 ]
   [ "$output" = '[29]' ]
+}
+
+@test "runsForPr returns [] when no row matches" {
+  _js 'm.runsForPr([row({pr_number:8}),row({mode:"self"})],"o/n","github.com",7)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[]' ]
+}
+
+@test "runsForPr returns the matching row then history as raw run objects" {
+  _js 'm.runsForPr([row({head_sha:"b",history:[{head_sha:"a",reviewed_at:"2026-01-01"}]})],"o/n","github.com",7)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"repo":"o/n","mode":"pr","pr_number":7,"host":"github.com","head_sha":"b","post":null,"reviewed_at":"2026-01-02","status":"completed","history":[{"head_sha":"a","reviewed_at":"2026-01-01"}]},{"head_sha":"a","reviewed_at":"2026-01-01"}]' ]
+}
+
+@test "runsForPr ignores other PRs and self; later reviewed_at wins" {
+  _js 'm.runsForPr([row({pr_number:8,head_sha:"x"}),row({mode:"self",head_sha:"y"}),row({reviewed_at:"2026-01-01",head_sha:"a"}),row({reviewed_at:"2026-01-03",head_sha:"c",history:[{head_sha:"h"}]})],"o/n","github.com",7).map(r=>r.head_sha)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["c","h"]' ]
 }

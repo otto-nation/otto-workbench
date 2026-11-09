@@ -9,6 +9,7 @@
  */
 
 import { busyPrs } from './batch.js';
+import { busyMap, getArgv, lsArgv, terminalsOf } from './busy.js';
 import {
   batches,
   graphqlArgv,
@@ -33,7 +34,7 @@ function classifyCaught(err, on) {
   return { kind, message: messageOf(err) };
 }
 
-function classifyCode(result) {
+export function classifyCode(result) {
   const stderr = result.stderr ?? '';
   if (result.code === 127) {
     return { kind: 'missing-tool', message: stderr || 'command not found' };
@@ -79,7 +80,7 @@ async function invoke(exec, ctx, cmd, args) {
   }
 }
 
-function readJson(text) {
+export function readJson(text) {
   try {
     return { ok: true, value: JSON.parse(text) };
   } catch (err) {
@@ -276,10 +277,33 @@ export async function loadLanded(exec, ctx, slug, listing, host, openPrs, nowMs)
   return { ok: true, prs: keepLanded(merged, nowMs), partial };
 }
 
-export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy }) {
+// Live terminals the board or pane started. `hc ls` carries no labels, so each listed address
+// is read with `hc get` (a handful at most). The local core also reports remote machines'
+// terminals, so one pass covers every target. A failed listing is an empty map: a missing
+// spinner must not fail the board.
+export async function loadTerminals(exec, ctx) {
+  try {
+    const ran = await exec('hc', lsArgv(), { cwd: ctx.cwd });
+    if (ran.code !== 0) return { ok: false, entries: [] };
+    const ids = terminalsOf(readJson(ran.stdout).value).map((e) => e.id);
+    const got = await Promise.all(ids.map(async (id) => {
+      const r = await exec('hc', getArgv(id), { cwd: ctx.cwd });
+      return r.code === 0 ? readJson(r.stdout).value : null;
+    }));
+    return { ok: true, entries: terminalsOf(got.filter((g) => g != null)) };
+  } catch {
+    return { ok: false, entries: [] };
+  }
+}
+
+export function runningFor(entries, slug) {
+  return busyMap(entries ?? [], slug);
+}
+
+export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy, running }) {
   return joinReviews(
     [...(openPrs ?? []), ...(landedPrs ?? [])],
-    listing, slug, host, login,
+    listing, slug, host, login, running ?? new Map(),
   ).map((pr) => ({ ...pr, busy: busy.has(pr.number) }));
 }
 

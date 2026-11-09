@@ -5,10 +5,6 @@
  * Derivations follow ui-code `toTeamPrInfo` with workbench post event names.
  */
 
-export function reviewLabel(repo, n) {
-  return `otto.pr=${repo}#${n}`;
-}
-
 export const POST_STATE_BY_EVENT = {
   approve: 'APPROVED',
   requested_changes: 'CHANGES_REQUESTED',
@@ -53,6 +49,12 @@ export function runsFor(row) {
   }));
 }
 
+// The listing rows' runs for one PR, newest first: what a detail window shows after a refresh.
+export function runsForPr(listing, repo, host, number) {
+  const row = pickRow(rowsOf(listing).filter((r) => matchesRepo(r, repo, host) && r.pr_number === number));
+  return row ? runsFor(row).map((r) => r.run) : [];
+}
+
 function pickRow(rows) {
   let best = null;
   for (const row of rows) {
@@ -77,7 +79,7 @@ function reviewStateOf(pr, runs, me) {
   return null;
 }
 
-export function joinReviews(prs, listing, repo, host, me) {
+export function joinReviews(prs, listing, repo, host, me, running = new Map()) {
   const rows = rowsOf(listing);
   const mine = (me ?? '').toLowerCase();
   return prs.map((pr) => {
@@ -93,8 +95,8 @@ export function joinReviews(prs, listing, repo, host, me) {
       isRequestedReviewer:
         (pr.requestedReviewers ?? []).some((l) => l.toLowerCase() === mine) && myReviewState === null,
       hasNewChangesSinceReview: reviewRuns.length > 0 && reviewRuns[0].head_sha !== pr.headSha,
-      // needs the otto.pr hc label PR 5 introduces
-      reviewing: false,
+      reviewing: running.has(pr.number),
+      reviewTerminal: running.get(pr.number)?.terminal ?? null,
       health: health(reviewRuns[0]?.run),
     };
   });

@@ -13,6 +13,13 @@ teardown() {
   common_teardown
 }
 
+_rr() {
+  run node --input-type=module -e "
+    import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
+    $1
+  "
+}
+
 # $1 = JS statements; table, exec, ctx, calls, pack, m are in scope.
 _bd() {
   run node --input-type=module -e "
@@ -358,11 +365,61 @@ _gql() {
   [[ "$output" == *'"runs8":0'* ]]
 }
 
-_rr() {
-  run node --input-type=module -e "
-    import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
-    $1
-  "
+@test "assemble running map marks the PR reviewing" {
+  _bd '
+    const table = [];
+    const out = m.assemble({
+      openPrs: [{ number: 7, headSha: "a", requestedReviewers: [], latestReviews: [] }],
+      listing: { reviews: [] }, slug: "o/n", host: "github.com", login: "me",
+      busy: new Set(), running: new Map([[7, { terminal: "t7" }]]),
+    });
+    process.stdout.write(JSON.stringify({ r: out[0].reviewing, t: out[0].reviewTerminal }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"r":true'* ]]
+  [[ "$output" == *'"t":"t7"'* ]]
+}
+
+@test "assemble without running leaves PRs not reviewing" {
+  _bd '
+    const out = m.assemble({
+      openPrs: [{ number: 7, headSha: "a", requestedReviewers: [], latestReviews: [] }],
+      listing: { reviews: [] }, slug: "o/n", host: "github.com", login: "me", busy: new Set(),
+    });
+    process.stdout.write(JSON.stringify({ r: out[0].reviewing }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"r":false'* ]]
+}
+
+@test "loadTerminals lists by app label then reads each with hc get" {
+  _rr '
+    const ctx = { cwd: "/repo" };
+    const calls = [];
+    const fake = async (cmd, args) => {
+      calls.push(args.join(" "));
+      if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ terminals: [{ address: "t7" }, { address: "homelab/t8" }] }) };
+      const id = args[1];
+      if (id === "t7") return { code: 0, stdout: JSON.stringify({ address: id, state: "live", labels: { "otto.pr": "o/n#7" } }) };
+      return { code: 1, stdout: "", stderr: "gone" };
+    };
+    const ok = await m.loadTerminals(fake, ctx);
+    const fail = await m.loadTerminals(async () => ({ code: 1, stdout: "", stderr: "no" }), ctx);
+    const threw = await m.loadTerminals(async () => { throw new Error("lost"); }, ctx);
+    const bad = await m.loadTerminals(async () => ({ code: 0, stdout: "not json" }), ctx);
+    process.stdout.write(JSON.stringify({
+      ids: ok.entries.map((e) => e.id), pr: ok.entries[0].labels["otto.pr"], calls,
+      fail, threw, badOk: bad.ok, badN: bad.entries.length,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ids":["t7"]'* ]]
+  [[ "$output" == *'"pr":"o/n#7"'* ]]
+  [[ "$output" == *'"calls":["ls --json --label otto.app=pr","get t7 --json","get homelab/t8 --json"]'* ]]
+  [[ "$output" == *'"fail":{"ok":false,"entries":[]}'* ]]
+  [[ "$output" == *'"threw":{"ok":false,"entries":[]}'* ]]
+  [[ "$output" == *'"badOk":true'* ]]
+  [[ "$output" == *'"badN":0'* ]]
 }
 
 @test "checkTools parses present and missing by basename" {

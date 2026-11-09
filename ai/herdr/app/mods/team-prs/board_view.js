@@ -4,13 +4,13 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, layout, run, props, openOverlay,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, layout, run, props,
 } from "herdr";
 import { locate } from "./_lib/location.js";
-import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
+import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
-  assemble, checkTools, loadBatchDoc, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
+  assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
 import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
@@ -56,7 +56,10 @@ function errorText(err, ctx) {
 
 
 export default class TeamPrs extends View {
+  // Handlers run after the render that built them; a redraw or task requested through that render's
+  // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
+    this.acx = cx;
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
@@ -152,6 +155,11 @@ export default class TeamPrs extends View {
     return cycle.get(k);
   }
 
+  terminalsFor(ctx, cycle) {
+    if (!cycle.has("terminals")) cycle.set("terminals", loadTerminals(exec, ctx));
+    return cycle.get("terminals");
+  }
+
   async pull(cx, listingOnly) {
     const cycle = new Map();
     await Promise.all(this.activeTargets().map(async (ctx) => {
@@ -180,11 +188,13 @@ export default class TeamPrs extends View {
     this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, doc] = await Promise.all([
+    const [open, listing, doc, terms] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
       this.listingFor(ctx, cycle),
       this.batchDocFor(ctx, cycle),
+      this.terminalsFor(ctx, cycle),
     ]);
+    const running = runningFor(terms.entries, repo.slug);
     if (!this.same(key)) return;
     const bad = [open, listing].find((r) => !r.ok);
     if (bad) { this.fail(key, bad.error); return; }
@@ -192,12 +202,12 @@ export default class TeamPrs extends View {
     const landedPrs = await this.landed(ctx, key, repo, listing.listing, open.prs);
     if (landedPrs == null || !this.same(key)) return;
     this.commit(key, {
-      repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null }, me: login, tools: have,
+      repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null, cwd: ctx.cwd }, me: login, tools: have,
       listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
       openPrs: open.prs, landedPrs,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
-        slug: repo.slug, host: repo.host, login, busy,
+        slug: repo.slug, host: repo.host, login, busy, running,
       }),
     }, ctx, cx);
   }
@@ -217,8 +227,10 @@ export default class TeamPrs extends View {
     if (!this.same(key)) return;
     if (!listing.ok) { this.fail(key, listing.error); return; }
     const doc = await this.batchDocFor(ctx, cycle);
+    const terms = await this.terminalsFor(ctx, cycle);
     if (!this.same(key)) return;
     const busy = busyPrs(doc.doc, prev.repo.slug);
+    const running = runningFor(terms.entries, prev.repo.slug);
     let landedPrs;
     if (JSON.stringify(listing.listing) === JSON.stringify(prev.listing)) {
       landedPrs = prev.landedPrs ?? [];
@@ -230,7 +242,7 @@ export default class TeamPrs extends View {
       ...prev, listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy, landedPrs,
       prs: assemble({
         openPrs: prev.openPrs ?? [], landedPrs, listing: listing.listing,
-        slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy,
+        slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy, running,
       }),
     }, ctx, cx);
   }
@@ -281,6 +293,10 @@ export default class TeamPrs extends View {
       const base = String(e.cwd).split("/").filter(Boolean).pop();
       return `${base ?? ""}${e.on != null ? " on " + e.on : ""}: ${friendlyError(e.error, e.on, scope)}`;
     };
+    const picked = this.selectedId
+      ? (view.prs.find((p) => cardId(p) === this.selectedId) ?? this.selectedPr) : null;
+    const open = picked ? this.detailView(picked, cx) : null;
+    if (open) return open;
     const mode = viewOf(props(), this.size?.width, layout());
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (mode === "rail" && view.repos === 0 && !view.loading) return this.railView(view);
@@ -297,7 +313,7 @@ export default class TeamPrs extends View {
         .child(this.scopeToggle());
     }
     if (mode === "rail") return this.railView(view);
-    if (mode === "compact") return this.compactView(view, t);
+    if (mode === "compact") return this.compactView(view, t, cx);
     return this.boardView(cx, targets[0], view, t);
   }
 
@@ -306,19 +322,22 @@ export default class TeamPrs extends View {
     return tabOf() === "mine" ? prs.filter((p) => isMine(p, me)) : filterPrs(prs, filtersOf(), me);
   }
 
-  // One window, replaced in place by the next click. The window is a separate copy of this mod, so
-  // it gets a snapshot of the card (and its review runs) as props.
-  openDetail(pr) {
-    openOverlay({
-      kind: "window", key: "team-prs-detail", mod: "team-prs", width: 0.55, height: 0.8,
-      props: { detail: {
-        repo: pr.repoSlug, host: pr.host, number: pr.number, title: pr.title, author: pr.author,
-        branch: pr.branch, ci: pr.ciStatus, decision: pr.reviewDecision, additions: pr.additions,
-        deletions: pr.deletions, files: pr.changedFiles, url: pr.url, on: pr.on ?? null,
-        runs: (pr.reviewRuns ?? []).map((r) => r.run),
-      } },
-    });
+  // The detail replaces the board in this same pane; Back returns. The card is looked up in the
+  // live state on every render, so its runs and busy state follow refreshes; the clicked copy only
+  // stands in if the PR drops out of the list.
+  openDetail(pr, cx) {
+    this.selectedId = cardId(pr);
+    this.selectedPr = pr;
+    this.acx.notify();
   }
+
+  closeDetail(cx) {
+    this.selectedId = this.selectedPr = null;
+    this.acx.notify();
+  }
+
+  // The selector (main.js) supplies the view; the plain board has none.
+  detailView() { return null; }
 
   onSize(size, cx) { this.size = size; cx.notify(); }
 
@@ -335,7 +354,7 @@ export default class TeamPrs extends View {
           .child("Open board")));
   }
 
-  compactView(state, t) {
+  compactView(state, t, cx) {
     const mine = tabOf() === "mine";
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
@@ -344,7 +363,7 @@ export default class TeamPrs extends View {
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(tabOf(), t))
       .child(renderCompact({
-        sections, onOpen: (pr) => this.openDetail(pr), showRepo: scopeOf() === "all",
+        sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
         width: this.size?.width,
       }));
   }
@@ -372,7 +391,7 @@ export default class TeamPrs extends View {
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx) }))
       .child(renderBoard({
         tab, prs: state.prs ?? [], filters, me: state.me ?? "",
-        onOpen: (pr) => this.openDetail(pr),
+        onOpen: (pr) => this.openDetail(pr, cx),
         spinner: "⠋", showRepo: scopeOf() === "all",
       }));
   }

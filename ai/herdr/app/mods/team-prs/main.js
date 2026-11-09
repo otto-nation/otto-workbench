@@ -1,16 +1,26 @@
-// team-prs entry: the board, or a detail window when props().detail is set. A pane copy may have
-// no props, so detail is read null-safely. The window copy never starts the board's timers.
-import { exec, props, closeOverlay, readTextFile } from "herdr";
+// team-prs entry: the board, with a PR's detail shown in the same pane when a card is opened.
+import { exec, readTextFile, run, notify } from "herdr";
 import Board from "./board_view.js";
-import { renderDetail } from "./detail.js";
+import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.js";
+import { actionsFor } from "./_lib/actions.js";
 import { readReview } from "./_lib/board_data.js";
+import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
+import { getArgv, terminalsOf } from "./_lib/busy.js";
 
 export default class TeamPrs extends Board {
   init(p, cx) {
-    this.detail = props()?.detail ?? null;
+    this.detail = null;
     this.openStamp = null;
+    this.confirm = null;
+    this.launching = false;
+    this.live = null;
+    this.finishedId = null;
+    this.note = null;
+    this.output = null;
+    // Terminals being followed to their end, whichever PR is open, and the action each ran.
+    this.watching = new Set();
+    this.actionOf = new Map();
     this.reviews = new Map();
-    if (this.detail) return;
     super.init(p, cx);
   }
 
@@ -31,13 +41,13 @@ export default class TeamPrs extends Board {
     return hit.result;
   }
 
-  onToggle(stamp, cx) {
+  onToggle(stamp) {
     this.openStamp = this.openStamp === stamp ? null : stamp;
-    if (this.openStamp) this.loadReview(this.openStamp, cx);
-    cx.notify();
+    if (this.openStamp) this.loadReview(this.openStamp);
+    this.acx.notify();
   }
 
-  loadReview(stamp, cx) {
+  loadReview(stamp) {
     const run = this.runOf(stamp);
     if (!run) return;
     const key = this.cacheKey(run);
@@ -45,7 +55,7 @@ export default class TeamPrs extends Board {
     if (hit && hit.stamp === stamp && hit.result !== undefined && hit.result.ok !== false) return;
     if (hit && hit.stamp !== stamp) this.reviews.delete(key);
     this.reviews.set(key, { stamp, result: undefined });
-    cx.spawn(async (cx) => {
+    this.acx.spawn(async (cx) => {
       const result = await readReview(readTextFile, run.reviewFile, this.detail.on);
       const cur = this.reviews.get(key);
       if (!cur || cur.stamp !== stamp) return;
@@ -54,14 +64,138 @@ export default class TeamPrs extends Board {
     });
   }
 
-  render(cx) {
-    if (!this.detail) return super.render(cx);
+  actions() {
+    const d = this.detail;
+    return actionsFor({
+      repo: d.repo, number: d.number, repoDir: d.cwd, run: (d.runs ?? [])[0] ?? null,
+      headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching, live: this.launching ? null : (this.live ?? d.live),
+      finished: this.finishedId,
+    });
+  }
+
+  // Post actions ask first; everything else runs at once.
+  onAction(action, cx) {
+    if (action.confirm) this.confirm = action;
+    else this.launch(action, cx);
+    this.acx.notify();
+  }
+
+  // Kill and watch are core commands; the rest start a labelled background terminal through hc
+  // (its --bg reply is immediate, so the 30 s exec limit never applies to the pr run itself).
+  launch(action, cx) {
+    if (action.show) {
+      // Watch toggles the in-pane output; a second click hides it.
+      this.output = this.output?.terminal === action.show ? null : { terminal: action.show, text: null };
+      if (this.output) this.readOutput(action.show);
+      this.acx.notify();
+      return;
+    }
+    if (action.command) {
+      run(action.command.name, action.command.args);
+      return;
+    }
+    const d = this.detail;
+    this.launching = true;
+    this.note = null;
+    this.acx.spawn(async (cx) => {
+      let res;
+      try {
+        const argv = hcRunArgv({
+          repo: d.repo, number: d.number, action: action.id, cwd: d.cwd, on: d.on, argv: action.argv,
+        });
+        res = parseRunReply(await exec("hc", argv, {}));
+      } catch (err) {
+        res = { ok: false, error: { message: String(err?.message ?? err) } };
+      }
+      this.launching = false;
+      if (!res.ok) {
+        this.note = res.error.message;
+      } else {
+        // The run is followed to its end even if another PR was opened meanwhile; only the
+        // open PR's own controls track it.
+        this.actionOf.set(res.terminal, action.id);
+        if (this.detail?.repo === d.repo && this.detail?.number === d.number) {
+          this.live = res.terminal;
+          this.finishedId = null;
+        }
+        if (!this.watching.has(res.terminal)) {
+          this.watching.add(res.terminal);
+          this.watch(cx, res.terminal, d);
+        }
+      }
+      cx.notify();
+    });
+    this.acx.notify();
+  }
+
+  readOutput(id) {
+    this.acx.spawn(async () => {
+      let text = null;
+      try {
+        const ran = await exec("hc", ["read", id, "--lines", "80"], {});
+        text = ran.code === 0 ? ran.stdout : "";
+      } catch { text = ""; }
+      if (this.output?.terminal !== id) return;
+      this.output = { terminal: id, text };
+      this.acx.notify();
+    });
+  }
+
+  // Until the terminal leaves "live", look again every 3 s: bounded by the run, and only while
+  // this window is open. The chain is tied to the terminal it was started for.
+  watch(cx, id, pr) {
+    cx.timer.after(3000, async (cx) => {
+      if (!this.watching.has(id)) return;
+      let entry = null;
+      try {
+        const ran = await exec("hc", getArgv(id), {});
+        entry = terminalsOf(ran.code === 0 ? [JSON.parse(ran.stdout)] : null)[0] ?? null;
+      } catch { entry = null; }
+      if (this.output?.terminal === id) this.readOutput(id);
+      if (entry?.state === "live") { this.watch(cx, id, pr); return; }
+      this.finish(id, entry, pr, cx);
+    });
+  }
+
+  finish(id, entry, d, cx) {
+    const outcome = outcomeText(this.actionOf.get(id), entry?.exitCode ?? null);
+    this.watching.delete(id);
+    if (this.live === id) {
+      this.finishedId = id;
+      this.live = null;
+    }
+    if (this.output?.terminal === id) this.readOutput(id);
+    notify({ title: outcome.title, body: `#${d.number} ${d.title ?? ""}`, level: outcome.level });
+    // The card, its runs and the head-moved flag come from the board's own refresh.
+    this.refresh(cx, { listingOnly: true });
+    cx.notify();
+  }
+
+  // Switching PRs starts a clean slate for the transient action state.
+  detailView(pr, cx) {
+    const prev = this.detail;
+    this.detail = detailOf(pr);
+    if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
+      this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
+      this.output = null;
+    }
     return renderDetail(this.detail, {
       nowMs: Date.now(),
       openStamp: this.openStamp,
       bodyFor: (stamp) => this.bodyFor(stamp),
-      onToggle: (stamp) => this.onToggle(stamp, cx),
-      onClose: () => closeOverlay(props().overlay),
+      onToggle: (stamp) => this.onToggle(stamp),
+      actionBar: renderActionBar(this.actions(), {
+        confirm: this.confirm,
+        note: this.launching ? "Starting…" : this.note,
+        onAction: (a) => this.onAction(a, cx),
+        onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },
+        onCancel: () => { this.confirm = null; this.acx.notify(); },
+      }),
+      outputPanel: this.output && renderOutput({ ...this.output, live: this.live === this.output.terminal }, {
+        onHide: () => { this.output = null; this.acx.notify(); },
+        onTab: () => run("terminal.keep", { terminal: this.output.terminal }),
+      }),
+      onClose: () => this.closeDetail(cx),
       // The browser is on this Mac even when the PR's repo is on a remote machine.
       onOpenUrl: (url) => exec("open", [url]),
     });

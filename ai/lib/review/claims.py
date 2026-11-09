@@ -265,16 +265,21 @@ def claims_of(
     )
 
 
-def check_warning(errors: Sequence[IngestError]) -> str:
+def check_warning(errors: Sequence[IngestError], job: ReviewJob) -> str:
     """Warning after a writer's second failed check, with a claims clause.
 
     `errors` are the ingest errors left after the repair turn. When any is a
-    claims kind, the warning adds that claims are published as not assessed.
+    claims kind, the warning adds that prior claims are carried, or that
+    claims are published as not assessed when they cannot be.
     """
-    more = (
-        ("claims are published as not assessed",)
-        if any(e.kind in CLAIM_KINDS for e in errors) else ()
-    )
+    more = ()
+    if any(e.kind in CLAIM_KINDS for e in errors):
+        clause = (
+            "prior claims are carried"
+            if _carryable_claims(job) is not None
+            else "claims are published as not assessed"
+        )
+        more = (clause,)
     return review.focus.check_warning(errors, more=more)
 
 

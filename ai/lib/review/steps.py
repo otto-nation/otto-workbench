@@ -499,7 +499,7 @@ def _phase_synthesis(
     )
     if outcome.ok:
         if outcome.errors:
-            core.log.warn(review.claims.check_warning(outcome.errors))
+            core.log.warn(review.claims.check_warning(outcome.errors, job))
         record = replace(
             outcome.artifact.to_record(
                 checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),

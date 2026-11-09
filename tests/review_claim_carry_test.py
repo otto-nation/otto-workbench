@@ -84,6 +84,7 @@ def test_a_settled_round_carries_the_claims_and_their_findings(tmp_path):
     assert read_review_meta(Path(job.artifact_dir)).claims_input_sha == (
         review.claims.input_sha(job)
     )
+    assert not stored.record.verdict.startswith("Approve")
     assert stored.record.verdict == mechanical_verdict(stored.record.open_counts).strip()
     assert stored.record.open_counts["S"] == 1
 
@@ -140,6 +141,23 @@ def test_a_carried_claim_keeps_its_writer_link_by_identity(tmp_path):
     assert not any(f.origin is FindingOrigin.CLAIM for f in stored.record.findings)
 
 
+def test_a_carried_link_to_a_derived_finding_is_cleared_and_re_derives(tmp_path):
+    c = claim(verdict=ClaimVerdict.CONTRADICTED, finding="S1")
+    prior_derived = finding(
+        "S1", "Claim contradicted: retries back off",
+        origin=FindingOrigin.CLAIM, stable_id="abcd1234", path="a.py",
+    )
+    job = _job(tmp_path, claims=(c,), findings=(prior_derived,))
+    merged_record = ReviewRecord(findings=(
+        finding("M1", "writer bug", stable_id="abcd1234"),
+    ))
+    review.outcome._write_settled_review(job, 1, merged_record)
+    stored = _stored(job)
+    derived = [f for f in stored.record.visible if f.origin is FindingOrigin.CLAIM]
+    assert len(derived) == 1
+    assert stored.record.claims[0].finding == derived[0].id
+
+
 def test_a_carried_link_to_a_vanished_writer_finding_derives(tmp_path):
     c = claim(verdict=ClaimVerdict.CONTRADICTED, finding="M1")
     prior_writer = finding("M1", "writer bug", stable_id="abcd1234")
@@ -179,3 +197,6 @@ def test_a_degraded_writer_round_carries_the_prior_claims(tmp_path):
     stored = _stored(job)
     assert stored.record.claims is not None
     assert tuple(x.verdict for x in stored.record.claims) == (ClaimVerdict.CONTRADICTED,)
+    derived = [f for f in stored.record.visible if f.origin is FindingOrigin.CLAIM]
+    assert len(derived) == 1
+    assert stored.record.claims[0].finding == derived[0].id

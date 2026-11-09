@@ -1,7 +1,7 @@
 """The review system's single-call reads of a PR.
 
 The PR's own metadata, its surrounding conversation, its refs, the diff, the
-pending-review check and the new-commit count. Used by the pipeline before any
+pending-review check. Used by the pipeline before any
 agent runs, and by review.posting after. Each accepts the consolidated
 `gh.pr_data.PRData` where it has one and answers from it without a call.
 

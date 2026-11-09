@@ -319,20 +319,6 @@ class TestCommentBodyDetails:
         assert "Static Analysis" not in result
 
 
-class TestFormatPathRef:
-    def test_path_with_line(self, rp):
-        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=42, end_line=None, body="")
-        assert rp._format_path_ref(f) == "`file.go:42`"
-
-    def test_path_with_line_range(self, rp):
-        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=10, end_line=20, body="")
-        assert rp._format_path_ref(f) == "`file.go:10-20`"
-
-    def test_path_only(self, rp):
-        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=None, end_line=None, body="")
-        assert rp._format_path_ref(f) == "`file.go`"
-
-
 class TestFormatFindingLine:
     def test_with_path_and_line(self, rp):
         f = rp.Finding(

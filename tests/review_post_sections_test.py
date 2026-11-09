@@ -5,8 +5,6 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -14,20 +12,18 @@ if str(LIB_DIR) not in sys.path:
 # The module the `rp` fixture returns, imported so bin/local/select-pytest maps
 # this suite to the code it reaches through `rp`.
 import cli.review_post  # noqa: E402,F401
-import review.dedup  # noqa: E402
 import review.render  # noqa: E402
 from review.document import ReviewDocument  # noqa: E402
-from review.format import format_body_text, renumber_for_posting  # noqa: E402
+from review.format import renumber_for_posting  # noqa: E402
 from review.record import (  # noqa: E402
     AgentFailure, Disposition, FocusSource, LedgerLine, ProseSection, TriageEntry,
 )
-from review.sections import ReviewSections  # noqa: E402
 from review.types import PriorDisposition, SEVERITIES  # noqa: E402
 
 from review_behaviours_support import behaviour  # noqa: E402
 from review_claims_support import claim  # noqa: E402
 from review_focus_support import area, user_area  # noqa: E402
-from review_record_support import finding, fixture_record, record  # noqa: E402
+from review_record_support import finding, record  # noqa: E402
 
 
 def _body_findings(rec):
@@ -53,12 +49,6 @@ RICH = record(
     static_analysis="### Nesting depth\n1 violation in 1 of 3 files checked",
 )
 
-_FIXTURES = (
-    "clean", "evidence_dropped", "fix_annotated", "mechanical_fallback",
-    "rebuild", "self_incremental_fixed", "synthesis_pr", "unchanged",
-)
-
-
 REVIEW = record(
     finding("M1", "missing error check", path="handler.go", line=11),
     finding("S1", "unused variable", path="handler.go", line=25),
@@ -66,30 +56,6 @@ REVIEW = record(
     verdict="Request changes — M1 is a blocker.",
     static_analysis="### Nesting depth\n1 violation in 1 of 3 files checked",
 )
-
-
-class TestReviewSections:
-    def test_from_record_ignores_severity_headers(self, rp):
-        sections = rp.ReviewSections.from_record(REVIEW)
-        assert sections.get("must_fix") == ""
-        assert sections.get("should_fix") == ""
-
-    def test_get_returns_empty_for_absent(self, rp):
-        assert rp.ReviewSections.from_record(REVIEW).get("nonexistent") == ""
-
-    def test_after_findings_returns_passthrough(self, rp):
-        keys = [cfg.key for cfg, _ in rp.ReviewSections.from_record(REVIEW).after_findings()]
-        assert "static_analysis" in keys
-
-    def test_empty_constructor(self, rp):
-        sections = rp.ReviewSections()
-        assert sections.get("summary") == ""
-        assert sections.before_findings() == []
-        assert sections.after_findings() == []
-
-    def test_before_findings_omits_empty(self, rp):
-        rec = record(finding("M1", "bug", path="a.go", line=1))
-        assert rp.ReviewSections.from_record(rec).before_findings() == []
 
 
 def test_the_comment_carries_summary_verdict_and_static_analysis():
@@ -205,15 +171,3 @@ def test_the_comment_sections_run_in_posted_order():
     assert "[C1]" not in body and "[B1]" not in body and "[F1]" not in body
     assert "File Triage" not in body and "Prior findings" not in body
     assert "Request changes" not in body and "M1 blocks." in body
-
-
-@pytest.mark.parametrize("case", [*_FIXTURES, "rich"])
-@pytest.mark.parametrize("has_inline", [False, True], ids=["no-inline", "inline"])
-def test_the_record_renderer_keeps_the_posted_word_set(case, has_inline):
-    """Transitional: deleted with `format_body_text` in the same PR. The already-posted guard compares these word sets."""
-    rec = RICH if case == "rich" else fixture_record(case)
-    findings = _body_findings(rec)
-    filt = {s.key for s in SEVERITIES}
-    new = review.render.comment_body(rec, findings, has_inline=has_inline, severity_filter=filt)
-    old = format_body_text(findings, has_inline, filt, ReviewSections.from_record(rec))
-    assert review.dedup.word_set(new) == review.dedup.word_set(old)

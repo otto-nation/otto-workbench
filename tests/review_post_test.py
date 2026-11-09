@@ -567,7 +567,7 @@ class TestACleanReviewStillPosts:
         assert tracking.review_id == 42
         assert tracking.submitted is False
 
-    # passes-at-base: pins the verdict post.jsonl records across the move off ReviewSections
+    # passes-at-base: pins the verdict post.jsonl records across the move off the sections registry
     def test_post_tracking_records_the_record_verdict(self, rp, tmp_path):
         _, _, post_file = self._post(rp, tmp_path, self.CLEAN)
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))

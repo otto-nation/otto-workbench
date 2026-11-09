@@ -233,6 +233,13 @@ def _records(ledger_dir):
     ]
 
 
+def test_sole_model_names_one_model_or_none():
+    assert agent.usage.sole_model({"m": 0.1}) == "m"
+    assert agent.usage.sole_model({"m": 0.1, "h": 0.01}) == ""
+    assert agent.usage.sole_model({"": 0.1}) == ""
+    assert agent.usage.sole_model({}) == ""
+
+
 def test_record_appends_line(ledger):
     agent.usage.record(
         script="pr-rebase", entry_point="prompt", backend="claude",

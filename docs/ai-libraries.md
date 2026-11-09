@@ -4755,8 +4755,8 @@ A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
 row cannot be told apart from.
 
-`otto-log stats` reads the ledger back; how it groups and what it leaves blank is
-`agent.usage_stats`.
+`otto-log stats` reads the ledger back (how it groups and what it leaves blank is
+`agent.usage_stats`), and so does a review's `Models:` line (`review.outcome.models_used`).
 
 ### agent/usage_log.py
 

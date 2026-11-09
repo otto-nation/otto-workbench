@@ -278,6 +278,7 @@ export default class TeamPrs extends Board {
     }
     const file = this.openFile && files?.files?.find((f) => f.path === this.openFile);
     const item = this.workflows.itemFor(this.detail.repo, this.detail.number);
+    if (!item && this.tab === "batch") this.tab = "history";
     if (item && this.tab === "batch") this.workflows.openItem(item.key);
     return renderDetail(this.detail, {
       nowMs: Date.now(),

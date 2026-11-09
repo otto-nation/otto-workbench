@@ -208,7 +208,7 @@ export default class TeamPrs extends Board {
     this.openFile = path;
     const f = this.filesByPr.get(this.filesKey(this.detail))?.files?.find((x) => x.path === path);
     this.diff = f && (f.patch != null || !f.hasPatch) ? patchRows(f.patch, MONO.charPx) : null;
-    if (f && f.patch == null && f.hasPatch) this.fetchPatch(f, path);
+    if (f && f.patch == null && f.hasPatch && !f.loadingPatch) this.fetchPatch(f, path);
     this.acx.notify();
   }
 

@@ -21,7 +21,7 @@ function ciColor(status) {
 
 function pill(text, color) {
   const t = theme();
-  return div().px(SP.sm).py(1).rounded(RADIUS.control).border_1().border_color(t.border)
+  return div().px(SP.sm).py(1).rounded(RADIUS.control).bg(t.background).border_1().border_color(t.border)
     .text_size(TEXT.caption).text_color(color ?? t.muted).child(text);
 }
 
@@ -67,7 +67,7 @@ export function renderCard(pr, { onOpen, spinner, showRepo }) {
   const t = theme();
   const mark = CI[pr.ciStatus] ?? "";
   return v_flex().id(cardId(pr)).p(SP.md).gap(SP.sm).rounded(RADIUS.card).border_1().border_color(t.border)
-    .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => onOpen(pr))
+    .cursor_pointer().hover((s) => s.bg(t.hover).border_color(t.dim)).on_click(() => onOpen(pr))
     .child(div().text_size(TEXT.body).font_medium().max_h(TITLE_LH * 2)
       .overflow_hidden().child(pr.title ?? ""))
     .child(h_flex().gap(SP.sm).items_center().text_size(TEXT.caption).text_color(t.dim)

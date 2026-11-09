@@ -12,7 +12,7 @@ function button(id, label, onClick) {
   const t = theme();
   return div().id(id).px(SP.sm).h(CONTROL_H.board).flex().items_center()
     .rounded(RADIUS.control).text_size(TEXT.caption).cursor_pointer()
-    .border_1().border_color(t.border).hover((s) => s.bg(t.hover))
+    .border_1().border_color(t.border).hover((s) => s.bg(t.hover).border_color(t.dim))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .on_click(() => onClick()).child(label);
 }
@@ -21,7 +21,7 @@ function closeButton(onClick) {
   const t = theme();
   return div().id("detail-close").h(CONTROL_H.board).w(CONTROL_H.board).flex()
     .items_center().justify_center().rounded(RADIUS.control).text_size(TEXT.caption)
-    .cursor_pointer().border_1().border_color(t.border).hover((s) => s.bg(t.hover))
+    .cursor_pointer().border_1().border_color(t.border).hover((s) => s.bg(t.hover).border_color(t.dim))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .on_click(() => onClick()).child("×");
 }
@@ -80,7 +80,7 @@ function postPill(post) {
 function runCard(r, { openStamp, bodyFor, onToggle }) {
   const t = theme();
   return v_flex().id(`run-${r.stamp}`).p(SP.md).gap(SP.xs).rounded(RADIUS.card).border_1()
-    .border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover))
+    .border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover).border_color(t.dim))
     .on_click(() => onToggle(r.stamp))
     .child(h_flex().gap(SP.sm).items_center()
       .child(div().text_size(TEXT.body).font_medium().child(r.verdict || "review"))

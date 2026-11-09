@@ -16,7 +16,7 @@ import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, 
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
-import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
+import { SP, TEXT, RADIUS, CONTROL_H } from "./_lib/tokens.js";
 import { segment, segmented } from "./ui.js";
 
 function ctxOf() {
@@ -389,26 +389,31 @@ export default class TeamPrs extends View {
     const loading = state.loading && !state.repos;
     const nFail = state.errors?.length ?? 0;
     const first = state.errors?.[0];
-    return h_flex().id("prs-header").h(48).flex_none().px(SP.lg).gap(SP.sm).items_center()
+    const all = scopeOf() === "all";
+    const title = all ? "All spaces" : (loading ? "loading…" : (state.slug ?? "no repo"));
+    const note = all ? (loading ? "loading…" : `${state.repos} repos`) : null;
+    const pinned = (e) => e.child(div().id("pin").px(SP.sm).h(CONTROL_H.compact).flex().items_center()
+      .rounded(RADIUS.control).text_size(TEXT.caption).cursor_pointer().border_1().border_color(t.border)
+      .hover((s) => s.border_color(t.dim))
+      .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
+      .child(pin ? "pinned" : "pin"));
+    // Title on the left names the subject (the repo); the controls that filter it sit on the right.
+    return h_flex().id("prs-header").h(52).flex_none().px(SP.lg).gap(SP.md).items_center()
+      .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
+        .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
+        .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))
+        .when(!all && ctx?.on != null, (e) => e.child(div().flex_none().px(SP.sm).py(1).rounded(RADIUS.control)
+          .border_1().border_color(t.border).text_size(TEXT.caption).text_color(t.muted).child(String(ctx.on))))
+        .when(nFail && !all, (e) => e
+          .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
+          .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
+        .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
+          .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
       .child(this.scopeToggle(t))
-      .when(scopeOf() === "all", (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim)
-        .child(loading ? "loading…" : `${state.repos} repos`)))
-      .when(scopeOf() !== "all", (e) => e.child(div().font_semibold().text_size(TEXT.body)
-        .child(loading ? "loading…" : (state.slug ?? "no repo"))))
-      .when(scopeOf() !== "all" && ctx?.on != null, (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim).child(String(ctx.on))))
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
       ]))
-      .when(scopeOf() !== "all", (e) => e.child(div().id("pin").px(SP.sm).py(SP.xs).rounded(RADIUS.control)
-        .text_size(TEXT.caption).cursor_pointer().border_1().border_color(t.border)
-        .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
-        .child(pin ? "pinned" : "pin")))
-      .when(nFail && scopeOf() !== "all", (e) => e
-        .child(div().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
-        .child(div().text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
-      .when(nFail && scopeOf() === "all", (e) => e
-        .child(div().text_size(TEXT.caption).text_color(t.ansi1).truncate()
-          .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`)));
+      .when(!all, pinned);
   }
 }

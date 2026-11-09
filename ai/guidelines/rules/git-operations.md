@@ -35,7 +35,7 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 
 ## Pushing
 
-- Never run `git push --force` or `git push --force-with-lease` — always print the exact command for the user to run and stop
+- Never run a raw `git push --force` or `git push --force-with-lease` — print the exact command for the user to run and stop. The one exception is the leased push through `pr` for a requested rebase (next bullet)
 - A rebase the user asked for is finished by pushing it, not by asking. When the tooling reports it clean, publish it through the owner's leased push (`pr rebase`, or `pr rebase --push-only --expect <full remote SHA>`) without prompting. A rebase left with a blocking finding is fixed and committed first, then pushed the same way. The lease refuses if the remote moved, which is what makes this safe where a raw force-push is not. A user's `--no-push` is the one request that withholds it. This section owns the policy; the `pr-rebase` and `pr-batch` skills only say what "clean" and "the remote SHA" are in their own output
 - Outside a requested rebase, when a regular push fails because the branch diverged, print the force-push command for the user
 - Never retry a failed push/fetch — diagnose instead (see Git Failure Debugging)

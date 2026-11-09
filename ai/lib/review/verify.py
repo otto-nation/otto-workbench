@@ -342,7 +342,7 @@ def _verified_behaviour(
         except (OSError, UnicodeDecodeError):
             return replace(entry, test_cited="", note="cited test not found")
         if not re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text):
-            return replace(entry, test_cited="", note=f"`{name}` not found in `{path}`")
+            return replace(entry, test_cited="", note="cited test not found")
     return replace(entry, note="") if entry.note else entry
 
 

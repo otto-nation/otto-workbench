@@ -11,9 +11,8 @@ from review.behaviour_types import BehaviourEntry
 from review.claim_types import ClaimEntry
 from review.document import (
     SECTION_CLAIMS, SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS,
-    SECTION_TEST_EVIDENCE,
     SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
-    SECTION_VERDICT, ReviewHeader, review_title,
+    SECTION_TEST_EVIDENCE, SECTION_VERDICT, ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, location_ref, sid_marker
 from review.record import (

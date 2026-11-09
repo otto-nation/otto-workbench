@@ -602,7 +602,7 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
         return DisproveRun(PhaseResult(), record)
     # The gate reads the record rendered with its evidence: the findings it
     # challenges, their locations, and the code each one quotes. Disprove judges
-    # truth, not where to look, so Focus and Claims are omitted.
+    # truth, not where to look, so Focus, Claims and Test evidence are omitted.
     result = run_phase(job, Phase.DISPROVE,
                        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
                        review_content=render_body(

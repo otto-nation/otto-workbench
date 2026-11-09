@@ -38,7 +38,12 @@ def _error(kind: IngestErrorKind, at: str, detail: str) -> IngestError:
     return IngestError(kind, 0, detail, at=at)
 
 
+def _has_bad_chars(value: str) -> bool:
+    return any(ch.isspace() or not ch.isprintable() for ch in value)
+
+
 def has_behaviour_source(job: ReviewJob) -> bool:
+    """Whether the PR's files include a subject the hint filter keeps."""
     return bool(review.grouping.hint_subjects(job.pr.files))
 
 
@@ -47,6 +52,7 @@ def behaviours_problems(
     *,
     has_behaviour_source: bool,
 ) -> tuple[IngestError, ...]:
+    """Writer-check errors for `behaviours`; () when there is no source."""
     if not has_behaviour_source:
         return ()
     if behaviours is None:
@@ -85,14 +91,27 @@ def _behaviour_problems(entry: BehaviourReport, index: int) -> list[IngestError]
         out.append(_error(
             IngestErrorKind.BAD_BEHAVIOUR, f"{at}.paths", "paths is empty",
         ))
-    cited = entry.test_cited.split("::", 1)[0]
-    if strip_line_suffix(cited) != cited:
+    path, sep, name = entry.test_cited.partition("::")
+    cited_path = path if sep else entry.test_cited
+    if entry.test_cited and (
+        _has_bad_chars(entry.test_cited) or (sep and (not path or not name))
+    ):
+        out.append(_error(
+            IngestErrorKind.BAD_BEHAVIOUR, f"{at}.test_cited",
+            "test_cited is empty-sided or has whitespace or control characters",
+        ))
+    elif strip_line_suffix(cited_path) != cited_path:
         out.append(_error(
             IngestErrorKind.BAD_BEHAVIOUR, f"{at}.test_cited",
             f"{entry.test_cited!r} carries a line number; drop the :N suffix",
         ))
     for path in entry.paths:
-        if strip_line_suffix(path) != path:
+        if not path or _has_bad_chars(path):
+            out.append(_error(
+                IngestErrorKind.BAD_BEHAVIOUR, f"{at}.paths",
+                "path is empty or has whitespace or control characters",
+            ))
+        elif strip_line_suffix(path) != path:
             out.append(_error(
                 IngestErrorKind.BAD_BEHAVIOUR, f"{at}.paths",
                 f"{path!r} carries a line number; drop the :N suffix",

@@ -132,6 +132,19 @@ class TestReviewSections:
         assert "### Claims" in body
         assert "Not assessed" in body.split("### Claims", 1)[1]
 
+    def test_the_comment_carries_unassessed_test_evidence(self, rp):
+        body = format_body_text(
+            [], False, set(), rp.ReviewSections.from_record(record(behaviours=None)),
+        )
+        assert "### Test evidence" in body
+        assert "Not assessed" in body.split("### Test evidence", 1)[1]
+
+    def test_the_comment_omits_empty_test_evidence(self, rp):
+        body = format_body_text(
+            [], False, set(), rp.ReviewSections.from_record(record(behaviours=())),
+        )
+        assert "### Test evidence" not in body
+
     def test_the_comment_carries_focus_under_the_summary(self, rp):
         rec = record(summary="looked", focus=(user_area("Locking"),))
         body = format_body_text([], False, set(), rp.ReviewSections.from_record(rec))

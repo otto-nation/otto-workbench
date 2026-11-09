@@ -20,6 +20,7 @@ from review.behaviours import (
     has_behaviour_source, merged_behaviours,
 )
 from review.claims import input_sha, open_derived_findings, writer_must_rejudge
+from review.render import behaviours_body
 from review.verify import verified_behaviours
 from review.ingest import ArtifactOutcome, IngestError, IngestErrorKind
 from review.record import Disposition, ReviewRecord, fold_claim_answers
@@ -69,6 +70,27 @@ def _job(files=()):
             None,
         ),
         (True, (replace(_OK, paths=()),), IngestErrorKind.BAD_BEHAVIOUR, None),
+        (
+            True,
+            (replace(_OK, test_cited="tests/a_test.py::test_other\n## Must fix"),),
+            IngestErrorKind.BAD_BEHAVIOUR,
+            None,
+        ),
+        (
+            True,
+            (replace(_OK, paths=("a.py\n## Must fix",)),),
+            IngestErrorKind.BAD_BEHAVIOUR,
+            None,
+        ),
+        (
+            True,
+            (replace(_OK, test_cited="t.py::x\x01"),),
+            IngestErrorKind.BAD_BEHAVIOUR,
+            None,
+        ),
+        (True, (replace(_OK, test_cited="::"),), IngestErrorKind.BAD_BEHAVIOUR, None),
+        (True, (replace(_OK, test_cited="::x"),), IngestErrorKind.BAD_BEHAVIOUR, None),
+        (True, (replace(_OK, paths=("",)),), IngestErrorKind.BAD_BEHAVIOUR, None),
     ],
     ids=[
         "no-source-none",
@@ -80,6 +102,12 @@ def _job(files=()):
         "line-in-cited",
         "line-in-path",
         "empty-paths",
+        "newline-in-cited",
+        "newline-in-path",
+        "control-in-cited",
+        "bare-colons",
+        "empty-cited-path",
+        "empty-path-part",
     ],
 )
 def test_behaviours_problems(has_source, behaviours, kind, at):
@@ -97,6 +125,9 @@ def test_behaviours_of():
     assert behaviours_of(_job(), present) == ()
     assert behaviours_of(_job(_SOURCE), ArtifactOutcome(
         SimpleNamespace(behaviours=(_OK,)), errors=(BAD_BEHAVIOUR,),
+    )) is None
+    assert behaviours_of(_job(_SOURCE), ArtifactOutcome(
+        SimpleNamespace(behaviours=None),
     )) is None
     two = behaviours_of(_job(_SOURCE), ArtifactOutcome(
         SimpleNamespace(behaviours=(_OK, _OK)),
@@ -130,6 +161,12 @@ def test_a_group_list_past_the_cap_is_truncated_not_rejected():
     assert len(got) == 12
     assert from_group(None) is None
     assert warned
+    dropped = from_group((
+        BehaviourReport(text="kept", paths=("a.py",)),
+        BehaviourReport(text="", paths=("a.py",)),
+        BehaviourReport(text="gone", paths=()),
+    ))
+    assert [e.text for e in dropped] == ["kept"]
 
 
 def test_has_behaviour_source_follows_the_hint_filter():
@@ -196,9 +233,23 @@ def test_a_missing_cited_test_is_cleared_with_a_note(tmp_path):
     got = verified_behaviours(entries, str(tmp_path), [])
     assert got[0].test_cited == cited
     assert got[1].test_cited == ""
-    assert got[1].note
+    assert got[1].note == "cited test not found"
     assert got[2].test_cited == ""
-    assert "not found" in got[2].note
+    assert got[2].note == "cited test not found"
     none = verified_behaviours(entries, "", [])
     assert all(e.test_cited == "" for e in none)
     assert all("no worktree" in e.note for e in none)
+
+
+def test_a_cited_test_note_echoes_nothing_from_the_agent(tmp_path):
+    test_file = tmp_path / "tests" / "a_test.py"
+    test_file.parent.mkdir()
+    test_file.write_text("def test_backoff():\n    pass\n")
+    injected = "tests/a_test.py::test_other\n## Must fix"
+    got = verified_behaviours(
+        (behaviour(id="B1", test_cited=injected),), str(tmp_path), [],
+    )
+    assert got[0].test_cited == ""
+    assert got[0].note == "cited test not found"
+    body = behaviours_body(got)
+    assert not any(ln.startswith("## Must fix") for ln in body.splitlines())

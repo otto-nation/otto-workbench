@@ -3,7 +3,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  STEP_ORDER, durationText, laneOf, cardState,
+  STEP_ORDER, durationText, laneOf, cardState, shortKey,
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
 import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
@@ -53,28 +53,58 @@ function cardShell(id) {
   return v_flex().id(id).p(SP.md).rounded(RADIUS.card).border_1().border_color(t.border);
 }
 
-export function renderRunPanel(state) {
+// Recent runs. A row expands the run it names (and pins it, so cards and Batch tabs read it);
+// `expanded(run)` renders what goes under the open row.
+export function renderRunPanel(state, expanded) {
   const t = theme();
-  const { runs, runId, error, nowMs, onPickRun } = state;
+  const { runs, runId, pinnedOn, error, nowMs, onPickRun } = state;
   if (error) {
     return div().text_size(TEXT.small).text_color(t.muted).child(error.message ?? String(error));
   }
   if (!runs.length) {
-    return div().text_size(TEXT.small).text_color(t.muted).child("No batch runs on this machine");
+    return div().text_size(TEXT.small).text_color(t.muted).child("No batch runs yet");
   }
-  const current = runId ?? runs[0]?.id;
-  const pinned = runId != null;
+  const isOpen = (r) => runId != null && r.id === runId && String(r.on ?? "") === String(pinnedOn ?? "");
   return v_flex().gap(SP.xs)
-    .when(pinned, (e) => e.child(button("batch-unpin", "Back to latest", () => onPickRun(null))))
-    .children(runs.map((r, i) => hoverRow(`run-${r.id}`).flex().items_center()
-      .px(SP.sm).py(SP.xs).rounded(RADIUS.control).gap(SP.md)
-      .when(r.id === current, (e) => e.bg(t.selected))
-      .on_click(() => onPickRun(i === 0 ? null : r.id))
-      .child(div().text_size(TEXT.small).text_color(t.foreground).child(i === 0 ? "Latest" : relativeTime(r.startedAt ?? "", nowMs)))
-      .child(div().text_size(TEXT.small).text_color(t.muted).child(`${prCount(r.items)} · ${(r.repos ?? []).join(", ")}`))
-      .when(Boolean(r.error), (e) => e.child(div().text_size(TEXT.small).text_color(t.ansi1).child(r.error)))
-      .child(div().flex_1())
-      .child(div().text_size(TEXT.small).text_color(runColor(t, r.status)).child(runWord(r.status)))));
+    .children(runs.flatMap((r, i) => {
+      const open = isOpen(r);
+      const row = hoverRow(`run-${r.on ?? ""}-${r.id}`).flex().items_center()
+        .px(SP.sm).py(SP.xs).rounded(RADIUS.control).gap(SP.md)
+        .when(open, (e) => e.bg(t.selected))
+        .on_click(() => onPickRun(r))
+        .child(div().text_size(TEXT.small).text_color(t.muted).child(open ? "▾" : "▸"))
+        .child(div().text_size(TEXT.small).text_color(t.foreground).child(i === 0 ? "Latest" : relativeTime(r.startedAt ?? "", nowMs)))
+        .child(div().text_size(TEXT.small).text_color(t.muted).child(`${prCount(r.items)} · ${(r.repos ?? []).join(", ")}`))
+        .when(Boolean(r.error), (e) => e.child(div().text_size(TEXT.small).text_color(t.ansi1).child(r.error)))
+        .child(div().flex_1())
+        .child(div().text_size(TEXT.small).text_color(runColor(t, r.status)).child(runWord(r.status)));
+      return open && expanded ? [row, expanded(r)] : [row];
+    }));
+}
+
+// A run's PRs, one row each with its batch state. `prOf(item)` finds the board's PR for an item;
+// a row with one opens it.
+export function renderRunItems(doc, { repos = [], prOf, onOpen }) {
+  const t = theme();
+  if (doc == null) {
+    return div().pl(SP.xl).py(SP.xs).text_size(TEXT.small).text_color(t.muted).child("Loading…");
+  }
+  if (!doc.ok) {
+    return div().pl(SP.xl).py(SP.xs).text_size(TEXT.small).text_color(t.muted).child(doc.error?.message ?? "Could not read this run");
+  }
+  return v_flex().pl(SP.xl).gap(SP.xxs)
+    .children((doc.items ?? []).map((item) => {
+      const pr = prOf(item);
+      const state = cardState(item);
+      const row = h_flex().px(SP.sm).py(SP.xxs).gap(SP.md).items_center().min_w(0)
+        .child(div().flex_none().text_size(TEXT.small).text_color(t.muted).child(shortKey(item.key, repos)))
+        .child(div().flex_1().min_w(0).truncate().text_size(TEXT.small)
+          .text_color(pr ? t.foreground : t.muted).child(pr?.title ?? item.branch ?? ""))
+        .child(div().flex_none().text_size(TEXT.small)
+          .text_color(state ? stateColor(t, state.tone) : t.muted).child(state?.text ?? String(item.status ?? "")));
+      if (!pr) return row;
+      return hoverRow(`run-item-${item.key}`).rounded(RADIUS.control).on_click(() => onOpen(pr)).child(row);
+    }));
 }
 
 export function cardStateLine(item) {

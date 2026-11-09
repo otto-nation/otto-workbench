@@ -6,7 +6,7 @@ import { STEP_NAMES, STEP_HELP, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, TEXT } from "./_lib/tokens.js";
 import { scrollBody, mono, button, solidButton, pane, paneBar, chip as chipOf, filterGroup } from "./_ui/ui.js";
-import { renderRunPanel } from "./workflows_view.js";
+import { renderRunPanel, renderRunItems } from "./workflows_view.js";
 
 function shortRepo(slug) {
   return String(slug ?? "").split("/").pop();
@@ -195,7 +195,10 @@ function renderForm({ launcher: L, prs }) {
         .child(button("batch-clear", "Clear", () => L.reset()))));
 }
 
-export function renderBatchPage({ launcher, workflows, prs, onBack, run }) {
+export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOpenPr, run }) {
+  const byKey = new Map((allPrs ?? prs ?? []).map((p) => [prKey(p.repoSlug, p.number).toLowerCase(), p]));
+  const prOf = (item) => byKey.get(String(item.key ?? "").toLowerCase()) ?? null;
+  const expanded = (r) => renderRunItems(workflows.docOf(r.on, r.id), { repos: r.repos ?? [], prOf, onOpen: onOpenPr });
   const running = renderRunning({ launcher, workflows, run });
   return pane("prs-batch")
     .child(paneBar()
@@ -207,5 +210,5 @@ export function renderBatchPage({ launcher, workflows, prs, onBack, run }) {
       .child(renderForm({ launcher, prs }))
       .child(v_flex().gap(SP.sm)
         .child(sectionLabel("RECENT RUNS"))
-        .child(renderRunPanel(workflows.barState()))));
+        .child(renderRunPanel(workflows.barState(), expanded))));
 }

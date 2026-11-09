@@ -220,11 +220,15 @@ export class Workflows {
   pin(on, id) { this.setPin({ on, id }); }
   unpin() { this.setPin(null); }
 
-  pickFromAll(id) {
-    if (id == null) return this.unpin();
-    const run = this.allRuns().find((r) => r.id === id);
-    if (run) this.pin(run.on, run.id);
-    else this.acx.notify();
+  // A run row toggles: picking the pinned run again unpins it.
+  pickRun(run) {
+    const pin = this.pinned;
+    if (run == null || (pin && k(pin.on) === k(run.on) && pin.id === run.id)) return this.unpin();
+    this.pin(run.on, run.id);
+  }
+
+  docOf(on, id) {
+    return this.machines.get(k(on))?.docs.get(id) ?? null;
   }
 
   async cancel(on, runId, { kill } = {}) {
@@ -249,11 +253,12 @@ export class Workflows {
       on: run?.on ?? null,
       runs,
       runId: this.pinned?.id ?? null,
+      pinnedOn: this.pinned?.on ?? null,
       doc: (run && m && m.docs.get(run.id)) || null,
       error,
       loading: this.keys == null || (this.machines.size > 0 && !loaded),
       nowMs: Date.now(),
-      onPickRun: (id) => this.pickFromAll(id),
+      onPickRun: (r) => this.pickRun(r),
     };
   }
 

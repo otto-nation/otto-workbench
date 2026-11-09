@@ -358,6 +358,8 @@ export default class TeamPrs extends View {
         launcher: this.launcher,
         workflows: this.workflows,
         prs: mineOpen(view),
+        allPrs: view.prs,
+        onOpenPr: (pr) => this.openDetail(pr, cx, "batch"),
         onBack: () => { this.batchOpen = false; this.acx.notify(); },
         run,
       }));
@@ -390,7 +392,9 @@ export default class TeamPrs extends View {
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
   // live state on every render, so its runs and busy state follow refreshes; the clicked copy only
   // stands in if the PR drops out of the list.
-  openDetail(pr, cx) {
+  // `tab` names the detail tab to open on (main.js reads pendingTab); omitted, the detail chooses.
+  openDetail(pr, cx, tab = null) {
+    this.pendingTab = tab;
     this.selectedId = cardId(pr);
     this.selectedPr = pr;
     this.acx.notify();

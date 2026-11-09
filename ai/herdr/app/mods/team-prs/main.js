@@ -266,6 +266,10 @@ export default class TeamPrs extends Board {
       this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
       this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
     }
+    if (this.pendingTab) {
+      this.tab = this.pendingTab;
+      this.pendingTab = null;
+    }
     const files = this.ensureFiles(this.detail);
     // The header counts what people wrote: once the files are known, generated ones drop out.
     if (files?.ok) {

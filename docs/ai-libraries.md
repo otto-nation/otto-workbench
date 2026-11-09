@@ -1690,6 +1690,14 @@ to `prior.json` and its sidecar copied to `prior-meta.json` when a re-review
 archives, so the re-review reads its predecessor as data rather than parsing
 `prior.md`.
 
+### review/usage_cache.py
+
+Session-log usage cached per review directory, keyed by each log's size and mtime.
+
+A log grows only while its run is live and never after it is archived, so its
+usage holds until its stat moves; this is what keeps `pr review --list` from
+re-parsing every log.
+
 ### review/verdict.py
 
 What a set of counts means, and the review a run without an agent writes.

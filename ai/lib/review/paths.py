@@ -46,6 +46,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import agent.usage
 import config.workbench_config
@@ -57,6 +58,9 @@ from core.phases import Phase
 from agent.usage import SessionUsage, parse_session_log
 from pr.state import now_iso
 from review.types import ReviewMeta, review_meta_from_dict
+
+if TYPE_CHECKING:
+    from review.usage_cache import UsageCache
 
 # ── Filenames ────────────────────────────────────────────────────────────────
 
@@ -481,18 +485,32 @@ def archived_file(review_dir: Path, stamp: str, suffix: str) -> Path:
     return archives_dir(review_dir) / f"{stamp}{suffix}"
 
 
-def archived_session_usage(review_dir: Path, stamp: str) -> SessionUsage:
-    """Usage from one archived run's session and post logs, as `aggregate_session_usage` reads the live run's."""
-    logs = [archived_file(review_dir, stamp, s) for s in (ARCHIVE_SESSION_EXT, ARCHIVE_POST_EXT)]
-    return agent.usage.merge([parse_session_log(str(p)) for p in logs if p.is_file()])
+def archived_session_usage(
+    review_dir: Path, stamp: str, cache: "UsageCache | None" = None,
+) -> SessionUsage:
+    """Usage from one archived run's session and post logs, as `aggregate_session_usage` reads the live run's, through *cache* when one is given."""
+    logs = [
+        p for p in (
+            archived_file(review_dir, stamp, s)
+            for s in (ARCHIVE_SESSION_EXT, ARCHIVE_POST_EXT)
+        )
+        if p.is_file()
+    ]
+    if cache is not None:
+        return cache.usage(logs)
+    return agent.usage.merge([parse_session_log(str(p)) for p in logs])
 
 
-def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
-    """Aggregate usage from session and post-session logs."""
+def aggregate_session_usage(
+    review_dir: Path | None, cache: "UsageCache | None" = None,
+) -> SessionUsage:
+    """Aggregate usage from session and post-session logs, through *cache* when one is given."""
     if not review_dir:
         return SessionUsage()
-    return agent.usage.merge([
-        parse_session_log(str(review_dir / n))
-        for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
-        if (review_dir / n).is_file()
-    ])
+    logs = [
+        p for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
+        if (p := review_dir / n).is_file()
+    ]
+    if cache is not None:
+        return cache.usage(logs)
+    return agent.usage.merge([parse_session_log(str(p)) for p in logs])

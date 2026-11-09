@@ -40,5 +40,5 @@ export function renderCompact({ sections, onOpen, showRepo, width }) {
 export function renderRail({ count }) {
   const t = theme();
   return v_flex().size_full().items_center().justify_center()
-    .child(div().px(6).py(2).rounded(8).text_size(12).text_color(t.muted).child(String(count ?? 0)));
+    .child(div().px(SP.sm - 2).py(2).rounded(RADIUS.card).text_size(TEXT.small).text_color(t.muted).child(String(count ?? 0)));
 }

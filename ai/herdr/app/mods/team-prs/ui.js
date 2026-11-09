@@ -1,6 +1,5 @@
-// Design tokens and small shared pieces for team-prs. The scale follows DESIGN.md's Linear
-// starting point (4px base, 6/8/12 radii, weights 400/500/600, hairline borders, one quiet
-// accent) shrunk to app density; colours come from the active theme, never from here.
+// Small shared pieces for team-prs (segmented control, eyebrow). Tokens live in _lib/tokens.js;
+// colours come from the active theme, never from here.
 import { div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { theme } from "herdr";

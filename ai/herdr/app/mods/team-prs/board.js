@@ -3,14 +3,11 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
-import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
+import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
 import { segment, eyebrow } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
-const COL_MIN = 260;
-const COL_EMPTY = 140;
-const TITLE_LH = 18;
-const COL_MAX = 400;
+const { colMin: COL_MIN, colMax: COL_MAX, colEmpty: COL_EMPTY, titleLh: TITLE_LH } = LAYOUT;
 
 function ciColor(status) {
   const t = theme();

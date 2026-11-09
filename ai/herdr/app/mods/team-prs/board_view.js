@@ -16,7 +16,7 @@ import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, 
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
-import { SP, TEXT, RADIUS, CONTROL_H } from "./_lib/tokens.js";
+import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented } from "./ui.js";
 
 function ctxOf() {
@@ -275,7 +275,7 @@ export default class TeamPrs extends View {
     if (isUntrustedHome(appHome())) {
       return v_flex().id("prs").size_full().items_center().justify_center().p(SP.xl).bg(t.background)
         .text_size(TEXT.body)
-        .child(div().max_w(480).text_color(t.muted).child("PR board is disabled in the untrusted window"));
+        .child(div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child("PR board is disabled in the untrusted window"));
     }
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
@@ -295,14 +295,14 @@ export default class TeamPrs extends View {
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
         .bg(t.background).text_size(TEXT.body))
-        .children(view.errors.slice(0, 3).map((e) => div().max_w(480).text_color(t.muted).child(errLine(e))))
-        .child(this.scopeToggle(t));
+        .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
+        .child(this.scopeToggle());
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
       return note(v_flex().id("prs").size_full().items_center().justify_center().gap(SP.sm).p(SP.xl)
         .bg(t.background).text_size(TEXT.body))
-        .child(div().max_w(480).text_color(t.muted).child("No open space is in a GitHub repository"))
-        .child(this.scopeToggle(t));
+        .child(div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child("No open space is in a GitHub repository"))
+        .child(this.scopeToggle());
     }
     if (mode === "rail") return this.railView(view);
     if (mode === "compact") return this.compactView(view, t);
@@ -332,7 +332,7 @@ export default class TeamPrs extends View {
 
   compactHeader(tab, t) {
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
-      .child(h_flex().child(this.scopeToggle(t)))
+      .child(h_flex().child(this.scopeToggle()))
       .child(h_flex().items_center().justify_between()
         .child(segmented([
           segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
@@ -363,7 +363,7 @@ export default class TeamPrs extends View {
       .child(renderRail({ count: this.listed(state).length }));
   }
 
-  scopeToggle(_t) {
+  scopeToggle() {
     const scope = scopeOf();
     return segmented([
       segment("scope-this", "This space", scope === "this", () => setShared("team-prs.scope", "this")),
@@ -398,7 +398,7 @@ export default class TeamPrs extends View {
       .on_click(() => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd }))
       .child(pin ? "pinned" : "pin"));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
-    return h_flex().id("prs-header").h(52).flex_none().px(SP.lg).gap(SP.md).items_center()
+    return h_flex().id("prs-header").h(LAYOUT.headerH).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
         .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))
@@ -409,7 +409,7 @@ export default class TeamPrs extends View {
           .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
-      .child(this.scopeToggle(t))
+      .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),

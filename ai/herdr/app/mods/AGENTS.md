@@ -13,42 +13,22 @@ Conventions for the mods under this directory (`team-prs`, `_lib`, …).
 ## Design
 
 Read the brand's `DESIGN.md` before changing a view (root `AGENTS.md` § UI and
-styling says where). The mods draw with herdr's `theme()`, which
-`ai/herdr/app/palettes/otto.toml` fills from the brand tokens, so use the field
-that carries the token's role. The table is a guide; `otto.toml` owns the
-mapping, so if they disagree the palette wins and this table needs fixing:
+styling says where), and apply its Do's and Don'ts, Elevation, Shapes and
+Components. Each value has one owner, so this section names the owners and
+restates none of their contents:
 
-| Brand token | `theme()` field | Use in a view |
-| --- | --- | --- |
-| canvas | `background` | Pane background |
-| surface | `surface` | A panel set apart from the canvas |
-| ink | `foreground` | Body copy, titles |
-| ink-muted | `muted` | Secondary copy, eyebrows, meta lines |
-| hairline | `border` | Card edges, dividers |
-| outline | `dim` | Control boundary only. Non-text (3:1): never body copy |
-| done | `done` | Success, as text |
-| warn | `ansi3` | Warning, as text |
-| warn (light) / amarillo (dark) | `working` | In progress |
-| rosa (light) / amarillo (dark) | `accent` | UI accents and large text only |
-| anil | `ansi4` | Links |
+- Colour: `theme()`, which `ai/herdr/app/palettes/otto.toml` fills from the
+  brand tokens. To find the field for a brand role, read the palette's
+  `[themes.*.colors]` and `ansi` entries for both schemes. Text takes a field
+  the palette maps to ink or ink-muted in both, never one mapped to outline,
+  which the brand defines as a non-text boundary. Prefer a named field to an
+  `ansiN` slot when one carries the role in both schemes.
+- Size, spacing and radius: `_lib/tokens.js`, whose comments say which brand
+  value each token stands for.
+- Shape of a control, card or label: `_ui/ui.js`.
 
-Prefer the named field over an `ansiN` slot: the name says the role, the slot
-only says where a terminal paints it.
-
-The brand's rules, as they apply here:
-
-- Flat. Hierarchy comes from hairline edges, never fills or shadows.
-- A card has no fill and a hairline border; title `TEXT.title` bold, body
-  `TEXT.small` in `muted`. `RADIUS.control` for controls, `RADIUS.card` for cards.
-- A section label is an eyebrow: mono, caption size, `muted`.
-- State is coloured text (`done`, `working`, `accent`). A bordered tag is for at
-  most one label per row; a row of tags reads as noise.
-- Amarillo is never text on the light canvas; rosa is never inline prose.
-
-Where `DESIGN.md` is silent (type sizes, interaction states, a danger colour, a
-third text tier, status glyphs), keep to `_lib/tokens.js` and the existing
-`_ui/ui.js` components rather than inventing a new value, and add the gap to
-otto-nation/otto-nation.github.io#23, which collects what the file lacks for app UI.
+Where `DESIGN.md` is silent, keep to those owners rather than inventing a value,
+and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 
 ## Checking and installing
 

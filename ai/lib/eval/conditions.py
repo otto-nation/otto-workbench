@@ -35,8 +35,8 @@ KEPT_RULES = frozenset({
 # neither opens a PR nor files an issue nor authors a skill.
 DROPPED_RULES = frozenset({
     "git-operations", "git.generated", "self-review", "issue-tracker",
-    "issue-tracker.local", "skills", "subagents", "artifacts", "output", "bash-tool",
-    "rules-authoring", "review-dev", "workbench",
+    "issue-tracker.local", "skills", "subagents", "artifacts", "output",
+    "bash-tool", "rules-authoring", "review-dev", "workbench",
     "tools.generated", "tools.generated.workbench", "tools.generated.java",
 })
 

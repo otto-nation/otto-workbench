@@ -297,9 +297,9 @@ def fold_claim_answers(
     """A new answers ledger: `carried`, then this record's derived findings.
 
     Each derived finding with a `stable_id` writes DECLINED/SKIPPED/FALSIFIED
-    or drops OPEN/UNREACHED/FIXED. When `record.claims` is not None, keys that
-    are not a remaining claim are dropped. `record.claims is None` keeps every
-    answer.
+    (restamping `head`) or drops OPEN/UNREACHED/FIXED. When `record.claims`
+    is not None, keys that are not a remaining claim are dropped.
+    `record.claims is None` keeps every answer. Mutates no argument.
     """
     answers = dict(carried)
     for finding in record.findings:

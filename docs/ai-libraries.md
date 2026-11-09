@@ -947,8 +947,10 @@ run-context check composed with focus coverage, turning a writer's reports
 into record entries after the check, the degraded-check warning, and
 `settle`. Renderers take claims off the record and never import it.
 
-The record is tri-state. `None` is not assessed — a writer that did not run, a
-check that degraded, or a legacy `review.json`. `()` is assessed with nothing
+The record is tri-state. `None` is not assessed — a writer that did not run
+and whose claims could not be carried, or a legacy `review.json`. A check
+that degraded still starts as `None`; `carried` then re-settles the prior
+claims when the fingerprint matches. `()` is assessed with nothing
 checkable, or no claim source. Entries are the assessed ledger.
 
 Writers are the single agent and synthesis only. Scout, holistic and group get
@@ -956,9 +958,9 @@ no claims fields. Agentless paths that never re-settle claims — clean,
 all-groups-failed, `--repair` rebuild — record `None`. So does any path whose
 claim inputs changed, or that has no prior claims to carry. When a description
 or ticket existed, that renders "*Not assessed this round.*" Settled,
-`--no-synthesis`, a budget cut, mechanical fallback, and low-effort re-settle
-the prior claims when the fingerprint still matches, so those rounds keep the
-ledger rather than dropping it.
+`--no-synthesis`, a budget cut, mechanical fallback, and a degraded writer
+check re-settle the prior claims when the fingerprint still matches, so those
+rounds keep the ledger rather than dropping it.
 
 The check rides ingest `check=` with one repair turn. Caps (12 claims, 512
 bytes per `text` / `evidence` / `snippet`) live inside the check, so an
@@ -968,16 +970,18 @@ fails `problems()` or schema never runs the claims check, so the repair prompt
 does not mention claims and the second load degrades without that turn having
 named them.
 
-`settle` verifies claims, then derives, then appends, then links each source
-claim by position. A dangling link (names no visible finding) is treated as
-no link, so that claim derives. A linked claim derives nothing, so settle is
-idempotent on a record it already linked. A no-op carried round never
-derives twice because that path never calls settle. It runs at both writer
-sites before disprove, so the record disprove reads already holds those
-findings. Disprove clears the link when it falsifies the finding. The
-evidence gate in post_process_record can drop, and disprove can falsify, a
-WRITER finding a claim links to; the link is then cleared and nothing
-re-derives that round.
+`settle` verifies claims, then derives, then applies live answers, then
+appends, then links each source claim by position. A dangling link (names no
+visible finding) is treated as no link, so that claim derives. A linked claim
+derives nothing, so settle is idempotent on a record it already linked. A
+true no-op round never derives twice because that path never calls settle.
+It runs at both writer sites before disprove, so the record disprove reads
+already holds those findings, and from `carried` on every path through
+`_reconcile_and_verify`. On the degraded single-agent path `carried` runs
+after disprove, so those re-derived claim findings skip the gate that round.
+Disprove clears the link when it falsifies the finding. The evidence gate in
+post_process_record can drop, and disprove can falsify, a WRITER finding a
+claim links to; the link is then cleared and nothing re-derives that round.
 Verification uses the same evidence matcher findings use: a supported or
 contradicted claim whose snippet is not in its file becomes unverifiable,
 with a note, and derives nothing.
@@ -990,20 +994,37 @@ the evidence prose, and `Source: description` or `Source: ticket`. The last
 line is always that `Source:` line so a derived body never ends in a
 non-defect phrase (D11).
 
-A prior round's derived findings (`origin` other than writer) are never
-shown in the prior prompt and never accounted for. The writer re-judges
-the claims and settle re-derives. A DECLINED or SKIPPED derived finding
-keeps its disposition from one writer round to the next, matched by
-stable_id (path plus the first 80 characters of the first line;
-description and ticket claims with the same wording collide). After a
-round that settles or ends clean without the writer — the merged record
-never holds derived findings — that answer is lost, and the next writer
-round re-derives the finding OPEN. A FALSIFIED derived finding is not
-re-derived the round after it was falsified, but a later round re-derives
-it. A true no-op round carries them with their claims. An OPEN or
-UNREACHED prior derived finding stops a round being treated as clean or
-settled, so the writer re-judges (`reconcile.open_derived_findings`,
-`steps._writer_must_rejudge`).
+Answers live in `ReviewMeta.claim_answers`, keyed by `ClaimEntry.key` (source
+plus collapsed lower-cased text). `store.write_review` folds them from the
+record's derived findings on every write. An answer holds while its claim
+key is unchanged and, when anchored, its file has not changed since the
+commit the answer was given at (OD-3); `live_answers` is that filter.
+Unanchored answers never expire until the wording changes.
+
+`settle` is the only reader of those answers (D4). Sticky skips neither mark
+nor skip derived findings (D5), so the ledger is the only carry for them. A
+run without `--prior-review` applies none.
+
+A round that publishes without the writer re-settles the prior claims when
+the fingerprint still matches (`carried`, D10): settled, `--no-synthesis`,
+budget-cut, synthesis-fallback, and a degraded writer check. Clean and
+all-groups-failed do not; they keep claims `None`, and answers still persist
+in the sidecar.
+
+The writer is forced when claims cannot be carried, an open claim finding is
+unanchored, or a prior derived finding — including answered and falsified —
+is anchored on a file in this round's change set (D11). An open claim
+finding the writer is not forced to re-judge never reaches a clean review.
+
+D19 still owns writer-finding declines: an ingest-time belief check on a
+decline an agent restated. Derived findings are never shown to an agent, so
+there is nothing for D19 to believe. Writer declines do not share the ledger
+(D6). A claim linked to a prior writer finding that was fixed or settled
+gets its link cleared and may derive OPEN on a non-writer round.
+
+A derived finding answered before claim keys included the source re-raises
+OPEN once on the next writer round: those records keep the old `stable_id`
+and their sidecars carry no `claim_answers`.
 
 The fingerprint hashes `pr.body` plus a projection of the issue: title and
 description or body only. Tracker fields that churn (state, labels,

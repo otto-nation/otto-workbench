@@ -1,13 +1,13 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
+import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
 import { segment } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
-const { colMin: COL_MIN, colMax: COL_MAX, colEmpty: COL_EMPTY, titleLh: TITLE_LH } = LAYOUT;
+const { colMin: COL_MIN, colMax: COL_MAX, titleLh: TITLE_LH } = LAYOUT;
 
 function ciColor(status) {
   const t = theme();
@@ -35,15 +35,14 @@ function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
   return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}55`)
-    .when(!empty, (e) => e.flex_1().min_w(COL_MIN).max_w(COL_MAX))
-    .when(empty, (e) => e.flex_none().min_w(COL_EMPTY).max_w(COL_EMPTY).overflow_x_hidden())
+    .flex_1().min_w(COL_MIN).max_w(COL_MAX)
     .child(columnHeader(col.label, col.items.length))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().p(SP.sm).gap(SP.sm)
       .when(empty, (e) => e.child(div().px(SP.md).text_size(TEXT.caption).text_color(t.dim).child("none")))
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
-export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo }) {
+export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo, loading }) {
   const t = theme();
   const mine = tab === "mine";
   const list = mine
@@ -51,9 +50,13 @@ export function renderBoard({ tab, prs, filters, me, onOpen, spinner, showRepo }
     : filterPrs(prs, filters, me);
   const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
   const cols = groupColumns(list, mine ? mineColumn : teamColumn, spec);
-  return h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
-    .bg(t.background).text_color(t.foreground).text_size(TEXT.body).overflow_x_scrollbar()
-    .children(cols.map((c) => column(c, { onOpen, spinner, showRepo })));
+  const shown = visibleColumns(cols, Boolean(filters?.empty));
+  const board = h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
+    .bg(t.background).text_color(t.foreground).text_size(TEXT.body).overflow_x_scrollbar();
+  if (!shown.length) {
+    return board.child(div().p(SP.lg).text_color(t.dim).child(loading ? "Loading…" : "No PRs"));
+  }
+  return board.children(shown.map((c) => column(c, { onOpen, spinner, showRepo })));
 }
 
 function badges(pr) {
@@ -98,5 +101,6 @@ export function renderChips(filters, authors, { onToggle }) {
     .bg(t.background)
     .child(chip("Drafts", "drafts", Boolean(f.drafts)))
     .child(chip("Landed", "landed", Boolean(f.landed)))
+    .child(chip("Empty lanes", "empty", Boolean(f.empty)))
     .children(authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))));
 }

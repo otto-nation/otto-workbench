@@ -281,3 +281,29 @@ _filter() {
   [ "$status" -eq 0 ]
   [ "$output" = "[2]" ]
 }
+
+@test "visibleColumns: drops empty columns when showEmpty is false" {
+  run node --input-type=module -e "
+    const { visibleColumns } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const cols = [
+      { key: 'open', items: [{}] },
+      { key: 'landed', items: [] },
+    ];
+    process.stdout.write(JSON.stringify(visibleColumns(cols, false).map((c) => c.key)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '["open"]' ]
+}
+
+@test "visibleColumns: keeps all columns when showEmpty is true" {
+  run node --input-type=module -e "
+    const { visibleColumns } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const cols = [
+      { key: 'open', items: [{}] },
+      { key: 'landed', items: [] },
+    ];
+    process.stdout.write(JSON.stringify(visibleColumns(cols, true).map((c) => c.key)));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '["open","landed"]' ]
+}

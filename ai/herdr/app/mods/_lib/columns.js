@@ -108,3 +108,7 @@ export function groupColumns(prs, colOf, columns) {
   }
   return columns.map((c) => ({ ...c, items: buckets[c.key] ?? [] }));
 }
+
+export function visibleColumns(cols, showEmpty) {
+  return showEmpty ? cols : cols.filter(c => c.items.length > 0);
+}

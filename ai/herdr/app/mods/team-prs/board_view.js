@@ -44,7 +44,7 @@ function ctxKey(ctx) {
 
 function filtersOf() {
   const f = shared("team-prs.filters") ?? {};
-  return { drafts: !!f.drafts, landed: !!f.landed, authors: [...(f.authors ?? [])] };
+  return { drafts: !!f.drafts, landed: !!f.landed, empty: !!f.empty, authors: [...(f.authors ?? [])] };
 }
 
 function tabOf() {
@@ -266,7 +266,7 @@ export default class TeamPrs extends View {
 
   toggleChip(name, cx) {
     const f = filtersOf();
-    if (name === "drafts" || name === "landed") {
+    if (name === "drafts" || name === "landed" || name === "empty") {
       f[name] = !f[name];
       setShared("team-prs.filters", f);
       if (name === "landed" && f.landed) this.refresh(cx);
@@ -399,7 +399,7 @@ export default class TeamPrs extends View {
       .child(renderBoard({
         tab, prs: state.prs ?? [], filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
-        spinner: "⠋", showRepo: scopeOf() === "all",
+        spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
       }));
   }
 

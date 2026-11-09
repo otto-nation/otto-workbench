@@ -40,10 +40,25 @@ export function pullsArgv(repo) {
   ];
 }
 
-// ceiling: --slurp with patches can pass herdr's exec output cap on a very large PR; page it (or drop patches) if a PR's Files tab fails to load.
-// The PR's files with their patches. The page size rides in the URL: `-f` would make gh POST.
+export const FILES_PER_PAGE = 100;
+
+// The file list without patches: a 1,000-file PR's patches pass herdr's exec output cap, so a
+// file's patch is fetched when it is opened (patchArgv). One JSON array per page, one per line.
+const FILES_JQ =
+  '[.[] | {filename, previous_filename, status, additions, deletions, has_patch: (.patch != null)}]';
+
+// The page size rides in the URL: `-f` would make gh POST.
 export function filesArgv(repo, number) {
-  return ['api', `/repos/${repo}/pulls/${number}/files?per_page=100`, '--paginate', '--slurp'];
+  return ['api', `/repos/${repo}/pulls/${number}/files?per_page=${FILES_PER_PAGE}`, '--paginate', '--jq', FILES_JQ];
+}
+
+// One file's patch: the API has no per-file endpoint, so read the page the file is on and keep
+// only its patch. JSON.stringify writes a valid jq string literal. Prints nothing when there is none.
+export function patchArgv(repo, number, page, path) {
+  return [
+    'api', `/repos/${repo}/pulls/${number}/files?per_page=${FILES_PER_PAGE}&page=${page}`,
+    '--jq', `.[] | select(.filename == ${JSON.stringify(path)}) | .patch // empty`,
+  ];
 }
 
 function intNums(numbers) {

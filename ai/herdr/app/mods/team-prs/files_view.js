@@ -55,7 +55,9 @@ function diffLine({ kind, number, text }) {
 // One file's diff as a virtual list of fixed-height rows; `diff` is patchRows' result.
 export function renderDiff(file, diff, { onBack }) {
   const t = theme();
-  const note = file.patch == null ? "No text diff for this file (binary or too large)" : null;
+  const note = file.loadingPatch ? "Loading diff…"
+    : file.patchError ? file.patchError
+    : file.patch == null ? "No text diff for this file (binary or too large)" : null;
   return v_flex().id("prs-diff").flex_1().min_h(0)
     .child(h_flex().flex_none().gap(SP.sm).items_center().px(SP.lg).py(SP.sm).border_b_1().border_color(t.border)
       .child(button("diff-back", "← Files", onBack))
@@ -66,6 +68,6 @@ export function renderDiff(file, diff, { onBack }) {
         .child(div().w_full().min_w(diff.width).h_full().child(v_virtual_list("pr-diff", diff.rows.length, ROW_H.diff,
           (i) => String(i), (range) => diff.rows.slice(range.start, range.end).map(diffLine)).size_full())))
       .child(Scrollbar.vertical("pr-diff").viewport_from_layout().absolute().inset_0())))
-    .when(diff.truncated, (e) => e.child(div().flex_none().px(SP.lg).py(SP.xs).text_size(TEXT.caption)
+    .when(Boolean(diff?.truncated), (e) => e.child(div().flex_none().px(SP.lg).py(SP.xs).text_size(TEXT.caption)
       .text_color(t.dim).child(`Showing the first ${MAX_LINES.toLocaleString("en-US")} lines`)));
 }

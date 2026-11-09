@@ -13,11 +13,13 @@ import { busyPrs } from './batch.js';
 import { busyMap, getArgv, lsArgv, terminalsOf } from './busy.js';
 import {
   batches,
+  FILES_PER_PAGE,
   filesArgv,
   graphqlArgv,
   landedArgv,
   mapGraphql,
   mapPulls,
+  patchArgv,
   pullsArgv,
   userArgv,
 } from './github.js';
@@ -239,9 +241,9 @@ export async function loadListing(exec, ctx) {
 export async function loadFiles(exec, ctx, slug, number) {
   const ran = await invoke(exec, ctx, 'gh', filesArgv(slug, number));
   if (!ran.ok) return ran;
-  const parsed = readJson(ran.stdout);
+  const parsed = readPages(ran.stdout);
   if (!parsed.ok) return parsed;
-  const files = mapFiles(parsed.value);
+  const files = mapFiles(parsed.value, FILES_PER_PAGE);
   // Which files .gitattributes calls generated is git's to answer, from the checkout. Without a
   // checkout, or when git cannot say, nothing is marked and the counts stay whole.
   if (ctx.cwd == null) return { ok: true, files };
@@ -252,6 +254,15 @@ export async function loadFiles(exec, ctx, slug, number) {
     for (const p of generatedPaths(attr.stdout)) generated.add(p);
   }
   return { ok: true, files: markGenerated(files, generated) };
+}
+
+// One file's patch, read from the page loadFiles saw it on. `patch: null` when GitHub has none
+// (binary, or too large for the API).
+export async function loadPatch(exec, ctx, slug, number, file) {
+  const ran = await invoke(exec, ctx, 'gh', patchArgv(slug, number, file.page, file.path));
+  if (!ran.ok) return ran;
+  const text = ran.stdout.replace(/\n$/, '');
+  return { ok: true, patch: text === '' ? null : text };
 }
 
 export async function loadBatchDoc(exec, ctx) {

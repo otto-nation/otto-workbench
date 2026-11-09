@@ -19,7 +19,15 @@ def test_every_installed_rule_is_classified_into_exactly_one_arm():
     both = eval.conditions.KEPT_RULES & eval.conditions.DROPPED_RULES
     assert both == frozenset(), f"classified into both arms: {sorted(both)}"
     assert len(eval.conditions.KEPT_RULES) == 12
-    assert len(eval.conditions.DROPPED_RULES) == 15
+    assert len(eval.conditions.DROPPED_RULES) == 16
+
+
+def test_every_repo_shipped_rule_is_classified():
+    stems = sorted(
+        p.stem
+        for p in (REPO_ROOT / "ai" / "guidelines" / "rules").glob("*.md")
+    )
+    eval.conditions.classify(stems)
 
 
 def test_an_unrecognised_rule_fails_the_run_rather_than_joining_an_arm():
@@ -66,7 +74,7 @@ def test_the_full_arm_seeds_every_rule_and_the_trimmed_arm_only_the_kept(tmp_pat
     full = eval.conditions.seed_config_tree(source, tmp_path / "cc-full", "full")
     trimmed = eval.conditions.seed_config_tree(source, tmp_path / "cc-trimmed", "trimmed")
 
-    assert len(list((full / "rules").glob("*.md"))) == 27
+    assert len(list((full / "rules").glob("*.md"))) == 28
     assert {p.stem for p in (trimmed / "rules").glob("*.md")} == set(eval.conditions.KEPT_RULES)
     assert (trimmed / "settings.json").is_file()
 
@@ -82,7 +90,7 @@ def test_seeding_copies_and_leaves_the_source_tree_untouched(tmp_path):
     dest = eval.conditions.seed_config_tree(source, tmp_path / "cc-trimmed", "trimmed")
 
     assert sorted(p.name for p in (source / "rules").iterdir()) == before
-    assert len(before) == 27
+    assert len(before) == 28
     assert {p.stem for p in (dest / "rules").glob("*.md")} == set(eval.conditions.KEPT_RULES)
     assert (dest / "settings.json").is_file()
 

@@ -1,10 +1,10 @@
 """The two rule prefixes an A/B run compares, and the trees they are served from.
 
-The prefix under test is the 27 files installed at ``~/.claude/rules/`` — the
-merge of repo defaults, generated files and operator overrides — not the 18 in
-``ai/guidelines/rules/``. A trim set written against the repo sources would
-leave the five generated files identical in both arms and quietly shrink the
-contrast the experiment exists to measure.
+The prefix under test is the files installed at ``~/.claude/rules/`` — the
+merge of repo defaults, generated files and operator overrides — not the
+sources in ``ai/guidelines/rules/``. A trim set written against the repo
+sources would leave the generated files identical in both arms and quietly
+shrink the contrast the experiment exists to measure.
 
 Membership is explicit on both sides rather than "kept is everything not
 dropped": a rule added later would otherwise join the kept arm silently and
@@ -35,8 +35,8 @@ KEPT_RULES = frozenset({
 # neither opens a PR nor files an issue nor authors a skill.
 DROPPED_RULES = frozenset({
     "git-operations", "git.generated", "self-review", "issue-tracker",
-    "issue-tracker.local", "skills", "artifacts", "output", "bash-tool",
-    "rules-authoring", "review-dev", "workbench",
+    "issue-tracker.local", "skills", "subagents", "artifacts", "output",
+    "bash-tool", "rules-authoring", "review-dev", "workbench",
     "tools.generated", "tools.generated.workbench", "tools.generated.java",
 })
 

@@ -4849,11 +4849,11 @@ arms (`eval.run`), the floors ratchet (`eval.floors`), metrics and tables
 
 The two rule prefixes an A/B run compares, and the trees they are served from.
 
-The prefix under test is the 27 files installed at ``~/.claude/rules/`` — the
-merge of repo defaults, generated files and operator overrides — not the 18 in
-``ai/guidelines/rules/``. A trim set written against the repo sources would
-leave the five generated files identical in both arms and quietly shrink the
-contrast the experiment exists to measure.
+The prefix under test is the files installed at ``~/.claude/rules/`` — the
+merge of repo defaults, generated files and operator overrides — not the
+sources in ``ai/guidelines/rules/``. A trim set written against the repo
+sources would leave the generated files identical in both arms and quietly
+shrink the contrast the experiment exists to measure.
 
 Membership is explicit on both sides rather than "kept is everything not
 dropped": a rule added later would otherwise join the kept arm silently and

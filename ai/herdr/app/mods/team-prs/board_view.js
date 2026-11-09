@@ -10,7 +10,7 @@ import { locate } from "./_lib/location.js";
 import { boardState, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
-  assemble, checkTools, loadBatchDoc, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
+  assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
 import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
@@ -152,6 +152,11 @@ export default class TeamPrs extends View {
     return cycle.get(k);
   }
 
+  terminalsFor(ctx, cycle) {
+    if (!cycle.has("terminals")) cycle.set("terminals", loadTerminals(exec, ctx));
+    return cycle.get("terminals");
+  }
+
   async pull(cx, listingOnly) {
     const cycle = new Map();
     await Promise.all(this.activeTargets().map(async (ctx) => {
@@ -180,11 +185,13 @@ export default class TeamPrs extends View {
     this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, doc] = await Promise.all([
+    const [open, listing, doc, terms] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
       this.listingFor(ctx, cycle),
       this.batchDocFor(ctx, cycle),
+      this.terminalsFor(ctx, cycle),
     ]);
+    const running = runningFor(terms.entries, repo.slug);
     if (!this.same(key)) return;
     const bad = [open, listing].find((r) => !r.ok);
     if (bad) { this.fail(key, bad.error); return; }
@@ -197,7 +204,7 @@ export default class TeamPrs extends View {
       openPrs: open.prs, landedPrs,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
-        slug: repo.slug, host: repo.host, login, busy,
+        slug: repo.slug, host: repo.host, login, busy, running,
       }),
     }, ctx, cx);
   }
@@ -217,8 +224,10 @@ export default class TeamPrs extends View {
     if (!this.same(key)) return;
     if (!listing.ok) { this.fail(key, listing.error); return; }
     const doc = await this.batchDocFor(ctx, cycle);
+    const terms = await this.terminalsFor(ctx, cycle);
     if (!this.same(key)) return;
     const busy = busyPrs(doc.doc, prev.repo.slug);
+    const running = runningFor(terms.entries, prev.repo.slug);
     let landedPrs;
     if (JSON.stringify(listing.listing) === JSON.stringify(prev.listing)) {
       landedPrs = prev.landedPrs ?? [];
@@ -230,7 +239,7 @@ export default class TeamPrs extends View {
       ...prev, listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy, landedPrs,
       prs: assemble({
         openPrs: prev.openPrs ?? [], landedPrs, listing: listing.listing,
-        slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy,
+        slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy, running,
       }),
     }, ctx, cx);
   }

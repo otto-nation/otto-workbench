@@ -104,6 +104,18 @@ _js() {
   [ "$output" = 'false' ]
 }
 
+@test "joinReviews with no 6th arg leaves reviewing false and reviewTerminal null" {
+  _js '(()=>{const p=m.joinReviews([{number:7,headSha:"a"}],[row()],"o/n","github.com","me")[0];return [p.reviewing,p.reviewTerminal]})()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[false,null]' ]
+}
+
+@test "joinReviews 6th arg sets reviewing on the matching PR only" {
+  _js 'm.joinReviews([{number:7,headSha:"a"},{number:8,headSha:"b"}],[],"o/n","github.com","me",new Map([[7,{terminal:"t7",action:"review"}]])).map(p=>({n:p.number,r:p.reviewing,t:p.reviewTerminal}))'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"n":7,"r":true,"t":"t7"},{"n":8,"r":false,"t":null}]' ]
+}
+
 @test "health Partial, Error, and ok" {
   _js '[m.joinReviews([{number:7,headSha:"a"}],[row({status:"partial"})],"o/n","github.com","me")[0].health,m.joinReviews([{number:7,headSha:"a"}],[row({status:"error"})],"o/n","github.com","me")[0].health,m.joinReviews([{number:7,headSha:"a"}],[row()],"o/n","github.com","me")[0].health,m.joinReviews([{number:7,headSha:"a"}],[],"o/n","github.com","me")[0].health]'
   [ "$status" -eq 0 ]

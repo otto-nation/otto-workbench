@@ -73,7 +73,7 @@ function reviewStateOf(pr, runs, me) {
   return null;
 }
 
-export function joinReviews(prs, listing, repo, host, me) {
+export function joinReviews(prs, listing, repo, host, me, running = new Map()) {
   const rows = rowsOf(listing);
   const mine = (me ?? '').toLowerCase();
   return prs.map((pr) => {
@@ -89,8 +89,8 @@ export function joinReviews(prs, listing, repo, host, me) {
       isRequestedReviewer:
         (pr.requestedReviewers ?? []).some((l) => l.toLowerCase() === mine) && myReviewState === null,
       hasNewChangesSinceReview: reviewRuns.length > 0 && reviewRuns[0].head_sha !== pr.headSha,
-      // needs the otto.pr hc label PR 5 introduces
-      reviewing: false,
+      reviewing: running.has(pr.number),
+      reviewTerminal: running.get(pr.number)?.terminal ?? null,
       health: health(reviewRuns[0]?.run),
     };
   });

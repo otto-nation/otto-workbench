@@ -9,6 +9,7 @@
  */
 
 import { busyPrs } from './batch.js';
+import { busyMap, lsArgv, terminalsOf } from './busy.js';
 import {
   batches,
   graphqlArgv,
@@ -260,10 +261,27 @@ export async function loadLanded(exec, ctx, slug, listing, host, openPrs, nowMs)
   return { ok: true, prs: keepLanded(merged, nowMs), partial };
 }
 
-export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy }) {
+// Terminals the board or pane started (labelled otto.pr). Listed from the local
+// core, which also reports remote machines' terminals, so one call covers every
+// target. A failed listing is an empty map: a missing spinner must not fail the board.
+export async function loadTerminals(exec, ctx) {
+  try {
+    const ran = await exec('hc', lsArgv(), { cwd: ctx.cwd });
+    if (ran.code !== 0) return { ok: false, entries: [] };
+    return { ok: true, entries: terminalsOf(readJson(ran.stdout).value) };
+  } catch {
+    return { ok: false, entries: [] };
+  }
+}
+
+export function runningFor(entries, slug) {
+  return busyMap(entries ?? [], slug);
+}
+
+export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy, running }) {
   return joinReviews(
     [...(openPrs ?? []), ...(landedPrs ?? [])],
-    listing, slug, host, login,
+    listing, slug, host, login, running ?? new Map(),
   ).map((pr) => ({ ...pr, busy: busy.has(pr.number) }));
 }
 

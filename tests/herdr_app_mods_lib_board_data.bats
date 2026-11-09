@@ -354,6 +354,44 @@ _gql() {
   [[ "$output" == *'"runs8":0'* ]]
 }
 
+@test "assemble running map marks the PR reviewing" {
+  _bd '
+    const table = [];
+    const out = m.assemble({
+      openPrs: [{ number: 7, headSha: "a", requestedReviewers: [], latestReviews: [] }],
+      listing: { reviews: [] }, slug: "o/n", host: "github.com", login: "me",
+      busy: new Set(), running: new Map([[7, { terminal: "t7" }]]),
+    });
+    process.stdout.write(JSON.stringify({ r: out[0].reviewing, t: out[0].reviewTerminal }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"r":true'* ]]
+  [[ "$output" == *'"t":"t7"'* ]]
+}
+
+@test "loadTerminals ok, code 1, throw, and not json" {
+  _rr '
+    const ctx = { cwd: "/repo" };
+    const live = { terminals: [{ address: "t7", state: "live", labels: { "otto.pr": "o/n#7" } }] };
+    const ok = await m.loadTerminals(async () => ({ code: 0, stdout: JSON.stringify(live) }), ctx);
+    const fail = await m.loadTerminals(async () => ({ code: 1, stdout: "", stderr: "no" }), ctx);
+    const threw = await m.loadTerminals(async () => { throw new Error("lost"); }, ctx);
+    const bad = await m.loadTerminals(async () => ({ code: 0, stdout: "not json" }), ctx);
+    process.stdout.write(JSON.stringify({
+      ok: ok.ok, n: ok.entries.length, id: ok.entries[0] && ok.entries[0].id,
+      fail, threw, badOk: bad.ok, badN: bad.entries.length,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"ok":true'* ]]
+  [[ "$output" == *'"n":1'* ]]
+  [[ "$output" == *'"id":"t7"'* ]]
+  [[ "$output" == *'"fail":{"ok":false,"entries":[]}'* ]]
+  [[ "$output" == *'"threw":{"ok":false,"entries":[]}'* ]]
+  [[ "$output" == *'"badOk":true'* ]]
+  [[ "$output" == *'"badN":0'* ]]
+}
+
 _rr() {
   run node --input-type=module -e "
     import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';

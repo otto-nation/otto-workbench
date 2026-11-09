@@ -551,7 +551,8 @@ Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires
 | `discover_core_components` | finds core component dirs and their descriptions. Populates the nameref arrays with dirs and descriptions. |
 | `select_core_components RESULT_ARRAY DIRS_ARRAY DESCS_ARRAY` | presents selection menu for core components. Reads INSTALL_ALL, INSTALL_TARGETED, INSTALL_TARGETS from caller. |
 | `run_core_component COMPONENT` | runs the install or sync function for a core component. |
-| `parse_install_flags ARGS...` | parses --all and component targets. Sets INSTALL_ALL, INSTALL_TARGETS, INSTALL_TARGETED in caller's scope. |
+| `parse_install_flags ARGS...` | parses --all, --remove NAME and component targets. Sets INSTALL_ALL, INSTALL_TARGETS, INSTALL_TARGETED and INSTALL_REMOVE in caller's scope. --remove is repeatable. |
+| `remove_selected_tools COMPONENT NAME...` | drops each NAME from COMPONENT's recorded tool selection (`<component>.tools`) so sync stops setting it up. The removal is remembered, so a later install does not offer it as a new tool. Files the tool already installed stay where they are. Refuses, changing nothing, when any NAME is not in that selection. |
 | `print_install_summary` | prints the final "All done" screen with a consolidated file listing, editable configs, and per-component summaries. |
 
 ### maintenance.sh
@@ -856,7 +857,9 @@ Bash-only — `read -n 1` behaves differently in zsh.
 | `confirm_step RESULT_VAR MSG` | [Y/n/a]; writes "yes", "no", or "all" to RESULT_VAR. "a" means accept this step and all remaining steps without prompting. |
 | `prompt_overwrite FILE` | warns that FILE already exists and presents a single combined prompt. [o]verwrite / [b]ackup and overwrite / [s]kip (default: skip) Creates a .backup copy before overwriting when b is chosen. Returns 1 if the user skips, 0 if they choose to overwrite (with or without backup). |
 | `select_menu RESULT_VAR COUNT [--default all\|skip\|require] [--single]` | Displays a numbered selection prompt and writes the result back to RESULT_VAR. Validates input against 1..COUNT; warns and ignores out-of-range numbers. 0 always means explicit skip regardless of --default. |
-| `select_subdirs RESULT_VAR PARENT_DIR PROMPT [SELECT_MENU_OPTS...]` | Discovers subdirectories in PARENT_DIR that contain setup.sh, presents a numbered menu with PROMPT, and writes space-separated selected names to RESULT_VAR. Any extra arguments are forwarded to select_menu (e.g. --default all, --single). Returns 1 if no subdirectories are found. |
+| `installed_mark STATE_KEY ITEM` | prints " (installed)" when ITEM is in the state list at STATE_KEY, and nothing when it is not or STATE_KEY is empty. |
+| `installed_hint STATE_KEY` | tells the operator that a pick only adds to the selection at STATE_KEY (`ai.tools`, `editors.tools`), and names the command that removes a tool from it. |
+| `select_subdirs RESULT_VAR PARENT_DIR PROMPT [--installed STATE_KEY] [SELECT_MENU_OPTS...]` | Discovers subdirectories in PARENT_DIR that contain setup.sh, presents a numbered menu with PROMPT, and writes space-separated selected names to RESULT_VAR. `--installed STATE_KEY` marks each entry already in that state list and says how to remove one; any other argument is forwarded to select_menu (e.g. --default all, --single). Returns 1 if no subdirectories are found. |
 | `conf_get FILE KEY` | reads a key = value line from a KEY = VALUE config file. Returns the trimmed value, or empty string if the key is not found. |
 
 Loaded via `ui.sh`.
@@ -1029,7 +1032,13 @@ state_file_exists           # returns 0 if state file exists
 | `state_get KEY` | reads a YAML value. Returns empty string for missing/null keys. |
 | `state_set_list KEY [VALUE...]` | replaces a YAML list with exactly VALUE..., or empties it when no values are given. Values must not contain newlines, the same assumption `state_get_list` makes by printing one per line. |
 | `state_get_list KEY` | reads a YAML list, one item per line. |
-| `state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]` | Loads saved selections from YAML, validates each against SCRIPT_DIR. When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in the saved list — forces a fresh menu so the user can opt in (or deselect). |
+| `state_list_contains KEY VALUE` | returns 0 when VALUE is an entry of the list at KEY, compared whole rather than by substring. |
+| `state_add_to_list KEY [VALUE...]` | adds each VALUE not already in the list at KEY, keeping the saved entries and their order. This is how an install records what was picked: choosing a subset of tools sets those up without dropping the ones installed before. Removal is `state_remove_from_list`, never a re-pick. |
+| `state_remove_from_list KEY [VALUE...]` | drops each VALUE from the list at KEY, leaving every other entry in its saved order. The one way a tool leaves a component's selection. |
+| `state_removed_key KEY` | the sibling list recording tools removed from the selection at KEY: `ai.tools` → `ai.removed`. |
+| `state_select_tools KEY NAME...` | records NAMEs as picked: added to the selection at KEY and taken off its removed list. Every installer menu records its answer through this, so a pick never drops a tool picked before. |
+| `state_deselect_tools KEY NAME...` | records NAMEs as removed: dropped from the selection at KEY and added to its removed list, which drift detection in `state_load_selections` reads so a removed tool is not offered again as new. |
+| `state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]` | Loads saved selections from YAML, validates each against SCRIPT_DIR. When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in the saved list — forces a fresh menu so the user can opt in to them. |
 
 Loaded via `ui.sh`.
 

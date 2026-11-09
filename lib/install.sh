@@ -357,21 +357,49 @@ _is_targeted() {
   return 1
 }
 
-# parse_install_flags ARGS... — parses --all and component targets.
-# Sets INSTALL_ALL, INSTALL_TARGETS, INSTALL_TARGETED in caller's scope.
+# parse_install_flags ARGS... — parses --all, --remove NAME and component targets.
+# Sets INSTALL_ALL, INSTALL_TARGETS, INSTALL_TARGETED and INSTALL_REMOVE in
+# caller's scope. --remove is repeatable.
 parse_install_flags() {
   INSTALL_ALL=false
   INSTALL_TARGETS=()
   INSTALL_TARGETED=false
+  INSTALL_REMOVE=()
 
-  for _arg in "$@"; do
-    case "$_arg" in
-      --all) INSTALL_ALL=true ;;
-      -*)    err "Unknown flag: $_arg"; exit 1 ;;
-      *)     INSTALL_TARGETS+=("$_arg") ;;
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all) INSTALL_ALL=true; shift ;;
+      --remove)
+        [[ -n "${2:-}" ]] || { err "--remove requires a tool name"; exit 2; }
+        INSTALL_REMOVE+=("$2")
+        shift 2
+        ;;
+      -*) err "Unknown flag: $1"; exit 1 ;;
+      *)  INSTALL_TARGETS+=("$1"); shift ;;
     esac
   done
   if [[ ${#INSTALL_TARGETS[@]} -gt 0 ]]; then INSTALL_TARGETED=true; fi
+}
+
+# remove_selected_tools COMPONENT NAME... — drops each NAME from COMPONENT's
+# recorded tool selection (`<component>.tools`) so sync stops setting it up.
+# The removal is remembered, so a later install does not offer it as a new
+# tool. Files the tool already installed stay where they are. Refuses, changing
+# nothing, when any NAME is not in that selection.
+remove_selected_tools() {
+  local component="$1"
+  shift
+  local key="${component}.tools" name
+  for name in "$@"; do
+    if ! state_list_contains "$key" "$name"; then
+      local selected
+      selected=$(state_get_list "$key" | paste -sd ' ' -)
+      err "$name is not in $component's selection (selected: ${selected:-none})"
+      return 1
+    fi
+  done
+  state_deselect_tools "$key" "$@"
+  success "Removed from $component: $*"
 }
 
 # ─── Install summary ────────────────────────────────────────────────────────

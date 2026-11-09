@@ -142,16 +142,46 @@ select_menu() {
   done
 }
 
-# select_subdirs RESULT_VAR PARENT_DIR PROMPT [SELECT_MENU_OPTS...]
+# installed_mark STATE_KEY ITEM — prints " (installed)" when ITEM is in the
+# state list at STATE_KEY, and nothing when it is not or STATE_KEY is empty.
+installed_mark() {
+  if [[ -n "$1" ]] && state_list_contains "$1" "$2"; then printf ' (installed)'; fi
+  return 0
+}
+
+# installed_hint STATE_KEY — tells the operator that a pick only adds to the
+# selection at STATE_KEY (`ai.tools`, `editors.tools`), and names the command
+# that removes a tool from it.
+installed_hint() {
+  local component="${1%%.*}"
+  echo -e "  ${DIM}Picks are added to what is installed. Remove one with:" \
+    "otto-workbench install $component --remove <name>${NC}"
+}
+
+# select_subdirs RESULT_VAR PARENT_DIR PROMPT [--installed STATE_KEY] [SELECT_MENU_OPTS...]
 #
 # Discovers subdirectories in PARENT_DIR that contain setup.sh, presents a
 # numbered menu with PROMPT, and writes space-separated selected names to
-# RESULT_VAR. Any extra arguments are forwarded to select_menu (e.g. --default
-# all, --single). Returns 1 if no subdirectories are found.
+# RESULT_VAR. `--installed STATE_KEY` marks each entry already in that state
+# list and says how to remove one; any other argument is forwarded to
+# select_menu (e.g. --default all, --single). Returns 1 if no subdirectories
+# are found.
 select_subdirs() {
   local -n __out=$1
   local _parent_dir=$2 _prompt=$3
   shift 3
+
+  local _installed_key="" _menu_opts=()
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == --installed ]]; then
+      [[ -n "${2:-}" ]] || { err "select_subdirs: --installed requires a state key"; return 1; }
+      _installed_key=$2
+      shift 2
+    else
+      _menu_opts+=("$1")
+      shift
+    fi
+  done
 
   local _items=() _dir
   for _dir in "$_parent_dir"/*/; do
@@ -168,13 +198,14 @@ select_subdirs() {
   info "$_prompt"
   local _i=1 _item
   for _item in "${_items[@]}"; do
-    echo "  [$_i] $_item"
+    echo "  [$_i] $_item$(installed_mark "$_installed_key" "$_item")"
     _i=$(( _i + 1 ))
   done
+  if [[ -n "$_installed_key" ]]; then installed_hint "$_installed_key"; fi
   echo
 
   local _sm_result
-  select_menu _sm_result "${#_items[@]}" "$@"
+  select_menu _sm_result "${#_items[@]}" "${_menu_opts[@]}"
 
   if [[ -z "$_sm_result" ]]; then
     __out=""

@@ -26,7 +26,7 @@ fi
 select_terminals() {
   local _sel
   select_subdirs _sel "$SCRIPT_DIR" "Which terminal(s) would you like to configure?" --default all \
-    || exit 1
+    --installed "$_STATE_KEY" || exit 1
 
   SELECTED_TERMINALS=()
   # shellcheck disable=SC2086  # word-splitting intentional — _sel is space-separated names
@@ -64,11 +64,12 @@ for _terminal in "${SELECTED_TERMINALS[@]}"; do
 done
 unset _terminal
 
-# One write, after every selected terminal is set up. A replay writes back what
-# it read, so the branch that produced the selection does not change what is
-# recorded — and until this line the previous selection is still what sync reads.
+# One write, after every selected terminal is set up. A pick is added to the saved
+# selection, never a replacement for it: choosing one terminal must not drop the
+# others. Removal is `otto-workbench install terminals --remove <name>`. A replay
+# writes nothing, and until this line the previous selection is what sync reads.
 if [[ "$_replaying" != true ]]; then
-  state_set_list "$_STATE_KEY" "${SELECTED_TERMINALS[@]}"
+  state_select_tools "$_STATE_KEY" "${SELECTED_TERMINALS[@]}"
 fi
 unset _replaying
 

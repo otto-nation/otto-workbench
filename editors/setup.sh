@@ -24,7 +24,7 @@ fi
 select_editors() {
   local _sel
   select_subdirs _sel "$SCRIPT_DIR" "Which editor(s) would you like to configure?" --default all \
-    || exit 1
+    --installed "$_STATE_KEY" || exit 1
 
   SELECTED_EDITORS=()
   # shellcheck disable=SC2086  # word-splitting intentional — _sel is space-separated names
@@ -61,11 +61,12 @@ for _editor in "${SELECTED_EDITORS[@]}"; do
 done
 unset _editor
 
-# One write, after every selected editor is set up. A replay writes back what it
-# read, so the branch that produced the selection does not change what is
-# recorded — and until this line the previous selection is still what sync reads.
+# One write, after every selected editor is set up. A pick is added to the saved
+# selection, never a replacement for it: choosing one editor must not drop the
+# others. Removal is `otto-workbench install editors --remove <name>`. A replay
+# writes nothing, and until this line the previous selection is what sync reads.
 if [[ "$_replaying" != true ]]; then
-  state_set_list "$_STATE_KEY" "${SELECTED_EDITORS[@]}"
+  state_select_tools "$_STATE_KEY" "${SELECTED_EDITORS[@]}"
 fi
 unset _replaying
 

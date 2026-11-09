@@ -31,7 +31,9 @@ export default class PrBatch extends View {
     this.cell = null;
     this.log = null;
     this.inflight = this.again = false;
-    this.logInflight = false;
+    // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
+    // click still starts its own read.
+    this.logInflight = null;
     this.watchRoot = null;
     this.key = ctxKey(ctxOf());
     cx.timer.every(15000, (cx) => {
@@ -173,14 +175,14 @@ export default class PrBatch extends View {
       cx.notify();
       return;
     }
-    if (this.logInflight) return;
+    if (this.logInflight === path) return;
     const argv = logTailArgv(path);
     const ctx = ctxOf();
-    this.logInflight = true;
+    this.logInflight = path;
     cx.spawn(async (cx) => {
       let ran;
       try { ran = await invoke(exec, ctx, argv[0], argv.slice(1)); }
-      finally { this.logInflight = false; }
+      finally { if (this.logInflight === path) this.logInflight = null; }
       if (!this.cell || this.cell.key !== cell.key || this.cell.step !== cell.step) return;
       this.log = ran.ok ? { text: ran.stdout ?? "" } : { error: ran.error.message };
       cx.notify();

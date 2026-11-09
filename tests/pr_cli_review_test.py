@@ -22,6 +22,7 @@ if str(LIB_DIR) not in sys.path:
 import cli.pr  # noqa: E402
 
 import cli.registry  # noqa: E402
+import cli.review_modes  # noqa: E402
 import cli.schema  # noqa: E402
 import review.listing  # noqa: E402
 
@@ -485,6 +486,11 @@ def test_review_list_bare_if_changed_is_a_usage_error_not_an_empty_stamp(capsys)
     assert _run_main("review", "--list", "--schema-version", "1",
                      "--if-changed") == cli.pr.EXIT_USAGE
     assert capsys.readouterr().out == ""
+
+
+def test_review_list_abbreviated_if_changed_is_not_accepted(capsys):
+    """`--if` must not silently act as `--if-changed`."""
+    assert cli.review_modes._if_changed_from_argv(["--list", "--if", "x"]) is None
 
 
 def test_review_list_if_changed_without_schema_version_is_usage(capsys):

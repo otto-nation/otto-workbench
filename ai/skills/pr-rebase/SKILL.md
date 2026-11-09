@@ -397,7 +397,8 @@ they then ask for the branch to be pushed.
 - Never run raw `git push --force-with-lease`, and never end a run by handing that
   command to the user — `pr rebase` force-pushes by default, and step 3 finishes any
   run that ended unpushed. `--no-push` is the only run that ends on the printed
-  command, because that is what the user asked for
+  command, because that is what the user asked for. The policy behind this is
+  `git-operations.md` § Pushing
 - A fresh rebase auto-stashes the worktree, untracked files included, and restores
   it afterwards; the pre-push hooks then validate the branch alone. A resumed
   rebase cannot stash (the index is mid-rebase), so uncommitted work is still

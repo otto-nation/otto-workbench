@@ -65,6 +65,7 @@ from pathlib import Path
 
 import core.log
 import git.client
+import review.behaviours
 from pr.domains import ReviewVerdict
 from review.behaviour_types import BehaviourEntry
 from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimVerdict
@@ -72,9 +73,7 @@ from review.format import resolve_path
 from review.merge import renumber_record
 from review.artifacts import DisproveArtifact, DisproveOutcome
 from review.record import Disposition, ReviewRecord
-from review.types import (
-    SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key,
-)
+from review.types import SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key
 from review.verdict import counts_prose, verdict_from_counts
 from core.text import plural
 
@@ -330,7 +329,7 @@ def _verified_behaviour(
 ) -> BehaviourEntry:
     if not entry.test_cited:
         return entry
-    if any(ch == "`" or not ch.isprintable() for ch in entry.test_cited):
+    if review.behaviours.has_unsafe_citation_text(entry.test_cited):
         return replace(entry, test_cited="", note="cited test not found")
     if not wt_path:
         return replace(entry, test_cited="", note="no worktree to check the cited test")

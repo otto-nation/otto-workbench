@@ -31,7 +31,7 @@ function scopeOf() {
 // The checkouts the board reads: the pinned or focused one, or every open space's.
 function targetsOf() {
   if (scopeOf() === "all") {
-    const all = spaceTargets(spaces());
+    const all = spaceTargets(spaces(), panes());
     if (all.length) return all;
   }
   const c = ctxOf();
@@ -173,7 +173,7 @@ export default class TeamPrs extends View {
       else await this.pullFull(ctx, key, cx, cycle);
       cx.notify();
     }));
-    const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces()).map(ctxKey)];
+    const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces(), panes()).map(ctxKey)];
     for (const k of staleKeys(this.cache.keys(), keep)) {
       this.cache.delete(k);
       this.repoByKey.delete(k);

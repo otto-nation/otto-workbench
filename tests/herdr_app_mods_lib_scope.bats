@@ -152,3 +152,21 @@ _js() {
   [ "$status" -eq 0 ]
   jq -e '.prs[0].viewer=="bob"' <<<"$output"
 }
+
+@test "spaceTargets: pane cwds win over a stale space folder" {
+  _js 'spaceTargets([{folder:"/stale",tabs:[{id:"t1"}]}],[{tab:"t1",cwd:"/live"}])'
+  [ "$status" -eq 0 ]
+  jq -e 'length==1 and .[0].cwd=="/live" and .[0].on==null' <<<"$output"
+}
+
+@test "spaceTargets: no matching pane cwds falls back to space folder" {
+  _js 'spaceTargets([{folder:"/space",tabs:[{id:"t1"}]}],[{tab:"other",cwd:"/live"}])'
+  [ "$status" -eq 0 ]
+  jq -e 'length==1 and .[0].cwd=="/space"' <<<"$output"
+}
+
+@test "spaceTargets: same pane cwd is one; null cwd ignored; remote keeps machine" {
+  _js 'spaceTargets([{folder:"/stale",machine:"m",tabs:[{id:"t1"},{id:"t2"}]}],[{tab:"t1",cwd:"/live"},{tab:"t1",cwd:"/live"},{tab:"t2",cwd:null}])'
+  [ "$status" -eq 0 ]
+  jq -e 'length==1 and .[0].cwd=="/live" and .[0].on=="m"' <<<"$output"
+}

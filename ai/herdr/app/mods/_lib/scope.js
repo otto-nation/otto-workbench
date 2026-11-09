@@ -35,17 +35,30 @@ export function friendlyError(err, on, scope = 'this') {
   return msg;
 }
 
-// Every distinct (machine, folder) among the open spaces, in space order.
-export function spaceTargets(spaces) {
+// Distinct (machine, folder) among the open spaces, in space order then pane
+// order. Prefers the panes' live folders and falls back to the space folder.
+export function spaceTargets(spaces, panes) {
   const seen = new Set();
   const out = [];
+  const paneList = panes ?? [];
   for (const s of spaces ?? []) {
-    if (!s.folder) continue;
+    const tabIds = new Set((s.tabs ?? []).map((t) => t.id));
+    const folders = [];
+    const local = new Set();
+    for (const p of paneList) {
+      if (!tabIds.has(p.tab)) continue;
+      if (!p.cwd || local.has(p.cwd)) continue;
+      local.add(p.cwd);
+      folders.push(p.cwd);
+    }
+    if (!folders.length && s.folder) folders.push(s.folder);
     const on = s.machine ?? null;
-    const id = `${on ?? ''}\u0000${s.folder}`;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push({ on, cwd: s.folder });
+    for (const folder of folders) {
+      const id = `${on ?? ''}\u0000${folder}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ on, cwd: folder });
+    }
   }
   return out;
 }

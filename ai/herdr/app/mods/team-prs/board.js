@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT } from "./_lib/tokens.js";
-import { segment, filterGroup, pill } from "./ui.js";
+import { chip as chipOf, filterGroup, pill } from "./ui.js";
 
 const CI = { passing: "✓", failing: "✗", pending: "…" };
 const { colMin: COL_MIN, colMax: COL_MAX, titleLh: TITLE_LH } = LAYOUT;
@@ -90,7 +90,7 @@ export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
   const f = filters ?? {};
   const set = new Set((f.authors ?? []).map((a) => String(a).toLowerCase()));
   const activeSet = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
-  const chip = (label, name, on) => segment(`chip-${name}`, label, on, () => onToggle(name));
+  const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => onToggle(name));
   const showItems = [];
   if (tab !== "mine") showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
   showItems.push(chip("Landed", "landed", Boolean(f.landed)));

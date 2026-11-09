@@ -50,10 +50,20 @@ export function segmented(items) {
     .children(items);
 }
 
+// Independent on/off chip; selected ones get a dim border and selected fill.
+export function chip(id, label, on, onClick) {
+  const t = theme();
+  return div().id(id).px(SP.sm).min_h(CONTROL_H.compact).flex().items_center().rounded(RADIUS.control)
+    .text_size(TEXT.caption).font_medium().cursor_pointer().border_1()
+    .when(on, (e) => e.border_color(t.dim).bg(t.selected).text_color(t.foreground))
+    .when(!on, (e) => e.border_color(t.border).text_color(t.muted).hover((s) => s.bg(t.hover).border_color(t.dim)))
+    .on_click(() => onClick()).child(label);
+}
+
 export function filterGroup(label, items) {
   return h_flex().gap(SP.sm).items_center()
     .child(div().w(LAYOUT.filterLabelW).flex_none().text_size(TEXT.caption).text_color(theme().dim).child(label))
-    .child(segmented(items));
+    .child(h_flex().flex_1().min_w(0).flex_wrap().gap(SP.xs).items_center().children(items));
 }
 
 // Small section label: quiet, medium weight, count beside it.

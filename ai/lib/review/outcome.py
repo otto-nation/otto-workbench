@@ -230,6 +230,9 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
 
 
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    # Before reconciliation and verification, which treat the carried findings
+    # like this round's.
+    record = review.claims.carried(job, record)
     # Before post-processing clears the sids: a carried finding is known by
     # its sid, and only this record still has them (D13).
     job.new_nits = new_nit_ids(record, prior_ids(job)) if _is_incremental(job) else frozenset()

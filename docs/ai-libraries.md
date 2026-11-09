@@ -952,11 +952,13 @@ check that degraded, or a legacy `review.json`. `()` is assessed with nothing
 checkable, or no claim source. Entries are the assessed ledger.
 
 Writers are the single agent and synthesis only. Scout, holistic and group get
-no claims fields. Agentless paths — clean, settled, `--no-synthesis`,
-low-effort, a budget cut, all-groups-failed, mechanical fallback, `--repair`
-rebuild — record `None`. When a description or ticket existed, that renders
-"*Not assessed this round.*" A multi-phase run that never reaches synthesis
-therefore shows Not assessed; that is the honest result.
+no claims fields. Agentless paths that never re-settle claims — clean,
+all-groups-failed, `--repair` rebuild — record `None`. So does any path whose
+claim inputs changed, or that has no prior claims to carry. When a description
+or ticket existed, that renders "*Not assessed this round.*" Settled,
+`--no-synthesis`, a budget cut, mechanical fallback, and low-effort re-settle
+the prior claims when the fingerprint still matches, so those rounds keep the
+ledger rather than dropping it.
 
 The check rides ingest `check=` with one repair turn. Caps (12 claims, 512
 bytes per `text` / `evidence` / `snippet`) live inside the check, so an

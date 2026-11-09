@@ -11,11 +11,13 @@ check that degraded, or a legacy `review.json`. `()` is assessed with nothing
 checkable, or no claim source. Entries are the assessed ledger.
 
 Writers are the single agent and synthesis only. Scout, holistic and group get
-no claims fields. Agentless paths — clean, settled, `--no-synthesis`,
-low-effort, a budget cut, all-groups-failed, mechanical fallback, `--repair`
-rebuild — record `None`. When a description or ticket existed, that renders
-"*Not assessed this round.*" A multi-phase run that never reaches synthesis
-therefore shows Not assessed; that is the honest result.
+no claims fields. Agentless paths that never re-settle claims — clean,
+all-groups-failed, `--repair` rebuild — record `None`. So does any path whose
+claim inputs changed, or that has no prior claims to carry. When a description
+or ticket existed, that renders "*Not assessed this round.*" Settled,
+`--no-synthesis`, a budget cut, mechanical fallback, and low-effort re-settle
+the prior claims when the fingerprint still matches, so those rounds keep the
+ledger rather than dropping it.
 
 The check rides ingest `check=` with one repair turn. Caps (12 claims, 512
 bytes per `text` / `evidence` / `snippet`) live inside the check, so an
@@ -139,6 +141,11 @@ def input_sha(job: ReviewJob) -> str:
     if not job.pr.body and not issue:
         return ""
     return hashlib.sha256((job.pr.body + "\0" + issue).encode()).hexdigest()
+
+
+def inputs_unchanged(job: ReviewJob) -> bool:
+    """Whether this run's description and ticket match the prior sidecar's."""
+    return job.prior is not None and job.prior.meta.claims_input_sha == input_sha(job)
 
 
 def claims_problems(
@@ -334,6 +341,57 @@ def live_answers(
         if not answer.path or answer.head == head
         or review.convergence.untouched(answer.path, changed)
     }
+
+
+def _carryable_claims(job: ReviewJob) -> tuple[ClaimEntry, ...] | None:
+    if not inputs_unchanged(job) or job.prior.record.claims is None:
+        return None
+    return job.prior.record.claims
+
+
+def _identities(finding: RecordFinding) -> set[str]:
+    return {token for token in (finding.stable_id, finding.sid) if token}
+
+
+def _writer_id_in(record: ReviewRecord, prior: RecordFinding) -> str:
+    ids = _identities(prior)
+    for finding in record.visible:
+        if finding.origin is not FindingOrigin.WRITER:
+            continue
+        if not (ids & _identities(finding)):
+            continue
+        return finding.id
+    return ""
+
+
+def _relinked(
+    prior: ReviewRecord, record: ReviewRecord, claims: tuple[ClaimEntry, ...],
+) -> tuple[ClaimEntry, ...]:
+    by_id = {f.id: f for f in prior.findings}
+    out: list[ClaimEntry] = []
+    for claim in claims:
+        linked = by_id.get(claim.finding) if claim.finding else None
+        if linked is None or linked.origin is not FindingOrigin.WRITER:
+            out.append(replace(claim, finding=""))
+            continue
+        out.append(replace(claim, finding=_writer_id_in(record, linked)))
+    return tuple(out)
+
+
+def carried(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
+    """Re-settle prior claims onto a round that did not run the writer (D10).
+
+    No-op when this record already assessed claims, or when the prior claims
+    cannot be carried. Otherwise relinks writer findings by identity, then
+    calls `settle` so verification, answers and derived findings apply here.
+    """
+    if record.claims is not None:
+        return record
+    claims = _carryable_claims(job)
+    if claims is None:
+        return record
+    claims = _relinked(job.prior.record, record, claims)
+    return settle(job, replace(record, claims=claims))
 
 
 def settle(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:

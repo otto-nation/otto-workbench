@@ -198,7 +198,7 @@ def _is_no_op_rereview(job) -> bool:
         and job.prior is not None
     ):
         return False
-    if job.prior.meta.claims_input_sha == review.claims.input_sha(job):
+    if review.claims.inputs_unchanged(job):
         return True
     core.log.info("claims fingerprint changed — not a no-op")
     return False

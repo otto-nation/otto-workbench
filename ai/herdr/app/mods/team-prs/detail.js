@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, button, pill, inset, ciMark, addStat, delStat, card, placeholder, caption, paneBar, scrollBody, pane, mono } from "./ui.js";
+import { segment, segmented, button, pill, inset, ciMark, addStat, delStat, card, placeholder, caption, paneBar, scrollBody, pane, mono } from "./_ui/ui.js";
 
 function postTone(tone) {
   const t = theme();

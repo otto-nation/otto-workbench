@@ -3,7 +3,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, ROW_H, BREAKPOINT } from "./_lib/tokens.js";
-import { eyebrow, ciMark, hoverRow } from "./ui.js";
+import { eyebrow, ciMark, hoverRow } from "./_ui/ui.js";
 
 function numOf(pr, showRepo) {
   return showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`;

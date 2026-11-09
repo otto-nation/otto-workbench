@@ -3,7 +3,7 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, settings } from "herdr";
-import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "./_lib/tokens.js";
+import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "../_lib/tokens.js";
 
 // Buttons stop the press so only the bare header drags the window.
 // A disabled button keeps the shape but is dim and does nothing.

@@ -18,7 +18,7 @@ import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact, renderRail } from "./compact.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./ui.js";
+import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());

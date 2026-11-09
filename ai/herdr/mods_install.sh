@@ -43,27 +43,34 @@ _herdr_mod_list_files() {
 }
 
 # _herdr_mod_source_rels SRC_MOD — relative paths installed for this mod:
-# SRC_MOD's files plus the shared _lib/ tree, already prefixed `_lib/`.
+# SRC_MOD's files plus every shared `_*` tree (`_lib/`, `_ui/`), each prefixed
+# with its directory name.
 _herdr_mod_source_rels() {
-  local src_mod="$1" rel listing lib_listing
+  local src_mod="$1" rel listing shared name shared_listing
   listing=$(_herdr_mod_list_files "$src_mod")
-  lib_listing=$(_herdr_mod_list_files "$HERDR_APP_MODS_SRC_DIR/_lib")
-  while IFS= read -r rel || [[ -n "$rel" ]]; do
-    [[ -n "$rel" ]] || continue
-    listing+=$'\n'"_lib/$rel"
-  done <<< "$lib_listing"
+  for shared in "$HERDR_APP_MODS_SRC_DIR"/_*/; do
+    [[ -d "$shared" ]] || continue
+    name=$(basename "$shared")
+    shared_listing=$(_herdr_mod_list_files "${shared%/}")
+    while IFS= read -r rel || [[ -n "$rel" ]]; do
+      [[ -n "$rel" ]] || continue
+      listing+=$'\n'"$name/$rel"
+    done <<< "$shared_listing"
+  done
   printf '%s\n' "$listing" | LC_ALL=C sort -u | sed '/^$/d'
   return 0
 }
 
 # _herdr_mod_src_for SRC_MOD REL — source path that supplies REL in SRC_MOD.
-# `_lib/*` always comes from HERDR_APP_MODS_SRC_DIR/_lib, not the mod folder.
+# A REL whose first segment is a shared `_*` directory of HERDR_APP_MODS_SRC_DIR
+# comes from there, not the mod folder.
 _herdr_mod_src_for() {
-  local src_mod="$1" rel="$2"
-  case "$rel" in
-    _lib/*) printf '%s\n' "$HERDR_APP_MODS_SRC_DIR/_lib/${rel#_lib/}" ;;
-    *)      printf '%s\n' "$src_mod/$rel" ;;
-  esac
+  local src_mod="$1" rel="$2" top="${2%%/*}"
+  if [[ "$rel" == _*/* && -d "$HERDR_APP_MODS_SRC_DIR/$top" ]]; then
+    printf '%s\n' "$HERDR_APP_MODS_SRC_DIR/$rel"
+    return 0
+  fi
+  printf '%s\n' "$src_mod/$rel"
   return 0
 }
 

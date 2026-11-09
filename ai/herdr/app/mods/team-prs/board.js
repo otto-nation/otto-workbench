@@ -31,7 +31,7 @@ function column(col, opts) {
   return v_flex().id(`col-${col.key}`).h_full().min_h(0)
     .when(!empty, (e) => e.flex_1().min_w(COL_MIN).max_w(COL_MAX))
     .when(empty, (e) => e.flex_none().min_w(COL_EMPTY).max_w(COL_EMPTY).overflow_x_hidden())
-    .child(eyebrow(col.label, col.items.length))
+    .child(eyebrow(col.label, col.items.length, SP.sm))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.sm).pb(SP.sm).gap(SP.sm)
       .when(empty, (e) => e.child(div().px(SP.md).text_size(TEXT.caption).text_color(t.dim).child("none")))
       .children(col.items.map((pr) => renderCard(pr, opts))));

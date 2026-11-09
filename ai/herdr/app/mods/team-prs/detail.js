@@ -99,7 +99,7 @@ export function renderDetail(d, { onClose, onOpenUrl, nowMs, openStamp, bodyFor,
   return v_flex().id("prs-detail").size_full().min_h(0).bg(t.background)
     .text_color(t.foreground).text_size(TEXT.body)
     .child(renderDetailHeader(d, { onClose, onOpenUrl }))
-    .child(eyebrow("Review history"))
+    .child(eyebrow("Review history", null, SP.lg))
     .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(SP.lg).pb(SP.lg).gap(SP.sm)
       .when(!rows.length, (e) => e.child(div().text_color(t.dim).child("No reviews yet")))
       .children(rows.map((r) => runCard(r, { openStamp, bodyFor, onToggle }))));

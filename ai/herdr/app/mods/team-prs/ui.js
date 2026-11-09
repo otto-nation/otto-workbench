@@ -24,9 +24,9 @@ export function segmented(items) {
 }
 
 // Small section label: quiet, medium weight, count beside it.
-export function eyebrow(label, count) {
+export function eyebrow(label, count, px = SP.md) {
   const t = theme();
-  return h_flex().px(SP.md).pt(SP.md).pb(SP.xs).gap(SP.sm).items_center().flex_none()
+  return h_flex().px(px).pt(SP.md).pb(SP.xs).gap(SP.sm).items_center().flex_none()
     .child(div().text_size(TEXT.caption).font_medium().text_color(t.muted).child(label))
     .when(count != null, (e) => e.child(div().text_size(TEXT.caption).text_color(t.dim).child(String(count))));
 }

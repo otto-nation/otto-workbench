@@ -89,7 +89,7 @@ export default class TeamPrs extends View {
       try { await this.pull(cx, listingOnly); }
       finally {
         this.inflight = false;
-        if (!this.again) this.manual = false;
+        if (!listingOnly) this.manual = false;
         cx.notify();
         if (this.again) {
           const next = this.againListing;
@@ -321,6 +321,7 @@ export default class TeamPrs extends View {
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(emptyPane())
         .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
+        .child(button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
         .child(this.scopeToggle());
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {

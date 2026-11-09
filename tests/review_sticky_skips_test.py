@@ -13,7 +13,7 @@ from review.convergence import anchor_key, apply_sticky_skips, blob_of, mark_ski
 from review.paths import read_review_meta, write_review_meta  # noqa: E402
 from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.store import read_review, write_review  # noqa: E402
-from review.types import ReviewMeta, StickySkip  # noqa: E402
+from review.types import FindingOrigin, ReviewMeta, StickySkip  # noqa: E402
 from review_convergence_support import committed_repo, finding, review_job  # noqa: E402
 from review_fix_pass_support import _run, _tracking  # noqa: E402
 
@@ -141,3 +141,23 @@ def test_no_mark_when_the_pass_committed_the_anchor_file(tmp_path):
     adapter.changed = {"a.py"}
     adapter._persist_sticky_skips(NEEDS_A_PERSON)
     assert read_review_meta(Path(job.artifact_dir)).sticky_skips == {}
+
+
+def test_a_claim_finding_gets_no_sticky_mark(tmp_path):
+    wt = _repo(tmp_path)
+    found = {"S1": finding(
+        "S1", "x", origin=FindingOrigin.CLAIM, path="a.py",
+        disposition=Disposition.SKIPPED,
+    ).view()}
+    assert mark_skips(found, NEEDS_A_PERSON, wt) == {}
+
+
+def test_a_live_mark_leaves_a_claim_finding_alone(tmp_path):
+    wt = _repo(tmp_path)
+    marks = {anchor_key("a.py", 0): StickySkip(blob_of(wt, "a.py"), "S", "design call")}
+    applied = apply_sticky_skips(
+        ReviewRecord(findings=(finding(
+            "S1", "x", path="a.py", line=None, origin=FindingOrigin.CLAIM,
+        ),)),
+        marks, wt)
+    assert applied.record.findings[0].disposition is Disposition.OPEN

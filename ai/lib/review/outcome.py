@@ -141,9 +141,9 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
 class _Session:
     """One kind of agent session the `Models:` line counts."""
 
-    phase: str
-    model: str
-    thinking: str
+    phase: str  # the label `review.phases.PhaseRunner.invocation` writes
+    model: str  # the served model, else the requested one
+    thinking: str  # the thinking level; "" when the row has none
 
 
 def models_used(job: ReviewJob) -> str:
@@ -159,6 +159,7 @@ def models_used(job: ReviewJob) -> str:
     """
     # The labels `review.phases.PhaseRunner.invocation` writes, and the root
     # `agent.backend._record` stamps on every row.
+    # A self-review has no PR, so its rows carry no `pr`: "" -> None matches them.
     this_run = (core.trail.inherited_root(), job.repo or None, job.pr.head or None,
                 str(job.pr_number) or None)
     counts: dict[_Session, int] = {}

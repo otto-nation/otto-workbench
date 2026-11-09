@@ -238,6 +238,7 @@ def _comment_tail(record: ReviewRecord) -> list[str]:
 
 
 def _models_line(models: str) -> str:
+    """The `Models:` line, with any whitespace (a newline in a model id) collapsed to single spaces."""
     return f"Models: {' '.join(models.split())}"
 
 

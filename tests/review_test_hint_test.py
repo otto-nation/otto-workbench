@@ -9,12 +9,14 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+from review.budget import MAX_TEST_HINT_BYTES
 from review.grouping import (
     hint_subjects,
     pairs_with,
     subject_stem,
     unpaired_subjects,
 )
+from review.prompt_sections import _build_test_hint_section
 
 
 @pytest.mark.parametrize(
@@ -60,3 +62,26 @@ def test_unpaired_subjects_uses_tests_in_the_same_diff():
 
 def test_subject_stem_of_a_prefixed_test_is_its_compound_stem():
     assert subject_stem("tests/review_grouping_test.py") == "review_grouping"
+
+
+def test_the_section_is_empty_without_paths():
+    assert _build_test_hint_section([]) == ""
+
+
+def test_the_section_lists_each_path_and_says_it_is_advisory():
+    section = _build_test_hint_section(["pkg/a.py", "bin/tool"])
+    assert "## Test hint" in section
+    assert (
+        "From file names only: these changed files have no test in this PR "
+        "whose name pairs with theirs. Not a finding by itself."
+    ) in section
+    assert "- `pkg/a.py`" in section
+    assert "- `bin/tool`" in section
+
+
+def test_the_section_is_capped_with_a_count_of_the_rest():
+    paths = [f"pkg/{'x' * 40}_{i}.py" for i in range(500)]
+    section = _build_test_hint_section(paths)
+    assert len(section.encode()) <= MAX_TEST_HINT_BYTES
+    assert "…and " in section.splitlines()[-1]
+    assert section.rstrip().endswith("more")

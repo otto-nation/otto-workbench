@@ -26,6 +26,7 @@ Rules:
 - Every finding names its file in `path` and its line in `line`; null only for a finding about the change as a whole
 - IDs are M/S/N/I and a number, sequential per severity
 - Must-fix and should-fix findings must carry `evidence` copied verbatim from the referenced file
+- The Test hint is advisory: a file with no paired test is a finding only when the change needs one.
 - Leave `triage` as []
 - Leave `verdict` as ""
 - A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it
@@ -50,5 +51,6 @@ marked unverified and settle it afterwards.
 ${execution_claim_guard}
 ${issue_section}
 ${focus_section}
+${test_hint_section}
 ${prior_section}
 ${reply_threads}

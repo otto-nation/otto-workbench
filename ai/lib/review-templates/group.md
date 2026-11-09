@@ -2,6 +2,7 @@ ${holistic_block}
 ${project_context}
 ${issue_section}
 ${focus_section}
+${test_hint_section}
 
 ${env_section}
 
@@ -12,6 +13,7 @@ ${pr_header}
 
 Review ONLY the following files. Do NOT read or comment on files outside this list.
 As you review, watch for: suspicious deletions or silent behavior changes, unhandled error/edge cases, missing sibling updates (e.g., enum added but switch not updated), security concerns (injection, auth bypass, data exposure), and correctness issues (off-by-one, race conditions, null handling).
+The Test hint is advisory: a file with no paired test is a finding only when the change needs one.
 ${group_files_formatted}
 ${preflight_data}
 ${delta_section}

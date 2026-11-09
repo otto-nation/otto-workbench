@@ -43,11 +43,12 @@ from review.prompt_prior import (
 )
 from review.claims import has_claim_source
 from review.focus import areas_for_group, needs_derived, user_areas
+from review.grouping import unpaired_subjects
 from review.prompt_sections import (
     _build_delta_section, _build_env_section, _build_focus_section,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
     _build_reply_threads_section, _build_reviews_section,
-    _build_state_context_section, _is_incremental,
+    _build_state_context_section, _build_test_hint_section, _is_incremental,
 )
 from review.types import PreflightData, ReviewJob
 
@@ -619,6 +620,7 @@ def _prompt_single(job, common, extra, output):
         "reply_threads", "env_section", "issue_section", "focus_section",
         "omitted_guidance", "max_turns",
     )
+    b.set("test_hint_section", _build_test_hint_section(unpaired_subjects(job.pr.files)))
     _identify_review(b, job, verdict_options=VERDICT_OPTIONS)
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
@@ -647,6 +649,7 @@ def _prompt_synthesis(job, common, extra, output):
         "pr_header", "state_context", "reply_threads", "issue_section",
         "focus_section", "max_turns",
     )
+    b.set("test_hint_section", _build_test_hint_section(unpaired_subjects(job.pr.files)))
     _identify_review(b, job, pr_title=job.pr.title)
     b.set("repo", job.repo)
     b.set("wt_path", job.wt_path)
@@ -731,6 +734,8 @@ def _prompt_group(job, common, extra, output):
             areas_for_group(job.focus, group_files) if group_files else job.focus,
         ),
     )
+    files = [f for f in job.pr.files if f["path"] in set(group_files)] if group_files else job.pr.files
+    b.set("test_hint_section", _build_test_hint_section(unpaired_subjects(files)))
     b.execution_claim_guard()
     b.output(output, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
     b.fit(job, file_filter=file_filter, skip_project_context=True)

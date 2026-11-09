@@ -20,7 +20,8 @@ from review.budget import (
     DERIVED_AREA_RESERVE_BYTES, MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES,
     fixed_preflight_bytes,
 )
-from review.prompt_sections import _build_focus_section
+from review.grouping import unpaired_subjects
+from review.prompt_sections import _build_focus_section, _build_test_hint_section
 from review.types import PreflightData
 from review_focus_support import area, user_area
 from review_prompt_support import _make_job
@@ -230,9 +231,11 @@ class TestGroupMergeCap:
             pf.review_profiles,
         )
         assert fixed >= 15_000  # the context files are charged at least whole
+        job = self._job(pf)
+        hint = len(_build_test_hint_section(unpaired_subjects(job.pr.files)).encode())
         assert cap == (
             300_000 - TEMPLATE_OVERHEAD_BYTES - fixed
-            - MAX_DERIVED_FOCUS * DERIVED_AREA_RESERVE_BYTES
+            - MAX_DERIVED_FOCUS * DERIVED_AREA_RESERVE_BYTES - hint
         )
 
     def test_never_below_the_diff_floor(self, monkeypatch):
@@ -254,6 +257,21 @@ class TestGroupMergeCap:
         job.issue_context = "x" * (6 * 1024)
         with_issue = review.pipeline._group_merge_cap(job)
         assert without - with_issue >= 6 * 1024
+
+    def test_the_merge_cap_reserves_the_test_hint(self, monkeypatch):
+        self._patch(monkeypatch, 300_000)
+        pf = PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            instructions_md="", architecture_md="",
+        )
+        job = self._job(pf)
+        job.pr.files = [{"path": "README.md", "additions": 2, "deletions": 0}]
+        without = review.pipeline._group_merge_cap(job)
+        unpaired = [{"path": "pkg/a.py", "additions": 3, "deletions": 0}]
+        job.pr.files = unpaired
+        with_hint = review.pipeline._group_merge_cap(job)
+        hint = _build_test_hint_section(unpaired_subjects(unpaired))
+        assert without - with_hint == len(hint.encode())
 
     def test_the_merge_cap_reserves_room_for_phase_one_areas(self, monkeypatch):
         self._patch(monkeypatch, 300_000)

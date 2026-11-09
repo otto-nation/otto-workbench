@@ -11,6 +11,7 @@ ${env_section}
 ${output_block}
 
 Must-fix and should-fix findings must carry `evidence`: the lines of the referenced file that prove the claim, copied verbatim.
+The Test hint is advisory: a file with no paired test is a finding only when the change needs one.
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
 On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.
 Set `verdict` to one of ${verdict_options}, then why. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead. A contradicted or unsupported claim you do not link to a finding is filed by the harness as a should-fix, and counts toward the verdict like any other.
@@ -30,5 +31,6 @@ marked unverified and settle it afterwards.
 ${execution_claim_guard}
 ${issue_section}
 ${focus_section}
+${test_hint_section}
 ${prior_section}
 ${reply_threads}

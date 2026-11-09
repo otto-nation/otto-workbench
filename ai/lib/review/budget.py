@@ -188,6 +188,8 @@ MAX_ISSUE_CONTEXT_BYTES = 8_192
 # cut to fit, so both what one requested area may say and how many there may
 # be are bounded: `review` refuses past either rather than truncating.
 MAX_FOCUS_BYTES = 4096
+# Bounded so the hint never crowds the diff.
+MAX_TEST_HINT_BYTES = 4096
 MAX_FOCUS_AREAS = 5
 DERIVED_AREA_RESERVE_BYTES = 512
 # The writer's list is bounded so the document stays reviewable.

@@ -207,3 +207,59 @@ _parse() {
   _js 'm.stateChanged(["/r/items/x.log"], "/r")'
   [ "$output" = 'false' ]
 }
+
+@test "laneOf table covering each status" {
+  _js '({running:m.laneOf({status:"running"}),queued:m.laneOf({status:"queued"}),waiting_admission:m.laneOf({status:"waiting_admission"}),awaiting_decision:m.laneOf({status:"awaiting_decision"}),needs_session:m.laneOf({status:"needs_session"}),ready_to_publish:m.laneOf({status:"ready_to_publish"}),done:m.laneOf({status:"done",findings:[]}),doneFindings:m.laneOf({status:"done",findings:[{reason:"open"}]}),dropped:m.laneOf({status:"dropped"}),skipped_closed:m.laneOf({status:"skipped_closed"}),unknown:m.laneOf({status:"mystery"}),nil:m.laneOf({status:null})})'
+  [ "$status" -eq 0 ]
+  jq -e '.running=="running" and .queued=="waiting" and .waiting_admission=="waiting" and .awaiting_decision=="attention" and .needs_session=="attention" and .ready_to_publish=="attention" and .done=="done" and .doneFindings=="attention" and .dropped=="closed" and .skipped_closed=="closed" and .unknown=="closed" and .nil=="closed"' <<<"$output"
+}
+
+@test "groupLanes keeps LANES order, given item order, and empty lanes" {
+  _js 'm.groupLanes([{key:"a",status:"done"},{key:"b",status:"running"},{key:"c",status:"queued"},{key:"d",status:"running"}])'
+  [ "$status" -eq 0 ]
+  jq -e '([.[].id] == ["attention","running","waiting","done","closed"]) and ([.[].label] == ["Needs you","Running","Waiting","Done","Dropped / closed"]) and .[0].items == [] and ([.[1].items[].key] == ["b","d"]) and ([.[2].items[].key] == ["c"]) and ([.[3].items[].key] == ["a"]) and .[4].items == []' <<<"$output"
+  _js 'm.groupLanes([])'
+  jq -e 'length == 5 and all(.[]; .items == [])' <<<"$output"
+}
+
+@test "laneCounts tallies each lane" {
+  _js 'm.laneCounts([{status:"awaiting_decision"},{status:"done",findings:[{reason:"x"}]},{status:"running"},{status:"queued"},{status:"waiting_admission"},{status:"done"},{status:"dropped"},{status:"mystery"}])'
+  [ "$status" -eq 0 ]
+  jq -e '.attention==2 and .running==1 and .waiting==2 and .done==1 and .closed==2' <<<"$output"
+  _js 'm.laneCounts([])'
+  jq -e '.attention==0 and .running==0 and .waiting==0 and .done==0 and .closed==0' <<<"$output"
+}
+
+@test "stepIcon table" {
+  _js '({done:m.stepIcon("done"),failed:m.stepIcon("failed"),running:m.stepIcon("running"),needs_decision:m.stepIcon("needs_decision"),interrupted:m.stepIcon("interrupted"),pending:m.stepIcon("pending"),skipped:m.stepIcon("skipped"),unknown:m.stepIcon("nope"),nil:m.stepIcon(null)})'
+  [ "$status" -eq 0 ]
+  jq -e '.done=="✓" and .failed=="✗" and .running=="●" and .needs_decision=="!" and .interrupted=="!" and .pending=="○" and .skipped=="–" and .unknown=="·" and .nil=="·"' <<<"$output"
+}
+
+@test "shortKey single repo hashes, otherwise full or empty" {
+  _js 'm.shortKey("o/r#1905", ["o/r"])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"#1905"' ]
+  _js 'm.shortKey("o/r#1905", ["o/r","o/s"])'
+  [ "$output" = '"o/r#1905"' ]
+  _js 'm.shortKey("o/r#1905", ["o/other"])'
+  [ "$output" = '"o/r#1905"' ]
+  _js 'm.shortKey(null, ["o/r"])'
+  [ "$output" = '""' ]
+}
+
+@test "durationText formats elapsed and empty cases" {
+  _js 'm.durationText("1970-01-01T00:00:00.000Z", "1970-01-01T00:01:18.000Z", 0)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"1m 18s"' ]
+  _js 'm.durationText("1970-01-01T00:00:00.000Z", "1970-01-01T00:00:05.000Z", 0)'
+  [ "$output" = '"5s"' ]
+  _js 'm.durationText("1970-01-01T00:00:00.000Z", "1970-01-01T01:02:00.000Z", 0)'
+  [ "$output" = '"1h 2m"' ]
+  _js 'm.durationText("1970-01-01T00:00:00.000Z", "", 5000)'
+  [ "$output" = '"5s"' ]
+  _js 'm.durationText("", "1970-01-01T00:00:05.000Z", 0)'
+  [ "$output" = '""' ]
+  _js 'm.durationText("1970-01-01T00:00:00.000Z", "not-a-date", 0)'
+  [ "$output" = '""' ]
+}

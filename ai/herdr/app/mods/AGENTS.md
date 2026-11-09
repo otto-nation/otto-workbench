@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`team-prs`, `pr-batch` — Workflows tab, read-only run grid, `_lib`, …).
+Conventions for the mods under this directory (`team-prs` — Workflows is a view inside the board, switched by PRs | Workflows in its header, `_lib`, …).
 
 ## Where things live
 

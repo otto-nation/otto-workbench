@@ -178,3 +178,69 @@ export function stateChanged(paths, runDir) {
   }
   return false;
 }
+
+export const LANES = [
+  { id: 'attention', label: 'Needs you' },
+  { id: 'running', label: 'Running' },
+  { id: 'waiting', label: 'Waiting' },
+  { id: 'done', label: 'Done' },
+  { id: 'closed', label: 'Dropped / closed' },
+];
+
+export function laneOf(item) {
+  const status = item?.status;
+  if (status === 'running') return 'running';
+  if (status === 'queued' || status === 'waiting_admission') return 'waiting';
+  if (ITEM_ATTENTION.has(status)) return 'attention';
+  if (status === 'done') {
+    return Array.isArray(item.findings) && item.findings.length > 0 ? 'attention' : 'done';
+  }
+  return 'closed';
+}
+
+export function groupLanes(items) {
+  const buckets = Object.fromEntries(LANES.map((l) => [l.id, []]));
+  for (const item of items ?? []) buckets[laneOf(item)].push(item);
+  return LANES.map((l) => ({ id: l.id, label: l.label, items: buckets[l.id] }));
+}
+
+export function laneCounts(items) {
+  const counts = { attention: 0, running: 0, waiting: 0, done: 0, closed: 0 };
+  for (const item of items ?? []) counts[laneOf(item)] += 1;
+  return counts;
+}
+
+export function stepIcon(status) {
+  if (status === 'done') return '✓';
+  if (status === 'failed') return '✗';
+  if (status === 'running') return '●';
+  if (status === 'needs_decision' || status === 'interrupted') return '!';
+  if (status === 'pending') return '○';
+  if (status === 'skipped') return '–';
+  return '·';
+}
+
+export function shortKey(key, repos) {
+  if (key == null) return '';
+  if (Array.isArray(repos) && repos.length === 1 && key.startsWith(`${repos[0]}#`)) {
+    return `#${key.slice(repos[0].length + 1)}`;
+  }
+  return key;
+}
+
+export function durationText(startedAt, endedAt, nowMs) {
+  if (!startedAt) return '';
+  const start = Date.parse(startedAt);
+  if (Number.isNaN(start)) return '';
+  let end;
+  if (endedAt == null || endedAt === '') {
+    end = nowMs;
+  } else {
+    end = Date.parse(endedAt);
+    if (Number.isNaN(end)) return '';
+  }
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}

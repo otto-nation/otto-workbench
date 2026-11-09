@@ -17,6 +17,7 @@ import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRe
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact } from "./compact.js";
+import { Workflows } from "./workflows.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
 
@@ -26,6 +27,10 @@ function ctxOf() {
 
 function scopeOf() {
   return shared("team-prs.scope") === "all" ? "all" : "this";
+}
+
+function viewModeOf() {
+  return shared("team-prs.view") === "workflows" ? "workflows" : "prs";
 }
 
 // The checkouts the board reads: the pinned or focused one, or every open space's.
@@ -61,6 +66,7 @@ export default class TeamPrs extends View {
   // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
     this.acx = cx;
+    this.workflows = new Workflows(cx, ctxOf);
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
@@ -112,11 +118,13 @@ export default class TeamPrs extends View {
     this.acx.notify();
   }
 
-  // The pr-batch tab: selected when one is open, else opened.
-  openWorkflows() {
-    const id = boardTabId(spaces(), "Workflows");
-    if (id) run("tab.select", { id });
-    else run("tab.new", { name: "Workflows", mod: "pr-batch" });
+  viewSwitch() {
+    const mode = viewModeOf();
+    const n = this.workflows.attention();
+    return segmented([
+      segment("view-prs", "PRs", mode === "prs", () => setShared("team-prs.view", "prs")),
+      segment("view-workflows", n > 0 ? `Workflows · ${n}` : "Workflows", mode === "workflows", () => setShared("team-prs.view", "workflows")),
+    ]);
   }
 
   refreshButton() {
@@ -320,6 +328,11 @@ export default class TeamPrs extends View {
   }
 
   render(cx) {
+    if (viewModeOf() === "workflows") {
+      this.workflows.show();
+      return this.workflows.view(this.viewSwitch());
+    }
+    this.workflows.hide();
     const t = theme();
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
@@ -381,6 +394,7 @@ export default class TeamPrs extends View {
 
   compactHeader(tab, t) {
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
+      .child(h_flex().child(this.viewSwitch()))
       .child(h_flex().child(this.scopeToggle()))
       .child(h_flex().items_center().justify_between()
         .child(segmented([
@@ -393,8 +407,7 @@ export default class TeamPrs extends View {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
             else run("tab.new", { name: "PRs", mod: "team-prs" });
-          }))
-          .child(link("open-workflows", "Workflows", () => this.openWorkflows()))));
+          }))));
   }
 
   compactView(state, t, cx) {
@@ -447,6 +460,7 @@ export default class TeamPrs extends View {
     const pinned = (e) => e.child(chip("pin", pin ? "pinned" : "pin", Boolean(pin), () => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
+      .child(this.viewSwitch())
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
         .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))
@@ -457,7 +471,6 @@ export default class TeamPrs extends View {
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
       .child(this.refreshButton())
-      .child(button("workflows", "Workflows", () => this.openWorkflows()))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

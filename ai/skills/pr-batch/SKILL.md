@@ -98,7 +98,7 @@ command: read the log or wait.
 | `closeout_owed` | `pr` still owes a closeout | `pr comments --finish --post --repo-dir WT` |
 | `ready_to_push` | local work is ready under the lease | printed `pr push --expect` / `pr rebase --push-only --expect` |
 | `wrong_branch` | worktree is on another branch | `git -C WT switch <branch>` |
-| `push_refused` | `publish.plan` refused | none — read the refusal; never force without `--expect` |
+| `push_refused` | `publish.plan` refused | rewritten commits only: the lease push (§ Push protocol); otherwise read the refusal |
 | `stack_wait_base` | base PR is still open | none — wait for it to merge |
 | `dirty_worktree` | paused rebase or dirty tree | none — stash, or `pr rebase --abort` when paused |
 | `worktree_collision` | another worktree occupies the path | none — `git worktree move` |
@@ -118,17 +118,20 @@ command: read the log or wait.
 
 ## Push protocol
 
-Nothing is pushed unless `--auto-publish ff`. `pr batch report` /
-`<run-dir>/report.md` prints the lease push with the full 40-char SHA and
-`--expect` — never invent a short SHA, never force-push by hand without that lease.
+When to push without asking is `git-operations.md` § Pushing; whether to comment
+on the PR is § A Branch With an Open PR Is Shared. This section only maps them
+onto batch state.
 
-On a **non-draft** PR, comment on the PR before a hand push. Drafts do not
-need that comment.
+Nothing is pushed unless `--auto-publish ff`, which never force-pushes, so a
+rebase always ends with the push still owed:
 
-Print the exact `pr push --expect SHA` or `pr rebase --push-only --expect SHA`
-for the user to run when the batch left a force-push unapplied. Do not run a
-force push yourself unless the user asked and the command carries `--expect`
-and the full SHA.
+- **The lease** — the item's full 40-char `remote_sha` from
+  `pr batch status --full`. Never a short SHA, never a push without `--expect`.
+- **Clean** — the item is `done`. A `push_refused` naming only the commits the
+  rebase rewrote is the expected refusal for a replay, not a blocker.
+- **Not clean** — the item is `needs_session` (`stale_generated`, a conflict, a
+  dirty tree). Fix and commit in its worktree first.
+- **The push** — `pr rebase --push-only --expect SHA --repo-dir WT`.
 
 ---
 

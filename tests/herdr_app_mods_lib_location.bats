@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for ai/herdr/app/mods/_lib/location.js — locate, remotes.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_lib/*.js lib/constants.sh
+# select-on: ai/herdr/app/mods/_lib/*.js
 
 setup() {
   load 'test_helper'

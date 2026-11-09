@@ -531,18 +531,19 @@ def _build_test_hint_section(paths: Sequence[str]) -> str:
     """
     if not paths:
         return ""
-    head = (
-        "## Test hint\n"
+    head = [
+        "",
+        "## Test hint",
         "From file names only: these changed files have no test in this PR "
-        "whose name pairs with theirs. Not a finding by itself."
-    )
+        "whose name pairs with theirs. Not a finding by itself.",
+    ]
     included: list[str] = []
     omitted = 0
     for i, path in enumerate(paths):
         rest = len(paths) - i - 1
         line = f"- `{path}`"
         suffix = [f"- …and {rest} more"] if rest else []
-        trial = "\n".join([head, *included, line, *suffix])
+        trial = "\n".join([*head, *included, line, *suffix])
         if len(trial.encode()) <= MAX_TEST_HINT_BYTES:
             included.append(line)
             continue
@@ -550,7 +551,7 @@ def _build_test_hint_section(paths: Sequence[str]) -> str:
         break
     if omitted:
         included.append(f"- …and {omitted} more")
-    return "\n".join([head, *included])
+    return "\n".join([*head, *included])
 
 
 def _build_issue_section(issue_link: str, issue_context: str) -> str:

@@ -486,16 +486,18 @@ def test_a_writer_prompt_with_no_claim_source_shows_no_example_claim(phase, extr
     assert '"verdict": "supported"' in result
 
 
-@pytest.mark.parametrize("phase, extra", [
-    (Phase.SINGLE, {}),
-    (Phase.SYNTHESIS, {"group_count": 2, "merged_content": "x"}),
+@pytest.mark.parametrize("phase, extra, mode", [
+    (Phase.SINGLE, {}, Mode.PR),
+    (Phase.SINGLE, {}, Mode.SELF),
+    (Phase.SYNTHESIS, {"group_count": 2, "merged_content": "x"}, Mode.PR),
+    (Phase.SYNTHESIS, {"group_count": 2, "merged_content": "x"}, Mode.SELF),
     (Phase.GROUP, {
         "group_idx": 1, "group_count": 1, "group_name": "core",
         "group_files_formatted": "- pkg/a.py", "group_file_paths": ["pkg/a.py"],
-    }),
+    }, Mode.PR),
 ])
-def test_writer_and_group_prompts_carry_the_test_hint(phase, extra):
-    job = _make_job(_make_preflight())
+def test_writer_and_group_prompts_carry_the_test_hint(phase, extra, mode):
+    job = _make_job(_make_preflight(), mode=mode)
     job.pr.files = [{"path": "pkg/a.py", "additions": 3, "deletions": 0}]
     result = review.registry.build_prompt(phase, job, max_turns=15, **extra)
     assert "## Test hint" in result

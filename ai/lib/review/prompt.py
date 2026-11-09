@@ -734,8 +734,9 @@ def _prompt_group(job, common, extra, output):
             areas_for_group(job.focus, group_files) if group_files else job.focus,
         ),
     )
-    files = [f for f in job.pr.files if f["path"] in set(group_files)] if group_files else job.pr.files
-    b.set("test_hint_section", _build_test_hint_section(unpaired_subjects(files)))
+    scope = set(group_files)
+    paths = [p for p in unpaired_subjects(job.pr.files) if p in scope] if group_files else unpaired_subjects(job.pr.files)
+    b.set("test_hint_section", _build_test_hint_section(paths))
     b.execution_claim_guard()
     b.output(output, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
     b.fit(job, file_filter=file_filter, skip_project_context=True)

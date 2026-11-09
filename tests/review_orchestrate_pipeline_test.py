@@ -224,14 +224,14 @@ class TestGroupMergeCap:
             file_permissions={}, instructions_md="c" * 10_000,
             architecture_md="a" * 5_000,
         )
-        cap = review.pipeline._group_merge_cap(self._job(pf))
+        job = self._job(pf)
+        cap = review.pipeline._group_merge_cap(job)
         # The commit log is a lever, so it is not charged against the cap.
         fixed = fixed_preflight_bytes(
             pf.instructions_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
         assert fixed >= 15_000  # the context files are charged at least whole
-        job = self._job(pf)
         hint = len(_build_test_hint_section(unpaired_subjects(job.pr.files)).encode())
         assert cap == (
             300_000 - TEMPLATE_OVERHEAD_BYTES - fixed

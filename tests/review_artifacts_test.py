@@ -24,11 +24,13 @@ from review.artifacts import (
     HolisticArtifact, ReviewArtifact, ScoutArtifact, SeverityHint,
     as_group_artifact, declinable_sids,
 )
+from review.behaviour_types import BehaviourReport
 from review.budget import DERIVED_AREA_RESERVE_BYTES
 from review.ingest import IngestErrorKind
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
 from review.store import StoredReview
 from review.types import SEVERITIES, PriorDisposition, ReviewMeta
+from review_behaviours_support import BEHAVIOUR_DOC
 
 ROOTS = [GroupArtifact, ReviewArtifact, ScoutArtifact, HolisticArtifact, DisproveArtifact]
 FINDING = {"id": "M1", "path": "a.py", "line": 3, "body": "x", "evidence": "y = 1"}
@@ -350,3 +352,26 @@ def test_a_format_with_a_claim_source_shows_a_claim_and_its_notes():
     assert "`claims[].verdict`" in text
     for value in ("supported", "contradicted", "unsupported", "unverifiable"):
         assert value in text
+
+
+@pytest.mark.parametrize("kind", [GroupArtifact, ReviewArtifact])
+def test_a_format_without_a_behaviour_source_shows_empty_behaviours(kind):
+    text = output_format(kind, Mode.PR, rereview=False, has_behaviour_source=False)
+    assert _shown_document(text)["behaviours"] == []
+
+
+def test_the_format_explains_behaviour_fields():
+    text = output_format(ReviewArtifact, Mode.PR, rereview=False)
+    assert "`behaviours[].test_cited`" in text
+
+
+def test_a_pre_upgrade_group_document_loads():
+    loaded = load_strict(GroupArtifact, {"findings": []})
+    assert loaded.behaviours is None
+
+
+def test_a_group_record_keeps_its_behaviours_and_shows_them_back():
+    report = BehaviourReport(**BEHAVIOUR_DOC)
+    rec = GroupArtifact(behaviours=(report,)).to_record(declinable=frozenset())
+    assert rec.behaviours[0].id == "B1"
+    assert as_group_artifact(rec).behaviours == (report,)

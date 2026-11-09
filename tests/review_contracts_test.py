@@ -354,6 +354,18 @@ def test_the_reviewer_protocol_explains_claims():
             assert load_strict(ReviewArtifact, doc).problems() == ()
 
 
+def test_the_reviewer_protocol_explains_behaviours():
+    text = (AGENTS / "reviewer.md").read_text()
+    assert "behaviours" in text
+    blocks = _JSON_BLOCK.findall(text)
+    assert blocks, "reviewer.md shows no JSON artifact"
+    docs = [json.loads(block) for block in blocks]
+    assert any("behaviours" in doc for doc in docs)
+    for doc in docs:
+        if "behaviours" in doc:
+            assert load_strict(ReviewArtifact, doc).problems() == ()
+
+
 def test_the_reviewer_protocol_gates_claims_on_the_output_shape():
     """Holistic uses this protocol too; HolisticArtifact has no claims field."""
     text = (AGENTS / "reviewer.md").read_text()

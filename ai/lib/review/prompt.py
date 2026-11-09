@@ -41,9 +41,10 @@ from review.collect import (
 from review.prompt_prior import (
     _build_prior_section, _build_unaccounted_section,
 )
+import review.behaviours
 from review.claims import has_claim_source
 from review.focus import areas_for_group, needs_derived, user_areas
-from review.grouping import unpaired_subjects
+from review.grouping import hint_subjects, unpaired_subjects
 from review.prompt_sections import (
     _build_delta_section, _build_env_section, _build_focus_section,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
@@ -591,7 +592,8 @@ def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
 
 
 def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False,
-                     derive_focus: bool = False, has_areas: bool = True) -> str:
+                     derive_focus: bool = False, has_areas: bool = True,
+                     has_behaviour_source: bool = True) -> str:
     """The Output section's JSON example and field guide for this phase's artifact.
 
     `rereview` is whether this prompt carries prior findings to account for.
@@ -599,7 +601,8 @@ def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False,
     """
     return output_format(extra["artifact"], job.mode, rereview=rereview,
                          derive_focus=derive_focus, has_areas=has_areas,
-                         has_claim_source=has_claim_source(job))
+                         has_claim_source=has_claim_source(job),
+                         has_behaviour_source=has_behaviour_source)
 
 
 def _prompt_single(job, common, extra, output):
@@ -628,6 +631,7 @@ def _prompt_single(job, common, extra, output):
     b.output(output, stdout_warning=True, output_format=_artifact_format(
         job, extra, rereview=bool(prior_section),
         derive_focus=needs_derived(job.focus), has_areas=bool(job.focus),
+        has_behaviour_source=review.behaviours.has_behaviour_source(job),
     ))
     b.fit(job)
     return BuiltPrompt(b, "")
@@ -666,6 +670,7 @@ def _prompt_synthesis(job, common, extra, output):
     b.output(output, output_format=_artifact_format(
         job, extra, rereview=job.prior is not None,
         derive_focus=needs_derived(job.focus), has_areas=bool(job.focus),
+        has_behaviour_source=review.behaviours.has_behaviour_source(job),
     ))
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
@@ -738,7 +743,11 @@ def _prompt_group(job, common, extra, output):
     paths = [p for p in unpaired_subjects(job.pr.files) if p in scope] if group_files else unpaired_subjects(job.pr.files)
     b.set("test_hint_section", _build_test_hint_section(paths))
     b.execution_claim_guard()
-    b.output(output, output_format=_artifact_format(job, extra, rereview=bool(prior_section)))
+    files = [f for f in job.pr.files if f["path"] in scope] if group_files else job.pr.files
+    b.output(output, output_format=_artifact_format(
+        job, extra, rereview=bool(prior_section),
+        has_behaviour_source=bool(hint_subjects(files)),
+    ))
     b.fit(job, file_filter=file_filter, skip_project_context=True)
     return BuiltPrompt(b, str(extra["group_idx"]))
 

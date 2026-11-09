@@ -26,6 +26,7 @@ from core.text import join_or
 from review.artifacts import (
     AgentFinding,
     AgentFocus,
+    BehaviourReport,
     ClaimReport,
     DisproveArtifact,
     DisproveVerdict,
@@ -87,6 +88,8 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "triage": "one entry per file in your group",
         "findings": "your findings, any severity, in any order",
         "prior_findings": _LEDGER_NOTE,
+        "behaviours": "each behaviour change in your files, one per entry; [] when the "
+                       "change alters no behaviour",
     },
     ReviewArtifact: {
         "summary": "markdown: what the change does and its overall quality",
@@ -99,6 +102,8 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "claims": "every distinct claim the Description or the Related issue (title, body, "
                    "acceptance criteria) makes that the code could confirm or refute; [] "
                    "when nothing there is checkable",
+        "behaviours": "every behaviour change in the PR — on synthesis, the merged groups' "
+                       "lists with duplicates merged; [] when nothing changes behaviour",
     },
     Lead: {
         "path": "the file the lead is about",
@@ -146,6 +151,12 @@ FIELD_NOTES[FocusReport] = {
     "id": "the area's id from the Focus section, or \"\" for one you add",
     "coverage": "what you checked and what you found, citing finding IDs",
     **{k: FIELD_NOTES[AgentFocus][k] for k in ("title", "rationale", "paths")},
+}
+FIELD_NOTES[BehaviourReport] = {
+    "text": "the behaviour, in one sentence",
+    "test_cited": "the test that exercises it as `path` or `path::name`, checked after "
+                   "you write; \"\" when you found none",
+    "paths": "the changed files it lives in, at least one",
 }
 FIELD_NOTES[ClaimReport] = {
     "source": '"description" for the Description and "ticket" for the Related issue',
@@ -233,14 +244,17 @@ def _field_guide(kind: type, hidden: dict[type, frozenset[str]], prefix: str = "
 
 def output_format(kind: type, mode: Mode, *, rereview: bool,
                   derive_focus: bool = False, has_areas: bool = True,
-                  has_claim_source: bool = True) -> str:
+                  has_claim_source: bool = True,
+                  has_behaviour_source: bool = True) -> str:
     """What a prompt's Output section shows: the example, then every field's meaning.
 
     `rereview` is whether the prompt carries prior findings to account for;
     without it the carry fields (`CARRY_FIELDS`) are neither shown nor explained.
     `has_areas` defaults to true so a format rendered outside a run shows the
     covering example. `has_claim_source` defaults to true so the example shows
-    a claim; without a source the example's claims are [].
+    a claim; without a source the example's claims are []. `has_behaviour_source`
+    defaults to true so the example shows a behaviour; without a source the
+    example's behaviours are [].
     """
     hidden = {**(CARRY_FIELDS if not rereview else {}), **({} if derive_focus else DERIVE_FIELDS)}
     example = kind.example(mode)
@@ -249,6 +263,8 @@ def output_format(kind: type, mode: Mode, *, rereview: bool,
             example.focus, derive_focus=derive_focus, has_areas=has_areas))
         if not has_claim_source:
             example = replace(example, claims=())
+    if kind in (GroupArtifact, ReviewArtifact) and not has_behaviour_source:
+        example = replace(example, behaviours=())
     shown = _example_dict(kind, core.serde.to_dict(example), hidden)
     return (
         "The file holds ONE JSON document — nothing before or after it, no code fence, "

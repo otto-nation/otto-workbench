@@ -28,7 +28,7 @@ from core.strict import example_json
 from agent.session import _parse_session_cost, diagnose_missing_output
 from review.convergence import change_set, drop_out_of_delta_nits, prior_ids
 from review.prompt_sections import _is_incremental
-from review.document import SECTION_CLAIMS, SECTION_FOCUS, SECTION_TEST_EVIDENCE, ReviewDocument
+from review.document import NON_FINDING_SECTIONS, ReviewDocument
 from review.grouping import HOLISTIC_MIN_GROUPS
 from review.artifacts import (
     GroupArtifact, ReviewArtifact, as_group_artifact, declinable_sids,
@@ -609,12 +609,12 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
         return DisproveRun(PhaseResult(), record)
     # The gate reads the record rendered with its evidence: the findings it
     # challenges, their locations, and the code each one quotes. Disprove judges
-    # truth, not where to look, so Focus, Claims and Test evidence are omitted.
+    # truth, not where to look, so the non-finding sections are omitted.
     result = run_phase(job, Phase.DISPROVE,
                        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
                        review_content=render_body(
                            record, evidence=True,
-                           omit=frozenset({SECTION_FOCUS, SECTION_CLAIMS, SECTION_TEST_EVIDENCE}),
+                           omit=NON_FINDING_SECTIONS,
                        ))
     if result.artifact is None:
         return DisproveRun(result, record)

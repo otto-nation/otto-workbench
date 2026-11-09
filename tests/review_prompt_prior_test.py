@@ -15,7 +15,7 @@ from dataclasses import replace
 
 from review.document import SECTION_PRIOR_FINDINGS
 from review.grammar import FindingIdentity, sid_marker
-from review.record import LedgerLine, RecordFinding, TriageEntry
+from review.record import LedgerLine, Question, RecordFinding, TriageEntry, VerifiedNote
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
 from review.types import FindingOrigin, PriorDisposition, ReplyState, ReviewMeta
@@ -195,6 +195,15 @@ class TestBuildPriorSectionLedger:
 
 
 class TestPriorTextOmitsBookkeeping:
+    def test_the_prior_section_leaves_out_questions_and_verified(self):
+        rec = record(finding("M1", "bug"), summary="s",
+                     questions=(Question("Q1", None, None, "why?"),),
+                     verified=(VerifiedNote(None, None, "sound"),))
+        result = _prior_text(_stored(rec=rec), None)
+        assert "## Questions" not in result
+        assert "## Verified" not in result
+        assert "**[M1]**" in result
+
     def test_the_prior_section_leaves_out_claims(self):
         for claims in (None, (claim(),)):
             rec = record(finding("M1", "bug"), summary="s", claims=claims)

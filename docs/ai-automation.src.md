@@ -187,9 +187,10 @@ A review is a typed record, `review.json`, written atomically beside
 every change and carries a "rendered from review.json" banner — edit it and the
 next write overwrites the edit; nothing reads it back.
 
-- **What the review says** — summary, findings and their dispositions, file
-  triage, agent failures, static analysis — is the record's
-  ([`review/record.py`](ai-libraries.md#reviewrecordpy)).
+- **What the review says** — summary (an assessment, not a recap), findings
+  and their dispositions, questions for the author, what the reviewer
+  verified sound, file triage, agent failures, static analysis — is the
+  record's ([`review/record.py`](ai-libraries.md#reviewrecordpy)).
 - **What the run was** — head SHA, mode, status, dates, generator, and the models its agents ran on (read once from the usage ledger) — is `meta.json`'s; the header at the top of `review.md` is rendered from it, and the posted comment ends with the same `Models:` line when the comment has anything else to say.
 - **A finding's disposition** — open, fixed, declined, skipped, unreached,
   falsified — replaces the checkbox and annotation ledgers.
@@ -209,6 +210,11 @@ next write overwrites the edit; nothing reads it back.
   `{"unchanged": true}` with no `reviews` when nothing under the reviews root
   changed since the document that carried that stamp. `review.archive_keep`
   (default 3) is how many earlier runs `history` keeps.
+
+Questions post under the Summary and verified notes in a collapsed block after
+the findings; neither is a finding, so neither counts toward the verdict or
+reaches a fix pass. A malformed question or verified note is dropped with a
+warning.
 
 ### How self-review rounds converge
 

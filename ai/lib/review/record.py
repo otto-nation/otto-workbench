@@ -33,24 +33,9 @@ import core.log
 import core.serde
 from review.claim_types import ClaimEntry
 from review.paths import FILENAME_RECORD
-from review.types import SEVERITIES, Finding, FindingOrigin, FindingRef, PriorDisposition
+from review.types import SEVERITIES, Disposition, Finding, FindingOrigin, FindingRef, PriorDisposition
 
 SCHEMA_VERSION = 2
-
-
-class Disposition(StrEnum):
-    """What became of a finding. Values are on disk; keep them stable."""
-
-    OPEN = "open"
-    FIXED = "fixed"
-    DECLINED = "declined"
-    # The fix pass handed it to a person (`FixOutcome.NEEDS_HUMAN`).
-    SKIPPED = "skipped"
-    # The fix pass never reached it (`FixOutcome.DEFERRED`). Still open, and
-    # written as nothing on the page — the line reads as it did.
-    UNREACHED = "unreached"
-    # The disprove gate refuted it. Kept, never rendered.
-    FALSIFIED = "falsified"
 
 
 class FocusSource(StrEnum):

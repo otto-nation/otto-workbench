@@ -425,6 +425,21 @@ def review_meta_from_dict(d) -> ReviewMeta:
 # ── Findings ─────────────────────────────────────────────────────────────────
 
 
+class Disposition(StrEnum):
+    """What became of a finding. Values are on disk; keep them stable."""
+
+    OPEN = "open"
+    FIXED = "fixed"
+    DECLINED = "declined"
+    # The fix pass handed it to a person (`FixOutcome.NEEDS_HUMAN`).
+    SKIPPED = "skipped"
+    # The fix pass never reached it (`FixOutcome.DEFERRED`). Still open, and
+    # written as nothing on the page — the line reads as it did.
+    UNREACHED = "unreached"
+    # The disprove gate refuted it. Kept, never rendered.
+    FALSIFIED = "falsified"
+
+
 class FindingOrigin(StrEnum):
     """Who produced this finding. The harness sets each value; an agent never does.
 

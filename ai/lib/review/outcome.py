@@ -15,11 +15,13 @@ phases that lead there is `review.pipeline`'s.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from pathlib import Path
 
+import agent.usage
 import core.log
+import core.trail
 import git.client
 import review.behaviours
 import review.claims
@@ -133,6 +135,57 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
         head_moved_to=_head_moved_to(job),
         dirty_files=_dirty_files(job),
         claims_input_sha=review.claims.input_sha(job) if record.claims is not None else ""))
+
+
+@dataclass(frozen=True)
+class _Session:
+    """One kind of agent session the `Models:` line counts."""
+
+    phase: str  # the label `review.phases.PhaseRunner.invocation` writes
+    model: str  # the served model, else the requested one
+    thinking: str  # the thinking level; "" when the row has none
+
+
+def models_used(job: ReviewJob) -> str:
+    """The agents this run's review ran, as its `Models:` line states them; "" when the ledger names none.
+
+    Read from the usage ledger, which every agent call writes: the rows under
+    this command's trail root for this repo, branch and PR since the run started.
+    Called once the review's phases are done and before the fix pass, so no
+    fix row is among them. The served model is shown, else the requested one;
+    a row naming neither is left out. Identical sessions collapse in the order
+    they first ran: `group (×5) m (low)`. `(×N)` counts attempts; a served-thinking
+    row and an unmeasured one stay split.
+    """
+    # The labels `review.phases.PhaseRunner.invocation` writes, and the root
+    # `agent.backend._record` stamps on every row.
+    # A self-review has no PR, so its rows carry no `pr`: "" -> None matches them.
+    this_run = (core.trail.inherited_root(), job.repo or None, job.pr.head or None,
+                str(job.pr_number) or None)
+    counts: dict[_Session, int] = {}
+    # Telemetry must not fail the review: a ledger line that is not an object,
+    # or bytes that are not UTF-8, would otherwise raise here after the agents
+    # have already spent.
+    try:
+        records = agent.usage.read_ledger(since=datetime.fromisoformat(job.started_at))
+    except Exception:
+        core.log.warn("usage ledger unreadable — models line omitted")
+        return ""
+    for rec in records:
+        if (rec.get("invocation"), rec.get("repo"), rec.get("branch"),
+                rec.get("pr")) != this_run:
+            continue
+        model = agent.usage.sole_model(rec.get("cost_by_model") or {}) or rec.get("model") or ""
+        if model:
+            session = _Session(rec.get("phase") or "", model, rec.get("thinking") or "")
+            counts[session] = counts.get(session, 0) + 1
+    return " · ".join(_models_entry(s, n) for s, n in counts.items())
+
+
+def _models_entry(session: _Session, count: int) -> str:
+    times = f" (×{count})" if count > 1 else ""
+    level = f" ({session.thinking})" if session.thinking else ""
+    return f"{session.phase}{times} {session.model}{level}".lstrip()
 
 
 def _pinned_here(job: ReviewJob) -> str:

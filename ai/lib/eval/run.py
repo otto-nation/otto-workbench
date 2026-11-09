@@ -21,6 +21,7 @@ from itertools import product
 from pathlib import Path
 
 import agent.backend
+import agent.usage
 import eval.baselines
 import eval.conditions
 import eval.scoring
@@ -74,14 +75,6 @@ def discover_entries(corpus_dir: str, entry_filter: str, task_filter: str = "") 
         sys.exit(1)
 
     return entries
-
-
-def _unique_served_model(usage) -> str:
-    """The session-log model when exactly one served; else unresolved."""
-    models = [m for m in usage.cost_by_model if m]
-    if len(models) == 1:
-        return models[0]
-    return ""
 
 
 def _cleanup(temp_dirs: list[str], keep: bool) -> None:
@@ -170,7 +163,7 @@ def _run_single(
         result = task.score(artifacts, manifest)
         recorded = label
         if not model:
-            recorded = _unique_served_model(artifacts.usage) or label
+            recorded = agent.usage.sole_model(artifacts.usage.cost_by_model) or label
         result = dataclasses.replace(
             result, entry_name=entry["name"], model=recorded,
             run_index=run_idx, condition=arm,

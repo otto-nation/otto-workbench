@@ -233,6 +233,13 @@ def _records(ledger_dir):
     ]
 
 
+def test_sole_model_names_one_model_or_none():
+    assert agent.usage.sole_model({"m": 0.1}) == "m"
+    assert agent.usage.sole_model({"m": 0.1, "h": 0.01}) == ""
+    assert agent.usage.sole_model({"": 0.1}) == ""
+    assert agent.usage.sole_model({}) == ""
+
+
 def test_record_appends_line(ledger):
     agent.usage.record(
         script="pr-rebase", entry_point="prompt", backend="claude",
@@ -419,6 +426,12 @@ def test_read_ledger_missing_dir_returns_empty(ledger):
 def test_read_ledger_skips_malformed_lines(ledger):
     ledger.mkdir(parents=True)
     (ledger / "2026-08.jsonl").write_text("{bad\n" + json.dumps({"script": "b"}) + "\n")
+    assert [r["script"] for r in agent.usage.read_ledger()] == ["b"]
+
+
+def test_read_ledger_skips_non_object_lines(ledger):
+    ledger.mkdir(parents=True)
+    (ledger / "2026-08.jsonl").write_text("null\n" + json.dumps({"script": "b"}) + "\n")
     assert [r["script"] for r in agent.usage.read_ledger()] == ["b"]
 
 

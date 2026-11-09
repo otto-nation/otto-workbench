@@ -198,7 +198,7 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 |------|-----------------|---------|
 | `review.json` | yes | Typed review record — the source of truth |
 | `review.md` | yes | Rendered from `review.json` + `meta.json`; never parsed back |
-| `meta.json` | yes | Run sidecar: SHAs (`head_sha`, `covered_sha`, `head_moved_to`), mode, status, dates, generator, the files read uncommitted, the nits withheld from fix work, static declines, sticky skips, an interrupted fix pass |
+| `meta.json` | yes | Run sidecar: SHAs (`head_sha`, `covered_sha`, `head_moved_to`), mode, status, dates, generator, the models the review's agents ran on (`models`), the files read uncommitted, the nits withheld from fix work, static declines, sticky skips, an interrupted fix pass |
 | `session.jsonl` | yes | Agent cost/usage/errors |
 | `fix-logs/<stamp>/` | yes (newest 5) | Each fix pass's `fix.jsonl` and `fix_verify-<n>.jsonl`, kept per pass; `Usage:` reads this run's |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |

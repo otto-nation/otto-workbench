@@ -16,6 +16,7 @@ import cli.review_post  # noqa: E402,F401
 import review.dedup  # noqa: E402
 import review.render  # noqa: E402
 
+from review.record import ProseSection  # noqa: E402
 from review_record_support import record  # noqa: E402
 
 
@@ -231,6 +232,31 @@ class TestCommentBody:
         assert found["trailing space"] == "c.py"
         assert "- **[N1]** `c.py:1` — trailing space" in body
         assert "pattern holds" in body
+
+    def test_the_models_line_closes_the_body(self):
+        rec = record(summary="Clean.", extra=(ProseSection("Review gaps", "- group 2"),))
+        body = review.render.comment_body(rec, [], has_inline=False, severity_filter={"M"},
+                                          models="single m (low)")
+        assert body.endswith("- group 2\n\n<sub>Models: single m (low)</sub>")
+
+    def test_no_models_line_without_a_body(self):
+        body = review.render.comment_body(record(), [], has_inline=False, severity_filter={"M"},
+                                          models="single m (low)")
+        assert body == ""
+
+    # passes-at-base: pins the pre-2b default (no models => byte-identical body)
+    def test_no_models_line_when_meta_names_none(self):
+        body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
+                                          severity_filter={"M"})
+        assert "Models:" not in body and "<sub>" not in body
+
+    def test_a_model_id_with_a_newline_stays_one_line(self):
+        body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
+                                          severity_filter={"M"},
+                                          models="single m\nnightly")
+        assert "<sub>Models: single m nightly</sub>" in body
+        inner = body[body.rfind("<sub>"):body.rfind("</sub>")]
+        assert "\n" not in inner
 
 
 class TestCommentBodyDetails:

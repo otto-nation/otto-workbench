@@ -390,6 +390,12 @@ def _run_phases(trail, args, job) -> _PhasesRun:
         with trail.span("single_agent"):
             run_single_agent(job, disprove=args.disprove)
 
+    # Every agent of the review has finished and the fix pass has not
+    # started, so the ledger's rows for this run are the review's.
+    models = review.outcome.models_used(job)
+    if models:
+        update_review(Path(job.review_file), models=models)
+
     if job.verification:
         v = job.verification
         detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"

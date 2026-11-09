@@ -18,8 +18,8 @@ A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
 row cannot be told apart from.
 
-`otto-log stats` reads the ledger back; how it groups and what it leaves blank is
-`agent.usage_stats`.
+`otto-log stats` reads the ledger back (how it groups and what it leaves blank is
+`agent.usage_stats`), and so does a review's `Models:` line (`review.outcome.models_used`).
 """
 
 # doc-group: backend
@@ -27,6 +27,7 @@ row cannot be told apart from.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,6 +107,17 @@ class SessionUsage:
     def cache_read_ratio(self) -> float:
         """Share of billed input served from cache, 0.0-1.0."""
         return self.cache_read_tokens / self.billed_input if self.billed_input else 0.0
+
+
+def sole_model(cost_by_model: Mapping[str, float]) -> str:
+    """The one model a session's costs name, or "" when they name none or several.
+
+    The session log's own word for what served a call. Costs split across
+    models cannot say which one served it, so the caller falls back to what
+    it asked for rather than picking one.
+    """
+    models = [m for m in cost_by_model if m]
+    return models[0] if len(models) == 1 else ""
 
 
 @dataclass(frozen=True)
@@ -429,6 +441,8 @@ def _ledger_record(line: str, cutoff_ts: str) -> dict | None:
     try:
         rec = json.loads(line)
     except json.JSONDecodeError:
+        return None
+    if not isinstance(rec, dict):
         return None
     ts = rec.get("ts", "")
     if cutoff_ts and ts and ts < cutoff_ts:

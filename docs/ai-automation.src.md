@@ -190,8 +190,7 @@ next write overwrites the edit; nothing reads it back.
 - **What the review says** — summary, findings and their dispositions, file
   triage, agent failures, static analysis — is the record's
   ([`review/record.py`](ai-libraries.md#reviewrecordpy)).
-- **What the run was** — head SHA, mode, status, dates, generator — is
-  `meta.json`'s, and the header at the top of `review.md` is rendered from it.
+- **What the run was** — head SHA, mode, status, dates, generator, and the models its agents ran on (read once from the usage ledger) — is `meta.json`'s; the header at the top of `review.md` is rendered from it, and the posted comment ends with the same `Models:` line when the comment has anything else to say.
 - **A finding's disposition** — open, fixed, declined, skipped, unreached,
   falsified — replaces the checkbox and annotation ledgers.
   `review-orchestrate --track` files the findings a fix pass left skipped or

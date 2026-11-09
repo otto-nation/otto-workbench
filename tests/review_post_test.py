@@ -518,12 +518,12 @@ class TestACleanReviewStillPosts:
         static_analysis=STATIC_ANALYSIS,
     )
 
-    def _post(self, rp, tmp_path, rec):
+    def _post(self, rp, tmp_path, rec, models=""):
         import argparse
         review_dir = tmp_path / "review"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
-        store_record(review_file, rec, ReviewMeta(head_sha="aaa1111bbb2222"))
+        store_record(review_file, rec, ReviewMeta(head_sha="aaa1111bbb2222", models=models))
 
         args = argparse.Namespace(
             repo="org/repo", pr="1", review_file=str(review_file),
@@ -572,6 +572,12 @@ class TestACleanReviewStillPosts:
         _, _, post_file = self._post(rp, tmp_path, self.CLEAN)
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
         assert tracking.verdict == "Approve — clean review."
+
+    def test_the_body_carries_the_models_meta_json_records(self, rp, tmp_path):
+        code, payloads, _ = self._post(rp, tmp_path, self.CLEAN, models="single m (low)")
+        assert code == 0
+        [payload] = payloads
+        assert payload["body"].endswith("<sub>Models: single m (low)</sub>")
 
     def test_a_review_with_nothing_at_all_posts_nothing(self, rp, tmp_path):
         code, payloads, post_file = self._post(rp, tmp_path, record())

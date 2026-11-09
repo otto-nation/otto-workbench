@@ -237,12 +237,19 @@ def _comment_tail(record: ReviewRecord) -> list[str]:
     return [p for h, b in chunks for p in (["", h, "", b] if h else ["", b])]
 
 
+def _models_line(models: str) -> str:
+    """The `Models:` line, with any whitespace (a newline in a model id) collapsed to single spaces."""
+    return f"Models: {' '.join(models.split())}"
+
+
 def comment_body(record: ReviewRecord, findings: list[Finding], *,
-                 has_inline: bool, severity_filter: set[str]) -> str:
+                 has_inline: bool, severity_filter: set[str], models: str = "") -> str:
     """The PR review comment's body: the record's prose around the body findings.
 
     `findings` are the ones `review.format` placed in the body, already
     renumbered for posting. A declined finding is stated in a block of its own.
+    `models` is `ReviewMeta.models`; its `<sub>` line closes a body that has
+    anything else to say.
     """
     labels = ", ".join(s.label for s in SEVERITIES if s.key in severity_filter)
     lines = _comment_prose(record)
@@ -250,7 +257,9 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
         lines.append(f"Have some comments marked as {labels}.")
     elif findings:
         lines.append(f"Review findings ({labels}):")
-    return "\n".join(lines + _comment_findings(findings, has_inline) + _comment_tail(record)).rstrip("\n")
+    body = "\n".join(lines + _comment_findings(findings, has_inline) + _comment_tail(record)).rstrip("\n")
+    # Only beside something else: a review with nothing to post still posts nothing.
+    return f"{body}\n\n<sub>{_models_line(models)}</sub>" if body and models else body
 
 
 def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
@@ -311,11 +320,12 @@ def render_review(record: ReviewRecord, meta: ReviewMeta, *, sids: bool = False,
                   omit: frozenset[str] = frozenset(), banner: bool = True) -> str:
     """The whole review.md: title and header from `meta`, banner, then the body.
 
-    Prompt text passes `banner=False` so an agent quoting a rendered review
-    does not echo the generated-file banner. Agents write JSON, so nothing
-    parses review.md; the banner tells a human the file is generated and that
-    editing it is lost.
+    Prompt text passes `banner=False` and gets neither the banner nor the
+    `Models:` line. Agents write JSON, so nothing parses review.md; the banner
+    tells a human the file is generated and that editing it is lost.
     """
     header = ReviewHeader.from_meta(meta).render()
     mark = f"{BANNER}\n" if banner else ""
-    return f"{review_title(meta)}\n\n{header}{mark}\n{render_body(record, sids=sids, omit=omit)}"
+    # Prompt text leaves it out: which models ran is not a prior reviewer's claim.
+    models = f"{_models_line(meta.models)}\n\n" if banner and meta.models else ""
+    return f"{review_title(meta)}\n\n{header}{mark}\n{models}{render_body(record, sids=sids, omit=omit)}"

@@ -71,9 +71,10 @@ select_tools() {
   local i=1
   local tool
   for tool in "${tools[@]}"; do
-    echo -e "  ${CYAN}[$i]${NC} $tool"
+    echo -e "  ${CYAN}[$i]${NC} $tool$(installed_mark "$_STATE_KEY" "$tool")"
     i=$(( i + 1 ))
   done
+  installed_hint "$_STATE_KEY"
   echo
 
   local _sel
@@ -149,11 +150,12 @@ done
 
 run_steps
 
-# Record installed component and sub-tools in state. The selection replaces the
-# saved one wholesale rather than being appended to it, so deselecting a tool
-# takes effect; until this line the previous selection is still what sync reads.
+# Record installed component and sub-tools in state. The selection is added to
+# the saved one, never a replacement for it: picking two tools must not drop a
+# third. Removal is `otto-workbench install ai --remove <tool>`. Until this line
+# the previous selection is still what sync reads.
 state_record "ai"
-state_set_list "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
+state_add_to_list "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
 
 # ─── GitHub token file ────────────────────────────────────────────────────
 

@@ -245,6 +245,7 @@ than restated here:
 | Command | Scope | Description |
 |---------|-------|-------------|
 | `otto-workbench install [--all] [COMPONENT ...]` | All components | Bootstrap the workbench on a new machine (first-time setup) |
+| `otto-workbench install COMPONENT --remove NAME` | ai, editors, terminals | Drop a tool from a component's recorded selection so sync stops setting it up |
 | `otto-workbench sync` | All components | Re-apply all workbench config — migrations, symlinks, tool context, AI settings |
 | `otto-workbench discover` | Environment overview | Show installed components, available scripts, and agent status |
 | `otto-workbench discover regenerate` | Component state | Re-detect installed components after manual changes |

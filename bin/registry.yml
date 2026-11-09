@@ -18,7 +18,12 @@ tools:
         description: "Bootstrap the workbench on a new machine (first-time setup)"
         scope: "All components"
         when: "Setting up a machine for the first time, or adding a component that was skipped"
-        detail: "On macOS, installs Homebrew if missing, then syncs core config and offers the optional component menu. `--all` skips the menu and installs everything; naming components installs just those."
+        detail: "On macOS, installs Homebrew if missing, then syncs core config and offers the optional component menu. `--all` skips the menu and installs everything; naming components installs just those. A component's tool menu (ai, editors, terminals) only ever adds to what is installed."
+      - name: "install COMPONENT --remove NAME"
+        description: "Drop a tool from a component's recorded selection so sync stops setting it up"
+        scope: "ai, editors, terminals"
+        when: "Retiring a tool a component installed — re-running the menu never removes one"
+        detail: "Edits `<component>.tools` in install state and runs nothing else; files the tool already installed stay in place. Repeat `--remove` for several tools. Refuses, changing nothing, when a name is not in the selection."
       - name: sync
         description: "Re-apply all workbench config — migrations, symlinks, tool context, AI settings"
         scope: "All components"

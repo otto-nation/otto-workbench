@@ -137,6 +137,8 @@ Component installation state is recorded in `$INSTALL_YML_FILE` — `~/.local/st
 - `state_is_installed()` — check if installed
 - `state_prune_orphans()` — remove entries for deleted components
 - `state_detect_installed()` — heuristic-based detection for bootstrapping state on existing machines
+- `state_add_to_list()` — add sub-tools to a component's selection; the ai, editors and terminals menus record picks this way, so choosing a subset never drops a tool installed earlier
+- `state_remove_from_list()` — drop sub-tools from a selection; reached from `otto-workbench install COMPONENT --remove NAME`, the only way a tool leaves one
 
 **Backward compatibility:** if no state file exists, sync runs all discovered components (pre-state-tracking behavior).
 

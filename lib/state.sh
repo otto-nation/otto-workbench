@@ -257,6 +257,58 @@ state_get_list() {
   yq '.components.'"$1"' | (. // []) | .[]' "$INSTALL_YML_FILE" 2>/dev/null || true
 }
 
+# state_list_contains KEY VALUE — returns 0 when VALUE is an entry of the list
+# at KEY, compared whole rather than by substring.
+state_list_contains() {
+  local _item
+  while IFS= read -r _item; do
+    if [[ "$_item" == "$2" ]]; then return 0; fi
+  done < <(state_get_list "$1")
+  return 1
+}
+
+# state_add_to_list KEY [VALUE...] — adds each VALUE not already in the list at
+# KEY, keeping the saved entries and their order. This is how an install records
+# what was picked: choosing a subset of tools sets those up without dropping the
+# ones installed before. Removal is `state_remove_from_list`, never a re-pick.
+state_add_to_list() {
+  local key="$1"
+  shift
+  local -a merged=()
+  local _item
+  while IFS= read -r _item; do
+    if [[ -n "$_item" ]]; then merged+=("$_item"); fi
+  done < <(state_get_list "$key")
+  local _new _seen
+  for _new in "$@"; do
+    _seen=false
+    for _item in "${merged[@]}"; do
+      if [[ "$_item" == "$_new" ]]; then _seen=true; break; fi
+    done
+    if [[ "$_seen" == false ]]; then merged+=("$_new"); fi
+  done
+  state_set_list "$key" "${merged[@]}"
+}
+
+# state_remove_from_list KEY [VALUE...] — drops each VALUE from the list at KEY,
+# leaving every other entry in its saved order. The one way a tool leaves a
+# component's selection.
+state_remove_from_list() {
+  local key="$1"
+  shift
+  local -a kept=()
+  local _item _drop _keep
+  while IFS= read -r _item; do
+    [[ -n "$_item" ]] || continue
+    _keep=true
+    for _drop in "$@"; do
+      if [[ "$_item" == "$_drop" ]]; then _keep=false; break; fi
+    done
+    if [[ "$_keep" == true ]]; then kept+=("$_item"); fi
+  done < <(state_get_list "$key")
+  state_set_list "$key" "${kept[@]}"
+}
+
 # _state_has_new_items SAVED_ARRAY AVAILABLE_ARRAY NEW_ARRAY
 # Compares two arrays and populates NEW_ARRAY with items in AVAILABLE but not SAVED.
 # Returns 0 if new items were found, 1 otherwise.
@@ -277,15 +329,14 @@ _state_has_new_items() {
 # state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]
 # Loads saved selections from YAML, validates each against SCRIPT_DIR. When
 # AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in the
-# saved list — forces a fresh menu so the user can opt in (or deselect).
+# saved list — forces a fresh menu so the user can opt in to them.
 #
 # Returns 0 (replaying) if valid saved selections found with no drift.
 # Returns 1 (fresh) if interactive, no valid saves, or drift detected.
 #
 # Reads only. Deciding to ask the question is not an answer to it, so the saved
-# selection stays until `state_set_list` replaces it with what the user actually
-# chose. Clearing here instead left the record empty from the moment the menu
-# opened, and nothing between there and the end of the install put it back: a
+# selection stays until `state_add_to_list` adds what the user actually chose.
+# Clearing here instead left the record empty from the moment the menu opened, and nothing between there and the end of the install put it back: a
 # declined menu exits 0, a failing step exits non-zero under `set -e`, and either
 # way the next sync reads an empty list and skips every tool it names. That is
 # how a machine stopped syncing Claude — `ai.tools` was emptied to ask about a

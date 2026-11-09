@@ -87,6 +87,7 @@ unset _f _step_files
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS=(
   "install [--all] [COMPONENT ...]"  "Bootstrap the workbench (first-time setup)"
+  "install COMPONENT --remove NAME"   "Drop a tool from a component's selection; picks only ever add"
   "sync"                              "Re-apply all workbench configuration to ~/"
   "ai <subcmd>"                       "Manage AI tools — scaffold projects, sync config, manage overrides"
   "config <subcmd>"                   "Write a workbench config key, checked against the key surface"
@@ -146,8 +147,19 @@ cmd_install() {
     exec "$WORKBENCH_REPO_DIR/bin/otto-workbench" install "$@"
   fi
 
-  # Parse flags: --all, component targets
+  # Parse flags: --all, --remove, component targets
   parse_install_flags "$@"
+
+  # Removal edits the recorded selection and nothing else, so it returns before
+  # the bootstrap rather than running an install around it.
+  if [[ ${#INSTALL_REMOVE[@]} -gt 0 ]]; then
+    if [[ ${#INSTALL_TARGETS[@]} -ne 1 || "$INSTALL_ALL" == true ]]; then
+      err "--remove takes exactly one component: otto-workbench install COMPONENT --remove NAME"
+      exit 2
+    fi
+    remove_selected_tools "${INSTALL_TARGETS[0]}" "${INSTALL_REMOVE[@]}"
+    return
+  fi
 
   # Collect warnings/errors for final summary replay.
   WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-install.XXXXXX")"

@@ -24,7 +24,11 @@ runs:
         cd "$tmp"
         # The published .sha256 names the asset it covers, so the file has to
         # be on disk under that name for -c to find it.
-        wget -q "$base/$tarball" "$base/$tarball.sha256"
+        # Release downloads time out intermittently on the hosted runners, and
+        # one failed fetch would otherwise fail the whole shard. Bound each
+        # attempt and retry, including on a refused connection.
+        wget -q --tries=5 --timeout=30 --waitretry=10 --retry-connrefused \
+          "$base/$tarball" "$base/$tarball.sha256"
         sha256sum -c "$tarball.sha256"
         tar -xJf "$tarball"
         sudo install -m 0755 "worktrunk-${target}/wt" /usr/local/bin/wt

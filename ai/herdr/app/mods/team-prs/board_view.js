@@ -63,7 +63,7 @@ export default class TeamPrs extends View {
   // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
     this.acx = cx;
-    this.workflows = new Workflows(cx, ctxOf);
+    this.workflows = new Workflows(cx, () => this.activeTargets());
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();

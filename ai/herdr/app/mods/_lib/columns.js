@@ -76,6 +76,21 @@ export function mineColumn(pr) {
   return 'pending-review';
 }
 
+// Owner of the four Show-chip defaults; unset stored values take these.
+export const DEFAULT_FILTERS = Object.freeze({
+  drafts: false,
+  mineDrafts: false,
+  landed: false,
+  empty: false,
+});
+
+// Stored boolean wins; otherwise DEFAULT_FILTERS[key], or false for an unknown key.
+export function filterOn(filters, key) {
+  const stored = filters?.[key];
+  if (typeof stored === 'boolean') return stored;
+  return DEFAULT_FILTERS[key] ?? false;
+}
+
 export function isMine(pr, me) {
   const login = String(pr.author ?? '').toLowerCase();
   const who = String(pr.viewer ?? me ?? '').toLowerCase();
@@ -94,8 +109,8 @@ export function filterRepos(prs, repos, loaded) {
 }
 
 export function filterPrs(prs, filters, me) {
-  const drafts = Boolean(filters?.drafts);
-  const landed = Boolean(filters?.landed);
+  const drafts = filterOn(filters, 'drafts');
+  const landed = filterOn(filters, 'landed');
   const authors = Array.isArray(filters?.authors) ? filters.authors : [];
   // The viewer is never an author filter: Team excludes them by design, and the Mine tab is theirs.
   const who = String(me ?? '').toLowerCase();

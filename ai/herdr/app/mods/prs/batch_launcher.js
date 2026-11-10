@@ -1,6 +1,7 @@
 // Starts `pr batch run` from Mine: form state, per-repo hc terminals, cancel/kill.
 import { exec } from "herdr";
 import { groupByRepo, runArgv, filterForm, launchOutcome } from "./_lib/batch_launch.js";
+import { DEFAULT_FILTERS } from "./_lib/columns.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 
@@ -22,7 +23,7 @@ function runKey(on, id) {
 
 export class BatchLauncher {
   // drafts: { on() -> whether draft PRs are shown, toggle() }; the owner keeps the setting.
-  constructor(acx, workflows, drafts = { on: () => true, toggle: () => {} }) {
+  constructor(acx, workflows, drafts = { on: () => DEFAULT_FILTERS.mineDrafts, toggle: () => {} }) {
     this.acx = acx;
     this.workflows = workflows;
     this.drafts = drafts;

@@ -3,6 +3,7 @@
  */
 
 import { BUSY_STATES, laneOf } from './batch.js';
+import { DEFAULT_FILTERS } from './columns.js';
 
 /** Step names a batch launch can request. */
 export const STEP_NAMES = ['rebase', 'ci', 'comments', 'review'];
@@ -70,7 +71,7 @@ export function formFacets(prs) {
 }
 
 /** Keep PRs matching repo AND label chips, dropping drafts when `drafts` is false; empty or stale chips match everything. */
-export function filterForm(prs, { repos = [], labels = [], drafts = true } = {}) {
+export function filterForm(prs, { repos = [], labels = [], drafts = DEFAULT_FILTERS.mineDrafts } = {}) {
   const list = prs ?? [];
   const facets = formFacets(list);
   const knownRepos = new Set(facets.repos.map(fold));

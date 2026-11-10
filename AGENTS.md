@@ -47,10 +47,9 @@ straight into a command without reading it first. The selection is the hook's, s
 wide (an `AGENTS.md` edit reaches dozens of bats files that read it) — read it rather than
 trust a specific shape.
 
-The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine
-is not already using — the sizing described below — so a hand-started suite racing the hook's
-own oversubscribes the box and produces exactly those contention failures, in arbitrary tests
-that never repeat. Worse, a suite killed part-way (a timeout, an impatient Ctrl-C) leaves
+The cost is not merely the wasted minutes. A hand-started suite competes with the hook's for
+the same cores (`CONTRIBUTING.md` § Running Tests) and oversubscribes the box and produces
+exactly those contention failures, in arbitrary tests that never repeat. Worse, a suite killed part-way (a timeout, an impatient Ctrl-C) leaves
 orphaned `bats` processes holding cores, and the next run inherits a machine that is already
 losing subprocesses. Two such piles, one of them hours old, are what prompted this rule.
 
@@ -93,25 +92,10 @@ runs serially only when none do. Install it into the same pipx venv as pytest �
 `pipx inject pytest pytest-xdist` — to get the parallel run locally when no
 other pytest on PATH already has it. CI installs it explicitly.
 
-The runner sizes the run from the cores the machine is *not* already using: the core count
-less the one-minute load average, floored at 2 and capped at 12. A second whole-suite run
-therefore takes the share the first left rather than oversubscribing the box, which is
-what neither suite survives — a test subprocess that cannot get scheduled surfaces as a
-timeout, a SIGPIPE, or a git daemon that will not answer, in arbitrary tests that never
-repeat. `TEST_JOBS` overrides the sizing outright, and `TEST_JOBS=1` restores the serial
-ordering. When contention does get through, `tests/conftest.py` raises `MachineContention`
-and names it in the message: re-run it, do not bisect it.
-
-It arrives in two shapes, and only the first is an exception. A subprocess a *fixture* ran
-raises `MachineContention` at the line that ran it. A subprocess the *code under test* ran
-does not: `proc.run` hands a timeout or an external-signal death back as an ordinary
-failure result — which is what its callers need — so the code handles it as designed and
-the assertion that trips afterwards looks like any other. For those, conftest attaches a
-`MachineContention — the code under test lost a subprocess` section to the failure report,
-listing what `proc.run` saw the machine end during that test. A failure carrying one is
-read the same way as the exception: re-run it before believing the assertion. A failure
-carrying no section is a failure with nothing in the record — which is evidence, not
-merely the absence of a marker.
+A failure carrying `MachineContention`, as an exception or as a section in the report,
+means the machine starved a subprocess: re-run it, do not bisect it. `TEST_JOBS=1` gives
+the serial ordering. How the runner sizes itself and what the two shapes mean is in
+`CONTRIBUTING.md` § Running Tests.
 
 ## UI and styling
 

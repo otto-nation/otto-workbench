@@ -111,7 +111,7 @@ in-progress rebase, and refuses the branches step 2's exit 4 describes — and i
 records each of those decisions with its reason, so the answers arrive in the
 trail rather than costing a turn each up front. When conflicts are expected to
 repeat on the same files, it may squash the replay itself (`rebase.squash`);
-do not preflight a squash, count commits, or inspect merge settings first.
+do not preflight the CLI's automatic squash, count commits, or inspect merge settings first. A squash the user asked for is `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts.
 Running `git fetch`,
 `rev-list --count`, or `gh pr view` before it asks the script's own questions in
 a worse form: the answer you get is from a second fetch, a moment earlier, with

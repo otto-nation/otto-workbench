@@ -7821,6 +7821,15 @@ Builds on the pure analysis in ``conflicts`` to drive agent-based file
 resolution during a rebase.  Every function that calls the AI backend
 accepts a ``trail`` parameter for audit logging.
 
+### rebase/squash.py
+
+Fold the replayed commits into one before git rebase starts.
+
+Never moves the branch. The squash commit is built with ``commit-tree`` and
+picked in place of the original todo, so orig-head, abort and resume still
+see the unsquashed tip. Each original is recorded as rewritten to that
+commit so ``git.replay.ReplayFinder`` and batch publish can follow the chain.
+
 ### rebase/stash.py
 
 Auto-stash and auto-unstash around a rebase.

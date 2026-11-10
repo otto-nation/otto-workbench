@@ -32,6 +32,7 @@ from . import pr_snapshot as rebase_pr_snapshot
 from . import refusals
 from . import replay_audit
 from . import resolve_ai as rebase_resolve
+from . import squash as rebase_squash
 from . import target as rebase_target
 from . import types as rebase_types
 
@@ -104,12 +105,18 @@ def _continue_command(mode: RunMode) -> str:
     return "pr rebase --fix"
 
 
-def _git_rebase(cwd: str, *args: str) -> CmdResult:
+def _git_rebase(
+    cwd: str, *args: str, squash: rebase_squash.SquashPlan | None = None,
+) -> CmdResult:
     """One rebase git child, with REBASE_CONFIG and chained hooks."""
+    pins = squash.git_config() if squash is not None else {}
+    env = unattended_env()
+    if squash is not None:
+        env.update(squash.git_env())
     with hooks_chain.override(cwd) as extra:
         return git.client.run(
-            *args, cwd=cwd, config={**REBASE_CONFIG, **extra},
-            env=unattended_env(),
+            *args, cwd=cwd, config={**REBASE_CONFIG, **extra, **pins},
+            env=env,
         )
 
 
@@ -733,6 +740,11 @@ def fresh(
     if start is None:
         return 1
 
+    squash = rebase_squash.plan(
+        cwd, ctx, target_ref=target_ref, replay_from=start.sha,
+        snapshot=snapshot, trail=trail,
+    )
+
     core.log.info(f"Rebasing onto {target_ref}...")
     # --autosquash unconditionally: it acts only on commits whose subject starts
     # with `fixup!` or `squash!`, which is a marker the author wrote to say
@@ -755,7 +767,10 @@ def fresh(
     # made inside it would not be the one the whole run accumulates into.
     # Made before the replay so it holds the tip the replay starts from.
     tally = ResolutionTally(pre_rebase_head=git.client.head_sha(cwd=cwd))
-    r = _git_rebase(cwd, "rebase", *AUTOSQUASH_ARGS, *replay)
+    # The branch ref is never moved to the squash commit, so orig-head,
+    # abort and resume all see the original commits. S is picked by
+    # replacing the todo; `--continue` / `--skip` / resume never squash.
+    r = _git_rebase(cwd, "rebase", *AUTOSQUASH_ARGS, *replay, squash=squash)
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(

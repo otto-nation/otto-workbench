@@ -68,6 +68,8 @@ _cksum() {
   cmp -s "$SRC/team-prs/main.js" "$APP/mods/team-prs/main.js"
   cmp -s "$SRC/team-prs/mod.json" "$APP/mods/team-prs/mod.json"
   cmp -s "$SRC/_lib/location.js" "$APP/mods/team-prs/_lib/location.js"
+  # tokens.js imports the generated brand module, so it has to ship beside it.
+  cmp -s "$SRC/_lib/brand.generated.js" "$APP/mods/team-prs/_lib/brand.generated.js"
   grep -qx $'main.js\t'"$(_cksum "$APP/mods/team-prs/main.js")" "$APP/mods/team-prs/.workbench-install"
   grep -qx $'mod.json\t'"$(_cksum "$APP/mods/team-prs/mod.json")" "$APP/mods/team-prs/.workbench-install"
   grep -qx $'_lib/location.js\t'"$(_cksum "$APP/mods/team-prs/_lib/location.js")" "$APP/mods/team-prs/.workbench-install"

@@ -108,7 +108,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `generate-cli-reference` | Renders a registered tool's usage line or flag tables from its own argparse parser |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
-| `generate-herdr-app-themes` | Generates the herdr-app theme JSON files from the palettes in ai/herdr/app/palettes (--terminal DIR) |
+| `generate-herdr-app-themes` | Generates the herdr-app theme JSON files from the palettes in ai/herdr/app/palettes, and the mods' brand.generated.js (--terminal DIR, --mods-lib DIR) |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
 | `validate-public-surface` | Validates that the committed public surface snapshots match the registries, config schema, and shipped artifacts they are generated from |
 | `generate-test-weights` | Writes tests/weights.tsv from a bats junit report — the measured per-file runtimes the CI shard packer balances on |

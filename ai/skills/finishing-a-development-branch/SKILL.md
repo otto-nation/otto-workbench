@@ -12,7 +12,7 @@ skip: "Do not use while work is still in progress, or on a branch whose PR is al
      and creates the PR with whatever forge CLI it finds. All three conflict
      with this machine: the rules forbid a completion menu, require every change
      to reach main through a merged PR, and pin PR creation to pr create.
-     Its cleanup step also calls `git worktree remove`, which `wt remove` owns.
+     Its cleanup step also calls `git worktree remove`, which `wt-cleanup` owns.
 
      This file wins by name collision: Pi ranks ~/.agents/skills (scope user,
      origin top-level) ahead of a package resource, so the upstream copy is
@@ -152,13 +152,13 @@ The worktree stays. Your human partner iterates on PR feedback there, and the
 branch is now shared — someone may be reading it, may have marked it ready, may
 be merging it.
 
-Cleanup happens later, after the PR merges, and it is `wt remove` that does it —
-never `git worktree remove`, and never on `main` or the default branch. Your
-human partner runs it when they are done with the tree; `wt-cleanup` sweeps
-merged branches in bulk. If `wt remove` refuses, the tree is dirty: read what is
-there before forcing it. Plans and specs are not among it — those live in the
-repository's workspace at the container (`resolve-workspace`), which `wt remove`
-does not touch.
+Cleanup happens after the PR merges, and it is `wt-cleanup` that does it —
+never `wt remove` (it leaves a squash-merged branch behind), never `git worktree
+remove`, and never on `main` or the default branch. Run it without asking; it
+removes every merged worktree and its branch. A merged tree that is still dirty is
+reported, not removed: read what it names before forcing anything. Plans and
+specs are not among it — those live in the repository's workspace at the
+container (`resolve-workspace`), which cleanup does not touch.
 
 If you do have to push again before the PR merges:
 - A push you make by hand needs a PR comment naming what changed and why. A
@@ -188,7 +188,7 @@ If you do have to push again before the PR merges:
 | Ready to ship | `pr create --draft` |
 | Human partner named a next step | Do that directly |
 | PR open, more work needed | Follow-up PR by default; if pushing by hand, comment first |
-| PR merged | `wt remove` — never `git worktree remove` |
+| PR merged | `wt-cleanup` — never `wt remove` or `git worktree remove`, and no asking |
 
 ## Common Rationalizations
 
@@ -202,4 +202,4 @@ If you do have to push again before the PR merges:
 | "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
 | "I'll push the last fix quietly by hand" | A branch with an open PR is shared. Say what changed. |
 | "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |
-| "The worktree is done, I'll clean it up" | `wt remove`, after the merge — and never the default branch's worktree. |
+| "The worktree is done, I'll clean it up" | `wt-cleanup`, after the merge, without asking — and never the default branch's worktree. |

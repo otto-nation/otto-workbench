@@ -4,8 +4,11 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { STEP_NAMES, STEP_HELP, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
-import { SP, TEXT } from "./_lib/tokens.js";
-import { scrollBody, mono, button, solidButton, pane, paneBar, chip as chipOf, filterGroup } from "./_ui/ui.js";
+import { SP } from "./_lib/tokens.js";
+import {
+  scrollBody, button, solidButton, pane, paneBar, chip as chipOf, filterGroup,
+  sectionLabel, text, type, statusText,
+} from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
 
 function shortRepo(slug) {
@@ -14,11 +17,6 @@ function shortRepo(slug) {
 
 function machineOf(on) {
   return on ?? "this computer";
-}
-
-function sectionLabel(text) {
-  const t = theme();
-  return div().font_family(mono()).text_size(TEXT.caption).text_color(t.muted).child(text);
 }
 
 function cardCheckbox(on) {
@@ -50,7 +48,7 @@ function renderRunning({ launcher: L, workflows, run }) {
   const runs = workflows.activeRuns();
   if (!runs.length) return null;
   return v_flex().gap(SP.sm)
-    .child(sectionLabel("RUNNING"))
+    .child(sectionLabel("Running"))
     .children(runs.map((entry) => {
       const on = entry.on;
       const id = entry.run.id;
@@ -61,16 +59,15 @@ function renderRunning({ launcher: L, workflows, run }) {
       const terminal = first ? L.terminalFor(on, first) : null;
       const progress = entry.progress ?? { done: 0, total: 0 };
       return h_flex().id(`run-${killKey}`).gap(SP.md).items_center()
-        .child(div().text_size(TEXT.small).text_color(t.foreground).child(repos))
-        .child(div().text_size(TEXT.small).text_color(t.muted).child(machineOf(on)))
-        .child(div().text_size(TEXT.small).text_color(t.working).child("running"))
-        .child(div().text_size(TEXT.small).text_color(t.muted).child(`${progress.done} of ${progress.total} done`))
+        .child(text("body", repos))
+        .child(text("meta", machineOf(on), t.muted))
+        .child(statusText("running", "Running"))
+        .child(text("meta", `${progress.done} of ${progress.total} done`, t.muted))
         .child(div().flex_1())
         .when(Boolean(terminal), (e) => e.child(
           button(`log-${killKey}`, "Log", () => run("terminal.keep", { terminal }))))
         .child(button(`cancel-${killKey}`, "Cancel", () => { void L.cancel(on, id, false); }))
-        .when(confirm, (e) => e.child(
-          div().text_size(TEXT.small).text_color(t.ansi1).child("Kills the run's processes")))
+        .when(confirm, (e) => e.child(text("body", "Kills the run's processes", t.ansi1)))
         .child(button(`kill-${killKey}`, confirm ? "Confirm kill" : "Kill", () => { void L.cancel(on, id, true); }));
     }));
 }
@@ -80,16 +77,14 @@ function prRow(pr, L, t) {
   const runnable = Boolean(pr.cwd);
   const row = h_flex().id(`pr-${key}`).gap(SP.md).items_center().px(SP.sm).py(SP.xs)
     .when(runnable, (e) => e.cursor_pointer().on_click(() => L.toggle(key)).child(cardCheckbox(L.selected.has(key))))
-    .child(div().flex_none().text_size(TEXT.small).text_color(t.muted).child(`#${pr.number}`))
-    .child(div().min_w(0).flex_1().truncate().text_size(TEXT.small)
+    .child(text("body", `#${pr.number}`, t.muted).flex_none())
+    .child(type(div().min_w(0).flex_1().truncate(), "body")
       .text_color(runnable ? t.foreground : t.muted).child(pr.title ?? ""))
-    .child(div().flex_none().text_size(TEXT.caption).text_color(t.muted).font_family(mono())
-      .child(pr.branch ?? ""));
+    .child(type(div().flex_none(), "code").text_color(t.muted).child(pr.branch ?? ""));
   if (runnable) return row;
   return v_flex().gap(SP.xxs)
     .child(row)
-    .child(div().px(SP.sm).text_size(TEXT.caption).text_color(t.muted)
-      .child("no checkout of this repo on its machine"));
+    .child(text("body", "No checkout of this repo on its machine", t.muted).px(SP.sm));
 }
 
 function renderFormFilters(L, prs) {
@@ -118,14 +113,12 @@ function renderPrs(L, prs, t) {
   if (!prs.length) {
     return v_flex().gap(SP.sm)
       .child(sectionLabel("PRs"))
-      .child(div().text_size(TEXT.small).text_color(t.muted)
-        .child("No open PRs of yours match the filters"));
+      .child(text("body", "No open PRs of yours match the filters", t.muted));
   }
   if (!shown.length) {
     return v_flex().gap(SP.sm)
       .child(sectionLabel("PRs"))
-      .child(div().text_size(TEXT.small).text_color(t.muted)
-        .child("No PRs match these filters"));
+      .child(text("body", "No PRs match these filters", t.muted));
   }
   return v_flex().gap(SP.sm)
     .child(sectionLabel("PRs"))
@@ -136,21 +129,18 @@ function renderPrs(L, prs, t) {
         .child(h_flex().gap(SP.md).items_center()
           .when(keys.length > 0, (e) => e.cursor_pointer().on_click(() => L.toggleRepo(keys))
             .child(cardCheckbox(allOn)))
-          .child(div().text_size(TEXT.small).font_semibold().text_color(t.foreground)
-            .child(shortRepo(g.repo)))
-          .child(div().text_size(TEXT.small).text_color(t.muted).child(machineOf(g.on))))
+          .child(text("body", shortRepo(g.repo)))
+          .child(text("meta", machineOf(g.on), t.muted)))
         .children(g.prs.map((pr) => prRow(pr, L, t)));
     }));
 }
 
-function checkLine(id, on, label, extra, onToggle, { strong = false } = {}) {
+function checkLine(id, on, label, extra, onToggle) {
   const t = theme();
-  const name = div().text_size(TEXT.small).text_color(t.foreground).child(label);
   return h_flex().id(id).gap(SP.md).items_center().cursor_pointer().on_click(onToggle)
     .child(cardCheckbox(on))
-    .child(strong ? name.font_semibold() : name)
-    .when(Boolean(extra), (e) => e.child(
-      div().min_w(0).text_size(TEXT.small).text_color(t.muted).child(extra)));
+    .child(text("body", label))
+    .when(Boolean(extra), (e) => e.child(text("meta", extra, t.muted).min_w(0)));
 }
 
 function renderForm({ launcher: L, prs }) {
@@ -167,24 +157,22 @@ function renderForm({ launcher: L, prs }) {
     : null;
   const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
-    .child(sectionLabel("START A BATCH"))
+    .child(sectionLabel("Start a batch"))
     .when(Boolean(filters), (e) => e.child(filters))
     .child(renderPrs(L, all, t))
     .child(v_flex().gap(SP.sm)
       .child(sectionLabel("Steps"))
-      .children(STEP_NAMES.map((s) => checkLine(`step-${s}`, L.steps.has(s), s, STEP_HELP[s] ?? "", () => L.toggleStep(s), { strong: true }))))
+      .children(STEP_NAMES.map((s) => checkLine(`step-${s}`, L.steps.has(s), s, STEP_HELP[s] ?? "", () => L.toggleStep(s)))))
     .child(v_flex().gap(SP.sm)
       .child(sectionLabel("Options"))
       .children(["rebase", "ci", "comments"].map((s) => checkLine(
         `ai-${s}`, L.withAi.has(s), `Use AI for ${s}`, "", () => L.toggleAi(s))))
       .child(checkLine("auto-publish", L.autoPublish, "Push clean fast-forwards", "", () => L.toggleAutoPublish())))
     .child(v_flex().gap(SP.sm)
-      .when(Boolean(reason), (e) => e.child(div().text_size(TEXT.small).text_color(t.muted).child(reason)))
+      .when(Boolean(reason), (e) => e.child(text("body", reason, t.muted)))
       .when(hiddenSelected > 0, (e) => e.child(
-        div().text_size(TEXT.small).text_color(t.muted)
-          .child(`${hiddenSelected} selected PR(s) hidden by filters won't run`)))
-      .when(Boolean(L.note), (e) => e.child(
-        div().text_size(TEXT.small).text_color(t.ansi1).child(L.note)))
+        text("body", `${hiddenSelected} selected PR(s) hidden by filters won't run`, t.muted)))
+      .when(Boolean(L.note), (e) => e.child(text("body", L.note, t.ansi1)))
       .child(h_flex().gap(SP.md).items_center()
         .child(solidButton(
           "batch-start",
@@ -204,11 +192,11 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
     .child(paneBar()
       .child(h_flex().gap(SP.sm).items_center()
         .child(button("batch-back", "Back", onBack))
-        .child(div().text_size(TEXT.title).font_semibold().child("Batch"))))
+        .child(text("title", "Batch"))))
     .child(scrollBody().id("batch-body").px(SP.lg).py(SP.lg).gap(SP.xl)
       .when(Boolean(running), (e) => e.child(running))
       .child(renderForm({ launcher, prs }))
       .child(v_flex().gap(SP.sm)
-        .child(sectionLabel("RECENT RUNS"))
+        .child(sectionLabel("Recent runs"))
         .child(renderRunPanel(workflows.barState(), expanded))));
 }

@@ -75,7 +75,7 @@ _run_step() {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
   jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["files","changes","prs-panel"]]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["team-prs"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["prs"]' <<< "$output"
 }
 
 @test "jq wraps the tab bar in a row with the PRs toggle" {

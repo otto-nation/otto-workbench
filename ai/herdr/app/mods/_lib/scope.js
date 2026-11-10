@@ -1,5 +1,5 @@
 /**
- * Scope helpers for the team-prs board: which checkouts the board reads
+ * Scope helpers for the PRs board: which checkouts the board reads
  * ("this space" or every open space) and how their results merge. Pure
  * values; no imports.
  */

@@ -1,5 +1,5 @@
 /**
- * Action table for team-prs detail buttons.
+ * Action table for PRs board detail buttons.
  */
 
 import { prKey, terminalCommand } from './launch.js';

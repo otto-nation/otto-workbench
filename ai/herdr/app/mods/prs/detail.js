@@ -3,21 +3,22 @@ import { h_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
-import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, button, tag, inset, ciMark, addStat, delStat, card, placeholder, caption, paneBar, scrollBody, pane, mono } from "./_ui/ui.js";
+import { SP, LAYOUT } from "./_lib/tokens.js";
+import {
+  segment, segmented, button, inset, ciMark, addStat, delStat, card, placeholder, caption,
+  paneBar, scrollBody, pane, type, text, statusText,
+} from "./_ui/ui.js";
 
-function postTone(tone) {
-  const t = theme();
-  if (tone === "success") return t.ansi2;
-  if (tone === "warning") return t.ansi1;
-  if (tone === "info") return t.accent;
-  return t.dim;
+function postKind(tone) {
+  if (tone === "success") return "pass";
+  if (tone === "warning") return "warn";
+  return "none";
 }
 
 function reviewBody(stamp, body) {
-  if (body == null) return placeholder("loading…");
+  if (body == null) return placeholder("Loading…");
   if (body.ok === false) return placeholder(body.error?.message ?? "");
-  if (body.text == null) return placeholder("review file not found — it may have been pruned");
+  if (body.text == null) return placeholder("Review file not found — it may have been pruned");
   return TextView.markdown("review-" + stamp, body.text).selectable();
 }
 
@@ -32,8 +33,7 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
   if (confirm) {
     const c = confirm.confirm;
     return paneBar()
-      .child(div().text_size(TEXT.small).child(
-        `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`))
+      .child(text("body", `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`))
       .child(h_flex().gap(SP.sm).child(button("act-confirm", `Confirm: ${confirm.label}`, onConfirm))
         .child(button("act-cancel", "Cancel", onCancel)));
   }
@@ -68,9 +68,9 @@ export function renderOutput(output, { onHide, onTab }) {
       .child(h_flex().gap(SP.sm)
         .child(button("out-tab", "Open as tab", onTab))
         .child(button("out-hide", "Hide", onHide))))
-    .child(inset().flex().flex_col().text_size(TEXT.caption).font_family(mono())
-      .when(output.text == null, (e) => e.child(placeholder("loading…")))
-      .when(output.text != null && !lines.length, (e) => e.child(placeholder("no output yet")))
+    .child(type(inset().flex().flex_col(), "code")
+      .when(output.text == null, (e) => e.child(placeholder("Loading…")))
+      .when(output.text != null && !lines.length, (e) => e.child(placeholder("No output yet")))
       .children(lines.map((l) => div().child(l === "" ? " " : l))));
 }
 
@@ -87,28 +87,29 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
         .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled }))
         .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))))
     .when(!reviewState.enabled, (e) => e.child(caption(reviewState.reason)))
-    .child(div().min_w(0).text_size(TEXT.title).font_semibold().max_h(LAYOUT.titleMaxH)
-      .overflow_hidden().child(`#${d.number} ${d.title ?? ""}`))
+    .child(h_flex().gap(SP.sm).items_center().min_w(0)
+      .child(text("body", `#${d.number}`, t.muted).flex_none())
+      .child(type(div().min_w(0).max_h(LAYOUT.titleMaxH).overflow_hidden(), "title").child(d.title ?? "")))
     .child(h_flex().gap_x(SP.md).gap_y(SP.xs).flex_wrap().items_center()
-      .text_size(TEXT.caption).text_color(t.dim)
-      .child(div().child(d.author ?? "")).child(div().truncate().child(d.branch ?? ""))
-      .child(addStat(d.additions ?? 0))
-      .child(delStat(d.deletions ?? 0))
-      .child(div().child(`${d.files ?? 0} files`))
-      .when(d.generated > 0, (e) => e.child(div().child(`excl. ${d.generated} generated`)))
+      .child(text("body", d.author ?? "", t.muted))
+      .child(type(div().truncate(), "code").text_color(t.muted).child(d.branch ?? ""))
+      .child(type(addStat(d.additions ?? 0), "meta"))
+      .child(type(delStat(d.deletions ?? 0), "meta"))
+      .child(text("meta", `${d.files ?? 0} files`, t.muted))
+      .when(d.generated > 0, (e) => e.child(text("meta", `excl. ${d.generated} generated`, t.muted)))
       .child(ciMark(d.ci))
-      .child(div().child(d.decision ? String(d.decision).toLowerCase().replace(/_/g, " ") : "")));
+      .child(text("meta", d.decision ? String(d.decision).toLowerCase().replace(/_/g, " ") : "", t.muted)));
 }
 
 function runCard(r, { openStamp, bodyFor, onToggle }) {
   return card(`run-${r.stamp}`).gap(SP.xs)
     .on_click(() => onToggle(r.stamp))
     .child(h_flex().gap(SP.sm).items_center()
-      .child(div().text_size(TEXT.body).font_medium().child(r.verdict || "review"))
+      .child(text("body", r.verdict || "review"))
       .child(caption(r.when))
-      .child(caption(r.shortSha)))
-    .child(div().text_size(TEXT.small).child(r.findingsText))
-    .child(h_flex().gap(SP.sm).items_center().child(tag(r.post.label, postTone(r.post.tone)))
+      .child(type(div(), "code").child(r.shortSha)))
+    .child(text("body", r.findingsText))
+    .child(h_flex().gap(SP.sm).items_center().child(statusText(postKind(r.post.tone), r.post.label))
       .when(Boolean(r.costText), (e) => e.child(caption(r.costText))))
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }
@@ -126,7 +127,6 @@ export function renderDetail(d, {
     segs.push(segment("tab-batch", "Batch", tab === "batch", () => onTab("batch")));
   }
   return pane("prs-detail")
-    .text_size(TEXT.body)
     .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }))
     .child(actionBar)
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))

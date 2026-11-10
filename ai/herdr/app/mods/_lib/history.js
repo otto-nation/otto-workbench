@@ -1,5 +1,5 @@
 /**
- * Review-history view model for the team-prs detail window.
+ * Review-history view model for the PRs board detail window.
  * Pure values; no imports. Field names match listing.py (`ReviewRun`).
  */
 

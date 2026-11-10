@@ -27,9 +27,6 @@ import { attrArgvs, generatedPaths, mapFiles, markGenerated } from './diff.js';
 import { hostOf, remoteSlug } from './location.js';
 import { joinReviews, keepLanded, landedCandidates } from './reviews.js';
 
-// pr review --list reads every review on the machine; on a busy one it takes ~15 s, half the exec default.
-const LISTING_TIMEOUT_MS = 120000;
-
 function messageOf(err) {
   if (err == null) return '';
   if (typeof err === 'string') return err;
@@ -234,7 +231,7 @@ export async function loadListing(exec, ctx, prior = null) {
   const stamp = prior?.listing?.stamp;
   const ran = await invoke(exec, ctx, 'pr', [
     'review', '--list', '--schema-version', '1', ...(stamp ? ['--if-changed', stamp] : []),
-  ], { timeout: LISTING_TIMEOUT_MS });
+  ]);
   if (!ran.ok) return ran;
   const parsed = readJson(ran.stdout);
   if (!parsed.ok) return parsed;

@@ -1,6 +1,6 @@
 # The workbench layout: Herdr's shipped main with a PRs toggle beside the tab bar opening the board as a panel.
 # The board is a panel-body child the PRs toggle selects.
-def prs_panel: {id: "prs-panel", type: "block", content: {mod: "team-prs"}};
+def prs_panel: {id: "prs-panel", type: "block", content: {mod: "prs"}};
 # Herdr's tabs mod hard-codes Files/Changes, so the PRs toggle is a sibling block.
 # prs-button width: 2*px 8 + icon 14 + gap 5 + "PRs" label + pr(SP.sm); 72 leaves slack.
 def tabs_row:

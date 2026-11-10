@@ -1,5 +1,5 @@
 /**
- * Compact view selection for the team-prs board.
+ * Compact view selection for the PRs board.
  */
 import { BREAKPOINT } from "./tokens.js";
 

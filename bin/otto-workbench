@@ -294,6 +294,8 @@ cmd_sync() {
   done
   unset WORKBENCH_CURRENT_COMPONENT
 
+  maintenance_refresh_schedule
+
   # shellcheck source=/dev/null
   . "$WORKBENCH_DIR/lib/summary.sh"
 

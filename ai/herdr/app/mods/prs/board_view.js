@@ -1,4 +1,4 @@
-// PRs board. Scope key `prs.scope`: "this" reads the pinned or focused checkout, "all" reads every
+// PRs board. Scope key `prs.scope`: "this" reads the focused checkout, "all" reads every
 // open space's start folder. One fetch per repo (repoId), one listing per machine, one watch per reviews
 // root; spaces outside a repo are skipped in All spaces.
 import { View, div } from "gpui-kit";
@@ -21,17 +21,17 @@ import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, chip, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder } from "./_ui/ui.js";
+import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder } from "./_ui/ui.js";
 
 function ctxOf() {
-  return shared("prs.pin") ?? locate(spaces(), panes(), focused());
+  return locate(spaces(), panes(), focused());
 }
 
 function scopeOf() {
   return shared("prs.scope") === "all" ? "all" : "this";
 }
 
-// The checkouts the board reads: the pinned or focused one, or every open space's.
+// The checkouts the board reads: the focused one, or every open space's.
 function targetsOf() {
   if (scopeOf() === "all") {
     const all = spaceTargets(spaces(), panes());
@@ -460,14 +460,14 @@ export default class PrsBoard extends View {
   }
 
   boardView(cx, ctx, state, t) {
-    const filters = filtersOf(), tab = tabOf(), pin = shared("prs.pin");
+    const filters = filtersOf(), tab = tabOf();
     // Team view is about teammates: the viewer has the Mine tab.
     const me = String(state.me ?? "").toLowerCase();
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
     const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(this.header(ctx, state, tab, pin, t))
+      .child(this.header(ctx, state, tab, t))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
       .child(renderBoard({
         tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
@@ -477,14 +477,13 @@ export default class PrsBoard extends View {
       }));
   }
 
-  header(ctx, state, tab, pin, t) {
+  header(ctx, state, tab, t) {
     const loading = state.loading && !state.repos;
     const nFail = state.errors?.length ?? 0;
     const first = state.errors?.[0];
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "Loading…" : (state.slug ?? "No repo"));
     const note = all ? (loading ? "Loading…" : `${state.repos} repos`) : null;
-    const pinned = (e) => e.child(chip("pin", pin ? "Pinned" : "Pin", Boolean(pin), () => setShared("prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
@@ -503,7 +502,6 @@ export default class PrsBoard extends View {
         segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
       ]))
-      .when(!all, pinned)
       .child(this.refreshButton());
   }
 }

@@ -154,3 +154,14 @@ _throws() {
   [ "$output" = '[[1,2,3,4,5,6],[1,2,3,4,5,6],[1,3,4],[1,2,4],[1,4],[1,2,3,4,5,6],[2],[1,2,3,4,5,6],[5]]' ]
 }
 
+@test "columnPreset: only columns a step can move PRs out of, and only with PRs in them" {
+  _js '["has-conflicts","ci-failing","has-comments","changes-requested","draft","awaiting-review","approved","in-queue","merged"].map((key) => { const p = m.columnPreset({ key, items: [{}] }); return p ? p.steps.join("+") + (p.ai ? ":ai" : "") + (p.rebaseBehind ? ":behind" : "") : null; }).concat([m.columnPreset({ key: "has-conflicts", items: [] }), m.columnPreset(null)])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["rebase:ai","ci","comments:ai",null,"review",null,"rebase:behind",null,null,null,null]' ]
+}
+
+@test "presetForm selects exactly the column, turns on only its steps, and leaves other steps' AI alone" {
+  _js '[m.presetForm({ keys: ["o/r#1","o/r#2"], preset: m.COLUMN_BATCH["has-conflicts"], withAi: ["comments"], pending: (k) => k === "o/r#2" }), m.presetForm({ keys: ["o/r#3"], preset: m.COLUMN_BATCH["ci-failing"], withAi: ["ci","rebase"] }), m.presetForm({ keys: [], preset: m.COLUMN_BATCH.approved })]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"selected":["o/r#1"],"steps":["rebase"],"withAi":["comments","rebase"],"rebaseBehind":false},{"selected":["o/r#3"],"steps":["ci"],"withAi":["rebase"],"rebaseBehind":false},{"selected":[],"steps":["rebase"],"withAi":[],"rebaseBehind":true}]' ]
+}

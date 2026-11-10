@@ -44,6 +44,47 @@ export function filterForm(prs, { repos = [], labels = [], drafts = DEFAULT_FILT
   return filterLabels(filterRepos(list, repos), labels);
 }
 
+/**
+ * The batch a Mine column's shortcut sets up, by column key: the steps it turns on, whether
+ * AI is on for its step, and whether a rebase also takes PRs only behind. A column absent
+ * here gets no shortcut: it waits on someone else, and no step moves a PR out of it.
+ *
+ * Has Conflicts turns AI on because a plain rebase stops at every real conflict; Has
+ * Comments, because the comments step does not run without it. CI Failing leaves AI off:
+ * a plain CI step reruns infrastructure flakes, and fixing code is the larger step to opt into.
+ */
+export const COLUMN_BATCH = Object.freeze({
+  'has-conflicts': { steps: ['rebase'], ai: true },
+  'ci-failing': { steps: ['ci'], ai: false },
+  'has-comments': { steps: ['comments'], ai: true },
+  draft: { steps: ['review'], ai: false },
+  approved: { steps: ['rebase'], ai: false, rebaseBehind: true },
+});
+
+/** The shortcut a column `{key, items}` offers, or null: none for a column without a preset or PRs. */
+export function columnPreset(col) {
+  const preset = COLUMN_BATCH[col?.key];
+  return preset && (col.items ?? []).length > 0 ? preset : null;
+}
+
+/**
+ * The Start form after a shortcut: exactly `keys` selected (none still launching, per
+ * `pending`), only the preset's steps on, AI for those steps as the preset says and for
+ * every other step as `withAi` had it, and rebase-behind as the preset says.
+ */
+export function presetForm({ keys, preset, withAi = [], pending = () => false }) {
+  const ai = new Set(withAi);
+  for (const s of preset.steps) {
+    if (preset.ai) ai.add(s); else ai.delete(s);
+  }
+  return {
+    selected: keys.filter((k) => !pending(k)),
+    steps: [...preset.steps],
+    withAi: [...ai],
+    rebaseBehind: Boolean(preset.rebaseBehind),
+  };
+}
+
 /** Argv after `pr` for `batch run` of one checkout group. */
 export function runArgv({
   keys,

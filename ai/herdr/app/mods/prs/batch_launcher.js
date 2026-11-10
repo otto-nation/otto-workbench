@@ -1,6 +1,6 @@
 // Starts `pr batch run` from Mine: form state, per-repo hc terminals, cancel/kill.
 import { exec } from "herdr";
-import { groupByRepo, runArgv, filterForm, launchOutcome } from "./_lib/batch_launch.js";
+import { groupByRepo, runArgv, filterForm, launchOutcome, presetForm } from "./_lib/batch_launch.js";
 import { filterOn } from "./_lib/columns.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
@@ -75,6 +75,18 @@ export class BatchLauncher {
 
   toggleAutoPublish() {
     this.autoPublish = !this.autoPublish;
+    this.acx.notify();
+  }
+
+  // A Mine column's shortcut: select exactly `keys` and turn on only `preset`'s steps, with AI
+  // for those steps as the preset says and every other step's AI left as it was. Starts nothing.
+  applyPreset(keys, preset) {
+    const form = presetForm({ keys, preset, withAi: [...this.withAi], pending: (k) => this.isPending(k) });
+    this.selected = new Set(form.selected);
+    this.steps = new Set(form.steps);
+    this.withAi = new Set(form.withAi);
+    this.rebaseBehind = form.rebaseBehind;
+    this.note = null;
     this.acx.notify();
   }
 

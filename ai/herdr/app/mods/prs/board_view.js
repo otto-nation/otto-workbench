@@ -23,6 +23,7 @@ import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
+import { prKey } from "./_lib/launch.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder, errorLine } from "./_ui/ui.js";
 import { relativeTime } from "./_lib/history.js";
@@ -441,6 +442,13 @@ export default class PrsBoard extends View {
   // The selector (main.js) supplies the view; the plain board has none.
   detailView() { return null; }
 
+  // A Mine column's shortcut: the Batch page with that column's visible PRs and its step set up.
+  batchFor(items, preset) {
+    this.launcher.applyPreset(items.map((p) => prKey(p.repoSlug, p.number)), preset);
+    this.batchOpen = true;
+    this.acx.notify();
+  }
+
   // The label names the action only; that runs are going shows beside it, not inside it.
   batchControl() {
     const running = this.workflows.activeRuns().length > 0;
@@ -484,7 +492,7 @@ export default class PrsBoard extends View {
       .child(this.compactHeader(tab))
       .child(renderCompact({
         sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
-        width: this.size?.width,
+        width: this.size?.width, onBatch: mine ? (items, preset) => this.batchFor(items, preset) : null,
       }));
   }
 
@@ -510,6 +518,7 @@ export default class PrsBoard extends View {
       .child(renderBoard({
         tab, prs: this.listed(state), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
+        onBatch: (items, preset) => this.batchFor(items, preset),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));

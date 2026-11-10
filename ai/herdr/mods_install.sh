@@ -233,6 +233,38 @@ _herdr_mod_sync_dir() {
   return 0
 }
 
+# _herdr_mod_install_fresh SRC_MOD DEST NAME — installs a mod DEST does not yet
+# hold by building it in a hidden staging directory beside the mods directory
+# and renaming it into place. herdr docks a mod the first time it sees its
+# folder, reading mod.json for where; copied file by file, main.js lands before
+# mod.json and the mod is docked with the default placement. The rename makes
+# the folder appear whole. A failed copy leaves nothing under the mods directory.
+_herdr_mod_install_fresh() {
+  local src_mod="$1" dest="$2" name="$3" stage
+  stage=$(mktemp -d "$(dirname "$(dirname "$dest")")/.workbench-mod.XXXXXX") \
+    || { warn "Could not stage herdr-app mod $name"; return 0; }
+  _herdr_mod_sync_dir "$src_mod" "$stage" "$name"
+  if [[ ! -f "$stage/.workbench-install" ]] || ! _herdr_mod_stage_complete "$src_mod" "$stage"; then
+    rm -rf "$stage"
+    warn "herdr-app mod $name: could not stage every file — not installed"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dest")" && mv "$stage" "$dest" \
+    || { rm -rf "$stage"; warn "Could not install herdr-app mod $name into $dest"; }
+  return 0
+}
+
+# _herdr_mod_stage_complete SRC_MOD STAGE — true when every source path is in STAGE.
+_herdr_mod_stage_complete() {
+  local src_mod="$1" stage="$2" rel rels
+  rels=$(_herdr_mod_source_rels "$src_mod")
+  while IFS= read -r rel || [[ -n "$rel" ]]; do
+    [[ -n "$rel" ]] || continue
+    [[ -f "$stage/$rel" ]] || return 1
+  done <<< "$rels"
+  return 0
+}
+
 # _herdr_mod_install_one SRC_MOD DEST NAME — installs one mod directory.
 # A symlink DEST is left alone; a dir with no manifest is adopted or skipped.
 # Appends NAME to HERDR_APP_MODS_NEWLY_INSTALLED when this run writes the
@@ -246,8 +278,10 @@ _herdr_mod_install_one() {
   fi
   if [[ -d "$dest" && ! -f "$dest/.workbench-install" ]]; then
     _herdr_mod_adopt_or_skip "$src_mod" "$dest" "$name"
-  else
+  elif [[ -e "$dest" ]]; then
     _herdr_mod_sync_dir "$src_mod" "$dest" "$name"
+  else
+    _herdr_mod_install_fresh "$src_mod" "$dest" "$name"
   fi
   if [[ "$had_manifest" -eq 0 && -f "$dest/.workbench-install" ]]; then
     HERDR_APP_MODS_NEWLY_INSTALLED+=("$name")

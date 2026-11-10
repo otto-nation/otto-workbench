@@ -17,6 +17,13 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 - A lane's Batch button opens the Batch page with the lane's shown PRs selected and its step set, and starts nothing. `COLUMN_BATCH` in `_lib/batch_launch.js` owns which lanes have one (Has Conflicts and Has Comments with AI on, CI Failing, Draft, Approved with PRs only behind); a lane that waits on someone else has none
 - Team, Mine and the Batch page share one `prs.filters` (Repo, Label, Drafts, Author on Team only). Drafts is one setting for Team and one for Mine and Batch; add a filter in `_lib/columns.js` so the board and the form share its matcher
 
+## Full screen
+
+- Only the panel copy (mounted with `props.placement === "panel"`) offers it. The layout owns "is full screen": `main` hidden (`_lib/fullscreen.js` `fullscreenState` reads it from `layout()`; a shown node's `hidden` is absent, not `false`). Enter hides `main` and sets the panel to weight 1; exit shows `main` and restores the width saved in `shared("prs.panelPx")`. `_lib/fullscreen_run.js` owns that sequence; the board button and `prs-button` both call it
+- A render is not re-run by a layout click, but `layout()` read in a `cx.timer.every` callback is current, so anything derived from it is refreshed by a timer, not left to `render`
+- herdr's tabs mod shows or hides the panel per space, so a space switch (or the Files button) can leave `main` and the panel both hidden. `prs-button` heals that from a one-second timer (`healDue` is the rule) by exiting full screen, exits at startup so the app never opens with the terminals hidden, and its toggle exits before it hides the panel
+- No Esc to exit: a mod only gets keys when it is focusable
+
 ## Design
 
 Read the brand's `DESIGN.md` before changing a view (root `AGENTS.md` § UI and

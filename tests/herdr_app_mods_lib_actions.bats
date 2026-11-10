@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for herdr-app team-prs action table.
+# Tests for herdr-app PRs board action table.
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/_lib/*.js
 

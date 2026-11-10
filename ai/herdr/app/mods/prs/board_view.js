@@ -1,4 +1,4 @@
-// team-prs board. Scope key `team-prs.scope`: "this" reads the pinned or focused checkout, "all" reads every
+// PRs board. Scope key `prs.scope`: "this" reads the pinned or focused checkout, "all" reads every
 // open space's start folder. One fetch per repo (repoId), one listing per machine, one watch per reviews
 // root; spaces outside a repo are skipped in All spaces.
 import { View, div } from "gpui-kit";
@@ -24,11 +24,11 @@ import { SP, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, chip, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder } from "./_ui/ui.js";
 
 function ctxOf() {
-  return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
+  return shared("prs.pin") ?? locate(spaces(), panes(), focused());
 }
 
 function scopeOf() {
-  return shared("team-prs.scope") === "all" ? "all" : "this";
+  return shared("prs.scope") === "all" ? "all" : "this";
 }
 
 // The checkouts the board reads: the pinned or focused one, or every open space's.
@@ -46,7 +46,7 @@ function ctxKey(ctx) {
 }
 
 function filtersOf() {
-  const f = shared("team-prs.filters") ?? {};
+  const f = shared("prs.filters") ?? {};
   return {
     drafts: !!f.drafts,
     mineDrafts: f.mineDrafts !== false,
@@ -58,7 +58,7 @@ function filtersOf() {
 }
 
 function tabOf() {
-  return shared("team-prs.tab") === "mine" ? "mine" : "team";
+  return shared("prs.tab") === "mine" ? "mine" : "team";
 }
 
 function errorText(err, ctx) {
@@ -73,7 +73,7 @@ function mineOpen(state) {
 }
 
 
-export default class TeamPrs extends View {
+export default class PrsBoard extends View {
   // Handlers run after the render that built them; a redraw or task requested through that render's
   // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
@@ -133,7 +133,7 @@ export default class TeamPrs extends View {
   }
 
   refreshButton() {
-    return iconButton("refresh", "mods/team-prs/refresh.svg", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual, spinning: this.manual });
+    return iconButton("refresh", "mods/prs/refresh.svg", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual, spinning: this.manual });
   }
 
   activeTargets() {
@@ -312,7 +312,7 @@ export default class TeamPrs extends View {
     const f = filtersOf();
     if (name === "drafts" || name === "mineDrafts" || name === "landed" || name === "empty") {
       f[name] = !f[name];
-      setShared("team-prs.filters", f);
+      setShared("prs.filters", f);
       if (name === "landed" && f.landed) this.refresh(cx);
       return;
     }
@@ -321,7 +321,7 @@ export default class TeamPrs extends View {
       const set = new Set(f.repos.map((r) => String(r).toLowerCase()));
       if (set.has(slug)) set.delete(slug); else set.add(slug);
       f.repos = [...set];
-      setShared("team-prs.filters", f);
+      setShared("prs.filters", f);
       return;
     }
     if (!name.startsWith("author:")) return;
@@ -329,7 +329,7 @@ export default class TeamPrs extends View {
     const set = new Set(f.authors.map((a) => String(a).toLowerCase()));
     if (set.has(login)) set.delete(login); else set.add(login);
     f.authors = [...set];
-    setShared("team-prs.filters", f);
+    setShared("prs.filters", f);
   }
 
   render(cx) {
@@ -426,15 +426,15 @@ export default class TeamPrs extends View {
         .child(this.refreshButton()))
       .child(h_flex().items_center().justify_between()
         .child(segmented([
-          segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
-          segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
+          segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
+          segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
           .child(button("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
-            else run("tab.new", { name: "PRs", mod: "team-prs" });
+            else run("tab.new", { name: "PRs", mod: "prs" });
           }))));
   }
 
@@ -454,13 +454,13 @@ export default class TeamPrs extends View {
   scopeToggle() {
     const scope = scopeOf();
     return segmented([
-      segment("scope-this", "This space", scope === "this", () => setShared("team-prs.scope", "this")),
-      segment("scope-all", "All spaces", scope === "all", () => setShared("team-prs.scope", "all")),
+      segment("scope-this", "This space", scope === "this", () => setShared("prs.scope", "this")),
+      segment("scope-all", "All spaces", scope === "all", () => setShared("prs.scope", "all")),
     ]);
   }
 
   boardView(cx, ctx, state, t) {
-    const filters = filtersOf(), tab = tabOf(), pin = shared("team-prs.pin");
+    const filters = filtersOf(), tab = tabOf(), pin = shared("prs.pin");
     // Team view is about teammates: the viewer has the Mine tab.
     const me = String(state.me ?? "").toLowerCase();
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
@@ -484,7 +484,7 @@ export default class TeamPrs extends View {
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "Loading…" : (state.slug ?? "No repo"));
     const note = all ? (loading ? "Loading…" : `${state.repos} repos`) : null;
-    const pinned = (e) => e.child(chip("pin", pin ? "Pinned" : "Pin", Boolean(pin), () => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
+    const pinned = (e) => e.child(chip("pin", pin ? "Pinned" : "Pin", Boolean(pin), () => setShared("prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
@@ -500,8 +500,8 @@ export default class TeamPrs extends View {
       .when(tab === "mine", (e) => e.child(this.batchControl()))
       .child(this.scopeToggle())
       .child(segmented([
-        segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
-        segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
+        segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
+        segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
       ]))
       .when(!all, pinned)
       .child(this.refreshButton());

@@ -1,4 +1,4 @@
-// team-prs entry: the board, with a PR's detail shown in the same pane when a card is opened.
+// prs entry: the board, with a PR's detail shown in the same pane when a card is opened.
 import { div } from "gpui-kit";
 import { exec, readTextFile, run, notify, spaces } from "herdr";
 import Board from "./board_view.js";
@@ -13,7 +13,7 @@ import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/wo
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 
-export default class TeamPrs extends Board {
+export default class PrsBoard extends Board {
   init(p, cx) {
     this.detail = null;
     this.openStamp = null;

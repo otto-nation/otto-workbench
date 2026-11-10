@@ -339,7 +339,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   following the system appearance; its colors come from the pinned `@otto-nation/brand` release (`bin/local/dev-deps` fetches it). Every other setting is left alone. A theme file you
   edited in place is kept with a warning; delete it to get the link back. If the app
   rejects a change it says why in `~/.config/herdr-app/settings.error`.
-- Sync also installs the PR board mod (`ai/herdr/app/mods/team-prs`) into `~/.config/herdr-app/mods/` (and `~/.config/herdr-app-untrusted/mods/` once that exists, so both windows carry the same mods and layouts)
+- Sync also installs the PR board mod (`ai/herdr/app/mods/prs`) into `~/.config/herdr-app/mods/` (and `~/.config/herdr-app-untrusted/mods/` once that exists, so both windows carry the same mods and layouts)
   as a real copy with `_lib/` and `_ui/` inside, keeps edits, and a `workbench` layout (main + a PRs toggle beside Files/Changes that opens the board as a right panel; `herdr-app do layout.switch --name workbench`).
   The board refreshes every 3 minutes (remote review listings every 15 s), and the refresh icon at the right of its header, in the board and in the PRs panel, pulls everything now.
   The board has This/All spaces; Team and Mine share Drafts, Landed, Empty lanes, and Repo filters (Author is Team-only); lanes with no PRs are hidden unless Empty lanes is on; in All spaces a Repo group filters by repository; a click opens the PR in the same pane with its review history and actions:

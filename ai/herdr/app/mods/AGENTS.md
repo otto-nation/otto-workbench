@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`team-prs`, `_lib`, …).
+Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui`, …).
 
 ## Where things live
 
@@ -37,8 +37,8 @@ and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 
 ## Checking and installing
 
-- Check an assembled copy, not the source tree: `_herdr_app_install_mods "$tmp"` then `herdr-app check "$tmp/mods/team-prs"` (source `lib/ui.sh`, `lib/constants.sh` and `ai/herdr/steps.sh` first)
-- Install live with `rm -rf ~/.config/herdr-app/mods/team-prs` then `_herdr_app_install_mods ~/.config/herdr-app`. Never patch the live files; edit the source and reinstall
+- Check an assembled copy, not the source tree: `_herdr_app_install_mods "$tmp"` then `herdr-app check "$tmp/mods/prs"` (source `lib/ui.sh`, `lib/constants.sh` and `ai/herdr/steps.sh` first)
+- Install live with `rm -rf ~/.config/herdr-app/mods/prs` then `_herdr_app_install_mods ~/.config/herdr-app`. Never patch the live files; edit the source and reinstall
 - A reload briefly reports "no main.js"; `herdr-app status` settles to `"errors": []`
 
 ## Screenshots

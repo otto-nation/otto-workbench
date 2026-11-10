@@ -448,11 +448,13 @@ def test_the_synthesis_notes_step_states_the_caps():
         assert expected in (TEMPLATE_DIR / name).read_text()
 
 
-_APPROACH_SENTENCE = (
-    "Write no verdict: the harness derives it from the findings. If the approach "
-    "itself is wrong — the PR should not land in any form — file one must-fix "
-    "finding with `path` null that says what to do instead."
+_WRITE_NO_VERDICT = "Write no verdict: the harness derives it from the findings."
+_APPROACH_CLAUSE = (
+    "In a PR review, if the approach itself is wrong — the PR should not land "
+    "in any form — file one must-fix finding with `path` null that says what "
+    "to do instead."
 )
+_APPROACH_SENTENCE = f"{_WRITE_NO_VERDICT} {_APPROACH_CLAUSE}"
 
 
 @pytest.mark.parametrize(
@@ -468,6 +470,22 @@ def test_the_approach_instruction_is_identical_across_copies(path):
     assert _APPROACH_SENTENCE in path.read_text()
     for name in ("self-review.md", "self-review-synthesis.md"):
         assert _APPROACH_SENTENCE not in (TEMPLATE_DIR / name).read_text()
+
+
+def test_reviewer_scopes_the_approach_clause_to_pr_reviews():
+    text = (AGENTS_DIR / "reviewer.md").read_text()
+    assert _WRITE_NO_VERDICT in text
+    assert "In a PR review, if the approach" in text
+    for name in ("self-review.md", "self-review-synthesis.md"):
+        body = (TEMPLATE_DIR / name).read_text()
+        assert _APPROACH_SENTENCE not in body
+        assert "In a PR review, if the approach" not in body
+
+
+def test_holistic_does_not_promise_a_must_fix_in_self_mode():
+    text = (TEMPLATE_DIR / "holistic.md").read_text()
+    assert "the synthesis step files it as a must-fix" not in text
+    assert "In a PR review, the synthesis step may file it as a must-fix" in text
 
 
 @pytest.mark.parametrize(

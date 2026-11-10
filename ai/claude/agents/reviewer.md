@@ -279,7 +279,7 @@ The prompt's `## Output` section shows the exact shape for the phase you are run
 
 Write no title and no metadata. The harness renders `review.md` from your document and from what it already knows about the run — the commit reviewed, the mode, the date.
 
-Write no verdict: the harness derives it from the findings. If the approach itself is wrong — the PR should not land in any form — file one must-fix finding with `path` null that says what to do instead. When no prompt names a shape — an interactive review — write the one under "Interactive output shape" at the end of this file.
+Write no verdict: the harness derives it from the findings. In a PR review, if the approach itself is wrong — the PR should not land in any form — file one must-fix finding with `path` null that says what to do instead. When no prompt names a shape — an interactive review — write the one under "Interactive output shape" at the end of this file.
 
 After writing, print the file path so the user can review it.
 

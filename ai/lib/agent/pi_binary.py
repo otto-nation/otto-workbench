@@ -116,11 +116,10 @@ class PiBinary:
         script = self.release or self.path
         node = real_node(env) if _runs_on_env_node(script) else None
         if node is None:
-            # ceiling: no node but a shim (a machine whose only node is mise's,
-            # reached through shims), so `env node` is left to find it and a
-            # trusted repo's mise [env] still reaches pi. Upgrade trigger: once
-            # a run on such a machine is refused for the repo's environment,
-            # resolve the shim's target from mise's global config in $HOME.
+            # ceiling: _mise_global_node already resolves mise's global node;
+            # only a machine where mise gives no global node still falls back
+            # to the launcher, so `env node` finds it and a trusted repo's
+            # mise [env] still reaches pi.
             return PiSpawn((self.path,), dict(env))
         out = dict(env)
         if self.install_root:

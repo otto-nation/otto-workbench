@@ -53,15 +53,6 @@ export function solidButton(id, label, onClick, { disabled = false } = {}) {
     .child(label);
 }
 
-// button-ghost: no border or fill until hover.
-export function ghostButton(id, label, onClick, { disabled = false } = {}) {
-  const t = theme();
-  return type(control(id, { disabled, onClick }), "label").px(CONTROL.px)
-    .text_color(disabled ? t.muted : t.foreground)
-    .when(!disabled, (e) => e.hover((s) => s.bg(t.hover)))
-    .child(label);
-}
-
 // A square ghost button holding an svg (tinted with the text colour). `label` is its tooltip and
 // accessible name; `spinning` turns the icon while work runs.
 export function iconButton(id, icon, label, onClick, { disabled = false, spinning = false } = {}) {
@@ -90,10 +81,6 @@ const STATUS = {
   warn: { glyph: "!", color: (t) => t.ansi3 },
   none: { glyph: "·", color: (t) => t.muted },
 };
-
-export function statusColor(kind) {
-  return (STATUS[kind] ?? STATUS.none).color(theme());
-}
 
 // Status is coloured text plus a glyph, never a pill. Without `label` the glyph stands alone and
 // `aria` names it.

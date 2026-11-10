@@ -16,5 +16,5 @@ migration_20261109_herdr_drop_team_prs_mod() {
     removed=1
   done
   (( removed )) || return "$MIGRATION_NOOP"
-  success "herdr-app: removed the old team-prs mod (now prs); reopen any PRs tab"
+  success "herdr-app: removed the old team-prs mod (now prs); reopen any PRs tab and update any keys.json binding naming \"mod\": \"team-prs\""
 }

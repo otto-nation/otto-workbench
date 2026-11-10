@@ -12,7 +12,6 @@ import {
 function postKind(tone) {
   if (tone === "success") return "pass";
   if (tone === "warning") return "warn";
-  if (tone === "info") return "none";
   return "none";
 }
 

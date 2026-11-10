@@ -565,7 +565,7 @@ Sourced by `bin/otto-workbench`; `lib/discover.sh` reads its globals
 
 | Function | Purpose |
 |----------|---------|
-| `maintenance_refresh_schedule` | re-installs an installed maintenance schedule whose files no longer match what the templates render, keeping its interval. A repo that moved leaves the schedule naming a path that no longer exists, and a template change otherwise reaches a machine only through `maintenance start`. Called by sync. A machine with no schedule installed is left without one. Skipped when sync runs inside the launchd job itself: reloading the job would end the run in progress, and a job that is running found its program. Non-fatal: always returns 0. |
+| `maintenance_refresh_schedule` | re-installs an installed maintenance schedule whose files no longer match what the templates render, keeping its interval. A repo that moved leaves the schedule naming a path that no longer exists, and a template change otherwise reaches a machine only through `maintenance start`. Called by sync. A machine with no schedule installed is left without one, and a plist launchd has not loaded is corrected but not started. Skipped when sync runs inside the launchd job itself: reloading the job would end the run in progress, and a job that is running found its program. Non-fatal: always returns 0. |
 
 ### migrations.sh
 

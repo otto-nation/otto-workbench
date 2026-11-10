@@ -19,9 +19,12 @@ setup() {
   SERVICE="$HOME/.config/systemd/user/otto-workbench-maintenance.service"
   CALLS="$TMPDIR/calls"
   STABLE="$TMPDIR/stable-checkout"
+  # Each stub records its call. `launchctl list` answers whether the job is
+  # loaded: loaded unless LAUNCHCTL_UNLOADED is set.
   local tool
   for tool in launchctl systemctl; do
-    printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\n' "$tool" "$CALLS" > "$TMPDIR/bin/$tool"
+    printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\n[[ "$1" == list && -n "${LAUNCHCTL_UNLOADED:-}" ]] && exit 1\nexit 0\n' \
+      "$tool" "$CALLS" > "$TMPDIR/bin/$tool"
     chmod +x "$TMPDIR/bin/$tool"
   done
 }
@@ -77,6 +80,16 @@ _plist() {
   [ "$status" -eq 0 ]
   [ ! -e "$PLIST" ]
   [ ! -e "$CALLS" ]
+}
+
+# A plist launchd has not loaded is a schedule the operator is not running.
+@test "a stale plist launchd has not loaded is corrected but not started" {
+  _plist "/Users/someone/old/place" 43200
+  _refresh darwin22 LAUNCHCTL_UNLOADED=1
+  [ "$status" -eq 0 ]
+  grep -q "<string>$STABLE/maintenance/bin/otto-workbench-maintenance</string>" "$PLIST"
+  ! grep -q "launchctl load" "$CALLS"
+  [[ "$output" == *"(not loaded)"* ]]
 }
 
 # Reloading the job from inside it would end the maintenance run in progress.

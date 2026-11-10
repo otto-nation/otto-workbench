@@ -161,17 +161,24 @@ _systemd_schedule_current() {
 # A repo that moved leaves the schedule naming a path that no longer exists, and
 # a template change otherwise reaches a machine only through `maintenance
 # start`. Called by sync. A machine with no schedule installed is left without
-# one. Skipped when sync runs inside the launchd job itself: reloading the job
-# would end the run in progress, and a job that is running found its program.
+# one, and a plist launchd has not loaded is corrected but not started. Skipped
+# when sync runs inside the launchd job itself: reloading the job would end the
+# run in progress, and a job that is running found its program.
 # Non-fatal: always returns 0.
 maintenance_refresh_schedule() {
   local interval
   if [[ "$OSTYPE" == "darwin"* ]]; then
     [[ -f "$_MAINTENANCE_PLIST" ]] || return 0
-    _launchd_is_loaded || return 0
     [[ "${XPC_SERVICE_NAME:-}" == "$_MAINTENANCE_LABEL" ]] && return 0
     interval=$(_launchd_installed_interval)
     _launchd_render "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" | cmp -s - "$_MAINTENANCE_PLIST" && return 0
+    # A plist on disk that launchd has not loaded is a schedule the operator is
+    # not running: correct the file, but do not start it.
+    if ! _launchd_is_loaded; then
+      _launchd_install "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}"
+      success "Maintenance schedule file re-rendered for $(_maintenance_run_dir) (not loaded)"
+      return 0
+    fi
     _launchd_start "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" \
       || { warn "Could not reload the maintenance schedule — run: otto-workbench maintenance start"; return 0; }
   else

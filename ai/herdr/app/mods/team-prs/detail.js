@@ -115,20 +115,25 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
 
 export function renderDetail(d, {
   onClose, onOpenUrl, onReview, reviewState, nowMs, openStamp, bodyFor, onToggle, actionBar, outputPanel,
-  tab, onTab, filesBody,
+  tab, onTab, filesBody, batchBody,
 }) {
   const rows = historyRows(d.runs ?? [], nowMs);
+  const segs = [
+    segment("tab-history", "Review history", tab === "history", () => onTab("history")),
+    segment("tab-files", "Files", tab === "files", () => onTab("files")),
+  ];
+  if (batchBody != null) {
+    segs.push(segment("tab-batch", "Batch", tab === "batch", () => onTab("batch")));
+  }
   return pane("prs-detail")
     .text_size(TEXT.body)
     .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }))
     .child(actionBar)
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))
-    .child(h_flex().flex_none().px(SP.lg).pt(SP.md).child(segmented([
-      segment("tab-history", "Review history", tab === "history", () => onTab("history")),
-      segment("tab-files", "Files", tab === "files", () => onTab("files")),
-    ])))
+    .child(h_flex().flex_none().px(SP.lg).pt(SP.md).child(segmented(segs)))
     .when(tab === "files", (e) => e.child(filesBody))
-    .when(tab !== "files", (e) => e.child(scrollBody().px(SP.lg).pb(SP.lg)
+    .when(tab === "batch", (e) => e.child(batchBody))
+    .when(tab !== "files" && tab !== "batch", (e) => e.child(scrollBody().px(SP.lg).pb(SP.lg)
       .pt(SP.sm).gap(SP.sm)
       .when(!rows.length, (x) => x.child(placeholder("No reviews yet")))
       .children(rows.map((r) => runCard(r, { openStamp, bodyFor, onToggle })))));

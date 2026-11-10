@@ -6,6 +6,7 @@ import { classifyCode, readJson, toolCall } from './board_data.js';
 
 export const LABEL_PR = 'otto.pr';
 export const LABEL_ACTION = 'otto.action';
+export const LABEL_REPO = 'otto.repo';
 // Constant on every terminal the PR surfaces start: the one label `hc ls --label` can select on.
 export const LABEL_APP = 'otto.app';
 export const APP_NAME = 'pr';
@@ -37,25 +38,44 @@ export function machineOf(id) {
   return id.slice(0, slash);
 }
 
-export function hcRunArgv({ repo, number, action, cwd, on, argv }) {
+function hcLaunchArgv({ cwd, on, argv, labels }) {
   const args = ['run', '--bg', '--json', '--cwd', cwd];
   // A terminal started on another machine has no login PATH either, so `pr` would be coreutils'.
   const run = toolCall({ on }, argv[0], argv.slice(1));
   if (on) {
     args.push('--on', on);
   }
-  args.push(
-    '--label',
-    `${LABEL_PR}=${prKey(repo, number)}`,
-    '--label',
-    `${LABEL_ACTION}=${action}`,
-    '--label',
-    `${LABEL_APP}=${APP_NAME}`,
-    '--',
-    run.cmd,
-    ...run.args,
-  );
+  for (const label of labels) {
+    args.push('--label', label);
+  }
+  args.push('--', run.cmd, ...run.args);
   return args;
+}
+
+export function hcRunArgv({ repo, number, action, cwd, on, argv }) {
+  return hcLaunchArgv({
+    cwd,
+    on,
+    argv,
+    labels: [
+      `${LABEL_PR}=${prKey(repo, number)}`,
+      `${LABEL_ACTION}=${action}`,
+      `${LABEL_APP}=${APP_NAME}`,
+    ],
+  });
+}
+
+export function hcBatchArgv({ repo, cwd, on, argv }) {
+  return hcLaunchArgv({
+    cwd,
+    on,
+    argv,
+    labels: [
+      `${LABEL_REPO}=${repo}`,
+      `${LABEL_ACTION}=batch`,
+      `${LABEL_APP}=${APP_NAME}`,
+    ],
+  });
 }
 
 export function terminalCommand(name, id) {

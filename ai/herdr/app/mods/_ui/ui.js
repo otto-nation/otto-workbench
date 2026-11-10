@@ -1,19 +1,33 @@
-// Small shared pieces for team-prs (button, pill, inset, segmented control, filter group, eyebrow). Tokens live in _lib/tokens.js;
-// colours come from the active theme, never from here.
+// Small shared pieces for team-prs (button-outline, button-solid, pill, inset, segmented control, filter group, eyebrow).
+// Tokens live in _lib/tokens.js; colours come from the active theme, never from here.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, settings } from "herdr";
 import { SP, TEXT, RADIUS, CONTROL_H, LAYOUT } from "../_lib/tokens.js";
 
-// Buttons stop the press so only the bare header drags the window.
-// A disabled button keeps the shape but is dim and does nothing.
+// button is outline (hairline, ink text on canvas); solidButton is the one primary action (ink fill, canvas text).
+// Both stop the press so only the bare header drags the window.
+// A disabled button keeps the shape, uses muted text, and does nothing.
 export function button(id, label, onClick, { disabled = false } = {}) {
   const t = theme();
-  return div().id(id).px(SP.sm).min_h(CONTROL_H.board).flex().items_center()
-    .rounded(RADIUS.control).text_size(TEXT.caption)
+  return div().id(id).px(SP.lg).min_h(CONTROL_H.board).flex().items_center()
+    .rounded(RADIUS.control).text_size(TEXT.small).font_semibold()
+    .text_color(disabled ? t.muted : t.foreground)
     .border_1().border_color(t.border)
-    .when(disabled, (e) => e.text_color(t.dim))
     .when(!disabled, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover).border_color(t.dim))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click(() => onClick()))
+    .child(label);
+}
+
+export function solidButton(id, label, onClick, { disabled = false } = {}) {
+  const t = theme();
+  return div().id(id).px(SP.lg).min_h(CONTROL_H.board).flex().items_center()
+    .rounded(RADIUS.control).text_size(TEXT.small).font_semibold()
+    .border_1()
+    .when(disabled, (e) => e.bg(t.border).text_color(t.muted).border_color(t.border))
+    .when(!disabled, (e) => e.bg(t.foreground).text_color(t.background).border_color(t.foreground)
+      .cursor_pointer().hover((s) => s.bg(t.muted))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(() => onClick()))
     .child(label);
@@ -51,13 +65,6 @@ export function placeholder(text) {
 // A small label; dim unless a colour is given.
 export function caption(text, color) {
   return div().text_size(TEXT.caption).text_color(color ?? theme().dim).child(text);
-}
-// A quiet text action: the compact panel's Refresh and Open board.
-export function link(id, label, onClick, { disabled = false } = {}) {
-  const t = theme();
-  return div().id(id).text_size(TEXT.caption).text_color(disabled ? t.dim : t.muted)
-    .when(!disabled, (e) => e.cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click(() => onClick()))
-    .child(label);
 }
 // The centered, padded pane for an empty or error state.
 export function emptyPane() {

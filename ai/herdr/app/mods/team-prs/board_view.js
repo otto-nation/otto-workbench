@@ -17,8 +17,11 @@ import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRe
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact } from "./compact.js";
+import { Workflows } from "./workflows.js";
+import { BatchLauncher } from "./batch_launcher.js";
+import { renderBatchPage } from "./batch_page.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, pill, chip, emptyPane, pane, link, button } from "./_ui/ui.js";
+import { segment, segmented, pill, chip, emptyPane, pane, button } from "./_ui/ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -44,7 +47,14 @@ function ctxKey(ctx) {
 
 function filtersOf() {
   const f = shared("team-prs.filters") ?? {};
-  return { drafts: !!f.drafts, landed: !!f.landed, empty: !!f.empty, authors: [...(f.authors ?? [])], repos: [...(f.repos ?? [])] };
+  return {
+    drafts: !!f.drafts,
+    mineDrafts: f.mineDrafts !== false,
+    landed: !!f.landed,
+    empty: !!f.empty,
+    authors: [...(f.authors ?? [])],
+    repos: [...(f.repos ?? [])],
+  };
 }
 
 function tabOf() {
@@ -55,12 +65,22 @@ function errorText(err, ctx) {
   return friendlyError(err, ctx?.on, scopeOf());
 }
 
+function mineOpen(state) {
+  const filters = filtersOf();
+  return filterRepos(state.prs ?? [], filters.repos, state.repoSlugs)
+    .filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED")
+    .filter((p) => filters.mineDrafts !== false || !p.isDraft);
+}
+
 
 export default class TeamPrs extends View {
   // Handlers run after the render that built them; a redraw or task requested through that render's
   // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
     this.acx = cx;
+    this.workflows = new Workflows(cx, () => this.activeTargets());
+    this.launcher = new BatchLauncher(cx, this.workflows);
+    this.batchOpen = false;
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.loginByOn = new Map();
@@ -290,7 +310,7 @@ export default class TeamPrs extends View {
 
   toggleChip(name, cx) {
     const f = filtersOf();
-    if (name === "drafts" || name === "landed" || name === "empty") {
+    if (name === "drafts" || name === "mineDrafts" || name === "landed" || name === "empty") {
       f[name] = !f[name];
       setShared("team-prs.filters", f);
       if (name === "landed" && f.landed) this.refresh(cx);
@@ -313,6 +333,7 @@ export default class TeamPrs extends View {
   }
 
   render(cx) {
+    this.workflows.show();
     const t = theme();
     const targets = this.activeTargets();
     const scopeKey = scopeOf() + JSON.stringify(targets.map(ctxKey));
@@ -332,6 +353,17 @@ export default class TeamPrs extends View {
     if (open) return open;
     const mode = viewOf(this.size?.width);
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
+    if (this.batchOpen && tabOf() === "mine") {
+      return note(renderBatchPage({
+        launcher: this.launcher,
+        workflows: this.workflows,
+        prs: mineOpen(view),
+        allPrs: view.prs,
+        onOpenPr: (pr) => this.openDetail(pr, cx, "batch"),
+        onBack: () => { this.batchOpen = false; this.acx.notify(); },
+        run,
+      }));
+    }
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(emptyPane())
         .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
@@ -348,15 +380,21 @@ export default class TeamPrs extends View {
   }
 
   listed(state) {
-    const base = filterRepos(state.prs ?? [], filtersOf().repos, state.repoSlugs);
+    const filters = filtersOf();
+    const base = filterRepos(state.prs ?? [], filters.repos, state.repoSlugs);
     const me = state.me ?? "";
-    return tabOf() === "mine" ? base.filter((p) => isMine(p, me)) : filterPrs(base, filtersOf(), me);
+    if (tabOf() === "mine") {
+      return base.filter((p) => isMine(p, me) && (filters.mineDrafts !== false || !p.isDraft));
+    }
+    return filterPrs(base, filters, me);
   }
 
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
   // live state on every render, so its runs and busy state follow refreshes; the clicked copy only
   // stands in if the PR drops out of the list.
-  openDetail(pr, cx) {
+  // `tab` names the detail tab to open on (main.js reads pendingTab); omitted, the detail chooses.
+  openDetail(pr, cx, tab = null) {
+    this.pendingTab = tab;
     this.selectedId = cardId(pr);
     this.selectedPr = pr;
     this.acx.notify();
@@ -370,9 +408,17 @@ export default class TeamPrs extends View {
   // The selector (main.js) supplies the view; the plain board has none.
   detailView() { return null; }
 
+  // The label names the action only; that runs are going shows beside it, not inside it.
+  batchControl() {
+    const running = this.workflows.activeRuns().length > 0;
+    return h_flex().gap(SP.sm).items_center()
+      .child(button("batch", "Batch", () => { this.batchOpen = true; this.acx.notify(); }))
+      .when(running, (e) => e.child(div().text_size(TEXT.small).text_color(theme().working).child("running")));
+  }
+
   onSize(size, cx) { this.size = size; cx.notify(); }
 
-  compactHeader(tab, t) {
+  compactHeader(tab) {
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
       .child(h_flex().child(this.scopeToggle()))
       .child(h_flex().items_center().justify_between()
@@ -381,8 +427,10 @@ export default class TeamPrs extends View {
           segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
         ]))
         .child(h_flex().gap(SP.md).items_center()
-          .child(link("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
-          .child(link("open-board", "Open board", () => {
+          .child(button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
+          .when(tab === "mine", (e) => e.child(
+            this.batchControl()))
+          .child(button("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
             else run("tab.new", { name: "PRs", mod: "team-prs" });
@@ -390,13 +438,13 @@ export default class TeamPrs extends View {
   }
 
   compactView(state, t, cx) {
-    const mine = tabOf() === "mine";
+    const tab = tabOf(), mine = tab === "mine";
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
     return pane("prs")
       .text_size(TEXT.small)
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(this.compactHeader(tabOf(), t))
+      .child(this.compactHeader(tab))
       .child(renderCompact({
         sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
         width: this.size?.width,
@@ -426,6 +474,7 @@ export default class TeamPrs extends View {
         tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
+        workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));
   }
 
@@ -441,14 +490,16 @@ export default class TeamPrs extends View {
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
-        .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.dim).child(note)))
+        .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.muted).child(note)))
         .when(!all && ctx?.on != null, (e) => e.child(pill(String(ctx.on), t.muted)))
         .when(nFail && !all, (e) => e
           .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
-          .child(div().min_w(0).text_size(TEXT.caption).text_color(t.dim).truncate().child(errorText(first.error, ctx))))
+          .child(div().min_w(0).text_size(TEXT.caption).text_color(t.muted).truncate().child(errorText(first.error, ctx))))
         .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
           .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
       .child(this.refreshButton())
+      .when(tab === "mine", (e) => e.child(
+        this.batchControl()))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),

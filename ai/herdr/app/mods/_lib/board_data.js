@@ -87,7 +87,7 @@ export function toolCall(ctx, cmd, args) {
   return { cmd: 'sh', args: ['-c', 'PATH="$HOME/.local/bin:$PATH"; exec "$@"', 'sh', cmd, ...args] };
 }
 
-async function invoke(exec, ctx, cmd, args, opts = {}) {
+export async function invoke(exec, ctx, cmd, args, opts = {}) {
   try {
     const call = toolCall(ctx, cmd, args);
     const result = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...opts });

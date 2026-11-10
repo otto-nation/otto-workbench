@@ -1,0 +1,6 @@
+{
+  "name": "pr-board",
+  "private": true,
+  "type": "module",
+  "description": "PR board web view; see ai/herdr/web/AGENTS.md"
+}

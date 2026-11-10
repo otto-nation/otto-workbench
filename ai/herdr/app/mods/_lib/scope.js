@@ -10,10 +10,11 @@ export function skippable(err) {
   return err?.kind === 'failed' && SKIPPABLE_RE.test(err.message ?? '');
 }
 
-// Operator-facing text for a failed target; raw git/gh stderr never reaches the board.
-export function friendlyError(err, on, scope = 'this') {
+// Operator-facing text for a failed target; raw git/gh stderr never reaches the board. `here` names
+// the machine the board itself runs on (the desktop app is on a Mac; the web board is a server).
+export function friendlyError(err, on, scope = 'this', here = 'this Mac') {
   if (!err) return '';
-  const where = on != null ? String(on) : 'this Mac';
+  const where = on != null ? String(on) : here;
   if (err.kind === 'auth') return `run gh auth login on ${where}`;
   const what = err.command || 'a command';
   if (err.kind === 'timeout') return `${what} took too long on ${where}`;

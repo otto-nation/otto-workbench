@@ -182,3 +182,9 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = "[1000,null]" ]
 }
+
+@test "friendlyError: a fourth argument names the local machine; three arguments still say this Mac" {
+  _js '({a:friendlyError({kind:"auth"},null,"all","homelab · maximum"),b:friendlyError({kind:"missing-tool",tools:["gh"]},null,"all","box"),c:friendlyError({kind:"auth"},"m","all","box"),d:friendlyError({kind:"auth"},null,"all")})'
+  [ "$status" -eq 0 ]
+  jq -e '.a=="run gh auth login on homelab · maximum" and .b=="install gh on box" and .c=="run gh auth login on m" and .d=="run gh auth login on this Mac"' <<<"$output"
+}

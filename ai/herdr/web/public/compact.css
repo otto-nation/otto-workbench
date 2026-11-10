@@ -1,0 +1,22 @@
+/* Layout from workspace specs/pr-board-web/mockup.html; look from the brand's DESIGN.md. Colours: /gen/theme.css. Sizes and type: /gen/tokens.css. */
+header { padding: var(--sp-sm) var(--sp-md); gap: var(--sp-sm); }
+.brand small, .desk { display: none; }
+.filters { display: none; padding: var(--sp-sm) var(--sp-md); }
+.filters.open { display: flex; }
+.mfilters { display: inline-flex; }
+.mfstate { display: inline; font: var(--font-meta); color: var(--muted); }
+.board { display: none; }
+.msections { display: flex; flex-direction: column; flex: 1; overflow-y: auto; padding: 0 var(--sp-md) var(--sp-lg); gap: var(--sp-xs); }
+.msec > button { width: 100%; border: 0; background: none; text-align: left; padding: var(--sp-md) var(--sp-xxs) var(--sp-xs); font: var(--font-section); color: var(--muted); display: flex; gap: var(--sp-sm); }
+.detail { position: fixed; inset: 0; z-index: 10; }
+.mback { display: inline-flex; flex: 1 1 100%; }
+.dhead h2 { flex: 1 1 100%; }
+.dhead .desk-btns { display: none; }
+.actions { display: none; }
+/* ceiling: phone touch target the brand has no token for; upgrade trigger: once DESIGN.md defines a touch control height, use it. */
+.mbar { display: flex; gap: var(--sp-sm); padding: var(--sp-sm) var(--sp-md) calc(var(--sp-sm) + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--canvas); }
+.mbar .btn { flex: 1; height: 40px; justify-content: center; }
+.mbar .more { flex: 0 0 56px; }
+.sheet .btn { height: 40px; }
+body:has(.detail.open) .toast { bottom: calc(56px + env(safe-area-inset-bottom) + var(--sp-md)); }
+.output, .tabs, .scroll { margin-left: var(--sp-md); margin-right: var(--sp-md); padding-left: 0; padding-right: 0; }

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PRs · {{name}} · sign in</title>
+<link rel="stylesheet" href="/login.css">
+</head>
+<body>
+<form class="login" method="post" action="/login">
+  <h1>PRs · {{name}}</h1>
+  <label for="token">Access token</label>
+  <input id="token" name="token" type="password" autocomplete="current-password" autofocus required>
+  <p class="error">{{message}}</p>
+  <button type="submit">Sign in</button>
+</form>
+</body>
+</html>

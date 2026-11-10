@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 722 -->
+<!-- doc-budget: 847 -->
 
 # AI Automation
 
@@ -81,6 +81,13 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
   A Files tab lists the PR's changed files (from `gh api …/pulls/N/files`) and shows a file's diff inline (first 1,500 lines); files marked `linguist-generated` in `.gitattributes` sort last and are left out of the header's file and line counts; Open for Review checks the PR out with `wt switch pr:N` and selects, or opens, a space on that worktree (this machine only).
   Mine's Batch button (with "running" beside it while runs are active) opens a Batch page: running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, under the shared filters, plus steps and AI and push options; it starts one `pr batch run` per repo), and recent runs to look back; cards show their batch state and a PR's detail has a Batch tab. The lanes and each lane's Batch shortcut are described in `ai/herdr/app/mods/AGENTS.md`.
+- **PR board on the web** (`ai/herdr/web/`): the same board in a browser or on a phone, for the repos the
+  agent's herdr-core terminals sit in. A Bun server (`bun ai/herdr/web/server/main.js`) reuses
+  `ai/herdr/app/mods/_lib/` for every fetch and decision, binds `127.0.0.1`, and requires its access
+  token (`PR_BOARD_TOKEN`) on every request but `GET /healthz`, `GET /login`, `GET /login.css` and
+  `POST /login`; sign in once at `/login` and the browser keeps a host-only session cookie. `ai/herdr/web/bin/pr-board-release --out DIR --ref REF` assembles a
+  self-contained, offline-startable release tree (no dependencies). Environment, routes, health, auth
+  behaviour, tools and memory: [PR board deploy contract](#pr-board-deploy-contract).
 - `herdr-app` with no arguments opens the main window through `open -n` and returns, so the
   window is not tied to the terminal and its log stays out of it; a window that already
   answers `herdr-app status` is left alone. With arguments it runs Herdr's own CLI
@@ -91,6 +98,124 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   (`HC_SESSION=untrusted`, `~/.config/herdr-app-untrusted`). It refuses a local
   terminal or `afar` grant. Sync copies appearance keys and `clipboard_write` from the main window, links keys/themes, seeds `shared.json` once. Edit
   appearance in the main window; machines are owned by homelab (`docs/herdr-agents.md`).
+
+### PR board deploy contract
+
+**8.1 Build**
+
+From a checkout (or `git archive` export) of the pinned workbench ref, no network:
+
+```bash
+ai/herdr/web/bin/pr-board-release --out DIR --ref REF
+```
+
+- `DIR` must not exist or be an empty directory (else exit 2). `REF` must match `^[A-Za-z0-9._/-]+$`
+  (exit 2). Copy failure exit 1. Needs bash ≥ 4.3, coreutils `cp`/`find`/`sort`, and `sha256sum` or
+  `shasum`. Does not need Bun, node, git, or network. Idempotent in the sense that it refuses rather than
+  merges.
+- Output (exact):
+
+```
+DIR/
+  VERSION                                   one line: REF
+  MANIFEST.sha256                           "<sha256>  <path>" for every other file, LC_ALL=C sorted
+  ai/herdr/app/mods/_lib/*.js               verbatim
+  ai/herdr/app/themes/otto-light.generated.json
+  ai/herdr/app/themes/otto-dark.generated.json
+  ai/herdr/web/package.json
+  ai/herdr/web/.bun-version
+  ai/herdr/web/server/*.js
+  ai/herdr/web/lib/*.js
+  ai/herdr/web/public/**                    html, css, js
+```
+
+- No `node_modules`, no `.git`, nothing generated at build: CSS is computed from the theme JSON at start.
+  The tree can be root-owned and read-only; the server never writes under it.
+- Verify: `cd DIR && sha256sum -c MANIFEST.sha256` (or `shasum -a 256 -c`).
+
+**8.2 Entrypoint**
+
+```bash
+bun DIR/ai/herdr/web/server/main.js
+```
+
+Bun ≥ 1.2; tested with the version in `DIR/ai/herdr/web/.bun-version` (`1.4.2`, the homelab's
+`ovis_bun_version`). Working directory irrelevant. Logs to stdout/stderr (journal): one start line
+`pr-board <version> listening on http://<host>:<port>`, tool-check warnings, refresh failures. Exits 2 on a
+bad configuration (message on stderr), 0 on SIGTERM/SIGINT. No network at start: the first `gh` call
+happens on the first pull, which runs only once a page connects.
+
+**8.3 Environment**
+
+| Var | Required | Default | Meaning |
+|---|---|---|---|
+| `PR_BOARD_TOKEN` | yes | — | ≥ 32 chars (use `openssl rand -hex 32`); start refused otherwise |
+| `PR_BOARD_PORT` | yes | — | integer 0–65535 (0 = any free port, for tests) |
+| `PR_BOARD_HOST` | no | `127.0.0.1` | must be `127.0.0.1`, `::1` or `localhost`; anything else refused |
+| `PR_BOARD_HC` | no | `hc` (PATH) | path of the herdr-core CLI; on the homelab `/home/<agent>/.local/bin/herdr-core` |
+| `PR_BOARD_STATE_DIR` | no | `$XDG_STATE_HOME/pr-board`, else `$HOME/.local/state/pr-board` | created 0700; will hold `actions.jsonl` (later phase; nothing writes it yet) |
+| `PR_BOARD_NAME` | no | `this server` | header label and "where" in errors, e.g. `homelab · maximum` |
+| `PR_BOARD_ORIGIN` | no (recommended) | — | exact external origin, e.g. `https://prs-maximum.lab.home`; else Origin host must equal `Host` |
+| `PR_BOARD_OVIS_URL` | no | — | the agent's Ovis base URL, e.g. `https://ovis-maximum.lab.home/`; will enable "Open in Ovis" (later phase; not read yet) |
+| `PR_BOARD_FULL_REFRESH_S` | no | `180` | full pull interval while a page is connected; integer 30–86400, else refused at start |
+| `PR_BOARD_LISTING_REFRESH_S` | no | `15` | listing-only pull interval while a page is connected; integer 5–3600, else refused at start |
+| `PR_BOARD_MAX_PROCS` | no | `4` | concurrent child processes; integer 1–32, else refused at start |
+| `HOME` | yes (systemd sets it) | — | the agent's home: `gh` auth, `pr`'s state root, the herdr-core socket. Start needs it only when neither `PR_BOARD_STATE_DIR` nor `XDG_STATE_HOME` is set |
+| `PATH` | yes | — | must resolve `pr` (workbench, not coreutils), `gh`, `git`, `wt`, and `hc` unless `PR_BOARD_HC` is set; put `$HOME/.local/bin` before `/usr/bin`. Not checked at start: a missing tool shows as a board error on the first pull |
+| `HC_SESSION`, `XDG_*` | no | inherited | passed to `hc` unchanged if the agent's core uses them |
+
+Empty string is treated as unset for every optional variable.
+
+**8.4 Tools it shells out to**
+
+All resolved through `PATH` (except `hc` → `PR_BOARD_HC`), run as the agent:
+
+| Tool | Calls (phase) |
+|---|---|
+| `hc` / `herdr-core` | `ls --json` (repo discovery, 1), `ls --json --label otto.app=pr` + `get <t> --json` (busy, 1), `run --bg --json …` (2, 3, 4), `get <t> --json` (run follow-up, 2), `read <t> --lines 80` (2, 4), `kill <t>` (2), `exec --json --on …` (remote targets only) |
+| `gh` | `api /user`, `api /repos/<o>/<n>/pulls`, `api graphql`, `api …/files`, patch pages (1); via `wt` (3) |
+| `git` | `remote get-url origin`, `check-attr -z linguist-generated` (1) |
+| `pr` | `pr review --list --schema-version 1`, `pr review --list --schema-version 1 --if-changed STAMP`, `pr batch status --full --offline` (1); `pr review` inside launched terminals (2); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
+| `tail` | `tail -n 200 <step log path>` (4; path from `pr batch status`) |
+| `wt` | `switch pr:<n> --no-cd --format json` (3) |
+| `sh` | `sh -c 'command -v pr; command -v gh; command -v wt; true'` (1) |
+| `pi` | started by herdr-core in the Open-for-Review terminal (3) — resolved by the **core's** PATH |
+
+**Requirement on herdr-core's environment (homelab side).** Terminals started by `hc run` get the core's
+environment, not the board's, and local runs are not PATH-wrapped by `hcRunArgv`/`hcBatchArgv` (only remote
+ones are). So the agent's `herdr-core.service` environment must resolve `pr`, `gh`, `git`, `wt`, `pi` to the
+workbench ones, and carry whatever the AI agents `pr review` and `pr batch run --with-ai`/`--with-review`
+spawn need (the same credentials reviews already use). Check as the agent:
+`herdr-core exec -- sh -c 'command -v pr gh git wt pi'` must print `~/.local/bin/pr` (not `/usr/bin/pr`).
+
+**8.5 Health and auth behaviour to probe**
+
+- `curl -fsS http://127.0.0.1:$PR_BOARD_PORT/healthz` → `200 {"ok":true,"version":"<ref>"}` without a token;
+  touches no tool, so it proves the server is up, not that herdr-core or GitHub are.
+- `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PR_BOARD_PORT/` → `401`, and the same for
+  `/api/board`. A deploy must fail if either is not `401`. (`/login.css` is public by design; do not probe
+  it for `401`.)
+- `curl -s -H "Authorization: Bearer $PR_BOARD_TOKEN" http://127.0.0.1:$PR_BOARD_PORT/api/board` → `200`.
+- SSE: `/api/events` sends a `: ping` comment every 15 s; Bun's idle timeout is set to 60 s. Caddy flushes
+  `text/event-stream` immediately; no `flush_interval` change needed.
+
+**8.6 Memory**
+
+Expected: server RSS 50–100 MB steady with a loaded board (Bun runtime + snapshot of a few hundred PRs ≈ 1–2 MB + files cache
+for ≤ 10 PRs). Measured empty, Bun 1.4.4: ≈ 39 MB idle, ≈ 41 MB with a page and SSE client. Children run inside the unit's cgroup: `pr review --list` (Python, ≈ 60–100 MB while it
+runs), `pr batch status` (Python, phase 4, every 15 s per machine while a page is connected), `gh`
+(≈ 20–30 MB each), `git`, bounded by `PR_BOARD_MAX_PROCS=4`. Peak cgroup ≈ 250–300 MB during a full pull.
+Recommendation: `MemoryMax=384M`, `OOMPolicy=stop`. Terminals launched with `hc run` (reviews, batch runs,
+pi) live in herdr-core's cgroup, not the board's. Phase 1 measures and records actual figures in the PR.
+
+**8.7 Behaviour the unit should know**
+
+- Start order: `Wants=herdr-core.service` and `After=herdr-core.service` (§ 7.7).
+- Restart: stateless (`actions.jsonl` arrives in a later phase); `Restart=on-failure` is safe. Sessions survive restarts
+  (cookie derived from the token). A restart forgets which batch terminal belongs to which repo (the Log
+  button), not the runs themselves: those are `pr batch`'s state.
+- Polling (board and batch) stops when no page is connected; an idle instance makes no `gh` or `pr` calls.
+- The session cookie gets `Secure` only when the request carries `X-Forwarded-Proto: https`, which Caddy's `reverse_proxy` sends by default.
 
 ## Configuration
 

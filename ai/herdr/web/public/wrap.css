@@ -1,0 +1,3 @@
+/* Layout from workspace specs/pr-board-web/mockup.html; look from the brand's DESIGN.md. Colours: /gen/theme.css. Sizes and type: /gen/tokens.css. */
+header { flex-wrap: wrap; row-gap: var(--sp-xs); }
+.updated { display: none; }

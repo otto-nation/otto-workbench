@@ -3,4 +3,5 @@
 # same linux-install identity as every other formula.
 brew "rtk"  # mise: rtk
 brew "node"  # mise: node@lts
+brew "bun"  # mise: bun
 brew "pytest"  # mise: pipx:pytest[uvx_args=--with pytest-xdist]

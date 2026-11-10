@@ -1,0 +1,15 @@
+/* Sign-in page rules. Served at /login.css after the generated theme and token variables (server/main.js). */
+body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: var(--canvas); color: var(--foreground); font: var(--font-body); }
+.login { display: flex; flex-direction: column; gap: var(--sp-sm); width: min(340px, 90vw); }
+.login h1 { font: var(--font-title); margin: 0 0 var(--sp-sm); }
+.login label { font: var(--font-label); }
+/* DESIGN.md input: outline edge, rounded.md, body role, control height. */
+.login input { font: var(--font-body); height: var(--control-h); padding: 0 var(--control-px); border-radius: var(--radius-control);
+  border: 1px solid var(--input); background: var(--canvas); color: var(--foreground); }
+/* DESIGN.md button-solid: the one primary action. */
+.login button { font: var(--font-label); height: var(--control-h); padding: 0 var(--control-px); border-radius: var(--radius-control);
+  border: 0; background: var(--solid); color: var(--solid-foreground); cursor: pointer; }
+.login :focus-visible { outline: var(--focus-width) solid var(--ring); outline-offset: var(--focus-offset); }
+/* DESIGN.md error state: a one-line reason in the danger colour. */
+.login .error { min-height: 1.4em; margin: 0; color: var(--status-fail); font: var(--font-meta); }

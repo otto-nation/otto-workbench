@@ -100,7 +100,7 @@ the serial ordering. How the runner sizes itself and what the two shapes mean is
 
 ## UI and styling
 
-Every UI this repo ships — the herdr-app mods (`ai/herdr/app/mods/`), the herdr
+Every UI this repo ships — the herdr-app mods (`ai/herdr/app/mods/`), the PR board web view (`ai/herdr/web/`), the herdr
 palettes (`ai/herdr/app/palettes/`) and the docs `site/` — follows the
 otto-nation design system. Read `DESIGN.md` from `@otto-nation/brand` before UI
 or styling work, starting at Do's and Don'ts and Components.

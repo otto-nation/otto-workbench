@@ -227,7 +227,7 @@ _herdr_mod_sync_dir() {
     _herdr_mod_remove_stale "$dest/$rel" "$rel" "${old[$rel]}" "$tmp" changed
   done
   _herdr_mod_commit_manifest "$manifest" "$tmp" changed || return 0
-  if [[ "$changed" -eq 1 ]]; then
+  if [[ "$changed" -eq 1 && "${5:-}" != quiet ]]; then
     success "herdr-app mod $name"
   fi
   return 0
@@ -243,14 +243,16 @@ _herdr_mod_install_fresh() {
   local src_mod="$1" dest="$2" name="$3" stage
   stage=$(mktemp -d "$(dirname "$(dirname "$dest")")/.workbench-mod.XXXXXX") \
     || { warn "Could not stage herdr-app mod $name"; return 0; }
-  _herdr_mod_sync_dir "$src_mod" "$stage" "$name"
+  _herdr_mod_sync_dir "$src_mod" "$stage" "$name" "" quiet
   if [[ ! -f "$stage/.workbench-install" ]] || ! _herdr_mod_stage_complete "$src_mod" "$stage"; then
     rm -rf "$stage"
     warn "herdr-app mod $name: could not stage every file — not installed"
     return 0
   fi
+  chmod 755 "$stage"
   mkdir -p "$(dirname "$dest")" && mv "$stage" "$dest" \
-    || { rm -rf "$stage"; warn "Could not install herdr-app mod $name into $dest"; }
+    || { rm -rf "$stage"; warn "Could not install herdr-app mod $name into $dest"; return 0; }
+  success "herdr-app mod $name"
   return 0
 }
 

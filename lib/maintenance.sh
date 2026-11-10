@@ -168,6 +168,7 @@ maintenance_refresh_schedule() {
   local interval
   if [[ "$OSTYPE" == "darwin"* ]]; then
     [[ -f "$_MAINTENANCE_PLIST" ]] || return 0
+    _launchd_is_loaded || return 0
     [[ "${XPC_SERVICE_NAME:-}" == "$_MAINTENANCE_LABEL" ]] && return 0
     interval=$(_launchd_installed_interval)
     _launchd_render "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" | cmp -s - "$_MAINTENANCE_PLIST" && return 0

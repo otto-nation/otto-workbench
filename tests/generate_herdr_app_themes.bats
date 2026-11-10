@@ -573,3 +573,11 @@ EOF
   [[ "$output" == *"--ow-font-section"*"is not a font shorthand"* ]]
   [ ! -e "$OUT/brand.generated.js" ]
 }
+
+@test "otto.toml carries no literal hex: every colour comes from the brand" {
+  local palette="$REPO_ROOT/ai/herdr/app/palettes/otto.toml"
+  [ -f "$palette" ]
+  run grep -nE '"#[0-9a-fA-F]{3,8}"' "$palette"
+  [ "$status" -eq 1 ]
+  grep -qx 'terminal = "brand"' "$palette"
+}

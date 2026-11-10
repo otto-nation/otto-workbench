@@ -42,8 +42,9 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
   continue work that must already be in a checkout. When omitted, the current
   branch is used.
 - `--fix` (optional): Resolve conflicts with AI and rebase (force-pushes
-  unless `--no-push`). Do not pass it unless the user asked for AI resolution
-  or a previous exit 3 named files that need it. Incompatible with
+  unless `--no-push`). Pass it on the first run only when the user asked for AI
+  resolution; otherwise run default mode first and escalate to it automatically
+  on exit 3. Incompatible with
   `--stop-on-conflict`.
 - `--stop-on-conflict` (optional): Pause on conflicts (stash held, tree
   dirty, exit 3) instead of aborting. Use when the user wants to inspect or
@@ -100,7 +101,8 @@ no bearing on what the run then decides.
   or `files_stale` aborts (`tree: clean`, exit 3). Foreground is fine: there is
   no AI call.
 
-- **`--fix` mode** (AI resolution):
+- **`--fix` mode** (AI resolution). Escalate to this automatically when default
+  mode exits 3; do not wait for the user to ask:
 
   ```bash
   pr rebase --fix --branch <branch>
@@ -224,9 +226,11 @@ manually; a repo that keeps landing in the second case wants a
 Runs that reach this, and the difference is `tree` plus what the console said:
 
 - **Default mode.** The rebase was **aborted** (`aborted: true`, `tree: clean`,
-  HEAD back at `pre_rebase_head`). Report `files` and `classes`. Ask the user
-  whether they want AI resolution. If yes, `pr rebase --fix --branch <branch>`
-  starts a **fresh** rebase (there is nothing to resume).
+  HEAD back at `pre_rebase_head`). Do not ask the user whether to continue: the
+  request to rebase is the request to finish it. Report `files` and `classes` in
+  one line, then immediately start `pr rebase --fix --branch <branch>` as a
+  background job (see step 1). It begins a **fresh** rebase (there is nothing to
+  resume). The task is not done until the branch is rebased and pushed.
 - **`--stop-on-conflict`.** The tree is **paused** (`aborted: false`,
   `tree: paused`, stash held). Report `files` and `classes`. Resume with
   `pr rebase --fix --branch <branch>` if the user wants AI, or resolve by hand
@@ -257,6 +261,11 @@ Runs that reach this, and the difference is `tree` plus what the console said:
   hunk, or — only if the user confirms each listed change really is superseded
   — resume with `WORKBENCH_ALLOW_DROPPED_CHANGES=1 pr rebase --fix --branch
   <branch>`.
+
+Exit 3 is never a stopping point for the agent. After a default-mode abort, run
+`--fix`; after a `--fix` run that paused on unresolved files, resolve them (by
+hand if the AI could not) and resume. Hand back to the user only for a refusal
+that needs their decision (exit 4 overrides) or an unavailable AI backend.
 
 Never answer a **paused** exit 3 (`tree: paused`) with `pr rebase --abort`.
 The rebase holds real work by this point; aborting throws away every resolution

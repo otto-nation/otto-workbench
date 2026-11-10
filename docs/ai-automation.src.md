@@ -80,9 +80,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
   A Files tab lists the PR's changed files (from `gh api …/pulls/N/files`) and shows a file's diff inline (first 1,500 lines); files marked `linguist-generated` in `.gitattributes` sort last and are left out of the header's file and line counts; Open for Review checks the PR out with `wt switch pr:N` and selects, or opens, a space on that worktree (this machine only).
-  Mine's lanes are Has Conflicts, CI Failing, Has Comments (feedback `pr comments` would answer, read with `pr batch plan --needs comments` while Mine shows), Changes Requested (every comment answered, waiting on the reviewer), Draft, Awaiting Review, Approved, In Queue and Merged.
-  Mine's Batch button (with "running" beside it while runs are active) opens a Batch page: running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, under the shared filters, plus steps and AI and push options; it starts one `pr batch run` per repo), and recent runs to look back; cards show their batch state and a PR's detail has a Batch tab.
-  Has Conflicts (rebase, AI on), CI Failing (ci), Has Comments (comments, AI on), Draft (self-review) and Approved (rebase, including PRs only behind) each have a Batch button in their header that opens the Batch page with that lane's shown PRs selected and its step set; nothing starts until Start.
+  Mine's Batch button (with "running" beside it while runs are active) opens a Batch page: running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, under the shared filters, plus steps and AI and push options; it starts one `pr batch run` per repo), and recent runs to look back; cards show their batch state and a PR's detail has a Batch tab. The lanes and each lane's Batch shortcut are described in `ai/herdr/app/mods/AGENTS.md`.
 - `herdr-app` with no arguments opens the main window through `open -n` and returns, so the
   window is not tied to the terminal and its log stays out of it; a window that already
   answers `herdr-app status` is left alone. With arguments it runs Herdr's own CLI
@@ -568,7 +566,6 @@ session with stdin closed, and runs drafted. Nothing is pushed unless `--auto-pu
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
-pr batch plan --checkout DIR --needs comments  # only the comments need; reads no branches
 pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff] [--rebase behind]
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps

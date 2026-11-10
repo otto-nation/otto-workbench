@@ -146,15 +146,14 @@ class TestMatchThreadToFinding:
             id=f"{severity}1", severity=severity, seq=1, path="ai/lib/x.py",
             line=12, end_line=None, body="missing error check",
         )
-        finding.posted_id = f"{severity}1"
         body = format_inline_comment(finding)["body"]
         assert _match_thread_to_finding(body).posted_id == f"{severity}1"
 
     def test_the_identity_comes_back_out_of_a_posted_body(self):
         """The durable half of the match, which the posted comment carries.
 
-        `posted_id` is reassigned every round, so on its own it names whatever
-        finding happens to hold that number in the review file being annotated.
+        Record IDs restart each round, so on its own the number names whatever
+        finding happens to hold that ID in the review file being annotated.
         """
         body = f"**[M1] [must-fix]**{sid_marker('abc12345')} Missing error check"
         assert _match_thread_to_finding(body) == ThreadFinding(
@@ -245,7 +244,6 @@ class TestFetchReplyThreads:
             id="M1", severity="M", seq=1, path="a.py", line=10, end_line=None,
             body="Missing error check",
         )
-        finding.posted_id = "M1"
         posted = format_inline_comment(finding)["body"]
 
         threads = [{

@@ -1,8 +1,7 @@
-"""Diff classification, renumbering for posting, inline comments, and permalinks.
+"""Diff classification, inline comments, and permalinks.
 
-Classifies findings as inline/file-level/skipped based on the PR diff,
-renumbers them for posted order, and formats inline review comments; the body is
-`review.render.comment_body`'s.
+Classifies findings as inline/file-level/skipped based on the PR diff
+and formats inline review comments; the body is `review.render.comment_body`'s.
 
 Reading the diff is part of that classification, so `parse_diff_hunks` lives
 here: which lines a hunk covers is the same question as whether a finding can
@@ -20,7 +19,7 @@ from dataclasses import dataclass
 
 import pr.target
 from review.grammar import posted_finding_tag, sid_marker
-from review.types import SEVERITIES, Finding, severity_by_key
+from review.types import Finding, severity_by_key
 
 
 # ── Classification constants ────────────────────────────────────────────────
@@ -182,42 +181,17 @@ def classify_findings(
     return inline, file_level, skipped
 
 
-# ── Renumbering ─────────────────────────────────────────────────────────────
-
-def renumber_for_posting(
-    inline: list[Finding], body: list[Finding],
-) -> tuple[list[Finding], list[Finding]]:
-    """Renumber findings sequentially by posted location.
-
-    Inline findings sorted by (path, line) get IDs first,
-    body findings continue the sequence. Each severity prefix
-    is numbered independently.
-    """
-    inline_sorted = sorted(inline, key=lambda f: (f.full_path or f.path, f.line or 0))
-
-    counters = {s.key: 1 for s in SEVERITIES}
-    for f in inline_sorted:
-        f.posted_id = f"{f.severity}{counters[f.severity]}"
-        counters[f.severity] += 1
-    for f in body:
-        f.posted_id = f"{f.severity}{counters[f.severity]}"
-        counters[f.severity] += 1
-
-    return inline_sorted, body
-
-
 # ── Comment formatting ──────────────────────────────────────────────────────
 
 def format_inline_comment(f: Finding) -> dict:
     """Format a finding as a GitHub inline review comment.
 
-    The comment carries the finding's stable ID in an HTML comment, invisible to
-    the reviewer reading the thread and the only handle a later round has on
-    which finding the thread belongs to: the `posted_id` in the tag is assigned
-    by diff position, so the same finding wears a different number in the review
-    file the next round reads.
+    The visible tag is the record ID (`M3`, not a diff-order recount). The
+    comment also carries the finding's stable ID in an HTML comment, invisible
+    to the reviewer and the handle a later round uses to match a reply thread:
+    record IDs restart each round, so they do not survive on their own.
     """
-    head = posted_finding_tag(f.posted_id, f.severity)
+    head = posted_finding_tag(f.id, f.severity)
     if f.stable_id:
         head += sid_marker(f.stable_id)
     body = f"{head} {f.body}"

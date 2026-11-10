@@ -76,8 +76,7 @@ class TestShaDriftReverify:
             patch.object(rp, "_get_diff", return_value=self.DIFF),
             patch.object(rp, "dedup_against_posted", return_value=(
                 [rp.Finding(id="M1", severity="M", seq=1, path="file.go",
-                            line=5, end_line=None, body="Fix this bug",
-                            posted_id="M1", classification="inline",
+                            line=5, end_line=None, body="Fix this bug", classification="inline",
                             full_path="file.go")],
                 [],
             )),
@@ -140,8 +139,7 @@ class TestShaDriftReverify:
             reviews=[],
         )
         finding = rp.Finding(id="M1", severity="M", seq=1, path="file.go",
-                             line=5, end_line=None, body="Fix",
-                             posted_id="M1", classification="inline",
+                             line=5, end_line=None, body="Fix", classification="inline",
                              full_path="file.go")
         with (
             patch.object(rp, "fetch_pr_data", return_value=pr_data),
@@ -162,8 +160,7 @@ class TestShaDriftReverify:
         pr_data = rp.PRData(viewer_login="bot", head_sha=head_sha,
                             head_ref="feat", base_ref="main", reviews=[])
         finding = rp.Finding(id="M1", severity="M", seq=1, path="file.go",
-                             line=5, end_line=None, body="Fix",
-                             posted_id="M1", classification="inline",
+                             line=5, end_line=None, body="Fix", classification="inline",
                              full_path="file.go")
         with (
             patch.object(rp, "fetch_pr_data", return_value=pr_data),

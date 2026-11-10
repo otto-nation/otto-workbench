@@ -1,9 +1,9 @@
 """Post a review file to GitHub as a PR review.
 
 Parses a markdown review file (produced by `review`), validates
-finding positions against the PR diff, renumbers findings by posted
-location (inline first, then body), and creates a PENDING review via
-the GitHub API. Pass --submit to submit the review immediately.
+finding positions against the PR diff, and creates a PENDING review via
+the GitHub API using each finding's record ID. Pass --submit to submit
+the review immediately.
 
 Usage:
   review-post --pr NUMBER --review-file PATH
@@ -44,7 +44,7 @@ from core.text import plural
 from review.types import Finding, ReviewMeta, SEVERITIES
 from review.format import (
     CLASS_FILE_LEVEL, CLASS_INLINE, classify_findings, format_inline_comment,
-    renumber_for_posting, resolve_permalinks, resolve_path, _hunk_end,
+    resolve_permalinks, resolve_path, _hunk_end,
     _build_permalink,
 )
 from gh.client import LineResolutionError

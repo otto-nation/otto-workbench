@@ -185,7 +185,7 @@ def failures_body(failures: tuple[AgentFailure, ...]) -> str:
 
 def _comment_finding_line(f: Finding, *, label: bool = True) -> str:
     """One posted body finding. `review.dedup` reads this shape back off earlier posts."""
-    tag = posted_finding_tag(f.posted_id, f.severity) if label else finding_tag(f.posted_id)
+    tag = posted_finding_tag(f.id, f.severity) if label else finding_tag(f.id)
     where = f" {location_ref(f.path, f.line, f.end_line)} —" if f.path else ""
     return f"- {tag}{where} {f.body}"
 
@@ -259,8 +259,8 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
                  meta: ReviewMeta, has_inline: bool, severity_filter: set[str]) -> str:
     """The PR review comment's body: the record's prose around the body findings.
 
-    `findings` are the ones `review.format` placed in the body, already
-    renumbered for posting. A declined finding is stated in a block of its own.
+    `findings` are the ones `review.format` placed in the body, tagged with
+    their record IDs. A declined finding is stated in a block of its own.
     `meta` supplies the verdict line's mode and status and the `Models:` line.
     """
     labels = ", ".join(s.label for s in SEVERITIES if s.key in severity_filter)

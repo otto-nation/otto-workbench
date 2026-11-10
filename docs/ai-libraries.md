@@ -1859,11 +1859,10 @@ during a review, and a fix pass needs only a finished review file to work from.
 
 ### review/format.py
 
-Diff classification, renumbering for posting, inline comments, and permalinks.
+Diff classification, inline comments, and permalinks.
 
-Classifies findings as inline/file-level/skipped based on the PR diff,
-renumbers them for posted order, and formats inline review comments; the body is
-`review.render.comment_body`'s.
+Classifies findings as inline/file-level/skipped based on the PR diff
+and formats inline review comments; the body is `review.render.comment_body`'s.
 
 Reading the diff is part of that classification, so `parse_diff_hunks` lives
 here: which lines a hunk covers is the same question as whether a finding can
@@ -2069,8 +2068,8 @@ reads. `fetch_reply_threads` classifies each thread into a `ReplyState` and
 matches it back to the finding its root comment declared, so a re-review can
 read the thread's account of a finding beside the ledger's. That match is a
 `ThreadFinding` carrying both of the names a posted comment gives a finding,
-because the visible one is renumbered every round and only the stable ID
-survives to the next.
+because the visible one is the record ID, which restarts each round, and
+only the stable ID survives to the next.
 
 Only a thread whose first comment is the reviewing bot's own counts. A thread
 the author opened is a comment on the PR rather than a reply to a finding, and
@@ -3170,7 +3169,7 @@ declared and this build agreed to serve, so it cannot go stale on its own.
 
 ### review/post_file.py
 
-Post one review file to its PR: parse, check positions, renumber, and post as a PENDING review.
+Post one review file to its PR: parse, check positions, and post as a PENDING review.
 
 `run_post` is the flow `review-post` runs: read the review document and its
 sidecar, resolve the PR's refs and diff, drop findings already posted,
@@ -8662,9 +8661,9 @@ Exit codes:
 Post a review file to GitHub as a PR review.
 
 Parses a markdown review file (produced by `review`), validates
-finding positions against the PR diff, renumbers findings by posted
-location (inline first, then body), and creates a PENDING review via
-the GitHub API. Pass --submit to submit the review immediately.
+finding positions against the PR diff, and creates a PENDING review via
+the GitHub API using each finding's record ID. Pass --submit to submit
+the review immediately.
 
 Usage:
   review-post --pr NUMBER --review-file PATH

@@ -343,7 +343,7 @@ class TestReclassifyAndRetry:
                 record=record(), meta=ReviewMeta(),
             )
             assert len(inline) == 1
-            assert inline[0].posted_id == "M1"
+            assert inline[0].id == "M1"
             assert results == [{"id": 42}]
 
     def test_reclassify_demotes_all_when_retry_also_fails(self, rp):

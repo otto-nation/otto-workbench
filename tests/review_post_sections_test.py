@@ -14,7 +14,6 @@ if str(LIB_DIR) not in sys.path:
 import cli.review_post  # noqa: E402,F401
 import review.render  # noqa: E402
 from review.document import ReviewDocument  # noqa: E402
-from review.format import renumber_for_posting  # noqa: E402
 from review.record import (  # noqa: E402
     AgentFailure, Disposition, FocusSource, LedgerLine, ProseSection, TriageEntry,
 )
@@ -27,7 +26,7 @@ from review_record_support import finding, record  # noqa: E402
 
 
 def _body_findings(rec):
-    return renumber_for_posting([], ReviewDocument(record=rec).open_findings)[1]
+    return ReviewDocument(record=rec).open_findings
 
 
 def _comment(rec, findings=(), *, has_inline=False, severity_filter=None):

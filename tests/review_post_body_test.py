@@ -43,7 +43,7 @@ class TestCommentBody:
     def test_without_inline_shows_review_findings(self, rp):
         f = rp.Finding(
             id="M1", severity="M", seq=1, path="handler.go", line=42,
-            end_line=None, body="Fix it", posted_id="M1",
+            end_line=None, body="Fix it",
         )
         result = _comment([f], False, {"M", "S", "N"})
         assert "Review findings" in result
@@ -66,7 +66,7 @@ class TestCommentBody:
     def test_body_findings_listed_with_path_refs(self, rp):
         f = rp.Finding(
             id="M1", severity="M", seq=1, path="handler.go", line=42,
-            end_line=None, body="Fix it", full_path="pkg/handler.go", posted_id="M1",
+            end_line=None, body="Fix it", full_path="pkg/handler.go",
         )
         result = _comment([f], True, {"M"})
         assert "**[M1] [must-fix]**" in result
@@ -81,7 +81,7 @@ class TestCommentBody:
     def test_pathless_finding_omits_backticks(self, rp):
         f = rp.Finding(
             id="I1", severity="I", seq=1, path="", line=None,
-            end_line=None, body="Good pattern across files.", posted_id="I1",
+            end_line=None, body="Good pattern across files.",
         )
         result = _comment([f], True, {"I"})
         assert "``" not in result
@@ -91,11 +91,11 @@ class TestCommentBody:
     def test_mixed_severities_grouped_with_headers(self, rp):
         findings = [
             rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
-                       end_line=None, body="Should fix", posted_id="S1"),
+                       end_line=None, body="Should fix"),
             rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
-                       end_line=None, body="Nit issue", posted_id="N1"),
+                       end_line=None, body="Nit issue"),
             rp.Finding(id="S2", severity="S", seq=2, path="c.go", line=30,
-                       end_line=None, body="Another should", posted_id="S2"),
+                       end_line=None, body="Another should"),
         ]
         result = _comment(findings, True, {"S", "N"})
         assert "### Should fix" in result
@@ -109,9 +109,9 @@ class TestCommentBody:
     def test_single_severity_nits_in_details(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
-                       end_line=None, body="Nit one", posted_id="N1"),
+                       end_line=None, body="Nit one"),
             rp.Finding(id="N2", severity="N", seq=2, path="b.go", line=20,
-                       end_line=None, body="Nit two", posted_id="N2"),
+                       end_line=None, body="Nit two"),
         ]
         result = _comment(findings, True, {"N"})
         assert "<details open>" in result
@@ -208,7 +208,7 @@ class TestCommentBody:
     def test_outside_diff_header_only_for_demoted_findings(self, rp):
         findings = [
             rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
-                       end_line=None, body="Should fix", posted_id="S1"),
+                       end_line=None, body="Should fix"),
         ]
         result = _comment(findings, True, {"S"})
         assert "**Findings outside the diff:**" in result
@@ -217,7 +217,7 @@ class TestCommentBody:
     def test_no_outside_diff_header_for_nits_only(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
-                       end_line=None, body="Nit issue", posted_id="N1"),
+                       end_line=None, body="Nit issue"),
         ]
         result = _comment(findings, True, {"N"})
         assert "Findings outside the diff" not in result
@@ -226,7 +226,7 @@ class TestCommentBody:
     def test_nits_drop_severity_label(self, rp):
         f = rp.Finding(
             id="N1", severity="N", seq=1, path="a.go", line=10,
-            end_line=None, body="Style issue", posted_id="N1",
+            end_line=None, body="Style issue",
         )
         result = _comment([f], True, {"N"})
         assert "**[N1]**" in result
@@ -235,20 +235,20 @@ class TestCommentBody:
     def test_body_findings_read_back_through_the_dedup_reader(self, rp):
         must = rp.Finding(
             id="M1", severity="M", seq=1, path="a.py", line=3,
-            end_line=None, body="lock never released", posted_id="M1",
+            end_line=None, body="lock never released",
         )
         idiom = rp.Finding(
             id="I1", severity="I", seq=1, path="", line=None,
-            end_line=None, body="pattern holds", posted_id="I1",
+            end_line=None, body="pattern holds",
         )
         declined = rp.Finding(
             id="S1", severity="S", seq=1, path="b.py", line=12,
-            end_line=None, body="use a constant", posted_id="S1",
+            end_line=None, body="use a constant",
             declined=True,
         )
         nit = rp.Finding(
             id="N1", severity="N", seq=1, path="c.py", line=1,
-            end_line=None, body="trailing space", posted_id="N1",
+            end_line=None, body="trailing space",
         )
         body = _comment([must, idiom, declined, nit], False, {"M", "S", "I", "N"})
         found = {item.body: item.path for item in review.dedup._extract_body_findings(body)}
@@ -295,7 +295,7 @@ class TestCommentBody:
 
     def test_verified_notes_are_collapsed_after_the_findings(self, rp):
         f = rp.Finding(id="M1", severity="M", seq=1, path="a.go", line=10,
-                       end_line=None, body="Fix it", posted_id="M1")
+                       end_line=None, body="Fix it")
         result = _comment(
             [f], False, {"M", "S"}, summary="s",
             extra=(ProseSection("Review gaps", "- group 2"),),
@@ -329,11 +329,11 @@ class TestCommentBodyDetails:
     def test_nits_sorted_by_path_then_line(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
-                       end_line=None, body="Naming issue", posted_id="N1"),
+                       end_line=None, body="Naming issue"),
             rp.Finding(id="N2", severity="N", seq=2, path="a.go", line=30,
-                       end_line=None, body="Another style", posted_id="N2"),
+                       end_line=None, body="Another style"),
             rp.Finding(id="N3", severity="N", seq=3, path="a.go", line=10,
-                       end_line=None, body="Style issue", posted_id="N3"),
+                       end_line=None, body="Style issue"),
         ]
         result = _comment(findings, True, {"N"})
         assert "<summary>Nit (3)</summary>" in result
@@ -343,9 +343,9 @@ class TestCommentBodyDetails:
     def test_nits_within_file_sorted_by_line(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=30,
-                       end_line=None, body="Later", posted_id="N1"),
+                       end_line=None, body="Later"),
             rp.Finding(id="N2", severity="N", seq=2, path="a.go", line=10,
-                       end_line=None, body="Earlier", posted_id="N2"),
+                       end_line=None, body="Earlier"),
         ]
         result = _comment(findings, True, {"N"})
         assert result.index("Earlier") < result.index("Later")
@@ -353,9 +353,9 @@ class TestCommentBodyDetails:
     def test_mixed_severity_body_shows_severity_then_details(self, rp):
         findings = [
             rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
-                       end_line=None, body="Should fix this", posted_id="S1"),
+                       end_line=None, body="Should fix this"),
             rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
-                       end_line=None, body="Nit issue", posted_id="N1"),
+                       end_line=None, body="Nit issue"),
         ]
         result = _comment(findings, True, {"S", "N"})
         assert "### Should fix" in result
@@ -365,9 +365,9 @@ class TestCommentBodyDetails:
     def test_nits_and_idioms_in_separate_details(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
-                       end_line=None, body="Nit", posted_id="N1"),
+                       end_line=None, body="Nit"),
             rp.Finding(id="I1", severity="I", seq=1, path="a.go", line=20,
-                       end_line=None, body="Idiom", posted_id="I1"),
+                       end_line=None, body="Idiom"),
         ]
         result = _comment(findings, True, {"N", "I"})
         assert "<summary>Nit (1)</summary>" in result
@@ -378,9 +378,9 @@ class TestCommentBodyDetails:
     def test_pathless_body_only_finding_in_details(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
-                       end_line=None, body="File nit", posted_id="N1"),
+                       end_line=None, body="File nit"),
             rp.Finding(id="I1", severity="I", seq=1, path="", line=None,
-                       end_line=None, body="General pattern", posted_id="I1"),
+                       end_line=None, body="General pattern"),
         ]
         result = _comment(findings, True, {"N", "I"})
         assert "<summary>Nit (1)</summary>" in result
@@ -392,7 +392,7 @@ class TestCommentBodyDetails:
     def test_static_analysis_appended_after_findings(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
-                       end_line=None, body="Nit", posted_id="N1"),
+                       end_line=None, body="Nit"),
         ]
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked\n\n- **`scripts/deploy.sh:42`** — depth 5 exceeds limit 4 (in main())"
         result = _comment(findings, True, {"N"}, static_analysis=sa)
@@ -415,7 +415,7 @@ class TestFormatFindingLine:
     def test_with_path_and_line(self, rp):
         f = rp.Finding(
             id="M1", severity="M", seq=1, path="file.go", line=42,
-            end_line=None, body="Fix bug", posted_id="M1",
+            end_line=None, body="Fix bug",
         )
         result = review.render._comment_finding_line(f)
         assert "**[M1] [must-fix]**" in result
@@ -426,7 +426,7 @@ class TestFormatFindingLine:
     def test_with_path_only_no_line(self, rp):
         f = rp.Finding(
             id="S1", severity="S", seq=1, path="file.go", line=None,
-            end_line=None, body="Refactor", posted_id="S1",
+            end_line=None, body="Refactor",
         )
         result = review.render._comment_finding_line(f)
         assert "`file.go`" in result
@@ -435,7 +435,7 @@ class TestFormatFindingLine:
     def test_pathless_finding(self, rp):
         f = rp.Finding(
             id="I1", severity="I", seq=1, path="", line=None,
-            end_line=None, body="Good pattern across files.", posted_id="I1",
+            end_line=None, body="Good pattern across files.",
         )
         result = review.render._comment_finding_line(f)
         assert "**[I1] [idiom]**" in result
@@ -568,10 +568,9 @@ class TestDeclinedFindingsAreNotAskedFor:
 
     def test_the_body_states_a_decline_apart_from_what_it_asks_for(self, rp):
         declined = self._declined(rp)
-        declined.posted_id = "S1"
         demoted = rp.Finding(
             id="S2", severity="S", seq=2, path="file.go", line=90, end_line=None,
-            body="real bug", posted_id="S2",
+            body="real bug",
         )
         text = _comment([demoted, declined], False, {"S"})
         heading = "**Declined — considered and not carried forward:**"
@@ -582,7 +581,6 @@ class TestDeclinedFindingsAreNotAskedFor:
 
     def test_a_decline_alone_still_renders_its_block(self, rp):
         declined = self._declined(rp)
-        declined.posted_id = "S1"
         text = _comment([declined], False, {"S"})
         assert "**Declined — considered and not carried forward:**" in text
         assert "use a constant" in text

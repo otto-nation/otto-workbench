@@ -59,10 +59,11 @@ PRIOR_WITH_INTERNAL = record(
 class TestThreadStateFollowsTheIdentityNotTheNumber:
     """The annotation lands on the finding the thread hangs off, after a renumber.
 
-    `renumber_for_posting` numbers inline findings by `(path, line)` on every
-    round, so the `[M1]` a thread's root carries is the number *its* round
-    assigned. Matched on that number, a thread rooted a round earlier annotates
-    whatever finding now holds it — silently, and on the wrong line.
+    Record IDs restart each round, so the `[M1]` a thread's root carries is the
+    number *its* round assigned. Matched on that number, a thread rooted a
+    round earlier annotates whatever finding now holds it — silently, and on
+    the wrong line. The stable ID is what keeps the annotation on the finding
+    the thread hangs off.
     """
 
     REVIEW = (

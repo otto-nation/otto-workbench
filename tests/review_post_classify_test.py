@@ -1,6 +1,6 @@
 """Tests for placing findings on a diff — `review.format`'s hunk parsing, path
-resolution, classification into inline, file-level and skipped, posting-order
-renumbering, and the inline comment each placed finding becomes.
+resolution, classification into inline, file-level and skipped, and the inline
+comment each placed finding becomes.
 """
 
 import sys
@@ -219,41 +219,11 @@ class TestClassifyFindings:
         assert len(inline) == 1
 
 
-class TestRenumberForPosting:
-    def test_inline_sorted_by_path_then_line(self, rp):
-        f1 = rp.Finding(id="M1", severity="M", seq=1, path="b.go", line=10, end_line=None, body="x", full_path="b.go")
-        f2 = rp.Finding(id="M2", severity="M", seq=2, path="a.go", line=5, end_line=None, body="y", full_path="a.go")
-        inline, _ = rp.renumber_for_posting([f1, f2], [])
-        assert (inline[0].posted_id, inline[0].full_path) == ("M1", "a.go")
-        assert (inline[1].posted_id, inline[1].full_path) == ("M2", "b.go")
-
-    def test_body_continues_after_inline(self, rp):
-        fi = rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=5, end_line=None, body="x", full_path="a.go")
-        fb = rp.Finding(id="S2", severity="S", seq=2, path="b.go", line=None, end_line=None, body="y", full_path="b.go")
-        inline, body = rp.renumber_for_posting([fi], [fb])
-        assert inline[0].posted_id == "S1"
-        assert body[0].posted_id == "S2"
-
-    def test_independent_counters_per_severity(self, rp):
-        f1 = rp.Finding(id="M1", severity="M", seq=1, path="a.go", line=1, end_line=None, body="x", full_path="a.go")
-        f2 = rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=2, end_line=None, body="y", full_path="a.go")
-        f3 = rp.Finding(id="M2", severity="M", seq=2, path="a.go", line=3, end_line=None, body="z", full_path="a.go")
-        inline, _ = rp.renumber_for_posting([f1, f2, f3], [])
-        assert [f.posted_id for f in inline] == ["M1", "S1", "M2"]
-
-    def test_same_file_sorted_by_line(self, rp):
-        f1 = rp.Finding(id="M1", severity="M", seq=1, path="a.go", line=30, end_line=None, body="x", full_path="a.go")
-        f2 = rp.Finding(id="M2", severity="M", seq=2, path="a.go", line=5, end_line=None, body="y", full_path="a.go")
-        inline, _ = rp.renumber_for_posting([f1, f2], [])
-        assert inline[0].line == 5
-        assert inline[1].line == 30
-
-
 class TestFormatInlineComment:
     def test_single_line(self, rp):
         f = rp.Finding(
             id="M1", severity="M", seq=1, path="file.go", line=42,
-            end_line=None, body="Fix bug", full_path="pkg/file.go", posted_id="M1",
+            end_line=None, body="Fix bug", full_path="pkg/file.go",
         )
         c = rp.format_inline_comment(f)
         assert c["path"] == "pkg/file.go"
@@ -265,7 +235,7 @@ class TestFormatInlineComment:
     def test_omits_subject_type(self, rp):
         f = rp.Finding(
             id="S1", severity="S", seq=1, path="file.go", line=10,
-            end_line=None, body="Fix", full_path="pkg/file.go", posted_id="S1",
+            end_line=None, body="Fix", full_path="pkg/file.go",
         )
         c = rp.format_inline_comment(f)
         assert "subject_type" not in c
@@ -273,7 +243,7 @@ class TestFormatInlineComment:
     def test_multi_line_range(self, rp):
         f = rp.Finding(
             id="S1", severity="S", seq=1, path="file.go", line=10,
-            end_line=20, body="Refactor", full_path="pkg/file.go", posted_id="S1",
+            end_line=20, body="Refactor", full_path="pkg/file.go",
         )
         c = rp.format_inline_comment(f)
         assert c["start_line"] == 10
@@ -287,26 +257,26 @@ class TestFormatInlineComment:
     def test_severity_labels(self, rp, sev_id, sev, label):
         f = rp.Finding(
             id=sev_id, severity=sev, seq=1, path="f.go", line=1,
-            end_line=None, body="text", full_path="f.go", posted_id=sev_id,
+            end_line=None, body="text", full_path="f.go",
         )
         body = rp.format_inline_comment(f)["body"]
         assert f"[{label}]" in body
 
 
 class TestPostedCommentsCarryTheFindingIdentity:
-    """The comment carries the hash, because the number it wears is reassigned.
+    """The comment carries the hash, because record IDs restart each round.
 
-    `renumber_for_posting` numbers by diff position, so the `[M1]` a reviewer
-    reads names a different finding in the review file a round later. The hash
-    goes in an HTML comment: invisible to the reviewer, and the only handle the
-    next round has on which finding a reply thread belongs to.
+    The visible `[M1]` is the record ID, which a later round may reuse for a
+    different finding. The hash goes in an HTML comment: invisible to the
+    reviewer, and the only handle the next round has on which finding a reply
+    thread belongs to.
     """
 
     def _finding(self, rp, **kwargs):
         return rp.Finding(
             id="M1", severity="M", seq=1, path="file.go", line=42,
             end_line=None, body="Fix bug", full_path="pkg/file.go",
-            posted_id="M1", **kwargs,
+            **kwargs,
         )
 
     def test_the_identity_rides_along_in_an_html_comment(self, rp):
@@ -386,24 +356,8 @@ class TestClassifyFindingsEdgeCases:
         comment = rp.format_inline_comment(
             rp.Finding(
                 id="M1", severity="M", seq=1, path="file.go", line=5,
-                end_line=5, body="x", full_path="file.go", posted_id="M1",
+                end_line=5, body="x", full_path="file.go",
             )
         )
         assert "start_line" not in comment
         assert comment["line"] == 5
-
-
-class TestRenumberForPostingEdgeCases:
-    def test_empty_inline_and_empty_body(self, rp):
-        inline, body = rp.renumber_for_posting([], [])
-        assert inline == []
-        assert body == []
-
-    def test_only_body_findings(self, rp):
-        fb1 = rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=None, end_line=None, body="x", full_path="a.go")
-        fb2 = rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=None, end_line=None, body="y", full_path="b.go")
-        inline, body = rp.renumber_for_posting([], [fb1, fb2])
-        assert len(inline) == 0
-        assert len(body) == 2
-        assert body[0].posted_id == "S1"
-        assert body[1].posted_id == "N1"

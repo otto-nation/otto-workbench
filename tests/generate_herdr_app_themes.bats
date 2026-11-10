@@ -32,27 +32,38 @@ EOF
 }
 
 _tokens() {
-  cat > "$BATS_TEST_TMPDIR/tokens.css" <<'EOF'
-:root {
-  /* } */
-  --ow-canvas: #f7f2e9;
-  --ow-only-root: #abcdef;
-  --ow-control-height: 21px;
-  --ow-control-height-dense: 22px;
-  --ow-row-height: 33px;
-  --ow-row-height-dense: 34px;
-  --ow-control-padding: 15px;
-  --ow-card-padding: 16px;
-  --ow-column-min: 270px;
-  --ow-font-meta: 400 11px/16px var(--font-display);
-  --ow-font-section: 600 11px/16px var(--ow-font-sans);
-  --ow-font-label: 500 12px/16px var(--font-display);
-  --ow-font-body: 400 13px/18px var(--font-display);
-  --ow-font-title: 600 14px/20px var(--font-display);
-  --ow-font-code: 400 12px/16px var(--font-mono);
-}
-.dark {
-  --ow-canvas: #0f0e13;
+  cat > "$BATS_TEST_TMPDIR/tokens.json" <<'EOF'
+{
+  "schemaVersion": 1,
+  "colors": {
+    "light": {
+      "canvas": "#f7f2e9",
+      "only-root": "#abcdef"
+    },
+    "dark": {
+      "canvas": "#0f0e13",
+      "only-root": "#abcdef"
+    }
+  },
+  "typography": {
+    "meta": { "fontSize": "11px", "fontWeight": 400, "lineHeight": "16px" },
+    "section": { "fontSize": "11px", "fontWeight": 600, "lineHeight": "16px" },
+    "label": { "fontSize": "12px", "fontWeight": 500, "lineHeight": "16px" },
+    "body": { "fontSize": "13px", "fontWeight": 400, "lineHeight": "18px" },
+    "title": { "fontSize": "14px", "fontWeight": 600, "lineHeight": "20px" },
+    "code": { "fontSize": "12px", "fontWeight": 400, "lineHeight": "16px" }
+  },
+  "lengths": {
+    "control-height": "21px",
+    "control-height-dense": "22px",
+    "row-height": "33px",
+    "row-height-dense": "34px",
+    "control-padding": "15px",
+    "card-padding": "16px",
+    "column-min": "270px"
+  },
+  "radii": { "sm": "4px", "md": "6px", "lg": "8px" },
+  "spacing": { "1": "4px", "2": "8px", "3": "12px", "4": "16px", "5": "20px", "6": "24px" }
 }
 EOF
 }
@@ -86,17 +97,17 @@ _brand_site() {
   fi
   printf '%s\n' "{\"packages\": {\"node_modules/@otto-nation/brand\": {\"version\": \"1.2.0\", \"resolved\": \"${2:-$url}\", \"integrity\": \"sha512-fake\"}}}" > "$site/package-lock.json"
   [[ -z "${1:-}" ]] && return 0
-  mkdir -p "$site/node_modules/@otto-nation/brand/src"
+  mkdir -p "$site/node_modules/@otto-nation/brand"
   printf '%s\n' "{\"version\": \"$1\"}" > "$site/node_modules/@otto-nation/brand/package.json"
   _tokens
-  cp "$BATS_TEST_TMPDIR/tokens.css" "$site/node_modules/@otto-nation/brand/src/tokens.css"
+  cp "$BATS_TEST_TMPDIR/tokens.json" "$site/node_modules/@otto-nation/brand/tokens.json"
 }
 
 _brand_tarball() {
   local root="$BATS_TEST_TMPDIR/pkg" tgz="$BATS_TEST_TMPDIR/brand.tgz" integrity
-  mkdir -p "$root/package/src"
+  mkdir -p "$root/package"
   _tokens
-  cp "$BATS_TEST_TMPDIR/tokens.css" "$root/package/src/tokens.css"
+  cp "$BATS_TEST_TMPDIR/tokens.json" "$root/package/tokens.json"
   COPYFILE_DISABLE=1 tar -czf "$tgz" -C "$root" package
   integrity="$(python3 -c 'import base64, hashlib, pathlib, sys
 print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read_bytes()).digest()).decode())' "$tgz")"
@@ -210,30 +221,38 @@ EOF
   [ -z "$(find "$OUT" -name '*.tmp')" ]
 }
 
-@test "light and dark brand:ow-canvas resolve to each block's hex" {
+@test "light and dark brand:ow-canvas resolve to each scheme's hex" {
   sandbox_state_dir
   _tokens
   _brand_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 0 ]
   [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
   [ "$(jq -r .background "$OUT/sample-dark.generated.json")" = "#0f0e13" ]
 }
 
-@test "a dark theme resolves a token only :root defines" {
+@test "a dark theme does not inherit a token only colors.light defines" {
   sandbox_state_dir
   _tokens
+  python3 - "$BATS_TEST_TMPDIR/tokens.json" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = json.loads(p.read_text())
+del data["colors"]["dark"]["only-root"]
+p.write_text(json.dumps(data, indent=2) + "\n")
+PY
   _brand_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
-  [ "$status" -eq 0 ]
-  [ "$(jq -r .accent "$OUT/sample-dark.generated.json")" = "#abcdef" ]
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"palette.only"*"ow-only-root"*"not a token"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
 }
 
 @test "an unknown brand token exits 2 and writes nothing" {
   sandbox_state_dir
   _tokens
   _brand_palette ow-missing
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"palette.only"*"ow-missing"* ]]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
@@ -244,7 +263,7 @@ EOF
   _tokens
   _brand_palette
   sed -i.bak '/^\[schemes\]/,/^$/d' "$PAL/test.toml"
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"no [schemes] entry"* ]]
 }
@@ -253,9 +272,36 @@ EOF
   sandbox_state_dir
   _tokens
   _brand_palette ow-only-root sepia
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"not light or dark"* ]]
+}
+
+@test "invalid tokens.json exits 3 and writes nothing" {
+  sandbox_state_dir
+  printf '{\n' > "$BATS_TEST_TMPDIR/tokens.json"
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"is not JSON"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
+}
+
+@test "tokens.json schemaVersion 2 exits 3 and writes nothing" {
+  sandbox_state_dir
+  _tokens
+  python3 - "$BATS_TEST_TMPDIR/tokens.json" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = json.loads(p.read_text())
+data["schemaVersion"] = 2
+p.write_text(json.dumps(data, indent=2) + "\n")
+PY
+  _brand_palette
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"schemaVersion 2"* ]]
+  [ -z "$(find "$OUT" -name '*.generated.json')" ]
 }
 
 @test "brand references with no --tokens exit 3 and write nothing" {
@@ -314,7 +360,7 @@ EOF
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
   [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#f7f2e9" ]
-  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
+  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/3/brand.tgz" ]
 }
 
 @test "a second --offline run succeeds from cache after the tarball is gone" {
@@ -350,7 +396,7 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   _brand_palette
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
-  printf 'nope' > "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz"
+  printf 'nope' > "$WORKBENCH_STATE_DIR/herdr-app-themes/3/brand.tgz"
   rm -f "$OUT"/*.generated.json
   run "$GEN" --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
@@ -361,12 +407,12 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   sandbox_state_dir
   _brand_tarball
   _brand_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 0 ]
   run "$GEN" --check --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
   [[ "$output" == *"bin/local/dev-deps"* ]]
-  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
+  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/3/brand.tgz" ]
 }
 
 @test "--resolve-brand --offline exits 3 on an empty cache and 0 from cache after a fetch" {
@@ -375,12 +421,12 @@ p.write_text(json.dumps(data))" "$BATS_TEST_TMPDIR/site/package-lock.json"
   _brand_palette
   run "$GEN" --resolve-brand --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
-  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
+  [ ! -e "$WORKBENCH_STATE_DIR/herdr-app-themes/3/brand.tgz" ]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
   run "$GEN" --resolve-brand --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
   [ "$output" = "fetched" ]
-  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/2/brand.tgz" ]
+  [ -f "$WORKBENCH_STATE_DIR/herdr-app-themes/3/brand.tgz" ]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
   run "$GEN" --resolve-brand --offline --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 0 ]
@@ -421,7 +467,7 @@ PY
   [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
 }
 
-@test "a tarball without package/src/tokens.css exits 3" {
+@test "a tarball without package/tokens.json exits 3 naming ≥ 1.4.0" {
   sandbox_state_dir
   local root="$BATS_TEST_TMPDIR/pkg" tgz="$BATS_TEST_TMPDIR/brand.tgz" integrity
   mkdir -p "$root/package"
@@ -435,7 +481,8 @@ print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read
   _brand_palette
   run "$GEN" --palettes "$PAL" --out "$OUT" --site "$BATS_TEST_TMPDIR/site"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"package/src/tokens.css"* ]]
+  [[ "$output" == *"package/tokens.json"* ]]
+  [[ "$output" == *"1.4.0"* ]]
 }
 
 @test "terminal = brand fills light and dark from --terminal DIR" {
@@ -443,7 +490,7 @@ print("sha512-" + base64.b64encode(hashlib.sha512(pathlib.Path(sys.argv[1]).read
   _tokens
   _terminal_dir
   _terminal_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css" --terminal "$BATS_TEST_TMPDIR/terminal"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json" --terminal "$BATS_TEST_TMPDIR/terminal"
   [ "$status" -eq 0 ]
   [ "$(jq -r .background "$OUT/sample-light.generated.json")" = "#aaaaaa" ]
   [ "$(jq -r .foreground "$OUT/sample-light.generated.json")" = "#111111" ]
@@ -472,7 +519,7 @@ if needle not in text:
     raise SystemExit('theme table not found')
 p.write_text(text.replace(needle, insert, 1))
 PY
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css" --terminal "$BATS_TEST_TMPDIR/terminal"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json" --terminal "$BATS_TEST_TMPDIR/terminal"
   [ "$status" -eq 2 ]
   [[ "$output" == *"terminal = \"brand\" cannot set background"* ]]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
@@ -482,7 +529,7 @@ PY
   sandbox_state_dir
   _tokens
   _terminal_palette
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 2 ]
   [[ "$output" == *"needs @otto-nation/brand ≥ 1.3.0"* ]]
   [ -z "$(find "$OUT" -name '*.generated.json')" ]
@@ -492,10 +539,10 @@ PY
   sandbox_state_dir
   _tokens
   _palette paper
-  run "$GEN" --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 0 ]
   [ "$(cat "$OUT/brand.generated.js")" = "$(cat <<'EOF'
-// Generated by bin/local/generate-herdr-app-themes from @otto-nation/brand tokens.css; do not edit.
+// Generated by bin/local/generate-herdr-app-themes from @otto-nation/brand tokens.json; do not edit.
 export const BRAND = {
   "controlHeight": 21,
   "controlHeightDense": 22,
@@ -535,6 +582,19 @@ export const BRAND = {
       "weight": 400,
       "lineHeight": 16
     }
+  },
+  "radius": {
+    "sm": 4,
+    "md": 6,
+    "lg": 8
+  },
+  "space": {
+    "1": 4,
+    "2": 8,
+    "3": 12,
+    "4": 16,
+    "5": 20,
+    "6": 24
   }
 };
 EOF
@@ -545,10 +605,10 @@ EOF
   sandbox_state_dir
   _tokens
   _palette paper
-  run "$GEN" --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 0 ]
   printf '%s\n' '// edited' > "$OUT/brand.generated.js"
-  run "$GEN" --check --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --check --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"brand.generated.js is stale"* ]]
   [ "$(cat "$OUT/brand.generated.js")" = "// edited" ]
@@ -558,19 +618,42 @@ EOF
   sandbox_state_dir
   _tokens
   _palette paper
-  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  run "$GEN" --palettes "$PAL" --out "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 0 ]
   [ ! -e "$OUT/brand.generated.js" ]
 }
 
-@test "a font role whose line height is not px is refused" {
+@test "a missing length exits 3 without writing the brand module" {
   sandbox_state_dir
   _tokens
   _palette paper
-  sed -i.bak 's#600 11px/16px var(--ow-font-sans)#600 11px/1.3 var(--ow-font-sans)#' "$BATS_TEST_TMPDIR/tokens.css"
-  run "$GEN" --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.css"
+  python3 - "$BATS_TEST_TMPDIR/tokens.json" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = json.loads(p.read_text())
+del data["lengths"]["control-height"]
+p.write_text(json.dumps(data, indent=2) + "\n")
+PY
+  run "$GEN" --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"--ow-font-section"*"is not a font shorthand"* ]]
+  [[ "$output" == *"lengths.control-height"* ]]
+  [ ! -e "$OUT/brand.generated.js" ]
+}
+
+@test "a non-px length is refused" {
+  sandbox_state_dir
+  _tokens
+  _palette paper
+  python3 - "$BATS_TEST_TMPDIR/tokens.json" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = json.loads(p.read_text())
+data["typography"]["section"]["lineHeight"] = "1.3"
+p.write_text(json.dumps(data, indent=2) + "\n")
+PY
+  run "$GEN" --palettes "$PAL" --out "$OUT" --mods-lib "$OUT" --tokens "$BATS_TEST_TMPDIR/tokens.json"
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"typography.section.lineHeight"*"is not a px length"* ]]
   [ ! -e "$OUT/brand.generated.js" ]
 }
 

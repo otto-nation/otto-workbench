@@ -102,6 +102,8 @@ BOLD_FINDING_ID_RE = re.compile(rf"\*\*\[({SEVERITY_KEY}\d+)\]{_POSTED_LABEL}\*\
 def finding_tag(finding_id: str) -> str:
     """The bold tag a review file's finding opens with.
 
+    `finding_id` is the record ID (`M3`), not a posting-order number.
+
     The plainer of the two spellings, and the one every reader above was
     written for.
     """
@@ -110,6 +112,8 @@ def finding_tag(finding_id: str) -> str:
 
 def posted_finding_tag(finding_id: str, severity: str) -> str:
     """The bold tag a posted comment's finding opens with, severity label included.
+
+    `finding_id` is the record ID (`M3`), not a posting-order number.
 
     The other spelling, and the reason it is written here rather than where it
     is posted from: it was spelled at two sites in `review.format` and read by

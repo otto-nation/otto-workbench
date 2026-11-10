@@ -219,7 +219,7 @@ def format_inline_comments(inline: list[Finding]) -> list[dict]:
     """
     return [
         format_inline_comment(f)
-        for f in sorted(inline, key=lambda f: (f.path, f.line))
+        for f in sorted(inline, key=lambda f: (f.full_path or f.path, f.line or 0))
     ]
 
 

@@ -110,7 +110,7 @@ class TestStaticAnalysisIntegration:
         from review_record_support import record
         write_review(
             Path(review_file),
-            record(summary="Looks good.", verdict="Approve"),
+            record(summary="Looks good."),
             ReviewMeta(),
         )
 

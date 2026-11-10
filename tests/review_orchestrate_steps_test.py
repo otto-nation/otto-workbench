@@ -20,7 +20,7 @@ from review.record import Disposition, FocusArea, FocusSource, LedgerLine, Prose
 from review.steps import Merged, _phase_disprove
 from review.store import StoredReview
 from review.types import PriorDisposition, ReviewMeta
-from review.verdict import FALLBACK_SUMMARY, MECHANICAL_NOTE
+from review.verdict import FALLBACK_SUMMARY
 from review.verify import PostProcessed
 from review_behaviours_support import behaviour
 from review_claims_support import claim
@@ -106,7 +106,7 @@ class TestPhaseSynthesis:
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
                 "summary": (
-                    f"Looks good. Quotes {MECHANICAL_NOTE} and "
+                    f"Looks good. Quotes (mechanically merged, not synthesized) and "
                     f"{FALLBACK_SUMMARY} in prose."
                 ),
                 "focus": DERIVED_FOCUS,

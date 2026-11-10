@@ -15,7 +15,7 @@ from core.phases import Phase
 from review.merge import merge_records
 from review.record import Question, TriageEntry, load_record
 from review.steps import Merged
-from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
+from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, SKIPPED_SUMMARY
 from review_record_support import finding, record
 
 
@@ -84,7 +84,7 @@ class TestRunSynthesisOrFallback:
     def test_a_synthesised_review_quoting_the_note_is_not_a_fallback(
         self, ro, tmp_path, monkeypatch,
     ):
-        """A review whose prose contains MECHANICAL_NOTE was still written by the agent.
+        """A review whose prose quotes the old mechanical note was still written by the agent.
 
         The diagnosis is the pipeline's own record of which path wrote the
         file, so a review discussing the fallback machinery is not diagnosed
@@ -99,7 +99,8 @@ class TestRunSynthesisOrFallback:
         def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
             Path(job.review_file).write_text(
                 "# Review\n\n## Summary\nThe merge path stamps "
-                f"{MECHANICAL_NOTE} and {FALLBACK_SUMMARY} on the document.\n\n"
+                "(mechanically merged, not synthesized) and "
+                f"{FALLBACK_SUMMARY} on the document.\n\n"
                 "## Verdict\nApprove\n"
             )
             return review.pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))

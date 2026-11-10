@@ -350,7 +350,6 @@ def _post_and_track(
     review_sha: str = "", sha_drifted: bool = False,
     *, record: ReviewRecord, meta: ReviewMeta,
 ):
-    verdict = record.verdict.strip()
     submit = getattr(args, "submit", False)
     event = event_of(args)
 
@@ -374,7 +373,6 @@ def _post_and_track(
             posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=list(existing_ids), commit_id=commit_id,
             submitted=submit, chunk_count=len(existing_ids),
-            verdict=verdict,
         ))
         return
 
@@ -418,7 +416,7 @@ def _post_and_track(
         body_count=len(body_findings), skipped_count=len(duplicates),
         submitted=submit or is_chunked, chunk_count=len(results),
         review_sha=review_sha or head_sha, head_sha_at_post=head_sha,
-        sha_drifted=sha_drifted, verdict=verdict,
+        sha_drifted=sha_drifted,
     ))
 
 

@@ -90,21 +90,3 @@ def test_review_verdict_from_counts(must, should, expected):
     assert ReviewVerdict.from_counts(must, should) is expected
 
 
-@pytest.mark.parametrize("text,expected", [
-    ("Approve — looks good.", ReviewVerdict.APPROVE),
-    ("**Needs discussion** — two open questions.", ReviewVerdict.NEEDS_DISCUSSION),
-    ("request changes — a bug.", ReviewVerdict.CHANGES_REQUESTED),
-    ("Looks fine to me.", None),
-    ("", None),
-])
-def test_review_verdict_stated_in(text, expected):
-    assert ReviewVerdict.stated_in(text) is expected
-
-
-def test_review_verdict_outranks_orders_the_derivable_calls():
-    assert ReviewVerdict.CHANGES_REQUESTED.outranks(ReviewVerdict.NEEDS_DISCUSSION)
-    assert ReviewVerdict.NEEDS_DISCUSSION.outranks(ReviewVerdict.APPROVE)
-    assert not ReviewVerdict.APPROVE.outranks(ReviewVerdict.CHANGES_REQUESTED)
-    assert not ReviewVerdict.APPROVE.outranks(ReviewVerdict.APPROVE)
-
-

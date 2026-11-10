@@ -71,7 +71,7 @@ def _record_stable_ids(record: ReviewRecord) -> set[str]:
     was asked for its sid.
     """
     ids = {f.sid for f in record.findings if f.sid} | {f.stable_id for f in record.findings if f.stable_id}
-    for text in (record.summary, record.verdict, *(e.body for e in record.extra),
+    for text in (record.summary, *(e.body for e in record.extra),
                  *(f.body for f in record.findings)):
         ids |= set(SID_MARKER_RE.findall(text))
     return ids
@@ -81,18 +81,13 @@ def _record_ledger(record: ReviewRecord) -> list[LedgerLine]:
     return list(record.ledger)
 
 
-def _held_open(finding: RecordFinding) -> bool:
-    """Whether a visible finding is still held — not Disposition.FIXED."""
-    return finding.disposition is not Disposition.FIXED
-
-
 def _prior_findings(record: ReviewRecord) -> list[PriorFinding]:
     """Every finding the prior round still held open, with the text that reported it."""
     out = []
-    for f in record.visible:
+    for f in record.unfixed:
         # Derived findings are re-derived from this round's claims and are
         # never a prior finding to account for.
-        if f.derived or not _held_open(f):
+        if f.derived:
             continue
         line = finding_line(f)
         out.append(PriorFinding(

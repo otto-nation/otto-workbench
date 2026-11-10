@@ -411,10 +411,9 @@ class TestCompleteReviewReadsSectionConstants:
         f.write_text(f"## {SECTION_SUMMARY}\n\nAll good.\n")
         assert not review.outcome.is_complete_review(str(f))
 
-    def test_verdict_section_marks_a_review_complete(self, tmp_path):
-        from review.document import SECTION_VERDICT
+    def test_markdown_alone_is_not_a_complete_review(self, tmp_path):
         f = tmp_path / "review.md"
-        f.write_text(f"## {SECTION_VERDICT}\n\nApprove.\n")
+        f.write_text("## Summary\n\nApprove.\n")
         assert not review.outcome.is_complete_review(str(f))
 
     def test_a_body_with_neither_section_is_incomplete(self, tmp_path):

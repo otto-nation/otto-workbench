@@ -1,19 +1,21 @@
 """What a set of counts means, and the review a run without an agent writes.
 
 The policy layer over `review.document`: the verdict is derived from the
-findings, status and mode, how that reads in prose, whether the run states a
-verdict at all, and the body a mechanically merged review carries when no
-synthesis agent produced one.
+findings, status and mode (`resolve_review_verdict` takes a record and meta),
+how that reads in one generated line (`verdict_line`), and the Summary a
+mechanically merged review carries when no synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
 a judgement — a stored review reads the same way whatever this module decides.
 
 A review where no group reported — every agent failed, so its header says
-`status: error` — records no verdict: its empty tally means nothing was read,
-not that nothing was found. It states `NO_RUN_VERDICT` above its Agent Failures
-table, and `pr review` exits 1 once it has shown and recorded it. A partial run
-records only a blocking verdict (none in place of Approve) and exits 0, since
-the surviving findings are real.
+`status: error` — states no verdict: its empty tally means nothing was read,
+not that nothing was found. The generated line closes the Summary (after Agent
+Failures) with `NO_RUN_VERDICT`, and `pr review` exits 1 once it has shown and
+recorded it. A partial run states only a blocking verdict (none in place of
+Approve) and exits 0, since the surviving findings are real. A self-review
+states none: `resolve_review_verdict` and `verdict_line` are the one reading
+of that rule.
 """
 
 # doc-group: pipeline
@@ -37,26 +39,11 @@ def open_counts(doc: ReviewDocument | None) -> dict[str, int]:
     The one place a review that was never written is read as one that found
     nothing. A caller reporting counts has no separate answer for absent — a
     listing prints zeroes either way — so the substitution is made once here
-    rather than restated at every reader. `resolve_review_verdict` is the
-    reader that does have a separate answer, and takes the same nullable
-    document to give it.
+    rather than restated at every reader.
     """
     if doc is None:
         return {s.key: 0 for s in SEVERITIES}
     return doc.open_counts
-
-
-def verdict_from_counts(counts: dict[str, int]) -> ReviewVerdict:
-    """The verdict a tally of open findings supports on its own.
-
-    The counts alone, with no prose read: what a mechanically merged
-    review states outright for want of an agent, and what a drop leaves a
-    stated verdict to be lowered to. A severity the tally omits counts as none
-    of that severity, so a partial tally is read rather than refused.
-    """
-    return ReviewVerdict.from_counts(
-        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
-    )
 
 
 def counts_prose(counts: dict[str, int]) -> str:
@@ -70,21 +57,8 @@ def counts_prose(counts: dict[str, int]) -> str:
     return ", ".join(f"{counts[s.key]} {s.label}" for s in SEVERITIES if counts.get(s.key))
 
 
-def states_verdict(mode: Mode | None) -> bool:
-    """Whether a review run in `mode` reaches a verdict at all.
-
-    False for a self-review, true for everything else — a review whose
-    metadata never stated a mode included, since a missing mode is not a claim
-    that the review had no PR. A self-review is advisory: there is nothing to
-    approve or block, so the verdict it would otherwise state is a call on
-    nothing. Every path that writes or reads a verdict asks here rather than
-    testing the mode for itself.
-    """
-    return mode is not Mode.SELF
-
-
 # What a partial run with nothing blocking open states. An incomplete run
-# cannot vouch that nothing blocks; writers still store this until Task 4.
+# cannot vouch that nothing blocks.
 PARTIAL_VERDICT = (
     "Review incomplete: part of this review did not run, so it cannot vouch "
     "that nothing blocks. See Agent Failures for what was not assessed."
@@ -154,34 +128,6 @@ def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
     return f"**Verdict: {verdict.prose}.** {_rationale(record)}{tail}"
 
 
-# Stamped into a mechanically written verdict so a reader — and the pipeline's
-# own check for whether synthesis ran — can tell one from a verdict an agent
-# reached.
-MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
-
-
-def mechanical_verdict(counts: dict[str, int]) -> str:
-    """The `## Verdict` body a tally supports, said without an agent.
-
-    What the review states when synthesis did not run: the call
-    `verdict_from_counts` derives, the tally read out, and `MECHANICAL_NOTE` so
-    the absence of a synthesis is on the page rather than inferred from the
-    prose being terse.
-    """
-    prose = counts_prose(counts)
-    if not prose:
-        return f"{ReviewVerdict.APPROVE.prose} — no findings {MECHANICAL_NOTE}.\n"
-    verdict = verdict_from_counts(counts)
-    suffix = " only" if verdict is ReviewVerdict.APPROVE else ""
-    return f"{verdict.prose} — {prose}{suffix} {MECHANICAL_NOTE}.\n"
-
-
-# The `## Verdict` a run that found nothing states. It carries no
-# `MECHANICAL_NOTE`: the note exists to say a merge stood in for a synthesis
-# that had findings to weigh, and a review with none had nothing to synthesize.
-CLEAN_VERDICT = f"{ReviewVerdict.APPROVE.prose} — clean review.\n"
-
-
 # What the Summary says when no synthesis agent wrote the review — the
 # `summary_note` a caller of `build_mechanical_record` hands in. Each names why
 # synthesis did not produce the document, because a reader who cannot tell a
@@ -234,7 +180,7 @@ def _summary_lead(counts: dict[str, int], *, group_count: int, summary_note: str
 
 def build_mechanical_record(
     merged: ReviewRecord, *, group_count: int, summary_note: str,
-    include_verdict: bool = True, verdict: str = "", file_count: int = 0,
+    file_count: int = 0,
     groups_reported: int | None = None,
 ) -> ReviewRecord:
     """`merged` as a whole review no synthesis agent read.
@@ -246,5 +192,4 @@ def build_mechanical_record(
     lead = _summary_lead(counts, group_count=group_count, summary_note=summary_note,
                          file_count=file_count, groups_reported=groups_reported)
     summary = f"{lead}\n\n{merged.summary}" if merged.summary else lead
-    stated = (verdict or mechanical_verdict(counts)).strip() if include_verdict else ""
-    return replace(merged, summary=summary, verdict=stated)
+    return replace(merged, summary=summary)

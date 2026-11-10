@@ -1,7 +1,7 @@
 """Tests for `post_process_record`, the pass evidence verification and the
 disprove gate run inside — the cleanups it applies in order, and the
-reconciliation that makes a review's Summary and Verdict account for what
-verification removed.
+reconciliation that makes a review's Summary account for what verification
+removed.
 
 The reconciliation has no other caller, and its contract is about the order —
 it must read counts renumbering has already settled — so the whole pass is the
@@ -153,13 +153,12 @@ class TestPostProcessFindings:
 class TestReconcileDroppedFindings:
     """A review must never describe a finding evidence verification removed.
 
-    The synthesis agent writes the Summary and the Verdict before verification
-    runs, so both are asserted against the finished file rather than against
-    the intermediate dict.
+    The synthesis agent writes the Summary before verification runs, so it is
+    asserted against the finished file rather than against the intermediate dict.
     """
 
     @staticmethod
-    def _sample(tmp_path, verdict="Request changes — the unchecked error is a bug.", extra=()):
+    def _sample(tmp_path, extra=()):
         """A review whose Summary names a must-fix that will not verify."""
         (tmp_path / "kept.py").write_text("x = 1\n")
         return record(
@@ -170,7 +169,6 @@ class TestReconcileDroppedFindings:
                 "Solid change overall; the most serious problem is the unchecked "
                 "error in `deleted.py`."
             ),
-            verdict=verdict,
             severity_sections=(SeveritySection("M"), SeveritySection("N")),
         )
 
@@ -212,40 +210,14 @@ class TestReconcileDroppedFindings:
         # the reader at it.
         assert "- **[M1]** `kept.py:1`" in result
 
-    def test_verdict_is_lowered_to_what_survives(self, tmp_path):
-        rec = self._sample(tmp_path)
-        done = post_process_record(rec, str(tmp_path))
-        assert "Approve — 1 nit" in done.record.verdict
-        assert "Request changes" not in done.record.verdict
-
-    def test_disapprove_is_never_lowered(self, tmp_path):
-        # Disapprove means the approach is wrong, which the finding counts do
-        # not derive — dropping a finding cannot refute it. The note still says
-        # what went, so the reader can weigh the verdict against it.
-        rec = self._sample(tmp_path, verdict="**Disapprove** — the approach is wrong.")
-        done = post_process_record(rec, str(tmp_path))
-        assert "**Disapprove** — the approach is wrong." in done.record.verdict
-        assert "Evidence verification removed 1 finding:" in done.record.summary
-
-    def test_verdict_the_counts_still_support_is_left_alone(self, tmp_path):
-        rec = self._sample(
-            tmp_path,
-            extra=(finding("M2", "also worth fixing", path="kept.py"),),
-        )
-        done = post_process_record(rec, str(tmp_path))
-        assert "Request changes — the unchecked error is a bug." in done.record.verdict
-        assert "Evidence verification removed 1 finding:" in done.record.summary
-
     def test_no_note_when_nothing_dropped(self, tmp_path):
         (tmp_path / "kept.py").write_text("x = 1\n")
         rec = record(
             finding("M1", "the error is never checked", path="kept.py"),
             summary="One real problem.",
-            verdict="Request changes — worth fixing.",
         )
         done = post_process_record(rec, str(tmp_path))
         assert "Evidence verification" not in done.record.summary
-        assert "Request changes — worth fixing." in done.record.verdict
 
     def test_second_pass_does_not_stack_notes(self, tmp_path):
         rec = self._sample(tmp_path)
@@ -277,7 +249,6 @@ class TestReconcileDroppedFindings:
                 evidence="y = 2",
             ),
             summary="One real problem.",
-            verdict="Request changes — worth fixing.",
         )
         _post_process(rec, str(review), str(tmp_path))
         result = review.read_text()

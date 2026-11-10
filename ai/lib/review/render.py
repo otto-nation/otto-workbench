@@ -334,7 +334,10 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool,
 
 def render_body(record: ReviewRecord, *, sids: bool = False, evidence: bool = False,
                 omit: frozenset[str] = frozenset(), verdict: str = "") -> str:
-    """The `## ` sections of `record`, without title or header. `omit` names headings."""
+    """The `## ` sections of `record`, without title or header. `omit` names headings.
+
+    `verdict` is the generated line that closes the Summary, not a stored field.
+    """
     return "\n".join(
         f"## {s.heading}\n\n{s.body.strip()}\n" if s.body.strip() else f"## {s.heading}\n"
         for s in _sections(record, sids, evidence, verdict) if s.heading not in omit

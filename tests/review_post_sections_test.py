@@ -42,7 +42,7 @@ RICH = record(
     finding("S2", "use a constant", path="b.py", line=12, disposition=Disposition.DECLINED),
     finding("N1", "trailing space", path="c.py", line=1),
     finding("I1", "pattern holds", path=""),
-    summary="looked at locking.", verdict="Request changes — M1 blocks.",
+    summary="looked at locking.",
     focus=(user_area("Locking"),), claims=(claim(),), behaviours=(behaviour(),),
     failures=(AgentFailure("disprove", "timed out", "failed", recoverable=True),),
     extra=(ProseSection("Review gaps", "- group 2"),),
@@ -53,7 +53,6 @@ REVIEW = record(
     finding("M1", "missing error check", path="handler.go", line=11),
     finding("S1", "unused variable", path="handler.go", line=25),
     summary="Clean refactor with good test coverage.",
-    verdict="Request changes — M1 is a blocker.",
     static_analysis="### Nesting depth\n1 violation in 1 of 3 files checked",
 )
 

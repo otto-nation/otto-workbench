@@ -51,7 +51,6 @@ PRIOR_WITH_INTERNAL = record(
         "\n"
         "</details>"
     ),
-    verdict="Request changes.",
 )
 
 

@@ -131,7 +131,6 @@ class PostTracking:
     review_sha: str = ""
     head_sha_at_post: str = ""
     sha_drifted: bool = False
-    verdict: str = ""
 
     def __post_init__(self):
         if not self.posted_at:

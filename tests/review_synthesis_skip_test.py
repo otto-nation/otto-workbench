@@ -26,8 +26,7 @@ from review.types import (  # noqa: E402
     ClaimAnswer, FindingOrigin, Group, PreflightData, ReviewMeta,
 )
 from review.verdict import (  # noqa: E402
-    BUDGET_SUMMARY, CLEAN_SUMMARY, CLEAN_VERDICT, SETTLED_SUMMARY,
-    mechanical_verdict,
+    BUDGET_SUMMARY, CLEAN_SUMMARY, SETTLED_SUMMARY,
 )
 from review.verify import PostProcessed  # noqa: E402
 from review_claims_support import claim  # noqa: E402
@@ -327,11 +326,11 @@ def test_a_round_with_no_open_derived_finding_still_writes_a_clean_review(
     assert result.cost == 0.0
     stored = read_review(Path(job.review_file))
     assert stored.record.summary == f"No findings across 2 groups. {CLEAN_SUMMARY}"
-    assert stored.record.verdict == CLEAN_VERDICT.strip()
+    assert "**Verdict: Approve.**" in Path(job.review_file).read_text()
 
 
 def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch):
-    """PR mode, because a self-review states no verdict on any path (`states_verdict`)."""
+    """PR mode, because a self-review states no verdict."""
     job = _job(tmp_path, mode=Mode.PR)
     monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
     reconciled = []
@@ -345,7 +344,7 @@ def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch)
     assert result.cost == 0.0
     stored = read_review(Path(job.review_file))
     assert stored.record.summary == f"1 finding across 2 groups. {SETTLED_SUMMARY}"
-    assert stored.record.verdict == mechanical_verdict(stored.record.open_counts).strip()
+    assert "**Verdict: Needs discussion.**" in Path(job.review_file).read_text()
     assert reconciled, "reconciliation did not run"
     assert [f.id for f in stored.record.findings] == ["S1"]
 

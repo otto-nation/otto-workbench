@@ -17,7 +17,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr.state import PostedAs, PostEvent, PostTracking
 from core.proc import CmdResult
-from core.serde import from_dict as serde_from_dict
+from core.serde import from_dict as serde_from_dict, load_file as serde_load_file
 import review.dedup
 import review.posting
 from review.posting import ReviewEvent
@@ -88,6 +88,21 @@ class TestWritePostTracking:
         assert tracking.review_ids == [100, 200, 300]
         assert tracking.chunk_count == 3
         assert tracking.submitted is True
+
+    def test_post_tracking_records_no_verdict(self, rp, tmp_path):
+        d = self._review_dir(tmp_path)
+        review = str(d / "review.md")
+        rp.write_post_tracking(review, PostTracking(
+            posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
+            review_ids=[123], commit_id="abc",
+        ))
+        path = d / "post.jsonl"
+        raw = json.loads(path.read_text())
+        assert "verdict" not in raw
+        path.write_text(json.dumps({**raw, "verdict": "Approve."}) + "\n")
+        loaded = serde_load_file(PostTracking, path)
+        assert loaded is not None
+        assert loaded.review_id == 123
 
 
 class TestFormatSubmitCommand:
@@ -350,7 +365,7 @@ class TestReclassifyAndRetry:
             patch("review.posting._post_chunked_review", side_effect=failing_then_succeeding),
             patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
         ):
-            rec = record(summary="Clean refactor.", verdict="Request changes — M1 blocks.")
+            rec = record(summary="Clean refactor.")
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
                 "abc123", 30, {"M"}, False,
@@ -399,7 +414,7 @@ class TestReclassifyAndRetry:
             captured.append(a[3])
             return [{"id": 1}]
 
-        rec = record(summary="Clean refactor.", verdict="Request changes — M1 blocks.")
+        rec = record(summary="Clean refactor.")
         with (
             patch("review.dedup.fetch_bot_reviews", return_value=review.dedup.BotReviews()),
             patch("review.dedup.check_review_already_posted", return_value=[]),

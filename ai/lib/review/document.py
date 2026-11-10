@@ -23,18 +23,17 @@ from review.record import ReviewRecord
 from review.types import SEVERITIES, Finding, ReviewMeta, ReviewType
 
 
-# The headers a review is written with. `Summary` and `Verdict` are the two this
-# module reads by name; the rest are here because they name sections of the same
-# document, and a header spelled in the module that reads it and again in the one
-# that writes it is two owners of one string. Any other header is the caller's
-# own vocabulary, passed to `section` as a string.
+# The headers a review is written with. `Summary` is the one this module reads
+# by name; the rest are here because they name sections of the same document,
+# and a header spelled in the module that reads it and again in the one that
+# writes it is two owners of one string. Any other header is the caller's own
+# vocabulary, passed to `section` as a string.
 SECTION_SUMMARY = "Summary"
 SECTION_FOCUS = "Focus"
 SECTION_CLAIMS = "Claims"
 SECTION_TEST_EVIDENCE = "Test evidence"
 SECTION_QUESTIONS = "Questions"
 SECTION_VERIFIED = "Verified, no issue"
-SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
 SECTION_FAILURES = "Agent Failures"
@@ -251,7 +250,6 @@ def _record_section(record: ReviewRecord, header: str) -> str:
         )
     by_key = {
         SECTION_SUMMARY.lower(): record.summary,
-        SECTION_VERDICT.lower(): record.verdict,
         SECTION_STATIC_ANALYSIS.lower(): record.static_analysis,
     }
     if key in by_key:

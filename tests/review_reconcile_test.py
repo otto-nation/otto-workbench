@@ -115,7 +115,7 @@ class TestParsePriorFindings:
 
     def test_a_findings_text_stops_at_the_next_section(self):
         first = review.reconcile._prior_findings(
-            _prior(F_M1, verdict="Request changes.").record,
+            _prior(F_M1).record,
         )[0]
         assert "Request changes" not in first.text
 

@@ -10,8 +10,6 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from dataclasses import replace
-
 from pr.domains import ReviewStatus
 from review.document import ReviewDocument, ReviewHeader
 from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
@@ -52,7 +50,7 @@ class TestTheStore:
     def test_reading_back_returns_record_and_meta(self, tmp_path):
         stored = read_review(_stored(tmp_path))
         assert stored.meta.status is ReviewStatus.PARTIAL
-        assert stored.record.verdict.startswith("**Approve.**")
+        assert stored.record.summary
 
     def test_a_directory_without_review_json_is_stale(self, tmp_path):
         (tmp_path / "review.md").write_text("# old\n## Summary\nx\n")
@@ -60,9 +58,8 @@ class TestTheStore:
 
     def test_an_update_rewrites_the_render(self, tmp_path):
         review_file = _stored(tmp_path)
-        update_review(review_file, lambda r: replace(r, verdict="changed"), status=ReviewStatus.ERROR)
+        update_review(review_file, lambda r: r, status=ReviewStatus.ERROR)
         text = review_file.read_text()
-        assert "changed" not in text
         assert "<!-- status: error -->" in text
         assert "**No verdict.** No part of this review ran." in text
 

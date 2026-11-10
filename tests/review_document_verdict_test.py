@@ -18,11 +18,7 @@ from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument, ReviewHeader
 from review.record import Disposition, LedgerLine
 from review.types import PriorDisposition, ReviewMeta, SEVERITIES
-from review.verdict import (
-    CLEAN_VERDICT, MECHANICAL_NOTE,
-    counts_prose, mechanical_verdict,
-    open_counts, resolve_review_verdict, states_verdict, verdict_from_counts,
-)
+from review.verdict import counts_prose, open_counts, resolve_review_verdict
 
 from review_document_support import _write
 from review_record_support import finding, record
@@ -118,25 +114,6 @@ class TestOpenCounts:
         assert open_counts(document) == document.open_counts
 
 
-class TestStatesVerdict:
-    """The one reading of which runs state a verdict at all.
-
-    Both the resolver and the mechanically merged body ask this rather than
-    testing the mode for themselves, so a self-review cannot state a verdict
-    in one place and withhold it in the other.
-    """
-
-    def test_a_pr_review_states_one(self):
-        assert states_verdict(Mode.PR)
-
-    def test_a_self_review_does_not(self):
-        assert not states_verdict(Mode.SELF)
-
-    def test_a_review_whose_metadata_named_no_mode_still_states_one(self):
-        """A missing mode is not a claim that the review had no PR."""
-        assert states_verdict(None)
-
-
 class TestResolveVerdict:
     @pytest.mark.parametrize(
         "severity,disposition,expected",
@@ -182,14 +159,11 @@ class TestResolveVerdict:
 
     def test_the_agent_s_prose_is_not_read(self):
         assert resolve_review_verdict(
-            record(
-                finding("S1", "smell", path=""),
-                verdict="Approve. Every remaining finding is minor.",
-            ),
+            record(finding("S1", "smell", path="")),
             _PR_DONE,
         ) is ReviewVerdict.NEEDS_DISCUSSION
         assert resolve_review_verdict(
-            record(finding("N1", "nit", path=""), verdict="Request changes"),
+            record(finding("N1", "nit", path="")),
             _PR_DONE,
         ) is ReviewVerdict.APPROVE
 
@@ -209,22 +183,6 @@ class TestResolveVerdict:
         )
 
 
-class TestVerdictFromCounts:
-    def test_a_must_fix_blocks(self):
-        assert verdict_from_counts({"M": 1, "S": 0}) is ReviewVerdict.CHANGES_REQUESTED
-
-    def test_a_should_fix_opens_a_discussion(self):
-        assert verdict_from_counts({"M": 0, "S": 2}) is ReviewVerdict.NEEDS_DISCUSSION
-
-    def test_nothing_blocking_approves(self):
-        assert verdict_from_counts({"N": 3}) is ReviewVerdict.APPROVE
-
-    def test_a_severity_the_tally_omits_counts_as_none(self):
-        """A partial tally is read rather than refused — the mechanical paths
-        hand this whatever counts they have."""
-        assert verdict_from_counts({}) is ReviewVerdict.APPROVE
-
-
 class TestCountsProse:
     def test_severities_read_out_in_order(self):
         assert counts_prose({"M": 2, "S": 1, "N": 1}) == "2 must-fix, 1 should-fix, 1 nit"
@@ -236,36 +194,3 @@ class TestCountsProse:
         assert counts_prose({"M": 0, "S": 0, "N": 0, "I": 0}) == ""
 
 
-# ── The body a review has when no agent wrote one ───────────────────────────
-
-
-class TestMechanicalVerdict:
-    def test_must_fix_present(self):
-        assert mechanical_verdict({"M": 2, "S": 1, "N": 0, "I": 0}).startswith(
-            "Request changes"
-        )
-
-    def test_should_fix_no_must(self):
-        assert mechanical_verdict({"M": 0, "S": 3, "N": 1, "I": 0}).startswith(
-            "Needs discussion"
-        )
-
-    def test_nits_and_idioms_only(self):
-        result = mechanical_verdict({"M": 0, "S": 0, "N": 2, "I": 1})
-        assert result.startswith("Approve")
-        assert "2 nit" in result
-        assert "1 idiom" in result
-
-    def test_no_findings(self):
-        assert "no findings" in mechanical_verdict({"M": 0, "S": 0, "N": 0, "I": 0})
-
-    def test_zero_counts_for_some(self):
-        result = mechanical_verdict({"M": 1, "S": 0, "N": 0, "I": 0})
-        assert "Request changes" in result
-        assert "1 must-fix" in result
-        assert "should-fix" not in result
-
-    def test_the_note_says_no_agent_reached_this(self):
-        """The pipeline reads it back to record that synthesis did not run."""
-        assert MECHANICAL_NOTE in mechanical_verdict({"M": 1})
-        assert MECHANICAL_NOTE in mechanical_verdict({})

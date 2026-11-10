@@ -290,7 +290,7 @@ class TestFailuresSectionInReview:
 
     def test_the_section_sits_above_the_summary(self):
         from review_record_support import record
-        result = self._body(record(summary="note", verdict="Approve"), self._state())
+        result = self._body(record(summary="note"), self._state())
         assert result.index("## Agent Failures") < result.index("## Summary")
 
     def test_a_review_with_no_summary_still_gets_the_section(self):

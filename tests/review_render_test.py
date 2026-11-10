@@ -78,7 +78,7 @@ def test_prompt_text_omits_the_models_line():
 
 def test_the_verdict_line_closes_the_summary():
     rec = record(
-        finding("S1", "x"), summary="Adds svc-lending.", verdict="Approve.",
+        finding("S1", "x"), summary="Adds svc-lending.",
     )
     text = render_review(
         rec, ReviewMeta(mode=Mode.PR, status=ReviewStatus.COMPLETED, repo="a/b", pr_number=1),
@@ -89,7 +89,7 @@ def test_the_verdict_line_closes_the_summary():
 
 
 def test_prompt_text_states_no_verdict():
-    rec = record(finding("M1", "x"), summary="s", verdict="Request changes.")
+    rec = record(finding("M1", "x"), summary="s")
     meta = ReviewMeta(mode=Mode.PR, repo="a/b", pr_number=1)
     assert "Verdict" not in render_review(rec, meta, banner=False)
     assert "Verdict" not in render_body(rec)
@@ -135,7 +135,7 @@ def test_a_head_annotation_renders_at_the_tail():
 def test_an_unknown_section_renders_before_the_tail():
     """D4."""
     body = render_body(record(
-        summary="s", verdict="ok", extra=(ProseSection("Review gaps", "g"),),
+        summary="s", extra=(ProseSection("Review gaps", "g"),),
     ))
     assert "## Verdict" not in body
     assert body.index("## Summary") < body.index("## Review gaps")

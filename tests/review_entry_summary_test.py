@@ -428,7 +428,7 @@ def test_a_stated_disapprove_is_not_recorded(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-42"
     review_dir.mkdir(parents=True)
     review = review_dir / "review.md"
-    store_record(review, record(verdict="Disapprove — fundamentally wrong approach."))
+    store_record(review, record())
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["verdict"] == "approve"
@@ -439,7 +439,6 @@ def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
     review = tmp_path / "review.md"
     store_record(review, record(
         finding("M1", "path:1 — bug", path=""),
-        verdict="Approve — looks fine.",
     ))
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
@@ -451,7 +450,6 @@ def test_json_summary_verdict_is_the_counts_not_the_prose(cr, tmp_path):
     review = tmp_path / "review.md"
     store_record(review, record(
         finding("N1", "path:1 — style", path=""),
-        verdict="Request changes — the approach needs rework.",
     ))
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
@@ -553,7 +551,7 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
 
 def test_format_findings_line_no_findings(tmp_path):
     review = tmp_path / "review.md"
-    store_record(review, record(summary="Looks good.", verdict="Approve"))
+    store_record(review, record(summary="Looks good."))
     report = build_review_summary("org/repo", "1", str(review))
     assert format_findings_line(report) == ""
 
@@ -563,7 +561,6 @@ def test_format_findings_line_nits_only(tmp_path):
     store_record(review, record(
         finding("N1", "style", path="file.py", line=10),
         finding("N2", "naming", path="file.py", line=20),
-        verdict="Approve",
     ))
     report = build_review_summary("org/repo", "1", str(review))
     assert format_findings_line(report) == "2 nit"
@@ -576,7 +573,6 @@ def test_format_findings_line_mixed(tmp_path):
         finding("S1", "cleanup", path="file.py", line=20),
         finding("N1", "style", path="file.py", line=30),
         finding("N2", "style", path="file.py", line=40),
-        verdict="Changes requested",
     ))
     report = build_review_summary("org/repo", "1", str(review))
     assert format_findings_line(report) == "1 must fix, 1 should fix, 2 nit"
@@ -589,7 +585,7 @@ def test_format_findings_line_nonexistent_file():
 
 def test_format_verdict_approve(tmp_path):
     review = tmp_path / "review.md"
-    store_record(review, record(verdict="Approve"))
+    store_record(review, record())
     report = build_review_summary("org/repo", "1", str(review))
     assert format_verdict(report) == "Approve"
 
@@ -598,7 +594,6 @@ def test_format_verdict_with_must_fix(tmp_path):
     review = tmp_path / "review.md"
     store_record(review, record(
         finding("M1", "bug", path="file.py", line=10),
-        verdict="Approve",
     ))
     report = build_review_summary("org/repo", "1", str(review))
     assert format_verdict(report) == "Request changes"
@@ -606,7 +601,7 @@ def test_format_verdict_with_must_fix(tmp_path):
 
 def test_format_verdict_explicit_disapprove(tmp_path):
     review = tmp_path / "review.md"
-    store_record(review, record(verdict="Disapprove"))
+    store_record(review, record())
     report = build_review_summary("org/repo", "1", str(review))
     assert format_verdict(report) == "Approve"
 

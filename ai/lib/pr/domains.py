@@ -106,7 +106,6 @@ there is one waiver mechanism rather than two.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import Enum, StrEnum
@@ -346,19 +345,16 @@ class ReviewVerdict(Enum):
     `value` is the persisted state value; `prose` is the word the verdict line
     states. One member owns both, so what a review says and what `pr status`
     reports cannot disagree.
-
-    `rank` orders the verdicts the finding counts derive.
     """
 
-    APPROVE = ("approve", "Approve", 0)
-    NEEDS_DISCUSSION = ("needs_discussion", "Needs discussion", 1)
-    CHANGES_REQUESTED = ("changes_requested", "Request changes", 2)
+    APPROVE = ("approve", "Approve")
+    NEEDS_DISCUSSION = ("needs_discussion", "Needs discussion")
+    CHANGES_REQUESTED = ("changes_requested", "Request changes")
 
-    def __new__(cls, value: str, prose: str, rank: int | None) -> ReviewVerdict:
+    def __new__(cls, value: str, prose: str) -> ReviewVerdict:
         obj = object.__new__(cls)
         obj._value_ = value
         obj.prose = prose
-        obj.rank = rank
         return obj
 
     @classmethod
@@ -374,39 +370,6 @@ class ReviewVerdict(Enum):
         if should:
             return cls.NEEDS_DISCUSSION
         return cls.APPROVE
-
-    @classmethod
-    def stated_in(cls, text: str) -> ReviewVerdict | None:
-        """The verdict `text` opens with, bold markers and case ignored."""
-        m = VERDICT_PROSE_RE.match(text.strip())
-        return _VERDICT_BY_PROSE[m.group(1).lower()] if m else None
-
-    def outranks(self, other: ReviewVerdict | None) -> bool:
-        """Whether this verdict is a stronger call than `other`.
-
-        An unranked verdict outranks nothing and is outranked by nothing.
-        """
-        if other is None or self.rank is None or other.rank is None:
-            return False
-        return self.rank > other.rank
-
-
-_VERDICT_BY_PROSE = {v.prose.lower(): v for v in ReviewVerdict}
-
-# Longest prose first so "Request changes" cannot be shadowed by a shorter
-# alternative sharing its prefix.
-VERDICT_PROSE_RE = re.compile(
-    r"\*{0,2}(" + "|".join(
-        re.escape(p) for p in sorted(_VERDICT_BY_PROSE, key=len, reverse=True)
-    ) + r")\*{0,2}",
-    re.IGNORECASE,
-)
-
-# The same words followed by the dash that separates them from the rationale —
-# what a renderer strips when the heading already carries the verdict.
-VERDICT_PROSE_PREFIX_RE = re.compile(
-    r"^" + VERDICT_PROSE_RE.pattern + r"\s*[—–\-]\s*", re.IGNORECASE,
-)
 
 
 class ReviewStatus(Enum):

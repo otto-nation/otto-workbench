@@ -362,17 +362,8 @@ def failures_of(state: "PipelineState") -> tuple[AgentFailure, ...]:
 
 
 def apply_failures(record: ReviewRecord, state: "PipelineState") -> ReviewRecord:
-    """`record` reporting `state`'s failures, its verdict withheld when the run was partial.
-
-    A verdict synthesised over files no agent opened is the line a reader acts
-    on without reading further.
-    """
-    from review.verdict import PARTIAL_VERDICT
-
-    record = replace(record, failures=failures_of(state))
-    if not state.partial or not record.verdict:
-        return record
-    return replace(record, verdict=PARTIAL_VERDICT.strip())
+    """`record` reporting `state`'s failures."""
+    return replace(record, failures=failures_of(state))
 
 
 def _inject_failures_and_status(review_file: str, state: "PipelineState") -> None:

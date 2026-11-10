@@ -52,14 +52,12 @@ _BIG_PR = {
 _PRIOR = record(
     finding("M1", "a bug nobody has fixed"),
     summary="Synthesized.",
-    verdict="Request changes",
 )
 # A prior run that approved while holding a finding the fast path must not
 # clear: its stale verdict is the one a document carrying two would report.
 _PRIOR_APPROVED = record(
     finding("M1", "a bug nobody has fixed"),
     summary="Synthesized.",
-    verdict="Approve — the prior run's call",
 )
 
 

@@ -6,7 +6,7 @@ import { STEP_NAMES, STEP_LABEL, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
-  scrollBody, button, solidButton, pane, paneBar, chip as chipOf, filterGroup,
+  scrollBody, button, solidButton, pane, chip as chipOf, filterGroup,
   sectionHeading, text, type, statusText, dangerColor,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
@@ -155,7 +155,6 @@ function renderForm({ launcher: L, prs }) {
     : null;
   const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
-    .child(sectionHeading("Start a batch"))
     .child(filters)
     .child(renderPrs(L, all, t))
     .child(v_flex().gap(SP.sm)
@@ -187,10 +186,10 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
   const expanded = (r) => renderRunItems(workflows.docOf(r.on, r.id), { repos: r.repos ?? [], prOf, onOpen: onOpenPr });
   const running = renderRunning({ launcher, workflows, run });
   return pane("prs-batch")
-    .child(paneBar()
-      .child(h_flex().gap(SP.sm).items_center()
-        .child(button("batch-back", "Back", onBack))
-        .child(text("heading", "Batch"))))
+    // One row and no rule: the page's title is the only header, and the form is its content.
+    .child(h_flex().flex_none().gap(SP.md).items_center().px(SP.lg).pt(SP.lg)
+      .child(button("batch-back", "← Back", onBack))
+      .child(text("heading", "Batch")))
     .child(scrollBody().id("batch-body").px(SP.lg).py(SP.lg).gap(SP.xl)
       .when(Boolean(running), (e) => e.child(running))
       .child(renderForm({ launcher, prs }))

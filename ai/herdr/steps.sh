@@ -122,6 +122,7 @@ _herdr_app_present() { command -v herdr-app >/dev/null 2>&1 || [[ -d "$HERDR_APP
 # HERDR_APP_DIR) as <name>.json, the name herdr-app reads the theme by.
 # Identical regular file → replaced by the link; differing regular file →
 # warned about and left (it is the person's edit).
+# shellcheck disable=SC2120 # HOME is optional; tests pass it, sync does not
 _herdr_app_link_themes() {
   local home="${1:-$HERDR_APP_DIR}"
   local themes_dir="$home/themes"
@@ -145,6 +146,7 @@ _herdr_app_link_themes() {
 # _herdr_app_set_theme [HOME] — sets settings.json's `theme` to the light/dark
 # pair and nothing else. Never clobbers: a file that is not one JSON object, or
 # a symlink, is warned about and left. HOME defaults to HERDR_APP_DIR.
+# shellcheck disable=SC2120 # HOME is optional; tests pass it, sync does not
 _herdr_app_set_theme() {
   local home="${1:-$HERDR_APP_DIR}"
   local light="$HERDR_APP_THEME_LIGHT" dark="$HERDR_APP_THEME_DARK" desired current updated

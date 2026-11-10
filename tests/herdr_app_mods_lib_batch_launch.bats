@@ -136,18 +136,6 @@ _throws() {
   [ "$output" = '["rebase","ci","comments","review"]' ]
 }
 
-@test "formFacets repos first-seen order, labels sorted case-insensitively, deduped" {
-  _js 'm.formFacets([{repoSlug:"b/two",labels:["Zebra","alpha"]},{repoSlug:"a/one",labels:["ALPHA","bug"]},{repoSlug:"b/two",labels:["gamma"]},{repoSlug:"B/Two",labels:["bug"]}])'
-  [ "$status" -eq 0 ]
-  [ "$output" = '{"repos":["b/two","a/one"],"labels":["alpha","bug","gamma","Zebra"]}' ]
-}
-
-@test "formFacets empty list and missing labels" {
-  _js '[m.formFacets([]),m.formFacets(null),m.formFacets([{repoSlug:"a/one"}])]' 
-  [ "$status" -eq 0 ]
-  [ "$output" = '[{"repos":[],"labels":[]},{"repos":[],"labels":[]},{"repos":["a/one"],"labels":[]}]' ]
-}
-
 @test "filterForm hides drafts by default; drafts:true shows them; repo chip still ANDs" {
   _js '(() => { const prs = [{n:1,repoSlug:"a/one",isDraft:true},{n:2,repoSlug:"a/one"},{n:3,repoSlug:"b/two",isDraft:true},{n:4,repoSlug:"b/two"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}),ids({drafts:true}),ids({drafts:false}),ids({drafts:false,repos:["b/two"]})]; })()'
   [ "$status" -eq 0 ]

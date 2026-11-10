@@ -113,6 +113,41 @@ export function filterRepos(prs, repos, loaded) {
   return prs.filter((p) => active.has(String(p.repoSlug ?? "").toLowerCase()));
 }
 
+function fold(s) {
+  return String(s ?? '').toLowerCase();
+}
+
+/** Distinct repo slugs (first-seen) and label names (case-insensitive sort) among `prs`: the chips a view offers. */
+export function filterFacets(prs) {
+  const repos = [];
+  const seenRepos = new Set();
+  const labels = [];
+  const seenLabels = new Set();
+  for (const pr of prs ?? []) {
+    const slug = pr?.repoSlug;
+    if (slug && !seenRepos.has(fold(slug))) {
+      seenRepos.add(fold(slug));
+      repos.push(slug);
+    }
+    for (const name of pr?.labels ?? []) {
+      if (!name || seenLabels.has(fold(name))) continue;
+      seenLabels.add(fold(name));
+      labels.push(name);
+    }
+  }
+  labels.sort((a, b) => fold(a).localeCompare(fold(b)));
+  return { repos, labels };
+}
+
+// A PR matches when it carries any selected label. A selection naming no label among `prs` is
+// ignored, as a stale repo is, so a label whose last PR merged does not empty the view.
+export function filterLabels(prs, labels) {
+  const known = new Set(filterFacets(prs).labels.map(fold));
+  const active = new Set([...(labels ?? [])].map(fold).filter((l) => known.has(l)));
+  if (active.size === 0) return prs;
+  return prs.filter((p) => (p.labels ?? []).some((n) => active.has(fold(n))));
+}
+
 export function filterPrs(prs, filters, me) {
   const drafts = filterOn(filters, 'drafts');
   const landed = filterOn(filters, 'landed');

@@ -2,7 +2,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { STEP_NAMES, STEP_LABEL, formFacets } from "./_lib/batch_launch.js";
+import { STEP_NAMES, STEP_LABEL } from "./_lib/batch_launch.js";
+import { filterFacets, filterOn } from "./_lib/columns.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
@@ -87,21 +88,22 @@ function prRow(pr, L, t) {
     .child(text("body", "No checkout of this repo on its machine", t.muted).px(SP.sm));
 }
 
+// The board's chips (shared prs.filters): toggling one here toggles it on Mine and Team too.
 function renderFormFilters(L, prs) {
-  const facets = formFacets(prs);
-  const repoOn = new Set([...L.repoFilter].map((r) => r.toLowerCase()));
-  const labelOn = new Set([...L.labelFilter].map((n) => n.toLowerCase()));
+  const f = L.filters.get();
+  const facets = filterFacets(prs);
+  const repoOn = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
+  const labelOn = new Set((f.labels ?? []).map((n) => String(n).toLowerCase()));
+  const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => L.filters.toggle(name));
   const out = v_flex().gap(SP.xs)
-    .child(filterGroup("Show", [chipOf("chip-drafts", "Drafts", L.drafts.on(), () => L.drafts.toggle())]));
+    .child(filterGroup("Show", [chip("Drafts", "mineDrafts", filterOn(f, "mineDrafts"))]));
   if (facets.repos.length > 1) {
-    out.child(filterGroup("Repo", facets.repos.map((slug) => chipOf(
-      `chip-repo:${slug}`, shortRepo(slug), repoOn.has(slug.toLowerCase()),
-      () => L.toggleRepoFilter(slug)))));
+    out.child(filterGroup("Repo", facets.repos.map((slug) => chip(
+      shortRepo(slug), `repo:${slug}`, repoOn.has(slug.toLowerCase())))));
   }
   if (facets.labels.length > 0) {
-    out.child(filterGroup("Label", facets.labels.map((name) => chipOf(
-      `chip-label:${name}`, name, labelOn.has(name.toLowerCase()),
-      () => L.toggleLabelFilter(name)))));
+    out.child(filterGroup("Label", facets.labels.map((name) => chip(
+      name, `label:${name}`, labelOn.has(name.toLowerCase())))));
   }
   return out;
 }

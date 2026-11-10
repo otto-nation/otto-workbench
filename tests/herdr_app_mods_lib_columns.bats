@@ -13,6 +13,13 @@ teardown() {
   common_teardown
 }
 
+_cols() {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    process.stdout.write(JSON.stringify($1));
+  "
+}
+
 # Overlay JSON on an open, empty PR; print teamColumn.
 _team() {
   run node --input-type=module -e "
@@ -396,4 +403,22 @@ _filter() {
   "
   [ "$status" -eq 0 ]
   [ "$output" = "[0,1]" ]
+}
+
+@test "filterFacets repos first-seen order, labels sorted case-insensitively, deduped" {
+  _cols 'm.filterFacets([{repoSlug:"b/two",labels:["Zebra","alpha"]},{repoSlug:"a/one",labels:["ALPHA","bug"]},{repoSlug:"b/two",labels:["gamma"]},{repoSlug:"B/Two",labels:["bug"]}])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"repos":["b/two","a/one"],"labels":["alpha","bug","gamma","Zebra"]}' ]
+}
+
+@test "filterFacets empty list and missing labels" {
+  _cols '[m.filterFacets([]),m.filterFacets(null),m.filterFacets([{repoSlug:"a/one"}])]' 
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"repos":[],"labels":[]},{"repos":[],"labels":[]},{"repos":["a/one"],"labels":[]}]' ]
+}
+
+@test "filterLabels: any selected label matches, case-insensitive; stale or empty selections are ignored" {
+  _cols '(() => { const prs = [{n:1,labels:["Bug"]},{n:2,labels:["docs"]},{n:3,labels:[]},{n:4}]; const ids = (l) => m.filterLabels(prs, l).map((p) => p.n); return [ids([]),ids(undefined),ids(["bug"]),ids(["BUG","docs"]),ids(["gone"]),ids(["gone","docs"])]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2,3,4],[1,2,3,4],[1],[1,2],[1,2,3,4],[2]]' ]
 }

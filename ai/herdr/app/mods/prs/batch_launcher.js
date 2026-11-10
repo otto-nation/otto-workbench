@@ -12,9 +12,11 @@ function runKey(on, id) {
 }
 
 export class BatchLauncher {
-  constructor(acx, workflows) {
+  // drafts: { on() -> whether draft PRs are shown, toggle() }; the owner keeps the setting.
+  constructor(acx, workflows, drafts = { on: () => true, toggle: () => {} }) {
     this.acx = acx;
     this.workflows = workflows;
+    this.drafts = drafts;
     this.selected = new Set();
     this.repoFilter = new Set();
     this.labelFilter = new Set();
@@ -80,7 +82,9 @@ export class BatchLauncher {
   }
 
   shown(prs) {
-    return filterForm(prs, { repos: [...this.repoFilter], labels: [...this.labelFilter] });
+    return filterForm(prs, {
+      repos: [...this.repoFilter], labels: [...this.labelFilter], drafts: this.drafts.on(),
+    });
   }
 
   reset() {

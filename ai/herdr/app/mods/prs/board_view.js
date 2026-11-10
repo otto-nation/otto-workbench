@@ -66,11 +66,12 @@ function errorText(err, ctx) {
   return friendlyError(err, ctx?.on, scopeOf());
 }
 
+// Drafts included: the Batch form applies the Drafts chip itself (BatchLauncher.shown), so a
+// selected draft the chip hides still counts as hidden rather than vanishing.
 function mineOpen(state) {
   const filters = filtersOf();
   return filterRepos(state.prs ?? [], filters.repos, state.repoSlugs)
-    .filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED")
-    .filter((p) => filters.mineDrafts !== false || !p.isDraft);
+    .filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED");
 }
 
 
@@ -82,7 +83,11 @@ export default class PrsBoard extends View {
     // Where the copy is mounted, not how wide it is, decides whether it offers the board tab.
     this.inPanel = offersOpenBoard(props());
     this.workflows = new Workflows(cx, () => this.activeTargets());
-    this.launcher = new BatchLauncher(cx, this.workflows);
+    // The Batch form's Drafts chip is the Mine tab's: one setting, so the list and the form agree.
+    this.launcher = new BatchLauncher(cx, this.workflows, {
+      on: () => filtersOf().mineDrafts !== false,
+      toggle: () => this.toggleChip("mineDrafts", this.acx),
+    });
     this.batchOpen = false;
     this.cache = new Map();
     this.toolsByOn = new Map();

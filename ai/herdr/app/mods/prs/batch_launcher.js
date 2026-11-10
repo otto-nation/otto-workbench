@@ -27,6 +27,8 @@ export class BatchLauncher {
     this.acx = acx;
     this.workflows = workflows;
     this.filters = filters;
+    // Every repo the board has loaded, set by the board before it draws the page.
+    this.loaded = undefined;
     this.selected = new Set();
     this.steps = new Set(["rebase", "ci", "comments"]);
     this.withAi = new Set();
@@ -92,7 +94,9 @@ export class BatchLauncher {
 
   shown(prs) {
     const f = this.filters.get();
-    return filterForm(prs, { repos: f.repos, labels: f.labels, drafts: filterOn(f, "mineDrafts") });
+    return filterForm(prs, {
+      repos: f.repos, labels: f.labels, drafts: filterOn(f, "mineDrafts"), loaded: this.loaded,
+    });
   }
 
   // Launching, or waiting on a launched terminal to start its run.

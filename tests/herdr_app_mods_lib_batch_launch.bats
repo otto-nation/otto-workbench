@@ -165,3 +165,9 @@ _throws() {
   [ "$status" -eq 0 ]
   [ "$output" = '[{"selected":["o/r#1"],"steps":["rebase"],"withAi":["comments","rebase"],"rebaseBehind":false},{"selected":["o/r#3"],"steps":["ci"],"withAi":["rebase"],"rebaseBehind":false},{"selected":[],"steps":["rebase"],"withAi":[],"rebaseBehind":true}]' ]
 }
+
+@test "filterForm: a repo chip on a loaded repo with none of these PRs empties the form; without loaded it is stale" {
+  _js '(() => { const prs = [{n:1,repoSlug:"a/one"},{n:2,repoSlug:"b/two"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({repos:["c/three"]}), ids({repos:["c/three"],loaded:["a/one","b/two","c/three"]}), ids({repos:["a/one"],loaded:["a/one","b/two"]})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2],[],[1]]' ]
+}

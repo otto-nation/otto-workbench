@@ -393,6 +393,7 @@ export default class PrsBoard extends View {
     const mode = viewOf(this.size?.width);
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (this.batchOpen && tabOf() === "mine") {
+      this.launcher.loaded = view.repoSlugs;
       return note(renderBatchPage({
         launcher: this.launcher,
         workflows: this.workflows,

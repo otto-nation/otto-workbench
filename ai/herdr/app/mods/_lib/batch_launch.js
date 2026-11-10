@@ -38,10 +38,14 @@ export function groupByRepo(prs) {
   return { groups, unrunnable };
 }
 
-/** Keep PRs the shared repo and label chips match, dropping drafts when `drafts` is false. */
-export function filterForm(prs, { repos = [], labels = [], drafts = DEFAULT_FILTERS.mineDrafts } = {}) {
+/**
+ * Keep PRs the shared repo and label chips match, dropping drafts when `drafts` is false.
+ * `loaded` is every repo the board has loaded, as for filterRepos: a repo chip on one where none
+ * of `prs` lives empties the form, as it empties the board, instead of being read as stale.
+ */
+export function filterForm(prs, { repos = [], labels = [], drafts = DEFAULT_FILTERS.mineDrafts, loaded } = {}) {
   const list = (prs ?? []).filter((pr) => drafts || !pr.isDraft);
-  return filterLabels(filterRepos(list, repos), labels);
+  return filterLabels(filterRepos(list, repos, loaded), labels);
 }
 
 /**

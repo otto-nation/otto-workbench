@@ -394,6 +394,7 @@ export default class PrsBoard extends View {
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (this.batchOpen && tabOf() === "mine") {
       this.launcher.loaded = view.repoSlugs;
+      this.launcher.knownLabels = filterFacets(tabList(view, filtersOf(), "mine")).labels;
       return note(renderBatchPage({
         launcher: this.launcher,
         workflows: this.workflows,

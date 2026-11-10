@@ -171,3 +171,9 @@ _throws() {
   [ "$status" -eq 0 ]
   [ "$output" = '[[1,2],[],[1]]' ]
 }
+
+@test "filterForm: a label chip known to the board but on no open PR empties the form" {
+  _js '(() => { const prs = [{n:1,labels:["a"]},{n:2,labels:[]}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({labels:["m"]}), ids({labels:["m"],knownLabels:["a","m"]}), ids({labels:["a"],knownLabels:["a","m"]})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2],[],[1]]' ]
+}

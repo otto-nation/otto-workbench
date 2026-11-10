@@ -141,8 +141,9 @@ export function filterFacets(prs) {
 
 // A PR matches when it carries any selected label. A selection naming no label among `prs` is
 // ignored, as a stale repo is, so a label whose last PR merged does not empty the view.
-export function filterLabels(prs, labels) {
-  const known = new Set(filterFacets(prs).labels.map(fold));
+// `knownLabels` lists the labels the board offers as chips; without it, those among `prs` stand in.
+export function filterLabels(prs, labels, knownLabels) {
+  const known = new Set((knownLabels ?? filterFacets(prs).labels).map(fold));
   const active = new Set([...(labels ?? [])].map(fold).filter((l) => known.has(l)));
   if (active.size === 0) return prs;
   return prs.filter((p) => (p.labels ?? []).some((n) => active.has(fold(n))));

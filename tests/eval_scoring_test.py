@@ -374,13 +374,16 @@ class TestTokenRatchet:
         assert result["regressions"] == []
 
     def test_cache_read_ratio_below_the_floor_regresses(self):
-        """The failure mode: caching silently stops and the bill triples."""
+        """The failure mode: caching silently stops and the bill triples.
+
+        Relies on the default baseline (0.85): the 0.60 floor only binds
+        when the recorded baseline is at or above 0.60.
+        """
         result = compare_baselines(
             {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.59))
         assert "cache_read_ratio_mean" in _regressed(result)
 
     def test_cache_read_below_0_60_passes_when_baseline_is_below_the_absolute(self):
-        from eval.floors import cache_read_fails_floor
         recorded, current = 0.40, 0.20
         result = compare_baselines(
             {"sonnet": _token_baseline(cache_read_ratio_mean=recorded)},
@@ -389,19 +392,18 @@ class TestTokenRatchet:
         assert "cache_read_ratio_mean" not in _regressed(result)
         assert result["comparisons"][("test-entry", "sonnet")][
             "cache_read_ratio_mean"
-        ]["regression"] is cache_read_fails_floor(recorded, current)
+        ]["regression"] is False
 
     def test_cache_read_at_or_above_0_60_is_still_held_to_the_absolute(self):
-        from eval.floors import cache_read_fails_floor
         recorded, current = 0.60, 0.59
         result = compare_baselines(
             {"sonnet": _token_baseline(cache_read_ratio_mean=recorded)},
             _token_current(cache_read_ratio_mean=current),
         )
         assert "cache_read_ratio_mean" in _regressed(result)
-        assert cache_read_fails_floor(recorded, current) is True
 
     def test_cache_read_ratio_at_the_floor_is_allowed(self):
+        """Uses the default 0.85 baseline; the floor binds only at >= 0.60."""
         result = compare_baselines(
             {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.60))
         assert "cache_read_ratio_mean" not in _regressed(result)

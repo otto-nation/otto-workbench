@@ -126,7 +126,7 @@ _budget_line() {
     "### Description template" \
     "" \
     "- Always create PRs via \`pr create\` — see \`git-operations.md\` § PR Creation for the full invocation and flags." \
-    "- When a repo has a PR template, its required section headers must be present — do not substitute or invent sections. A section whose HTML comment says to delete or remove it may be omitted when empty. The fallback template below is ONLY for repos with no project template:" \
+    "- When a repo has a PR template, its required headers must be present — see \`git-operations.md\` § The PR Template. The fallback below is only for repos with none:" \
     "" \
     '```markdown'
   printf '%s\n' "$FALLBACK_TEMPLATE"
@@ -140,9 +140,7 @@ _budget_line() {
     "" \
     "### Issue linking" \
     "" \
-    "- A PR that should close an issue says so with \`--closes <ID>\`, which appends \`Closes <ID>\` to the body. Nothing else adds the keyword — an issue number in the branch name is context for the generated description, not a close" \
-    "- \`--closes\` is repeatable: \`--closes 941 --closes 942\`" \
-    "- A numeric ID (\`941\`, \`#941\`) is a GitHub issue and always closes. A tracker key (\`ENG-123\`) only closes where the tracker acts on the keyword, so it is accepted when \`issues.provider\` is \`linear\` and refused otherwise — rather than opening the PR with a link that will never fire" \
+    "- A PR closes an issue only through \`--closes <ID>\` — see \`git-operations.md\` § PR Creation." \
     "" \
     "### Assignee" \
     "" \

@@ -223,16 +223,16 @@ _filter() {
   [ "$output" = "approved" ]
 }
 
-@test "mineColumn: APPROVED + pending -> pending-review" {
+@test "mineColumn: APPROVED + pending -> awaiting-review" {
   _mine '{"reviewDecision":"APPROVED","ciStatus":"pending"}'
   [ "$status" -eq 0 ]
-  [ "$output" = "pending-review" ]
+  [ "$output" = "awaiting-review" ]
 }
 
-@test "mineColumn: default -> pending-review" {
+@test "mineColumn: default -> awaiting-review" {
   _mine '{}'
   [ "$status" -eq 0 ]
-  [ "$output" = "pending-review" ]
+  [ "$output" = "awaiting-review" ]
 }
 
 @test "isMine: viewer wins over me; author vs me is case-insensitive" {

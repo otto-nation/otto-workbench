@@ -33,7 +33,7 @@ export const MINE_COLUMNS = [
   { key: 'has-comments', label: 'Has Comments' },
   { key: 'changes-requested', label: 'Changes Requested' },
   { key: 'draft', label: 'Draft' },
-  { key: 'pending-review', label: 'Pending Review' },
+  { key: 'awaiting-review', label: 'Awaiting Review' },
   { key: 'approved', label: 'Approved' },
   { key: 'in-queue', label: 'In Queue' },
   { key: 'merged', label: 'Merged' },
@@ -78,7 +78,7 @@ export function mineColumn(pr) {
   if (pr.isDraft) return 'draft';
   if (pr.reviewDecision === 'APPROVED' && (pr.ciStatus === 'passing' || pr.ciStatus === 'none'))
     return 'approved';
-  return 'pending-review';
+  return 'awaiting-review';
 }
 
 // Owner of the four Show-chip defaults; unset stored values take these.

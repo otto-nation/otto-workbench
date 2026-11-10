@@ -44,7 +44,6 @@ def _record() -> ReviewRecord:
         ),
         triage=(TriageEntry(path="a.py", note="reviewed"),),
         failures=(AgentFailure("disprove", "no output", "failed", recoverable=True),),
-        verdict="**Approve.**",
         severity_sections=(SeveritySection("M", "(none)"),),
         extra=(ProseSection("Review gaps", "- group 2"),),
     )
@@ -106,15 +105,6 @@ class TestOnDisk:
         loaded = load_record(tmp_path)
         assert loaded is not None
         assert loaded.triage is None
-
-    def test_a_non_object_approach_is_stale(self, tmp_path):
-        (tmp_path / FILENAME_RECORD).write_text(
-            json.dumps({"schema_version": 1, "approach": "nope"}),
-        )
-        warned = []
-        with patch.object(core.log, "warn", side_effect=warned.append):
-            assert load_record(tmp_path) is None
-        assert any("dropped approach" in msg for msg in warned)
 
 
 class TestWhatTheReadApiSees:
@@ -254,12 +244,36 @@ def test_a_schema_1_record_is_upgraded(tmp_path):
     assert record.ledger == ()
 
 
-def test_a_schema_1_approach_is_upgraded_like_a_finding(tmp_path):
-    (tmp_path / FILENAME_RECORD).write_text(json.dumps({**V1, "approach": V1["findings"][0]}))
-    record = load_record(tmp_path)
-    assert record is not None
-    assert record.approach.evidence == "y = compute(x)\n    return y"
-    assert record.approach.stable_id == "5e406135"
+def test_a_legacy_verdict_or_approach_key_loads_clean(tmp_path, monkeypatch):
+    warned = []
+    monkeypatch.setattr(core.log, "warn", warned.append)
+    (tmp_path / FILENAME_RECORD).write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION,
+        "findings": [{
+            "id": "M1", "severity": "M", "path": "a.py", "body": "bug",
+        }],
+        "verdict": "Approve.",
+        "approach": None,
+    }))
+    rec = load_record(tmp_path)
+    assert rec is not None
+    assert [f.id for f in rec.findings] == ["M1"]
+    assert warned == []
+    save_record(tmp_path, rec)
+    saved = json.loads((tmp_path / FILENAME_RECORD).read_text())
+    assert "verdict" not in saved and "approach" not in saved
+
+    warned.clear()
+    (tmp_path / FILENAME_RECORD).write_text(json.dumps({
+        **V1, "approach": V1["findings"][0],
+    }))
+    rec = load_record(tmp_path)
+    assert rec is not None
+    assert rec.findings[0].id == "M1"
+    assert warned == []
+    save_record(tmp_path, rec)
+    saved = json.loads((tmp_path / FILENAME_RECORD).read_text())
+    assert "verdict" not in saved and "approach" not in saved
 
 
 def test_a_boolean_schema_version_is_not_schema_1(tmp_path):

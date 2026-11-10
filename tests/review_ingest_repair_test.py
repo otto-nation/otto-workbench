@@ -248,7 +248,7 @@ def test_a_rejected_synthesis_that_repairs_publishes_the_agent_record(
     merged = Merged(record(
         finding("N1", "x", path="a.py", line=1),
         finding("N2", "y", path="b.py", line=1),
-        summary="Looks good.", verdict="Approve.",
+        summary="Looks good.",
     ))
     result = review.steps._phase_synthesis(job, "", 1, merged)
     assert result.diagnosis is None
@@ -313,7 +313,6 @@ GOOD_REVIEW_JSON = json.dumps({
         {"id": "N1", "path": "a.py", "line": 1, "body": "x"},
         {"id": "N2", "path": "b.py", "line": 1, "body": "y"},
     ],
-    "verdict": "Approve.",
     "focus": DERIVED_FOCUS,
 })
 BAD_REVIEW_JSON = json.dumps({
@@ -322,7 +321,6 @@ BAD_REVIEW_JSON = json.dumps({
         {"id": "N1", "path": "a.py", "line": 1, "body": "x"},
         {"id": "N1", "path": "b.py", "line": 1, "body": "y"},
     ],
-    "verdict": "Approve.",
 })
 
 

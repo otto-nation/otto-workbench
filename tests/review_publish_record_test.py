@@ -290,7 +290,8 @@ def test_static_analysis_is_a_record_field(tmp_path, monkeypatch):
     review.orchestrate._inject_static_analysis_section(job)
     assert read_review(Path(job.review_file)).record.static_analysis == "All checks passed."
     text = Path(job.review_file).read_text()
-    assert text.index("## Static Analysis") < text.index("## Verdict")
+    assert "## Static Analysis" in text
+    assert "## Verdict" not in text
 
 
 def test_rebuild_publishes_a_record_matching_todays_rebuild(tmp_path):

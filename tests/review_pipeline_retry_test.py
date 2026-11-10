@@ -405,16 +405,10 @@ class TestCompleteReviewReadsSectionConstants:
     through an agent it did not need.
     """
 
-    def test_summary_section_marks_a_review_complete(self, tmp_path):
+    def test_markdown_alone_is_not_a_complete_review(self, tmp_path):
         from review.document import SECTION_SUMMARY
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_SUMMARY}\n\nAll good.\n")
-        assert not review.outcome.is_complete_review(str(f))
-
-    def test_verdict_section_marks_a_review_complete(self, tmp_path):
-        from review.document import SECTION_VERDICT
-        f = tmp_path / "review.md"
-        f.write_text(f"## {SECTION_VERDICT}\n\nApprove.\n")
         assert not review.outcome.is_complete_review(str(f))
 
     def test_a_body_with_neither_section_is_incomplete(self, tmp_path):
@@ -637,7 +631,7 @@ def test_the_single_agent_derives_after_dropping_an_out_of_delta_nit(
 def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):
     job = _make_job(tmp_path)
     (tmp_path / "single.json").write_text(json.dumps({
-        "summary": "old run", "verdict": "Approve",
+        "summary": "old run",
     }))
 
     def _agent(inv, *_args, **_kwargs) -> int:

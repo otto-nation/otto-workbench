@@ -16,7 +16,7 @@ Then assess:
 2. Is the scope focused or does it mix unrelated concerns?
 3. Are there cross-module design issues (inconsistent patterns, missing integrations, API mismatches)?
 4. Flag specific things that detailed per-file reviewers should watch for.
-5. Is this the right approach? Could the stated goal be achieved with a fundamentally simpler or safer design? If the direction is wrong, say so explicitly — the synthesis step can recommend disapproval.
+5. Is this the right approach? Could the stated goal be achieved with a fundamentally simpler or safer design? If the direction is wrong, say so explicitly. In a PR review, the synthesis step may file it as a must-fix finding about the PR as a whole.
 6. Name 1–3 areas this PR most needs reviewed — the risks particular to this change, each with a `title`, a `rationale`, and the `paths` it concerns ([] when it spans the PR).
 
 ${reviews_section}

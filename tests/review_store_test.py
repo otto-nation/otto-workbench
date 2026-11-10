@@ -10,14 +10,13 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from dataclasses import replace
-
-from pr.domains import ReviewStatus, ReviewVerdict
+from pr.domains import ReviewStatus
 from review.document import ReviewDocument, ReviewHeader
 from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
 from review.render import BANNER
 from review.store import archive_prior, clear_prior, read_prior, read_review, update_review, write_review
 from review.types import ReviewMeta, SEVERITIES
+from review.verdict import verdict_line
 
 from review_record_support import FIXTURES, fixture_meta, fixture_record
 
@@ -52,7 +51,8 @@ class TestTheStore:
     def test_reading_back_returns_record_and_meta(self, tmp_path):
         stored = read_review(_stored(tmp_path))
         assert stored.meta.status is ReviewStatus.PARTIAL
-        assert stored.record.verdict.startswith("**Approve.**")
+        assert stored.record.findings
+        assert "Needs discussion" in verdict_line(stored.record, stored.meta)
 
     def test_a_directory_without_review_json_is_stale(self, tmp_path):
         (tmp_path / "review.md").write_text("# old\n## Summary\nx\n")
@@ -60,9 +60,10 @@ class TestTheStore:
 
     def test_an_update_rewrites_the_render(self, tmp_path):
         review_file = _stored(tmp_path)
-        update_review(review_file, lambda r: replace(r, verdict="changed"), status=ReviewStatus.ERROR)
+        update_review(review_file, lambda r: r, status=ReviewStatus.ERROR)
         text = review_file.read_text()
-        assert "changed" in text and "<!-- status: error -->" in text
+        assert "<!-- status: error -->" in text
+        assert "**No verdict.** No part of this review ran." in text
 
     def test_updating_a_stale_directory_does_nothing(self, tmp_path):
         assert update_review(tmp_path / "review.md") is None
@@ -152,7 +153,6 @@ class TestARecordBackedDocument:
         doc = ReviewDocument.from_stored(read_review(_stored(tmp_path)))
         assert [f.id for f in doc.findings] == ["S1", "S2", "N1", "N2", "I1"]
         assert doc.open_counts == {"M": 0, "S": 2, "N": 2, "I": 1}
-        assert doc.verdict is ReviewVerdict.APPROVE
         assert doc.header.status is ReviewStatus.PARTIAL
         assert doc.section("Summary").startswith("Adds speech-to-text")
         assert doc.title.startswith("# Review: acme/widget#38")

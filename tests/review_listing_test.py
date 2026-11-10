@@ -139,6 +139,25 @@ def test_a_pr_review_of_the_same_findings_does_report_one(reviews_dir):
     assert row.verdict == pr.domains.ReviewVerdict.CHANGES_REQUESTED.value
 
 
+def test_a_partial_pr_review_with_nits_only_lists_no_verdict(reviews_dir):
+    _review(
+        reviews_dir, repo="acme/widget", pr_number=1, mode="pr", status="partial",
+        rec=record(finding("N1", "spacing", path="")),
+    )
+
+    row, = review.listing.rows()
+
+    assert row.verdict == ""
+
+
+def test_a_partial_pr_review_with_an_open_must_fix_lists_changes_requested(reviews_dir):
+    _review(reviews_dir, repo="acme/widget", pr_number=1, mode="pr", status="partial")
+
+    row, = review.listing.rows()
+
+    assert row.verdict == pr.domains.ReviewVerdict.CHANGES_REQUESTED.value
+
+
 def test_an_orphaned_directory_is_not_a_review(reviews_dir):
     """A run that produced nothing is `pr gc`'s business — a consumer asking
     what has been reviewed is not asking about it."""

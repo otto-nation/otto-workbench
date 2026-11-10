@@ -12,7 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 import review.claims
+from agent.diagnosis import Diagnosis, DiagnosisKind
+from core.phases import Mode, Phase
+from pr.domains import ReviewStatus
 from review.record import FocusSource, Question, ReviewRecord, TriageEntry, load_record
+from review.render import render_review
+from review.state import PipelineState
+from review.types import ReviewMeta
+from review.verdict import NO_RUN_VERDICT, PARTIAL_VERDICT
 from review_behaviours_support import behaviour
 from review_claims_support import claim
 from review_focus_support import area, user_area
@@ -184,9 +191,6 @@ class TestBuildMechanicalFallback:
         contributed to, which is how a review of two thirds of a PR was acted
         on as a review of all of it.
         """
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.state import PipelineState
-
         state = PipelineState(group_names=["a", "b", "c"])
         state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
         result = ro._build_mechanical_fallback(
@@ -197,16 +201,16 @@ class TestBuildMechanicalFallback:
 
     def test_a_partial_run_withholds_the_clean_verdict(self, ro, tmp_path):
         """Approve over source no agent opened is the line a reader acts on."""
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.state import PipelineState
-
         state = PipelineState(group_names=["a", "b", "c"])
         state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
         result = ro._build_mechanical_fallback(
             self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
-        assert "No verdict — part of this review did not run." in result.verdict
-        assert "Approve" not in result.verdict
+        text = render_review(
+            result, ReviewMeta(mode=Mode.PR, status=ReviewStatus.PARTIAL),
+        )
+        assert f"**No verdict.** {PARTIAL_VERDICT}" in text
+        assert "Approve" not in text
 
     def test_a_run_where_every_group_reported_counts_plainly(self, ro, tmp_path):
         """The common case keeps its wording; only a partial run qualifies it."""
@@ -226,9 +230,6 @@ class TestBuildMechanicalFallback:
         three groups hit the turn cap, and the review reported a clean read of
         all of them above a failures table listing all three.
         """
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.state import PipelineState
-
         state = PipelineState(group_names=["a", "b", "c"])
         for n in range(3):
             state.groups_failed[n] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=15)
@@ -247,36 +248,30 @@ class TestBuildMechanicalFallback:
         review still closed on "Approve — no findings" — the one line a
         reader acts on without opening the failures table.
         """
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.document import ReviewDocument
-        from review.state import PipelineState
-        from review.verdict import NO_RUN_VERDICT
-
         state = PipelineState(group_names=["a", "b", "c"])
         for n in range(3):
             state.groups_failed[n] = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="boom")
         result = ro._build_mechanical_fallback(
             self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
-
-        assert result.verdict.strip() == NO_RUN_VERDICT.strip()
-        assert "Approve" not in result.verdict
+        text = render_review(
+            result, ReviewMeta(mode=Mode.PR, status=ReviewStatus.ERROR),
+        )
+        assert f"**No verdict.** {NO_RUN_VERDICT}" in text
+        assert "Approve" not in text
 
     def test_a_run_synthesis_diagnosed_as_all_failed_states_no_verdict(self, ro, tmp_path):
         """`all_groups_failed` has a second source: synthesis's own diagnosis."""
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from core.phases import Phase
-        from review.state import PipelineState
-        from review.verdict import NO_RUN_VERDICT
-
         state = PipelineState(group_names=["a", "b"])
         state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
         result = ro._build_mechanical_fallback(
             self._partial_job(ro, tmp_path), 2, record(), pipeline_state=state,
         )
-
-        assert NO_RUN_VERDICT.strip() in result.verdict
-        assert "Approve" not in result.verdict
+        text = render_review(
+            result, ReviewMeta(mode=Mode.PR, status=ReviewStatus.ERROR),
+        )
+        assert f"**No verdict.** {NO_RUN_VERDICT}" in text
+        assert "Approve" not in text
         assert "No findings" not in result.summary
         assert "No group reported" in result.summary
 
@@ -309,7 +304,7 @@ class TestWriteCleanReview:
         content = Path(job.review_file).read_text()
         assert "# Review:" in content
         assert "No findings across 3 files in 2 groups" in content
-        assert "Approve — clean review." in content
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in content
 
     def test_self_review_mode(self, ro, tmp_path):
         job = self._job(ro, tmp_path, ro.Mode.SELF)
@@ -353,10 +348,7 @@ class TestIsCompleteReview:
     def test_has_summary(self, ro, tmp_path):
         assert ro.is_complete_review(self._store(tmp_path, summary="Looks good.")) is True
 
-    def test_has_verdict(self, ro, tmp_path):
-        assert ro.is_complete_review(self._store(tmp_path, verdict="Approve.")) is True
-
-    def test_missing_summary_and_verdict(self, ro, tmp_path):
+    def test_missing_summary_is_incomplete(self, ro, tmp_path):
         assert ro.is_complete_review(self._store(tmp_path)) is False
 
     def test_markdown_without_record_is_incomplete(self, ro, tmp_path):

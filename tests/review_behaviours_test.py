@@ -295,7 +295,7 @@ def test_a_cited_name_planted_in_the_file_is_still_cleared_when_unsafe(tmp_path)
     assert not any(ln.startswith("## Must fix") for ln in body.splitlines())
 
 
-_WRITER = {"summary": "s", "verdict": "Approve", "focus": DERIVED_FOCUS}
+_WRITER = {"summary": "s", "focus": DERIVED_FOCUS}
 BAD_CLAIM = IngestError(IngestErrorKind.BAD_CLAIM, 0, "d", at="$.claims")
 
 

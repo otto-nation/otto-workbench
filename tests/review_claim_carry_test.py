@@ -20,7 +20,6 @@ from review.state import PipelineState
 from review.store import StoredReview, read_review
 from review.types import ClaimAnswer, FindingOrigin, PreflightData, ReviewMeta
 from review.phases import PhaseResult
-from review.verdict import mechanical_verdict
 from review_claims_support import claim
 from review_convergence_support import merged, review_job
 from review_record_support import finding, record
@@ -87,9 +86,8 @@ def test_a_settled_round_carries_the_claims_and_their_findings(tmp_path):
     assert read_review_meta(Path(job.artifact_dir)).claims_input_sha == (
         review.claims.input_sha(job)
     )
-    assert not stored.record.verdict.startswith("Approve")
-    assert stored.record.verdict == mechanical_verdict(stored.record.open_counts).strip()
     assert stored.record.open_counts["S"] == 1
+    assert "**Verdict: Needs discussion.**" in Path(job.review_file).read_text()
 
 
 def test_a_carried_claim_finding_keeps_its_answer(tmp_path):

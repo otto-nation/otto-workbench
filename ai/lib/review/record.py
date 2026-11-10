@@ -11,11 +11,11 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields still carry markdown an agent wrote — `verdict`,
-`extra`, `severity_sections` — and go when agents write JSON and the verdict
-is derived. A record written at schema 1, before agents wrote JSON, is
-upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the
-stable IDs its posted comments carry.
+`extra` and `severity_sections` still carry markdown an agent wrote — the
+Review gaps section and carried-forward notes — and `ledger` is the agent's
+`prior_findings`; all three are live, not transitional. A record written at
+schema 1, before agents wrote JSON, is upgraded on load (`_upgrade_v1`)
+rather than declared stale, keeping the stable IDs its posted comments carry.
 """
 
 # doc-group: findings
@@ -248,7 +248,6 @@ class LedgerLine:
 class ReviewRecord:
     schema_version: int = SCHEMA_VERSION
     summary: str = ""
-    approach: RecordFinding | None = None
     findings: tuple[RecordFinding, ...] = ()
     questions: tuple[Question, ...] = ()
     verified: tuple[VerifiedNote, ...] = ()
@@ -262,8 +261,6 @@ class ReviewRecord:
     triage: tuple[TriageEntry, ...] | None = None
     static_analysis: str = ""
     failures: tuple[AgentFailure, ...] = ()
-    # PR 0 carriers of today's markdown; see the module docstring.
-    verdict: str = ""
     severity_sections: tuple[SeveritySection, ...] = ()
     ledger: tuple[LedgerLine, ...] = ()
     extra: tuple[ProseSection, ...] = ()
@@ -273,9 +270,17 @@ class ReviewRecord:
         return tuple(f for f in self.findings if f.visible)
 
     @property
+    def unfixed(self) -> tuple[RecordFinding, ...]:
+        """Visible findings not yet fixed — declined, skipped and unreached included.
+
+        The one reading of "open" the counts and the verdict take, so the two cannot disagree.
+        """
+        return tuple(f for f in self.visible if f.disposition is not Disposition.FIXED)
+
+    @property
     def open_counts(self) -> dict[str, int]:
         """Visible findings not yet fixed, by severity key, every key present."""
-        tally = Counter(f.severity for f in self.visible if f.disposition is not Disposition.FIXED)
+        tally = Counter(f.severity for f in self.unfixed)
         return {s.key: tally[s.key] for s in SEVERITIES}
 
     def finding(self, finding_id: str) -> RecordFinding | None:
@@ -394,18 +399,16 @@ def _finding_v2(finding: dict) -> dict:
 def _upgrade_v1(raw: dict) -> dict:
     """A schema-1 record as schema 2 reads it: the same review in today's shapes.
 
-    `lead` goes, because the fields render the location; `approach` is a
-    finding and is upgraded as one. Evidence loses the blockquote it was quoted
-    in. A triage line becomes its path and note. The ledger goes, non-empty or
-    not: its IDs number the round before, and the one writer that stored a
-    non-empty one (`_write_clean_review`) should have cleared it as every other
-    did. Stored stable IDs are kept: they are the sids posted comments carry. An
-    entry that is not an object is passed through for `_dropped_field` to report.
+    `lead` goes, because the fields render the location. Evidence loses the
+    blockquote it was quoted in. A triage line becomes its path and note. The
+    ledger goes, non-empty or not: its IDs number the round before, and the one
+    writer that stored a non-empty one (`_write_clean_review`) should have
+    cleared it as every other did. Stored stable IDs are kept: they are the sids
+    posted comments carry. An entry that is not an object is passed through for
+    `_dropped_field` to report.
     """
     out = {k: v for k, v in raw.items() if k != "ledger"}
     out["schema_version"] = SCHEMA_VERSION
-    if isinstance(raw.get("approach"), dict):
-        out["approach"] = _finding_v2(raw["approach"])
     if isinstance(raw.get("findings"), list):
         out["findings"] = [_finding_v2(f) if isinstance(f, dict) else f for f in raw["findings"]]
     if isinstance(raw.get("triage"), list):

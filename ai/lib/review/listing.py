@@ -242,7 +242,7 @@ def _run_for(review_dir: Path, stamp: str, cache: UsageCache) -> ReviewRun:
     record = load_record(archive, f"{stamp}{ARCHIVE_RECORD_EXT}")
     meta = read_review_meta(archive, f"{stamp}{ARCHIVE_META_EXT}")
     doc = ReviewDocument.from_stored(StoredReview(record, meta)) if record else None
-    verdict = resolve_review_verdict(doc, mode=meta.mode) if doc else None
+    verdict = resolve_review_verdict(record, meta) if record else None
     usage = archived_session_usage(review_dir, stamp, cache)
     return ReviewRun(
         stamp=stamp,
@@ -276,7 +276,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
     meta = entry.meta
 
     doc = ReviewDocument.read(review_file)
-    verdict = resolve_review_verdict(doc, mode=meta.mode)
+    verdict = resolve_review_verdict(doc.record, doc.meta) if doc else None
     cache = UsageCache(entry.path)
     usage = aggregate_session_usage(entry.path, cache)
     history = [_run_for(entry.path, stamp, cache) for stamp in archived_stamps(entry.path)]

@@ -41,9 +41,8 @@ from review.worktree_delta import uncommitted_files
 from review.store import StoredReview, read_review, write_review
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
-    CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
-    NO_RUN_VERDICT, PARTIAL_VERDICT, SETTLED_SUMMARY, build_mechanical_record,
-    states_verdict,
+    CLEAN_SUMMARY, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY, SETTLED_SUMMARY,
+    build_mechanical_record,
 )
 from review.verify import post_process_record, verified_behaviours
 
@@ -228,7 +227,7 @@ def _dirty_files(job: ReviewJob) -> tuple[str, ...]:
 def is_complete_review(review_file: str) -> bool:
     """Whether a finished review is stored — the resumed run's test for trusting the disk."""
     stored = read_review(Path(review_file))
-    return bool(stored and (stored.record.summary or stored.record.verdict))
+    return bool(stored and stored.record.summary)
 
 
 def _fallback_status(job: ReviewJob) -> ReviewStatus:
@@ -243,9 +242,7 @@ def _build_mechanical_fallback(
     # What reported, not what was dispatched. A group that produced nothing
     # contributed no findings, so counting it in the scope tells the reader a
     # surface was examined when it was not — and that sentence sits directly
-    # above the findings the missing group never added to. The verdict goes
-    # the same way: "Approve — clean review" over unread source is the one
-    # line a reader acts on without opening the failures table below it.
+    # above the findings the missing group never added to.
     failed = len(pipeline_state.groups_failed) if pipeline_state else 0
     # `None` says "every dispatched group reported", and only a run where none
     # failed may say it. The earlier test was `partial`, which is false both
@@ -256,24 +253,21 @@ def _build_mechanical_fallback(
     # apart; the scope is the only place the difference can be stated.
     reported = group_count - failed
     # Every group gone — counted here or diagnosed by synthesis — leaves an
-    # empty tally that `mechanical_verdict` would read as Approve.
+    # empty tally; the derived line withholds Approve on an error or partial run.
     nothing_ran = bool(pipeline_state and pipeline_state.all_groups_failed)
-    partial = bool(pipeline_state and pipeline_state.partial)
-    verdict = NO_RUN_VERDICT if nothing_ran else (PARTIAL_VERDICT if partial else "")
     record = build_mechanical_record(
         merged, group_count=group_count, summary_note=FALLBACK_SUMMARY,
-        include_verdict=states_verdict(job.mode), verdict=verdict,
         file_count=job.pr.changed_files,
         groups_reported=0 if nothing_ran else (None if failed == 0 else reported),
     )
     if pipeline_state:
-        record = replace(record, failures=apply_failures(record, pipeline_state).failures)
+        record = apply_failures(record, pipeline_state)
     return record
 
 
 def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
                          summary_note: str) -> ReviewRecord:
-    """`merged` under a Summary saying synthesis did not run, and why. No verdict.
+    """`merged` under a Summary saying synthesis did not run, and why.
 
     The two paths that reach the review file with the group output and no agent
     — `--no-synthesis` and the budget cut-off — write through here so that both
@@ -281,12 +275,11 @@ def _no_synthesis_record(job: ReviewJob, merged: ReviewRecord, group_count: int,
     reads the document as unfinished and a run resumed at the disprove gate
     re-enters synthesis to rewrite a review it already has.
 
-    No verdict: neither path reviewed anything the synthesis agent would have
-    weighed, and a mechanical approve/request-changes from a run the operator
-    stopped is a claim nobody made.
+    The derived line still applies, matching what `pr status` already showed:
+    open must-fix and should-fix findings block, and nothing open approves.
     """
     return build_mechanical_record(merged, group_count=group_count, summary_note=summary_note,
-                                   include_verdict=False, file_count=job.pr.changed_files)
+                                   file_count=job.pr.changed_files)
 
 
 def _reconcile_and_verify(job: ReviewJob, record: ReviewRecord) -> ReviewRecord:
@@ -312,7 +305,7 @@ def _carried_record(prior: StoredReview) -> ReviewRecord:
     Behaviours stay as the prior round left them, so a legacy `None` stays
     not assessed until a writer round runs.
     """
-    return replace(prior.record, summary="", verdict="", triage=None, ledger=(),
+    return replace(prior.record, summary="", triage=None, ledger=(),
                    static_analysis="", focus=())
 
 
@@ -329,9 +322,7 @@ def _post_process_review(job: ReviewJob, record: ReviewRecord,
 
 def _write_mechanical_fallback(job: ReviewJob, group_count: int, merged: ReviewRecord,
                                skipped_groups: int = 0) -> None:
-    # Today's `_write_mechanical_fallback` did not pass `pipeline_state`; Task
-    # 10's `_inject_failures_and_status` adds the failures. Keep that: this
-    # writer passes no state.
+    # This writer passes no pipeline_state; failures are injected afterwards.
     record = _build_mechanical_fallback(job, group_count, _reconcile_and_verify(job, merged),
                                         skipped_groups=skipped_groups)
     _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count,
@@ -349,7 +340,6 @@ def _write_clean_review(job: ReviewJob, group_count: int, merged: ReviewRecord,
     """
     record = build_mechanical_record(
         merged, group_count=group_count, summary_note=CLEAN_SUMMARY,
-        include_verdict=states_verdict(job.mode), verdict=CLEAN_VERDICT,
         file_count=job.pr.changed_files,
     )
     # Publishing clears the ledger everywhere else (`post_process_record`); this
@@ -372,9 +362,9 @@ def write_unchanged_review(job: ReviewJob) -> None:
     Only the internal sections go, since a coverage table describing the prior
     run's groups would be read as this one's.
 
-    The verdict follows those carried findings rather than approving. A prior
-    review that asked for changes is still asking; the author has not answered
-    it yet.
+    The derived verdict follows those carried findings rather than approving.
+    A prior review that asked for changes is still asking; the author has not
+    answered it yet.
 
     Written through `_publish` like every other agentless path, so the header
     states this run's head SHA — which is the point of doing it at all. The
@@ -383,7 +373,7 @@ def write_unchanged_review(job: ReviewJob) -> None:
     """
     record = build_mechanical_record(
         _carried_record(job.prior), group_count=0, summary_note=NO_CHANGES_SUMMARY,
-        include_verdict=states_verdict(job.mode), file_count=job.pr.changed_files,
+        file_count=job.pr.changed_files,
     )
     _publish(job, record)
 
@@ -394,13 +384,12 @@ def _write_settled_review(job: ReviewJob, group_count: int, merged: ReviewRecord
 
     Synthesis writes up findings; with no new ones and every prior finding
     settled by the ledger, a carry, a prior decline or the tree, it would only
-    restate the merge at the cost of an agent call. The verdict is stated from
-    the carried findings, as `write_unchanged_review` does: a round that adds
-    nothing does not withdraw what the last one asked for.
+    restate the merge at the cost of an agent call. The derived verdict is
+    stated from the carried findings, as `write_unchanged_review` does: a round
+    that adds nothing does not withdraw what the last one asked for.
     """
     record = build_mechanical_record(
         _reconcile_and_verify(job, merged), group_count=group_count,
-        summary_note=SETTLED_SUMMARY, include_verdict=states_verdict(job.mode),
-        file_count=job.pr.changed_files,
+        summary_note=SETTLED_SUMMARY, file_count=job.pr.changed_files,
     )
     _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count)

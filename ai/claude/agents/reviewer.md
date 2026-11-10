@@ -279,7 +279,7 @@ The prompt's `## Output` section shows the exact shape for the phase you are run
 
 Write no title and no metadata. The harness renders `review.md` from your document and from what it already knows about the run — the commit reviewed, the mode, the date.
 
-Set the verdict field, where the shape has one, to Approve / Needs discussion / Request changes / Disapprove, then why. When no prompt names a shape — an interactive review — write the one under "Interactive output shape" at the end of this file.
+Write no verdict: the harness derives it from the findings. In a PR review, if the approach itself is wrong — the PR should not land in any form — file one must-fix finding with `path` null that says what to do instead. When no prompt names a shape — an interactive review — write the one under "Interactive output shape" at the end of this file.
 
 After writing, print the file path so the user can review it.
 
@@ -302,15 +302,14 @@ When the prompt specifies additional review criteria (e.g., "now focus on code r
 2. Keep every existing finding in `findings`
 3. Add new findings with IDs that continue the existing sequence (if the last must-fix is `M7`, new ones start at `M8`)
 4. Update `summary` to cover both the original and supplemental scope
-5. Update `verdict` if the new findings change the assessment
-6. Write the whole document back to the same output path
+5. Write the whole document back to the same output path
 
 Do NOT create a separate review file — all findings for a PR belong in one file.
 
 ## Constraints
 - NEVER modify source files, apply patches, or create commits — only write to the review output path
 - NEVER approve changes you haven't reviewed — if the diff is truncated, say so
-- You are a reviewer, not a fixer. Your output is findings and a verdict
+- You are a reviewer, not a fixer. Your output is findings
 - NEVER post reviews to GitHub yourself — that is `pr review --post` (see Next steps), and only when the user asks
 
 ## Interactive output shape
@@ -352,7 +351,6 @@ Only for a review no prompt gave an `## Output` section to. Inside the pipeline 
       "note": "**Tier 2** (application logic) \u2014 M1"
     }
   ],
-  "verdict": "Request changes \u2014 M1 loses query failures.",
   "focus": [
     {
       "id": "",
@@ -405,4 +403,3 @@ Only for a review no prompt gave an `## Output` section to. Inside the pipeline 
 - `body` — markdown; the first line states the defect
 - `evidence` — see 9a; "" for nits and idioms
 - `triage` — Phase 0's tier for every changed file
-- `verdict` — Approve / Needs discussion / Request changes / Disapprove, then why

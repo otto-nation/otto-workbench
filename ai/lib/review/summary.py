@@ -149,7 +149,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> ReviewS
     review_dir = Path(review_file).parent if review_file else None
     meta = doc.meta if doc.meta is not None else ReviewMeta()
 
-    resolved = resolve_review_verdict(doc, mode=meta.mode)
+    resolved = resolve_review_verdict(doc.record, meta)
     verdict = resolved.value if resolved else ""
 
     fix_pass = usage_logs(review_dir, "", "")

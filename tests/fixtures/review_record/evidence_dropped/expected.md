@@ -22,12 +22,10 @@ The retry loop is a good direction, but M1 blocks: the timeout is never honoured
 > **Evidence verification removed 1 finding:**
 > - Must fix — `src/cli.py`: evidence mismatch at char 3
 
+**Verdict: Needs discussion.** 1 should-fix open.
+
 ## Must fix
 
 ## Should fix
 
 - **[S1]** `src/app.py:2` — The retry loop never sleeps between attempts.
-
-## Verdict
-
-Needs discussion — 1 should-fix after evidence verification removed 1 finding.

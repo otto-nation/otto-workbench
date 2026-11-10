@@ -15,7 +15,7 @@ from dataclasses import replace
 
 from review.document import SECTION_PRIOR_FINDINGS
 from review.grammar import FindingIdentity, sid_marker
-from review.record import LedgerLine, Question, RecordFinding, TriageEntry, VerifiedNote
+from review.record import LedgerLine, ProseSection, Question, RecordFinding, TriageEntry, VerifiedNote
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
 from review.types import FindingOrigin, PriorDisposition, ReplyState, ReviewMeta
@@ -51,7 +51,6 @@ PRIOR_WITH_INTERNAL = record(
         "\n"
         "</details>"
     ),
-    verdict="Request changes.",
 )
 
 
@@ -236,14 +235,24 @@ class TestPriorTextOmitsBookkeeping:
         assert "Nesting depth" not in result
         assert "<details>" not in result
 
-    def test_keeps_findings_and_verdict(self):
+    def test_keeps_findings_and_omits_a_verdict_section(self):
         result = _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
         assert "**[M1]**" in result
         assert "## Must fix" in result
-        assert "Request changes." in result
+        assert "## Verdict" not in result
+        assert "**Verdict:" not in result
 
     def test_section_after_excluded_one_resumes(self):
-        assert "Request changes." in _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
+        rec = record(
+            finding("M1", "missing error check", path="a.py", line=10),
+            questions=(Question(id="Q1", body="why this lock?"),),
+            extra=(ProseSection("Review gaps", "group 2 skipped"),),
+        )
+        result = _prior_text(_stored(rec=rec), None)
+        assert "## Questions" not in result
+        assert "**[M1]**" in result
+        assert "## Review gaps" in result
+        assert result.index("**[M1]**") < result.index("## Review gaps")
 
     def test_findings_survive_render(self):
         assert "**[M1]**" in _prior_text(_stored(finding("M1", "bug")), None)

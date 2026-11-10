@@ -22,7 +22,7 @@ ${test_hint_section}
 4. Keep each must-fix and should-fix finding's `evidence` exactly as the merged findings carry it
 5. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings
 6. Check for cross-file concerns — do findings in one group imply issues in files from another group?
-7. Leave `triage` as [] and `verdict` as ""
+7. Leave `triage` as []
 8. If the merged findings carry `prior_findings`, copy every entry into your output unchanged — they record which prior findings the group agents found fixed, and they are stripped before the review is published. Add entries only where a section below asks you to
 9. Add any cross-cutting findings
 10. Fill `focus` with one entry per area in the Focus section: what you checked and what you found, citing finding IDs. If the Focus section asks, add 1–3 areas of your own.

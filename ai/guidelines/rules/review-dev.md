@@ -127,8 +127,9 @@ round's held set plus this round's new ones; empty after a full round), and
 withholds every nit whose stable id is held. When the round is
 incremental, no group failed, the groups that ran produced nothing and
 `passed_over` is empty, synthesis and the disprove gate are both skipped and
-`_write_settled_review` ships the merge, with a mechanical verdict where the
-mode states one.
+`_write_settled_review` ships the merge; its verdict is derived like every review's.
+
+- `review/verdict.py` `resolve_review_verdict(record, meta)`: the only verdict. Nothing stores or parses one; `render` states `verdict_line`, prompts never see it, and `readiness` reads counts, not the verdict.
 
 A self-review records the files it read uncommitted (`ReviewMeta.dirty_files`),
 and the next self-mode incremental round adds them to its change set, so an edit

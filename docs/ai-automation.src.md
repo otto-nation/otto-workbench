@@ -268,28 +268,37 @@ Module detail: [`review/focus.py`](ai-libraries.md#reviewfocuspy).
 
 ### How a review's verdict is decided
 
-`ReviewVerdict` owns the four verdicts in both spellings they are written in: the
-word the prompt asks for and the review states (`Request changes`), and the value
-recorded in state and shown by `pr status` (`changes_requested`). One member owns
-both, so the prompt cannot ask for wording the parser does not recognise, and the
-markdown cannot say one thing while the dashboard reports another.
+`ReviewVerdict` owns the three verdicts in both spellings: the word the line
+states (`Request changes`) and the value `pr status` shows (`changes_requested`).
+One member owns both, so the markdown cannot say one thing while the dashboard
+reports another.
 
-The verdict a review is recorded with reconciles two readings of it — the prose
-the agent wrote and the findings that survived verification — and the stronger
-call wins:
+The verdict is derived, never written. One function reads the findings, how the
+run ended and its mode:
 
-- Findings that block cannot be under-reported. A review stating `Approve` with a
-  must-fix finding still records `changes_requested`.
-- A stronger call the agent made is not discarded. A review stating
-  `Request changes` over nits alone keeps it.
-- `Disapprove` is unranked and always stands: it judges the overall approach,
-  which no finding count implies or refutes.
-- A self-review records no verdict — it is advisory and has no PR to approve or
-  block. `Disapprove` is the exception, since it holds without a PR.
+- A self-review states none — it is advisory and has no PR to approve or block.
+- An error run states none, and the line says why (`No part of this review ran`).
+- Any open must-fix → Request changes; any open should-fix → Needs discussion;
+  otherwise Approve.
+- A partial run keeps Request changes / Needs discussion and adds "Review
+  incomplete"; where it would approve it states no verdict, because an
+  incomplete run cannot vouch that nothing blocks.
 
-Counts alone map to `Request changes` (any must-fix), `Needs discussion` (any
-should-fix), or `Approve`. Nits and idioms do not affect the verdict, and a review
-file that does not exist records no verdict rather than an approval.
+Open means not fixed: declined, skipped and unreached findings still count, and
+the line counts declined ones apart. Nits and idioms never count.
+
+Both `review.md` and the posted comment state it as one generated line closing
+the Summary (`**Verdict: Needs discussion.** 1 should-fix open.`). Agents write
+none: prompts never see the line, and a writer's `verdict` key is a schema
+violation. `pr status`, the listing and herdr record the same value, so they
+cannot disagree.
+
+An objection to the approach is a must-fix finding about the PR as a whole;
+there is no Disapprove.
+
+Posting still uses the event the operator chose (`--event`); nothing maps the
+verdict to an approval. Readiness blocks on open must-fix counts, not on the
+verdict.
 
 Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
 one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).

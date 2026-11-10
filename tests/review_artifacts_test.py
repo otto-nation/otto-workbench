@@ -26,7 +26,7 @@ from review.artifacts import (
 )
 from review.behaviour_types import BehaviourReport
 from review.budget import DERIVED_AREA_RESERVE_BYTES, MAX_QUESTIONS, MAX_VERIFIED
-from review.ingest import IngestErrorKind
+from review.ingest import IngestErrorKind, IngestRejected, load_artifact
 from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord, VerifiedNote
 from review.store import StoredReview
 from review.types import SEVERITIES, PriorDisposition, ReviewMeta
@@ -270,11 +270,20 @@ def test_a_pathless_finding_converts_with_an_empty_path():
     assert AgentFinding(id="N1", body="b").to_record(checkbox=False, declinable=NONE).path == ""
 
 
-def test_a_review_artifact_keeps_summary_ledger_and_verdict():
+def test_a_writer_verdict_key_is_a_schema_violation(tmp_path):
+    path = tmp_path / "review.json"
+    path.write_text(json.dumps({"summary": "s", "verdict": "Approve"}))
+    with pytest.raises(IngestRejected) as exc:
+        load_artifact(str(path), ReviewArtifact)
+    (error,) = exc.value.errors
+    assert (error.kind, error.at) == (IngestErrorKind.SCHEMA_VIOLATION, "$.verdict")
+
+
+def test_a_review_artifact_keeps_summary_and_ledger():
     ledger = (LedgerLine("M2", PriorDisposition.FIXED, "a.py"),)
-    artifact = ReviewArtifact(summary=" s ", prior_findings=ledger, verdict="Approve")
+    artifact = ReviewArtifact(summary=" s ", prior_findings=ledger)
     record = artifact.to_record(checkbox=False, declinable=NONE)
-    assert (record.summary, record.ledger, record.verdict, record.triage) == ("s", ledger, "Approve", None)
+    assert (record.summary, record.ledger, record.triage) == ("s", ledger, None)
 
 
 def test_the_merged_record_is_shown_to_synthesis_as_a_group_artifact():

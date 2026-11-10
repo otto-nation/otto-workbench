@@ -56,7 +56,7 @@ class TestSynthesisFocus:
 
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
-                "summary": "s", "verdict": "Approve",
+                "summary": "s",
                 "focus": [
                     {"id": "F1", "coverage": "checked F1"},
                     *DERIVED_FOCUS,
@@ -76,7 +76,7 @@ class TestSynthesisFocus:
     def test_a_synthesis_missing_coverage_gets_a_repair_turn(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
         covered = {
-            "summary": "s", "verdict": "Approve",
+            "summary": "s",
             "focus": [{"id": "F1", "coverage": "now covered"}, *DERIVED_FOCUS],
         }
         prompts = []
@@ -101,7 +101,7 @@ class TestSynthesisFocus:
         job = self._make_job(ro, tmp_path)
 
         def mock_invoke(inv, **kwargs):
-            Path(inv.output_path).write_text(json.dumps({"summary": "s", "verdict": "Approve"}))
+            Path(inv.output_path).write_text(json.dumps({"summary": "s"}))
             Path(inv.session_log).write_text("")
             return 0
 

@@ -29,7 +29,6 @@ from enum import StrEnum
 import core.log
 import review.behaviours
 from core.phases import Mode
-from pr.domains import ReviewVerdict
 from review.behaviour_types import BehaviourReport
 from review.grammar import SEVERITY_KEY, FindingIdentity, strip_line_suffix
 from review.budget import DERIVED_AREA_RESERVE_BYTES, MAX_QUESTIONS, MAX_VERIFIED
@@ -259,7 +258,6 @@ class ReviewArtifact:
     findings: tuple[AgentFinding, ...] = ()
     triage: tuple[TriageEntry, ...] = ()
     prior_findings: tuple[LedgerLine, ...] = ()
-    verdict: str = ""
     focus: tuple[FocusReport, ...] = ()
     claims: tuple[ClaimReport, ...] | None = None
     behaviours: tuple[BehaviourReport, ...] | None = None
@@ -282,18 +280,18 @@ class ReviewArtifact:
             findings=tuple(f.to_record(checkbox=checkbox, declinable=declinable) for f in self.findings),
             triage=self.triage or None,
             ledger=self.prior_findings,
-            verdict=self.verdict.strip(), questions=_record_questions(self.questions),
+            questions=_record_questions(self.questions),
             verified=_record_verified(self.verified))
 
     @classmethod
     def example(cls, mode: Mode) -> ReviewArtifact:
         full = cls(
             summary=_EXAMPLE_SUMMARY, findings=_EXAMPLE_FINDINGS, triage=_EXAMPLE_TRIAGE,
-            prior_findings=_EXAMPLE_LEDGER, verdict=_EXAMPLE_VERDICT,
+            prior_findings=_EXAMPLE_LEDGER,
             focus=_EXAMPLE_FOCUS_REPORT, claims=_EXAMPLE_CLAIMS,
             behaviours=_EXAMPLE_BEHAVIOURS, questions=_EXAMPLE_QUESTIONS,
             verified=_EXAMPLE_VERIFIED)
-        return full if mode is Mode.PR else replace(full, triage=(), verdict="")
+        return full if mode is Mode.PR else replace(full, triage=())
 
 
 def _agent_finding(f: RecordFinding) -> AgentFinding:
@@ -590,7 +588,6 @@ _EXAMPLE_LEDGER = (
 _EXAMPLE_SUMMARY = (
     "Sound overall: one helper replaces three copies of the retry loop, so every caller now backs off the same way. The top risk is M1: a failed query reads as an empty result on the hot path. S1's fixed retry budget is a documented tradeoff and stays declined."
 )
-_EXAMPLE_VERDICT = f"{ReviewVerdict.CHANGES_REQUESTED.prose} — M1 loses query failures."
 _EXAMPLE_FOCUS = (
     AgentFocus("Retry handling", "Backoff changed", ("pkg/retry.go",)),
     AgentFocus("Caller contracts", "Every caller assumed a fixed delay", ("pkg/handler.go",)),

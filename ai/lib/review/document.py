@@ -4,8 +4,8 @@ This module owns the keys a review header may state, the sentence the title is,
 and `ReviewDocument` as the read view of a stored review. `ReviewHeader.render`
 and `ReviewHeader.from_meta` write the header from the sidecar; `covers` is
 whether a header SHA covers a commit; `review_title` is the `# ...` line
-derived from the same sidecar. `ReviewDocument` answers sections, findings,
-open counts and the verdict off the record, never by parsing `review.md`.
+derived from the same sidecar. `ReviewDocument` answers sections, findings
+and open counts off the record, never by parsing `review.md`.
 """
 
 # doc-group: pipeline
@@ -17,24 +17,23 @@ from enum import StrEnum
 from pathlib import Path
 
 from core.phases import Mode
-from pr.domains import ReviewStatus, ReviewVerdict
+from pr.domains import ReviewStatus
 from pr.target import display_repo
 from review.record import ReviewRecord
 from review.types import SEVERITIES, Finding, ReviewMeta, ReviewType
 
 
-# The headers a review is written with. `Summary` and `Verdict` are the two this
-# module reads by name; the rest are here because they name sections of the same
-# document, and a header spelled in the module that reads it and again in the one
-# that writes it is two owners of one string. Any other header is the caller's
-# own vocabulary, passed to `section` as a string.
+# The headers a review is written with. `Summary` is the one this module reads
+# by name; the rest are here because they name sections of the same document,
+# and a header spelled in the module that reads it and again in the one that
+# writes it is two owners of one string. Any other header is the caller's own
+# vocabulary, passed to `section` as a string.
 SECTION_SUMMARY = "Summary"
 SECTION_FOCUS = "Focus"
 SECTION_CLAIMS = "Claims"
 SECTION_TEST_EVIDENCE = "Test evidence"
 SECTION_QUESTIONS = "Questions"
 SECTION_VERIFIED = "Verified, no issue"
-SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
 SECTION_FAILURES = "Agent Failures"
@@ -251,7 +250,6 @@ def _record_section(record: ReviewRecord, header: str) -> str:
         )
     by_key = {
         SECTION_SUMMARY.lower(): record.summary,
-        SECTION_VERDICT.lower(): record.verdict,
         SECTION_STATIC_ANALYSIS.lower(): record.static_analysis,
     }
     if key in by_key:
@@ -273,9 +271,9 @@ def _record_section(record: ReviewRecord, header: str) -> str:
 class ReviewDocument:
     """The read view of a stored review: its title, its header, and its record.
 
-    Sections, findings, open counts and the verdict are answered off the
-    record. A document with no record is an empty view — zeroes, no findings,
-    no verdict — which is what a review that was never written reads as.
+    Sections, findings and open counts are answered off the record. A document
+    with no record is an empty view — zeroes, no findings — which is what a
+    review that was never written reads as.
     """
 
     title: str = ""
@@ -347,10 +345,3 @@ class ReviewDocument:
         if self.record is not None:
             return self.record.open_counts
         return {s.key: 0 for s in SEVERITIES}
-
-    @property
-    def verdict(self) -> ReviewVerdict | None:
-        """The verdict the `## Verdict` section states, if it states one."""
-        if self.record is None:
-            return None
-        return ReviewVerdict.stated_in(self.record.verdict)

@@ -61,9 +61,11 @@ def test_posting_sections_come_from_the_record(tmp_path):
         tmp_path / "review.md", fixture_record("synthesis_pr"), fixture_meta("synthesis_pr"),
     )
     body = review.render.comment_body(
-        ReviewDocument.read(path).record, [], has_inline=False, severity_filter=set())
+        ReviewDocument.read(path).record, [], meta=fixture_meta("synthesis_pr"),
+        has_inline=False, severity_filter=set())
     assert "Adds speech-to-text" in body
-    assert body.split("### Verdict", 1)[1].strip().startswith("**Approve.**")
+    assert "**Verdict: Needs discussion.** 2 should-fix open. Review incomplete:" in body
+    assert "### Verdict" not in body
     assert "disprove" in body.split("## Agent Failures", 1)[1]
 
 

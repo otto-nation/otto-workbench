@@ -30,7 +30,7 @@ from review.merge import merge_records
 from review.paths import read_review_meta
 from review.record import ReviewRecord
 from review.store import read_prior, read_review, write_review
-from review.verdict import build_mechanical_record, states_verdict
+from review.verdict import build_mechanical_record
 from review.verify import post_process_record
 
 REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
@@ -128,7 +128,7 @@ def rebuild(review_dir: Path, pr: str, *, script: str, debug: bool = False) -> i
         existing = read_review(review_file)
         record = build_mechanical_record(
             done.record, group_count=len(group_files), summary_note=REBUILD_SUMMARY,
-            include_verdict=states_verdict(meta.mode), file_count=meta.changed_files,
+            file_count=meta.changed_files,
         )
         record = replace(
             record,

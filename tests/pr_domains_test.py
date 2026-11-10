@@ -189,21 +189,14 @@ def test_review_render_empty_status():
     assert "[ERROR]" not in lines[0]
 
 
-def test_review_render_disapprove():
-    lines = pr.domains.ReviewSummary(
-        review_type="full", verdict=pr.domains.ReviewVerdict.DISAPPROVE.value,
-        updated_at="t",
-    ).render_status()
-    assert "[DISAPPROVED]" in lines[0]
-
-
-def test_review_render_disapprove_and_error():
-    lines = pr.domains.ReviewSummary(
-        review_type="full", verdict=pr.domains.ReviewVerdict.DISAPPROVE.value,
+def test_review_render_an_old_disapprove_value_as_stored():
+    line = pr.domains.ReviewSummary(
+        review_type="full", verdict="disapprove",
         status=pr.domains.ReviewStatus.ERROR.value, updated_at="t",
-    ).render_status()
-    assert "[ERROR]" in lines[0]
-    assert "[DISAPPROVED]" in lines[0]
+    ).render_status()[0]
+    assert ": disapprove" in line
+    assert "[ERROR]" in line
+    assert "[DISAPPROVED]" not in line
 
 
 def test_review_render_with_findings():

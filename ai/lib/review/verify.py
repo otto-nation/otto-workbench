@@ -25,28 +25,19 @@ challenged by an agent, and one that cannot survive the challenge is marked
 `DisproveArtifact`; `apply_disprove` reads those verdicts onto the record.
 Whether the gate runs at all is `review.phases`'.
 
-The synthesis agent wrote the Summary and the Verdict before either gate ran,
-so both can describe findings that are no longer visible. Regenerating them
-would cost the agent's qualitative assessment, which is the part of a review
-a reader cannot reconstruct from counts. So the prose stays and the review
-says what left it:
+The synthesis agent wrote the Summary before either gate ran, so it can
+describe findings that are no longer visible. Regenerating it would cost the
+agent's qualitative assessment, which is the part of a review a reader cannot
+reconstruct from counts. So the prose stays and the review says what left it:
 
 * A blockquote at the end of the Summary names each dropped finding by
   severity and path — not by ID, since renumbering has already reassigned
   those — and why it was dropped.
-* The Verdict is rewritten when the surviving counts no longer support the
-  stated action. A drop can only remove findings, so this only ever lowers a
-  verdict: ``Request changes`` → ``Needs discussion`` → ``Approve``. A verdict
-  the remaining findings still support is left exactly as written, and
-  ``Disapprove`` is never touched — it means the overall approach is wrong,
-  which the counts do not derive, so no drop refutes it.
 
-Both are idempotent — a review that already carries the note is left alone, so
-re-running post-processing does not stack notes or re-lower a verdict.
-
-Which verdict a tally supports in the first place is `review.verdict`'s. A
-finding's evidence is the code on the record, and the file it is checked
-against is `path` — resolved with the poster's `review.format.resolve_path`
+The note is idempotent — a review that already carries it is left alone, so
+re-running post-processing does not stack notes. A finding's evidence is the
+code on the record, and the file it is checked against is `path` — resolved
+with the poster's `review.format.resolve_path`
 against the files the diff changed first, as the poster does, and the tracked
 tree only when the diff has no match — so a finding is not placed against one
 file and verified against another. A finding with no path names no file, and
@@ -66,7 +57,6 @@ from pathlib import Path
 import core.log
 import git.client
 import review.behaviours
-from pr.domains import ReviewVerdict
 from review.behaviour_types import BehaviourEntry
 from review.claim_types import CITE_VERDICTS, ClaimEntry, ClaimVerdict
 from review.format import resolve_path
@@ -74,7 +64,6 @@ from review.merge import renumber_record
 from review.artifacts import DisproveArtifact, DisproveOutcome
 from review.record import Disposition, ReviewRecord
 from review.types import SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key
-from review.verdict import counts_prose, verdict_from_counts
 from core.text import plural
 
 # ── Evidence verification ────────────────────────────────────────────────────
@@ -382,23 +371,13 @@ def _drop_note(details: list[dict], dropped: list[str]) -> str:
     return "\n".join([_DROP_NOTE_MARKER, header, *lines])
 
 
-def _revised_verdict(verdict: str, counts: dict[str, int], n_dropped: int) -> str:
-    stated = ReviewVerdict.stated_in(verdict)
-    supported = verdict_from_counts(counts)
-    if not stated or not stated.outranks(supported):
-        return verdict
-    return (f"{supported.prose} — {counts_prose(counts) or 'no findings'} after "
-            f"evidence verification removed {n_dropped} finding{plural(n_dropped)}.")
-
-
 def _reconciled_record(record: ReviewRecord, verification: dict) -> ReviewRecord:
     dropped = verification.get("dropped") or []
     if not dropped or _DROP_NOTE_MARKER in record.summary:
         return record
     note = _drop_note(verification.get("details") or [], dropped)
     summary = f"{record.summary.rstrip()}\n\n{note}" if record.summary else note
-    return replace(record, summary=summary,
-                   verdict=_revised_verdict(record.verdict, record.open_counts, len(dropped)))
+    return replace(record, summary=summary)
 
 
 # ── Disprove-it gate ─────────────────────────────────────────────────────────

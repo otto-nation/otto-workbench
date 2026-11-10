@@ -7,13 +7,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from core.markdown import escape_cell
-from pr.domains import VERDICT_PROSE_PREFIX_RE
 from review.behaviour_types import BehaviourEntry
 from review.claim_types import ClaimEntry
 from review.document import (
     SECTION_CLAIMS, SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS,
     SECTION_PRIOR_FINDINGS, SECTION_QUESTIONS, SECTION_STATIC_ANALYSIS,
-    SECTION_SUMMARY, SECTION_TEST_EVIDENCE, SECTION_VERDICT, SECTION_VERIFIED,
+    SECTION_SUMMARY, SECTION_TEST_EVIDENCE, SECTION_VERIFIED,
     ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, location_ref, posted_finding_tag, sid_marker
@@ -22,6 +21,7 @@ from review.record import (
     Question, RecordFinding, ReviewRecord, TriageEntry, VerifiedNote,
 )
 from review.types import SEVERITIES, Finding, ReviewMeta, severity_by_key
+from review.verdict import verdict_line
 
 # The line every rendered review.md carries. Agents write JSON, so nothing
 # parses review.md; the banner tells a human the file is generated and that
@@ -194,23 +194,19 @@ def _by_place(f: Finding) -> tuple[bool, str, int]:
     return (not f.path, f.path or "", f.line or 0)
 
 
-def _comment_prose(record: ReviewRecord) -> list[str]:
-    """The Summary and its subsections; a rule closes them when there is a summary."""
-    summary = record.summary.strip()
+def _comment_prose(record: ReviewRecord, verdict: str) -> list[str]:
+    """The Summary, closed by the verdict line, and its subsections."""
+    summary = "\n\n".join(p for p in (record.summary.strip(), verdict) if p)
     lines = [f"## {SECTION_SUMMARY}", "", summary, ""] if summary else []
     for heading, body in (
         (SECTION_FOCUS, focus_comment(record.focus)),
         (SECTION_QUESTIONS, "\n".join(question_line(q) for q in record.questions)),
         (SECTION_CLAIMS, claims_comment(record.claims) if record.claims != () else ""),
         (SECTION_TEST_EVIDENCE, behaviours_comment(record.behaviours) if record.behaviours != () else ""),
-        (SECTION_VERDICT, record.verdict),
     ):
         text = body.strip()
         if not text:
             continue
-        # The heading carries the verdict word, so the prose keeps only the rationale.
-        if heading == SECTION_VERDICT:
-            text = VERDICT_PROSE_PREFIX_RE.sub("", text, count=1)
         lines += [f"### {heading}", "", text, ""]
     return [*lines, "---", ""] if summary else lines
 
@@ -260,16 +256,15 @@ def _models_line(models: str) -> str:
 
 
 def comment_body(record: ReviewRecord, findings: list[Finding], *,
-                 has_inline: bool, severity_filter: set[str], models: str = "") -> str:
+                 meta: ReviewMeta, has_inline: bool, severity_filter: set[str]) -> str:
     """The PR review comment's body: the record's prose around the body findings.
 
     `findings` are the ones `review.format` placed in the body, already
     renumbered for posting. A declined finding is stated in a block of its own.
-    `models` is `ReviewMeta.models`; its `<sub>` line closes a body that has
-    anything else to say.
+    `meta` supplies the verdict line's mode and status and the `Models:` line.
     """
     labels = ", ".join(s.label for s in SEVERITIES if s.key in severity_filter)
-    lines = _comment_prose(record)
+    lines = _comment_prose(record, verdict_line(record, meta))
     if has_inline:
         lines.append(f"Have some comments marked as {labels}.")
     elif findings:
@@ -278,8 +273,8 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
         lines + _comment_findings(findings, has_inline)
         + _verified_comment(record) + _comment_tail(record),
     ).rstrip("\n")
-    # Only beside something else: a review with nothing to post still posts nothing.
-    return f"{body}\n\n<sub>{_models_line(models)}</sub>" if body and models else body
+    # Only beside something else: a self-review with nothing to post still posts nothing.
+    return f"{body}\n\n<sub>{_models_line(meta.models)}</sub>" if body and meta.models else body
 
 
 def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
@@ -301,15 +296,17 @@ def _verified_comment(record: ReviewRecord) -> list[str]:
     return ["", head, "", *(verified_line(v) for v in record.verified), "", "</details>"]
 
 
-def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
-    """Every section the record holds, in spec §2's order, with today's Claims, Test evidence and harness sections slotted in: File Triage, Agent Failures, Summary, Focus, Questions, Claims, Test evidence, findings, Verified, Prior findings, extra, Static Analysis, Verdict."""
+def _sections(record: ReviewRecord, sids: bool, evidence: bool,
+              verdict: str = "") -> list[ProseSection]:
+    """Every section the record holds, in spec §2's order, with today's Claims, Test evidence and harness sections slotted in: File Triage, Agent Failures, Summary, Focus, Questions, Claims, Test evidence, findings, Verified, Prior findings, extra, Static Analysis."""
     sections: list[ProseSection] = []
     if record.triage is not None:
         sections.append(ProseSection(SECTION_FILE_TRIAGE, "\n".join(triage_line(e) for e in record.triage)))
     if record.failures:
         sections.append(ProseSection(SECTION_FAILURES, failures_body(record.failures)))
-    if record.summary:
-        sections.append(ProseSection(SECTION_SUMMARY, record.summary))
+    lead = "\n\n".join(p for p in (record.summary, verdict) if p)
+    if lead:
+        sections.append(ProseSection(SECTION_SUMMARY, lead))
     if record.focus:
         sections.append(ProseSection(
             SECTION_FOCUS, "\n".join(focus_line(a) for a in record.focus),
@@ -332,17 +329,18 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSec
     sections += list(record.extra)
     if record.static_analysis:
         sections.append(ProseSection(SECTION_STATIC_ANALYSIS, record.static_analysis))
-    if record.verdict:
-        sections.append(ProseSection(SECTION_VERDICT, record.verdict))
     return sections
 
 
 def render_body(record: ReviewRecord, *, sids: bool = False, evidence: bool = False,
-                omit: frozenset[str] = frozenset()) -> str:
-    """The `## ` sections of `record`, without title or header. `omit` names headings."""
+                omit: frozenset[str] = frozenset(), verdict: str = "") -> str:
+    """The `## ` sections of `record`, without title or header. `omit` names headings.
+
+    `verdict` is the generated line that closes the Summary, not a stored field.
+    """
     return "\n".join(
         f"## {s.heading}\n\n{s.body.strip()}\n" if s.body.strip() else f"## {s.heading}\n"
-        for s in _sections(record, sids, evidence) if s.heading not in omit
+        for s in _sections(record, sids, evidence, verdict) if s.heading not in omit
     )
 
 
@@ -355,12 +353,13 @@ def render_review(record: ReviewRecord, meta: ReviewMeta, *, sids: bool = False,
                   omit: frozenset[str] = frozenset(), banner: bool = True) -> str:
     """The whole review.md: title and header from `meta`, banner, then the body.
 
-    Prompt text passes `banner=False` and gets neither the banner nor the
-    `Models:` line. Agents write JSON, so nothing parses review.md; the banner
+    Prompt text passes `banner=False` and gets no banner, no `Models:` line and
+    no verdict line. Agents write JSON, so nothing parses review.md; the banner
     tells a human the file is generated and that editing it is lost.
     """
     header = ReviewHeader.from_meta(meta).render()
     mark = f"{BANNER}\n" if banner else ""
     # Prompt text leaves it out: which models ran is not a prior reviewer's claim.
     models = f"{_models_line(meta.models)}\n\n" if banner and meta.models else ""
-    return f"{review_title(meta)}\n\n{header}{mark}\n{models}{render_body(record, sids=sids, omit=omit)}"
+    line = verdict_line(record, meta) if banner else ""
+    return f"{review_title(meta)}\n\n{header}{mark}\n{models}{render_body(record, sids=sids, omit=omit, verdict=line)}"

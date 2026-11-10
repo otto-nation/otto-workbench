@@ -33,7 +33,6 @@ class TestDryRunIntegration:
         finding("M1", "missing error check", path="handler.go", line=11),
         finding("S1", "unclear variable name", path="handler.go", line=25),
         finding("N1", "trailing whitespace", path="config.sh", line=2),
-        verdict="Request changes.",
         triage=(TriageEntry("handler.go", "**Tier 2** (application logic)"),),
         ledger=(
             LedgerLine("M4", PriorDisposition.FIXED, "handler.go"),
@@ -241,7 +240,6 @@ class TestDryRunIntegration:
                         path="handler.go", line=11),
                 finding("S1", "unclear variable name", path="handler.go", line=25),
                 finding("N1", "trailing whitespace", path="config.sh", line=2),
-                verdict="Request changes.",
                 triage=(TriageEntry("handler.go", "**Tier 2** (application logic)"),),
                 ledger=(
                     LedgerLine("M4", PriorDisposition.FIXED, "handler.go"),
@@ -295,7 +293,6 @@ class TestDryRunIntegration:
         rec = record(
             finding("M1", "missing error check", path="handler.go", line=11),
             summary="Clean refactor.",
-            verdict="Request changes.",
             static_analysis=(
                 "### Nesting depth\n"
                 "1 violation in 1 of 3 files checked\n\n"
@@ -318,7 +315,6 @@ class TestDryRunIntegration:
         rec = record(
             finding("M1", "missing error check", path="handler.go", line=11),
             summary="Clean refactor.",
-            verdict="Request changes.",
             extra=(ProseSection(
                 "Performance Notes",
                 "Consider caching the DB query at handler.go:15.",
@@ -514,7 +510,6 @@ class TestACleanReviewStillPosts:
 
     CLEAN = record(
         summary="No findings across 3 files in 1 group.",
-        verdict="Approve — clean review.",
         static_analysis=STATIC_ANALYSIS,
     )
 
@@ -557,7 +552,7 @@ class TestACleanReviewStillPosts:
         [payload] = payloads
         assert "comments" not in payload
         assert "No findings across 3 files" in payload["body"]
-        assert "clean review." in payload["body"]
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in payload["body"]
         assert "depth 3 exceeds limit 2" in payload["body"]
         assert "Review findings" not in payload["body"]
 
@@ -567,20 +562,15 @@ class TestACleanReviewStillPosts:
         assert tracking.review_id == 42
         assert tracking.submitted is False
 
-    # passes-at-base: pins the verdict post.jsonl records across the move off the sections registry
-    def test_post_tracking_records_the_record_verdict(self, rp, tmp_path):
-        _, _, post_file = self._post(rp, tmp_path, self.CLEAN)
-        tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
-        assert tracking.verdict == "Approve — clean review."
-
     def test_the_body_carries_the_models_meta_json_records(self, rp, tmp_path):
         code, payloads, _ = self._post(rp, tmp_path, self.CLEAN, models="single m (low)")
         assert code == 0
         [payload] = payloads
         assert payload["body"].endswith("<sub>Models: single m (low)</sub>")
 
-    def test_a_review_with_nothing_at_all_posts_nothing(self, rp, tmp_path):
+    def test_an_empty_pr_record_posts_its_verdict(self, rp, tmp_path):
         code, payloads, post_file = self._post(rp, tmp_path, record())
         assert code == 0
-        assert payloads == []
-        assert not post_file.exists()
+        [payload] = payloads
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in payload["body"]
+        assert post_file.exists()

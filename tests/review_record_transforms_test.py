@@ -9,11 +9,12 @@ if LIB_DIR not in sys.path:
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Phase
+from pr.domains import ReviewStatus
 from review.record import Disposition, LedgerLine, TriageEntry
 from review.render import render_review
-from review.state import PipelineState, apply_failures, failures_of
+from review.state import PipelineState, failures_of
 from review.types import PriorDisposition
-from review.verdict import CLEAN_SUMMARY, CLEAN_VERDICT, PARTIAL_VERDICT, build_mechanical_record
+from review.verdict import CLEAN_SUMMARY, build_mechanical_record
 from review.artifacts import DisproveArtifact, DisproveOutcome, DisproveVerdict
 from review.verify import apply_disprove, post_process_record
 
@@ -88,7 +89,7 @@ class TestMechanical:
             TriageEntry("src/app.py", "reviewed; nothing to report."),
         ))
         rec = build_mechanical_record(merged, group_count=2, summary_note=CLEAN_SUMMARY,
-                                      verdict=CLEAN_VERDICT, file_count=3)
+                                      file_count=3)
         assert canonical(render_review(rec, fixture_meta("clean"))) == canonical(expected_text("clean"))
 
     def test_a_drop_note_stays_inside_the_summary(self):
@@ -109,16 +110,11 @@ class TestFailures:
         rows = failures_of(state)
         assert [(r.agent, r.status) for r in rows] == [("group-2: b", "failed"), ("synthesis", "fallback")]
 
-    def test_a_partial_run_withholds_a_stated_verdict(self):
-        state = self._state(groups_failed={2: Diagnosis(DiagnosisKind.OUTPUT_MISSING)})
-        rec = apply_failures(record(verdict="**Approve.**"), state)
-        assert rec.verdict == PARTIAL_VERDICT.strip()
-
     def test_failures_with_no_named_groups_are_partial(self):
         """`group_count == 0` with failures is partial, matching the old rule."""
         state = PipelineState(
             head_sha="x", group_names=[],
             groups_failed={1: Diagnosis(DiagnosisKind.OUTPUT_MISSING)},
         )
-        assert state.partial
+        assert state.status is ReviewStatus.PARTIAL
         assert not state.all_groups_failed

@@ -231,8 +231,9 @@ def _exit_status(outcome: review.run.ReviewOutcome) -> int:
 
     Decided after the review is shown, summarised and recorded: the failures
     table is the diagnosis, and a caller — a background job, `pr batch` — needs
-    the status to know the review step reviewed nothing. A partial run exits 0;
-    its verdict is already withheld and the surviving findings are real.
+    the status to know the review step reviewed nothing. A partial run exits 0:
+    the surviving findings are real, and the derived line already reflects
+    whether anything blocking is open.
     """
     if not outcome.nothing_ran:
         return 0

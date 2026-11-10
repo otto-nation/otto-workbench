@@ -12,10 +12,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
+from pr.domains import ReviewStatus
 from review.merge import merge_records
 from review.record import Question, TriageEntry, load_record
 from review.steps import Merged
-from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
+from review.store import read_review
+from review.verdict import (
+    BUDGET_SUMMARY, FALLBACK_SUMMARY, NO_RUN_VERDICT, PARTIAL_VERDICT,
+    SKIPPED_SUMMARY,
+)
 from review_record_support import finding, record
 
 
@@ -84,7 +89,7 @@ class TestRunSynthesisOrFallback:
     def test_a_synthesised_review_quoting_the_note_is_not_a_fallback(
         self, ro, tmp_path, monkeypatch,
     ):
-        """A review whose prose contains MECHANICAL_NOTE was still written by the agent.
+        """A review whose prose quotes the old mechanical note was still written by the agent.
 
         The diagnosis is the pipeline's own record of which path wrote the
         file, so a review discussing the fallback machinery is not diagnosed
@@ -99,7 +104,8 @@ class TestRunSynthesisOrFallback:
         def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
             Path(job.review_file).write_text(
                 "# Review\n\n## Summary\nThe merge path stamps "
-                f"{MECHANICAL_NOTE} and {FALLBACK_SUMMARY} on the document.\n\n"
+                "(mechanically merged, not synthesized) and "
+                f"{FALLBACK_SUMMARY} on the document.\n\n"
                 "## Verdict\nApprove\n"
             )
             return review.pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
@@ -357,3 +363,37 @@ class TestRunSynthesisOrFallback:
         )
 
         assert "## Verdict" not in Path(job.review_file).read_text()
+
+    def test_every_group_failed_stores_error_and_the_no_run_line(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        (tmp_path / "wt").mkdir()
+        state = ro.PipelineState(
+            head_sha="abc123",
+            group_names=["a", "b"],
+            done={Phase.HOLISTIC},
+        )
+        failed = [
+            ro.GroupFailure("a", ro.Diagnosis(ro.DiagnosisKind.AGENT_ERROR, detail="boom")),
+            ro.GroupFailure("b", ro.Diagnosis(ro.DiagnosisKind.AGENT_ERROR, detail="boom")),
+        ]
+        ro._run_synthesis_or_fallback(
+            job, state, "", 2, _merged(), failed, 0, 0.0, 20.0,
+        )
+        stored = read_review(Path(job.review_file))
+        assert stored.meta.status is ReviewStatus.ERROR
+        assert f"**No verdict.** {NO_RUN_VERDICT}" in Path(job.review_file).read_text()
+
+    def test_no_group_stores_partial_and_withholds_approve(self, ro, tmp_path):
+        job = self._make_job(
+            ro, tmp_path, skip_phases=frozenset({ro.Phase.GROUP}))
+        (tmp_path / "wt").mkdir()
+        state = self._make_state(ro)
+        skipped = ro.Diagnosis(ro.DiagnosisKind.SKIPPED, detail="--no-group")
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, _merged(),
+            [ro.GroupFailure("grp-1", skipped)],
+            0, 0.0, 20.0,
+        )
+        stored = read_review(Path(job.review_file))
+        assert stored.meta.status is ReviewStatus.PARTIAL
+        assert f"**No verdict.** {PARTIAL_VERDICT}" in Path(job.review_file).read_text()

@@ -29,6 +29,8 @@ Run `pr review --recover` to retry failed agents.
 
 4 findings across 3 files in 2 groups. Synthesis agent failed — findings below are from individual group reviews.
 
+**Verdict: Request changes.** 1 must-fix, 1 should-fix open. Review incomplete: see Agent Failures for what was not assessed.
+
 ## Must fix
 
 (none)
@@ -42,7 +44,3 @@ Run `pr review --recover` to retry failed agents.
 
 - **[N1]** `src/util.py:1` — `clamp` duplicates `max(min(...))`; see [S1] for the caller.
 - **[N2]** `src/cli.py:1` — Unused import `os`.
-
-## Verdict
-
-Request changes — 1 must-fix, 1 should-fix, 2 nit (mechanically merged, not synthesized).

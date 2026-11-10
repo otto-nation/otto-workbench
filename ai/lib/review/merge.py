@@ -217,7 +217,6 @@ def _rewrite_record(record: ReviewRecord, renumbering: _Renumbering) -> ReviewRe
         record,
         findings=tuple(moved(f) for f in record.findings),
         summary=renumbering.rewrite(record.summary),
-        verdict=renumbering.rewrite(record.verdict),
         severity_sections=tuple(
             replace(s, note=renumbering.rewrite(s.note)) for s in record.severity_sections
         ),

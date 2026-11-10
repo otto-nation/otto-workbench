@@ -7,7 +7,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from review.document import ReviewDocument
-from review.record import Disposition
+from review.record import Disposition, ProseSection
 from review.types import Finding
 
 from review_record_support import finding, record
@@ -53,7 +53,6 @@ class TestFindings:
             finding("M2", "Last must-fix body", path="b.go", line=2),
             finding("S1", "First should-fix", path="c.go", line=3),
             finding("N1", "The only nit", path="d.go", line=4),
-            verdict="All done.",
         )
         by_id = {f.id: f for f in findings}
         assert by_id["M2"].body == "Last must-fix body"
@@ -149,9 +148,9 @@ class TestFindings:
         line = "This is not a finding: - **[M2]** **`b.go:2`** — Not parsed"
         document = _doc(
             finding("M1", "A finding", path="a.go", line=1),
-            verdict=line,
+            extra=(ProseSection("Notes", line),),
         )
-        assert line in document.section("Verdict")
+        assert line in document.section("Notes")
         assert [f.id for f in document.findings] == ["M1"]
 
     def test_empty_input(self):
@@ -191,7 +190,6 @@ class TestFindings:
             finding("M2", "Race condition in handler.", path="handler.go", line=50),
             finding("S1", "Hardcoded prefix.", path="config.sh", line=30),
             finding("N1", "Tests not in CI.", path="test.sh", line=5),
-            verdict="Request changes.",
         )
         by_id = {f.id: f for f in findings}
         assert all(f.body for f in findings)
@@ -207,7 +205,6 @@ class TestFindings:
             finding("S1", "Should-fix only (last in section)", path="c.go", line=3),
             finding("N1", "Nit alpha", path="d.go", line=4),
             finding("N2", "Nit beta (last in section)", path="e.go", line=5),
-            verdict="Done.",
         )
         by_id = {f.id: f for f in findings}
         assert all(f.body for f in findings)

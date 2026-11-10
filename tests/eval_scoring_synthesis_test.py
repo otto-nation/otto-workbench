@@ -142,7 +142,7 @@ class TestReadFindings:
     def test_reads_what_synthesis_wrote(self, tmp_path):
         out = tmp_path / "s.json"
         out.write_text(json.dumps({
-            "summary": "ok", "verdict": "Approve", "findings": [
+            "summary": "ok", "findings": [
                 {"id": "M1", "path": "a.py", "line": 1, "body": "b", "sid": "x"},
             ],
         }))
@@ -193,7 +193,7 @@ class TestTask:
 
         def write(inv):
             Path(inv.output_path).write_text(json.dumps({
-                "summary": "ok", "verdict": "Approve",
+                "summary": "ok",
                 "findings": [
                     {"id": f["id"], "path": f["path"], "line": f["line"],
                      "body": f["body"], "sid": f["sid"]} for f in keep

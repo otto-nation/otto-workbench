@@ -1137,8 +1137,8 @@ This module owns the keys a review header may state, the sentence the title is,
 and `ReviewDocument` as the read view of a stored review. `ReviewHeader.render`
 and `ReviewHeader.from_meta` write the header from the sidecar; `covers` is
 whether a header SHA covers a commit; `review_title` is the `# ...` line
-derived from the same sidecar. `ReviewDocument` answers sections, findings,
-open counts and the verdict off the record, never by parsing `review.md`.
+derived from the same sidecar. `ReviewDocument` answers sections, findings
+and open counts off the record, never by parsing `review.md`.
 
 ### review/fix_logs.py
 
@@ -1690,19 +1690,21 @@ re-parsing every log.
 
 What a set of counts means, and the review a run without an agent writes.
 
-The policy layer over `review.document`: how many open findings of each
-severity add up to an approve or a request-for-changes, how that reads in
-prose, whether the run states a verdict at all, and the body a mechanically
-merged review carries when no synthesis agent produced one.
+The policy layer over `review.document`: the verdict is derived from the
+findings, status and mode (`resolve_review_verdict` takes a record and meta),
+how that reads in one generated line (`verdict_line`), and the Summary a
+mechanically merged review carries when no synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
 a judgement — a stored review reads the same way whatever this module decides.
 
 A review where no group reported — every agent failed, so its header says
-`status: error` — records no verdict: its empty tally means nothing was read,
-not that nothing was found. It states `NO_RUN_VERDICT` above its Agent Failures
-table, and `pr review` exits 1 once it has shown and recorded it. A partial run
-states `PARTIAL_VERDICT` and exits 0, since the surviving findings are real.
+`status: error` — states no verdict: its empty tally means nothing was read,
+not that nothing was found. On review.md the generated line closes the Summary
+with `NO_RUN_VERDICT`; `pr review` exits 1 once it has shown and recorded it.
+A partial run states only a blocking verdict (none in place of Approve) and
+exits 0, since the surviving findings are real. A self-review states none:
+`resolve_review_verdict` and `verdict_line` both consult `_is_self_review`.
 
 ### review/worktree.py
 
@@ -2046,11 +2048,11 @@ that used to disagree: the checkbox, the `*(declined — …)*` and `*(skipped �
 annotations, and `ReviewMeta.open_findings`. `view()` hands the read API the
 `review.types.Finding` it always handed out, so readers did not change.
 
-Some fields still carry markdown an agent wrote — `verdict`,
-`extra`, `severity_sections` — and go when agents write JSON and the verdict
-is derived. A record written at schema 1, before agents wrote JSON, is
-upgraded on load (`_upgrade_v1`) rather than declared stale, keeping the
-stable IDs its posted comments carry.
+`extra` and `severity_sections` still carry markdown an agent wrote — the
+Review gaps section and carried-forward notes — and `ledger` is the agent's
+`prior_findings`; all three are live, not transitional. A record written at
+schema 1, before agents wrote JSON, is upgraded on load (`_upgrade_v1`)
+rather than declared stale, keeping the stable IDs its posted comments carry.
 
 ### review/render.py
 
@@ -2141,28 +2143,19 @@ challenged by an agent, and one that cannot survive the challenge is marked
 `DisproveArtifact`; `apply_disprove` reads those verdicts onto the record.
 Whether the gate runs at all is `review.phases`'.
 
-The synthesis agent wrote the Summary and the Verdict before either gate ran,
-so both can describe findings that are no longer visible. Regenerating them
-would cost the agent's qualitative assessment, which is the part of a review
-a reader cannot reconstruct from counts. So the prose stays and the review
-says what left it:
+The synthesis agent wrote the Summary before either gate ran, so it can
+describe findings that are no longer visible. Regenerating it would cost the
+agent's qualitative assessment, which is the part of a review a reader cannot
+reconstruct from counts. So the prose stays and the review says what left it:
 
 * A blockquote at the end of the Summary names each dropped finding by
   severity and path — not by ID, since renumbering has already reassigned
   those — and why it was dropped.
-* The Verdict is rewritten when the surviving counts no longer support the
-  stated action. A drop can only remove findings, so this only ever lowers a
-  verdict: ``Request changes`` → ``Needs discussion`` → ``Approve``. A verdict
-  the remaining findings still support is left exactly as written, and
-  ``Disapprove`` is never touched — it means the overall approach is wrong,
-  which the counts do not derive, so no drop refutes it.
 
-Both are idempotent — a review that already carries the note is left alone, so
-re-running post-processing does not stack notes or re-lower a verdict.
-
-Which verdict a tally supports in the first place is `review.verdict`'s. A
-finding's evidence is the code on the record, and the file it is checked
-against is `path` — resolved with the poster's `review.format.resolve_path`
+The note is idempotent — a review that already carries it is left alone, so
+re-running post-processing does not stack notes. A finding's evidence is the
+code on the record, and the file it is checked against is `path` — resolved
+with the poster's `review.format.resolve_path`
 against the files the diff changed first, as the poster does, and the tracked
 tree only when the diff has no match — so a finding is not placed against one
 file and verified against another. A finding with no path names no file, and

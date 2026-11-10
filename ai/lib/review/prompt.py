@@ -29,7 +29,6 @@ import git.client
 from agent.templates import build_execution_claim_guard, build_output_block
 from agent.types import EFFORT_PRESETS
 from core.phases import Mode, Phase
-from pr.domains import ReviewVerdict
 from review.artifact_format import output_format
 from review.budget import (
     FileFit, MIN_DIFF_BYTES,
@@ -52,10 +51,6 @@ from review.prompt_sections import (
     _build_state_context_section, _build_test_hint_section, _is_incremental,
 )
 from review.types import PreflightData, ReviewJob
-
-# The verdicts the prompt offers for the artifact's `verdict` field.
-VERDICT_OPTIONS = " / ".join(v.prose for v in ReviewVerdict)
-
 
 @dataclass(frozen=True)
 class CommonSections:
@@ -578,9 +573,8 @@ def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
 
     A self-review has no PR to point at, so it is identified by its branch and
     has no reviews on it to read. `pr_only` carries whatever else belongs to the
-    PR side of one template: the verdict wording for the single-agent prompt,
-    the title for synthesis. A caller states that difference rather than
-    restating the split it hangs off.
+    PR side of one template: the title for synthesis. A caller states that
+    difference rather than restating the split it hangs off.
     """
     if job.mode is Mode.SELF:
         b.set("branch_name", job.pr.head)
@@ -608,9 +602,8 @@ def _artifact_format(job: ReviewJob, extra: dict, *, rereview: bool = False,
 def _prompt_single(job, common, extra, output):
     """The one-agent review, of an open PR or of the working branch.
 
-    The modes differ in three places, all of them consequences of there being
-    no PR: a self-review is identified by its branch, has no reviews on it to
-    read, and is not asked for a verdict.
+    The modes differ in two places, both consequences of there being no PR: a
+    self-review is identified by its branch and has no reviews on it to read.
     """
     prior_section = _build_prior_section(
         job.prior,
@@ -624,7 +617,7 @@ def _prompt_single(job, common, extra, output):
         "omitted_guidance", "max_turns",
     )
     b.set("test_hint_section", _build_test_hint_section(unpaired_subjects(job.pr.files)))
-    _identify_review(b, job, verdict_options=VERDICT_OPTIONS)
+    _identify_review(b, job)
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
     b.execution_claim_guard()
@@ -640,8 +633,7 @@ def _prompt_single(job, common, extra, output):
 def _prompt_synthesis(job, common, extra, output):
     """The group findings written up as the review document.
 
-    Same split as `_prompt_single`, minus the verdict: synthesis asks for one in
-    either mode, each template in its own words.
+    Same split as `_prompt_single`.
 
     The prior section here is not the prior review — the group agents were each
     shown their slice of it and their conclusions are already in
@@ -659,7 +651,6 @@ def _prompt_synthesis(job, common, extra, output):
     b.set("wt_path", job.wt_path)
     b.set("prior_section", _build_unaccounted_section(extra.get("unaccounted_prior") or []))
     b.set("group_count", extra["group_count"])
-    b.set("verdict_options", VERDICT_OPTIONS)
     b.set("holistic_content", extra.get("holistic_content") or "## Phase 1 context\n_No holistic assessment available._")
     b.set("merged_content", extra["merged_content"])
     # The step that authors new cross-cutting findings is numbered by the

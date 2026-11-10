@@ -97,7 +97,7 @@ EOF
   grep -q "# Review: org/repo#42 — Test PR" "$TMPDIR/review/review.md"
   grep -q "## $must_section" "$TMPDIR/review/review.md"
   grep -q "## $should_section" "$TMPDIR/review/review.md"
-  grep -q "## Verdict" "$TMPDIR/review/review.md"
+  grep -Fq "**Verdict: Request changes.**" "$TMPDIR/review/review.md"
   grep -q "2 groups" "$TMPDIR/review/review.md"
 }
 

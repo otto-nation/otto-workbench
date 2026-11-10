@@ -55,11 +55,11 @@ class TestSharedPromptBodies:
         differing = [k for k in holistic if holistic[k] != scout[k]]
         assert differing == ["output_block"]
 
-    def test_single_variants_differ_only_in_identity_and_the_verdict(self):
+    def test_single_variants_differ_only_in_identity(self):
         pr = self._vars(Phase.SINGLE, "/tmp/r.md")
         self_ = self._vars(Phase.SINGLE, "/tmp/r.md", mode=Mode.SELF)
         assert set(pr) - set(self_) == {
-            "pr_number", "reviews_section", "verdict_options",
+            "pr_number", "reviews_section",
         }
         assert set(self_) - set(pr) == {"branch_name"}
         # The re-review preamble is worded per mode, so it is expected to differ.

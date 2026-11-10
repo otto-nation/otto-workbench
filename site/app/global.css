@@ -7,5 +7,7 @@
 /* Tailwind v4 excludes node_modules from auto-detection, so without this every
    utility used inside @otto-nation/brand is missing from the emitted stylesheet
    and the page builds clean but renders unstyled. otto-brand-check fails the
-   build if this line goes away. */
-@source '../node_modules/@otto-nation/brand/**/*.tsx';
+   build if this line goes away. The glob starts at src/: Tailwind keeps
+   auto-detecting beside @source, and a glob rooted at the package scans its
+   README and DESIGN.md as class candidates. */
+@source '../node_modules/@otto-nation/brand/src/**/*.tsx';

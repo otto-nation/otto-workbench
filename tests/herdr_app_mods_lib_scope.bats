@@ -176,3 +176,9 @@ _js() {
   [ "$status" -eq 0 ]
   jq -e 'length==1 and .[0].cwd=="/live" and .[0].on=="m"' <<<"$output"
 }
+
+@test "boardState: an error carries the last successful load so the header can say how stale" {
+  _js 'boardState([{cwd:"/a"},{cwd:"/b"}],[{error:{kind:"timeout"},updatedAt:1000,prs:[]},{error:{kind:"timeout"}}],"this").errors.map((e) => e.updatedAt)'
+  [ "$status" -eq 0 ]
+  [ "$output" = "[1000,null]" ]
+}

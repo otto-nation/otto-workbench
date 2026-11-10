@@ -21,7 +21,8 @@ import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder } from "./_ui/ui.js";
+import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder, errorLine } from "./_ui/ui.js";
+import { relativeTime } from "./_lib/history.js";
 
 function ctxOf() {
   return locate(spaces(), panes(), focused());
@@ -366,7 +367,7 @@ export default class PrsBoard extends View {
     }
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(emptyPane())
-        .children(view.errors.slice(0, 3).map((e) => placeholder(errLine(e)).max_w(LAYOUT.msgMaxW)))
+        .children(view.errors.slice(0, 3).map((e) => errorLine(errLine(e)).max_w(LAYOUT.msgMaxW)))
         .child(button("refresh-retry", "Retry", () => this.refreshNow()))
         .child(this.scopeToggle());
     }
@@ -491,7 +492,11 @@ export default class PrsBoard extends View {
         .when(Boolean(note), (e) => e.child(text("meta", note, t.muted).flex_none()))
         .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on))))
         .when(nFail && !all, (e) => e
-          .child(statusText("warn", "Stale"))
+          // DESIGN.md: stale is warn plus how old the shown data is; with nothing loaded yet it is
+          // an error, not stale.
+          .child(first.updatedAt != null
+            ? statusText("warn", `stale · ${relativeTime(new Date(first.updatedAt).toISOString(), Date.now())}`)
+            : statusText("fail", "failed"))
           .child(text("meta", errorText(first.error, ctx), t.muted).min_w(0).truncate()))
         .when(nFail && all, (e) => e
           .child(statusText("fail", `${nFail} failed`))

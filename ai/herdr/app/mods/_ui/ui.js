@@ -131,6 +131,14 @@ export function placeholder(content) {
   return text("body", content, theme().muted);
 }
 
+// DESIGN.md's error state: a one-line reason in the danger colour. Callers that can reload add
+// an outline "Retry" button beside it.
+export const dangerColor = () => STATUS.fail.color(theme());
+
+export function errorLine(content) {
+  return text("body", content, dangerColor());
+}
+
 // Meta-sized supporting text; muted unless a colour is given.
 export function caption(content, color) {
   return text("meta", content, color ?? theme().muted);
@@ -155,7 +163,7 @@ export function scrollBody() {
 // One choice in a segmented control: muted label, or ink fill with canvas label when selected.
 export function segment(id, label, active, onClick) {
   const t = theme();
-  return type(div().id(id).px(CONTROL.px).h(CONTROL.hDense).flex().items_center().rounded(RADIUS.tag), "label")
+  return type(div().id(id).px(CONTROL.px).h(CONTROL.hDense).flex().items_center().rounded(RADIUS.control), "label")
     .cursor_pointer()
     .when(active, (e) => e.bg(t.solid).text_color(t.solid_foreground))
     .when(!active, (e) => e.text_color(t.muted).hover((s) => s.bg(t.hover)))

@@ -6,7 +6,7 @@ import { tailLines } from "./_lib/output.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import {
   segment, segmented, button, inset, ciMark, addStat, delStat, card, placeholder, caption,
-  paneBar, scrollBody, pane, type, text, statusText,
+  paneBar, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
 } from "./_ui/ui.js";
 
 function postKind(tone) {
@@ -17,7 +17,7 @@ function postKind(tone) {
 
 function reviewBody(stamp, body) {
   if (body == null) return placeholder("Loading…");
-  if (body.ok === false) return placeholder(body.error?.message ?? "");
+  if (body.ok === false) return errorLine(body.error?.message ?? "Could not read the review");
   if (body.text == null) return placeholder("Review file not found — it may have been pruned");
   return TextView.markdown("review-" + stamp, body.text).selectable();
 }
@@ -43,7 +43,7 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
     .border_b_1().border_color(t.border)
     .children(on.map((a) => button(`act-${a.id}`, a.label, () => onAction(a))))
     .when(!on.length && Boolean(why), (e) => e.child(caption(why.reason)))
-    .when(Boolean(note), (e) => e.child(caption(note, t.ansi1)));
+    .when(Boolean(note), (e) => e.child(caption(note, dangerColor())));
 }
 
 // What the detail view needs from a board card.

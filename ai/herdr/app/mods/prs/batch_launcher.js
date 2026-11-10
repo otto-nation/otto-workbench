@@ -107,8 +107,8 @@ export class BatchLauncher {
   }
 
   reset() {
-    this.selected.clear();
-    this.note = null;
+    for (const k of [...this.selected]) if (!this.isPending(k)) this.selected.delete(k);
+    if (!this.starting) this.note = null;
     this.acx.notify();
   }
 
@@ -168,7 +168,7 @@ export class BatchLauncher {
         output = read.code === 0 ? read.stdout : "";
         const got = await exec("hc", getArgv(p.terminal), {});
         live = terminalsOf(got.code === 0 ? [JSON.parse(got.stdout)] : null)[0]?.state === "live";
-      } catch { live = false; }
+      } catch { this.watchLaunch(cx, tk); return; }
       const outcome = launchOutcome(output);
       if (!outcome.started && live) { this.watchLaunch(cx, tk); return; }
       this.pending.delete(tk);

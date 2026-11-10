@@ -21,7 +21,7 @@ import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, pill, chip, emptyPane, pane, button } from "./_ui/ui.js";
+import { segment, segmented, tag, chip, emptyPane, pane, button } from "./_ui/ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -491,7 +491,7 @@ export default class TeamPrs extends View {
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
         .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.muted).child(note)))
-        .when(!all && ctx?.on != null, (e) => e.child(pill(String(ctx.on), t.muted)))
+        .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on), t.muted)))
         .when(nFail && !all, (e) => e
           .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
           .child(div().min_w(0).text_size(TEXT.caption).text_color(t.muted).truncate().child(errorText(first.error, ctx))))

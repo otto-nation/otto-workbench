@@ -4,7 +4,7 @@ Conventions for the mods under this directory (`team-prs`, `_lib`, …).
 
 ## Where things live
 
-- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `chip`, `pill`, `inset`, `segment`/`segmented`, `filterGroup`, `eyebrow`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `ciMark`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
+- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `chip`, `tag`, `inset`, `segment`/`segmented`, `filterGroup`, `eyebrow`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `ciMark`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
 - Every top-level `_*/` directory under `mods/` is a shared tree installed into every mod, so only put real libraries there (no scratch dirs like `_tmp/`)
 - Sizes, spacing, fills and breakpoints: `_lib/tokens.js`. Colours come only from `theme()`. No literal pixel or colour values in views
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`
@@ -26,6 +26,8 @@ restates none of their contents:
 - Size, spacing and radius: `_lib/tokens.js`, whose comments say which brand
   value each token stands for.
 - Shape of a control, card or label: `_ui/ui.js`.
+- `tests/herdr_app_mods_style.bats` holds the views to the brand rules a grep
+  can see: no hover that changes a border, no `pill`, no ✗ glyph.
 
 Where `DESIGN.md` is silent, keep to those owners rather than inventing a value,
 and record the gap in otto-nation/otto-nation.github.io's issue tracker.

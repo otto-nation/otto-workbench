@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, TEXT, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
-import { chip as chipOf, filterGroup, pill, ciMark, addStat, delStat, card, eyebrow, placeholder, scrollBody } from "./_ui/ui.js";
+import { chip as chipOf, filterGroup, tag, ciMark, addStat, delStat, card, eyebrow, placeholder, scrollBody } from "./_ui/ui.js";
 import { cardStateLine } from "./workflows_view.js";
 
 const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
@@ -44,13 +44,13 @@ export function renderBoard({
 function badges(pr, { hideBusy } = {}) {
   const t = theme();
   const out = [];
-  if (pr.isDraft) out.push(pill("draft"));
-  if (pr.state === "MERGED") out.push(pill("merged"));
-  if (pr.inMergeQueue) out.push(pill("queue"));
-  if (pr.busy && !hideBusy) out.push(pill("batch is working on this"));
+  if (pr.isDraft) out.push(tag("draft"));
+  if (pr.state === "MERGED") out.push(tag("merged"));
+  if (pr.inMergeQueue) out.push(tag("queue"));
+  if (pr.busy && !hideBusy) out.push(tag("batch is working on this"));
   const runs = pr.reviewRuns.length;
-  if (runs > 0) out.push(pill(`${runs} runs`));
-  for (const name of pr.labels.slice(0, 2)) out.push(pill(name));
+  if (runs > 0) out.push(tag(`${runs} runs`));
+  for (const name of pr.labels.slice(0, 2)) out.push(tag(name));
   return out;
 }
 

@@ -87,7 +87,7 @@ _launch() {
 @test "arguments go to the bundle binary unchanged, without open" {
   _stub_bundle 1
   _stub_open
-  run _launch do layout.switch --name workbench
+  run _launch "do" layout.switch --name workbench
   [ "$status" -eq 0 ]
   run cat "$CALLS"
   [ "$output" = "argv:do layout.switch --name workbench" ]

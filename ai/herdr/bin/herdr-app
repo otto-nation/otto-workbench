@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Open the main Herdr window without tying it to the terminal, or run a Herdr
+# command against a running window.
+#
+# With no arguments, hands the launch to macOS (`open -n`) and returns at once:
+# the window is not a child of the shell, and its log stays out of the
+# terminal. When the window this shell would open already answers
+# `herdr-app status`, nothing is launched. With arguments, runs the app's own
+# CLI (`herdr-app do …`, `status`, `ls`, `shot`, `check`, `commands`)
+# unchanged.
+#
+# ```
+# herdr-app
+# herdr-app do layout.switch --name workbench
+# ```
+#
+# | Flag | Description |
+# |------|-------------|
+# | `-h`, `--help` | Show help |
+#
+# | Environment Variable | Description | Default |
+# |---------------------|-------------|---------|
+# | `HERDR_APP_BUNDLE` | The Herdr app bundle | `~/Applications/Herdr.app` |
+# | `HERDR_APP_HOME` | Which window to open or ask; passed to the launched app when set | `~/.config/herdr-app` |
+# | `HC_SESSION` | herdr-core session; passed to the launched app when set | `default` |
+#
+# Herdr's installer links its binary into ~/.local/bin under this name; sync
+# replaces that link with this script. Use herdr-app-untrusted for the
+# untrusted window.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../../../lib/ui.sh"
+
+usage() {
+  cat <<'EOF'
+Open the main Herdr window detached from the terminal, or run a Herdr command.
+
+Usage: herdr-app              open the window (no-op when it is already running)
+       herdr-app <command>    run a Herdr command (see: herdr-app commands)
+
+  -h, --help   Show this help
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+bin="$HERDR_APP_BUNDLE/Contents/MacOS/Herdr"
+if [[ ! -x "$bin" ]]; then
+  err "herdr-app: Herdr is not installed (no $bin) — set HERDR_APP_BUNDLE if it lives elsewhere"
+  exit 1
+fi
+
+if [[ $# -gt 0 ]]; then
+  exec "$bin" "$@"
+fi
+
+# status reports an error unless a window for HERDR_APP_HOME is running.
+# ceiling: a window still starting up may not answer yet, so two quick runs can
+# open two windows on one home. Upgrade trigger: if Herdr gains a launch command
+# that focuses an existing window instead of starting another.
+if "$bin" status > /dev/null 2>&1; then
+  info "herdr-app: a window for ${HERDR_APP_HOME:-$HERDR_APP_DIR} is already running"
+  exit 0
+fi
+
+# Without open (not macOS) there is no launcher to hand off to; run in the
+# foreground as the bundle binary would.
+if ! command -v open > /dev/null 2>&1; then
+  exec "$bin"
+fi
+
+# -n: with herdr-app-untrusted running, a plain `open` would only bring that
+# instance forward. A GUI launched by open inherits launchd's environment, not
+# this shell's, so the variables that pick the window are passed explicitly.
+open_args=(-n "$HERDR_APP_BUNDLE")
+[[ -n "${HERDR_APP_HOME:-}" ]] && open_args+=(--env "HERDR_APP_HOME=$HERDR_APP_HOME")
+[[ -n "${HC_SESSION:-}" ]] && open_args+=(--env "HC_SESSION=$HC_SESSION")
+open "${open_args[@]}"

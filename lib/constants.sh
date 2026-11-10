@@ -283,6 +283,10 @@ HERDR_TUI_THEME_DARK="gruvbox"
 # own config dir. The workbench owns its theme files and settings.json's `theme`
 # key only; every other file there is the app's or the person's.
 HERDR_APP_DIR="$HOME/.config/herdr-app"
+# The app bundle. Herdr's installer also links its binary into ~/.local/bin as
+# herdr-app; sync replaces that link with ai/herdr/bin/herdr-app, which reaches the
+# binary through this path. Override for a bundle installed elsewhere.
+HERDR_APP_BUNDLE="${HERDR_APP_BUNDLE:-$HOME/Applications/Herdr.app}"
 HERDR_APP_THEMES_DIR="$HERDR_APP_DIR/themes"
 HERDR_APP_SETTINGS_FILE="$HERDR_APP_DIR/settings.json"
 HERDR_APP_THEMES_SRC_DIR="$WORKBENCH_DIR/ai/herdr/app/themes"

@@ -114,8 +114,15 @@ step_herdr_machine_note() {
   return 0
 }
 
-# _herdr_app_present — true when herdr-app is on PATH or its config dir exists.
-_herdr_app_present() { command -v herdr-app >/dev/null 2>&1 || [[ -d "$HERDR_APP_DIR" ]]; }
+# _herdr_app_present — true when the app bundle or its config dir exists, or a
+# herdr-app other than the workbench's own launcher (ai/herdr/bin/herdr-app,
+# installed with herdr whether or not the app is) is on PATH.
+_herdr_app_present() {
+  [[ -x "$HERDR_APP_BUNDLE/Contents/MacOS/Herdr" || -d "$HERDR_APP_DIR" ]] && return 0
+  local found
+  found=$(command -v herdr-app 2>/dev/null) || return 1
+  ! workbench_symlink_owned "$found" "ai/herdr/bin"
+}
 
 # _herdr_app_link_themes [HOME] — symlinks every generated
 # ai/herdr/app/themes/<name>.generated.json into HOME/themes (default

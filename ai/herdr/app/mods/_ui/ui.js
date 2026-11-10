@@ -112,10 +112,11 @@ export function sectionHeading(label, count = null) {
 }
 
 // A bordered scrolling box for long text inside a pane: review bodies, run output.
-export function inset() {
+// `maxH` lets a caller scale the box with its window; the default is the fixed token.
+export function inset({ maxH = LAYOUT.bodyMaxH } = {}) {
   const t = theme();
   return div().p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
-    .max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar();
+    .max_h(maxH).overflow_y_scrollbar();
 }
 
 // list-row: hover fills; selected adds the selected fill, a 2px primary rule on the left and ink

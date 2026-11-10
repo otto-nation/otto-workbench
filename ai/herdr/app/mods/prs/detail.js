@@ -60,7 +60,16 @@ export function detailOf(pr) {
 
 // The run's text, read-only, inside the pane. The terminal itself can open as a tab for anything
 // interactive.
-export function renderOutput(output, { onHide, onTab }) {
+// Selectable text: a fenced block in a TextView, so it can be highlighted and copied. The fence is
+// longer than any backtick run in the output so the output cannot close it early.
+function selectableOutput(lines) {
+  const longest = Math.max(0, ...(lines.join("\n").match(/`+/g) ?? []).map((r) => r.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  const body = lines.join("\n");
+  return TextView.markdown(`output-${body.length}`, `${fence}\n${body}\n${fence}`).selectable();
+}
+
+export function renderOutput(output, { onHide, onTab, maxH }) {
   const lines = tailLines(output.text ?? "", 80);
   return paneBar()
     .child(h_flex().gap(SP.sm).items_center().justify_between()
@@ -68,10 +77,10 @@ export function renderOutput(output, { onHide, onTab }) {
       .child(h_flex().gap(SP.sm)
         .child(button("out-tab", "Open as tab", onTab))
         .child(button("out-hide", "Hide", onHide))))
-    .child(type(inset().flex().flex_col(), "code")
+    .child(type(inset({ maxH }).flex().flex_col(), "code")
       .when(output.text == null, (e) => e.child(placeholder("Loading…")))
       .when(output.text != null && !lines.length, (e) => e.child(placeholder("No output yet")))
-      .children(lines.map((l) => div().child(l === "" ? " " : l))));
+      .when(lines.length > 0, (e) => e.child(selectableOutput(lines))));
 }
 
 export function prUrl(d) {

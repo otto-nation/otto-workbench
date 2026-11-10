@@ -449,7 +449,7 @@ export default class PrsBoard extends View {
     const picked = this.selectedId
       ? (view.prs.find((p) => cardId(p) === this.selectedId) ?? this.selectedPr) : null;
     const open = picked ? this.detailView(picked, cx) : null;
-    if (open) return open;
+    if (open) return open.on_size_change((size, cx2) => this.onSize(size, cx2));
     const mode = viewOf(this.size?.width);
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (this.batchOpen && tabOf() === "mine") {

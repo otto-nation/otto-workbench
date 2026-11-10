@@ -5,7 +5,7 @@ import Board from "./board_view.js";
 import { renderDetail, renderActionBar, renderOutput, detailOf } from "./detail.js";
 import { renderBatchTab } from "./workflows_view.js";
 import { renderFileList, renderDiff } from "./files_view.js";
-import { MONO } from "./_lib/tokens.js";
+import { MONO, LAYOUT } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
 import { readReview, loadFiles, loadPatch } from "./_lib/board_data.js";
 import { patchRows, summarize } from "./_lib/diff.js";
@@ -295,6 +295,8 @@ export default class PrsBoard extends Board {
       outputPanel: this.output && renderOutput({ ...this.output, live: this.live === this.output.terminal }, {
         onHide: () => { this.output = null; this.acx.notify(); },
         onTab: () => run("terminal.keep", { terminal: this.output.terminal }),
+        // The run output grows with the window: 40% of its height, never under the fixed token.
+        maxH: Math.max(LAYOUT.bodyMaxH, Math.round((this.size?.height ?? 0) * 0.4)),
       }),
       tab: this.tab,
       onTab: (tab) => { this.tab = tab; this.openFile = null; this.diff = null; this.acx.notify(); },

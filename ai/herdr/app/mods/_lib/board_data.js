@@ -79,9 +79,18 @@ export function classifyCode(result) {
 // `pr`) is missing from PATH and `pr` resolves to coreutils' pagination tool of the same name.
 // Prefixing the workbench bin dir for remote calls makes the right `pr` win; local calls keep the
 // app's own PATH.
+// A remote terminal is started by the machine's core, not by a login shell, so it lacks what the
+// shell's startup files export: the workbench bin dir and ~/.env.local (GOOGLE_CLOUD_PROJECT and
+// the like, without which pi never registers its Vertex provider). ~/.env.local is sourced only
+// after a subshell proves it parses under sh — a syntax error in a sourced file would otherwise
+// end this shell before `exec`.
+export const REMOTE_PREAMBLE = 'PATH="$HOME/.local/bin:$PATH"; '
+  + 'if [ -r "$HOME/.env.local" ] && ( . "$HOME/.env.local" ) >/dev/null 2>&1; '
+  + 'then set -a; . "$HOME/.env.local" >/dev/null 2>&1; set +a; fi; exec "$@"';
+
 export function toolCall(ctx, cmd, args) {
   if (ctx.on == null || ctx.on === '') return { cmd, args };
-  return { cmd: 'sh', args: ['-c', 'PATH="$HOME/.local/bin:$PATH"; exec "$@"', 'sh', cmd, ...args] };
+  return { cmd: 'sh', args: ['-c', REMOTE_PREAMBLE, 'sh', cmd, ...args] };
 }
 
 export async function invoke(exec, ctx, cmd, args, opts = {}) {

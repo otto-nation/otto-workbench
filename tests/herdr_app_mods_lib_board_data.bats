@@ -520,7 +520,7 @@ _gql() {
     ]));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"cmd":"pr","args":["review","--list"]},{"cmd":"gh","args":["api"]},{"cmd":"sh","args":["-c","PATH=\"$HOME/.local/bin:$PATH\"; exec \"$@\"","sh","pr","review","--list"]}]' ]
+  [ "$output" = '[{"cmd":"pr","args":["review","--list"]},{"cmd":"gh","args":["api"]},{"cmd":"sh","args":["-c","PATH=\"$HOME/.local/bin:$PATH\"; if [ -r \"$HOME/.env.local\" ] && ( . \"$HOME/.env.local\" ) >/dev/null 2>&1; then set -a; . \"$HOME/.env.local\" >/dev/null 2>&1; set +a; fi; exec \"$@\"","sh","pr","review","--list"]}]' ]
 }
 
 @test "loadListing sends the prior stamp as --if-changed and keeps the prior when unchanged" {

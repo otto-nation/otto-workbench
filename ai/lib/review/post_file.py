@@ -1,4 +1,4 @@
-"""Post one review file to its PR: parse, check positions, renumber, and post as a PENDING review.
+"""Post one review file to its PR: parse, check positions, and post as a PENDING review.
 
 `run_post` is the flow `review-post` runs: read the review document and its
 sidecar, resolve the PR's refs and diff, drop findings already posted,
@@ -25,8 +25,8 @@ from core.text import plural
 from review.types import ReviewMeta
 from review.format import (
     CLASS_FILE_LEVEL, CLASS_INLINE,
-    classify_findings, format_inline_comment,
-    renumber_for_posting, resolve_permalinks,
+    classify_findings, format_inline_comment, format_inline_comments,
+    resolve_permalinks,
 )
 from review.render import comment_body
 from gh.pr_data import fetch_pr_data
@@ -165,9 +165,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref,
                        sidecar.host)
 
-    inline, body_findings = renumber_for_posting(inline, body_findings)
-
-    inline_comments = [format_inline_comment(f) for f in inline]
+    inline_comments = format_inline_comments(inline)
     body_text = comment_body(
         stored.record, body_findings,
         has_inline=len(inline) > 0, severity_filter=severity_filter,

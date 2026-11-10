@@ -95,11 +95,10 @@ _STATE_LABELS = {
 def _state_of(line: str, by_sid: dict[str, str], by_id: dict[str, str]) -> str:
     """The label the thread on `line`'s finding earns, or empty for no thread.
 
-    The stable ID answers first. A thread's `[M1]` is the number its comment was
-    posted under, which `renumber_for_posting` assigned by diff position, so it
-    names a different finding in the review file whenever anything above it
-    moved. The number is the fallback for a comment posted before the marker
-    existed, where a wrong-but-adjacent label beats none at all.
+    The stable ID answers first. A thread's `[M1]` is the record ID its comment
+    was posted under; a later round restarts those IDs, so the number is only
+    the fallback for a comment posted before the marker existed, where a
+    wrong-but-adjacent label beats none at all.
     """
     sid = SID_MARKER_RE.search(line)
     if sid and sid.group(1) in by_sid:

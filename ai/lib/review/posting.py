@@ -248,8 +248,7 @@ def _reclassify_and_retry(
 
     if new_inline:
         core.log.info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
-        new_inline, new_body = review.format.renumber_for_posting(new_inline, new_body)
-        new_inline_comments = [review.format.format_inline_comment(f) for f in new_inline]
+        new_inline_comments = review.format.format_inline_comments(new_inline)
         new_body_text = review.render.comment_body(
             record, new_body, has_inline=True, severity_filter=severity_filter,
             meta=meta,
@@ -265,7 +264,7 @@ def _reclassify_and_retry(
         except LineResolutionError:
             core.log.warn("Retry still failed — demoting all to body-level")
 
-    _, new_body = review.format.renumber_for_posting([], list(inline) + list(body_findings))
+    new_body = list(inline) + list(body_findings)
     new_body_text = review.render.comment_body(
         record, new_body, has_inline=False, severity_filter=severity_filter,
         meta=meta,
@@ -437,8 +436,8 @@ def _print_dry_run(
     print()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     print()
-    core.log.info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
-    core.log.info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
+    core.log.info(f"Inline: {', '.join(f.id for f in inline) or 'none'}")
+    core.log.info(f"Body: {', '.join(f.id for f in body_findings) or 'none'}")
     # Placed in the body, not dropped: these are in `body_findings` above. Said
     # as such, because "Skipped" read as a finding that would never be posted.
     for f in body_only:

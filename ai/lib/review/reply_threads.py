@@ -7,8 +7,8 @@ reads. `fetch_reply_threads` classifies each thread into a `ReplyState` and
 matches it back to the finding its root comment declared, so a re-review can
 read the thread's account of a finding beside the ledger's. That match is a
 `ThreadFinding` carrying both of the names a posted comment gives a finding,
-because the visible one is renumbered every round and only the stable ID
-survives to the next.
+because the visible one is the record ID, which restarts each round, and
+only the stable ID survives to the next.
 
 Only a thread whose first comment is the reviewing bot's own counts. A thread
 the author opened is a comment on the PR rather than a reply to a finding, and
@@ -92,9 +92,9 @@ class ThreadFinding:
     Both names, because they answer in different rounds. `stable_id` is the
     durable one: it hashes the finding's location and wording, so the prior
     review's `<!-- sid: -->` markers still hold it a round later. `posted_id` is
-    the `[M1]` a reviewer sees, assigned by diff position at post time — the
-    same finding wears a different number in the review file, so it is the
-    fallback for comments posted before the marker existed rather than the key.
+    the `[M1]` a reviewer sees, which is the record ID at post time — record
+    IDs restart each round, so it is the fallback for comments posted before
+    the marker existed rather than the key.
 
     Empty on both counts when the body declares no finding, which is an ordinary
     outcome: a thread's root is only sometimes one of ours.

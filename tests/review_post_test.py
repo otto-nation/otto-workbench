@@ -574,3 +574,78 @@ class TestACleanReviewStillPosts:
         [payload] = payloads
         assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in payload["body"]
         assert post_file.exists()
+
+
+class TestPostedCommentsKeepRecordIds:
+    """A posted review labels each finding with the record ID agents cited.
+
+    Diff-order renumbering used to retag an earlier-path finding as `[M1]` even
+    when the record called it `M3`, so a summary citing `[M3]` named someone else.
+    """
+
+    TWO_FILES = (
+        "diff --git a/a.go b/a.go\n"
+        "--- a/a.go\n"
+        "+++ b/a.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+        "diff --git a/b.go b/b.go\n"
+        "--- a/b.go\n"
+        "+++ b/b.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    ONE_FILE = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    def _payload(self, rp, tmp_path, capsys, rec, diff):
+        import argparse
+        review_dir = tmp_path / "review"
+        review_dir.mkdir(exist_ok=True)
+        review_file = review_dir / "review.md"
+        store_record(review_file, rec, ReviewMeta(head_sha="aaa1111bbb2222"))
+        args = argparse.Namespace(
+            repo="org/repo", pr="1", review_file=str(review_file),
+            dry_run=True, submit=False, chunk_size=30, severity="M,S,N,I",
+            debug=False,
+        )
+        with patch.object(rp, "_get_diff", return_value=diff):
+            assert rp.run_post(
+                MagicMock(), args, "org/repo",
+                rp.ReviewMeta(repo="org/repo"), review_file,
+            ) == 0
+        out = capsys.readouterr().out
+        return json.loads(out[out.index("{"):out.rindex("}") + 1])
+
+    def test_an_inline_finding_keeps_its_record_id_when_an_earlier_path_sits_first(
+            self, rp, tmp_path, capsys):
+        rec = record(
+            finding("M1", "error check", path="b.go", line=5),
+            finding("M3", "lock never released", path="a.go", line=5),
+        )
+        payload = self._payload(rp, tmp_path, capsys, rec, self.TWO_FILES)
+        by_path = {c["path"]: c["body"] for c in payload["comments"]}
+        assert "**[M3] [must-fix]**" in by_path["a.go"]
+        assert "lock never released" in by_path["a.go"]
+        assert "**[M1] [must-fix]**" in by_path["b.go"]
+        assert "**[M1]" not in by_path["a.go"]
+
+    def test_summary_citation_names_the_finding_labelled_with_that_id(
+            self, rp, tmp_path, capsys):
+        rec = record(
+            finding("M1", "error check", path="file.go", line=5),
+            finding("M3", "lock never released", path="other.go", line=9),
+            summary="The lock bug is [M3].",
+        )
+        payload = self._payload(rp, tmp_path, capsys, rec, self.ONE_FILE)
+        body = payload["body"]
+        assert "The lock bug is [M3]." in body
+        tagged = [line for line in body.splitlines() if "**[M3] [must-fix]**" in line]
+        assert tagged and "lock never released" in tagged[0]
+        assert "**[M2]" not in body

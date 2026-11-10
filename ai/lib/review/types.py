@@ -526,7 +526,6 @@ class Finding:
     end_line: int | None
     body: str
     full_path: str = ""
-    posted_id: str = ""
     # The `FindingIdentity.stable_id` of this finding, which a posted comment
     # carries so a later round can match a reply thread back to the finding it
     # hangs off.

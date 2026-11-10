@@ -80,16 +80,18 @@ _herdr_layout_protected() {
   fi
   [[ -f "$dest" ]] || return 1
   dest_sum=$(_herdr_layout_cksum "$dest")
+  # Already what this run would write — whoever wrote it (herdr's layout.set, a
+  # person restoring it by hand): adopt it rather than call it an edit forever.
+  if printf '%s\n' "$out" | cmp -s "$dest" -; then
+    printf '%s\t%s\n' "$name" "$dest_sum" >> "$man_out"
+    return 0
+  fi
   if [[ -n "$old_sum" && "$dest_sum" != "$old_sum" ]]; then
     warn "herdr-app layout $name: $dest differs from the workbench copy — left as is; delete it and re-run otto-workbench sync to restore it"
     _herdr_layout_keep "$name" "$old_sum" "$man_out"
     return 0
   fi
   if [[ -z "$old_sum" ]]; then
-    if printf '%s\n' "$out" | cmp -s "$dest" -; then
-      printf '%s\t%s\n' "$name" "$dest_sum" >> "$man_out"
-      return 0
-    fi
     warn "herdr-app layout $name: $dest exists without a workbench manifest and differs from the workbench copy — left as is"
     return 0
   fi

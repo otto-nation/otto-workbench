@@ -26,17 +26,34 @@ _launchd_is_loaded() {
   launchctl list "$_MAINTENANCE_LABEL" >/dev/null 2>&1
 }
 
-_launchd_install() {
+# The schedule runs the stable checkout (the main worktree in a bare-repo
+# layout), never the worktree a command happened to run from: a feature
+# worktree is deleted once its branch merges, and a schedule pointing into one
+# fails from then on with nothing reporting it.
+_maintenance_run_dir() {
+  echo "${WORKBENCH_STABLE_DIR:-$WORKBENCH_DIR}"
+}
+
+# _launchd_render INTERVAL — prints the plist the template gives for INTERVAL.
+_launchd_render() {
   local interval="${1:-$_MAINTENANCE_DEFAULT_INTERVAL}"
-  local template="$MAINTENANCE_SRC_DIR/maintenance.plist.template"
-
-  mkdir -p "$(dirname "$_MAINTENANCE_PLIST")" "$_MAINTENANCE_LOG_DIR_MACOS"
-
   sed \
-    -e "s|__WORKBENCH_DIR__|${WORKBENCH_DIR}|g" \
+    -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
     -e "s|__INTERVAL__|${interval}|g" \
     -e "s|__LOG_DIR__|${_MAINTENANCE_LOG_DIR_MACOS}|g" \
-    "$template" > "$_MAINTENANCE_PLIST"
+    "$MAINTENANCE_SRC_DIR/maintenance.plist.template"
+}
+
+_launchd_install() {
+  local interval="${1:-$_MAINTENANCE_DEFAULT_INTERVAL}"
+  mkdir -p "$(dirname "$_MAINTENANCE_PLIST")" "$_MAINTENANCE_LOG_DIR_MACOS"
+  _launchd_render "$interval" > "$_MAINTENANCE_PLIST"
+}
+
+# _launchd_installed_interval — the StartInterval of the installed plist, or nothing.
+_launchd_installed_interval() {
+  sed -n '/<key>StartInterval<\/key>/{n;s/.*<integer>\([0-9][0-9]*\)<\/integer>.*/\1/p;q;}' \
+    "$_MAINTENANCE_PLIST" 2>/dev/null
 }
 
 _launchd_start() {
@@ -81,7 +98,7 @@ _systemd_install() {
 
   mkdir -p "$_SYSTEMD_USER_DIR"
 
-  sed -e "s|__WORKBENCH_DIR__|${WORKBENCH_DIR}|g" \
+  sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
     "$svc_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service"
 
   sed -e "s|__INTERVAL__|${interval}|g" \
@@ -118,6 +135,60 @@ _systemd_status() {
   else
     echo -e "  ${GREEN}Running${NC}"
   fi
+  return 0
+}
+
+# _systemd_installed_interval — the OnUnitActiveSec of the installed timer, or nothing.
+_systemd_installed_interval() {
+  sed -n '/^OnUnitActiveSec=[0-9][0-9]*sec$/{s/^OnUnitActiveSec=\([0-9]*\)sec$/\1/p;q;}' \
+    "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer" 2>/dev/null
+}
+
+# _systemd_schedule_current INTERVAL — true when both installed units equal
+# what the templates render for INTERVAL.
+_systemd_schedule_current() {
+  local interval="$1"
+  sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
+    "$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.service.template" \
+    | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service" || return 1
+  sed -e "s|__INTERVAL__|${interval}|g" \
+    "$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.timer.template" \
+    | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
+}
+
+# maintenance_refresh_schedule — re-installs an installed maintenance schedule
+# whose files no longer match what the templates render, keeping its interval.
+# A repo that moved leaves the schedule naming a path that no longer exists, and
+# a template change otherwise reaches a machine only through `maintenance
+# start`. Called by sync. A machine with no schedule installed is left without
+# one, and a plist launchd has not loaded is corrected but not started. Skipped
+# when sync runs inside the launchd job itself: reloading the job would end the
+# run in progress, and a job that is running found its program.
+# Non-fatal: always returns 0.
+maintenance_refresh_schedule() {
+  local interval
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    [[ -f "$_MAINTENANCE_PLIST" ]] || return 0
+    [[ "${XPC_SERVICE_NAME:-}" == "$_MAINTENANCE_LABEL" ]] && return 0
+    interval=$(_launchd_installed_interval)
+    _launchd_render "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" | cmp -s - "$_MAINTENANCE_PLIST" && return 0
+    # A plist on disk that launchd has not loaded is a schedule the operator is
+    # not running: correct the file, but do not start it.
+    if ! _launchd_is_loaded; then
+      _launchd_install "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}"
+      success "Maintenance schedule file re-rendered for $(_maintenance_run_dir) (not loaded)"
+      return 0
+    fi
+    _launchd_start "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" \
+      || { warn "Could not reload the maintenance schedule — run: otto-workbench maintenance start"; return 0; }
+  else
+    [[ -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer" ]] || return 0
+    interval=$(_systemd_installed_interval)
+    _systemd_schedule_current "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" && return 0
+    _systemd_start "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" \
+      || { warn "Could not reload the maintenance schedule — run: otto-workbench maintenance start"; return 0; }
+  fi
+  success "Maintenance schedule re-installed for $(_maintenance_run_dir)"
   return 0
 }
 

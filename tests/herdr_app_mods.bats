@@ -76,6 +76,33 @@ _cksum() {
   [[ "$output" == *"herdr-app mod prs"* ]]
 }
 
+# herdr docks a mod the first time it sees the folder, reading mod.json for where;
+# a folder that exists while its files are still being copied gets the default.
+@test "a fresh install never shows the mod folder without its mod.json" {
+  local log="$BATS_TEST_TMPDIR/cp-saw-dest"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "[[ -e \"$APP/mods/prs\" && ! -e \"$APP/mods/prs/mod.json\" ]] && echo seen >> \"$log\"" \
+    'PATH=/usr/bin:/bin exec cp "$@"' > "$BIN/cp"
+  chmod +x "$BIN/cp"
+  run _run
+  [ "$status" -eq 0 ]
+  [ -f "$APP/mods/prs/mod.json" ]
+  [ ! -s "$log" ]
+  run ls -A "$APP"
+  [[ "$output" != *".workbench-mod."* ]]
+}
+
+@test "a fresh install whose copy fails leaves no mod folder behind" {
+  chmod 000 "$SRC/prs/main.js"
+  run _run
+  chmod 644 "$SRC/prs/main.js"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"herdr-app mod prs: could not stage every file"* ]]
+  [ ! -e "$APP/mods/prs" ]
+  run ls -A "$APP"
+  [[ "$output" != *".workbench-mod."* ]]
+}
+
 @test "re-run is a quiet no-op with WORKBENCH_SYNC=true" {
   run _run
   [ "$status" -eq 0 ]

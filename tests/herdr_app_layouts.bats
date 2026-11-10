@@ -165,6 +165,20 @@ _run_step() {
   grep -qx $'workbench\t'"$recorded" "$MANIFEST"
 }
 
+# herdr's layout.set (or a person restoring the file) can leave it equal to what
+# the workbench would write now while the manifest still records an older copy.
+@test "a layout already matching the workbench copy is adopted, not called an edit" {
+  _seed_main
+  run _run
+  [ "$status" -eq 0 ]
+  jq '.children[0].size.px = 300' "$FIXTURE" > "$APP/layouts/main.json"
+  jq -f "$SRC/workbench.jq" "$APP/layouts/main.json" > "$APP/layouts/workbench.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"left as is"* ]]
+  grep -qx $'workbench\t'"$(_cksum "$APP/layouts/workbench.json")" "$MANIFEST"
+}
+
 @test "manifest-less identical layout is adopted" {
   _seed_main
   jq -f "$SRC/workbench.jq" "$APP/layouts/main.json" > "$APP/layouts/workbench.json"

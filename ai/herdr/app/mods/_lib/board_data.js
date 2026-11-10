@@ -15,10 +15,12 @@ import {
   batches,
   FILES_PER_PAGE,
   filesArgv,
+  filesPageArgv,
   graphqlArgv,
   landedArgv,
   mapGraphql,
   mapPulls,
+  pagePatchesArgv,
   patchArgv,
   pullsArgv,
   userArgv,
@@ -222,11 +224,25 @@ export async function loadOpenPrs(exec, ctx, slug) {
   return { ok: true, prs: pulls.map((p) => asOpen(p, byNumber[p.number])), partial };
 }
 
-export async function readReview(readTextFile, path, on) {
+// A review on another machine is read two ways at once, first answer wins: herdr's readTextFile,
+// and `cat` through exec. Either alone can stall on a remote, which left the card on "Loading…".
+export async function readReview(readTextFile, path, on, exec = null) {
+  const remote = on != null && on !== '';
   try {
-    const text = await readTextFile(path, { on });
+    const direct = Promise.resolve().then(() => readTextFile(path, { on }));
+    let text;
+    if (remote && exec != null) {
+      const viaCat = Promise.resolve().then(() => exec('cat', [path], { on })).then((r) => {
+        if (r?.code !== 0) throw new Error(`cat exited ${r?.code}`);
+        return r.stdout ?? '';
+      });
+      text = await Promise.any([direct, viaCat]);
+    } else {
+      text = await direct;
+    }
     return { ok: true, text: text ?? null };
-  } catch (err) {
+  } catch (e) {
+    const err = e instanceof AggregateError ? e.errors[0] : e;
     if (on != null && on !== '') {
       return { ok: false, error: { kind: 'exec', command: 'read review', message: execReason(err) } };
     }
@@ -266,13 +282,116 @@ export async function loadFiles(exec, ctx, slug, number) {
   return { ok: true, files: markGenerated(files, generated) };
 }
 
-// One file's patch, read from the page loadFiles saw it on. `patch: null` when GitHub has none
-// (binary, or too large for the API).
-export async function loadPatch(exec, ctx, slug, number, file) {
-  const ran = await invoke(exec, ctx, 'gh', patchArgv(slug, number, file.page, file.path));
+function assembledPages(pageMap) {
+  const files = [];
+  for (const page of [...pageMap.keys()].sort((a, b) => a - b)) {
+    files.push(...pageMap.get(page));
+  }
+  return files;
+}
+
+async function loadFilesPage(exec, ctx, slug, number, page) {
+  const ran = await invoke(exec, ctx, 'gh', filesPageArgv(slug, number, page));
   if (!ran.ok) return ran;
-  const text = ran.stdout.replace(/\n$/, '');
-  return { ok: true, patch: text === '' ? null : text };
+  const parsed = readJson(ran.stdout);
+  if (!parsed.ok) return parsed;
+  return { ok: true, files: mapFiles(parsed.value, FILES_PER_PAGE, page) };
+}
+
+async function markFilesGenerated(exec, ctx, files) {
+  if (ctx.cwd == null) return files;
+  const generated = new Set();
+  for (const argv of attrArgvs(files)) {
+    const attr = await invoke(exec, ctx, 'git', argv);
+    if (!attr.ok) return files;
+    for (const p of generatedPaths(attr.stdout)) generated.add(p);
+  }
+  return markGenerated(files, generated);
+}
+
+// Page 1 first so the Files tab can paint, then pages 2..N together. `total` is the listing's
+// changed-files count; without a positive integer, loadFiles paginates as before.
+export async function loadFilesIncremental(exec, ctx, slug, number, total, onUpdate) {
+  if (!Number.isInteger(total) || total < 1) {
+    const result = await loadFiles(exec, ctx, slug, number);
+    onUpdate(result);
+    return result;
+  }
+  const pageCount = Math.ceil(total / FILES_PER_PAGE);
+  const pageMap = new Map();
+
+  const first = await loadFilesPage(exec, ctx, slug, number, 1);
+  if (!first.ok) {
+    onUpdate(first);
+    return first;
+  }
+  pageMap.set(1, first.files);
+  onUpdate({
+    ok: true,
+    files: assembledPages(pageMap),
+    loading: pageCount > 1,
+    total,
+  });
+
+  if (pageCount > 1) {
+    let pageError = null;
+    await Promise.all(Array.from({ length: pageCount - 1 }, (_, i) => i + 2).map(async (page) => {
+      const r = await loadFilesPage(exec, ctx, slug, number, page);
+      if (!r.ok) {
+        if (pageError == null) pageError = r.error?.message ?? 'failed';
+        return;
+      }
+      pageMap.set(page, r.files);
+      if (pageError == null) {
+        onUpdate({
+          ok: true,
+          files: assembledPages(pageMap),
+          loading: pageMap.size < pageCount,
+          total,
+        });
+      }
+    }));
+    if (pageError != null) {
+      const result = {
+        ok: true,
+        files: assembledPages(pageMap),
+        loading: false,
+        total,
+        pageError,
+      };
+      onUpdate(result);
+      return result;
+    }
+  }
+
+  const files = await markFilesGenerated(exec, ctx, assembledPages(pageMap));
+  const result = { ok: true, files, loading: false, total };
+  onUpdate(result);
+  return result;
+}
+
+// One file's patch, read from the page loadFiles saw it on. `patch: null` when GitHub has none
+// (binary, or too large for the API). `cache` maps `${slug}#${number}#${page}` to that page's
+// `{filename: patch}` object so a second file on the same page does not refetch.
+export async function loadPatch(exec, ctx, slug, number, file, cache) {
+  if (cache == null) {
+    const ran = await invoke(exec, ctx, 'gh', patchArgv(slug, number, file.page, file.path));
+    if (!ran.ok) return ran;
+    const text = ran.stdout.replace(/\n$/, '');
+    return { ok: true, patch: text === '' ? null : text };
+  }
+  const key = `${slug}#${number}#${file.page}`;
+  let obj = cache.get(key);
+  if (obj === undefined) {
+    const ran = await invoke(exec, ctx, 'gh', pagePatchesArgv(slug, number, file.page));
+    if (!ran.ok) return ran;
+    const parsed = readJson(ran.stdout);
+    if (!parsed.ok) return parsed;
+    obj = parsed.value;
+    cache.set(key, obj);
+  }
+  const patch = obj == null ? null : obj[file.path];
+  return { ok: true, patch: patch == null || patch === '' ? null : patch };
 }
 
 export async function loadBatchDoc(exec, ctx) {

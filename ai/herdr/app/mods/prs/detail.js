@@ -51,7 +51,7 @@ export function detailOf(pr) {
   return {
     repo: pr.repoSlug, host: pr.host, number: pr.number, title: pr.title, author: pr.author,
     branch: pr.branch, ci: pr.ciStatus, decision: pr.reviewDecision, additions: pr.additions,
-    deletions: pr.deletions, files: pr.changedFiles, url: pr.url, on: pr.on ?? null,
+    deletions: pr.deletions, files: pr.changedFiles, changedFiles: pr.changedFiles, url: pr.url, on: pr.on ?? null,
     runs: (pr.reviewRuns ?? []).map((r) => r.run),
     cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
     batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null, sha: pr.headSha ?? "",
@@ -62,11 +62,12 @@ export function detailOf(pr) {
 // interactive.
 // Selectable text: a fenced block in a TextView, so it can be highlighted and copied. The fence is
 // longer than any backtick run in the output so the output cannot close it early.
-function selectableOutput(lines) {
+function selectableOutput(lines, maxH) {
   const longest = Math.max(0, ...(lines.join("\n").match(/`+/g) ?? []).map((r) => r.length));
   const fence = "`".repeat(Math.max(3, longest + 1));
   const body = lines.join("\n");
-  return TextView.markdown(`output-${body.length}`, `${fence}\n${body}\n${fence}`).selectable();
+  return TextView.markdown(`output-${body.length}`, `${fence}\n${body}\n${fence}`)
+    .selectable().scrollable().max_h(maxH);
 }
 
 export function renderOutput(output, { onHide, onTab, maxH }) {
@@ -77,10 +78,10 @@ export function renderOutput(output, { onHide, onTab, maxH }) {
       .child(h_flex().gap(SP.sm)
         .child(button("out-tab", "Open as tab", onTab))
         .child(button("out-hide", "Hide", onHide))))
-    .child(type(inset({ maxH }).flex().flex_col(), "code")
+    .child(type(inset({ maxH, scroll: false }).flex().flex_col(), "code")
       .when(output.text == null, (e) => e.child(placeholder("Loading…")))
       .when(output.text != null && !lines.length, (e) => e.child(placeholder("No output yet")))
-      .when(lines.length > 0, (e) => e.child(selectableOutput(lines))));
+      .when(lines.length > 0, (e) => e.child(selectableOutput(lines, maxH))));
 }
 
 export function prUrl(d) {

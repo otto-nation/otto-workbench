@@ -595,3 +595,227 @@ _gql() {
   [[ "$output" == *'"b":null'* ]]
   [[ "$output" == *'"ok":true'* ]]
 }
+
+@test "loadFilesIncremental updates with page 1 before later pages resolve, then all pages in order" {
+  _bd '
+    function unwrap(cmd, args) {
+      if (cmd === "sh" && args[0] === "-c" && args[2] === "sh") return [args[3], args.slice(4)];
+      return [cmd, args];
+    }
+    function stdoutOf(names) {
+      return JSON.stringify(names.map((name) => ({filename: name, status: "modified", additions: 1, deletions: 0})));
+    }
+    const starts = [];
+    exec = async (cmd, args) => {
+      [cmd, args] = unwrap(cmd, args);
+      const rec = { cmd, url: args[1], resolved: false };
+      starts.push(rec);
+      return await new Promise((resolve) => {
+        rec.release = (result) => { rec.resolved = true; resolve(result); };
+      });
+    };
+    async function until(pred) {
+      for (let i = 0; i < 200; i++) { if (pred()) return; await Promise.resolve(); }
+      throw new Error("until timeout");
+    }
+    const updates = [];
+    const none = { cwd: null, on: null };
+    const done = m.loadFilesIncremental(exec, none, "o/n", 7, 250, (u) => {
+      updates.push({
+        paths: (u.files || []).map((f) => f.path),
+        loading: u.loading,
+        ok: u.ok,
+        starts: starts.length,
+        resolved: starts.filter((s) => s.resolved).length,
+      });
+    });
+    await until(() => starts.length >= 1);
+    starts[0].release({ code: 0, stdout: stdoutOf(["p1"]), stderr: "" });
+    await until(() => updates.length >= 1);
+    const first = updates[0];
+    await until(() => starts.length >= 3);
+    const laterPending = starts.slice(1).every((s) => !s.resolved);
+    starts.find((s) => String(s.url).includes("page=3")).release({ code: 0, stdout: stdoutOf(["p3"]), stderr: "" });
+    starts.find((s) => String(s.url).includes("page=2")).release({ code: 0, stdout: stdoutOf(["p2"]), stderr: "" });
+    await done;
+    const last = updates[updates.length - 1];
+    process.stdout.write(JSON.stringify({ first, laterPending, lastPaths: last.paths, lastLoading: last.loading }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"first":{"paths":["p1"],"loading":true,"ok":true,"starts":1,"resolved":1},"laterPending":true,"lastPaths":["p1","p2","p3"],"lastLoading":false}' ]
+}
+
+@test "loadFilesIncremental requests pages 2..N without waiting for each other" {
+  _bd '
+    function unwrap(cmd, args) {
+      if (cmd === "sh" && args[0] === "-c" && args[2] === "sh") return [args[3], args.slice(4)];
+      return [cmd, args];
+    }
+    function stdoutOf(names) {
+      return JSON.stringify(names.map((name) => ({filename: name, status: "modified", additions: 1, deletions: 0})));
+    }
+    const starts = [];
+    exec = async (cmd, args) => {
+      [cmd, args] = unwrap(cmd, args);
+      const rec = { cmd, url: args[1], resolved: false };
+      starts.push(rec);
+      return await new Promise((resolve) => {
+        rec.release = (result) => { rec.resolved = true; resolve(result); };
+      });
+    };
+    async function until(pred) {
+      for (let i = 0; i < 200; i++) { if (pred()) return; await Promise.resolve(); }
+      throw new Error("until timeout");
+    }
+    const none = { cwd: null, on: null };
+    const done = m.loadFilesIncremental(exec, none, "o/n", 7, 250, () => {});
+    await until(() => starts.length >= 1);
+    starts[0].release({ code: 0, stdout: stdoutOf(["p1"]), stderr: "" });
+    await until(() => starts.length >= 3);
+    const later = starts.slice(1).map((s) => ({ url: s.url, resolved: s.resolved }));
+    for (const s of starts) {
+      if (!s.resolved) s.release({ code: 0, stdout: stdoutOf(["x"]), stderr: "" });
+    }
+    await done;
+    process.stdout.write(JSON.stringify({
+      n: starts.length,
+      laterPending: later.every((s) => s.resolved === false),
+      pages: later.map((s) => s.url).sort(),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"n":3'* ]]
+  [[ "$output" == *'"laterPending":true'* ]]
+  [[ "$output" == *'page=2'* ]]
+  [[ "$output" == *'page=3'* ]]
+}
+
+@test "loadFilesIncremental keeps page 1 files when page 2 fails" {
+  _bd '
+    function unwrap(cmd, args) {
+      if (cmd === "sh" && args[0] === "-c" && args[2] === "sh") return [args[3], args.slice(4)];
+      return [cmd, args];
+    }
+    function stdoutOf(names) {
+      return JSON.stringify(names.map((name) => ({filename: name, status: "modified", additions: 1, deletions: 0})));
+    }
+    const starts = [];
+    exec = async (cmd, args) => {
+      [cmd, args] = unwrap(cmd, args);
+      const rec = { cmd, url: args[1], resolved: false };
+      starts.push(rec);
+      return await new Promise((resolve) => {
+        rec.release = (result) => { rec.resolved = true; resolve(result); };
+      });
+    };
+    async function until(pred) {
+      for (let i = 0; i < 200; i++) { if (pred()) return; await Promise.resolve(); }
+      throw new Error("until timeout");
+    }
+    const updates = [];
+    const none = { cwd: null, on: null };
+    const done = m.loadFilesIncremental(exec, none, "o/n", 7, 200, (u) => updates.push(u));
+    await until(() => starts.length >= 1);
+    starts[0].release({ code: 0, stdout: stdoutOf(["p1"]), stderr: "" });
+    await until(() => starts.length >= 2);
+    starts[1].release({ code: 1, stdout: "", stderr: "page boom" });
+    const r = await done;
+    process.stdout.write(JSON.stringify({
+      ok: r.ok, paths: r.files.map((f) => f.path), loading: r.loading, pageError: r.pageError,
+      lastErr: updates[updates.length - 1].pageError,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":true,"paths":["p1"],"loading":false,"pageError":"page boom","lastErr":"page boom"}' ]
+}
+
+@test "loadFilesIncremental marks generated in a later update, not the first" {
+  _bd '
+    function unwrap(cmd, args) {
+      if (cmd === "sh" && args[0] === "-c" && args[2] === "sh") return [args[3], args.slice(4)];
+      return [cmd, args];
+    }
+    const starts = [];
+    exec = async (cmd, args) => {
+      [cmd, args] = unwrap(cmd, args);
+      const rec = { cmd, args: [...args], resolved: false };
+      starts.push(rec);
+      return await new Promise((resolve) => {
+        rec.release = (result) => { rec.resolved = true; resolve(result); };
+      });
+    };
+    async function until(pred) {
+      for (let i = 0; i < 200; i++) { if (pred()) return; await Promise.resolve(); }
+      throw new Error("until timeout");
+    }
+    const updates = [];
+    const done = m.loadFilesIncremental(exec, { cwd: "/repo", on: null }, "o/n", 7, 1, (u) => {
+      updates.push({
+        generated: (u.files || []).map((f) => f.generated),
+        git: starts.some((s) => s.cmd === "git"),
+      });
+    });
+    await until(() => starts.length >= 1);
+    starts[0].release({
+      code: 0,
+      stdout: JSON.stringify([{filename:"a.js",status:"modified",additions:1,deletions:0},{filename:"g.json",status:"modified",additions:1,deletions:0}]),
+      stderr: "",
+    });
+    await until(() => updates.length >= 1);
+    const first = updates[0];
+    await until(() => starts.some((s) => s.cmd === "git"));
+    starts.find((s) => s.cmd === "git").release({
+      code: 0,
+      stdout: "a.js\0linguist-generated\0unspecified\0g.json\0linguist-generated\0set\0",
+      stderr: "",
+    });
+    await done;
+    const last = updates[updates.length - 1];
+    process.stdout.write(JSON.stringify({ first, last }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"first":{"generated":[false,false],"git":false},"last":{"generated":[false,true],"git":true}}' ]
+}
+
+@test "loadFilesIncremental falls back to loadFiles when total is not a positive integer" {
+  _bd '
+    const pages = JSON.stringify([{filename:"a.js",status:"modified",additions:1,deletions:0}]) + "\n";
+    const table = [{ prefix: "gh api /repos/o/n/pulls/7/files", stdout: pages }];
+    const updates = [];
+    const r = await m.loadFilesIncremental(exec, { cwd: null, on: null }, "o/n", 7, 1.5, (u) => updates.push(u));
+    process.stdout.write(JSON.stringify({
+      n: updates.length,
+      paginate: calls.some((c) => c.args.includes("--paginate")),
+      path: r.files[0].path,
+      ok: r.ok,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"n":1,"paginate":true,"path":"a.js","ok":true}' ]
+}
+
+@test "loadPatch with a cache issues one exec for two files on the same page" {
+  _bd '
+    const cache = new Map();
+    const table = [{ prefix: "gh api /repos/o/n/pulls/7/files?per_page=100&page=2", stdout: JSON.stringify({"a.js":"@@ a","b.js":"@@ b"}) }];
+    const r1 = await m.loadPatch(exec, ctx, "o/n", 7, {path:"a.js", page:2}, cache);
+    const r2 = await m.loadPatch(exec, ctx, "o/n", 7, {path:"b.js", page:2}, cache);
+    process.stdout.write(JSON.stringify({
+      a: r1.patch, b: r2.patch, n: calls.length,
+      jq: calls[0].args[calls[0].args.indexOf("--jq") + 1],
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"a":"@@ a","b":"@@ b","n":1,"jq":"map({(.filename): .patch}) | add"}' ]
+}
+
+@test "readReview on a remote answers from exec cat when readTextFile never settles" {
+  _rr '
+    const readTextFile = () => new Promise(() => {});
+    const exec = async (cmd, args, opts) => ({ code: 0, stdout: "# from cat:" + cmd + args[0] + opts.on });
+    const r = await m.readReview(readTextFile, "/r.md", "agent", exec);
+    process.stdout.write(JSON.stringify(r));
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"text":"# from cat:cat/r.mdagent"'* ]]
+}

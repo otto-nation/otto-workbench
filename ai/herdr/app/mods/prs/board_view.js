@@ -13,6 +13,7 @@ import { boardState, cardId, friendlyError, repoId, representatives, spaceTarget
 import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadOwed, loadRepo, loadUser,
+  owedDue,
 } from "./_lib/board_data.js";
 import {
   TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, filterLabels, filterFacets, filterOn,
@@ -49,6 +50,16 @@ function targetsOf() {
 
 function ctxKey(ctx) {
   return JSON.stringify({ on: ctx?.on ?? null, cwd: ctx?.cwd ?? null });
+}
+
+function owedStamp(pair) {
+  const at = pair?.owedAt;
+  return Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+}
+
+// A comments-only read can land while a full or listing pull is still in flight; keep the newer pair.
+function newerOwed(cached, read) {
+  return owedStamp(cached) > owedStamp(read) ? cached : read;
 }
 
 function filtersOf() {
@@ -256,19 +267,52 @@ export default class PrsBoard extends View {
     }
   }
 
-  // Has Comments is read only while Mine shows; opening Mine reads it now rather than at the
-  // next full refresh.
+  // Has Comments is read only while Mine shows, and only when the last comments read is older than a minute.
   showMine() {
     setShared("prs.tab", "mine");
-    this.refresh(this.acx);
+    this.refreshOwed(this.acx);
   }
 
-  // What `pr` says each PR is owed, read only for Mine. A failed read keeps the last good answer
+  // What `pr` says each PR is owed, read only for Mine. A failed read keeps the last good pair
   // rather than emptying the column.
   async owedFor(ctx, slug, prev) {
-    if (tabOf() !== "mine") return prev ?? null;
+    if (tabOf() !== "mine") return { owed: prev?.owed ?? null, owedAt: prev?.owedAt ?? null };
     const r = await loadOwed(exec, ctx, slug);
-    return r.ok ? r.owed : (prev ?? null);
+    if (r.ok) return { owed: r.owed, owedAt: Date.now() };
+    return { owed: prev?.owed ?? null, owedAt: prev?.owedAt ?? null };
+  }
+
+  // Rebuild the board from cached rows after a comments-only read; skip when nothing is cached or the last read is still fresh.
+  refreshOwed(cx) {
+    for (const ctx of this.activeTargets()) {
+      const key = ctxKey(ctx);
+      const prev = this.cache.get(key);
+      if (!prev?.repo || !owedDue(prev.owedAt, Date.now())) continue;
+      cx.spawn(async (cx) => {
+        const r = await loadOwed(exec, ctx, prev.repo.slug);
+        if (!r.ok || !this.same(key)) return;
+        const cur = this.cache.get(key);
+        if (!cur?.repo) return;
+        const now = Date.now();
+        this.commit(key, {
+          ...cur,
+          owed: r.owed,
+          owedAt: now,
+          prs: assemble({
+            openPrs: cur.openPrs ?? [],
+            landedPrs: cur.landedPrs ?? [],
+            listing: cur.listing,
+            slug: cur.repo.slug,
+            host: cur.repo.host,
+            login: cur.me ?? "",
+            busy: cur.busy,
+            running: cur.running,
+            owed: r.owed,
+          }),
+        }, ctx, cx);
+        cx.notify();
+      });
+    }
   }
 
   async pullFull(ctx, key, cx, cycle) {
@@ -280,12 +324,12 @@ export default class PrsBoard extends View {
     this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, doc, terms, owed] = await Promise.all([
+    const [open, listing, doc, terms, owedRead] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
       this.listingFor(ctx, cycle),
       this.batchDocFor(ctx, cycle),
       this.terminalsFor(ctx, cycle),
-      this.owedFor(ctx, repo.slug, this.cache.get(key)?.owed),
+      this.owedFor(ctx, repo.slug, this.cache.get(key)),
     ]);
     const running = runningFor(terms.entries, repo.slug);
     if (!this.same(key)) return;
@@ -294,10 +338,11 @@ export default class PrsBoard extends View {
     const busy = busyPrs(doc.doc, repo.slug);
     const landedPrs = await this.landed(ctx, key, repo, listing.listing, open.prs);
     if (landedPrs == null || !this.same(key)) return;
+    const { owed, owedAt } = newerOwed(this.cache.get(key), owedRead);
     this.commit(key, {
       repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null, cwd: ctx.cwd }, me: login, tools: have,
       listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
-      openPrs: open.prs, landedPrs, owed,
+      openPrs: open.prs, landedPrs, running, owed, owedAt,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
         slug: repo.slug, host: repo.host, login, busy, running, owed,
@@ -331,12 +376,14 @@ export default class PrsBoard extends View {
       landedPrs = await this.landed(ctx, key, prev.repo, listing.listing, prev.openPrs ?? []);
       if (landedPrs == null || !this.same(key)) return;
     }
+    const { owed, owedAt } = newerOwed(this.cache.get(key), { owed: prev.owed, owedAt: prev.owedAt });
     this.commit(key, {
       ...prev, listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy, landedPrs,
+      running, owed, owedAt,
       prs: assemble({
         openPrs: prev.openPrs ?? [], landedPrs, listing: listing.listing,
         slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy, running,
-        owed: prev.owed,
+        owed,
       }),
     }, ctx, cx);
   }

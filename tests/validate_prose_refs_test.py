@@ -25,7 +25,10 @@ def names():
 def _reasons(tmp_path, text, tools, names, headings=None):
     page = tmp_path / "page.md"
     page.write_text(text)
-    return [v.reason for v in vpr.check_file(page, tools, names, headings)]
+    if headings is None:
+        headings = vpr.load_rule_headings(REPO_ROOT)
+    return [v.reason for v in vpr.check_file(
+        page, tools, names, headings, vpr.load_repo_basenames(REPO_ROOT))]
 
 
 def test_the_repo_prose_resolves():
@@ -128,3 +131,51 @@ def test_discover_skips_generated_and_composed_pages(tmp_path):
         (docs / name).write_text("x\n")
     found = {p.name for p in vpr.discover(tmp_path)}
     assert found == {"a.src.md", "b.md"}
+
+
+def test_a_pointer_split_across_lines_fails(tmp_path, tools, names):
+    headings = vpr.load_rule_headings(REPO_ROOT)
+    text = "permalink (`git-operations.md`\n  § Replying to Review Comments).\n"
+    assert _reasons(tmp_path, text, tools, names, headings) == [
+        "`git-operations.md`: pointer split across lines"]
+
+
+def test_heading_match_requires_a_boundary(tmp_path, tools, names):
+    headings = {"git-operations.md": ("Pushing", "GitHub")}
+    assert _reasons(
+        tmp_path, "`git-operations.md` § Pushing the PR\n", tools, names,
+        headings) == ["`git-operations.md` § Pushing the PR: no such heading"]
+    assert _reasons(
+        tmp_path, "`git-operations.md` § GitHub Enterprise\n", tools, names,
+        headings) == ["`git-operations.md` § GitHub Enterprise: no such heading"]
+    assert _reasons(
+        tmp_path, "`git-operations.md` § Pushing\n", tools, names,
+        headings) == []
+    assert _reasons(
+        tmp_path, "`git-operations.md` § Pushing).\n", tools, names,
+        headings) == []
+    assert _reasons(
+        tmp_path, "`git-operations.md` § Pushing — cue\n", tools, names,
+        headings) == []
+
+
+def test_load_rule_headings_ignores_hash_lines_inside_fences(tmp_path):
+    rules = tmp_path / "ai" / "guidelines" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "sample.md").write_text(
+        "# Real\n\n```bash\n# not-a-heading\n```\n\n## Also Real\n")
+    assert vpr.load_rule_headings(tmp_path)["sample.md"] == ("Real", "Also Real")
+
+
+def test_an_unknown_rule_file_pointer_fails(tmp_path, tools, names):
+    headings = vpr.load_rule_headings(REPO_ROOT)
+    assert _reasons(
+        tmp_path, "`git-operation.md` § Pushing\n", tools, names,
+        headings) == ["`git-operation.md`: unknown rule file"]
+
+
+def test_a_known_non_rule_md_pointer_is_skipped(tmp_path, tools, names):
+    headings = vpr.load_rule_headings(REPO_ROOT)
+    assert _reasons(
+        tmp_path, "`CONTRIBUTING.md` § No Such Heading\n", tools, names,
+        headings) == []

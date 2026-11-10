@@ -21,8 +21,12 @@ Three checks, each against the live source of truth rather than a list kept here
   Slash commands    A code span `/name ...` must name a skill under ai/skills/,
                     a command a workbench hook answers, a harness built-in, or
                     a filesystem root (`/tmp`), which is a path and not a command.
-  Rule pointers     A `` `name.md` § Heading `` span whose `name.md` lives under
-                    ai/guidelines/rules/ must prefix-match a heading in that file.
+  Rule pointers     A `` `name.md` § Heading `` span must sit on one line. When
+                    `name.md` lives under ai/guidelines/rules/, the heading must
+                    match a heading in that file at a boundary: end of the span,
+                    whitespace then a delimiter, or one of ) . , ; : | ` em dash.
+                    A `name.md` § span that names no file in the repo fails as
+                    an unknown rule file.
 
 With no files, scans every hand-written markdown file: ai/claude/agents/,
 ai/skills/, ai/guidelines/rules/, docs/ and the top-level AGENTS.md, README.md
@@ -36,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import os
 import re
 import shlex
 import sys
@@ -75,6 +80,9 @@ FILESYSTEM_ROOTS = frozenset({
 
 CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
 POINTER = re.compile(r"`([^`\n]+\.md)`\s*§\s*")
+SPLIT_POINTER = re.compile(r"`([^`\n]+\.md)`\s*$")
+HEADING_DELIMS = frozenset(").,;:|`")
+_SKIP_WALK = frozenset({".git", "node_modules", "__pycache__", ".venv"})
 # CommonMark: a backtick fence's info string may not contain a backtick.
 FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})(.*)$")
 SLASH_REF = re.compile(r"^/([A-Za-z][A-Za-z0-9_-]*)(?:\s|$)")
@@ -207,29 +215,65 @@ def check_invocation(text: str, tools: dict[str, ToolFlags]) -> list[str]:
     return [f"`{label}`: no such flag {flag}" for flag in _flags(rest) if flag not in accepted]
 
 
+def _headings_of(path: Path) -> tuple[str, ...]:
+    """ATX heading texts in *path*, skipping fenced code."""
+    heads: list[str] = []
+    opened: str | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        before, opened = opened, _fence_after(line, opened)
+        if opened is not None or opened != before:
+            continue
+        text = line.lstrip("#").strip()
+        if line.startswith("#") and text:
+            heads.append(text)
+    return tuple(heads)
+
+
 def load_rule_headings(root: Path) -> dict[str, tuple[str, ...]]:
     """Each `*.md` under ai/guidelines/rules/, mapped to its heading texts."""
     rules = root / "ai" / "guidelines" / "rules"
-    out: dict[str, tuple[str, ...]] = {}
     if not rules.is_dir():
-        return out
-    for path in sorted(rules.glob("*.md")):
-        heads = tuple(line.lstrip("#").strip()
-                      for line in path.read_text(encoding="utf-8").splitlines()
-                      if line.startswith("#") and line.lstrip("#").strip())
-        out[path.name] = heads
-    return out
+        return {}
+    return {path.name: _headings_of(path) for path in sorted(rules.glob("*.md"))}
 
 
-def check_pointer(line: str, headings: dict[str, tuple[str, ...]]) -> list[str]:
+def load_repo_basenames(root: Path) -> frozenset[str]:
+    """Every file basename under *root*, used to tell unknown rule files from docs."""
+    names: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_WALK]
+        names.update(filenames)
+    return frozenset(names)
+
+
+def _heading_held(text: str, head: str) -> bool:
+    """True when *text* starts with *head* at a heading boundary."""
+    if not text.startswith(head):
+        return False
+    rest = text[len(head):]
+    if not rest or rest[0] in HEADING_DELIMS or rest.startswith("—"):
+        return True
+    if rest[0].isspace():
+        rest = rest.lstrip()
+        if not rest or rest[0] in HEADING_DELIMS or rest.startswith("—"):
+            return True
+    return False
+
+
+def check_pointer(line: str, headings: dict[str, tuple[str, ...]],
+                  basenames: frozenset[str]) -> list[str]:
     """Reasons a `name.md` § Heading pointer names no heading in that rules file."""
     reasons: list[str] = []
     for match in POINTER.finditer(line):
         name = match.group(1)
-        if name not in headings:
+        base = Path(name).name
+        if base not in headings and base not in basenames:
+            reasons.append(f"`{name}`: unknown rule file")
+            continue
+        if base not in headings:
             continue
         text = line[match.end():].lstrip()
-        if not any(text.startswith(head) for head in headings[name]):
+        if not any(_heading_held(text, head) for head in headings[base]):
             shown = text.split(")", 1)[0].strip() or "(empty)"
             reasons.append(f"`{name}` § {shown}: no such heading")
     return reasons
@@ -244,11 +288,12 @@ def check_slash(text: str, names: frozenset[str]) -> list[str]:
 
 def _line_reasons(line: str, in_fence: bool, tools: dict[str, ToolFlags],
                   names: frozenset[str],
-                  headings: dict[str, tuple[str, ...]]) -> list[str]:
+                  headings: dict[str, tuple[str, ...]],
+                  basenames: frozenset[str]) -> list[str]:
     """Reasons one non-fence line fails. Inside a fence the whole line is a command."""
     if in_fence:
         return check_invocation(line.strip(), tools)
-    return check_pointer(line, headings) + [
+    return check_pointer(line, headings, basenames) + [
         r for span in CODE_SPAN.findall(line)
         for r in check_invocation(span, tools) + check_slash(span, names)]
 
@@ -272,18 +317,28 @@ def _fence_after(line: str, opened: str | None) -> str | None:
 
 
 def check_file(path: Path, tools: dict[str, ToolFlags], names: frozenset[str],
-               headings: dict[str, tuple[str, ...]] | None = None) -> list[Violation]:
-    if headings is None:
-        headings = {}
+               headings: dict[str, tuple[str, ...]],
+               basenames: frozenset[str]) -> list[Violation]:
     violations: list[Violation] = []
     opened: str | None = None
+    prev_split: tuple[str, int] | None = None
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         before, opened = opened, _fence_after(line, opened)
         if opened != before:
+            prev_split = None
             continue
+        if opened is None and prev_split is not None and re.match(r"^\s*§", line):
+            name, start = prev_split
+            violations.append(Violation(
+                path, start, f"`{name}`: pointer split across lines"))
+        prev_split = None
+        split = SPLIT_POINTER.search(line) if opened is None else None
+        if split is not None:
+            prev_split = (split.group(1), number)
         violations.extend(Violation(path, number, r)
                           for r in _line_reasons(
-                              line, opened is not None, tools, names, headings))
+                              line, opened is not None, tools, names,
+                              headings, basenames))
     return violations
 
 
@@ -312,8 +367,10 @@ def main(argv: list[str] | None = None) -> int:
     tools = load_tools(REPO_ROOT)
     names = load_slash_names(REPO_ROOT)
     headings = load_rule_headings(REPO_ROOT)
+    basenames = load_repo_basenames(REPO_ROOT)
     files = args.files or discover(REPO_ROOT)
-    violations = [v for f in files for v in check_file(f, tools, names, headings)]
+    violations = [v for f in files for v in check_file(
+        f, tools, names, headings, basenames)]
     for v in violations:
         rel = v.path.relative_to(REPO_ROOT) if v.path.is_relative_to(REPO_ROOT) else v.path
         print(f"  {RED}✗{NC} {rel}:{v.line}: {v.reason}", file=sys.stderr)

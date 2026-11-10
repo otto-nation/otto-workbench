@@ -408,7 +408,7 @@ they then ask for the branch to be pushed.
   without the JSON saying so
 - Background it through the harness's job facility and nothing else. A detached
   `&`/`nohup` run reports no completion, which is what turns a finished rebase
-  into a poll loop, and `general.md` § Waiting on Background Work forbids it
+  into a poll loop, and (`general.md` § Waiting on Background Work) forbids it
   under every harness
 - Never redirect a run's output into the worktree to read back later
   (`> ignore/rebase.json`). The job facility returns stdout on completion and

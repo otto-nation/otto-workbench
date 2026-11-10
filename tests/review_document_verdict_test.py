@@ -1,7 +1,7 @@
 """Tests for `review.verdict`: open counts, the derived call, and counts prose.
 
-Absent and empty are the distinction these turn on — a review nobody wrote
-reaches no verdict, while one written with nothing in it approves.
+The verdict follows the open findings, the run's status and its mode: a
+self-review or errored run states none, a partial run states no approval.
 """
 
 from collections import Counter

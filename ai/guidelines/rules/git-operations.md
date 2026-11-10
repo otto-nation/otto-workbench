@@ -28,10 +28,16 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 
 ## Protected Branches
 
-- Never remove the `main` (or default branch) worktree — use `wt remove` only on feature branches
+- Never remove the `main` (or default branch) worktree — see Worktree Cleanup for how feature-branch worktrees go
 - Never commit on `main` — create a feature branch first, even for one-line changes
 - Never run `git push` while on `main` or targeting `main` — branch protection will reject it, so don't attempt it at all
 - All changes reach `main` through a merged PR, no exceptions
+
+## Worktree Cleanup
+
+- Once a PR you opened has merged, run `wt-cleanup` — never `wt remove`, never `git worktree remove`, and never ask whether to clean up. It removes the worktree of every merged branch and deletes the branch with it. `wt remove` leaves a squash-merged branch behind, because git's ancestry check cannot see a squash, and the leftover reads as unmerged work
+- `wt-cleanup` reports a merged worktree that still holds uncommitted changes instead of removing it. Read what it names; do not force it
+- Stale worktrees from other work are `wt-cleanup`'s to sweep too. Do not list them to the user, ask about them, or remove them by hand. `wt-cleanup --age <days>` removes inactive worktrees but keeps their unmerged branches. It is the one flag that goes past merged work, so use it only when the user asks for it
 
 ## Pushing
 

@@ -67,8 +67,7 @@ git status --porcelain -uall
 ```
 
 Three dots for the diff. Reversions or unrelated files mean a stale base —
-rebase onto `origin/main` before going further, and resolve any conflicts before
-writing new code.
+`git-operations.md` § Branch Freshness.
 
 The first two commands see committed work only. `git status --porcelain -uall`
 is what catches the file that exists nowhere else: a dirty tree passes the diff
@@ -157,7 +156,7 @@ and the push owes `pr review --self --fix --push`
 |-----------|--------|
 | Tests failing | Stop. Report failures |
 | Something still on your list | Finish it now — do not open the PR yet. Leftover work is a follow-up PR, not an issue |
-| Diff shows unrelated reversions | Stale base — rebase onto `origin/main` |
+| Diff shows unrelated reversions | Stale base — `git-operations.md` § Branch Freshness |
 | Uncommitted files in the tree | Commit them or say why not — the PR will not carry them |
 | Branch targets something other than `main` | Substitute it, and pass `--base` in Step 4 |
 | Detached HEAD | `git switch -c` a branch first — `pr create` has nothing to push otherwise |

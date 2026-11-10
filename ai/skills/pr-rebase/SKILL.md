@@ -1,9 +1,9 @@
 ---
 name: pr-rebase
-description: "Rebase onto the branch's base with generated-only conflict rebuild or abort; --fix for AI resolution. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording."
+description: "Rebase onto the branch's base with generated-only conflict rebuild or abort; --fix for AI resolution. TRIGGER when: user asks to rebase a branch, update it onto its base, squash-and-rebase, resolve rebase conflicts, or says hand rebase / rebase by hand. SKIP: simple git pull --rebase with no conflicts; commit rewording."
 source: otto-workbench/ai/skills/pr-rebase/SKILL.md
 invocation: "/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]"
-trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase."
+trigger: "Use when the user asks to rebase a branch, update it onto its base, squash-and-rebase, resolve rebase conflicts, or says hand rebase / rebase by hand."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording."
 output_schema:
   tool: pr rebase
@@ -29,15 +29,18 @@ stack whose parent has no PR yet onto that parent, and a repo whose trunk is not
 SHA. The rungs below it yield a branch name that is resolved as
 `origin/<name>`.
 
+A rebase request is this CLI even when delegated — `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts.
+
 Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
 ## Finish without asking
 
-A request to rebase is a request for a rebased, pushed branch. Drive every
-outcome below to that end yourself — run `--fix` from the start, resolve what the AI
-could not, fix a failing pre-push check, and push through step 3 — and report
-what you did once it is done. Do not stop to ask
-whether to continue, whether to use AI, or whether to push.
+When a requested rebase is finished, and when to push, is `git-operations.md` § Pushing.
+This skill owns the exits and what "clean" looks like in `pr rebase`
+output. Drive every outcome below to a finished run — `--fix` from the start
+unless the user asked for no AI, resolve what the AI could not, fix a failing
+pre-push check, then step 3 — and report what you did. Do not stop to ask
+whether to continue or whether to use AI.
 
 Stop and hand back only where the next move is a decision the tooling exists to
 leave to a person, and say exactly which one it is:

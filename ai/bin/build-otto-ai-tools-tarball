@@ -199,17 +199,20 @@ tar -czf "$TARBALL" -C "$STAGING" "otto-ai-tools-${VERSION}"
 contents=$(tar -tzf "$TARBALL")
 failed=false
 
+# Here-strings, not `echo | grep`: grep -q exits at its first match, and under pipefail the
+# SIGPIPE that kills a still-writing echo turns a present entry into a reported missing one.
+# -Fx against the full archive path, so bin/review does not match bin/review-orchestrate.
 for entry in "bin/review" "bin/_libdir.py" "lib/ui.sh" "VERSION"; do
-  if ! echo "$contents" | grep -q "$entry"; then
+  if ! grep -Fxq "otto-ai-tools-${VERSION}/$entry" <<<"$contents"; then
     echo "ERROR: tarball missing $entry" >&2
     failed=true
   fi
 done
 
-bin_tarball_count=$(echo "$contents" | grep -c 'bin/' || true)
-py_count=$(echo "$contents" | grep -c '\.py$' || true)
-agent_count=$(echo "$contents" | grep -c 'agents/.*\.md$' || true)
-tpl_count=$(echo "$contents" | grep -c 'review-templates/.*\.md$' || true)
+bin_tarball_count=$(grep -c 'bin/' <<<"$contents" || true)
+py_count=$(grep -c '\.py$' <<<"$contents" || true)
+agent_count=$(grep -c 'agents/.*\.md$' <<<"$contents" || true)
+tpl_count=$(grep -c 'review-templates/.*\.md$' <<<"$contents" || true)
 
 if (( bin_tarball_count < MIN_BIN_SCRIPTS )); then
   echo "ERROR: tarball has $bin_tarball_count bin scripts, expected >= $MIN_BIN_SCRIPTS" >&2

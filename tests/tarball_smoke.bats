@@ -255,7 +255,24 @@ print('ok')
   [ -f "$TARBALL_ROOT/agents/reviewer.md" ]
 }
 
-# ── 12. Argument validation ────────────────────────────────────────────────
+# ── 12. Verification ───────────────────────────────────────────────────────
+
+@test "a long tarball listing does not make a present entry read as missing" {
+  local build="$BATS_TEST_TMPDIR/build" shim="$BATS_TEST_TMPDIR/shim" real_tar
+  real_tar="$(command -v tar)"
+  mkdir -p "$build" "$shim"
+  # tar -t lists the real archive, then enough padding that a reader which stops at its first
+  # match closes the pipe while the listing is still being written.
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "if [[ \"\$1\" == -tzf ]]; then '$real_tar' \"\$@\" && seq 1 200000; exit; fi" \
+    "exec '$real_tar' \"\$@\"" > "$shim/tar"
+  chmod +x "$shim/tar"
+  run env PATH="$shim:$PATH" bash -c "cd '$build' && '$REPO_ROOT/ai/bin/build-otto-ai-tools-tarball' '$TEST_VERSION'"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"tarball missing"* ]]
+}
+
+# ── 13. Argument validation ────────────────────────────────────────────────
 
 @test "unknown flag is rejected without building a tarball" {
   local probe_dir="$BATS_TEST_TMPDIR/probe"

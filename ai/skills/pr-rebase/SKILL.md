@@ -34,7 +34,7 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 ## Finish without asking
 
 A request to rebase is a request for a rebased, pushed branch. Drive every
-outcome below to that end yourself — escalate to `--fix`, resolve what the AI
+outcome below to that end yourself — run `--fix` from the start, resolve what the AI
 could not, take a refusal's `remedy`, fix a failing pre-push check, and push
 through step 3 — and report what you did once it is done. Do not stop to ask
 whether to continue, whether to use AI, or whether to push.
@@ -48,7 +48,8 @@ leave to a person, and say exactly which one it is:
 - a resolution that would drop changes git merged cleanly and that you cannot
   rebuild hunk by hunk — `WORKBENCH_ALLOW_DROPPED_CHANGES=1` is the user's to set
 - a pre-push check failure the branch caused and that you cannot fix
-- anything the user asked to withhold: `--no-push`, `--stop-on-conflict`
+- anything the user asked to withhold: `--no-push`, `--stop-on-conflict`, or a
+  request only to see what conflicts — run default mode, report `files`, and stop
 
 ---
 
@@ -61,10 +62,11 @@ leave to a person, and say exactly which one it is:
   continue work that must already be in a checkout. When omitted, the current
   branch is used.
 - `--fix` (optional): Resolve conflicts with AI and rebase (force-pushes
-  unless `--no-push`). Pass it on the first run only when the user asked for AI
-  resolution; otherwise run default mode first and escalate to it automatically
-  on exit 3. Incompatible with
-  `--stop-on-conflict`.
+  unless `--no-push`). Pass it on the first run unless the user asked for no AI:
+  it calls the AI only for a conflict default mode would have aborted on, so a
+  clean or generated-only replay costs the same either way, and a real conflict
+  is resolved in one run instead of an abort and a second replay. Incompatible
+  with `--stop-on-conflict`.
 - `--stop-on-conflict` (optional): Pause on conflicts (stash held, tree
   dirty, exit 3) instead of aborting. Use when the user wants to inspect or
   finish the replay by hand. Default without `--fix` is abort, not pause.
@@ -108,6 +110,9 @@ no bearing on what the run then decides.
 
 ### 1. Run pr rebase
 
+- **`--fix` mode** is the run to start with — see below. Default mode is for a
+  user who asked for no AI, and for finishing a push (step 3).
+
 - **Default mode** (generated rebuild or abort; no AI):
 
   ```bash
@@ -121,8 +126,8 @@ no bearing on what the run then decides.
   or `files_stale` aborts (`tree: clean`, exit 3). Foreground is fine: there is
   no AI call.
 
-- **`--fix` mode** (AI resolution). Escalate to this automatically when default
-  mode exits 3; do not wait for the user to ask:
+- **`--fix` mode** (AI resolution). The first run, unless the user asked for no
+  AI; if a default-mode run exits 3, rerun with this without asking:
 
   ```bash
   pr rebase --fix --branch <branch>

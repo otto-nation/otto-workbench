@@ -156,7 +156,7 @@ function renderForm({ launcher: L, prs }) {
   const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
     .child(sectionHeading("Start a batch"))
-    .when(Boolean(filters), (e) => e.child(filters))
+    .child(filters)
     .child(renderPrs(L, all, t))
     .child(v_flex().gap(SP.sm)
       .child(text("title", "Steps"))

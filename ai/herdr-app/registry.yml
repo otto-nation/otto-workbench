@@ -1,4 +1,4 @@
-# Isolated herdr-app window launcher. A second registry because ai/herdr/registry.yml
+# herdr-app window launchers. A second registry because ai/herdr/registry.yml
 # is `validation: none` (the herdr TUI is not a bindir script). Discoverable as
 # */*/registry.yml; source is ai/herdr/bin.
 # Regenerate: generate-tool-context
@@ -9,6 +9,10 @@ meta:
   source: ai/herdr/bin
 
 tools:
+  - name: herdr-app
+    permission: false
+    visibility: brief
+    description: "Open the main Herdr window detached from the terminal (no-op when running), or run a Herdr command. Operator tool"
   - name: herdr-app-untrusted
     permission: false
     visibility: brief

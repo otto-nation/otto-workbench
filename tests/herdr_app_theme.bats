@@ -67,6 +67,23 @@ _run() {
   [ -f "$APP/settings.json" ]
 }
 
+@test "the app bundle alone counts as installed" {
+  mkdir -p "$HOME/Applications/Herdr.app/Contents/MacOS"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$HOME/Applications/Herdr.app/Contents/MacOS/Herdr"
+  chmod +x "$HOME/Applications/Herdr.app/Contents/MacOS/Herdr"
+  run _run step_herdr_app_theme
+  [ "$status" -eq 0 ]
+  [ -L "$APP/themes/${APP_DARK}.json" ]
+}
+
+@test "the workbench's own herdr-app launcher on PATH does not count as installed" {
+  ln -s "$REPO_ROOT/ai/herdr/bin/herdr-app" "$BIN/herdr-app"
+  run _run step_herdr_app_theme
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$APP" ]
+}
+
 @test "preserves other settings keys and does not add appearance" {
   _stub_app
   mkdir -p "$APP"

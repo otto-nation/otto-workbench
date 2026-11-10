@@ -7,6 +7,7 @@
     "command:generate-changelog",
     "command:get-secret",
     "command:ghostty-terminfo-push",
+    "command:herdr-app",
     "command:herdr-app-untrusted",
     "command:lint-sweep",
     "command:mem-analyze",

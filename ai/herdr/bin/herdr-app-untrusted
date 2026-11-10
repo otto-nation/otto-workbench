@@ -70,7 +70,7 @@ _herdr_untrusted_open() {
       --env "HERDR_APP_HOME=$HERDR_UNTRUSTED_APP_DIR"
     return 0
   fi
-  local bin="${HERDR_APP_BUNDLE:-$HOME/Applications/Herdr.app}/Contents/MacOS/Herdr"
+  local bin="$HERDR_APP_BUNDLE/Contents/MacOS/Herdr"
   if [[ -x "$bin" ]]; then
     exec env \
       HC_SESSION="$HERDR_UNTRUSTED_SESSION" \

@@ -60,6 +60,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |
 | `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
+| `herdr-app` | Open the main Herdr window detached from the terminal (no-op when running), or run a Herdr command. Operator tool |
 | `herdr-app-untrusted` | Launch an isolated Herdr window (HC_SESSION=untrusted) with no local terminals. Operator tool |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI |
@@ -607,6 +608,37 @@ dream-verify
 |------|---------|
 | `0` | All checks pass, or no memory directories found |
 | `1` | One or more checks fail |
+
+### `herdr-app`
+
+Open the main Herdr window without tying it to the terminal, or run a Herdr
+command against a running window.
+
+With no arguments, hands the launch to macOS (`open -n`) and returns at once:
+the window is not a child of the shell, and its log stays out of the
+terminal. When the window this shell would open already answers
+`herdr-app status`, nothing is launched. With arguments, runs the app's own
+CLI (`herdr-app do …`, `status`, `ls`, `shot`, `check`, `commands`)
+unchanged.
+
+```
+herdr-app
+herdr-app do layout.switch --name workbench
+```
+
+| Flag | Description |
+|------|-------------|
+| `-h`, `--help` | Show help |
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `HERDR_APP_BUNDLE` | The Herdr app bundle | `~/Applications/Herdr.app` |
+| `HERDR_APP_HOME` | Which window to open or ask; passed to the launched app when set | `~/.config/herdr-app` |
+| `HC_SESSION` | herdr-core session; passed to the launched app when set | `default` |
+
+Herdr's installer links its binary into ~/.local/bin under this name; sync
+replaces that link with this script. Use herdr-app-untrusted for the
+untrusted window.
 
 ### `herdr-app-untrusted`
 

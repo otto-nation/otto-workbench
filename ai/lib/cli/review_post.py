@@ -44,6 +44,7 @@ from core.text import plural
 from review.types import Finding, ReviewMeta, SEVERITIES
 from review.format import (
     CLASS_FILE_LEVEL, CLASS_INLINE, classify_findings, format_inline_comment,
+    format_inline_comments,
     resolve_permalinks, resolve_path, _hunk_end,
     _build_permalink,
 )

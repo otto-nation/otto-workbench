@@ -115,7 +115,7 @@ def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
     """The one line review.md and the comment state the verdict in; "" for a self-review.
 
     `**Verdict: Needs discussion.** 1 should-fix open.` — the rationale counts rather
-    than naming IDs, because the comment renumbers findings by place. An error run,
+    than naming IDs, because record IDs restart each round. An error run,
     and a partial run with nothing blocking open, say why they state none; a partial
     run's blocking verdict says the review is incomplete.
     """

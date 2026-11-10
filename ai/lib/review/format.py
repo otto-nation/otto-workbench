@@ -212,6 +212,17 @@ def format_inline_comment(f: Finding) -> dict:
     return comment
 
 
+def format_inline_comments(inline: list[Finding]) -> list[dict]:
+    """GitHub inline comments in path-then-line order so chunk membership is path-stable.
+
+    Record IDs are unchanged — this only orders the comments.
+    """
+    return [
+        format_inline_comment(f)
+        for f in sorted(inline, key=lambda f: (f.path, f.line))
+    ]
+
+
 # ── Permalink resolution ────────────────────────────────────────────────────
 
 _PERMALINK_REF_RE = re.compile(

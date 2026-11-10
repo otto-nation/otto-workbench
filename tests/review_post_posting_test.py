@@ -310,6 +310,18 @@ class TestReclassifyAndRetry:
         "@@ -40,3 +40,10 @@\n"
         "+line\n"
     )
+    DIFF_TWO = (
+        "diff --git a/a.go b/a.go\n"
+        "--- a/a.go\n"
+        "+++ b/a.go\n"
+        "@@ -8,3 +8,10 @@\n"
+        "+line\n"
+        "diff --git a/b.go b/b.go\n"
+        "--- a/b.go\n"
+        "+++ b/b.go\n"
+        "@@ -18,3 +18,10 @@\n"
+        "+line\n"
+    )
 
     def _make_args(self, repo="org/repo", pr="1"):
         import argparse
@@ -319,6 +331,19 @@ class TestReclassifyAndRetry:
         args.review_file = "/tmp/test-review.md"
         args.submit = False
         return args
+
+    def _reverse_path_musts(self, rp):
+        later = rp.Finding(
+            id="M1", severity="M", seq=1, path="b.go", line=20,
+            end_line=None, body="error check", full_path="b.go",
+            classification="inline",
+        )
+        earlier = rp.Finding(
+            id="M2", severity="M", seq=2, path="a.go", line=10,
+            end_line=None, body="lock never released", full_path="a.go",
+            classification="inline",
+        )
+        return [later, earlier]
 
     def test_reclassify_recovers_inline_with_fresh_diff(self, rp):
         f = rp.Finding(
@@ -343,7 +368,7 @@ class TestReclassifyAndRetry:
                 record=record(), meta=ReviewMeta(),
             )
             assert len(inline) == 1
-            assert inline[0].id == "M1"
+            assert "**[M1] [must-fix]**" in inline_comments[0]["body"]
             assert results == [{"id": 42}]
 
     def test_reclassify_demotes_all_when_retry_also_fails(self, rp):
@@ -374,6 +399,59 @@ class TestReclassifyAndRetry:
             assert (inline_comments, inline, results) == ([], [], [{"id": 99}])
             assert "Clean refactor." in body_text
             assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in body_text
+
+    def test_reclassify_recovered_inline_comments_keep_record_ids(self, rp):
+        posted = {}
+
+        def capture(*a, **kw):
+            posted["body"] = a[3]
+            posted["comments"] = a[4]
+            return [{"id": 42}]
+
+        with (
+            patch("gh.pr_reads._get_diff", return_value=self.DIFF_TWO),
+            patch("review.posting._post_chunked_review", side_effect=capture),
+            patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
+        ):
+            rp._reclassify_and_retry(
+                self._make_args(), self._reverse_path_musts(rp), [],
+                "abc123", 30, {"M"}, False,
+                record=record(), meta=ReviewMeta(),
+            )
+        by_path = {c["path"]: c["body"] for c in posted["comments"]}
+        assert "**[M2] [must-fix]**" in by_path["a.go"]
+        assert "lock never released" in by_path["a.go"]
+        assert "**[M1] [must-fix]**" in by_path["b.go"]
+        assert "**[M1]" not in by_path["a.go"]
+
+    def test_reclassify_demoted_body_keeps_record_ids(self, rp):
+        posted = {}
+        call_count = [0]
+
+        def failing_then_capture(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise rp.LineResolutionError("still broken")
+            posted["body"] = a[3]
+            posted["comments"] = a[4]
+            return [{"id": 99}]
+
+        with (
+            patch("gh.pr_reads._get_diff", return_value=self.DIFF_TWO),
+            patch("review.posting._post_chunked_review", side_effect=failing_then_capture),
+            patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
+        ):
+            rp._reclassify_and_retry(
+                self._make_args(), self._reverse_path_musts(rp), [],
+                "abc123", 30, {"M"}, False,
+                record=record(), meta=ReviewMeta(),
+            )
+        lock = [line for line in posted["body"].splitlines() if "lock never released" in line]
+        err = [line for line in posted["body"].splitlines() if "error check" in line]
+        assert posted["comments"] == []
+        assert lock and "**[M2] [must-fix]**" in lock[0]
+        assert err and "**[M1] [must-fix]**" in err[0]
+        assert "**[M1]" not in lock[0]
 
     def test_reclassify_preserves_skipped_findings_in_body(self, rp):
         inline_f = rp.Finding(

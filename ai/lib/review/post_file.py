@@ -25,7 +25,7 @@ from core.text import plural
 from review.types import ReviewMeta
 from review.format import (
     CLASS_FILE_LEVEL, CLASS_INLINE,
-    classify_findings, format_inline_comment,
+    classify_findings, format_inline_comment, format_inline_comments,
     resolve_permalinks,
 )
 from review.render import comment_body
@@ -165,7 +165,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref,
                        sidecar.host)
 
-    inline_comments = [format_inline_comment(f) for f in inline]
+    inline_comments = format_inline_comments(inline)
     body_text = comment_body(
         stored.record, body_findings,
         has_inline=len(inline) > 0, severity_filter=severity_filter,

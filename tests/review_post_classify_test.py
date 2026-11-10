@@ -220,6 +220,20 @@ class TestClassifyFindings:
 
 
 class TestFormatInlineComment:
+    def test_formats_comments_in_path_then_line_order(self, rp):
+        later = rp.Finding(
+            id="M1", severity="M", seq=1, path="b.go", line=1,
+            end_line=None, body="error check", full_path="b.go",
+        )
+        earlier = rp.Finding(
+            id="M2", severity="M", seq=2, path="a.go", line=9,
+            end_line=None, body="lock never released", full_path="a.go",
+        )
+        comments = rp.format_inline_comments([later, earlier])
+        assert [c["path"] for c in comments] == ["a.go", "b.go"]
+        assert "**[M2] [must-fix]**" in comments[0]["body"]
+        assert "**[M1] [must-fix]**" in comments[1]["body"]
+
     def test_single_line(self, rp):
         f = rp.Finding(
             id="M1", severity="M", seq=1, path="file.go", line=42,

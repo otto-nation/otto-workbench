@@ -248,7 +248,7 @@ def _reclassify_and_retry(
 
     if new_inline:
         core.log.info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
-        new_inline_comments = [review.format.format_inline_comment(f) for f in new_inline]
+        new_inline_comments = review.format.format_inline_comments(new_inline)
         new_body_text = review.render.comment_body(
             record, new_body, has_inline=True, severity_filter=severity_filter,
             meta=meta,

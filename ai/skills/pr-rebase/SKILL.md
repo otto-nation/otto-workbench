@@ -31,6 +31,25 @@ SHA. The rungs below it yield a branch name that is resolved as
 
 Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
+## Finish without asking
+
+A request to rebase is a request for a rebased, pushed branch. Drive every
+outcome below to that end yourself — escalate to `--fix`, resolve what the AI
+could not, take a refusal's `remedy`, fix a failing pre-push check, and push
+through step 3 — and report what you did once it is done. Do not stop to ask
+whether to continue, whether to use AI, or whether to push.
+
+Stop and hand back only where the next move is a decision the tooling exists to
+leave to a person, and say exactly which one it is:
+
+- an exit 4 that is not `partially_landed` — the branch already landed, shares
+  no history with its base, or conflicts past the budget, so the only way on is
+  `--force` or deleting the branch
+- a resolution that would drop changes git merged cleanly and that you cannot
+  rebuild hunk by hunk — `WORKBENCH_ALLOW_DROPPED_CHANGES=1` is the user's to set
+- a pre-push check failure the branch caused and that you cannot fix
+- anything the user asked to withhold: `--no-push`, `--stop-on-conflict`
+
 ---
 
 ## Arguments
@@ -242,30 +261,42 @@ Runs that reach this, and the difference is `tree` plus what the console said:
   The broken file is not written or staged. Everything else in the step is
   already resolved and staged, and every commit replayed so far is intact — the
   rebase is *paused*, not aborted, and `files_resolved` in `state.json` records
-  what it kept. `files` names only what is still unresolved. Report those, offer
-  to resolve them by hand, and finish with `pr rebase --fix --branch <branch>`,
-  which resumes from where it stopped.
+  what it kept. `files` names only what is still unresolved. Resolve those
+  yourself (see *Resolving by hand* below), stage them, and finish with
+  `pr rebase --fix --branch <branch>`, which resumes from where it stopped.
 - **`--fix` mode, where the AI backend is unavailable.** The console says so
   directly ("Cannot resolve conflicts — AI backend unavailable.") before any
   file is even attempted. Resuming with `pr rebase --fix --branch <branch>`
-  hits the same wall again with nothing changed — fix the AI backend's
-  availability first, then resume.
+  hits the same wall again with nothing changed. Do not stop there: resolve the
+  conflicts yourself instead. If the tree is paused, resolve `files` by hand,
+  stage them, and resume with `pr rebase --stop-on-conflict --branch <branch>`;
+  if the default run aborted, start the replay with that same command so it
+  pauses rather than calling the backend. Repeat — each resume pauses at the
+  next conflicting commit — until it exits 0, then finish at step 3.
 - **A resolution that throws away changes.** The console prints "This
   resolution throws away changes" and lists, per file, each change git had
   merged cleanly that the resolution no longer contains — the signature of a
   whole-file `git checkout --ours`/`--theirs`. `files` names those files. When
   the run made the resolution itself, the conflict has been put back
   (`git checkout -m`) and resuming retries it. When the resolution was staged by
-  hand before the run, it is left as it was: show the user the listed changes,
-  restore the conflict with `git checkout -m -- <file>` and resolve it hunk by
-  hunk, or — only if the user confirms each listed change really is superseded
-  — resume with `WORKBENCH_ALLOW_DROPPED_CHANGES=1 pr rebase --fix --branch
-  <branch>`.
+  hand before the run, it is left as it was: restore the conflict with
+  `git checkout -m -- <file>`, resolve it hunk by hunk keeping every listed
+  change, and resume. `WORKBENCH_ALLOW_DROPPED_CHANGES=1` is the user's
+  override, never yours — if a listed change genuinely cannot be kept, stop and
+  show them the list.
+
+**Resolving by hand.** Edit each conflicted file hunk by hunk, keeping both
+sides' intent and every change git merged cleanly; under Claude Code use Bash
+for the edits, per `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts.
+Never take a side whole (see Constraints). Check the file still parses —
+`gofmt -e`, `bash -n`, or `python3 -m py_compile` — then
+`git -C <worktree> add <file>` and resume.
 
 Exit 3 is never a stopping point for the agent. After a default-mode abort, run
-`--fix`; after a `--fix` run that paused on unresolved files, resolve them (by
-hand if the AI could not) and resume. Hand back to the user only for a refusal
-that needs their decision (exit 4 overrides) or an unavailable AI backend.
+`--fix`; after a `--fix` run that paused on unresolved files, resolve them by
+hand and resume; with the AI backend down, resolve every conflict by hand under
+`--stop-on-conflict`. The only exit 3 you hand back is one the user asked for
+with `--stop-on-conflict`, or a dropped-changes refusal you cannot rebuild.
 
 Never answer a **paused** exit 3 (`tree: paused`) with `pr rebase --abort`.
 The rebase holds real work by this point; aborting throws away every resolution
@@ -309,7 +340,9 @@ tracker is asked before the branch is checked out, so there is no honest count
 to report there. `pr_number` is set on `pr_merged` only. `remedy` is set on
 `partially_landed` only, and is the flag to re-run with.
 
-Report `detail` and stop. What to suggest depends on `status`:
+`partially_landed` is handled without asking — re-run with its `remedy`, as
+below. Every other status is a stop: report `detail` and what to suggest, which
+depends on `status`:
 
 - `already_landed` — rebasing would replay landed work and force-push a branch
   the merge deleted. Suggest deleting the worktree and branch instead.
@@ -320,8 +353,10 @@ Report `detail` and stop. What to suggest depends on `status`:
 - `partially_landed` — an earlier part of the branch already landed, usually
   because someone merged a prefix of it or amended it on the way in. Replaying
   the whole branch would reapply those commits on top of themselves. This is the
-  one refusal with a real fix rather than an override: re-run with the flag the
-  `remedy` field gives, which replays only what is left.
+  one refusal with a real fix rather than an override: re-run immediately, in
+  the background like any `--fix` run, with the flag the `remedy` field gives,
+  which replays only what is left. Then handle that run's result from the top
+  of step 2.
 
   ```bash
   pr rebase --fix --fork-point <sha from remedy> --branch <branch>
@@ -366,8 +401,13 @@ rebase done and only the push outstanding — both end at step 3, never at a
 - **`Recovery left uncommitted changes — not pushing`.** A push-recovery step left
   edits outside any commit, so the branch was deliberately left unpushed
   (`force_pushed` is `false`). Pre-push hooks validate the worktree rather than the
-  commits, so pushing there would green-light a HEAD no hook saw. Report the listed
-  paths, let the user commit or discard them, then finish at step 3.
+  commits, so pushing there would green-light a HEAD no hook saw. The user's own
+  uncommitted work is stashed during a fresh rebase, so these paths are the
+  recovery's. Read their diff: commit what fixes the failing check as its own
+  `fix:`/`chore:` commit, restore what is noise with
+  `git -C <worktree> checkout -- <path>`, then finish at step 3. On a resumed
+  rebase (no stash), stop instead if a path also held uncommitted work from
+  before the run.
 
 ### 3. Finish the push
 
@@ -387,11 +427,14 @@ and never hand it to the user as the remaining step: `pr rebase` prints a
 `Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,
 and that hint is for a human at a terminal, not an instruction to you.
 
-When the hook's failure is one the user has decided to push past — a flake, a
-failure the branch did not cause, or simply their call — finish with
-`pr rebase --no-verify --branch <branch>` rather than handing them a raw
-`git push --no-verify`. It is still the owner's push, under the lease the rebase
-recorded.
+When a hook failure is not the branch's doing, push past it yourself. Re-run
+step 3 once to rule out a flake. If the same check fails again and what it
+names lies outside the branch's diff (`git -C <worktree> diff --stat
+<base>...HEAD`), finish with `pr rebase --no-verify --branch <branch>` and say
+which check you pushed past and why. A failure the branch did cause is fixed and
+committed, never skipped. The same command honours a user who has said to push
+past it. It is still the owner's push, under the lease the rebase recorded —
+never hand anyone a raw `git push --no-verify`.
 
 The one exception is `--no-push`, where the user asked for the push to be withheld
 — report the printed command as the script gave it, and come back here only if

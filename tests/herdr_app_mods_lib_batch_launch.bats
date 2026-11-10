@@ -76,6 +76,12 @@ _throws() {
   [ "$output" = '[["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase,ci","--rebase","behind"],["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase"],["batch","run","--checkout","/co","--prs","o/r#1","--steps","ci"]]' ]
 }
 
+@test "launchOutcome: started on run_started; otherwise the last line is the error" {
+  _js '(() => { const started = "plan…\n{\"schema_version\": 1, \"kind\": \"run_started\", \"run\": \"r1\"}\n{\"schema_version\": 1, \"kind\": \"item_queued\"}\n"; const failed = "⚠ Transient failure on graphql (attempt 1/3)\npr batch: GitHub query failed: gh: HTTP 504\n\n  \n"; return [m.launchOutcome(started).started, m.launchOutcome(failed), m.launchOutcome(""), m.launchOutcome(null)]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,{"started":false,"error":"pr batch: GitHub query failed: gh: HTTP 504"},{"started":false,"error":""},{"started":false,"error":""}]' ]
+}
+
 @test "runArgv selects follow keys order and imply --with-review" {
   _js 'm.runArgv({keys:["o/r#2","o/r#1","o/r#3"],steps:["rebase","ci"],selects:{"o/r#3":["ci"],"o/r#1":["review"],"o/r#2":["rebase"],"o/r#9":["ci"]},checkout:"/co"})'
   [ "$status" -eq 0 ]

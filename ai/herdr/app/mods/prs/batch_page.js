@@ -2,7 +2,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { STEP_NAMES, STEP_LABEL, STEP_HELP, formFacets } from "./_lib/batch_launch.js";
+import { STEP_NAMES, STEP_LABEL, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
@@ -148,8 +148,8 @@ function renderForm({ launcher: L, prs }) {
   const selectedPrs = shown.filter((p) => L.selected.has(prKey(p.repoSlug, p.number)));
   const hiddenSelected = all.filter((p) => L.selected.has(prKey(p.repoSlug, p.number))).length
     - selectedPrs.length;
-  const disabled = L.launching || selectedPrs.length === 0 || L.steps.size === 0;
-  const reason = L.launching ? null
+  const disabled = L.starting || selectedPrs.length === 0 || L.steps.size === 0;
+  const reason = L.starting ? null
     : selectedPrs.length === 0 ? "Select at least one PR"
     : L.steps.size === 0 ? "Turn on at least one step"
     : null;
@@ -161,7 +161,7 @@ function renderForm({ launcher: L, prs }) {
     .child(v_flex().gap(SP.sm)
       .child(text("title", "Steps"))
       .children(STEP_NAMES.map((s) => checkLine(
-        `step-${s}`, L.steps.has(s), STEP_LABEL[s] ?? s, STEP_HELP[s] ?? "", () => L.toggleStep(s)))))
+        `step-${s}`, L.steps.has(s), STEP_LABEL[s] ?? s, "", () => L.toggleStep(s)))))
     .child(v_flex().gap(SP.sm)
       .child(text("title", "Options"))
       .children(["rebase", "ci", "comments"].map((s) => checkLine(
@@ -176,13 +176,9 @@ function renderForm({ launcher: L, prs }) {
         text("body", `${hiddenSelected} selected PR(s) hidden by filters won't run`, t.muted)))
       .when(Boolean(L.note), (e) => e.child(text("body", L.note, dangerColor())))
       .child(h_flex().gap(SP.md).items_center()
-        .child(solidButton(
-          "batch-start",
-          L.launching ? "Starting…" : "Start",
-          () => L.launch(prs),
-          { disabled },
-        ))
-        .child(button("batch-clear", "Clear", () => L.reset()))));
+        .child(solidButton("batch-start", "Start", () => L.launch(prs), { disabled }))
+        .child(button("batch-clear", "Clear", () => L.reset()))
+        .when(L.starting, (e) => e.child(statusText("running", "Starting")))));
 }
 
 export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOpenPr, run }) {

@@ -1,7 +1,16 @@
 // Starts `pr batch run` from Mine: form state, per-repo hc terminals, cancel/kill.
 import { exec } from "herdr";
-import { groupByRepo, runArgv, filterForm } from "./_lib/batch_launch.js";
+import { groupByRepo, runArgv, filterForm, launchOutcome } from "./_lib/batch_launch.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
+import { getArgv, terminalsOf } from "./_lib/busy.js";
+
+// How often a launched terminal is looked at until its run starts or the terminal ends, and how
+// much of its output is read: run_started follows one item_queued line per PR, so it stays well
+// inside this many lines.
+const WATCH_MS = 3000;
+const READ_LINES = "400";
+// Consecutive looks at a terminal hc could not answer for (about a minute) before giving up on it.
+const MAX_UNREADABLE = 20;
 
 function termKey(on, repo) {
   return `${on ?? ""}\0${repo}`;
@@ -27,6 +36,9 @@ export class BatchLauncher {
     this.launching = false;
     this.note = null;
     this.terminals = new Map();
+    // A launched terminal whose run has not said it started yet, per machine+repo. Its PRs stay
+    // selected until it does, and come back with the reason when the terminal ends first.
+    this.pending = new Map();
     this.confirmKill = null;
   }
 
@@ -87,21 +99,37 @@ export class BatchLauncher {
     });
   }
 
+  // Launching, or waiting on a launched terminal to start its run.
+  get starting() {
+    return this.launching || this.pending.size > 0;
+  }
+
+  isPending(key) {
+    return [...this.pending.values()].some((p) => p.keys.includes(key));
+  }
+
+  addNote(message) {
+    this.note = this.note ? `${this.note}; ${message}` : message;
+  }
+
   reset() {
-    this.selected.clear();
-    this.note = null;
+    for (const k of [...this.selected]) if (!this.isPending(k)) this.selected.delete(k);
+    if (!this.starting) this.note = null;
     this.acx.notify();
   }
 
-  launch(prs, onDone) {
-    if (this.launching) return;
+  launch(prs) {
+    if (this.starting) return;
     this.launching = true;
     this.note = null;
     this.acx.notify();
     this.acx.spawn(async (cx) => {
       const errors = [];
       try {
-        const selectedPrs = this.shown(prs).filter((p) => this.selected.has(prKey(p.repoSlug, p.number)));
+        const selectedPrs = this.shown(prs).filter((p) => {
+          const key = prKey(p.repoSlug, p.number);
+          return this.selected.has(key) && !this.isPending(key);
+        });
         const { groups } = groupByRepo(selectedPrs);
         for (const g of groups) {
           try {
@@ -117,9 +145,10 @@ export class BatchLauncher {
               repo: g.repo, cwd: g.cwd, on: g.on, argv,
             }), {}));
             if (res.ok) {
-              this.terminals.set(termKey(g.on, g.repo), res.terminal);
-              // Launched: out of the selection, so a retry after another repo fails does not start it twice.
-              for (const key of g.keys) this.selected.delete(key);
+              const tk = termKey(g.on, g.repo);
+              this.terminals.set(tk, res.terminal);
+              this.pending.set(tk, { terminal: res.terminal, repo: g.repo, keys: g.keys });
+              this.watchLaunch(cx, tk);
             } else errors.push(`${g.repo}: ${res.error?.message ?? "hc failed"}`);
           } catch (err) {
             errors.push(String(err?.message ?? err));
@@ -128,12 +157,44 @@ export class BatchLauncher {
       } finally {
         this.launching = false;
       }
-      if (errors.length) this.note = errors.join("; ");
-      else {
-        this.reset();
-        onDone?.();
+      if (errors.length) this.addNote(errors.join("; "));
+      cx.notify();
+    });
+  }
+
+  // A terminal starting is not the batch starting: `pr batch run` can still fail on GitHub or on
+  // another run holding the repo. Its PRs leave the selection only once the run says it started.
+  watchLaunch(cx, tk) {
+    cx.timer.after(WATCH_MS, async (cx) => {
+      const p = this.pending.get(tk);
+      if (!p) return;
+      // Only an answer from hc decides: a failed read or lookup is looked at again rather than
+      // read as an ended terminal, which would hand the PRs back while their run may be starting.
+      let output = null, state = null;
+      try {
+        const read = await exec("hc", ["read", p.terminal, "--lines", READ_LINES], {});
+        if (read.code === 0) output = read.stdout;
+        const got = await exec("hc", getArgv(p.terminal), {});
+        if (got.code === 0) state = terminalsOf([JSON.parse(got.stdout)])[0]?.state ?? null;
+      } catch { output = state = null; }
+      if (output == null || state == null) {
+        p.unreadable = (p.unreadable ?? 0) + 1;
+        if (p.unreadable < MAX_UNREADABLE) { this.watchLaunch(cx, tk); return; }
+        this.pending.delete(tk);
+        this.addNote(`${p.repo}: could not read its terminal ${p.terminal}; check it before starting again`);
+        cx.notify();
+        return;
       }
-      this.workflows.refresh(this.acx);
+      p.unreadable = 0;
+      const outcome = launchOutcome(output);
+      if (!outcome.started && state === "live") { this.watchLaunch(cx, tk); return; }
+      this.pending.delete(tk);
+      if (outcome.started) {
+        for (const key of p.keys) this.selected.delete(key);
+        this.workflows.refresh(this.acx);
+      } else {
+        this.addNote(`${p.repo}: ${outcome.error || "the batch ended before it started"}`);
+      }
       cx.notify();
     });
   }

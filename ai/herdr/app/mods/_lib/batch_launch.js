@@ -165,10 +165,15 @@ export const STEP_LABEL = {
   review: 'Self-review',
 };
 
-/** One-line help for each launchable step. */
-export const STEP_HELP = {
-  rebase: 'Only PRs that conflict with their base; ones just behind are left alone',
-  ci: 'Fix failing checks',
-  comments: 'Answer review threads',
-  review: 'Run a self-review',
-};
+/**
+ * What a launched `pr batch run` terminal's output says so far.
+ *
+ * started: the run emitted its `run_started` event, so it exists and owns its PRs.
+ * error: the last non-blank line, which is the failure `pr batch` printed when the terminal
+ * ends without `started` (a GitHub outage, another run holding the repo's lock).
+ */
+export function launchOutcome(text) {
+  const lines = String(text ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const started = lines.some((l) => l.includes('"kind": "run_started"'));
+  return { started, error: lines.length ? lines[lines.length - 1] : '' };
+}

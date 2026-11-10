@@ -10,6 +10,13 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`
 - Handlers use the long-lived context saved in `init` (`this.acx`), never the render's `cx`, for notify and spawn
 
+## The Mine board
+
+- Lanes, in precedence order: Has Conflicts, CI Failing, Has Comments, Changes Requested, Draft, Awaiting Review, Approved, In Queue, Merged (`_lib/columns.js` `mineColumn`)
+- Has Comments is feedback `pr comments` would answer, read with `pr batch plan --needs comments` only while Mine shows. It ranks above Changes Requested: owed feedback is the author's work, while a request with every comment answered waits on the reviewer
+- A lane's Batch button opens the Batch page with the lane's shown PRs selected and its step set, and starts nothing. `COLUMN_BATCH` in `_lib/batch_launch.js` owns which lanes have one (Has Conflicts and Has Comments with AI on, CI Failing, Draft, Approved with PRs only behind); a lane that waits on someone else has none
+- Team, Mine and the Batch page share one `prs.filters` (Repo, Label, Drafts, Author on Team only). Drafts is one setting for Team and one for Mine and Batch; add a filter in `_lib/columns.js` so the board and the form share its matcher
+
 ## Design
 
 Read the brand's `DESIGN.md` before changing a view (root `AGENTS.md` § UI and

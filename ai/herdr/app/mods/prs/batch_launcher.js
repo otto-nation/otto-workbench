@@ -1,7 +1,7 @@
 // Starts `pr batch run` from Mine: form state, per-repo hc terminals, cancel/kill.
 import { exec } from "herdr";
-import { groupByRepo, runArgv, filterForm, launchOutcome } from "./_lib/batch_launch.js";
-import { DEFAULT_FILTERS } from "./_lib/columns.js";
+import { groupByRepo, runArgv, filterForm, launchOutcome, presetForm } from "./_lib/batch_launch.js";
+import { filterOn } from "./_lib/columns.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 
@@ -22,14 +22,16 @@ function runKey(on, id) {
 }
 
 export class BatchLauncher {
-  // drafts: { on() -> whether draft PRs are shown, toggle() }; the owner keeps the setting.
-  constructor(acx, workflows, drafts = { on: () => DEFAULT_FILTERS.mineDrafts, toggle: () => {} }) {
+  // filters: { get() -> the shared prs.filters, toggle(chip name) }; the board owns the setting.
+  constructor(acx, workflows, filters = { get: () => ({}), toggle: () => {} }) {
     this.acx = acx;
     this.workflows = workflows;
-    this.drafts = drafts;
+    this.filters = filters;
+    // Every repo the board has loaded and the label chips it offers; shown() assumes the board
+    // sets both before it draws the page (undefined reads a chip as stale, falling back to the PRs given).
+    this.loaded = undefined;
+    this.knownLabels = undefined;
     this.selected = new Set();
-    this.repoFilter = new Set();
-    this.labelFilter = new Set();
     this.steps = new Set(["rebase", "ci", "comments"]);
     this.withAi = new Set();
     this.autoPublish = false;
@@ -80,23 +82,23 @@ export class BatchLauncher {
     this.acx.notify();
   }
 
-  toggleRepoFilter(slug) {
-    const key = [...this.repoFilter].find((r) => r.toLowerCase() === String(slug).toLowerCase());
-    if (key != null) this.repoFilter.delete(key);
-    else this.repoFilter.add(slug);
-    this.acx.notify();
-  }
-
-  toggleLabelFilter(name) {
-    const key = [...this.labelFilter].find((n) => n.toLowerCase() === String(name).toLowerCase());
-    if (key != null) this.labelFilter.delete(key);
-    else this.labelFilter.add(name);
+  // A Mine column's shortcut: select exactly `keys` and turn on only `preset`'s steps, with AI
+  // for those steps as the preset says and every other step's AI left as it was. Starts nothing.
+  applyPreset(keys, preset) {
+    const form = presetForm({ keys, preset, withAi: [...this.withAi], pending: (k) => this.isPending(k) });
+    this.selected = new Set(form.selected);
+    this.steps = new Set(form.steps);
+    this.withAi = new Set(form.withAi);
+    this.rebaseBehind = form.rebaseBehind;
+    this.note = null;
     this.acx.notify();
   }
 
   shown(prs) {
+    const f = this.filters.get();
     return filterForm(prs, {
-      repos: [...this.repoFilter], labels: [...this.labelFilter], drafts: this.drafts.on(),
+      repos: f.repos, labels: f.labels, drafts: filterOn(f, "mineDrafts"),
+      loaded: this.loaded, knownLabels: this.knownLabels,
     });
   }
 

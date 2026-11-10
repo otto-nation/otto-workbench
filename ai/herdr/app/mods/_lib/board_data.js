@@ -361,11 +361,42 @@ export function runningFor(entries, slug) {
   return busyMap(entries ?? [], slug);
 }
 
-export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy, running }) {
+// `owed` maps a PR number to what `pr` says it is owed an answer for (see owedFrom); a PR
+// absent from it has nothing owed, or nothing known yet.
+export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy, running, owed }) {
   return joinReviews(
     [...(openPrs ?? []), ...(landedPrs ?? [])],
     listing, slug, host, login, running ?? new Map(),
-  ).map((pr) => ({ ...pr, busy: busy.has(pr.number) }));
+  ).map((pr) => ({ ...pr, busy: busy.has(pr.number), owedFeedback: owed?.get(pr.number) ?? null }));
+}
+
+/** Argv after `pr` for the comments-only plan of a checkout: reads no branches. */
+export function owedArgv(cwd) {
+  return ['batch', 'plan', '--checkout', cwd, '--needs', 'comments'];
+}
+
+/**
+ * PR number -> what it is owed, from a `pr batch plan` document, for the rows of `slug`.
+ * Only rows whose comments need is set; the reason is pr.owed_feedback's own summary, so the
+ * board says exactly what `pr comments` would answer.
+ */
+export function owedFrom(doc, slug) {
+  const out = new Map();
+  const want = String(slug ?? '').toLowerCase();
+  for (const row of doc?.rows ?? []) {
+    if (String(row?.repo ?? '').toLowerCase() !== want || !Number.isInteger(row?.pr)) continue;
+    const need = row?.needs?.comments;
+    if (need?.needed) out.set(row.pr, String(need.reason ?? ''));
+  }
+  return out;
+}
+
+export async function loadOwed(exec, ctx, slug) {
+  const ran = await invoke(exec, ctx, 'pr', owedArgv(ctx.cwd));
+  if (!ran.ok) return ran;
+  const parsed = readJson(ran.stdout);
+  if (!parsed.ok) return parsed;
+  return { ok: true, owed: owedFrom(parsed.value, slug) };
 }
 
 export async function checkTools(exec, ctx) {

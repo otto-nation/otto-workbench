@@ -3,7 +3,7 @@
  */
 
 import { BUSY_STATES, laneOf } from './batch.js';
-import { DEFAULT_FILTERS } from './columns.js';
+import { DEFAULT_FILTERS, filterLabels, filterRepos } from './columns.js';
 
 /** Step names a batch launch can request. */
 export const STEP_NAMES = ['rebase', 'ci', 'comments', 'review'];
@@ -38,55 +38,55 @@ export function groupByRepo(prs) {
   return { groups, unrunnable };
 }
 
-function fold(s) {
-  return String(s ?? '').toLowerCase();
+/**
+ * Keep PRs the shared repo and label chips match, dropping drafts when `drafts` is false.
+ * `loaded` is every repo the board has loaded, as for filterRepos (`knownLabels` likewise for labels): a repo chip on one where none
+ * of `prs` lives empties the form, as it empties the board, instead of being read as stale.
+ */
+export function filterForm(prs, { repos = [], labels = [], drafts = DEFAULT_FILTERS.mineDrafts, loaded, knownLabels } = {}) {
+  const list = (prs ?? []).filter((pr) => drafts || !pr.isDraft);
+  return filterLabels(filterRepos(list, repos, loaded), labels, knownLabels);
 }
 
-/** Distinct repo slugs (first-seen) and label names (case-insensitive sort) on the Start form. */
-export function formFacets(prs) {
-  const repos = [];
-  const seenRepos = new Set();
-  const labels = [];
-  const seenLabels = new Set();
-  for (const pr of prs ?? []) {
-    const slug = pr?.repoSlug;
-    if (slug) {
-      const key = fold(slug);
-      if (!seenRepos.has(key)) {
-        seenRepos.add(key);
-        repos.push(slug);
-      }
-    }
-    for (const name of pr?.labels ?? []) {
-      if (!name) continue;
-      const key = fold(name);
-      if (!seenLabels.has(key)) {
-        seenLabels.add(key);
-        labels.push(name);
-      }
-    }
+/**
+ * The batch a Mine column's shortcut sets up, by column key: the steps it turns on, whether
+ * AI is on for its step, and whether a rebase also takes PRs only behind. A column absent
+ * here gets no shortcut: it waits on someone else, and no step moves a PR out of it.
+ *
+ * Has Conflicts turns AI on because a plain rebase stops at every real conflict; Has
+ * Comments, because the comments step does not run without it. CI Failing leaves AI off:
+ * a plain CI step reruns infrastructure flakes, and fixing code is the larger step to opt into.
+ */
+export const COLUMN_BATCH = Object.freeze({
+  'has-conflicts': { steps: ['rebase'], ai: true },
+  'ci-failing': { steps: ['ci'], ai: false },
+  'has-comments': { steps: ['comments'], ai: true },
+  draft: { steps: ['review'], ai: false },
+  approved: { steps: ['rebase'], ai: false, rebaseBehind: true },
+});
+
+/** The shortcut a column `{key, items}` offers, or null: none for a column without a preset or PRs. */
+export function columnPreset(col) {
+  const preset = COLUMN_BATCH[col?.key];
+  return preset && (col.items ?? []).length > 0 ? preset : null;
+}
+
+/**
+ * The Start form after a shortcut: exactly `keys` selected (none still launching, per
+ * `pending`), only the preset's steps on, AI for those steps as the preset says and for
+ * every other step as `withAi` had it, and rebase-behind as the preset says.
+ */
+export function presetForm({ keys, preset, withAi = [], pending = () => false }) {
+  const ai = new Set(withAi);
+  for (const s of preset.steps) {
+    if (preset.ai) ai.add(s); else ai.delete(s);
   }
-  labels.sort((a, b) => fold(a).localeCompare(fold(b)));
-  return { repos, labels };
-}
-
-/** Keep PRs matching repo AND label chips, dropping drafts when `drafts` is false; empty or stale chips match everything. */
-export function filterForm(prs, { repos = [], labels = [], drafts = DEFAULT_FILTERS.mineDrafts } = {}) {
-  const list = prs ?? [];
-  const facets = formFacets(list);
-  const knownRepos = new Set(facets.repos.map(fold));
-  const knownLabels = new Set(facets.labels.map(fold));
-  const repoSet = new Set((repos ?? []).map(fold).filter((r) => knownRepos.has(r)));
-  const labelSet = new Set((labels ?? []).map(fold).filter((l) => knownLabels.has(l)));
-  return list.filter((pr) => {
-    if (!drafts && pr.isDraft) return false;
-    if (repoSet.size > 0 && !repoSet.has(fold(pr.repoSlug))) return false;
-    if (labelSet.size > 0) {
-      const names = (pr.labels ?? []).map(fold);
-      if (!names.some((n) => labelSet.has(n))) return false;
-    }
-    return true;
-  });
+  return {
+    selected: keys.filter((k) => !pending(k)),
+    steps: [...preset.steps],
+    withAi: [...ai],
+    rebaseBehind: Boolean(preset.rebaseBehind),
+  };
 }
 
 /** Argv after `pr` for `batch run` of one checkout group. */

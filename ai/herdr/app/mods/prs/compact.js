@@ -3,12 +3,13 @@ import { theme } from "herdr";
 import { cardId } from "./_lib/scope.js";
 import { SP, ROW_H, BREAKPOINT } from "./_lib/tokens.js";
 import { sectionLabel, ciMark, hoverRow, text, type } from "./_ui/ui.js";
+import { batchAction } from "./board.js";
 
 function numOf(pr, showRepo) {
   return showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`;
 }
 
-export function renderCompact({ sections, onOpen, showRepo, width }) {
+export function renderCompact({ sections, onOpen, showRepo, width, onBatch }) {
   const t = theme();
   const two = (width ?? 0) >= BREAKPOINT.twoLine;
   const row = (pr) => {
@@ -22,6 +23,9 @@ export function renderCompact({ sections, onOpen, showRepo, width }) {
   };
   return v_flex().size_full().min_h(0).overflow_y_scrollbar()
     .children((sections ?? []).map((s) => v_flex().flex_none()
-      .child(sectionLabel(s.label, s.count).px(SP.md).pt(SP.md).pb(SP.xs))
+      .child(h_flex().items_center().px(SP.md).pt(SP.md).pb(SP.xs)
+        .child(sectionLabel(s.label, s.count))
+        .child(h_flex().flex_1())
+        .children([batchAction({ key: s.key, items: s.items }, onBatch)].filter(Boolean)))
       .children(s.items.map(row))));
 }

@@ -136,18 +136,6 @@ _throws() {
   [ "$output" = '["rebase","ci","comments","review"]' ]
 }
 
-@test "formFacets repos first-seen order, labels sorted case-insensitively, deduped" {
-  _js 'm.formFacets([{repoSlug:"b/two",labels:["Zebra","alpha"]},{repoSlug:"a/one",labels:["ALPHA","bug"]},{repoSlug:"b/two",labels:["gamma"]},{repoSlug:"B/Two",labels:["bug"]}])'
-  [ "$status" -eq 0 ]
-  [ "$output" = '{"repos":["b/two","a/one"],"labels":["alpha","bug","gamma","Zebra"]}' ]
-}
-
-@test "formFacets empty list and missing labels" {
-  _js '[m.formFacets([]),m.formFacets(null),m.formFacets([{repoSlug:"a/one"}])]' 
-  [ "$status" -eq 0 ]
-  [ "$output" = '[{"repos":[],"labels":[]},{"repos":[],"labels":[]},{"repos":["a/one"],"labels":[]}]' ]
-}
-
 @test "filterForm hides drafts by default; drafts:true shows them; repo chip still ANDs" {
   _js '(() => { const prs = [{n:1,repoSlug:"a/one",isDraft:true},{n:2,repoSlug:"a/one"},{n:3,repoSlug:"b/two",isDraft:true},{n:4,repoSlug:"b/two"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}),ids({drafts:true}),ids({drafts:false}),ids({drafts:false,repos:["b/two"]})]; })()'
   [ "$status" -eq 0 ]
@@ -166,3 +154,26 @@ _throws() {
   [ "$output" = '[[1,2,3,4,5,6],[1,2,3,4,5,6],[1,3,4],[1,2,4],[1,4],[1,2,3,4,5,6],[2],[1,2,3,4,5,6],[5]]' ]
 }
 
+@test "columnPreset: only columns a step can move PRs out of, and only with PRs in them" {
+  _js '["has-conflicts","ci-failing","has-comments","changes-requested","draft","awaiting-review","approved","in-queue","merged"].map((key) => { const p = m.columnPreset({ key, items: [{}] }); return p ? p.steps.join("+") + (p.ai ? ":ai" : "") + (p.rebaseBehind ? ":behind" : "") : null; }).concat([m.columnPreset({ key: "has-conflicts", items: [] }), m.columnPreset(null)])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["rebase:ai","ci","comments:ai",null,"review",null,"rebase:behind",null,null,null,null]' ]
+}
+
+@test "presetForm selects exactly the column, turns on only its steps, and leaves other steps' AI alone" {
+  _js '[m.presetForm({ keys: ["o/r#1","o/r#2"], preset: m.COLUMN_BATCH["has-conflicts"], withAi: ["comments"], pending: (k) => k === "o/r#2" }), m.presetForm({ keys: ["o/r#3"], preset: m.COLUMN_BATCH["ci-failing"], withAi: ["ci","rebase"] }), m.presetForm({ keys: [], preset: m.COLUMN_BATCH.approved })]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"selected":["o/r#1"],"steps":["rebase"],"withAi":["comments","rebase"],"rebaseBehind":false},{"selected":["o/r#3"],"steps":["ci"],"withAi":["rebase"],"rebaseBehind":false},{"selected":[],"steps":["rebase"],"withAi":[],"rebaseBehind":true}]' ]
+}
+
+@test "filterForm: a repo chip on a loaded repo with none of these PRs empties the form; without loaded it is stale" {
+  _js '(() => { const prs = [{n:1,repoSlug:"a/one"},{n:2,repoSlug:"b/two"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({repos:["c/three"]}), ids({repos:["c/three"],loaded:["a/one","b/two","c/three"]}), ids({repos:["a/one"],loaded:["a/one","b/two"]})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2],[],[1]]' ]
+}
+
+@test "filterForm: a label chip known to the board but on no open PR empties the form" {
+  _js '(() => { const prs = [{n:1,labels:["a"]},{n:2,labels:[]}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({labels:["m"]}), ids({labels:["m"],knownLabels:["a","m"]}), ids({labels:["a"],knownLabels:["a","m"]})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2],[],[1]]' ]
+}

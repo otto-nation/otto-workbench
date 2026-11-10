@@ -13,6 +13,7 @@
  *   hasNewChangesSinceReview: boolean
  *   reviewing: boolean — ui-code's isReviewQueued, stored on the PR here
  *   author: login
+ *   owedFeedback: string | null — what `pr comments` would answer, from pr's own plan
  *   reviewRuns: array NEWEST FIRST of { postedEvent: null | string }
  *     null = unposted; any non-null, including 'dismissed', counts as posted
  */
@@ -29,9 +30,10 @@ export const TEAM_COLUMNS = [
 export const MINE_COLUMNS = [
   { key: 'has-conflicts', label: 'Has Conflicts' },
   { key: 'ci-failing', label: 'CI Failing' },
+  { key: 'has-comments', label: 'Has Comments' },
   { key: 'changes-requested', label: 'Changes Requested' },
   { key: 'draft', label: 'Draft' },
-  { key: 'pending-review', label: 'Pending Review' },
+  { key: 'awaiting-review', label: 'Awaiting Review' },
   { key: 'approved', label: 'Approved' },
   { key: 'in-queue', label: 'In Queue' },
   { key: 'merged', label: 'Merged' },
@@ -69,11 +71,14 @@ export function mineColumn(pr) {
   if (pr.inMergeQueue) return 'in-queue';
   if (pr.mergeable === 'CONFLICTING') return 'has-conflicts';
   if (pr.ciStatus === 'failing') return 'ci-failing';
+  // Before Changes Requested: feedback still owed is the author's work, while a request with
+  // every comment answered waits on the reviewer.
+  if (pr.owedFeedback) return 'has-comments';
   if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'changes-requested';
   if (pr.isDraft) return 'draft';
   if (pr.reviewDecision === 'APPROVED' && (pr.ciStatus === 'passing' || pr.ciStatus === 'none'))
     return 'approved';
-  return 'pending-review';
+  return 'awaiting-review';
 }
 
 // Owner of the four Show-chip defaults; unset stored values take these.
@@ -106,6 +111,42 @@ export function filterRepos(prs, repos, loaded) {
   );
   if (active.size === 0) return prs;
   return prs.filter((p) => active.has(String(p.repoSlug ?? "").toLowerCase()));
+}
+
+function fold(s) {
+  return String(s ?? '').toLowerCase();
+}
+
+/** Distinct repo slugs (first-seen) and label names (case-insensitive sort) among `prs`: the chips a view offers. */
+export function filterFacets(prs) {
+  const repos = [];
+  const seenRepos = new Set();
+  const labels = [];
+  const seenLabels = new Set();
+  for (const pr of prs ?? []) {
+    const slug = pr?.repoSlug;
+    if (slug && !seenRepos.has(fold(slug))) {
+      seenRepos.add(fold(slug));
+      repos.push(slug);
+    }
+    for (const name of pr?.labels ?? []) {
+      if (!name || seenLabels.has(fold(name))) continue;
+      seenLabels.add(fold(name));
+      labels.push(name);
+    }
+  }
+  labels.sort((a, b) => fold(a).localeCompare(fold(b)));
+  return { repos, labels };
+}
+
+// A PR matches when it carries any selected label. A selection naming no label among `prs` is
+// ignored, as a stale repo is, so a label whose last PR merged does not empty the view.
+// `knownLabels` lists the labels the board offers as chips; without it, those among `prs` stand in.
+export function filterLabels(prs, labels, knownLabels) {
+  const known = new Set((knownLabels ?? filterFacets(prs).labels).map(fold));
+  const active = new Set([...(labels ?? [])].map(fold).filter((l) => known.has(l)));
+  if (active.size === 0) return prs;
+  return prs.filter((p) => (p.labels ?? []).some((n) => active.has(fold(n))));
 }
 
 export function filterPrs(prs, filters, me) {

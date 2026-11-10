@@ -11,15 +11,19 @@ import { boardTabId, offersOpenBoard } from "./_lib/tabs.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
-  assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
+  assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadOwed, loadRepo, loadUser,
 } from "./_lib/board_data.js";
-import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, filterOn, isMine, groupColumns } from "./_lib/columns.js";
+import {
+  TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, filterLabels, filterFacets, filterOn,
+  isMine, groupColumns,
+} from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
+import { prKey } from "./_lib/launch.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder, errorLine } from "./_ui/ui.js";
 import { relativeTime } from "./_lib/history.js";
@@ -55,6 +59,7 @@ function filtersOf() {
     empty: f.empty,
     authors: [...(f.authors ?? [])],
     repos: [...(f.repos ?? [])],
+    labels: [...(f.labels ?? [])],
   };
 }
 
@@ -66,12 +71,19 @@ function errorText(err, ctx) {
   return friendlyError(err, ctx?.on, scopeOf());
 }
 
-// Drafts included: the Batch form applies the Drafts chip itself (BatchLauncher.shown), so a
-// selected draft the chip hides still counts as hidden rather than vanishing.
+// Unfiltered: the Batch form applies the shared chips itself (BatchLauncher.shown), so a selected
+// PR a chip hides still counts as hidden rather than vanishing.
 function mineOpen(state) {
-  const filters = filtersOf();
-  return filterRepos(state.prs ?? [], filters.repos, state.repoSlugs)
+  return (state.prs ?? [])
     .filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED");
+}
+
+// The PRs a tab lists before the label chips: the label chips offered are those among them.
+function tabList(state, filters, tab) {
+  const base = filterRepos(state.prs ?? [], filters.repos, state.repoSlugs);
+  const me = state.me ?? "";
+  if (tab === "mine") return base.filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft));
+  return filterPrs(base, filters, me);
 }
 
 
@@ -84,9 +96,10 @@ export default class PrsBoard extends View {
     this.inPanel = offersOpenBoard(props());
     this.workflows = new Workflows(cx, () => this.activeTargets());
     // The Batch form's Drafts chip is the Mine tab's: one setting, so the list and the form agree.
+    // The Batch form's chips are the board's: one prs.filters, so a view and the form agree.
     this.launcher = new BatchLauncher(cx, this.workflows, {
-      on: () => filterOn(filtersOf(), "mineDrafts"),
-      toggle: () => this.toggleChip("mineDrafts", this.acx),
+      get: () => filtersOf(),
+      toggle: (name) => this.toggleChip(name, this.acx),
     });
     this.batchOpen = false;
     this.cache = new Map();
@@ -232,6 +245,21 @@ export default class PrsBoard extends View {
     }
   }
 
+  // Has Comments is read only while Mine shows; opening Mine reads it now rather than at the
+  // next full refresh.
+  showMine() {
+    setShared("prs.tab", "mine");
+    this.refresh(this.acx);
+  }
+
+  // What `pr` says each PR is owed, read only for Mine. A failed read keeps the last good answer
+  // rather than emptying the column.
+  async owedFor(ctx, slug, prev) {
+    if (tabOf() !== "mine") return prev ?? null;
+    const r = await loadOwed(exec, ctx, slug);
+    return r.ok ? r.owed : (prev ?? null);
+  }
+
   async pullFull(ctx, key, cx, cycle) {
     const have = await this.ensureTools(ctx, key);
     if (!have || !this.same(key)) return;
@@ -241,11 +269,12 @@ export default class PrsBoard extends View {
     this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, doc, terms] = await Promise.all([
+    const [open, listing, doc, terms, owed] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
       this.listingFor(ctx, cycle),
       this.batchDocFor(ctx, cycle),
       this.terminalsFor(ctx, cycle),
+      this.owedFor(ctx, repo.slug, this.cache.get(key)?.owed),
     ]);
     const running = runningFor(terms.entries, repo.slug);
     if (!this.same(key)) return;
@@ -257,10 +286,10 @@ export default class PrsBoard extends View {
     this.commit(key, {
       repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null, cwd: ctx.cwd }, me: login, tools: have,
       listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
-      openPrs: open.prs, landedPrs,
+      openPrs: open.prs, landedPrs, owed,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
-        slug: repo.slug, host: repo.host, login, busy, running,
+        slug: repo.slug, host: repo.host, login, busy, running, owed,
       }),
     }, ctx, cx);
   }
@@ -296,6 +325,7 @@ export default class PrsBoard extends View {
       prs: assemble({
         openPrs: prev.openPrs ?? [], landedPrs, listing: listing.listing,
         slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy, running,
+        owed: prev.owed,
       }),
     }, ctx, cx);
   }
@@ -324,11 +354,12 @@ export default class PrsBoard extends View {
       if (name === "landed" && f.landed) this.refresh(cx);
       return;
     }
-    if (name.startsWith("repo:")) {
-      const slug = name.slice(5).toLowerCase();
-      const set = new Set(f.repos.map((r) => String(r).toLowerCase()));
-      if (set.has(slug)) set.delete(slug); else set.add(slug);
-      f.repos = [...set];
+    for (const [prefix, field] of [["repo:", "repos"], ["label:", "labels"]]) {
+      if (!name.startsWith(prefix)) continue;
+      const value = name.slice(prefix.length).toLowerCase();
+      const set = new Set(f[field].map((r) => String(r).toLowerCase()));
+      if (set.has(value)) set.delete(value); else set.add(value);
+      f[field] = [...set];
       setShared("prs.filters", f);
       return;
     }
@@ -362,6 +393,8 @@ export default class PrsBoard extends View {
     const mode = viewOf(this.size?.width);
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (this.batchOpen && tabOf() === "mine") {
+      this.launcher.loaded = view.repoSlugs;
+      this.launcher.knownLabels = filterFacets(tabList(view, filtersOf(), "mine")).labels;
       return note(renderBatchPage({
         launcher: this.launcher,
         workflows: this.workflows,
@@ -389,12 +422,7 @@ export default class PrsBoard extends View {
 
   listed(state) {
     const filters = filtersOf();
-    const base = filterRepos(state.prs ?? [], filters.repos, state.repoSlugs);
-    const me = state.me ?? "";
-    if (tabOf() === "mine") {
-      return base.filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft));
-    }
-    return filterPrs(base, filters, me);
+    return filterLabels(tabList(state, filters, tabOf()), filters.labels);
   }
 
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
@@ -416,6 +444,13 @@ export default class PrsBoard extends View {
   // The selector (main.js) supplies the view; the plain board has none.
   detailView() { return null; }
 
+  // A Mine column's shortcut: the Batch page with that column's visible PRs and its step set up.
+  batchFor(items, preset) {
+    this.launcher.applyPreset(items.map((p) => prKey(p.repoSlug, p.number)), preset);
+    this.batchOpen = true;
+    this.acx.notify();
+  }
+
   // The label names the action only; that runs are going shows beside it, not inside it.
   batchControl() {
     const running = this.workflows.activeRuns().length > 0;
@@ -435,7 +470,7 @@ export default class PrsBoard extends View {
       .child(h_flex().items_center().justify_between()
         .child(segmented([
           segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
-          segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
+          segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
@@ -459,7 +494,7 @@ export default class PrsBoard extends View {
       .child(this.compactHeader(tab))
       .child(renderCompact({
         sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
-        width: this.size?.width,
+        width: this.size?.width, onBatch: mine ? (items, preset) => this.batchFor(items, preset) : null,
       }));
   }
 
@@ -477,13 +512,15 @@ export default class PrsBoard extends View {
     const me = String(state.me ?? "").toLowerCase();
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
     const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
+    const labels = filterFacets(tabList(state, filters, tab)).labels;
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, t))
-      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
+      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos, labels }))
       .child(renderBoard({
-        tab, prs: filterRepos(state.prs ?? [], filters.repos, state.repoSlugs), filters, me: state.me ?? "",
+        tab, prs: this.listed(state), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
+        onBatch: (items, preset) => this.batchFor(items, preset),
         spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));
@@ -516,7 +553,7 @@ export default class PrsBoard extends View {
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
-        segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
+        segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
       ]))
       .when(this.inPanel, (e) => e.child(this.openBoardButton()))
       .child(this.refreshButton());

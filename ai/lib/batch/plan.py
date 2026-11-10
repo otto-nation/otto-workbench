@@ -50,7 +50,7 @@ import rebase.need
 import review.document
 import review.paths
 import review.store
-from batch.model import RebaseWhen, Step
+from batch.model import STEP_ORDER, RebaseWhen, Step
 from gh.pr_data import PRData
 from pr.comments_fix import CloseoutDebt
 
@@ -637,7 +637,14 @@ def _local_heads(repo_dir: str) -> dict[str, str]:
 
 def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
          ref_namespace: str = "", viewer: str = "",
-         remote_heads: dict[str, str] | None = None, repo_key: str = "") -> PlanRow:
+         remote_heads: dict[str, str] | None = None, repo_key: str = "",
+         steps: frozenset[Step] | None = None) -> PlanRow:
+    """One plan row; *steps* limits which needs are judged (None is every step).
+
+    A rebase need left out is never computed, so a plan that does not ask for
+    it reads no refs and never falls back to GitHub's merge state.
+    """
+    wanted = frozenset(STEP_ORDER) if steps is None else steps
     branch, head = node["headRefName"], node["headRefOid"]
     base = node.get("baseRefName") or ""
     fork = bool(node.get("isCrossRepository"))
@@ -665,17 +672,18 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     return PlanRow(
         repo=repo, repo_dir=repo_dir, pr=int(node["number"]), title=node.get("title", ""),
         branch=branch, head_sha=head, is_draft=bool(node.get("isDraft")),
-        needs={
-            Step.REBASE: rebase(RebaseWhen.CONFLICTS),
-            Step.CI: FORK_NEED if fork else ci_step_need(ci_state),
-            Step.COMMENTS: comments_need(node, viewer, state),
-            Step.REVIEW: review_need(_review_file(repo, branch), head, local_head=local_head),
-        },
+        needs={step: judge() for step, judge in (
+            (Step.REBASE, lambda: rebase(RebaseWhen.CONFLICTS)),
+            (Step.CI, lambda: FORK_NEED if fork else ci_step_need(ci_state)),
+            (Step.COMMENTS, lambda: comments_need(node, viewer, state)),
+            (Step.REVIEW, lambda: review_need(_review_file(repo, branch), head,
+                                              local_head=local_head)),
+        ) if step in wanted},
         local_head=local_head, base_ref=base, is_fork=fork, ci_state=ci_state,
         ref_namespace=ref_namespace,
         closeout=_closeout_from(state).describe(),
         repo_key=repo_key,
-        rebase_behind=rebase(RebaseWhen.BEHIND),
+        rebase_behind=rebase(RebaseWhen.BEHIND) if Step.REBASE in wanted else None,
     )
 
 
@@ -707,6 +715,7 @@ def _fetch_branches(data: dict, repo_dirs: dict[str, str]) -> dict[str, list[str
 def rows_from_search(data: dict, repo_dirs: dict[str, str],
                      namespaces: dict[str, str] | None = None,
                      remote_heads: dict[str, dict[str, str] | None] | None = None,
+                     steps: frozenset[Step] | None = None,
                      ) -> list[PlanRow]:
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
     viewer = (data.get("viewer") or {}).get("login", "")
@@ -725,7 +734,7 @@ def rows_from_search(data: dict, repo_dirs: dict[str, str],
         rows.append(_row(
             n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), ""),
             (namespaces or {}).get(repo_dir, ""), viewer,
-            (remote_heads or {}).get(repo_dir), repo_key=keys[repo_dir]))
+            (remote_heads or {}).get(repo_dir), repo_key=keys[repo_dir], steps=steps))
     return sorted(rows, key=lambda r: (r.repo, r.pr))
 
 
@@ -829,9 +838,10 @@ def _plan_inputs(repo_dirs: list[str], prs: list[str] | None = None):
     return repo_dirs, by_slug, data, _fetch_branches(data, by_slug)
 
 
-def build_plan(repo_dirs: list[str]) -> Plan:
+def build_plan(repo_dirs: list[str], steps: frozenset[Step] | None = None) -> Plan:
+    """A read-only plan of every open PR of the viewer's; *steps* limits the needs judged."""
     repo_dirs, by_slug, data, needed = _plan_inputs(repo_dirs)
-    return _plan_without_refs(data, by_slug, repo_dirs, needed)
+    return _plan_without_refs(data, by_slug, repo_dirs, needed, steps)
 
 
 def build_run_plan(repo_dirs: list[str], prs: list[str] | None = None) -> Plan:
@@ -863,15 +873,16 @@ def _plan_with_namespace(
 
 def _plan_without_refs(
     data: dict, by_slug: dict[str, str], repo_dirs: list[str],
-    needed: dict[str, list[str]],
+    needed: dict[str, list[str]], steps: frozenset[Step] | None = None,
 ) -> Plan:
     tips: dict[str, dict[str, str] | None] = {}
-    for repo_dir in repo_dirs:
+    # Origin tips only feed the rebase need; a plan without it reads none.
+    for repo_dir in repo_dirs if steps is None or Step.REBASE in steps else []:
         heads = git.push.remote_heads(repo_dir, needed.get(repo_dir, []))
         tips[repo_dir] = heads
         if heads:
             fetch_objects(repo_dir, list(heads.values()))
-    rows = rows_from_search(data, by_slug, remote_heads=tips)
+    rows = rows_from_search(data, by_slug, remote_heads=tips, steps=steps)
     return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows)
 
 

@@ -151,3 +151,12 @@ def test_named_prs_are_planned_by_number_and_a_bare_run_searches(monkeypatch):
     _main(["batch", "run", "--checkout", "/r", "--prs", "o/r#1,o/r#2"])
     _main(["batch", "run", "--checkout", "/r"])
     assert seen == [["o/r#1", "o/r#2"], None]
+
+
+def test_plan_needs_limits_the_steps_judged(monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(batch.plan, "build_plan",
+                        lambda dirs, steps=None: seen.append(steps) or Plan("me", []))
+    assert _main(["batch", "plan", "--checkout", "/r", "--needs", "comments"]) == 0
+    assert _main(["batch", "plan", "--checkout", "/r"]) == 0
+    assert seen == [frozenset({batch.model.Step.COMMENTS}), None]

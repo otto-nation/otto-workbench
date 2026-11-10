@@ -967,6 +967,7 @@ Takes no flags.
 | Flag | Description |
 |------|-------------|
 | `--checkout` `<dir>` | A checkout whose open PRs to plan for; repeatable. Required. |
+| `--needs` `<steps>` | Judge only these steps' needs, any of rebase,ci,comments,review; without rebase no branch is read or fetched (default: every step). |
 
 **`pr batch run`** — Start a run
 

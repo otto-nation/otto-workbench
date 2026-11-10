@@ -2,10 +2,11 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
+import { columnPreset } from "./_lib/batch_launch.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import {
-  chip as chipOf, filterGroup, ciMark, addStat, delStat, card, placeholder, scrollBody,
+  button, chip as chipOf, filterGroup, ciMark, addStat, delStat, card, placeholder, scrollBody,
   laneTitle, tag, text, type, statusText,
 } from "./_ui/ui.js";
 import { cardStateLine } from "./workflows_view.js";
@@ -17,14 +18,22 @@ function column(col, opts) {
   const empty = !col.items.length;
   return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}${FILL.lane}`)
     .flex_1().min_w(COL_MIN).max_w(COL_MAX)
-    .child(laneTitle(col.label, col.items.length))
+    .child(laneTitle(col.label, col.items.length, batchAction(col, opts.onBatch)))
     .child(scrollBody().p(SP.sm).gap(SP.sm)
       .when(empty, (e) => e.child(placeholder("None").px(SP.md)))
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
+// A Mine column a batch step can move PRs out of offers a shortcut to the Batch page with its
+// PRs and that step set up (COLUMN_BATCH); an empty column, or one waiting on others, offers none.
+export function batchAction(col, onBatch) {
+  const preset = columnPreset(col);
+  if (!onBatch || !preset) return null;
+  return button(`batch-${col.key}`, "Batch", () => onBatch(col.items, preset));
+}
+
 export function renderBoard({
-  tab, prs, filters, me, onOpen, spinner, showRepo, loading, workflowOf,
+  tab, prs, filters, me, onOpen, spinner, showRepo, loading, workflowOf, onBatch,
 }) {
   const t = theme();
   const mine = tab === "mine";
@@ -40,7 +49,7 @@ export function renderBoard({
     return board.child(placeholder(loading ? "Loading…" : "No pull requests").p(SP.lg));
   }
   return board.children(shown.map((c) => column(c, {
-    onOpen, spinner, showRepo, workflowOf,
+    onOpen, spinner, showRepo, workflowOf, onBatch: mine ? onBatch : null,
   })));
 }
 
@@ -51,6 +60,7 @@ function badges(pr, { hideBusy } = {}) {
   if (pr.state === "MERGED") out.push(statusText("pass", "Merged"));
   if (pr.inMergeQueue) out.push(statusText("running", "In merge queue"));
   if (pr.busy && !hideBusy) out.push(statusText("running", "Batch working"));
+  if (pr.owedFeedback) out.push(text("meta", pr.owedFeedback, t.muted));
   const runs = pr.reviewRuns.length;
   if (runs > 0) out.push(text("meta", `${runs} reviews`, t.muted));
   for (const name of pr.labels.slice(0, 2)) out.push(tag(name));
@@ -83,11 +93,12 @@ export function renderCard(pr, {
     .when(Boolean(stateLine), (e) => e.child(stateLine));
 }
 
-export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
+export function renderChips(filters, authors, { onToggle, tab, repos = [], labels = [] }) {
   const t = theme();
   const f = filters ?? {};
   const set = new Set((f.authors ?? []).map((a) => String(a).toLowerCase()));
   const activeSet = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
+  const labelSet = new Set((f.labels ?? []).map((l) => String(l).toLowerCase()));
   const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => onToggle(name));
   const showItems = [];
   if (tab === "mine") showItems.push(chip("Drafts", "mineDrafts", filterOn(f, "mineDrafts")));
@@ -98,6 +109,8 @@ export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
     .child(filterGroup("Show", showItems))
     .when(repos.length > 1, (e) => e.child(
       filterGroup("Repo", repos.map((slug) => chip(slug.split("/").pop(), `repo:${slug}`, activeSet.has(slug.toLowerCase()))))))
+    .when(labels.length > 0, (e) => e.child(
+      filterGroup("Label", labels.map((name) => chip(name, `label:${name}`, labelSet.has(String(name).toLowerCase()))))))
     .when(tab !== "mine" && authors.length > 0, (e) => e.child(
       filterGroup("Author", authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))))));
 }

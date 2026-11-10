@@ -9,6 +9,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import batch.model  # noqa: E402
 import batch.plan  # noqa: E402
 import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
@@ -467,3 +468,28 @@ def test_plan_inputs_read_named_prs_by_number_and_search_otherwise(monkeypatch):
     batch.plan._plan_inputs(["/repos/a"], ["o/a#1"])
     batch.plan._plan_inputs(["/repos/a"])
     assert calls == [("n", ["o/a#1"]), ("s", batch.plan.search_query(["o/a"]))]
+
+
+def test_a_comments_only_plan_reads_no_refs_and_judges_only_comments(monkeypatch):
+    monkeypatch.setattr(batch.plan, "pr_state", lambda repo_dir, branch: None)
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
+    monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
+    monkeypatch.setattr(batch.plan, "_local_heads", lambda d: {})
+    monkeypatch.setattr(batch.plan.batch.targets, "origin_key", lambda d: "k")
+    touched = []
+    monkeypatch.setattr(batch.plan.git.push, "remote_heads",
+                        lambda *a, **k: touched.append("remote_heads") or {})
+    monkeypatch.setattr(batch.plan, "_merge_state",
+                        lambda *a: touched.append("merge_state") or "DIRTY")
+    node = {"number": 7, "title": "t", "isDraft": False, "headRefName": "b",
+            "headRefOid": "sha", "baseRefName": "main",
+            "repository": {"nameWithOwner": "o/a"},
+            "reviewThreads": {"nodes": [{"id": "T1", "isResolved": False}]}}
+    monkeypatch.setattr(batch.plan, "_search",
+                        lambda q: {"viewer": {"login": "me"}, "search": {"nodes": [node]}})
+    [row] = batch.plan.build_plan(["/repos/a"], frozenset({Step.COMMENTS})).rows
+    assert touched == []
+    assert set(row.needs) == {Step.COMMENTS} and row.needs[Step.COMMENTS].needed
+    assert row.rebase_behind is None
+    [full] = batch.plan.build_plan(["/repos/a"]).rows
+    assert set(full.needs) == set(batch.model.STEP_ORDER) and touched

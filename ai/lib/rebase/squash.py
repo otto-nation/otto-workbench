@@ -102,19 +102,17 @@ def _message(
     title = snapshot.title if snapshot is not None and snapshot.answered else ""
     subject = title or commits[0].subject
     bullets = [f"- {commit.subject}" for commit in commits]
-    footers: list[str] = []
-    seen: set[str] = set()
+    footer_set: dict[str, None] = {}
     for commit in commits:
         # %b, not %B: a body-less commit's last paragraph would otherwise be
         # its subject, and a conventional subject has a trailer's shape.
         body = git.client.out("log", "-1", "--format=%b", commit.sha, cwd=cwd)
-        for line in _last_paragraph(body).splitlines():
-            if _FOOTER_LINE.match(line) and line not in seen:
-                seen.add(line)
-                footers.append(line)
+        lines = _last_paragraph(body).splitlines()
+        # dict keys: insertion-ordered de-duplication
+        footer_set.update({ln: None for ln in lines if _FOOTER_LINE.match(ln)})
     parts = [subject, "", *bullets]
-    if footers:
-        parts.extend(["", *footers])
+    if footer_set:
+        parts.extend(["", *footer_set])
     return "\n".join(parts) + "\n"
 
 

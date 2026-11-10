@@ -85,6 +85,8 @@ colima start
 
 The workbench detects your active runtime from the `~/.docker/run/docker.sock` symlink target — it doesn't matter which runtime is installed, only which is running.
 
+On Linux, sync links `~/.docker/run/docker.sock` to a rootless daemon's socket (`$XDG_RUNTIME_DIR/docker.sock`) when one exists, and otherwise to the system daemon's socket only if you can write it (you are in the `docker` group). A `DOCKER_HOST` already exported before the zsh config loads — rootless Docker's `~/.zshenv` line, `~/.env.local` — is kept, not replaced by the link. If you see `permission denied ... ~/.docker/run/docker.sock`, run `otto-workbench sync` and `exec zsh`.
+
 ## Shell changes not taking effect
 
 ZSH configuration is copied (not symlinked) to `~/.config/zsh/config.d/`. After pulling workbench updates:

@@ -81,16 +81,47 @@ step_docker_testcontainers() {
   install_symlink "$TESTCONTAINERS_SRC" "$TESTCONTAINERS_FILE"
 }
 
-# _detect_native_docker_sock VAR — sets VAR to the native Docker socket path, or empty string.
-# Checks /run/docker.sock first (systemd-managed), then /var/run/docker.sock (legacy path).
+# _detect_native_docker_sock VAR — sets VAR to the Docker socket this user can
+# reach, or empty string. A rootless daemon's socket ($XDG_RUNTIME_DIR/docker.sock)
+# comes first: a user who has one runs their own daemon on purpose. The system
+# daemon's socket counts only when writable — without the docker group it is
+# there but refuses every call, and pointing DOCKER_HOST at it turns a missing
+# daemon into "permission denied".
 _detect_native_docker_sock() {
   local -n __sock=$1
   __sock=""
-  if [[ -S /run/docker.sock ]]; then
-    __sock="/run/docker.sock"
-  elif [[ -S /var/run/docker.sock ]]; then
-    __sock="/var/run/docker.sock"
+  local rootless="${XDG_RUNTIME_DIR:-/run/user/$UID}/docker.sock"
+  if [[ -S "$rootless" ]]; then
+    __sock="$rootless"
+    return 0
   fi
+  local candidate
+  for candidate in "${DOCKER_SYSTEM_SOCKETS[@]}"; do
+    if [[ -S "$candidate" && -w "$candidate" ]]; then
+      __sock="$candidate"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# _remove_unusable_docker_link — removes the canonical symlink when it points at a
+# system daemon socket this user cannot write. Earlier syncs linked it without
+# checking access, and the zsh config exports DOCKER_HOST from it.
+# Only links to DOCKER_SYSTEM_SOCKETS are touched (a missing target also counts as
+# unwritable); a stale link to a vanished rootless socket is deliberately left alone.
+_remove_unusable_docker_link() {
+  local link="$DOCKER_RUN_DIR/docker.sock" target candidate
+  target=$(readlink "$link" 2>/dev/null || true)
+  [[ -n "$target" ]] || return 0
+  for candidate in "${DOCKER_SYSTEM_SOCKETS[@]}"; do
+    if [[ "$target" == "$candidate" && ! -w "$target" ]]; then
+      rm -f "$link"
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ removed $link → $target (not writable by $USER)${NC}" || true
+      return 0
+    fi
+  done
+  return 0
 }
 
 # _sync_docker_linux — detects native Docker socket and symlinks for path consistency.
@@ -103,7 +134,8 @@ _sync_docker_linux() {
     mkdir -p "$DOCKER_RUN_DIR"
     install_symlink "$native_sock" "$DOCKER_RUN_DIR/docker.sock"
   else
-    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ no Docker socket found — is Docker installed?${NC}" || true
+    _remove_unusable_docker_link
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ no usable Docker socket found — is Docker installed, and is $USER in the docker group?${NC}" || true
   fi
 
   sync_header "testcontainers → $TESTCONTAINERS_FILE"

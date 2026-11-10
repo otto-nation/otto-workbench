@@ -466,11 +466,8 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 - One reply per thread. If our position changed, revise the existing reply via
   `--reply` — a second comment leaves the reviewer holding two answers and no
   way to tell which one stands
-- Back every factual claim in a reply with a blob permalink pinned to a SHA
-  (`https://github.com/<owner>/<repo>/blob/<sha>/<path>#L<line>`), never a
-  branch-relative URL, which drifts as the branch moves. This applies hardest to
-  disagreement: if you cannot point at the line that settles it, say what you
-  checked and ask
+- Back every factual claim with a SHA-pinned blob permalink (`git-operations.md`
+  § Replying to Review Comments).
 - Never file a `deferred` thread on the tracking issue without the user
   choosing to — deferral is a decision, not a fallback for a failed fix pass.
   Pass their chosen ids to `--track`; `--track-all` is the one blanket form,

@@ -1,5 +1,6 @@
 """pr.permalinks: tree-scoped line anchors and evidence links."""
 
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -167,3 +168,39 @@ class TestEvidencePermalinks:
         )
         assert "| `a.py:9` |" in body
         assert "/blob/" not in body
+
+
+class TestRepoPath:
+    """A path cited the way a reviewer reads it still links to the repo's own."""
+
+    @pytest.fixture
+    def tree(self, worktree):
+        for args in (("config", "user.email", "t@example.com"), ("config", "user.name", "T"),
+                     ("config", "commit.gpgsign", "false")):
+            subprocess.run(["git", *args], cwd=worktree, check=True)
+        for rel in ("dev-tooling/tasks/tests/a.py", "dev-tooling/tasks/b.py", "x/dup.py", "y/dup.py"):
+            f = worktree / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("1\n")
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-qm", "c", "--no-verify"], cwd=worktree, check=True)
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, check=True,
+                             capture_output=True, text=True).stdout.strip()
+        return SimpleNamespace(path=worktree, sha=sha)
+
+    def test_a_subdirectory_relative_path_gets_its_repo_prefix(self, tree):
+        assert pr.permalinks.repo_path(
+            "tasks/tests/a.py", tree.sha, tree.path) == "dev-tooling/tasks/tests/a.py"
+
+    def test_a_real_path_is_kept(self, tree):
+        assert pr.permalinks.repo_path(
+            "dev-tooling/tasks/b.py", tree.sha, tree.path) == "dev-tooling/tasks/b.py"
+
+    def test_an_ambiguous_path_is_left_as_written(self, tree):
+        assert pr.permalinks.repo_path("dup.py", tree.sha, tree.path) == "dup.py"
+
+    def test_a_partial_segment_does_not_match(self, tree):
+        assert pr.permalinks.repo_path("asks/b.py", tree.sha, tree.path) == "asks/b.py"
+
+    def test_no_worktree_only_strips_the_dot_slash(self):
+        assert pr.permalinks.repo_path("./a/b.py", "abc", None) == "a/b.py"

@@ -2,12 +2,12 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { STEP_NAMES, STEP_HELP, formFacets } from "./_lib/batch_launch.js";
+import { STEP_NAMES, STEP_LABEL, STEP_HELP, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
   scrollBody, button, solidButton, pane, paneBar, chip as chipOf, filterGroup,
-  sectionLabel, text, type, statusText, dangerColor,
+  sectionHeading, text, type, statusText, dangerColor,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
 
@@ -48,7 +48,7 @@ function renderRunning({ launcher: L, workflows, run }) {
   const runs = workflows.activeRuns();
   if (!runs.length) return null;
   return v_flex().gap(SP.sm)
-    .child(sectionLabel("Running"))
+    .child(sectionHeading("Running"))
     .children(runs.map((entry) => {
       const on = entry.on;
       const id = entry.run.id;
@@ -104,7 +104,6 @@ function renderFormFilters(L, prs) {
       `chip-label:${name}`, name, labelOn.has(name.toLowerCase()),
       () => L.toggleLabelFilter(name)))));
   }
-  if (any) out.child(button("batch-filters-clear", "Clear filters", () => L.clearFilters()));
   return out;
 }
 
@@ -112,16 +111,16 @@ function renderPrs(L, prs, t) {
   const shown = L.shown(prs);
   if (!prs.length) {
     return v_flex().gap(SP.sm)
-      .child(sectionLabel("PRs"))
+      .child(text("title", "PRs"))
       .child(text("body", "No open PRs of yours match the filters", t.muted));
   }
   if (!shown.length) {
     return v_flex().gap(SP.sm)
-      .child(sectionLabel("PRs"))
+      .child(text("title", "PRs"))
       .child(text("body", "No PRs match these filters", t.muted));
   }
   return v_flex().gap(SP.sm)
-    .child(sectionLabel("PRs"))
+    .child(text("title", "PRs"))
     .children(groupPrs(shown).map((g) => {
       const keys = g.prs.filter((p) => p.cwd).map((p) => prKey(p.repoSlug, p.number));
       const allOn = keys.length > 0 && keys.every((k) => L.selected.has(k));
@@ -157,16 +156,20 @@ function renderForm({ launcher: L, prs }) {
     : null;
   const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
-    .child(sectionLabel("Start a batch"))
+    .child(sectionHeading("Start a batch"))
     .when(Boolean(filters), (e) => e.child(filters))
     .child(renderPrs(L, all, t))
     .child(v_flex().gap(SP.sm)
-      .child(sectionLabel("Steps"))
-      .children(STEP_NAMES.map((s) => checkLine(`step-${s}`, L.steps.has(s), s, STEP_HELP[s] ?? "", () => L.toggleStep(s)))))
+      .child(text("title", "Steps"))
+      .children(STEP_NAMES.map((s) => checkLine(
+        `step-${s}`, L.steps.has(s), STEP_LABEL[s] ?? s, STEP_HELP[s] ?? "", () => L.toggleStep(s)))))
     .child(v_flex().gap(SP.sm)
-      .child(sectionLabel("Options"))
+      .child(text("title", "Options"))
       .children(["rebase", "ci", "comments"].map((s) => checkLine(
         `ai-${s}`, L.withAi.has(s), `Use AI for ${s}`, "", () => L.toggleAi(s))))
+      .when(L.steps.has("rebase"), (e) => e.child(checkLine(
+        "rebase-behind", L.rebaseBehind, "Also rebase PRs that are only behind", "",
+        () => L.toggleRebaseBehind())))
       .child(checkLine("auto-publish", L.autoPublish, "Push clean fast-forwards", "", () => L.toggleAutoPublish())))
     .child(v_flex().gap(SP.sm)
       .when(Boolean(reason), (e) => e.child(text("body", reason, t.muted)))
@@ -192,11 +195,11 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
     .child(paneBar()
       .child(h_flex().gap(SP.sm).items_center()
         .child(button("batch-back", "Back", onBack))
-        .child(text("title", "Batch"))))
+        .child(text("heading", "Batch"))))
     .child(scrollBody().id("batch-body").px(SP.lg).py(SP.lg).gap(SP.xl)
       .when(Boolean(running), (e) => e.child(running))
       .child(renderForm({ launcher, prs }))
       .child(v_flex().gap(SP.sm)
-        .child(sectionLabel("Recent runs"))
+        .child(sectionHeading("Recent runs"))
         .child(renderRunPanel(workflows.barState(), expanded))));
 }

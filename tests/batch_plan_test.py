@@ -12,7 +12,7 @@ import batch.plan  # noqa: E402
 import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
 import pr.target  # noqa: E402
-from batch.model import Step  # noqa: E402
+from batch.model import RebaseWhen, Step  # noqa: E402
 from review.types import ReviewMeta  # noqa: E402
 from review_record_support import record, store_record  # noqa: E402
 from pr.comments_fix import CloseoutDebt, FixSummary  # noqa: E402
@@ -22,13 +22,23 @@ from pr.comments_fix import CloseoutDebt, FixSummary  # noqa: E402
     ("BEHIND", True), ("DIRTY", True), ("CLEAN", False), ("BLOCKED", False),
     ("UNSTABLE", False), ("DRAFT", False), ("HAS_HOOKS", False), ("UNKNOWN", True),
 ])
-def test_rebase_need_follows_merge_state(state, needed):
+def test_rebase_need_behind_follows_merge_state(state, needed):
+    n = batch.plan.rebase_need(state, RebaseWhen.BEHIND)
+    assert n.needed is needed and n.reason
+
+
+@pytest.mark.parametrize("state,needed", [
+    ("BEHIND", False), ("DIRTY", True), ("CLEAN", False), ("BLOCKED", False),
+    ("UNSTABLE", False), ("DRAFT", False), ("HAS_HOOKS", False), ("UNKNOWN", False),
+])
+def test_rebase_need_by_default_takes_only_a_conflicting_merge_state(state, needed):
     n = batch.plan.rebase_need(state)
     assert n.needed is needed and n.reason
 
 
-def test_rebase_need_unknown_leaves_it_to_the_rebase_step():
-    assert "the rebase step decides" in batch.plan.rebase_need("UNKNOWN").reason
+def test_rebase_need_unknown_leaves_it_to_the_rebase_step_only_under_behind():
+    assert "the rebase step decides" in batch.plan.rebase_need("UNKNOWN", RebaseWhen.BEHIND).reason
+    assert "not rebased" in batch.plan.rebase_need("UNKNOWN").reason
 
 
 def _threads_node(*threads):
@@ -86,7 +96,8 @@ def test_rows_from_search_maps_nodes_and_drops_unknown_repos(monkeypatch):
     assert [r.key for r in rows] == ["o/a#7"]
     r = rows[0]
     assert r.repo_dir == "/repos/a" and r.is_draft
-    assert all(r.needs[s].needed for s in (Step.REBASE, Step.COMMENTS, Step.REVIEW))
+    assert all(r.needs[s].needed for s in (Step.COMMENTS, Step.REVIEW))
+    assert r.rebase_behind.needed and not r.needs[Step.REBASE].needed
 
 
 def test_build_plan_raises_on_graphql_failure(monkeypatch):

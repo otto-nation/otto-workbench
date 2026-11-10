@@ -947,6 +947,7 @@ Takes no flags.
 | `--with-review` | Add the review step (today's argv). |
 | `--pool` `<pool>` | Concurrency ceiling. |
 | `--auto-publish` `<ff>` | Push a clean fast-forward (`pr push --expect`) when an item closes with no findings; never a force push, closeout post or issue filing. |
+| `--rebase` `<conflicts\|behind>` | Which PRs the rebase step takes: only those that conflict with their base (default), or every PR behind it. |
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume honors it. |

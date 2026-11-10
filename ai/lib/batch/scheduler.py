@@ -27,8 +27,8 @@ import git.client
 import pr.ci_need
 import rebase.inspect
 from batch.model import (STEP_ORDER, CancelState, DecisionKind, DirtyReason,
-                         EvidenceKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
-                         StepStatus)
+                         EvidenceKind, Item, ItemStatus, RebaseWhen, Run, RunStatus, Step,
+                         StepRecord, StepStatus)
 from batch.plan import PlanRow
 from batch.requests import Cancel, Outcome, Release
 from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure_worktree,
@@ -84,13 +84,14 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
             no_verify: bool = False, focus: Sequence[str] = (),
             with_ai: list[Step] | None = None,
-            auto_publish_ff: bool = False) -> Run:
+            auto_publish_ff: bool = False,
+            rebase_when: RebaseWhen = RebaseWhen.CONFLICTS) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
     for r in rows:
         chosen = selected.get(r.key, []) if selected is not None else \
-            [s for s in steps if r.needs.get(s) and r.needs[s].needed]
+            [s for s in steps if (n := r.need_for(s, rebase_when)) and n.needed]
         # A row whose only work is the closeout pr recorded as owed is kept with
         # every step skipped: _admit closes it straight away and records
         # closeout_owed. Only when comments is a step of this run, and never past
@@ -118,7 +119,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                steps=list(steps), pool=pool, auto_publish=[], items=items,
                ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []),
                no_verify=no_verify, focus=list(focus), with_ai=with_ai,
-               schema_version=2, auto_publish_ff=auto_publish_ff)
+               schema_version=2, auto_publish_ff=auto_publish_ff,
+               rebase_when=rebase_when)
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
@@ -486,7 +488,7 @@ class Scheduler:
                        status=item.status.value)
             return None
         self._refresh_remote(item, fresh.head_sha)
-        need = fresh.needs.get(rec.step)
+        need = fresh.need_for(rec.step, self.run.rebase_when)
         forced = rec.explicit or (rec.step is Step.REVIEW and item.head_moved)
         if need is not None and not need.needed and not forced:
             rec.status = StepStatus.SKIPPED

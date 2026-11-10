@@ -61,7 +61,9 @@ with AI:
 
 `--with-ai=rebase,ci,comments` restores today's AI argv. `--with-review` adds
 review. `--prs` limits keys; `--select KEY=STEPS` runs exactly those steps for
-one PR. `--auto-publish ff` (fast-forward only). `--no-verify` skips
+one PR. `--rebase behind` also rebases PRs that are only behind their base;
+by default the rebase step takes only PRs that conflict with it.
+`--auto-publish ff` (fast-forward only). `--no-verify` skips
 the pre-push hook on publishes the batch makes; persist it only when the user
 has already read a hook failure.
 

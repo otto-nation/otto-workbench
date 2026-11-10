@@ -7662,6 +7662,7 @@ GitHub's `mergeStateStatus` answers a different question — `UNKNOWN` while it
 computes, `BLOCKED` outranking `BEHIND` — so a branch two commits behind its base
 can read as up to date. This counts the commits the base has that the head does
 not, and says "cannot tell" rather than "current" when either ref is missing.
+`conflict_need` narrows that to a branch whose merge with the base conflicts.
 
 ### rebase/pr_snapshot.py
 

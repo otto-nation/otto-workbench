@@ -102,6 +102,15 @@ export function sectionLabel(label, count = null) {
     .when(count != null, (e) => e.child(text("meta", String(count), t.muted)));
 }
 
+// A page's section heading: the title role in ink, where sectionLabel is a muted 11px label.
+// Trialled on the Batch page, where sections are the page's structure rather than labels.
+export function sectionHeading(label, count = null) {
+  const t = theme();
+  return h_flex().flex_none().gap(SP.sm).items_center().pb(SP.xs).border_b_1().border_color(t.border)
+    .child(text("title", label))
+    .when(count != null, (e) => e.child(text("meta", String(count), t.muted)));
+}
+
 // A bordered scrolling box for long text inside a pane: review bodies, run output.
 export function inset() {
   const t = theme();

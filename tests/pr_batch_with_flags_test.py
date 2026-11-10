@@ -128,3 +128,17 @@ def test_resolve_next_and_status_decision_are_gone(capsys):
     assert "invalid choice" in err or "invalid" in err.lower() or "unrecognized" in err.lower()
     assert _main(["batch", "status", "r1", "--decision", "d1"]) == 2
     assert _main(["batch", "next", "r1"]) == 2
+
+
+def test_rebase_defaults_to_conflicts_and_behind_is_persisted_on_the_run(monkeypatch):
+    _plan_all(monkeypatch)
+    seen = []
+
+    def fake_run(self):
+        seen.append(self.run.rebase_when)
+        return stops_at(batch.model.RunStatus.DONE)(self)
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert _main(["batch", "run", "--checkout", "/r", "--rebase", "behind"]) == 0
+    assert seen == [batch.model.RebaseWhen.CONFLICTS, batch.model.RebaseWhen.BEHIND]

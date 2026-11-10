@@ -80,6 +80,32 @@ def test_unselected_step_is_still_skipped_when_replan_says_not_needed():
     assert h.spawned == []
 
 
+def test_new_run_judges_the_rebase_step_by_the_runs_rebase_when():
+    only_behind = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NEED,
+                   batch.model.Step.REVIEW: NO}
+    rows = [row(1, only_behind, rebase_behind=NEED)]
+    steps = list(batch.model.STEP_ORDER)
+    default = batch.scheduler.new_run(rows, steps=steps, selected=None, pool=1)
+    behind = batch.scheduler.new_run(rows, steps=steps, selected=None, pool=1,
+                                     rebase_when=batch.model.RebaseWhen.BEHIND)
+    assert default.rebase_when is batch.model.RebaseWhen.CONFLICTS
+    assert default.items[0].step(batch.model.Step.REBASE).status is batch.model.StepStatus.SKIPPED
+    assert behind.items[0].step(batch.model.Step.REBASE).status is batch.model.StepStatus.PENDING
+
+
+@pytest.mark.parametrize("when,spawned", [
+    (batch.model.RebaseWhen.CONFLICTS, []),
+    (batch.model.RebaseWhen.BEHIND, ["rebase"]),
+])
+def test_confirm_judges_the_fresh_rebase_need_by_the_runs_rebase_when(when, spawned):
+    planned = {batch.model.Step.REBASE: NEED}
+    fresh = {batch.model.Step.REBASE: NO}
+    h = Harness([row(1, planned, rebase_behind=NEED)], rebase_when=when,
+                replan=lambda r: row(1, fresh, rebase_behind=NEED))
+    h.sched.run_until_blocked()
+    assert [a[1] for a in h.spawned] == spawned
+
+
 def test_explicit_selection_still_skips_a_closed_pr():
     h = Harness([row(1)], selected={"o/r#1": [batch.model.Step.REVIEW]}, replan=lambda r: None)
     h.sched.run_until_blocked()

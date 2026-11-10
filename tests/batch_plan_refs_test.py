@@ -16,7 +16,7 @@ import batch.admission  # noqa: E402
 import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-from batch.model import STEP_ORDER, RunStatus, Step  # noqa: E402
+from batch.model import STEP_ORDER, RebaseWhen, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 # `_close_open_sessions` is an autouse fixture; imported only so pytest registers it.
 from batch_scheduler_support import _close_open_sessions, attach_scheduler  # noqa: F401,E402
@@ -56,14 +56,14 @@ def test_a_blocked_pr_that_is_behind_still_needs_a_rebase(tmp_path, monkeypatch)
     ns = batch.plan.new_namespace()
     _fetch(pair.work, ns)
     row = batch.plan._row(_node(), str(pair.work), "o/a", "", ns)
-    assert row.needs[Step.REBASE] == StepNeed(True, "1 behind main")
+    assert row.rebase_behind == StepNeed(True, "1 behind main")
 
 
 def test_unknown_merge_state_without_refs_falls_back_to_needed(monkeypatch):
     _quiet(monkeypatch)
     row = batch.plan._row(_node(merge_state="UNKNOWN"), "/repos/a", "o/a")
-    assert row.needs[Step.REBASE].needed is True
-    assert "the rebase step decides" in row.needs[Step.REBASE].reason
+    assert row.rebase_behind.needed is True
+    assert "the rebase step decides" in row.rebase_behind.reason
 
 
 def test_a_repo_whose_fetch_fails_plans_from_merge_state(monkeypatch):
@@ -78,7 +78,7 @@ def test_a_repo_whose_fetch_fails_plans_from_merge_state(monkeypatch):
     assert plan.ref_dirs == []
     [row] = plan.rows
     assert row.ref_namespace == ""
-    assert row.needs[Step.REBASE] == StepNeed(True, "behind its base")
+    assert row.rebase_behind == StepNeed(True, "behind its base")
 
 
 def test_a_stacked_pr_is_counted_against_its_base_branch(tmp_path, monkeypatch):
@@ -90,7 +90,7 @@ def test_a_stacked_pr_is_counted_against_its_base_branch(tmp_path, monkeypatch):
     ns = batch.plan.new_namespace()
     _fetch(pair.work, ns, ("feat", "feat2", "main"))
     row = batch.plan._row(_node(branch="feat2", base="feat"), str(pair.work), "o/a", "", ns)
-    assert row.needs[Step.REBASE] == StepNeed(True, "1 behind feat")
+    assert row.rebase_behind == StepNeed(True, "1 behind feat")
 
 
 def test_replan_reads_need_from_the_rows_namespace(monkeypatch):
@@ -100,7 +100,7 @@ def test_replan_reads_need_from_the_rows_namespace(monkeypatch):
         "repository": {"pullRequest": dict(_node(), state="OPEN")}})
     monkeypatch.setattr(batch.plan.rebase.inspect, "ref_exists", lambda *a, **k: False)
 
-    def fake(repo_dir, head, base, merge_state, *, base_label=""):
+    def fake(repo_dir, head, base, merge_state, *, base_label="", when=None):
         seen["head"] = head
         seen["base"] = base
         return StepNeed(False, "x")
@@ -330,9 +330,9 @@ def test_a_read_plan_does_not_write_refs_and_still_counts_behind(
     assert git_out(pair.work, "for-each-ref") == before
     assert plan.ref_namespace == "" and plan.ref_dirs == []
     by_pr = {r.pr: r for r in plan.rows}
-    assert by_pr[7].needs[Step.REBASE] == StepNeed(True, "1 behind main")
+    assert by_pr[7].rebase_behind == StepNeed(True, "1 behind main")
     assert by_pr[7].ref_namespace == ""
-    assert by_pr[8].needs[Step.REBASE] == StepNeed(True, "1 behind feat")
+    assert by_pr[8].rebase_behind == StepNeed(True, "1 behind feat")
 
 
 def test_a_read_plan_succeeds_while_packed_refs_is_locked(tmp_path, monkeypatch):
@@ -345,7 +345,7 @@ def test_a_read_plan_succeeds_while_packed_refs_is_locked(tmp_path, monkeypatch)
         lock = pair.work / lock
     lock.write_text("")
     plan = batch.plan.build_plan([str(pair.work)])
-    assert plan.rows[0].needs[Step.REBASE] == StepNeed(True, "1 behind main")
+    assert plan.rows[0].rebase_behind == StepNeed(True, "1 behind main")
 
 
 def test_a_deleted_origin_branch_does_not_lose_the_other_rows_need(
@@ -364,7 +364,7 @@ def test_a_deleted_origin_branch_does_not_lose_the_other_rows_need(
         ]}})
     plan = batch.plan.build_plan([str(pair.work)])
     by_pr = {r.pr: r for r in plan.rows}
-    assert by_pr[8].needs[Step.REBASE] == StepNeed(True, "1 behind main")
+    assert by_pr[8].rebase_behind == StepNeed(True, "1 behind main")
 
 
 def test_an_impostor_remote_ref_does_not_change_the_read_plans_need(
@@ -375,7 +375,7 @@ def test_an_impostor_remote_ref_does_not_change_the_read_plans_need(
     git_in(pair.origin, "update-ref", "refs/heads/x/refs/heads/main", feat)
     _plan_against(monkeypatch)
     plan = batch.plan.build_plan([str(pair.work)])
-    assert plan.rows[0].needs[Step.REBASE] == StepNeed(True, "1 behind main")
+    assert plan.rows[0].rebase_behind == StepNeed(True, "1 behind main")
 
 
 def test_a_read_plan_prefers_the_local_branch_over_the_remote_head(
@@ -388,7 +388,7 @@ def test_a_read_plan_prefers_the_local_branch_over_the_remote_head(
     monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {
         "viewer": {"login": "me"}, "search": {"nodes": [_node(merge_state="BEHIND")]}})
     plan = batch.plan.build_plan([str(pair.work)])
-    assert plan.rows[0].needs[Step.REBASE].needed is False
+    assert plan.rows[0].rebase_behind.needed is False
 
 
 def _fetch_argvs(monkeypatch):
@@ -442,10 +442,10 @@ def test_build_run_plan_fetches_into_a_namespace_replan_still_reads(
     refs = git_out(pair.work, "for-each-ref", "--format=%(refname)", ns).split()
     assert f"{ns}/feat" in refs and f"{ns}/main" in refs
     assert plan.rows[0].ref_namespace == ns
-    assert plan.rows[0].needs[Step.REBASE] == StepNeed(True, "1 behind main")
+    assert plan.rows[0].rebase_behind == StepNeed(True, "1 behind main")
     fresh = batch.plan.replan_row(plan.rows[0])
     assert fresh is not None and fresh.ref_namespace == ns
-    assert fresh.needs[Step.REBASE] == StepNeed(True, "1 behind main")
+    assert fresh.rebase_behind == StepNeed(True, "1 behind main")
     batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
 
 
@@ -483,7 +483,7 @@ def test_read_path_skips_ref_exists_when_base_sha_is_missing(monkeypatch):
     monkeypatch.setattr(batch.plan.rebase.inspect, "ref_exists",
                         lambda *a, **k: called.append(1) or False)
     need = batch.plan._row_rebase_need(
-        "/r", "feat", "main", "BEHIND", "", {"feat": "abc"})
+        "/r", "feat", "main", "BEHIND", "", {"feat": "abc"}, RebaseWhen.BEHIND)
     assert called == []
     assert need == StepNeed(True, "behind its base")
 
@@ -497,3 +497,25 @@ def test_read_path_calls_ref_exists_when_base_sha_exists(monkeypatch):
     batch.plan._row_rebase_need(
         "/r", "feat", "main", "BEHIND", "", {"feat": "abc", "main": "def"})
     assert called == [1]
+
+
+def test_by_default_a_pr_only_behind_is_not_rebased_and_a_conflicting_one_is(
+        tmp_path, monkeypatch):
+    _quiet(monkeypatch)
+    pair = remote_and_clone(tmp_path)
+    git_in(pair.seed, "checkout", "-q", "-b", "clash", "main")
+    (pair.seed / "base.txt").write_text("clash\n")
+    commit_all(pair.seed, "clash edits base")
+    git_in(pair.seed, "push", "-q", "origin", "clash")
+    git_in(pair.seed, "checkout", "-q", "main")
+    (pair.seed / "base.txt").write_text("main\n")
+    commit_all(pair.seed, "main edits base")
+    git_in(pair.seed, "push", "-q", "origin", "main")
+    ns = batch.plan.new_namespace()
+    _fetch(pair.work, ns, ("feat", "clash", "main"))
+    behind = batch.plan._row(_node(), str(pair.work), "o/a", "", ns)
+    clash = batch.plan._row(_node(branch="clash", number=8), str(pair.work), "o/a", "", ns)
+    assert behind.needs[Step.REBASE] == StepNeed(False, "1 behind main, no conflicts")
+    assert behind.need_for(Step.REBASE, RebaseWhen.BEHIND) == StepNeed(True, "1 behind main")
+    assert clash.needs[Step.REBASE] == StepNeed(True, "conflicts with main")
+    assert clash.need_for(Step.REBASE, RebaseWhen.BEHIND).needed is True

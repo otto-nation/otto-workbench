@@ -113,14 +113,15 @@ class Harness:
                  contains=None, dirty=None, rebasing=None, unpublished=None,
                  descends=None, commits=None, verbose=False,
                  machine=None, hold_tree=None, branch=None, focus=(),
-                 with_ai=None):
+                 with_ai=None, rebase_when=batch.model.RebaseWhen.CONFLICTS):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
         self.published, self.publish_code = [], 0
         run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER),
                                       selected=selected, pool=pool,
-                                      focus=focus, with_ai=with_ai)
+                                      focus=focus, with_ai=with_ai,
+                                      rebase_when=rebase_when)
         self.heads = heads or {}
         publish = runner or self._publish
         tree_fn = tree or ff_tree

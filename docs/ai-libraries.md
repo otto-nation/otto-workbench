@@ -4870,6 +4870,9 @@ from the baseline also fails: the gate walks the floors, not the current file.
 does not yet carry, and for a new backend with no file; the validator then
 holds that floor. `floors.json` is the high-water across committed history of
 each lineage; `seed_floors` folds historical baselines and never drops `best`.
+The 0.60 cache-read floor is `cache_read_fails_floor`: it binds only where the
+recorded floor is already at or above 0.60, and scoring imports that predicate
+rather than applying 0.60 to every entry.
 
 ### eval/rules_canary.py
 
@@ -4941,14 +4944,17 @@ that were recorded on the same backend, and exits `2` on a regression. A run
 whose backend has no file yet is a new baseline, not a failure. The gate is
 deliberately narrow, because a gate that flaps gets disabled: token growth,
 quality drops and false positives fail past the thresholds declared below, the
-cache-read ratio fails below its floor, and cost and duration are reported but
-never gated.
+cache-read ratio fails below 0.60 when the recorded floor is already at or
+above 0.60, and cost and duration are reported but never gated.
 
 Tokens are gated and cost is not because tokens are what a change controls; the
 dollar figure also moves with model prices, and duration moves with machine
-load. The cache-read floor is an absolute minimum rather than a delta: a
-prompt-prefix change that silently disables caching shows up as the ratio
-collapsing, and the value it collapsed from is not the interesting number.
+load. The cache-read floor is an absolute minimum rather than a delta, and it
+binds only where the recorded floor is already at or above 0.60
+(`eval.floors.cache_read_fails_floor`): a prompt-prefix change that silently
+disables caching shows up as the ratio collapsing, and the value it collapsed
+from is not the interesting number. Entries recorded below 0.60 (Pi baselines)
+are not held to 0.60, so a compare against them is not a permanent exit 2.
 
 A baseline written before a metric existed leaves it ungated rather than
 failing, so an older baseline still loads. The comparison table marks every

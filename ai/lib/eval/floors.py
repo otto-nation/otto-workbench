@@ -14,6 +14,9 @@ from the baseline also fails: the gate walks the floors, not the current file.
 does not yet carry, and for a new backend with no file; the validator then
 holds that floor. `floors.json` is the high-water across committed history of
 each lineage; `seed_floors` folds historical baselines and never drops `best`.
+The 0.60 cache-read floor is `cache_read_fails_floor`: it binds only where the
+recorded floor is already at or above 0.60, and scoring imports that predicate
+rather than applying 0.60 to every entry.
 """
 
 # doc-group: eval
@@ -28,13 +31,23 @@ from typing import Container, Mapping
 
 from eval.scoring import (
     AGGREGATE_TOLERANCE,
-    CACHE_READ_FLOOR,
     ENTRY_FALSE_POSITIVE_TOLERANCE,
     ENTRY_SEVERITY_TOLERANCE,
     MIN_RECALL_TOLERANCE_RUNS,
     TOKEN_REGRESSION_RATIO,
     entry_recall_tolerance,
 )
+
+# The cache-read floor is an absolute minimum, not a high-water ratchet, and it
+# binds only where the recorded floor is already at or above this value. Pi
+# baselines sit below it; applying 0.60 to every entry fails every Pi compare.
+CACHE_READ_FLOOR = 0.60
+
+
+def cache_read_fails_floor(recorded: float, current: float) -> bool:
+    """The 0.60 absolute floor binds only where the recorded floor is >= 0.60."""
+    return recorded >= CACHE_READ_FLOOR and current < CACHE_READ_FLOOR
+
 
 FLOORS_FILENAME = "floors.json"
 FLOORS_SCHEMA_VERSION = 1
@@ -391,7 +404,7 @@ def _tolerance_for(metric: str, rec: FloorRecord, runs_per_entry: int) -> float:
 
 def _breached(metric: str, floor: float, current: float, tolerance: float) -> bool:
     if metric == "cache_read_ratio_mean":
-        return floor >= CACHE_READ_FLOOR and current < CACHE_READ_FLOOR
+        return cache_read_fails_floor(floor, current)
     if metric in LOWER_IS_BETTER:
         return current > floor + tolerance
     return current < floor - tolerance

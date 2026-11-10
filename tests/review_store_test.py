@@ -62,7 +62,9 @@ class TestTheStore:
         review_file = _stored(tmp_path)
         update_review(review_file, lambda r: replace(r, verdict="changed"), status=ReviewStatus.ERROR)
         text = review_file.read_text()
-        assert "changed" in text and "<!-- status: error -->" in text
+        assert "changed" not in text
+        assert "<!-- status: error -->" in text
+        assert "**No verdict.** No part of this review ran." in text
 
     def test_updating_a_stale_directory_does_nothing(self, tmp_path):
         assert update_review(tmp_path / "review.md") is None

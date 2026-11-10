@@ -28,7 +28,7 @@ import core.log
 from gh.client import LineResolutionError
 from pr.state import PostedAs, PostEvent, PostTracking
 from gh.pr_data import PRData
-from review.types import Finding
+from review.types import Finding, ReviewMeta
 from core.serde import to_dict as serde_to_dict
 
 
@@ -224,7 +224,7 @@ def _reclassify_and_retry(
     commit_id: str, chunk_size: int, severity_filter: set[str],
     submit: bool,
     pr_data: PRData | None = None,
-    *, record: ReviewRecord, models: str, event: ReviewEvent = ReviewEvent.COMMENT,
+    *, record: ReviewRecord, meta: ReviewMeta, event: ReviewEvent = ReviewEvent.COMMENT,
 ) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
     """Re-fetch diff and reclassify findings after a LineResolutionError.
 
@@ -252,7 +252,7 @@ def _reclassify_and_retry(
         new_inline_comments = [review.format.format_inline_comment(f) for f in new_inline]
         new_body_text = review.render.comment_body(
             record, new_body, has_inline=True, severity_filter=severity_filter,
-            models=models,
+            meta=meta,
         )
         try:
             results = _post_chunked_review(
@@ -268,7 +268,7 @@ def _reclassify_and_retry(
     _, new_body = review.format.renumber_for_posting([], list(inline) + list(body_findings))
     new_body_text = review.render.comment_body(
         record, new_body, has_inline=False, severity_filter=severity_filter,
-        models=models,
+        meta=meta,
     )
     results = _post_chunked_review(
         args.repo, args.pr, commit_id,
@@ -348,7 +348,7 @@ def _post_and_track(
     chunk_size: int, severity_filter: set[str],
     pr_data: PRData | None = None,
     review_sha: str = "", sha_drifted: bool = False,
-    *, record: ReviewRecord, models: str,
+    *, record: ReviewRecord, meta: ReviewMeta,
 ):
     verdict = record.verdict.strip()
     submit = getattr(args, "submit", False)
@@ -393,7 +393,7 @@ def _post_and_track(
         inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
             args, inline, body_findings,
             commit_id, chunk_size, severity_filter, submit, pr_data,
-            record=record, models=models, event=event,
+            record=record, meta=meta, event=event,
         )
 
     if not results:

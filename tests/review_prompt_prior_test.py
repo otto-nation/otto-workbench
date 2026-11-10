@@ -240,10 +240,13 @@ class TestPriorTextOmitsBookkeeping:
         result = _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
         assert "**[M1]**" in result
         assert "## Must fix" in result
-        assert "Request changes." in result
+        assert "## Verdict" not in result
+        assert "Request changes." not in result
 
     def test_section_after_excluded_one_resumes(self):
-        assert "Request changes." in _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
+        result = _prior_text(_stored(rec=PRIOR_WITH_INTERNAL), None)
+        assert "**[M1]**" in result
+        assert "## Verdict" not in result
 
     def test_findings_survive_render(self):
         assert "**[M1]**" in _prior_text(_stored(finding("M1", "bug")), None)

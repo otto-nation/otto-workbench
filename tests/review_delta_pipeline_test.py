@@ -35,6 +35,8 @@ from core.phases import Effort, Mode
 from gh.types import PRContext, PRMetadata
 from pr.domains import ReviewVerdict
 from review.document import ReviewDocument
+from review.store import read_review
+from review.verdict import resolve_review_verdict
 import review.claims
 from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
 from review_record_support import finding, record
@@ -378,7 +380,8 @@ class TestTheEmptyDeltaFastPath:
         run_phases(job)
 
         written = Path(job.review_file).read_text()
-        assert written.count("## Verdict") == 1
+        assert "## Verdict" not in written
+        assert written.count("**Verdict:") == 1
         assert written.count("## Summary") == 1
 
     def test_a_stale_approve_does_not_survive_its_findings(
@@ -395,7 +398,8 @@ class TestTheEmptyDeltaFastPath:
         run_phases(job)
 
         written = Path(job.review_file).read_text()
-        assert ReviewDocument.read(job.review_file).verdict is ReviewVerdict.CHANGES_REQUESTED
+        stored = read_review(Path(job.review_file))
+        assert resolve_review_verdict(stored.record, stored.meta) is ReviewVerdict.CHANGES_REQUESTED
         assert "the prior run's call" not in written
 
     def test_the_prior_runs_own_framing_is_not_carried_in(

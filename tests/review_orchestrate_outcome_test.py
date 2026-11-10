@@ -205,7 +205,8 @@ class TestBuildMechanicalFallback:
         result = ro._build_mechanical_fallback(
             self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
-        assert "No verdict — part of this review did not run." in result.verdict
+        from review.verdict import PARTIAL_VERDICT
+        assert result.verdict == PARTIAL_VERDICT
         assert "Approve" not in result.verdict
 
     def test_a_run_where_every_group_reported_counts_plainly(self, ro, tmp_path):
@@ -309,7 +310,7 @@ class TestWriteCleanReview:
         content = Path(job.review_file).read_text()
         assert "# Review:" in content
         assert "No findings across 3 files in 2 groups" in content
-        assert "Approve — clean review." in content
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in content
 
     def test_self_review_mode(self, ro, tmp_path):
         job = self._job(ro, tmp_path, ro.Mode.SELF)

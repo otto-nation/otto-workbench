@@ -3,6 +3,7 @@ lines, the permalinks `review.format` resolves, and what the body leaves out
 for a finding the fix pass declined.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,15 +16,21 @@ if str(LIB_DIR) not in sys.path:
 import cli.review_post  # noqa: E402,F401
 import review.dedup  # noqa: E402
 import review.render  # noqa: E402
-
+from core.phases import Mode  # noqa: E402
+from pr.domains import ReviewStatus, ReviewVerdict  # noqa: E402
 from review.record import ProseSection, Question, VerifiedNote  # noqa: E402
+from review.store import read_review  # noqa: E402
+from review.types import ReviewMeta  # noqa: E402
+from review.verdict import resolve_review_verdict  # noqa: E402
 from review_focus_support import user_area  # noqa: E402
-from review_record_support import FIXTURES, fixture_meta, fixture_record, record  # noqa: E402
+from review_record_support import (  # noqa: E402
+    FIXTURES, fixture_meta, fixture_record, finding, record, store_record,
+)
 
 
 def _comment(findings, has_inline, severity_filter, **fields):
     return review.render.comment_body(
-        record(**fields), findings, has_inline=has_inline,
+        record(**fields), findings, meta=ReviewMeta(), has_inline=has_inline,
         severity_filter=severity_filter,
     )
 
@@ -52,7 +59,9 @@ class TestCommentBody:
         assert "### Nesting depth" in result
 
     def test_no_findings_and_no_sections_is_empty(self):
-        assert _comment([], False, {"M"}) == ""
+        result = _comment([], False, {"M"})
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in result
+        assert "Review findings" not in result
 
     def test_body_findings_listed_with_path_refs(self, rp):
         f = rp.Finding(
@@ -66,7 +75,8 @@ class TestCommentBody:
 
     def test_no_body_findings_single_line(self):
         text = _comment([], True, {"M", "S"})
-        assert len(text.strip().split("\n")) == 1
+        assert "Have some comments" in text
+        assert "Review findings" not in text
 
     def test_pathless_finding_omits_backticks(self, rp):
         f = rp.Finding(
@@ -110,76 +120,89 @@ class TestCommentBody:
         assert "N1" in result
         assert "N2" in result
 
-    def test_summary_and_verdict_prepended(self):
-        result = _comment(
-            [], True, {"M"}, summary="Clean refactor.", verdict="Approve.",
+    def test_the_verdict_line_follows_the_summary(self):
+        rec = record(
+            finding("M1", "bug"), summary="looked at locking.",
+            focus=(user_area("Locking"),),
         )
+        result = review.render.comment_body(
+            rec, [], meta=ReviewMeta(), has_inline=True, severity_filter={"M"},
+        )
+        line = "**Verdict: Request changes.** 1 must-fix open."
         assert result.startswith("## Summary")
-        assert "Clean refactor." in result
-        assert "### Verdict" in result
-        assert "Approve." in result
-        assert "---" in result
-        assert result.index("## Summary") < result.index("---")
-        assert result.index("---") < result.index("Have some comments")
+        assert "looked at locking." in result and line in result
+        assert result.index("looked at locking.") < result.index(line)
+        assert result.index(line) < result.index("### Focus")
+        assert result.index(line) < result.index("---")
+        assert "### Verdict" not in result
 
-    def test_verdict_action_prefix_stripped(self):
-        result = _comment(
-            [], True, {"M"}, summary="Summary text.",
-            verdict="Request changes — M1 and M2 are blockers.",
+    def test_the_comment_states_the_derived_verdict_not_the_agent_s(self, tmp_path):
+        path = store_record(
+            tmp_path / "review.md",
+            record(
+                finding("S1", "lint config disagrees"),
+                finding("N1", "test gap"),
+                finding("I1", "naming"),
+                summary="Adds svc-lending.",
+            ),
+            ReviewMeta(mode=Mode.PR, status=ReviewStatus.COMPLETED),
         )
-        assert "### Verdict" in result
-        assert "M1 and M2 are blockers." in result
-        assert "Request changes" not in result
+        data = json.loads((tmp_path / "review.json").read_text())
+        data["verdict"] = "Approve. Every remaining finding is minor."
+        (tmp_path / "review.json").write_text(json.dumps(data))
+        stored = read_review(path)
+        body = review.render.comment_body(
+            stored.record, [], meta=stored.meta, has_inline=True,
+            severity_filter={"M", "S"},
+        )
+        line = "**Verdict: Needs discussion.** 1 should-fix open."
+        assert line in body and "Approve" not in body and "### Verdict" not in body
+        rendered = path.read_text()
+        assert line in rendered and "## Verdict" not in rendered
+        assert resolve_review_verdict(stored.record, stored.meta) is ReviewVerdict.NEEDS_DISCUSSION
 
-    def test_verdict_approve_prefix_stripped(self):
-        result = _comment(
-            [], True, {"M"}, summary="Summary text.",
-            verdict="Approve — clean code.",
+    def test_a_self_review_comment_states_no_verdict(self):
+        result = review.render.comment_body(
+            record(finding("M1", "bug"), summary="s"),
+            [], meta=ReviewMeta(mode=Mode.SELF), has_inline=False,
+            severity_filter={"M"},
         )
-        assert "### Verdict" in result
-        assert "clean code." in result
+        assert "verdict" not in result.lower()
+
+    def test_a_partial_run_with_blockers_states_them_as_incomplete(self):
+        result = review.render.comment_body(
+            record(finding("M1", "bug"), summary="s"),
+            [], meta=ReviewMeta(status=ReviewStatus.PARTIAL), has_inline=False,
+            severity_filter={"M"},
+        )
+        assert "**Verdict: Request changes.** 1 must-fix open. Review incomplete:" in result
         assert "Approve" not in result
 
-    def test_verdict_action_prefix_stripped_plain_hyphen(self):
-        result = _comment(
-            [], True, {"M"}, summary="Summary text.",
-            verdict="Needs discussion - looks good.",
+    def test_a_partial_run_with_nothing_blocking_states_no_verdict(self):
+        result = review.render.comment_body(
+            record(finding("N1", "nit"), summary="s"),
+            [], meta=ReviewMeta(status=ReviewStatus.PARTIAL), has_inline=False,
+            severity_filter={"N"},
         )
-        assert "### Verdict" in result
-        assert "looks good." in result
-        assert "Needs discussion" not in result
+        assert "**No verdict.** Review incomplete:" in result
+        assert "Approve" not in result
 
-    def test_verdict_bold_action_prefix_stripped(self):
-        result = _comment(
-            [], True, {"M"}, summary="Summary text.",
-            verdict="**Request changes** — M1 and M2 are blockers.",
+    def test_an_error_run_states_no_verdict(self):
+        result = review.render.comment_body(
+            record(summary="s"), [], meta=ReviewMeta(status=ReviewStatus.ERROR),
+            has_inline=False, severity_filter={"M"},
         )
-        assert "### Verdict" in result
-        assert "M1 and M2 are blockers." in result
-        assert "Request changes" not in result
+        assert "**No verdict.** No part of this review ran." in result
 
-    def test_verdict_without_action_prefix_unchanged(self):
-        result = _comment(
-            [], True, {"M"}, summary="Summary text.",
-            verdict="Looks good overall.",
-        )
-        assert "### Verdict" in result
-        assert "Looks good overall." in result
-
-    def test_summary_without_verdict(self):
-        result = _comment([], False, {"M"}, summary="Clean refactor.")
-        assert result.startswith("## Summary")
-        assert "Clean refactor." in result
-        assert "### Verdict" not in result
-        assert "---" in result
-        assert result.index("## Summary") < result.index("---")
-        assert result.endswith("---")
+    def test_the_verdict_line_is_not_read_back_as_a_finding(self):
+        body = "**Verdict: Needs discussion.** 1 should-fix open."
+        assert review.dedup._extract_body_findings(body) == []
 
     def test_empty_summary_omitted(self):
         result = _comment([], True, {"M"})
-        assert "## Summary" not in result
+        assert "## Summary" in result
+        assert "**Verdict: Approve.**" in result
         assert "### Verdict" not in result
-        assert "---" not in result
 
     def test_outside_diff_header_only_for_demoted_findings(self, rp):
         findings = [
@@ -237,24 +260,26 @@ class TestCommentBody:
     def test_the_models_line_closes_the_body(self):
         rec = record(summary="Clean.", extra=(ProseSection("Review gaps", "- group 2"),))
         body = review.render.comment_body(rec, [], has_inline=False, severity_filter={"M"},
-                                          models="single m (low)")
+                                          meta=ReviewMeta(models="single m (low)"))
         assert body.endswith("- group 2\n\n<sub>Models: single m (low)</sub>")
 
     def test_no_models_line_without_a_body(self):
-        body = review.render.comment_body(record(), [], has_inline=False, severity_filter={"M"},
-                                          models="single m (low)")
+        body = review.render.comment_body(
+            record(), [], has_inline=False, severity_filter={"M"},
+            meta=ReviewMeta(mode=Mode.SELF, models="single m (low)"),
+        )
         assert body == ""
 
     # passes-at-base: pins the pre-2b default (no models => byte-identical body)
     def test_no_models_line_when_meta_names_none(self):
         body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
-                                          severity_filter={"M"})
+                                          severity_filter={"M"}, meta=ReviewMeta())
         assert "Models:" not in body and "<sub>" not in body
 
     def test_a_model_id_with_a_newline_stays_one_line(self):
         body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
                                           severity_filter={"M"},
-                                          models="single m\nnightly")
+                                          meta=ReviewMeta(models="single m\nnightly"))
         assert "<sub>Models: single m nightly</sub>" in body
         inner = body[body.rfind("<sub>"):body.rfind("</sub>")]
         assert "\n" not in inner
@@ -284,7 +309,9 @@ class TestCommentBody:
     def test_no_questions_or_verified_add_nothing_to_the_comment(self):
         for case in sorted(p.name for p in FIXTURES.iterdir() if (p / "record.json").is_file()):
             rec = fixture_record(case)
-            body = review.render.comment_body(rec, [], has_inline=False, severity_filter={"M", "S"})
+            body = review.render.comment_body(
+                rec, [], meta=fixture_meta(case), has_inline=False,
+                severity_filter={"M", "S"})
             rendered = review.render.render_review(rec, fixture_meta(case))
             for text in (body, rendered):
                 assert "### Questions" not in text and "Verified, no issue" not in text

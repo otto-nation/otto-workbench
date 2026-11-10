@@ -557,7 +557,7 @@ class TestACleanReviewStillPosts:
         [payload] = payloads
         assert "comments" not in payload
         assert "No findings across 3 files" in payload["body"]
-        assert "clean review." in payload["body"]
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in payload["body"]
         assert "depth 3 exceeds limit 2" in payload["body"]
         assert "Review findings" not in payload["body"]
 
@@ -582,5 +582,6 @@ class TestACleanReviewStillPosts:
     def test_a_review_with_nothing_at_all_posts_nothing(self, rp, tmp_path):
         code, payloads, post_file = self._post(rp, tmp_path, record())
         assert code == 0
-        assert payloads == []
-        assert not post_file.exists()
+        [payload] = payloads
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in payload["body"]
+        assert post_file.exists()

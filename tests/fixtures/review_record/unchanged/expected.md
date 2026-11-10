@@ -25,6 +25,8 @@ Run `pr review --recover` to retry failed agents.
 
 5 findings. No agent ran — the author has committed nothing since the prior review. Its findings are carried forward below unchanged.
 
+**Verdict: Needs discussion.** 2 should-fix open.
+
 ## Must fix
 
 (none)
@@ -42,7 +44,3 @@ Run `pr review --recover` to retry failed agents.
 ## Idioms
 
 - **[I1]** `apps/web/src/stores/voice.ts` — `loadStatus` uses a module-level guard, consistent with the cache guidance.
-
-## Verdict
-
-Needs discussion — 2 should-fix, 2 nit, 1 idiom (mechanically merged, not synthesized).

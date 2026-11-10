@@ -18,6 +18,4 @@
 
 No findings across 3 files in 2 groups. Synthesis did not run — no group reported a finding.
 
-## Verdict
-
-Approve — clean review.
+**Verdict: Approve.** No must-fix or should-fix finding is open.

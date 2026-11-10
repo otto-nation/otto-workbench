@@ -28,6 +28,8 @@ Run `pr review --recover` to retry failed agents.
 
 Adds speech-to-text in the composer behind a mic button. The endpoint is hardened for cross-origin use. The remaining findings are robustness issues; none blocks.
 
+**Verdict: Needs discussion.** 2 should-fix open. Review incomplete: see Agent Failures for what was not assessed.
+
 ## Must fix
 
 (none)
@@ -45,7 +47,3 @@ Adds speech-to-text in the composer behind a mic button. The endpoint is hardene
 ## Idioms
 
 - **[I1]** `apps/web/src/stores/voice.ts` — `loadStatus` uses a module-level guard, consistent with the cache guidance.
-
-## Verdict
-
-**Approve.** There are no must-fix issues; the should-fix items can follow up.

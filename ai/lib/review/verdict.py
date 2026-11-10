@@ -20,12 +20,13 @@ the surviving findings are real.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument
-from review.record import ReviewRecord
+from review.record import Disposition, ReviewRecord
 from review.types import ReviewMeta, SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
 from core.text import plural
 
@@ -82,24 +83,22 @@ def states_verdict(mode: Mode | None) -> bool:
     return mode is not Mode.SELF
 
 
-# What a partial run states instead. "Approve — clean review" is the one line
-# a reader may act on without opening the rest, and on a run where the group
-# holding the source produced nothing it is false in the most expensive
-# direction: it reports a clean bill of health for files no agent opened. The
-# `## Agent Failures` table already said so and was read second.
+# What a partial run with nothing blocking open states. An incomplete run
+# cannot vouch that nothing blocks; writers still store this until Task 4.
 PARTIAL_VERDICT = (
-    "No verdict — part of this review did not run. "
-    "See Agent Failures below for what was not assessed.\n"
+    "Review incomplete: part of this review did not run, so it cannot vouch "
+    "that nothing blocks. See Agent Failures for what was not assessed."
 )
 
-# What a run where no group reported states. An empty tally there means no
-# agent read anything, not that nothing was found, so the Approve that
-# `mechanical_verdict` derives from it would be a clean bill of health for the
-# whole change. Distinct from `PARTIAL_VERDICT` because "part of this review"
-# understates a run with nothing in it.
+# What a run where no group reported states. Distinct from `PARTIAL_VERDICT`
+# because "part of this review" understates a run with nothing in it.
 NO_RUN_VERDICT = (
-    "No verdict — no part of this review ran. "
-    "See Agent Failures below for why.\n"
+    "No part of this review ran. See Agent Failures for why."
+)
+
+# The sentence a partial run's blocking verdict ends with.
+PARTIAL_NOTE = (
+    "Review incomplete: see Agent Failures for what was not assessed."
 )
 
 
@@ -123,6 +122,36 @@ def resolve_review_verdict(record: ReviewRecord, meta: ReviewMeta) -> ReviewVerd
     if verdict is ReviewVerdict.APPROVE and meta.status is ReviewStatus.PARTIAL:
         return None
     return verdict
+
+
+def _rationale(record: ReviewRecord) -> str:
+    blocking = [f for f in record.unfixed if f.severity in (SEVERITY_MUST, SEVERITY_SHOULD)]
+    if not blocking:
+        return "No must-fix or should-fix finding is open."
+    declined = Counter(f.severity for f in blocking if f.disposition is Disposition.DECLINED)
+    still = Counter(f.severity for f in blocking if f.disposition is not Disposition.DECLINED)
+    parts = [f"{counts_prose(still)} open"] if still else []
+    parts += [f"{counts_prose(declined)} declined, still counted"] if declined else []
+    return "; ".join(parts) + "."
+
+
+def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
+    """The one line review.md and the comment state the verdict in; "" for a self-review.
+
+    `**Verdict: Needs discussion.** 1 should-fix open.` — the rationale counts rather
+    than naming IDs, because the comment renumbers findings by place. An error run,
+    and a partial run with nothing blocking open, say why they state none; a partial
+    run's blocking verdict says the review is incomplete.
+    """
+    if meta.mode is Mode.SELF:
+        return ""
+    if meta.status is ReviewStatus.ERROR:
+        return f"**No verdict.** {NO_RUN_VERDICT}"
+    verdict = resolve_review_verdict(record, meta)
+    if verdict is None:
+        return f"**No verdict.** {PARTIAL_VERDICT}"
+    tail = f" {PARTIAL_NOTE}" if meta.status is ReviewStatus.PARTIAL else ""
+    return f"**Verdict: {verdict.prose}.** {_rationale(record)}{tail}"
 
 
 # Stamped into a mechanically written verdict so a reader — and the pipeline's

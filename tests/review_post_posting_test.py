@@ -21,6 +21,7 @@ from core.serde import from_dict as serde_from_dict
 import review.dedup
 import review.posting
 from review.posting import ReviewEvent
+from review.types import ReviewMeta
 from review_record_support import record
 
 # A GitHub outage as gh reports it: nothing on stdout, the status line on
@@ -324,7 +325,7 @@ class TestReclassifyAndRetry:
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [body_f],
                 "abc123", 30, {"M", "N"}, False,
-                record=record(), models="",
+                record=record(), meta=ReviewMeta(),
             )
             assert len(inline) == 1
             assert inline[0].posted_id == "M1"
@@ -353,11 +354,11 @@ class TestReclassifyAndRetry:
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
                 "abc123", 30, {"M"}, False,
-                record=rec, models="",
+                record=rec, meta=ReviewMeta(),
             )
             assert (inline_comments, inline, results) == ([], [], [{"id": 99}])
             assert "Clean refactor." in body_text
-            assert "M1 blocks." in body_text
+            assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in body_text
 
     def test_reclassify_preserves_skipped_findings_in_body(self, rp):
         inline_f = rp.Finding(
@@ -379,7 +380,7 @@ class TestReclassifyAndRetry:
             _, _, body, _, _ = rp._reclassify_and_retry(
                 self._make_args(), [inline_f], [skipped_f],
                 "abc123", 30, {"M", "I"}, False,
-                record=record(), models="",
+                record=record(), meta=ReviewMeta(),
             )
             assert any(f.body == "Good pattern" for f in body)
 
@@ -412,10 +413,10 @@ class TestReclassifyAndRetry:
                 "initial",
                 [f], [], [],
                 "abc123", "abc123", 30, {"M"},
-                record=rec, models="single m (low)",
+                record=rec, meta=ReviewMeta(models="single m (low)"),
             )
         assert "Clean refactor." in captured[1]
-        assert "M1 blocks." in captured[1]
+        assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in captured[1]
         assert "<sub>Models: single m (low)</sub>" in captured[1]
 
 

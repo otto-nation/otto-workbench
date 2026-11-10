@@ -18,7 +18,7 @@ from review.format import renumber_for_posting  # noqa: E402
 from review.record import (  # noqa: E402
     AgentFailure, Disposition, FocusSource, LedgerLine, ProseSection, TriageEntry,
 )
-from review.types import PriorDisposition, SEVERITIES  # noqa: E402
+from review.types import PriorDisposition, ReviewMeta, SEVERITIES  # noqa: E402
 
 from review_behaviours_support import behaviour  # noqa: E402
 from review_claims_support import claim  # noqa: E402
@@ -32,7 +32,7 @@ def _body_findings(rec):
 
 def _comment(rec, findings=(), *, has_inline=False, severity_filter=None):
     return review.render.comment_body(
-        rec, list(findings), has_inline=has_inline,
+        rec, list(findings), meta=ReviewMeta(), has_inline=has_inline,
         severity_filter=set() if severity_filter is None else severity_filter)
 
 
@@ -61,13 +61,15 @@ REVIEW = record(
 def test_the_comment_carries_summary_verdict_and_static_analysis():
     body = _comment(REVIEW)
     assert "Clean refactor with good test coverage." in body
-    assert "M1 is a blocker." in body
+    assert "**Verdict: Request changes.** 1 must-fix, 1 should-fix open." in body
     assert "Nesting depth" in body
 
 
 def test_the_summary_comes_before_the_verdict():
     body = _comment(REVIEW)
-    assert body.index("## Summary") < body.index("### Verdict")
+    assert body.index("Clean refactor with good test coverage.") < body.index(
+        "**Verdict: Request changes.**")
+    assert "### Verdict" not in body
 
 
 def test_the_comment_carries_extra_sections_after_agent_failures():
@@ -160,7 +162,7 @@ def test_the_comment_sections_run_in_posted_order():
     )
     markers = (
         "## Summary", "### Focus", "### Claims", "### Test evidence",
-        "### Verdict", "---", "Have some comments marked as",
+        "---", "Have some comments marked as",
         "**Findings outside the diff:**", "### Must fix", "### Should fix",
         "<summary>Nit (1)</summary>", "<summary>Idioms (1)</summary>",
         "**Declined — considered and not carried forward:**",
@@ -170,4 +172,5 @@ def test_the_comment_sections_run_in_posted_order():
     assert idxs == sorted(idxs)
     assert "[C1]" not in body and "[B1]" not in body and "[F1]" not in body
     assert "File Triage" not in body and "Prior findings" not in body
-    assert "Request changes" not in body and "M1 blocks." in body
+    assert "**Verdict: Request changes.** 1 must-fix, 1 should-fix open; 1 should-fix declined, still counted." in body
+    assert "M1 blocks." not in body

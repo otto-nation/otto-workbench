@@ -214,51 +214,38 @@ class TestReconcileDroppedFindings:
 
     def test_verdict_is_lowered_to_what_survives(self, tmp_path):
         rec = self._sample(tmp_path)
-        review = tmp_path / "review.md"
-        _post_process(rec, str(review), str(tmp_path))
-        result = review.read_text()
-
-        verdict = result[result.index("## Verdict"):]
-        assert "Approve — 1 nit" in verdict
-        assert "Request changes" not in result
+        done = post_process_record(rec, str(tmp_path))
+        assert "Approve — 1 nit" in done.record.verdict
+        assert "Request changes" not in done.record.verdict
 
     def test_disapprove_is_never_lowered(self, tmp_path):
         # Disapprove means the approach is wrong, which the finding counts do
         # not derive — dropping a finding cannot refute it. The note still says
         # what went, so the reader can weigh the verdict against it.
         rec = self._sample(tmp_path, verdict="**Disapprove** — the approach is wrong.")
-        review = tmp_path / "review.md"
-        _post_process(rec, str(review), str(tmp_path))
-        result = review.read_text()
-
-        assert "**Disapprove** — the approach is wrong." in result
-        assert "Evidence verification removed 1 finding:" in result
+        done = post_process_record(rec, str(tmp_path))
+        assert "**Disapprove** — the approach is wrong." in done.record.verdict
+        assert "Evidence verification removed 1 finding:" in done.record.summary
 
     def test_verdict_the_counts_still_support_is_left_alone(self, tmp_path):
         rec = self._sample(
             tmp_path,
             extra=(finding("M2", "also worth fixing", path="kept.py"),),
         )
-        review = tmp_path / "review.md"
-        _post_process(rec, str(review), str(tmp_path))
-        result = review.read_text()
-
-        assert "Request changes — the unchecked error is a bug." in result
-        assert "Evidence verification removed 1 finding:" in result
+        done = post_process_record(rec, str(tmp_path))
+        assert "Request changes — the unchecked error is a bug." in done.record.verdict
+        assert "Evidence verification removed 1 finding:" in done.record.summary
 
     def test_no_note_when_nothing_dropped(self, tmp_path):
         (tmp_path / "kept.py").write_text("x = 1\n")
-        review = tmp_path / "review.md"
         rec = record(
             finding("M1", "the error is never checked", path="kept.py"),
             summary="One real problem.",
             verdict="Request changes — worth fixing.",
         )
-        _post_process(rec, str(review), str(tmp_path))
-        result = review.read_text()
-
-        assert "Evidence verification" not in result
-        assert "Request changes — worth fixing." in result
+        done = post_process_record(rec, str(tmp_path))
+        assert "Evidence verification" not in done.record.summary
+        assert "Request changes — worth fixing." in done.record.verdict
 
     def test_second_pass_does_not_stack_notes(self, tmp_path):
         rec = self._sample(tmp_path)

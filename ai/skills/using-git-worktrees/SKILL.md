@@ -163,8 +163,8 @@ if [ -f go.mod ]; then go mod download; fi
 
 ## Step 3: Verify a Clean Baseline
 
-Run the project's tests so the workspace starts green. Use the project's own
-command — `task test`, `npm test`, `cargo test`, `pytest`, `go test ./...`.
+Run the baseline the repo's AGENTS.md prescribes; where it forbids whole-suite
+runs, run the files the planned work will touch.
 
 Run them **in this worktree**, never in another. A test harness that creates
 temporary git repos can corrupt the branch and commit state of whatever tree it

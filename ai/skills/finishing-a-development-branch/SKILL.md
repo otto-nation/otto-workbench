@@ -12,7 +12,8 @@ skip: "Do not use while work is still in progress, or on a branch whose PR is al
      and creates the PR with whatever forge CLI it finds. All three conflict
      with this machine: the rules forbid a completion menu, require every change
      to reach main through a merged PR, and pin PR creation to pr create.
-     Its cleanup step also calls `git worktree remove`, which `wt-cleanup` owns.
+     Its cleanup step also calls `git worktree remove`, which conflicts with
+     git-operations.md § Worktree Cleanup.
 
      This file wins by name collision: Pi ranks ~/.agents/skills (scope user,
      origin top-level) ahead of a package resource, so the upstream copy is
@@ -43,18 +44,17 @@ complete this work."
 
 ## Step 1: Verify Tests
 
-Run the project's full suite, in this worktree — never in another.
+Run the tests this change reaches, the way the repo's AGENTS.md and testing
+rules say, in this worktree and never in another. Where the repo forbids local
+whole-suite runs, the pre-push gate and CI cover the rest.
 
 **If tests fail**, report the failures and stop. Nothing below happens on a red
 suite.
 
 ## Step 2: Confirm the Branch Is Finished
 
-Opening a PR is a claim that the branch is done, and it is acted on as such — a
-reviewer reads it, marks it ready, and merges. Before continuing, check that
-nothing is still on your list: a test you meant to add, a finding you meant to
-fix, a TODO you left. Anything outstanding belongs in the branch now, or in a
-follow-up PR after this one — not in a PR you open and then push to.
+Before continuing, check that nothing is still on your list
+(`git-operations.md` § Branch Completion).
 
 Confirm the branch contains only your work. Fetch first — a local `origin/main`
 that has not moved since yesterday reads a stale base as clean:
@@ -94,20 +94,14 @@ trunk. On a stacked branch that means the parent's commits are not read as this
 branch's own. Pass `--base <branch>` when the derivation picks wrong — a stale
 branch parked between this one and its real parent is the case that does it.
 
-`--fix` is part of the command. Without it you get a findings list somebody then
-applies by hand — slower and sloppier than the pass the fix agent runs, and a
-round trip before the branch is shippable. Leave it off only when you want the
-findings without the edits, which at this step you do not: the next step opens
-the PR. No `--push` here — `pr create` pushes in Step 4.
+`--fix` is part of the command; no `--push` here, because `pr create` pushes in
+Step 4 (`self-review.md` § Before PR Creation).
 
 Read the review from `~/.local/state/workbench/reviews/`, present what the fix
-pass did — fixed, skipped, and why — and work through whatever it left open as
-your human partner directs. A review covers exactly the SHA in its
-`<!-- head_sha: -->`, plus the fix commit in its `<!-- covered_sha: -->` when
-the pass qualified it — landed on the reviewed commit, checks green, every
-fix verified, nothing but fixed files and their tests, and no file of a
-finding it left unfixed. Before opening the PR, check `git rev-parse HEAD`
-against that value; if it is neither, re-run.
+pass did, and work through whatever it left open as your human partner directs
+(`self-review.md` § Before PR Creation). Before opening the PR, check
+`git rev-parse HEAD` against the review's `covered_sha`, else its `head_sha`;
+if it is neither, re-run (`self-review.md` § The Review Covers One Commit).
 
 Skip only if your human partner explicitly says to.
 
@@ -121,12 +115,8 @@ pr create --draft
 ```
 
 - Closing an issue on merge: `pr create --draft --closes 941`
-- Giving the description an issue's context without closing it:
-  `pr create --draft --issue ENG-123`
-- From a different directory: add `--repo-dir /path/to/worktree`
-- Custom title or body: `--title` / `--body-file`. Supplying both skips AI
-  generation
-- To see the title and body first without pushing anything: add `--dry-run`
+- Other flags (`--issue`, `--repo-dir`, `--title`/`--body-file`, `--dry-run`,
+  `--base`): `git-operations.md` § PR Creation.
 
 `--draft` is not optional: PRs go through review before being marked ready.
 
@@ -152,26 +142,14 @@ The worktree stays. Your human partner iterates on PR feedback there, and the
 branch is now shared — someone may be reading it, may have marked it ready, may
 be merging it.
 
-Cleanup happens after the PR merges, and it is `wt-cleanup` that does it —
-never `wt remove` (it leaves a squash-merged branch behind), never
-`git worktree remove`, and never on `main` or the default branch. Run it
-without asking; it removes every merged worktree and its branch. A merged tree
-that is still dirty is reported, not removed: read what it names before forcing
-anything. Plans and specs are not among it — those live in the repository's
-workspace at the container (`resolve-workspace`), which cleanup does not touch.
+After the PR merges, cleanup is `wt-cleanup`, run without asking
+(`git-operations.md` § Worktree Cleanup). Plans and specs live in the
+workspace, which cleanup does not touch.
 
-If you do have to push again before the PR merges:
-- A push you make by hand needs a PR comment naming what changed and why. A
-  push the `pr` tooling makes does not — its own summary and replies are the
-  announcement, and a free-form comment on top only restates them
-- Never hand-push to a PR marked ready without commenting first — ready is the
-  author declaring the branch finished, and a later push retracts that
-- Re-run `pr review --self --fix --push`; the earlier review said nothing about
-  the new commit, and on an open PR the fix commit has to reach the branch being
-  read
-- `cannot lock ref` on push usually means the branch merged and was deleted.
-  Check `git log --oneline origin/main..HEAD` and open a follow-up PR for
-  whatever did not land
+Prefer a follow-up PR. If you must push before merge, `git-operations.md` § A
+Branch With an Open PR Is Shared says when to comment, and the push owes
+`pr review --self --fix --push` (`self-review.md` § The Review Covers One
+Commit).
 
 ## Quick Reference
 
@@ -188,7 +166,7 @@ If you do have to push again before the PR merges:
 | Ready to ship | `pr create --draft` |
 | Human partner named a next step | Do that directly |
 | PR open, more work needed | Follow-up PR by default; if pushing by hand, comment first |
-| PR merged | `wt-cleanup` — never `wt remove` or `git worktree remove`, and no asking |
+| PR merged | `wt-cleanup` (`git-operations.md` § Worktree Cleanup) |
 
 ## Common Rationalizations
 
@@ -202,4 +180,4 @@ If you do have to push again before the PR merges:
 | "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
 | "I'll push the last fix quietly by hand" | A branch with an open PR is shared. Say what changed. |
 | "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |
-| "The worktree is done, I'll clean it up" | `wt-cleanup`, after the merge, without asking — and never the default branch's worktree. |
+| "The worktree is done, I'll clean it up" | Only after the merge, and only `wt-cleanup` (§ Worktree Cleanup). |

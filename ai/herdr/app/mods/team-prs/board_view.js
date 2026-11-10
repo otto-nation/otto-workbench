@@ -20,8 +20,8 @@ import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
-import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, tag, chip, emptyPane, pane, button } from "./_ui/ui.js";
+import { SP, LAYOUT } from "./_lib/tokens.js";
+import { segment, segmented, chip, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder } from "./_ui/ui.js";
 
 function ctxOf() {
   return shared("team-prs.pin") ?? locate(spaces(), panes(), focused());
@@ -133,7 +133,7 @@ export default class TeamPrs extends View {
   }
 
   refreshButton() {
-    return button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual });
+    return iconButton("refresh", "mods/team-prs/refresh.svg", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual, spinning: this.manual });
   }
 
   activeTargets() {
@@ -366,13 +366,13 @@ export default class TeamPrs extends View {
     }
     if (view.repos === 0 && view.errors.length && !view.loading) {
       return note(emptyPane())
-        .children(view.errors.slice(0, 3).map((e) => div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child(errLine(e))))
-        .child(this.refreshButton())
+        .children(view.errors.slice(0, 3).map((e) => placeholder(errLine(e)).max_w(LAYOUT.msgMaxW)))
+        .child(button("refresh-retry", "Retry", () => this.refreshNow()))
         .child(this.scopeToggle());
     }
     if (scope === "all" && view.repos === 0 && !view.errors.length && !view.loading) {
       return note(emptyPane())
-        .child(div().max_w(LAYOUT.msgMaxW).text_color(t.muted).child("No open space is in a GitHub repository"))
+        .child(placeholder("No open space is in a GitHub repository").max_w(LAYOUT.msgMaxW))
         .child(this.scopeToggle());
     }
     if (mode === "compact") return this.compactView(view, t, cx);
@@ -413,23 +413,24 @@ export default class TeamPrs extends View {
     const running = this.workflows.activeRuns().length > 0;
     return h_flex().gap(SP.sm).items_center()
       .child(button("batch", "Batch", () => { this.batchOpen = true; this.acx.notify(); }))
-      .when(running, (e) => e.child(div().text_size(TEXT.small).text_color(theme().working).child("running")));
+      .when(running, (e) => e.child(statusText("running", "Running")));
   }
 
   onSize(size, cx) { this.size = size; cx.notify(); }
 
   compactHeader(tab) {
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
-      .child(h_flex().child(this.scopeToggle()))
+      .child(h_flex().items_center()
+        .child(this.scopeToggle())
+        .child(div().flex_1())
+        .child(this.refreshButton()))
       .child(h_flex().items_center().justify_between()
         .child(segmented([
           segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
           segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
         ]))
         .child(h_flex().gap(SP.md).items_center()
-          .child(button("refresh", this.manual ? "Refreshing…" : "Refresh", () => this.refreshNow(), { disabled: this.manual }))
-          .when(tab === "mine", (e) => e.child(
-            this.batchControl()))
+          .when(tab === "mine", (e) => e.child(this.batchControl()))
           .child(button("open-board", "Open board", () => {
             const id = boardTabId(spaces(), "PRs");
             if (id) run("tab.select", { id });
@@ -442,7 +443,6 @@ export default class TeamPrs extends View {
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
     return pane("prs")
-      .text_size(TEXT.small)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(tab))
       .child(renderCompact({
@@ -466,7 +466,6 @@ export default class TeamPrs extends View {
     const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
     const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
     return pane("prs")
-      .text_size(TEXT.body)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, pin, t))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos }))
@@ -483,28 +482,28 @@ export default class TeamPrs extends View {
     const nFail = state.errors?.length ?? 0;
     const first = state.errors?.[0];
     const all = scopeOf() === "all";
-    const title = all ? "All spaces" : (loading ? "loading…" : (state.slug ?? "no repo"));
-    const note = all ? (loading ? "loading…" : `${state.repos} repos`) : null;
-    const pinned = (e) => e.child(chip("pin", pin ? "pinned" : "pin", Boolean(pin), () => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
+    const title = all ? "All spaces" : (loading ? "Loading…" : (state.slug ?? "No repo"));
+    const note = all ? (loading ? "Loading…" : `${state.repos} repos`) : null;
+    const pinned = (e) => e.child(chip("pin", pin ? "Pinned" : "Pin", Boolean(pin), () => setShared("team-prs.pin", pin ? null : { on: ctx.on, cwd: ctx.cwd })));
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
-        .child(div().min_w(0).truncate().text_size(TEXT.title).font_semibold().child(title))
-        .when(Boolean(note), (e) => e.child(div().flex_none().text_size(TEXT.caption).text_color(t.muted).child(note)))
-        .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on), t.muted)))
+        .child(type(div().min_w(0).truncate(), "title").child(title))
+        .when(Boolean(note), (e) => e.child(text("meta", note, t.muted).flex_none()))
+        .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on))))
         .when(nFail && !all, (e) => e
-          .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi1).child("stale"))
-          .child(div().min_w(0).text_size(TEXT.caption).text_color(t.muted).truncate().child(errorText(first.error, ctx))))
-        .when(nFail && all, (e) => e.child(div().min_w(0).text_size(TEXT.caption).text_color(t.ansi1).truncate()
-          .child(`${nFail} failed — ${friendlyError(first.error, first.on, "all")}`))))
-      .child(this.refreshButton())
-      .when(tab === "mine", (e) => e.child(
-        this.batchControl()))
+          .child(statusText("warn", "Stale"))
+          .child(text("meta", errorText(first.error, ctx), t.muted).min_w(0).truncate()))
+        .when(nFail && all, (e) => e
+          .child(statusText("fail", `${nFail} failed`))
+          .child(text("meta", friendlyError(first.error, first.on, "all"), t.muted).min_w(0).truncate())))
+      .when(tab === "mine", (e) => e.child(this.batchControl()))
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("team-prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => setShared("team-prs.tab", "mine")),
       ]))
-      .when(!all, pinned);
+      .when(!all, pinned)
+      .child(this.refreshButton());
   }
 }

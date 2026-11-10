@@ -6,32 +6,32 @@ import {
   STEP_ORDER, durationText, laneOf, cardState, shortKey,
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
-import { SP, TEXT, RADIUS } from "./_lib/tokens.js";
+import { SP, RADIUS } from "./_lib/tokens.js";
 import {
-  hoverRow, card, inset, scrollBody, mono, button,
+  hoverRow, card, inset, scrollBody, type, text, statusText, caption, placeholder,
 } from "./_ui/ui.js";
 
-function runColor(t, status) {
-  if (status === "done") return t.done;
-  if (status === "running" || status === "waiting") return t.working;
-  if (status === "cancelled" || status === "interrupted") return t.ansi1;
-  return t.muted;
+function runKind(status) {
+  if (status === "done") return "pass";
+  if (status === "running" || status === "waiting" || status === "queued") return "running";
+  if (status === "cancelled" || status === "interrupted" || status === "failed") return "fail";
+  return "none";
 }
 
-function stepColor(t, status) {
-  if (status === "failed") return t.ansi1;
-  if (status === "needs_decision" || status === "interrupted") return t.ansi3;
-  if (status === "running") return t.working;
-  if (status === "done") return t.done;
-  return t.muted;
+function stepKind(status) {
+  if (status === "failed") return "fail";
+  if (status === "needs_decision" || status === "interrupted") return "warn";
+  if (status === "running" || status === "queued") return "running";
+  if (status === "done") return "pass";
+  return "none";
 }
 
-function stateColor(t, tone) {
-  if (tone === "failed") return t.ansi1;
-  if (tone === "attention") return t.ansi3;
-  if (tone === "busy") return t.working;
-  if (tone === "done") return t.done;
-  return t.muted;
+function toneKind(tone) {
+  if (tone === "failed") return "fail";
+  if (tone === "attention") return "warn";
+  if (tone === "busy") return "running";
+  if (tone === "done") return "pass";
+  return "none";
 }
 
 const RUN_WORD = { running: "running", waiting: "waiting", done: "finished", cancelled: "cancelled", interrupted: "interrupted" };
@@ -59,25 +59,24 @@ export function renderRunPanel(state, expanded) {
   const t = theme();
   const { runs, runId, pinnedOn, error, nowMs, onPickRun } = state;
   if (error) {
-    return div().text_size(TEXT.small).text_color(t.muted).child(error.message ?? String(error));
+    return placeholder(error.message ?? String(error));
   }
   if (!runs.length) {
-    return div().text_size(TEXT.small).text_color(t.muted).child("No batch runs yet");
+    return placeholder("No batch runs yet");
   }
   const isOpen = (r) => runId != null && r.id === runId && String(r.on ?? "") === String(pinnedOn ?? "");
   return v_flex().gap(SP.xs)
     .children(runs.flatMap((r, i) => {
       const open = isOpen(r);
-      const row = hoverRow(`run-${r.on ?? ""}-${r.id}`).flex().items_center()
-        .px(SP.sm).py(SP.xs).rounded(RADIUS.control).gap(SP.md)
-        .when(open, (e) => e.bg(t.selected))
+      const row = hoverRow(`run-${r.on ?? ""}-${r.id}`, { selected: open }).flex().items_center()
+        .px(SP.sm).py(SP.xs).gap(SP.md)
         .on_click(() => onPickRun(r))
-        .child(div().text_size(TEXT.small).text_color(t.muted).child(open ? "▾" : "▸"))
-        .child(div().text_size(TEXT.small).text_color(t.foreground).child(i === 0 ? "Latest" : relativeTime(r.startedAt ?? "", nowMs)))
-        .child(div().text_size(TEXT.small).text_color(t.muted).child(`${prCount(r.items)} · ${(r.repos ?? []).join(", ")}`))
-        .when(Boolean(r.error), (e) => e.child(div().text_size(TEXT.small).text_color(t.ansi1).child(r.error)))
+        .child(text("meta", open ? "▾" : "▸", t.muted))
+        .child(text("meta", i === 0 ? "Latest" : relativeTime(r.startedAt ?? "", nowMs)))
+        .child(text("meta", `${prCount(r.items)} · ${(r.repos ?? []).join(", ")}`, t.muted))
+        .when(Boolean(r.error), (e) => e.child(text("body", r.error, t.ansi1)))
         .child(div().flex_1())
-        .child(div().text_size(TEXT.small).text_color(runColor(t, r.status)).child(runWord(r.status)));
+        .child(statusText(runKind(r.status), runWord(r.status)));
       return open && expanded ? [row, expanded(r)] : [row];
     }));
 }
@@ -87,23 +86,24 @@ export function renderRunPanel(state, expanded) {
 export function renderRunItems(doc, { repos = [], prOf, onOpen }) {
   const t = theme();
   if (doc == null) {
-    return div().pl(SP.xl).py(SP.xs).text_size(TEXT.small).text_color(t.muted).child("Loading…");
+    return placeholder("Loading…").pl(SP.xl).py(SP.xs);
   }
   if (!doc.ok) {
-    return div().pl(SP.xl).py(SP.xs).text_size(TEXT.small).text_color(t.muted).child(doc.error?.message ?? "Could not read this run");
+    return placeholder(doc.error?.message ?? "Could not read this run").pl(SP.xl).py(SP.xs);
   }
   return v_flex().pl(SP.xl).gap(SP.xxs)
     .children((doc.items ?? []).map((item) => {
       const pr = prOf(item);
       const state = cardState(item);
       const row = h_flex().px(SP.sm).py(SP.xxs).gap(SP.md).items_center().min_w(0)
-        .child(div().flex_none().text_size(TEXT.small).text_color(t.muted).child(shortKey(item.key, repos)))
-        .child(div().flex_1().min_w(0).truncate().text_size(TEXT.small)
+        .child(type(div().flex_none(), "code").text_color(t.muted).child(shortKey(item.key, repos)))
+        .child(type(div().flex_1().min_w(0).truncate(), "body")
           .text_color(pr ? t.foreground : t.muted).child(pr?.title ?? item.branch ?? ""))
-        .child(div().flex_none().text_size(TEXT.small)
-          .text_color(state ? stateColor(t, state.tone) : t.muted).child(state?.text ?? String(item.status ?? "")));
+        .child(state
+          ? statusText(toneKind(state.tone), state.text)
+          : text("meta", String(item.status ?? ""), t.muted));
       if (!pr) return row;
-      return hoverRow(`run-item-${item.key}`).rounded(RADIUS.control).on_click(() => onOpen(pr)).child(row);
+      return hoverRow(`run-item-${item.key}`).on_click(() => onOpen(pr)).child(row);
     }));
 }
 
@@ -111,9 +111,9 @@ export function cardStateLine(item) {
   const t = theme();
   const state = cardState(item);
   if (state == null) return null;
-  return h_flex().gap(SP.xxs).text_size(TEXT.caption)
-    .child(div().text_color(t.muted).child("Batch · "))
-    .child(div().text_color(stateColor(t, state.tone)).child(state.text));
+  return h_flex().gap(SP.xxs).items_center()
+    .child(text("meta", "Batch · ", t.muted))
+    .child(statusText(toneKind(state.tone), state.text));
 }
 
 // The steps this run was asked for, in pipeline order: a step it never ran gets no column.
@@ -131,33 +131,28 @@ function renderNotes(item) {
   if (!findings.length && !wait && !moved) return null;
   const title = laneOf(item) === "attention" ? "Needs you" : "Notes";
   return card("batch-notes").gap(SP.xs)
-    .child(div().text_size(TEXT.title).font_semibold().child(title))
+    .child(text("title", title))
     .children(findings.map((f, i) => {
       const files = (f.files ?? []).join(", ");
       return v_flex().id(`finding-${i}`).gap(SP.xxs)
-        .child(div().text_size(TEXT.small).text_color(t.foreground).child(pretty(f.reason)))
-        .when(Boolean(f.detail), (e) => e.child(
-          div().text_size(TEXT.small).text_color(t.muted).child(f.detail)))
-        .when(Boolean(files), (e) => e.child(
-          div().text_size(TEXT.caption).text_color(t.muted).child(files)));
+        .child(text("body", pretty(f.reason)))
+        .when(Boolean(f.detail), (e) => e.child(text("body", f.detail, t.muted)))
+        .when(Boolean(files), (e) => e.child(type(div(), "code").text_color(t.muted).child(files)));
     }))
-    .when(Boolean(wait), (e) => e.child(
-      div().text_size(TEXT.small).text_color(t.ansi3).child(wait)))
-    .when(moved, (e) => e.child(
-      div().text_size(TEXT.small).text_color(t.ansi3).child("head moved since the run")));
+    .when(Boolean(wait), (e) => e.child(text("body", wait, t.ansi3)))
+    .when(moved, (e) => e.child(text("body", "Head moved since the run", t.ansi3)));
 }
 
 function renderLog(state) {
-  const t = theme();
   const log = state.log;
   if (log == null) {
-    return div().text_size(TEXT.small).text_color(t.muted).child("Loading log…");
+    return placeholder("Loading log…");
   }
   if (log.error) {
-    return div().text_size(TEXT.small).text_color(t.muted).child(log.error);
+    return placeholder(log.error);
   }
   const lines = String(log.text ?? "").split("\n");
-  return inset().font_family(mono()).text_size(TEXT.caption).text_color(t.foreground)
+  return type(inset().text_color(theme().foreground), "code")
     .children(lines.map((l) => div().child(l === "" ? " " : l)));
 }
 
@@ -167,17 +162,15 @@ function renderStepCard(item, name, state) {
   if (rec == null) return null;
   const dur = durationText(rec.startedAt, rec.endedAt, state.nowMs);
   const head = h_flex().gap(SP.sm).items_center()
-    .child(div().text_size(TEXT.title).font_semibold().child(name))
-    .child(div().text_size(TEXT.small).text_color(stepColor(t, rec.status)).child(pretty(rec.status)))
-    .when(Boolean(dur), (e) => e.child(div().text_size(TEXT.small).text_color(t.muted).child(dur)))
+    .child(text("title", name))
+    .child(statusText(stepKind(rec.status), pretty(rec.status)))
+    .when(Boolean(dur), (e) => e.child(caption(dur)))
     .when(rec.exitCode != null, (e) => e.child(
-      div().text_size(TEXT.small)
-        .text_color(rec.exitCode !== 0 ? t.ansi1 : t.muted)
-        .child(`exit ${rec.exitCode}`)));
+      caption(`exit ${rec.exitCode}`, rec.exitCode !== 0 ? t.ansi1 : t.muted)));
   if (!rec.logPath) {
     return cardShell(`step-${name}`).gap(SP.xs)
       .child(head)
-      .child(div().text_size(TEXT.small).text_color(t.muted).child("no log"));
+      .child(placeholder("No log"));
   }
   return card(`step-${name}`).gap(SP.xs)
     .on_click(() => state.onStep(name))
@@ -186,11 +179,9 @@ function renderStepCard(item, name, state) {
 }
 
 export function renderBatchTab(item, state) {
-  const t = theme();
   const body = scrollBody().px(SP.lg).pb(SP.lg).pt(SP.sm).gap(SP.sm);
   if (item == null) {
-    return body.child(div().text_size(TEXT.small).text_color(t.muted)
-      .child("This PR was not in the selected batch run"));
+    return body.child(placeholder("This PR was not in the selected batch run"));
   }
   const notes = renderNotes(item);
   return body

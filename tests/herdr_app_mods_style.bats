@@ -24,8 +24,8 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
-@test "ciMark uses × for a failure, never ✗, which no brand font draws" {
+@test "the fail status glyph is ×, never ✗, which no brand font draws" {
   run grep -n '✗' "$MODS"/_ui/*.js "$MODS"/team-prs/*.js
   [ "$status" -eq 1 ]
-  grep -q 'failing: "×"' "$MODS/_ui/ui.js"
+  grep -q 'fail: { glyph: "×"' "$MODS/_ui/ui.js"
 }

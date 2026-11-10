@@ -6,7 +6,8 @@
 import { View, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { run, theme, shared, setShared, layout } from "herdr";
-import { PANEL_BUTTON, RADIUS, SP, TEXT } from "./_lib/tokens.js";
+import { PANEL_BUTTON, RADIUS, SP } from "./_lib/tokens.js";
+import { type } from "./_ui/ui.js";
 
 const CHILD = "prs-panel";
 
@@ -32,8 +33,8 @@ export default class PrsButton extends View {
     const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
     const on = Boolean(panel && !panel.hidden && body?.active === CHILD);
     return h_flex().size_full().items_center().pr(SP.sm).bg(t.chrome).border_b_1().border_color(t.border)
-      .child(h_flex().id("panel-prs").h(PANEL_BUTTON.h).px(PANEL_BUTTON.px).gap(PANEL_BUTTON.gap).flex_none().items_center()
-        .rounded(RADIUS.control).text_size(TEXT.small).cursor_pointer()
+      .child(type(h_flex().id("panel-prs").h(PANEL_BUTTON.h).px(PANEL_BUTTON.px).gap(PANEL_BUTTON.gap).flex_none().items_center()
+        .rounded(RADIUS.control).cursor_pointer()
         .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
         .hover((s) => s.bg(t.hover))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -42,6 +43,6 @@ export default class PrsButton extends View {
           else { run("layout.select", { stack: "panel-body", child: CHILD }); run("layout.show", { id: "panel" }); }
         })
         .child(svg("mods/prs-button/pr.svg").size(PANEL_BUTTON.icon))
-        .child("PRs"));
+        .child("PRs"), "label"));
   }
 }

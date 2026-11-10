@@ -23,9 +23,12 @@ restates none of their contents:
   the palette maps to ink or ink-muted in both, never one mapped to outline,
   which the brand defines as a non-text boundary. Prefer a named field to an
   `ansiN` slot when one carries the role in both schemes.
-- Size, spacing and radius: `_lib/tokens.js`, whose comments say which brand
-  value each token stands for.
-- Shape of a control, card or label: `_ui/ui.js`.
+- Size, spacing, radius and type: `_lib/tokens.js`, which reads the brand's
+  values from `_lib/brand.generated.js` (rendered by
+  `bin/local/generate-herdr-app-themes`). Text takes one of `TYPE`'s roles,
+  applied with `_ui/ui.js` `type()` or `text()`, never a bare size.
+- Shape of a control, card, tag, status or label: `_ui/ui.js`, one function per
+  `DESIGN.md` component.
 - `tests/herdr_app_mods_style.bats` holds the views to the brand rules a grep
   can see: no hover that changes a border, no `pill`, no ✗ glyph.
 

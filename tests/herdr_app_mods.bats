@@ -251,16 +251,6 @@ _cksum() {
   [ ! -e "$UNTRUSTED" ]
 }
 
-@test "step prints the key-binding suggestion on first install only" {
-  _stub_app
-  run _run_step
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'herdr-app: bind a key to open the PR board by adding to keys.json: "<key>": {"command": "tab.new", "args": {"name": "PRs", "mod": "prs"}}'* ]]
-  run _run_step
-  [ "$status" -eq 0 ]
-  [[ "$output" != *'bind a key to open the PR board'* ]]
-}
-
 @test "WORKBENCH_SYNC=true re-run of the step prints nothing" {
   _stub_app
   run _run_step

@@ -7,7 +7,6 @@ import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run, props, layout,
 } from "herdr";
 import { locate } from "./_lib/location.js";
-import { boardTabId } from "./_lib/tabs.js";
 import { fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
 import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
@@ -94,7 +93,7 @@ export default class PrsBoard extends View {
   // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
     this.acx = cx;
-    // Where the copy is mounted, not how wide it is, decides whether it offers the board tab.
+    // The copy mounted in the side panel (not its width) decides whether it offers Full screen.
     this.inPanel = isPanelCopy(props());
     this.fsState = null;
     if (this.inPanel) {
@@ -486,7 +485,7 @@ export default class PrsBoard extends View {
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
-          .when(this.inPanel, (e) => e.child(this.fullscreenButton()).child(this.openBoardButton()))));
+          .when(this.inPanel, (e) => e.child(this.fullscreenButton()))));
   }
 
   fullscreenButton() {
@@ -497,14 +496,6 @@ export default class PrsBoard extends View {
         return;
       }
       enterFullscreen();
-    });
-  }
-
-  openBoardButton() {
-    return button("open-board", "Open board", () => {
-      const id = boardTabId(spaces(), "PRs");
-      if (id) run("tab.select", { id });
-      else run("tab.new", { name: "PRs", mod: "prs" });
     });
   }
 
@@ -578,7 +569,7 @@ export default class PrsBoard extends View {
         segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
       ]))
-      .when(this.inPanel, (e) => e.child(this.fullscreenButton()).child(this.openBoardButton()))
+      .when(this.inPanel, (e) => e.child(this.fullscreenButton()))
       .child(this.refreshButton());
   }
 }

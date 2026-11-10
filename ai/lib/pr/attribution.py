@@ -495,6 +495,11 @@ class AddressingHistory:
         self._commits: dict[tuple[str, int], str] = {}
         self._committed_at: dict[str, float] = {}
 
+    @property
+    def wt_path(self) -> Path | None:
+        """The worktree this history reads, for callers that link into its tree."""
+        return self._wt_path
+
     def framing(
         self,
         entry: CommentItem,

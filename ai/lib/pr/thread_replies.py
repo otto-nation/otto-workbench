@@ -425,8 +425,9 @@ def post_fix_replies(
         # and pointing a reviewer at the wrong line is worse than pointing them
         # at the file the change landed in.
         if entry.file:
-            url = pr.permalinks.blob_permalink(repo, sha, entry.file, host=host)
-            parts.append(f"Result is in [`{entry.file}`]({url}).")
+            path = pr.permalinks.repo_path(entry.file, sha, history.wt_path if history else None)
+            url = pr.permalinks.blob_permalink(repo, sha, path, host=host)
+            parts.append(f"Result is in [`{path}`]({url}).")
         note = unverified_note(entry)
         if note:
             parts.append(note)

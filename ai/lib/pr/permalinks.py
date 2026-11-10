@@ -18,6 +18,7 @@ than beside triage because the thing it guards is the link.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +46,32 @@ from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, Repo
 # earns nothing over the two arguments it would wrap. If it is ever revived it
 # belongs in this module alone, built at the call from `(ctx.repo, ctx.host)`,
 # and never as a field on anything that is written to disk.
+
+
+@functools.lru_cache(maxsize=32)
+def _tree_paths(wt_path: str, sha: str) -> frozenset[str]:
+    return frozenset(git.client.lines("ls-tree", "-r", "--name-only", sha, cwd=wt_path))
+
+
+def repo_path(filepath: str, sha: str, wt_path: Path | None) -> str:
+    """`filepath` as the repo spells it at `sha`, so a link built from it resolves.
+
+    A reviewer or the triage agent cites a file the way they read it: a path
+    relative to a subdirectory (`tasks/tests/x.py` for `dev-tooling/tasks/tests/x.py`),
+    or with a leading `./`. Linked as written, that is a 404 under the
+    reviewer's own comment. A path that exists at `sha` is kept; otherwise the
+    one tracked path it is a whole-segment suffix of is used. Ambiguous or
+    unknown reads as no, and the path is left as written: guessing between two
+    files would link the claim to code it is not about.
+    """
+    cited = filepath.removeprefix("./").lstrip("/")
+    if not wt_path or not sha or not Path(wt_path).is_dir():
+        return cited
+    tree = _tree_paths(str(wt_path), sha)
+    if not tree or cited in tree:
+        return cited
+    matches = [p for p in tree if p.endswith(f"/{cited}")]
+    return matches[0] if len(matches) == 1 else cited
 
 
 def blob_permalink(
@@ -106,6 +133,7 @@ def anchored_link(
     host: str = "",
 ) -> str:
     """A markdown blob link to `filepath`, anchored only where the line holds."""
+    filepath = repo_path(filepath, sha, wt_path)
     anchor = anchored_line(entry, filepath, line, sha, wt_path)
     url = blob_permalink(repo, sha, filepath, anchor, host)
     label = f"{filepath}:{anchor}" if anchor else filepath

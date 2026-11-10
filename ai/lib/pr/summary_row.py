@@ -174,9 +174,10 @@ def row_cells_for(
     summary = pr.permalinks.thread_cell(entry, threads_by_id, repo, pr_number, host)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
     if entry.file and head_sha:
-        anchor = pr.permalinks.anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
-        label = f"{entry.file}:{anchor}" if anchor else entry.file
-        url = pr.permalinks.blob_permalink(repo, head_sha, entry.file, anchor, host)
+        path = pr.permalinks.repo_path(entry.file, head_sha, wt_path)
+        anchor = pr.permalinks.anchored_line(entry, path, entry.line, head_sha, wt_path)
+        label = f"{path}:{anchor}" if anchor else path
+        url = pr.permalinks.blob_permalink(repo, head_sha, path, anchor, host)
         file_loc = f"[`{label}`]({url})"
     elif entry.file and entry.line:
         file_loc = f"`{entry.file}:{entry.line}`"

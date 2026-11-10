@@ -1,6 +1,6 @@
 ---
 name: pr-comments
-description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then draft replies for approval before publishing with --post. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead)."
+description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then publish clean rounds directly and draft contested ones for approval. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead)."
 source: otto-workbench/ai/skills/pr-comments/SKILL.md
 invocation: "/pr-comments [<pr_number_or_branch>]"
 trigger: "Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments."
@@ -13,9 +13,26 @@ Triages and fixes PR review comments. Wraps `pr comments --fix`, which classifie
 threads via AI, applies mechanical fixes, and outputs structured JSON for any
 threads that need human input.
 
-Nothing reaches GitHub until the user approves it. Replies, the summary comment,
-thread resolutions, and deferral issues are drafted to stderr; `--post` is what
-publishes them, and it is only ever passed after the user has read the drafts.
+Replies, the summary comment, thread resolutions, and deferral issues are drafted
+to stderr; `--post` is what publishes them. A round that needs a person's
+decision waits for it. A **clean** round does not: see "Clean rounds close
+themselves" below.
+
+**Clean rounds close themselves.** A round is clean when every item is `fixed`,
+`already_addressed`, or `dismissed`; `needs_human` and `deferred` are empty; no
+publishing hold applies; `commit_status` is `pushed` or `no_changes`; and no
+verify-gate verdict is broken or unverified. For a clean round, run
+`pr comments --finish --post` yourself right after the fix pass (or after the
+last `--settle`) and report what was published. Do not ask the user to approve
+drafts, to run a command, or to confirm anything that is ready. Prompting is for
+decisions only: a `needs_human` item, a `--track` choice, a hold, a falsified
+fix, or a destructive act.
+
+**Defects in the tool's own output are fixed, not reported.** A summary link that
+404s, a path missing its repo prefix, a mis-attributed commit: fix the
+`pr comments` code (in the workbench repo, on its own branch, with a test) and
+rerun. Never hand the user a defect in a generated artifact to deal with, and
+never post around it by hand.
 
 `--post` is a gate, not a step. The phase flags — `--fix`, `--finish`,
 `--reply`, `--settle` — choose which work the run does; `--post` decides whether
@@ -316,7 +333,11 @@ never commits against it and its recorded outcome is kept. If the reviewer
 replies to it, or edits a comment on it, after it was settled, it is triaged
 again like any other thread.
 
-### Step 4: Present drafts and get approval
+### Step 4: Close out
+
+A clean round (definition above) skips straight to
+`pr comments --finish --post`. Everything below about showing drafts applies
+only to a round that is not clean.
 
 Two paths reach this step, and they satisfy its approval gate differently.
 
@@ -448,11 +469,11 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 
 ## Constraints
 
-- Never pass `--post` before the user has seen the drafts and approved them.
+- Never pass `--post` on a round that is not clean before the user has seen the drafts and approved them.
   The fix pass does not draft the tracking issue or the deferral replies — only
   the finish phase renders those, so `--finish --post --track` publishes text
   nobody read unless the drafted `--finish --track` ran first
-- Never re-run `--fix` to resume a pass whose drafts the user already approved.
+- Never re-run `--fix` to resume a pass whose drafts were already produced.
   The queue is intact, and regenerating it means `--post` publishes text they
   never saw — the same violation as posting before approval
 - Never apply fixes without user confirmation for `needs_human` items

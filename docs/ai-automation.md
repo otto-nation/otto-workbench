@@ -176,7 +176,7 @@ Sweep many open PRs with pr batch and turn the result into focused per-PR sessio
 
 ### `/pr-comments [<pr_number_or_branch>]`
 
-Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then draft replies for approval before publishing with --post. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
+Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then publish clean rounds directly and draft contested ones for approval. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
 
 ```
 /pr-comments [<pr_number_or_branch>]

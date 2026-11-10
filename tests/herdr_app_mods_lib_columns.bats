@@ -240,6 +240,30 @@ _filter() {
   [ "$output" = "[1,2]" ]
 }
 
+@test "DEFAULT_FILTERS hides drafts, mine drafts, landed, and empty" {
+  run node --input-type=module -e "
+    const { DEFAULT_FILTERS } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    process.stdout.write(JSON.stringify(DEFAULT_FILTERS));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"drafts":false,"mineDrafts":false,"landed":false,"empty":false}' ]
+}
+
+@test "filterOn: unset takes DEFAULT_FILTERS; stored boolean wins; unknown key is false" {
+  run node --input-type=module -e "
+    const { filterOn } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    process.stdout.write(JSON.stringify({
+      unsetDrafts: filterOn({}, 'drafts'),
+      unsetMine: filterOn(null, 'mineDrafts'),
+      storedTrue: filterOn({mineDrafts: true}, 'mineDrafts'),
+      storedFalse: filterOn({drafts: false}, 'drafts'),
+      unknown: filterOn({}, 'nope'),
+    }));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"unsetDrafts":false,"unsetMine":false,"storedTrue":true,"storedFalse":false,"unknown":false}' ]
+}
+
 @test "filterPrs: drafts hidden by default" {
   _filter '[{"number":1,"author":"alice","isDraft":true,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{}' 'alice'
   [ "$status" -eq 0 ]

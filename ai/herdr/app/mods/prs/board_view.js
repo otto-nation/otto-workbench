@@ -13,7 +13,7 @@ import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
 } from "./_lib/board_data.js";
-import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, isMine, groupColumns } from "./_lib/columns.js";
+import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, filterOn, isMine, groupColumns } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
 import { renderCompact } from "./compact.js";
@@ -49,10 +49,10 @@ function ctxKey(ctx) {
 function filtersOf() {
   const f = shared("prs.filters") ?? {};
   return {
-    drafts: !!f.drafts,
-    mineDrafts: f.mineDrafts !== false,
-    landed: !!f.landed,
-    empty: !!f.empty,
+    drafts: f.drafts,
+    mineDrafts: f.mineDrafts,
+    landed: f.landed,
+    empty: f.empty,
     authors: [...(f.authors ?? [])],
     repos: [...(f.repos ?? [])],
   };
@@ -85,7 +85,7 @@ export default class PrsBoard extends View {
     this.workflows = new Workflows(cx, () => this.activeTargets());
     // The Batch form's Drafts chip is the Mine tab's: one setting, so the list and the form agree.
     this.launcher = new BatchLauncher(cx, this.workflows, {
-      on: () => filtersOf().mineDrafts !== false,
+      on: () => filterOn(filtersOf(), "mineDrafts"),
       toggle: () => this.toggleChip("mineDrafts", this.acx),
     });
     this.batchOpen = false;
@@ -266,7 +266,7 @@ export default class PrsBoard extends View {
   }
 
   async landed(ctx, key, repo, listing, openPrs) {
-    if (!filtersOf().landed) return [];
+    if (!filterOn(filtersOf(), "landed")) return [];
     const result = await loadLanded(exec, ctx, repo.slug, listing, repo.host, openPrs, Date.now());
     if (!this.same(key)) return null;
     if (!result.ok) { this.fail(key, result.error); return null; }
@@ -319,7 +319,7 @@ export default class PrsBoard extends View {
   toggleChip(name, cx) {
     const f = filtersOf();
     if (name === "drafts" || name === "mineDrafts" || name === "landed" || name === "empty") {
-      f[name] = !f[name];
+      f[name] = !filterOn(f, name);
       setShared("prs.filters", f);
       if (name === "landed" && f.landed) this.refresh(cx);
       return;
@@ -392,7 +392,7 @@ export default class PrsBoard extends View {
     const base = filterRepos(state.prs ?? [], filters.repos, state.repoSlugs);
     const me = state.me ?? "";
     if (tabOf() === "mine") {
-      return base.filter((p) => isMine(p, me) && (filters.mineDrafts !== false || !p.isDraft));
+      return base.filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft));
     }
     return filterPrs(base, filters, me);
   }

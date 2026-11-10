@@ -148,10 +148,16 @@ _throws() {
   [ "$output" = '[{"repos":[],"labels":[]},{"repos":[],"labels":[]},{"repos":["a/one"],"labels":[]}]' ]
 }
 
-@test "filterForm drops drafts only when drafts is false, alongside the repo chip" {
+@test "filterForm hides drafts by default; drafts:true shows them; repo chip still ANDs" {
   _js '(() => { const prs = [{n:1,repoSlug:"a/one",isDraft:true},{n:2,repoSlug:"a/one"},{n:3,repoSlug:"b/two",isDraft:true},{n:4,repoSlug:"b/two"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}),ids({drafts:true}),ids({drafts:false}),ids({drafts:false,repos:["b/two"]})]; })()'
   [ "$status" -eq 0 ]
-  [ "$output" = '[[1,2,3,4],[1,2,3,4],[2,4],[4]]' ]
+  [ "$output" = '[[2,4],[1,2,3,4],[2,4],[4]]' ]
+}
+
+@test "filterForm hides drafts when drafts is omitted" {
+  _js '(() => { const prs = [{n:1,repoSlug:"a/one",isDraft:true},{n:2,repoSlug:"a/one"}]; return m.filterForm(prs).map((p) => p.n); })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[2]' ]
 }
 
 @test "filterForm empty, repo, labels OR, repo AND label, stale ignored, unlabeled hidden" {

@@ -1,7 +1,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
+import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import {
@@ -29,11 +29,11 @@ export function renderBoard({
   const t = theme();
   const mine = tab === "mine";
   const list = mine
-    ? prs.filter((p) => isMine(p, me) && (filters?.mineDrafts !== false || !p.isDraft))
+    ? prs.filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft))
     : filterPrs(prs, filters, me);
   const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
   const cols = groupColumns(list, mine ? mineColumn : teamColumn, spec);
-  const shown = visibleColumns(cols, Boolean(filters?.empty));
+  const shown = visibleColumns(cols, filterOn(filters, "empty"));
   const board = type(h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
     .bg(t.background).text_color(t.foreground).overflow_x_scrollbar(), "body");
   if (!shown.length) {
@@ -90,10 +90,10 @@ export function renderChips(filters, authors, { onToggle, tab, repos = [] }) {
   const activeSet = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
   const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => onToggle(name));
   const showItems = [];
-  if (tab === "mine") showItems.push(chip("Drafts", "mineDrafts", f.mineDrafts !== false));
-  else showItems.push(chip("Drafts", "drafts", Boolean(f.drafts)));
-  showItems.push(chip("Landed", "landed", Boolean(f.landed)));
-  showItems.push(chip("Empty lanes", "empty", Boolean(f.empty)));
+  if (tab === "mine") showItems.push(chip("Drafts", "mineDrafts", filterOn(f, "mineDrafts")));
+  else showItems.push(chip("Drafts", "drafts", filterOn(f, "drafts")));
+  showItems.push(chip("Landed", "landed", filterOn(f, "landed")));
+  showItems.push(chip("Empty lanes", "empty", filterOn(f, "empty")));
   return v_flex().id("prs-chips").gap(SP.xs).px(SP.lg).py(SP.sm).flex_none().bg(t.background)
     .child(filterGroup("Show", showItems))
     .when(repos.length > 1, (e) => e.child(

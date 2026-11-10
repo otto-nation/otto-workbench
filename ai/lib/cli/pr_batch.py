@@ -44,7 +44,8 @@ import core.log
 import core.run_lock
 import core.serde
 import review.focus
-from batch.model import FINISHED_RUN, STEP_ORDER, Item, Run, RunStatus, Step, StepStatus
+from batch.model import (FINISHED_RUN, STEP_ORDER, Item, RebaseWhen, Run, RunStatus, Step,
+                         StepStatus)
 from batch.requests import Outcome
 from batch.store import Role
 from core.trail import TRAIL_ROOT_ENV, Trail
@@ -79,8 +80,12 @@ recipes:
   pr batch run --checkout DIR                     rebase, ci, comments; no AI, no review
   pr batch run --checkout DIR --with-ai=rebase,ci,comments --with-review
   pr batch run --checkout DIR --steps rebase,ci   rebase and CI where needed
+  pr batch run --checkout DIR --rebase behind     also rebase PRs that are only behind
   pr batch run --checkout DIR --with-review --focus "…"   review with a focus
   pr batch resume --steps rebase,ci,comments      continue without re-running review
+
+The rebase step takes only PRs whose merge with their base conflicts, checked
+locally with `git merge-tree`; --rebase behind takes every PR behind its base.
 
 `run` plans for itself — no `pr batch plan` first. It is long-running and
 streams NDJSON events; start it as a background job. Step output stays in the
@@ -134,6 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--auto-publish", choices=["ff"], default=None,
                    help="Push a clean fast-forward (`pr push --expect`) when an item closes "
                         "with no findings; never a force push, closeout post or issue filing")
+    r.add_argument("--rebase", choices=[w.value for w in RebaseWhen],
+                   default=RebaseWhen.CONFLICTS.value,
+                   help="Which PRs the rebase step takes: only those that conflict with "
+                        "their base (default), or every PR behind it")
     r.add_argument("--prs", default="", help="Comma-separated repo#number keys to include")
     r.add_argument("--select", type=_selection, action="append", default=[],
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")
@@ -455,7 +464,8 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       no_verify=args.no_verify, focus=focus,
                                       with_ai=args.with_ai,
-                                      auto_publish_ff=args.auto_publish == "ff")
+                                      auto_publish_ff=args.auto_publish == "ff",
+                                      rebase_when=RebaseWhen(args.rebase))
         if focus:
             _warn_focus_without_review(run)
         session = held.enter_context(batch.store.create(run, inbox=inbox,
@@ -480,7 +490,8 @@ def _emit_started(run: Run) -> None:
     batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
                       steps=[s.value for s in run.steps],
                       auto_publish="ff" if run.auto_publish_ff else None,
-                      with_ai=None if run.with_ai is None else [s.value for s in run.with_ai])
+                      with_ai=None if run.with_ai is None else [s.value for s in run.with_ai],
+                      rebase=run.rebase_when.value)
     for item in run.items:
         batch.events.emit("item_queued", run=run.id, item=item.key,
                           steps=[s.step.value for s in item.steps])

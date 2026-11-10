@@ -49,7 +49,7 @@ import rebase.need
 import review.document
 import review.paths
 import review.store
-from batch.model import Step
+from batch.model import RebaseWhen, Step
 from gh.pr_data import PRData
 from pr.comments_fix import CloseoutDebt
 
@@ -106,7 +106,10 @@ query($owner: String!, $name: String!, $number: Int!) {
 }
 """ % _PR_FIELDS
 
-_REBASE_NEEDED = {"BEHIND": "behind its base", "DIRTY": "has merge conflicts"}
+_REBASE_NEEDED = {
+    RebaseWhen.BEHIND: {"BEHIND": "behind its base", "DIRTY": "has merge conflicts"},
+    RebaseWhen.CONFLICTS: {"DIRTY": "has merge conflicts"},
+}
 
 # Where the plan fetches every branch of a repo, one namespace per plan. Never
 # refs/remotes/origin/*: the rebase lease trusts that ref as last seen before
@@ -138,6 +141,8 @@ class PlanRow:
     branch: str
     head_sha: str
     is_draft: bool
+    # needs[Step.REBASE] is the conflicts-only need, the default; rebase_behind
+    # is the same PR judged by --rebase behind. need_for picks between them.
     needs: dict[Step, StepNeed] = field(default_factory=dict)
     # HEAD of the branch's local worktree, or "" when none is checked out.
     # Unpushed commits live here, so a self-review is judged against it.
@@ -153,10 +158,23 @@ class PlanRow:
     # Origin key of the repo (pr.target.repo_key_from_origin) taken at plan time;
     # the per-repo batch lock is named after it. "" when the checkout had no origin.
     repo_key: str = ""
+    # None in a plan saved before the field existed; need_for then falls back
+    # to needs[Step.REBASE].
+    rebase_behind: StepNeed | None = None
 
     @property
     def key(self) -> str:
         return f"{self.repo}#{self.pr}"
+
+    def need_for(self, step: Step, when: RebaseWhen = RebaseWhen.CONFLICTS) -> StepNeed | None:
+        """This row's need for *step*, the rebase need judged by *when*."""
+        if step is Step.REBASE and when is RebaseWhen.BEHIND and self.rebase_behind is not None:
+            return self.rebase_behind
+        return self.needs.get(step)
+
+    def needs_for(self, when: RebaseWhen = RebaseWhen.CONFLICTS) -> dict[Step, StepNeed]:
+        """Every step's need, the rebase need judged by *when*."""
+        return {s: n for s in self.needs if (n := self.need_for(s, when)) is not None}
 
 
 @dataclass(frozen=True)
@@ -213,49 +231,60 @@ def search_query(repos: list[str]) -> str:
     return " ".join(["is:pr is:open author:@me archived:false", *(f"repo:{r}" for r in repos)])
 
 
-def rebase_need(merge_state: str) -> StepNeed:
-    """GitHub's merge state — the fallback when the branch's refs cannot be read."""
-    if merge_state in _REBASE_NEEDED:
-        return StepNeed(True, _REBASE_NEEDED[merge_state])
+def rebase_need(merge_state: str, when: RebaseWhen = RebaseWhen.CONFLICTS) -> StepNeed:
+    """GitHub's merge state — the fallback when the branch's refs cannot be read.
+
+    Under *when* CONFLICTS only `DIRTY` needs a rebase, and an `UNKNOWN` state is
+    left alone: rebasing it would rebase a branch nobody showed conflicts.
+    """
+    if merge_state in _REBASE_NEEDED[when]:
+        return StepNeed(True, _REBASE_NEEDED[when][merge_state])
     if merge_state == "UNKNOWN":
+        if when is RebaseWhen.CONFLICTS:
+            return StepNeed(False, "mergeability unknown — not rebased")
         return StepNeed(True, "mergeability unknown — the rebase step decides")
+    if merge_state == "BEHIND":
+        return StepNeed(False, "behind its base, no conflicts")
     return StepNeed(False, f"up to date ({merge_state.lower()})")
 
 
 def tree_rebase_need(repo_dir: str, head: str, base: str, merge_state: str,
-                     *, base_label: str = "") -> StepNeed:
-    """Rebase need counted from resolved *head* and *base*, else *merge_state*.
+                     *, base_label: str = "",
+                     when: RebaseWhen = RebaseWhen.CONFLICTS) -> StepNeed:
+    """Rebase need read from resolved *head* and *base*, else *merge_state*.
 
-    *head* and *base* are SHAs or ref names `rebase.need` can resolve. Either
-    missing, or a comparison git cannot make, falls back to GitHub's merge
-    state as today.
+    *head* and *base* are SHAs or ref names `rebase.need` can resolve. *when*
+    CONFLICTS asks git whether the two merge cleanly; BEHIND counts commits.
+    Either ref missing, or a question git cannot answer, falls back to GitHub's
+    merge state.
     """
     if head and base:
-        found = rebase.need.need(
-            repo_dir, head, base, base_label=base_label or base)
+        judge = rebase.need.conflict_need if when is RebaseWhen.CONFLICTS else rebase.need.need
+        found = judge(repo_dir, head, base, base_label=base_label or base)
         if found.resolved:
             return StepNeed(found.needed, found.reason)
-    return rebase_need(merge_state)
+    return rebase_need(merge_state, when)
 
 
 def _row_rebase_need(repo_dir: str, branch: str, base: str, merge_state: str,
                      namespace: str,
-                     remote_heads: dict[str, str] | None) -> StepNeed:
+                     remote_heads: dict[str, str] | None,
+                     when: RebaseWhen = RebaseWhen.CONFLICTS) -> StepNeed:
     if not namespace and remote_heads is None:
-        return rebase_need(merge_state)
+        return rebase_need(merge_state, when)
     local = f"refs/heads/{branch}"
     if namespace and base:
         has_local = rebase.inspect.ref_exists(repo_dir, local)
         head = local if has_local else f"{namespace}/{branch}"
         return tree_rebase_need(
-            repo_dir, head, f"{namespace}/{base}", merge_state, base_label=base)
+            repo_dir, head, f"{namespace}/{base}", merge_state, base_label=base, when=when)
     base_sha = (remote_heads or {}).get(base, "")
     if not base_sha:
-        return rebase_need(merge_state)
+        return rebase_need(merge_state, when)
     has_local = rebase.inspect.ref_exists(repo_dir, local)
     head = local if has_local else (remote_heads or {}).get(branch, "")
     return tree_rebase_need(
-        repo_dir, head, base_sha, merge_state, base_label=base)
+        repo_dir, head, base_sha, merge_state, base_label=base, when=when)
 
 
 def rollup_state(node: dict) -> str:
@@ -580,12 +609,18 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     merge_state = node.get("mergeStateStatus") or "UNKNOWN"
     # One state load (one git call) per row, shared by the comments need and the closeout.
     state = pr_state(repo_dir, branch)
+
+    def rebase(when: RebaseWhen) -> StepNeed:
+        if fork:
+            return FORK_NEED
+        return _row_rebase_need(repo_dir, branch, base, merge_state, ref_namespace,
+                                remote_heads, when)
+
     return PlanRow(
         repo=repo, repo_dir=repo_dir, pr=int(node["number"]), title=node.get("title", ""),
         branch=branch, head_sha=head, is_draft=bool(node.get("isDraft")),
         needs={
-            Step.REBASE: FORK_NEED if fork else _row_rebase_need(
-                repo_dir, branch, base, merge_state, ref_namespace, remote_heads),
+            Step.REBASE: rebase(RebaseWhen.CONFLICTS),
             Step.CI: FORK_NEED if fork else ci_step_need(ci_state),
             Step.COMMENTS: comments_need(node, viewer, state),
             Step.REVIEW: review_need(_review_file(repo, branch), head, local_head=local_head),
@@ -594,6 +629,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
         ref_namespace=ref_namespace,
         closeout=_closeout_from(state).describe(),
         repo_key=repo_key,
+        rebase_behind=rebase(RebaseWhen.BEHIND),
     )
 
 

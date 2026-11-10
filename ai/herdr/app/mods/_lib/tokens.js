@@ -23,6 +23,10 @@ export const TYPE = {
   body: role(BRAND.font.body),
   title: role(BRAND.font.title),
   code: role(BRAND.font.code, true),
+  // ceiling: a page heading the brand has no app role for yet (its heading tokens are for web
+  // pages), trialled on the Batch page. Upgrade trigger: once DESIGN.md defines an app page or
+  // pane heading, read it from BRAND here and drop the literal.
+  heading: { size: 18, weight: 600, lh: 24, mono: false },
 };
 // tag is rounded.sm, control is rounded.md, card is rounded.lg.
 export const RADIUS = { tag: BRAND.radius.sm, control: BRAND.radius.md, card: BRAND.radius.lg };

@@ -23,6 +23,13 @@ class Step(StrEnum):
 STEP_ORDER: tuple[Step, ...] = (Step.REBASE, Step.CI, Step.COMMENTS, Step.REVIEW)
 
 
+class RebaseWhen(StrEnum):
+    """Which PRs the rebase step takes: only conflicting ones, or every one behind its base."""
+
+    CONFLICTS = "conflicts"
+    BEHIND = "behind"
+
+
 class StepStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -324,6 +331,9 @@ class Run:
     with_ai: list[Step] | None = None
     # --auto-publish ff. auto_publish (list[Step]) is load-only for v1 runs.
     auto_publish_ff: bool = False
+    # --rebase. The default is the load value for a run saved before the field
+    # existed, when every PR behind its base was rebased; new_run always sets it.
+    rebase_when: RebaseWhen = RebaseWhen.BEHIND
 
     def uses_ai(self, step: Step) -> bool:
         return self.with_ai is None or step in self.with_ai

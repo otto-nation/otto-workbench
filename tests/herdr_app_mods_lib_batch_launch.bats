@@ -70,6 +70,12 @@ _throws() {
   [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase,ci,comments","--auto-publish","ff"]' ]
 }
 
+@test "runArgv sends --rebase behind only when asked and rebase is a step" {
+  _js '[m.runArgv({keys:["o/r#1"],steps:["rebase","ci"],rebaseBehind:true,checkout:"/co"}), m.runArgv({keys:["o/r#1"],steps:["rebase"],checkout:"/co"}), m.runArgv({keys:["o/r#1"],steps:["ci"],rebaseBehind:true,checkout:"/co"})]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase,ci","--rebase","behind"],["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase"],["batch","run","--checkout","/co","--prs","o/r#1","--steps","ci"]]' ]
+}
+
 @test "runArgv selects follow keys order and imply --with-review" {
   _js 'm.runArgv({keys:["o/r#2","o/r#1","o/r#3"],steps:["rebase","ci"],selects:{"o/r#3":["ci"],"o/r#1":["review"],"o/r#2":["rebase"],"o/r#9":["ci"]},checkout:"/co"})'
   [ "$status" -eq 0 ]

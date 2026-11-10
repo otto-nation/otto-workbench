@@ -21,6 +21,7 @@ export class BatchLauncher {
     this.steps = new Set(["rebase", "ci", "comments"]);
     this.withAi = new Set();
     this.autoPublish = false;
+    this.rebaseBehind = false;
     this.launching = false;
     this.note = null;
     this.terminals = new Map();
@@ -54,6 +55,11 @@ export class BatchLauncher {
     this.acx.notify();
   }
 
+  toggleRebaseBehind() {
+    this.rebaseBehind = !this.rebaseBehind;
+    this.acx.notify();
+  }
+
   toggleAutoPublish() {
     this.autoPublish = !this.autoPublish;
     this.acx.notify();
@@ -70,12 +76,6 @@ export class BatchLauncher {
     const key = [...this.labelFilter].find((n) => n.toLowerCase() === String(name).toLowerCase());
     if (key != null) this.labelFilter.delete(key);
     else this.labelFilter.add(name);
-    this.acx.notify();
-  }
-
-  clearFilters() {
-    this.repoFilter.clear();
-    this.labelFilter.clear();
     this.acx.notify();
   }
 
@@ -107,6 +107,7 @@ export class BatchLauncher {
               steps: [...this.steps],
               withAi: [...this.withAi],
               autoPublish: this.autoPublish,
+              rebaseBehind: this.rebaseBehind,
             })];
             const res = parseRunReply(await exec("hc", hcBatchArgv({
               repo: g.repo, cwd: g.cwd, on: g.on, argv,

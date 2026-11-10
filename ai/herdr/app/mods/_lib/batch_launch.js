@@ -93,6 +93,7 @@ export function runArgv({
   steps,
   withAi = [],
   autoPublish = false,
+  rebaseBehind = false,
   selects = {},
   focus = [],
   checkout,
@@ -115,6 +116,9 @@ export function runArgv({
   const ai = withAi.filter((s) => AI_STEPS.has(s));
   if (ai.length > 0) argv.push('--with-ai', ai.join(','));
   if (autoPublish) argv.push('--auto-publish', 'ff');
+  // pr batch rebases only conflicting PRs unless told otherwise; the flag is sent only when it
+  // changes something, so a machine whose pr predates it still runs the default.
+  if (rebaseBehind && stepList.includes('rebase')) argv.push('--rebase', 'behind');
 
   const effectiveSelects = { ...selects };
   if (reviewOnly) {
@@ -152,9 +156,17 @@ export function runProgress(parsed) {
   return { done, total: items.length };
 }
 
+/** The Start form's label for each launchable step. */
+export const STEP_LABEL = {
+  rebase: 'Rebase conflicting PRs',
+  ci: 'Fix CI',
+  comments: 'Answer comments',
+  review: 'Self-review',
+};
+
 /** One-line help for each launchable step. */
 export const STEP_HELP = {
-  rebase: 'Rebase onto the base branch',
+  rebase: 'Only PRs that conflict with their base; ones just behind are left alone',
   ci: 'Fix failing checks',
   comments: 'Answer review threads',
   review: 'Run a self-review',

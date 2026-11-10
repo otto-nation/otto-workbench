@@ -94,8 +94,10 @@ def compare(run: Run, plan: batch.plan.Plan, repos: set[str]) -> dict:
                   for k, r in rows.items() if k in items and r.head_sha != _last_seen(items[k])],
         "closed": [i.key for k, i in items.items()
                    if k not in rows and i.status is not ItemStatus.SKIPPED_CLOSED],
-        "owed": [{"pr": r.key, "needs": {s.value: n.reason for s, n in r.needs.items() if n.needed}}
-                 for k, r in rows.items() if any(n.needed for n in r.needs.values())],
+        "owed": [{"pr": r.key, "needs": {s.value: n.reason
+                                         for s, n in r.needs_for(run.rebase_when).items() if n.needed}}
+                 for k, r in rows.items()
+                 if any(n.needed for n in r.needs_for(run.rebase_when).values())],
     }
 
 

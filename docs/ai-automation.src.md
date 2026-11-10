@@ -550,7 +550,7 @@ session with stdin closed, and runs drafted. Nothing is pushed unless `--auto-pu
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
-pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff]
+pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff] [--rebase behind]
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
 pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
@@ -566,8 +566,12 @@ Default steps are `rebase`, `ci`, `comments` (`review` needs `--with-review`),
 each only where needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
 step is still planned into the run when its saved `pr` state owes a closeout,
 but only when `comments` is one of the run's steps and there is no `--select`. It is queued and gets a worktree like any other item. `rebase` is needed
-when the branch is behind its PR's base, from fetched objects (a run keeps them
-in `refs/pr-batch/`; GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed). `comments` is needed when `pr comments` would find something to answer (`pr.owed_feedback`): threads, review bodies or PR comments.
+only when the branch conflicts with its PR's base: `git merge-tree` over fetched
+objects (a run keeps them in `refs/pr-batch/`), falling back to GitHub's merge
+state, where only `DIRTY` counts. A branch that is behind but merges cleanly is
+left alone. `--rebase behind` takes every branch behind its base instead
+(fallback: `BEHIND`, `DIRTY` and `UNKNOWN` count); the run records the choice,
+so `resume` keeps it. `comments` is needed when `pr comments` would find something to answer (`pr.owed_feedback`): threads, review bodies or PR comments.
 `ci` runs `ci-check --no-rebase --head-sha <planned remote head>` (not `pr ci`)
 when the rollup failed, with `--wait` if still running; `--fix` and the rate-limit
 rerun only under `--with-ai=ci`. Fork heads skip both. A stacked PR records

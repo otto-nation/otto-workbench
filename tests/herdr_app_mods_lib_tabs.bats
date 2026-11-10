@@ -25,6 +25,11 @@ _js() {
   [ "$output" = '"a"' ]
 }
 
+@test "only the panel copy offers Open board, whatever its width" {
+  _js '[m.offersOpenBoard({placement:"panel"}), m.offersOpenBoard({}), m.offersOpenBoard(undefined), m.offersOpenBoard({placement:"tab"})]'
+  [ "$output" = '[true,false,false,false]' ]
+}
+
 @test "falls back to another space; none, unnamed or other names give null" {
   _js '[m.boardTabId([{active:true,tabs:[]},{active:false,tabs:[{id:"o",name:"PRs",named:true}]}],"PRs"), m.boardTabId([{active:true,tabs:[{id:"x",name:"PRs",named:false}]}],"PRs"), m.boardTabId([],"PRs"), m.boardTabId(null,"PRs")]'
   [ "$output" = '["o",null,null,null]' ]

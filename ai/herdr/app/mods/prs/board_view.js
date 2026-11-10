@@ -4,10 +4,10 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run, props,
 } from "herdr";
 import { locate } from "./_lib/location.js";
-import { boardTabId } from "./_lib/tabs.js";
+import { boardTabId, offersOpenBoard } from "./_lib/tabs.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
@@ -79,6 +79,8 @@ export default class PrsBoard extends View {
   // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
     this.acx = cx;
+    // Where the copy is mounted, not how wide it is, decides whether it offers the board tab.
+    this.inPanel = offersOpenBoard(props());
     this.workflows = new Workflows(cx, () => this.activeTargets());
     this.launcher = new BatchLauncher(cx, this.workflows);
     this.batchOpen = false;
@@ -432,11 +434,15 @@ export default class PrsBoard extends View {
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
-          .child(button("open-board", "Open board", () => {
-            const id = boardTabId(spaces(), "PRs");
-            if (id) run("tab.select", { id });
-            else run("tab.new", { name: "PRs", mod: "prs" });
-          }))));
+          .when(this.inPanel, (e) => e.child(this.openBoardButton()))));
+  }
+
+  openBoardButton() {
+    return button("open-board", "Open board", () => {
+      const id = boardTabId(spaces(), "PRs");
+      if (id) run("tab.select", { id });
+      else run("tab.new", { name: "PRs", mod: "prs" });
+    });
   }
 
   compactView(state, t, cx) {
@@ -507,6 +513,7 @@ export default class PrsBoard extends View {
         segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
       ]))
+      .when(this.inPanel, (e) => e.child(this.openBoardButton()))
       .child(this.refreshButton());
   }
 }

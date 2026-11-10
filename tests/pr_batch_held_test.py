@@ -79,7 +79,7 @@ def test_run_skips_a_pr_held_by_repo_key(monkeypatch, capsys):
     _seed_holder(_row(1), started_at=started)
     planned = [_row(1), _row(2)]
     _no_locks(monkeypatch)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", planned))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
     def fake_run(self):
@@ -109,7 +109,7 @@ def test_run_skips_a_pr_held_by_label_when_the_seeded_item_has_no_key(
     _seed_holder(_row(1, repo="o/r", repo_key="", repo_dir="/missing"))
     planned = [_row(1, repo="O/R", repo_key="")]
     _no_locks(monkeypatch)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", planned))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
     def fake_run(self):
@@ -127,7 +127,7 @@ def test_run_does_not_skip_a_pr_held_only_by_a_finished_run(monkeypatch):
     _seed_holder(_row(1), status=RunStatus.DONE, item_status=ItemStatus.QUEUED)
     planned = [_row(1)]
     _no_locks(monkeypatch)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", planned))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
     def fake_run(self):
@@ -144,7 +144,7 @@ def test_run_does_not_skip_a_pr_whose_item_is_already_terminal(monkeypatch):
     _seed_holder(_row(1), item_status=ItemStatus.DROPPED)
     planned = [_row(1)]
     _no_locks(monkeypatch)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", planned))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
     def fake_run(self):

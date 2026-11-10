@@ -153,7 +153,7 @@ def test_batch_need_broken_input_yields_no_lock_not_an_exception(tmp_path):
 def test_a_run_over_a_different_repo_is_not_refused(monkeypatch, tmp_path):
     a = _origin_repo(tmp_path / "a", "acme/one")
     b = _origin_repo(tmp_path / "b", "acme/two")
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", []))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", []))
     with live_pid() as pid, held_elsewhere(
             _path(_key(a)),
             {"pid": pid, "command": "pr batch run", "started": "t0",
@@ -165,7 +165,7 @@ def test_a_run_over_a_different_repo_is_not_refused(monkeypatch, tmp_path):
 def test_a_run_over_the_same_repo_is_refused_naming_the_lock(monkeypatch, tmp_path, capsys):
     repo = repo_with_origin(tmp_path / "repo")
     key = _key(repo)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", []))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", []))
     with live_pid() as pid, held_elsewhere(
             _path(key),
             {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0",
@@ -218,7 +218,7 @@ def test_the_handler_refuses_when_a_chosen_runs_key_is_not_held(monkeypatch, tmp
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(
         batch.plan, "build_run_plan",
-        lambda dirs: Plan("me", [_row(repo, 1, "feat/a", key="other-key-ffffffff")]))
+        lambda dirs, prs=None: Plan("me", [_row(repo, 1, "feat/a", key="other-key-ffffffff")]))
     code = _main(["batch", "run", "--checkout", str(repo)])
     assert code == 1
     assert "the batch lock for other-key-ffffffff is not held" in capsys.readouterr().err

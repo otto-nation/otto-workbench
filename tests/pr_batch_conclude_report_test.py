@@ -33,7 +33,7 @@ def test_run_summary_survives_a_report_write_failure(monkeypatch, capsys):
     # Revert: remove the try/except around write_report in _conclude.
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
 
     def fake_run(self):
         self.run.status = batch.model.RunStatus.DONE

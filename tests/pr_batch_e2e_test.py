@@ -64,7 +64,7 @@ def test_default_run_exits_0_and_records_findings(tmp_path, monkeypatch, capsys)
                           capture_output=True, text=True, check=True).stdout.strip()
     row = PlanRow("o/r", str(repo), 1, "t", branch, head, False,
                   {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
     monkeypatch.setattr(batch.plan, "replan_row", lambda r: row)
     log = tmp_path / "calls.log"
     bin_dir = tmp_path / "bin"

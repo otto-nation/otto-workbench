@@ -829,7 +829,9 @@ pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder ap
 `--focus` is forwarded to every review step and replayed by `resume` (`--steps` only narrows).
 
 Default steps are `rebase`, `ci`, `comments` (`review` needs `--with-review`),
-each only where needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
+each only where needed (`run` plans for itself; `run --help` has recipes). `run --prs` reads the named PRs by
+number, ten to a request; without it the plan searches every open PR of yours,
+ten to a page, since GitHub fails a request that runs past about ten seconds. A PR that needs no
 step is still planned into the run when its saved `pr` state owes a closeout,
 but only when `comments` is one of the run's steps and there is no `--select`. It is queued and gets a worktree like any other item. `rebase` is needed
 only when the branch conflicts with its PR's base: `git merge-tree` over fetched

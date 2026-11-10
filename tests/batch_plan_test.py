@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -371,3 +372,98 @@ def test_the_reason_names_every_kind_of_owed_feedback(monkeypatch):
     need = _comments_need(monkeypatch, reviews=[_review_body(11), _review_body(12)],
                           threads=[{"id": "T1", "isResolved": False}])
     assert need == batch.plan.StepNeed(True, "1 unresolved thread, 2 unanswered review bodies")
+
+
+def test_search_reads_every_page_and_keeps_the_first_viewer(monkeypatch):
+    pages = {
+        None: {"viewer": {"login": "me"}, "search": {
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"}, "nodes": [{"number": 1}]}},
+        "c1": {"viewer": {"login": "me"}, "search": {
+            "pageInfo": {"hasNextPage": True, "endCursor": "c2"}, "nodes": [{"number": 2}]}},
+        "c2": {"viewer": {"login": "me"}, "search": {
+            "pageInfo": {"hasNextPage": False, "endCursor": "c3"}, "nodes": [{"number": 3}]}},
+    }
+    asked = []
+
+    def fake(query, variables):
+        asked.append(variables["after"])
+        return pages[variables["after"]]
+
+    monkeypatch.setattr(batch.plan, "_graphql", fake)
+    data = batch.plan._search("q")
+    assert asked == [None, "c1", "c2"]
+    assert data == {"viewer": {"login": "me"},
+                    "search": {"nodes": [{"number": 1}, {"number": 2}, {"number": 3}]}}
+
+
+def test_search_stops_on_a_cursor_that_does_not_advance(monkeypatch):
+    stuck = {"search": {"pageInfo": {"hasNextPage": True, "endCursor": "c1"}, "nodes": [{"number": 1}]}}
+    asked = []
+    monkeypatch.setattr(batch.plan, "_graphql",
+                        lambda q, v: asked.append(v["after"]) or stuck)
+    assert batch.plan._search("q")["search"]["nodes"] == [{"number": 1}, {"number": 1}]
+    assert asked == [None, "c1"]
+
+
+def test_by_number_reads_only_the_named_open_prs_of_the_viewer(monkeypatch):
+    asked = []
+
+    def fake(query, variables):
+        asked.append((variables, sorted(re.findall(r"pullRequest\(number: (\d+)\)", query))))
+        mine = {"state": "OPEN", "author": {"login": "me"}}
+        return {"viewer": {"login": "me"}, "repository": {
+            "p1": dict(mine, number=1), "p2": dict(mine, number=2, state="CLOSED"),
+            "p3": dict(mine, number=3, author={"login": "you"}), "p4": None}}
+
+    monkeypatch.setattr(batch.plan, "_graphql", fake)
+    data = batch.plan._by_number(["O/A#3", "o/a#1", "o/a#2", "o/a#4", "x/y#9", "o/a#bad"],
+                                 {"o/a": "/repos/a"})
+    assert asked == [({"owner": "o", "name": "a"}, ["1", "2", "3", "4"])]
+    assert [n["number"] for n in data["search"]["nodes"]] == [1]
+    assert data["viewer"] == {"login": "me"}
+
+
+def test_by_number_reads_at_most_a_page_of_prs_per_request(monkeypatch):
+    sizes = []
+    monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: sizes.append(
+        q.count("pullRequest(number:")) or {"viewer": {"login": "me"}, "repository": {}})
+    batch.plan._by_number([f"o/a#{n}" for n in range(1, 24)], {"o/a": "/repos/a"})
+    assert sizes == [10, 10, 3]
+
+
+def test_the_bulk_read_never_asks_github_for_merge_state():
+    assert "mergeStateStatus" not in batch.plan._SEARCH
+    assert "mergeStateStatus" not in batch.plan._BY_NUMBER % ""
+
+
+def test_merge_state_is_fetched_only_when_the_refs_cannot_answer(monkeypatch):
+    monkeypatch.setattr(batch.plan, "pr_state", lambda repo_dir, branch: None)
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
+    asked = []
+    monkeypatch.setattr(batch.plan, "_merge_state",
+                        lambda repo, number: asked.append((repo, number)) or "DIRTY")
+    node = {"number": 7, "title": "t", "isDraft": False, "headRefName": "b",
+            "headRefOid": "sha", "baseRefName": "main",
+            "repository": {"nameWithOwner": "o/a"}, "reviewThreads": {"nodes": []}}
+    row = batch.plan._row(node, "/repos/a", "o/a")
+    assert asked == [("o/a", 7)]
+    assert row.needs[Step.REBASE] == batch.plan.StepNeed(True, "has merge conflicts")
+    assert row.rebase_behind.needed is True
+
+    monkeypatch.setattr(batch.plan, "tree_rebase_need",
+                        lambda *a, **k: batch.plan.StepNeed(False, "up to date with main"))
+    monkeypatch.setattr(batch.plan.rebase.inspect, "ref_exists", lambda *a, **k: False)
+    asked.clear()
+    batch.plan._row(node, "/repos/a", "o/a", "", "refs/pr-batch/x")
+    assert asked == []
+
+
+def test_plan_inputs_read_named_prs_by_number_and_search_otherwise(monkeypatch):
+    monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
+    empty = {"viewer": {"login": "me"}, "search": {"nodes": []}}
+    calls = []
+    monkeypatch.setattr(batch.plan, "_by_number", lambda keys, by_slug: calls.append(("n", keys)) or empty)
+    monkeypatch.setattr(batch.plan, "_search", lambda q: calls.append(("s", q)) or empty)
+    batch.plan._plan_inputs(["/repos/a"], ["o/a#1"])
+    batch.plan._plan_inputs(["/repos/a"])
+    assert calls == [("n", ["o/a#1"]), ("s", batch.plan.search_query(["o/a"]))]

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,7 +75,8 @@ PLAN_SCHEMA_VERSION = 1
 _THREAD_COMMENTS = 5
 
 _PR_FIELDS = """
-  number title isDraft headRefName headRefOid mergeStateStatus
+  number title isDraft headRefName headRefOid
+  author { login }
   baseRefName isCrossRepository
   repository { nameWithOwner }
   reviewThreads(first: 100) {
@@ -90,14 +92,22 @@ _PR_FIELDS = """
        "comments": gh.pr_pages.GQL_ISSUE_COMMENTS_LIMIT,
        "thread_comments": _THREAD_COMMENTS}
 
-# ceiling: search first:100 and reviewThreads first:100 are unpaginated; upgrade
-# to pagination if a user has >100 open PRs in the scope or a PR has >100 threads.
+# PRs per search page. GitHub answers a request that runs past about ten seconds
+# with a 502 or 504, and each PR's nested threads, reviews and comments cost about
+# a quarter of a second: 45 PRs in one request failed every time, 15 took four
+# seconds. Ten keeps a page well inside the limit on a busy repo.
+_SEARCH_PAGE = 10
+
+# ceiling: reviewThreads first:100 is unpaginated; page it if a PR has >100 threads.
 _SEARCH = """
-query($q: String!) {
+query($q: String!, $after: String) {
   viewer { login }
-  search(query: $q, type: ISSUE, first: 100) { nodes { ... on PullRequest { %s } } }
+  search(query: $q, type: ISSUE, first: %(page)d, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ... on PullRequest { %(fields)s } }
+  }
 }
-""" % _PR_FIELDS
+""" % {"page": _SEARCH_PAGE, "fields": _PR_FIELDS}
 
 _ONE = """
 query($owner: String!, $name: String!, $number: Int!) {
@@ -105,6 +115,31 @@ query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) { state %s } }
 }
 """ % _PR_FIELDS
+
+# The PRs `--prs` names, read by number rather than found by search, this many to a
+# request (the same per-request bound as _SEARCH_PAGE).
+_BY_NUMBER = """
+query($owner: String!, $name: String!) {
+  viewer { login }
+  repository(owner: $owner, name: $name) { %s }
+}
+"""
+
+# GitHub's merge state: the fallback for a PR whose refs the plan cannot read.
+# Never part of the bulk read: GitHub computes mergeability on request, which
+# alone took six seconds for 45 PRs.
+_MERGE_STATE = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { mergeStateStatus } }
+}
+"""
+
+MergeState = str | Callable[[], str]
+
+
+def _state(merge_state: MergeState) -> str:
+    """*merge_state*, read now when it is the function that fetches it."""
+    return merge_state() if callable(merge_state) else merge_state
 
 _REBASE_NEEDED = {
     RebaseWhen.BEHIND: {"BEHIND": "behind its base", "DIRTY": "has merge conflicts"},
@@ -248,7 +283,7 @@ def rebase_need(merge_state: str, when: RebaseWhen = RebaseWhen.CONFLICTS) -> St
     return StepNeed(False, f"up to date ({merge_state.lower()})")
 
 
-def tree_rebase_need(repo_dir: str, head: str, base: str, merge_state: str,
+def tree_rebase_need(repo_dir: str, head: str, base: str, merge_state: MergeState,
                      *, base_label: str = "",
                      when: RebaseWhen = RebaseWhen.CONFLICTS) -> StepNeed:
     """Rebase need read from resolved *head* and *base*, else *merge_state*.
@@ -256,22 +291,23 @@ def tree_rebase_need(repo_dir: str, head: str, base: str, merge_state: str,
     *head* and *base* are SHAs or ref names `rebase.need` can resolve. *when*
     CONFLICTS asks git whether the two merge cleanly; BEHIND counts commits.
     Either ref missing, or a question git cannot answer, falls back to GitHub's
-    merge state.
+    merge state. *merge_state* may be a function that fetches it, so it is read
+    only on that fallback.
     """
     if head and base:
         judge = rebase.need.conflict_need if when is RebaseWhen.CONFLICTS else rebase.need.need
         found = judge(repo_dir, head, base, base_label=base_label or base)
         if found.resolved:
             return StepNeed(found.needed, found.reason)
-    return rebase_need(merge_state, when)
+    return rebase_need(_state(merge_state), when)
 
 
-def _row_rebase_need(repo_dir: str, branch: str, base: str, merge_state: str,
+def _row_rebase_need(repo_dir: str, branch: str, base: str, merge_state: MergeState,
                      namespace: str,
                      remote_heads: dict[str, str] | None,
                      when: RebaseWhen = RebaseWhen.CONFLICTS) -> StepNeed:
     if not namespace and remote_heads is None:
-        return rebase_need(merge_state, when)
+        return rebase_need(_state(merge_state), when)
     local = f"refs/heads/{branch}"
     if namespace and base:
         has_local = rebase.inspect.ref_exists(repo_dir, local)
@@ -280,7 +316,7 @@ def _row_rebase_need(repo_dir: str, branch: str, base: str, merge_state: str,
             repo_dir, head, f"{namespace}/{base}", merge_state, base_label=base, when=when)
     base_sha = (remote_heads or {}).get(base, "")
     if not base_sha:
-        return rebase_need(merge_state, when)
+        return rebase_need(_state(merge_state), when)
     has_local = rebase.inspect.ref_exists(repo_dir, local)
     head = local if has_local else (remote_heads or {}).get(branch, "")
     return tree_rebase_need(
@@ -606,7 +642,14 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     base = node.get("baseRefName") or ""
     fork = bool(node.get("isCrossRepository"))
     ci_state = rollup_state(node)
-    merge_state = node.get("mergeStateStatus") or "UNKNOWN"
+    cached: dict[str, str] = {}
+
+    # Asked of GitHub only when the refs cannot answer, then shared by both modes.
+    def merge_state() -> str:
+        if "v" not in cached:
+            cached["v"] = node.get("mergeStateStatus") or _merge_state(repo, int(node["number"]))
+        return cached["v"]
+
     # One state load (one git call) per row, shared by the comments need and the closeout.
     state = pr_state(repo_dir, branch)
 
@@ -706,7 +749,71 @@ def _graphql(query: str, variables: dict) -> dict:
         raise PlanError(f"GitHub query failed: {detail}") from exc
 
 
-def _plan_inputs(repo_dirs: list[str]):
+def _merge_state(repo: str, number: int) -> str:
+    """GitHub's merge state for one PR, or UNKNOWN when GitHub cannot say."""
+    owner, name = repo.split("/", 1)
+    try:
+        data = _graphql(_MERGE_STATE, {"owner": owner, "name": name, "number": number})
+    except PlanError as exc:
+        core.log.warn(f"{repo}#{number}: merge state unavailable ({exc}); rebase need unknown")
+        return "UNKNOWN"
+    pr = (data.get("repository") or {}).get("pullRequest") or {}
+    return pr.get("mergeStateStatus") or "UNKNOWN"
+
+
+def _by_number(keys: list[str], by_slug: dict[str, str]) -> dict:
+    """The open PRs of the viewer's that *keys* (`owner/repo#N`) name, as one `{viewer, search: {nodes}}`.
+
+    A key outside *by_slug*, a closed PR or someone else's is dropped, as the
+    search it stands in for would never have returned it.
+    """
+    by_fold = {slug.casefold(): slug for slug in by_slug}
+    wanted: dict[str, list[int]] = {}
+    for key in keys:
+        repo, _, number = key.partition("#")
+        slug = by_fold.get(repo.casefold())
+        if slug is None or not number.isdigit():
+            continue
+        wanted.setdefault(slug, []).append(int(number))
+    viewer: dict = {}
+    nodes: list[dict] = []
+    for slug, numbers in wanted.items():
+        owner, name = slug.split("/", 1)
+        numbers = sorted(set(numbers))
+        for i in range(0, len(numbers), _SEARCH_PAGE):
+            chunk = numbers[i:i + _SEARCH_PAGE]
+            aliases = " ".join(f"p{n}: pullRequest(number: {n}) {{ state {_PR_FIELDS} }}"
+                               for n in chunk)
+            data = _graphql(_BY_NUMBER % aliases, {"owner": owner, "name": name})
+            viewer = viewer or data.get("viewer") or {}
+            repo = data.get("repository") or {}
+            nodes.extend(n for n in (repo.get(f"p{num}") for num in chunk)
+                         if n and n.get("state") == "OPEN")
+    login = viewer.get("login", "")
+    mine = [n for n in nodes if ((n.get("author") or {}).get("login") or "") == login]
+    return {"viewer": viewer, "search": {"nodes": mine}}
+
+
+def _search(q: str) -> dict:
+    """Every PR *q* matches, read a page at a time, as one `{viewer, search: {nodes}}`."""
+    viewer: dict = {}
+    nodes: list[dict] = []
+    after = None
+    while True:
+        data = _graphql(_SEARCH, {"q": q, "after": after})
+        viewer = viewer or data.get("viewer") or {}
+        found = data.get("search") or {}
+        nodes.extend(found.get("nodes") or [])
+        page = found.get("pageInfo") or {}
+        cursor = page.get("endCursor")
+        # A cursor that does not advance would page forever; stop at what was read.
+        if not page.get("hasNextPage") or not cursor or cursor == after:
+            break
+        after = cursor
+    return {"viewer": viewer, "search": {"nodes": nodes}}
+
+
+def _plan_inputs(repo_dirs: list[str], prs: list[str] | None = None):
     # Absolute, because a run persists these: a relative checkout names a
     # different directory, or none, to every later reader in another cwd.
     repo_dirs = [os.path.abspath(d) for d in repo_dirs]
@@ -715,7 +822,7 @@ def _plan_inputs(repo_dirs: list[str]):
     if len(by_slug) != len(repo_dirs):
         dupes = sorted({s for s in slugs if slugs.count(s) > 1})
         raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
-    data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
+    data = _by_number(prs, by_slug) if prs else _search(search_query(sorted(by_slug)))
     return repo_dirs, by_slug, data, _fetch_branches(data, by_slug)
 
 
@@ -724,8 +831,9 @@ def build_plan(repo_dirs: list[str]) -> Plan:
     return _plan_without_refs(data, by_slug, repo_dirs, needed)
 
 
-def build_run_plan(repo_dirs: list[str]) -> Plan:
-    repo_dirs, by_slug, data, needed = _plan_inputs(repo_dirs)
+def build_run_plan(repo_dirs: list[str], prs: list[str] | None = None) -> Plan:
+    """The run's plan: for the PRs *prs* names when given, else every open PR of the viewer's."""
+    repo_dirs, by_slug, data, needed = _plan_inputs(repo_dirs, prs)
     return _plan_with_namespace(data, by_slug, repo_dirs, needed)
 
 

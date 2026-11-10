@@ -157,6 +157,19 @@ _filter() {
   [ "$output" = "in-queue" ]
 }
 
+@test "mineColumn: a running review -> in-review, ahead of conflicts and CI, behind merged and the queue" {
+  _mine '{"reviewing":true}'
+  [ "$output" = "in-review" ]
+  _mine '{"reviewing":true,"mergeable":"CONFLICTING","ciStatus":"failing"}'
+  [ "$output" = "in-review" ]
+  _mine '{"reviewing":true,"inMergeQueue":true}'
+  [ "$output" = "in-queue" ]
+  _mine '{"reviewing":true,"state":"MERGED"}'
+  [ "$output" = "merged" ]
+  _mine '{"reviewing":false}'
+  [ "$output" = "awaiting-review" ]
+}
+
 @test "mineColumn: merged beats inMergeQueue" {
   _mine '{"state":"MERGED","inMergeQueue":true}'
   [ "$status" -eq 0 ]
@@ -220,7 +233,7 @@ _filter() {
   _mine '{"isDraft":true,"ciStatus":"failing"}'
   [ "$output" = "ci-failing" ]
   _cols 'm.MINE_COLUMNS.map((c) => c.key)'
-  [ "$output" = '["has-conflicts","ci-failing","has-comments","changes-requested","awaiting-review","approved","in-queue","merged"]' ]
+  [ "$output" = '["has-conflicts","ci-failing","has-comments","changes-requested","in-review","awaiting-review","approved","in-queue","merged"]' ]
 }
 
 @test "mineColumn: APPROVED + ciStatus passing -> approved" {

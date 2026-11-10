@@ -179,6 +179,19 @@ _run_step() {
   grep -qx $'workbench\t'"$(_cksum "$APP/layouts/workbench.json")" "$MANIFEST"
 }
 
+# herdr's layout.set saves the same tree with its own key order.
+@test "a layout matching the workbench copy in another key order is adopted" {
+  _seed_main
+  run _run
+  [ "$status" -eq 0 ]
+  jq '.children[0].size.px = 300' "$FIXTURE" > "$APP/layouts/main.json"
+  jq -f "$SRC/workbench.jq" "$APP/layouts/main.json" | jq -S . > "$APP/layouts/workbench.json"
+  run _run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"left as is"* ]]
+  grep -qx $'workbench\t'"$(_cksum "$APP/layouts/workbench.json")" "$MANIFEST"
+}
+
 @test "manifest-less identical layout is adopted" {
   _seed_main
   jq -f "$SRC/workbench.jq" "$APP/layouts/main.json" > "$APP/layouts/workbench.json"

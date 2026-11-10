@@ -116,11 +116,11 @@ class PiBinary:
         script = self.release or self.path
         node = real_node(env) if _runs_on_env_node(script) else None
         if node is None:
-            # ceiling: no node but a shim (a machine whose only node is mise's,
-            # reached through shims), so `env node` is left to find it and a
-            # trusted repo's mise [env] still reaches pi. Upgrade trigger: once
-            # a run on such a machine is refused for the repo's environment,
-            # resolve the shim's target from mise's global config in $HOME.
+            # ceiling: _mise_global_node already resolves mise's global node;
+            # only a machine where mise gives no global node still falls back
+            # to the launcher, so `env node` finds it and a trusted repo's
+            # mise [env] still reaches pi. Upgrade trigger: once a run is refused
+            # for the repo's environment on such a machine, refuse to spawn instead.
             return PiSpawn((self.path,), dict(env))
         out = dict(env)
         if self.install_root:
@@ -223,10 +223,12 @@ def real_node(env: Mapping[str, str]) -> str | None:
 
     pi's bundled node (`pi_node`) when it is executable — the one pi's launcher
     puts first — else the first ``node`` on *env*'s ``PATH`` that is not a mise
-    shim, else None. Relative ``PATH`` entries are skipped.
+    shim, else the node mise's global config provides, else None. Relative
+    ``PATH`` entries are skipped.
 
-    `mise which node` is not asked: it fails where node is not active in the
-    global config, and the answer needed is any real node, not mise's.
+    `mise which node` is only the last resort, asked from ``$HOME``: it fails
+    where node is not active in the global config, and a real node anywhere
+    earlier is a better answer than mise's.
     """
     bundled = pi_node(env)
     if _executable_file(bundled):
@@ -239,7 +241,35 @@ def real_node(env: Mapping[str, str]) -> str | None:
         candidate = os.path.join(entry, "node")
         if _executable_file(candidate) and not _is_mise_shim(candidate, shims_dir):
             return candidate
-    return None
+    return _mise_global_node(env, shims_dir)
+
+
+def _mise_global_node(env: Mapping[str, str], shims_dir: str) -> str | None:
+    """The node mise's global config provides, asked from ``$HOME``; None when it gives none.
+
+    For a machine whose only node is mise's and whose caller's ``PATH`` carries
+    no shims (a GUI-launched app, a service): the shim is not reachable by
+    ``env node``, but the real binary behind it is. Asked from ``$HOME`` so no
+    repo's mise config applies — the answer is the global one, which is what
+    `real_node` promises. The mise binary is the shim's own link target, else
+    the first ``mise`` on ``PATH``.
+    """
+    shim = os.path.join(shims_dir, "node")
+    resolved = os.path.realpath(shim)
+    mise = resolved if os.path.basename(resolved) == "mise" and _executable_file(resolved) else shutil.which(
+        "mise", path=env.get("PATH") or "")
+    if not mise:
+        return None
+    home = env.get("HOME") or str(Path.home())
+    if not os.path.isdir(home):
+        return None
+    result = core.proc.run(
+        [mise, "which", "node"], cwd=home, env=dict(env), timeout=core.timeouts.LOCAL,
+    )
+    candidate = result.stdout.strip()
+    if not result.ok or not os.path.isabs(candidate) or not _executable_file(candidate):
+        return None
+    return None if _is_mise_shim(candidate, shims_dir) else candidate
 
 
 def _runs_on_env_node(script: str) -> bool:

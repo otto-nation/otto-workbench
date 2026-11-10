@@ -18,7 +18,7 @@ function fileRow(f, onPick) {
   const parts = f.path.split("/");
   const name = parts.pop();
   const ink = f.generated ? t.muted : t.foreground;
-  return hoverRow(`file-${f.path}`).h(CONTROL.h).flex_none().px(SP.sm).gap(SP.sm).items_center()
+  return hoverRow(`file-${f.path}`).flex().h(CONTROL.h).flex_none().px(SP.sm).gap(SP.sm).items_center()
     .on_click(() => onPick(f.path))
     .child(type(div().w(LAYOUT.statusW).text_color(fileMarkColor(t, f.status)), "code").child(f.status))
     .child(type(h_flex().flex_1().min_w(0).text_color(ink), "code")

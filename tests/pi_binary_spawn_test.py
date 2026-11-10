@@ -128,6 +128,20 @@ class TestRealNode:
         shim = layout.shim()
         assert agent.pi_binary.real_node(layout.env(shim.parent)) is None
 
+    def test_mise_global_node_is_found_when_path_carries_no_shims(self, layout):
+        """A GUI-launched app has no shims on PATH; the node mise names for $HOME is used."""
+        layout.shim()
+        real = layout.real("mise-installs")
+        (layout.tmp / "home").mkdir()
+        _executable(layout.mise, f"#!/bin/sh\nprintf '%s\\n' '{real}'\n")
+        assert agent.pi_binary.real_node(layout.env(layout.tmp / "usr-bin")) == str(real)
+
+    def test_mise_answering_with_a_shim_is_not_a_real_node(self, layout):
+        shim = layout.shim()
+        (layout.tmp / "home").mkdir()
+        _executable(layout.mise, f"#!/bin/sh\nprintf '%s\\n' '{shim}'\n")
+        assert agent.pi_binary.real_node(layout.env(layout.tmp / "usr-bin")) is None
+
     def test_an_empty_xdg_data_home_means_the_default(self, layout):
         """The launcher's `${XDG_DATA_HOME:-…}` treats empty as unset."""
         home = layout.tmp / "home"

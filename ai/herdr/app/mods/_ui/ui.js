@@ -133,8 +133,10 @@ export function placeholder(content) {
 
 // DESIGN.md's error state: a one-line reason in the danger colour. Callers that can reload add
 // an outline "Retry" button beside it.
+export const dangerColor = () => STATUS.fail.color(theme());
+
 export function errorLine(content) {
-  return text("body", content, STATUS.fail.color(theme()));
+  return text("body", content, dangerColor());
 }
 
 // Meta-sized supporting text; muted unless a colour is given.

@@ -112,6 +112,8 @@ A repo-local `core.hooksPath` shadows that global directory for every git comman
 
 Without `--fix`, `pr rebase` classifies the stop and **aborts** (`tree: clean`, exit 3) unless every conflicted file is generated-class and a declared `rebase.regenerate` (or a lockfile regenerator) rebuilt it. `mise run generate` as a conventional fallback does not qualify — that stays `--fix`-only. Pass `--stop-on-conflict` to keep the paused tree and held stash; `--fix` resolves with AI. A resumed rebase never aborts: a further stop pauses, because aborting would discard earlier resolutions. `--fix --stop-on-conflict` is a parser error.
 
+`pr rebase` skips a landed prefix rather than replaying it. Those skipped commits have no rewrite record, so a `pr batch` publish then refuses `not_incorporated_remote` and names them. Confirm the skip is what you wanted before pushing; `--force` on the rebase replays the prefix in full.
+
 ## `ssh: connect to host github.com port 22: Connection refused`
 
 Some networks — hotel and conference Wi-Fi, corporate egress filters, a few consumer ISPs — block or intermittently reset outbound TCP/22. Push and fetch fail; HTTPS traffic to GitHub keeps working, which is why `gh` commands succeed while git does not.

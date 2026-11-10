@@ -303,6 +303,19 @@ verdict.
 Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
 one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).
 
+### What pr rebase replays
+
+`pr rebase` does not always replay the whole branch. When a leading run of
+commits is already in the base — a squash-landed parent of a stacked child, or
+any other prefix that landed first — it skips that prefix and replays only what
+is left (`git rebase --onto <base> <fork-point>`).
+
+The skip is announced on the console as `Skipping already-landed commit(s): …`
+and recorded as a `fork_point` trail event (the SHAs, how many landed, the
+source `detected`). `--force` turns the detection off and replays the whole
+branch. `--fork-point REF` overrides it and replays only the commits after REF,
+whether or not a prefix was detected.
+
 ### Which files the rebase fix pass is allowed to touch
 
 When a rebase's force-push is rejected by a pre-push check, `pr rebase` runs a

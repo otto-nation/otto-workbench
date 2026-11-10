@@ -113,8 +113,10 @@ command: read the log or wait.
 
 ## Stacks
 
-`stack_wait_base` waits for the base PR to merge. Then rebase the child with
-`--fork-point`. Do not rebase a child onto a base that is still open.
+`stack_wait_base` waits for the base PR to merge. Then rebase the child;
+`pr rebase` skips the landed parent itself and publish refuses
+`not_incorporated_remote` naming the skipped commits for you to confirm. Do not
+rebase a child onto a base that is still open.
 
 ---
 

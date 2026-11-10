@@ -3529,15 +3529,14 @@ up to date (no block).
 
 #### Rebase refusals
 
-The already-landed signals answer "is this work already in the base?". Two more
-answer a different question — "is replaying this branch onto that base a safe
-thing to do at all?" — and refuse on the same exit code, with the same
+The already-landed signals answer "is this work already in the base?". Further
+signals answer a different question — "is replaying this branch onto that base a
+safe thing to do at all?" — and refuse on the same exit code, with the same
 ``--force`` override:
 
 | Signal | What it reads | When it fires |
 |---|---|---|
 | `no_merge_base` | `git merge-base <base> HEAD` exits nonzero | The branch and its base share no commit |
-| `partially_landed` | a prefix of the branch's commits already in the base | Some, but not all, of the branch landed |
 | `conflicts_over_budget` | distinct conflicted files across the whole rebase | The count passes `CONFLICT_FILE_BUDGET` |
 | `resolutions_over_budget` | resolution calls spent across the whole rebase | The count passes `CONFLICT_RESOLUTION_BUDGET` |
 
@@ -3555,21 +3554,13 @@ verifies the ref names a commit first and passes when it does not — refusing
 those as unrelated history would send the operator after a root they do not
 have, where git's own error for the missing ref says what actually went wrong.
 
-`partially_landed` is what the two landed signals above cannot express. Both ask
-whether the branch's work is *entirely* in the base, so a branch whose first six
-commits landed and whose seventh has not reads to them exactly like a branch
-that landed nothing. Replaying such a branch onto the base reapplies the six
-that are already there, conflicting each of them against itself — which is the
-shape that burns a resolution call per file per commit and rewrites the base's
-version back to the branch's. Patch ids do not catch it either: one amendment
-early in the landed prefix changes the context lines of every later commit's
-hunks, so `git cherry` reports every one of them as unlanded.
-
-It is the one refusal that carries a remedy the tool can execute. `--fork-point
-<ref>` supplies git's `<upstream>` argument, so the replay is
-`git rebase --onto <base> <ref>` — the landed prefix is skipped and only the
-commits after it are replayed. The refusal names the exact ref to pass, because
-a refusal whose remedy the tool cannot express is a dead end.
+A prefix of the branch already in the base is not a refusal. The two landed
+signals above ask whether the work is *entirely* in the base, so a branch whose
+first six commits landed and whose seventh has not reads to them like a branch
+that landed nothing. Replaying that prefix onto itself conflicts each commit
+against its landed version. `pr rebase` detects the prefix and replays only
+what is left (``git rebase --onto <base> <fork-point>``). ``--fork-point REF``
+overrides the detection; ``--force`` turns it off and replays the whole branch.
 
 The budgets are the circuit breaker for what all of this produces. Conflict
 resolution is an AI call per conflicted file, with edit access to the worktree,
@@ -4311,7 +4302,7 @@ Markdown and stdout projections of a session report dict.
 
 Rendered from the JSON only. Filing commands go in a trailing
 "File follow-up issues (only on request)" block, never on the stdout line.
-Each finding renders its reason, detail, files, log path and remedy.
+Each finding renders its reason, detail, files and log path.
 
 ### batch/requests.py
 
@@ -7569,6 +7560,14 @@ Conflict classification, parsing, and git-level resolution.
 Pure conflict-analysis functions — prompt construction, AI invocation,
 and file-level dispatch live in ``resolve_ai``.
 
+### rebase/fork_point.py
+
+Where a rebase starts replaying from — a named, detected, or whole-branch start.
+
+``select`` is the one owner of that choice. An explicit ``--fork-point`` wins;
+``--force`` turns detection off and replays the whole branch; otherwise a
+landed prefix is skipped rather than refused.
+
 ### rebase/hooks_chain.py
 
 Chain workbench git hooks in front of a repo that set ``core.hooksPath``.
@@ -7735,7 +7734,7 @@ artifacts.
 
 ### rebase/refusals.py
 
-Preflight refusals — the four questions asked before a branch is replayed.
+Preflight refusals — the preflight questions asked before a branch is replayed.
 
 Each check answers with a ``RefusalReport`` or None, and ``refuse`` is what
 turns one into the shared exit code. A refusal leaves the worktree untouched

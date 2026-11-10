@@ -82,7 +82,8 @@ _herdr_layout_protected() {
   dest_sum=$(_herdr_layout_cksum "$dest")
   # Already what this run would write — whoever wrote it (herdr's layout.set, a
   # person restoring it by hand): adopt it rather than call it an edit forever.
-  if printf '%s\n' "$out" | cmp -s "$dest" -; then
+  # Compared as JSON with sorted keys: herdr saves a layout in its own key order.
+  if [[ "$(jq -S . "$dest" 2>/dev/null)" == "$(printf '%s\n' "$out" | jq -S .)" ]]; then
     printf '%s\t%s\n' "$name" "$dest_sum" >> "$man_out"
     return 0
   fi

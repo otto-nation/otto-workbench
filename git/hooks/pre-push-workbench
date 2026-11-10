@@ -146,7 +146,11 @@ fi
 
 # Every tool the steps below run, checked up front against bin/local/dev-deps's
 # one declaration, so a missing one is named with its fix rather than surfacing
-# as a confusing failure halfway through. Installs nothing and runs no sudo.
+# as a confusing failure halfway through. Installs nothing EXCEPT it fetches
+# the integrity-verified pinned brand tarball into the state-dir cache, because
+# a brand bump empties that cache on every machine; the check stays strict.
+# Runs no sudo.
+"$REPO_ROOT/bin/local/generate-herdr-app-themes" --resolve-brand >/dev/null || true
 if ! "$REPO_ROOT/bin/local/dev-deps" --check; then
   echo "" >&2
   echo "  Install them with: task dev:setup (bin/local/dev-deps), then push again." >&2

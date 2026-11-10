@@ -32,7 +32,6 @@ export const MINE_COLUMNS = [
   { key: 'ci-failing', label: 'CI Failing' },
   { key: 'has-comments', label: 'Has Comments' },
   { key: 'changes-requested', label: 'Changes Requested' },
-  { key: 'draft', label: 'Draft' },
   { key: 'awaiting-review', label: 'Awaiting Review' },
   { key: 'approved', label: 'Approved' },
   { key: 'in-queue', label: 'In Queue' },
@@ -75,7 +74,8 @@ export function mineColumn(pr) {
   // every comment answered waits on the reviewer.
   if (pr.owedFeedback) return 'has-comments';
   if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'changes-requested';
-  if (pr.isDraft) return 'draft';
+  // A draft is not a lane: it sits in the lane for its real state and carries a Draft badge,
+  // and the Drafts chip decides whether it is listed at all.
   if (pr.reviewDecision === 'APPROVED' && (pr.ciStatus === 'passing' || pr.ciStatus === 'none'))
     return 'approved';
   return 'awaiting-review';

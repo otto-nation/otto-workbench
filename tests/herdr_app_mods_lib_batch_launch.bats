@@ -155,9 +155,9 @@ _throws() {
 }
 
 @test "columnPreset: only columns a step can move PRs out of, and only with PRs in them" {
-  _js '["has-conflicts","ci-failing","has-comments","changes-requested","draft","awaiting-review","approved","in-queue","merged"].map((key) => { const p = m.columnPreset({ key, items: [{}] }); return p ? p.steps.join("+") + (p.ai ? ":ai" : "") + (p.rebaseBehind ? ":behind" : "") : null; }).concat([m.columnPreset({ key: "has-conflicts", items: [] }), m.columnPreset(null)])'
+  _js '["has-conflicts","ci-failing","has-comments","changes-requested","awaiting-review","approved","in-queue","merged"].map((key) => { const p = m.columnPreset({ key, items: [{}] }); return p ? p.steps.join("+") + (p.ai ? ":ai" : "") + (p.rebaseBehind ? ":behind" : "") : null; }).concat([m.columnPreset({ key: "has-conflicts", items: [] }), m.columnPreset(null)])'
   [ "$status" -eq 0 ]
-  [ "$output" = '["rebase:ai","ci","comments:ai",null,"review",null,"rebase:behind",null,null,null,null]' ]
+  [ "$output" = '["rebase:ai","ci","comments:ai",null,null,"rebase:behind",null,null,null,null]' ]
 }
 
 @test "presetForm selects exactly the column, turns on only its steps, and leaves other steps' AI alone" {

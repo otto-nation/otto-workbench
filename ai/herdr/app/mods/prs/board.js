@@ -56,7 +56,7 @@ export function renderBoard({
 function badges(pr, { hideBusy } = {}) {
   const t = theme();
   const out = [];
-  if (pr.isDraft) out.push(text("meta", "Draft", t.muted));
+  if (pr.isDraft) out.push(tag("Draft"));
   if (pr.state === "MERGED") out.push(statusText("pass", "Merged"));
   if (pr.inMergeQueue) out.push(statusText("running", "In merge queue"));
   if (pr.busy && !hideBusy) out.push(statusText("running", "Batch working"));

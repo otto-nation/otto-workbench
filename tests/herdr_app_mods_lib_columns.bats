@@ -212,10 +212,15 @@ _filter() {
   [ "$output" = "changes-requested" ]
 }
 
-@test "mineColumn: isDraft -> draft" {
+@test "mineColumn: a draft is in the lane for its real state, never a lane of its own" {
   _mine '{"isDraft":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "draft" ]
+  [ "$output" = "awaiting-review" ]
+  _mine '{"isDraft":true,"mergeable":"CONFLICTING"}'
+  [ "$output" = "has-conflicts" ]
+  _mine '{"isDraft":true,"ciStatus":"failing"}'
+  [ "$output" = "ci-failing" ]
+  _cols 'm.MINE_COLUMNS.map((c) => c.key)'
+  [ "$output" = '["has-conflicts","ci-failing","has-comments","changes-requested","awaiting-review","approved","in-queue","merged"]' ]
 }
 
 @test "mineColumn: APPROVED + ciStatus passing -> approved" {

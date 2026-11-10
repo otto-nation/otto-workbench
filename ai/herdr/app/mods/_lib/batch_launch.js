@@ -61,7 +61,6 @@ export const COLUMN_BATCH = Object.freeze({
   'has-conflicts': { steps: ['rebase'], ai: true },
   'ci-failing': { steps: ['ci'], ai: false },
   'has-comments': { steps: ['comments'], ai: true },
-  draft: { steps: ['review'], ai: false },
   approved: { steps: ['rebase'], ai: false, rebaseBehind: true },
 });
 

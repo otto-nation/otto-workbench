@@ -87,7 +87,8 @@ leave to a person, and say exactly which one it is:
   Not git's boolean `--fork-point`, and it is ignored on a resumed rebase.
 - `--no-verify` (optional): Force-push without running the pre-push hook. The
   same rule as `pr create --draft --no-verify`: only for a hook failure already read
-  and judged a flake or not the branch's doing, or when the user asks. It also
+  and judged a flake or not the branch's doing — you make that judgement
+  yourself by the test in step 3 — or when the user asks. It also
   skips the AI repair of pre-push failures, since no hook output exists to
   repair. Never add it to get past a failure nobody has read.
 

@@ -210,6 +210,23 @@ def test_message_falls_back_to_the_first_subject_without_a_snapshot(tmp_path):
     assert body.startswith("feat: one\n\n- feat: one\n- feat: two\n")
 
 
+def test_a_subject_only_commit_contributes_no_footer(tmp_path):
+    """A conventional subject has the shape of a trailer (``docs: x``).
+
+    A body-less commit's last paragraph is its subject, so footers must be
+    read from the body alone or every subject is copied in as a trailer.
+    """
+    repo = _root(tmp_path)
+    _commit(repo, "a.txt", "a\n", "docs: one")
+    _commit(repo, "b.txt", "b\n", "docs: two")
+    _policy("always")
+    planned = _plan(repo, snapshot=None)
+    assert planned is not None
+    assert _body(repo, planned.commit).strip() == (
+        "docs: one\n\n- docs: one\n- docs: two"
+    )
+
+
 def test_breaking_change_and_not_breaking_footers_survive(tmp_path):
     repo = _root(tmp_path)
     _commit(

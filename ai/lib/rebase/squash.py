@@ -105,7 +105,9 @@ def _message(
     footers: list[str] = []
     seen: set[str] = set()
     for commit in commits:
-        body = git.client.out("log", "-1", "--format=%B", commit.sha, cwd=cwd)
+        # %b, not %B: a body-less commit's last paragraph would otherwise be
+        # its subject, and a conventional subject has a trailer's shape.
+        body = git.client.out("log", "-1", "--format=%b", commit.sha, cwd=cwd)
         for line in _last_paragraph(body).splitlines():
             if _FOOTER_LINE.match(line) and line not in seen:
                 seen.add(line)

@@ -45,8 +45,8 @@ leave to a person, and say exactly which one it is:
 - an exit 4 — the branch already landed, shares no history with its base, or
   conflicts past the budget, so the only way on is `--force` or deleting the
   branch
-- a resolution that would drop changes git merged cleanly and that you cannot
-  rebuild hunk by hunk — `WORKBENCH_ALLOW_DROPPED_CHANGES=1` is the user's to set
+- a resolution that would drop changes git merged cleanly, where you cannot
+  rebuild them hunk by hunk or verify each is superseded
 - a pre-push check failure the branch caused and that you cannot fix
 - anything the user asked to withhold: `--no-push`, `--stop-on-conflict`, or a
   request only to see what conflicts — run default mode, report `files`, and stop
@@ -145,24 +145,10 @@ no bearing on what the run then decides.
   on completion, while a detached shell leaves you polling for an exit you are
   never told about. Give it 90 minutes.
 
-  Ninety because that clears the longest run on record. Across 90 days of trails
-  (`otto-log list --script pr-rebase --since 90d`), runs that hit at least one
-  conflict took a median of under 4 minutes, but the p90 was 24 minutes and the
-  slowest 74 — the distribution has a long tail, and the tail is what the bound
-  has to cover. Per file, resolution is faster than it looks from the outside:
-  10 seconds at the median, 83 at p90.
-
-  So most runs finish well inside any harness's foreground timeout and the tail
-  does not come close to it. Background it for the tail, not for the median. A
-  timeout is not a clean retry: the kill does not abort the rebase, it leaves a
-  partial one in the worktree, and the next run resumes it — announced on the
-  console, but invisible in the JSON step 2 parses. What looks like "it timed
-  out, run it again" is a mid-flight handoff to a second run that inherits an
-  unfinished rebase.
-
-  Backgrounding is safe here because nothing downstream reads the run's output
-  mid-flight: step 2 parses the JSON the completed job returns, and the script
-  owns its own locking and state.
+  Ninety clears the longest run on record (p90 24 minutes, slowest 74). A timeout
+  is not a clean retry: the kill leaves a partial rebase in the worktree that the
+  next run resumes without the JSON saying so. Backgrounding is safe because
+  nothing reads the run's output mid-flight.
 
 - **`--stop-on-conflict`**: same as default but **pauses** (`tree: paused`, stash
   held) instead of aborting. Resume never aborts either: a further stop pauses,
@@ -178,29 +164,15 @@ JSON output is on stdout; status messages are on stderr.
 
 ### 1b. Reading a run in flight
 
-Don't. The job messages you when it finishes, and the JSON that step 2 parses
-does not exist until the run is over.
-
-When the user asks what it is doing, or a run has gone long enough that you want
-to know whether it is progressing or wedged, read the trail — not the tail of
-the job's output, which is the last status line and says nothing about rate:
+Don't; the job messages you when it finishes. If you must know whether a long run
+is progressing, read the trail, not the job's output tail:
 
 ```bash
-otto-log list --script pr-rebase --since 1h      # find the invocation
-otto-log show <invocation>                        # every decision, timed
-otto-log show <invocation> --json                 # adds each event's data field
+otto-log list --script pr-rebase --since 1h   # find the invocation
+otto-log show <invocation> --json             # timed events; data.remaining = commits left
 ```
 
-The run logs its target ref and why, the mode, whether it started fresh or
-resumed, and a `resolve_file:<path>` span per conflicted file — a timed pair of
-events, opened before the file is classified and closed when it is staged. That
-pair is what answers "is this nearly done": the gap between them is the rate,
-and an open span with no close is the file being worked on right now. The count
-of commits still to replay rides in `data.remaining` on both kinds of `step`
-event — the one that resolves conflicts and the one that skips an empty commit
-— and the default rendering omits `data`, so that one needs `--json`. Either way
-it is one call, and no files written into the worktree to hold output the job
-facility already has.
+A `resolve_file:<path>` span with no close is the file being worked on now.
 
 ### 2. Handle the result
 
@@ -232,19 +204,15 @@ report both the SHA and those subjects to the user; they are not in
 `commits_replayed`. Report `squashed_commits` the same way when it is not
 null.
 
-Every conflict a run meets is resolved by that run: git's rerere cache is held
-off for the whole rebase, so nothing is replayed from an earlier one and nothing
-this run resolves is recorded for a later one. The cache is shared by every
-worktree of a repo and is read by a plain `git rebase` too, so recording an
-unreviewed AI resolution into it put that resolution in the path of every later
-rebase, including one run by hand.
+Every conflict is resolved by the run itself: git's rerere cache is held off, so
+no unreviewed resolution is recorded for a later rebase.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
 non-empty, those files were staged from the incoming side and never rebuilt —
 either the repo's regeneration command failed, or it declares none and has no
-conventional `generate` task. Say so and tell the user to regenerate them
-manually; a repo that keeps landing in the second case wants a
-`rebase.regenerate` entry in its `.workbench.yml`. Done.
+conventional `generate` task. Regenerate them yourself — see *After the rebase* — then finish at
+step 3. A repo that keeps landing in the second case wants a
+`rebase.regenerate` entry in its `.workbench.yml`.
 
 **Exit 3 — conflicts a human must look at.** Parse the JSON. `aborted` and
 `tree` say whether the replay was thrown away (`tree: clean`) or left paused
@@ -304,9 +272,11 @@ Runs that reach this, and the difference is `tree` plus what the console said:
   (`git checkout -m`) and resuming retries it. When the resolution was staged by
   hand before the run, it is left as it was: restore the conflict with
   `git checkout -m -- <file>`, resolve it hunk by hunk keeping every listed
-  change, and resume. `WORKBENCH_ALLOW_DROPPED_CHANGES=1` is the user's
-  override, never yours — if a listed change genuinely cannot be kept, stop and
-  show them the list.
+  change, and resume. Set `WORKBENCH_ALLOW_DROPPED_CHANGES=1` on the
+  resume only when you hand-merged the file deliberately and checked each listed
+  change is superseded (for example, both sides added the same function and you
+  kept one design) — and name those changes in your report. Never set it to get
+  past a refusal on an AI or earlier resolution you have not read.
 
 **Resolving by hand.** Edit each conflicted file hunk by hunk, keeping both
 sides' intent and every change git merged cleanly; under Claude Code use Bash
@@ -314,12 +284,6 @@ for the edits, per `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts.
 Never take a side whole (see Constraints). Check the file still parses —
 `gofmt -e`, `bash -n`, or `python3 -m py_compile` — then
 `git -C <worktree> add <file>` and resume.
-
-Exit 3 is never a stopping point for the agent. After a default-mode abort, run
-`--fix`; after a `--fix` run that paused on unresolved files, resolve them by
-hand and resume; with the AI backend down, resolve every conflict by hand under
-`--stop-on-conflict`. The only exit 3 you hand back is one the user asked for
-with `--stop-on-conflict`, or a dropped-changes refusal you cannot rebuild.
 
 Never answer a **paused** exit 3 (`tree: paused`) with `pr rebase --abort`.
 The rebase holds real work by this point; aborting throws away every resolution
@@ -413,6 +377,20 @@ rebase done and only the push outstanding — both end at step 3, never at a
   `git -C <worktree> checkout -- <path>`, then finish at step 3. On a resumed
   rebase (no stash), stop instead if a path also held uncommitted work from
   before the run.
+
+### 2b. After the rebase: regenerate and fold
+
+A replay can leave generated files at the incoming side (`files_stale`), or
+miss what the combined code now needs (a main-side schema or proto change).
+Before pushing, from the worktree and as a background job when it is slow:
+
+1. Build and vet the touched module, resolving compile errors from hand-merged
+   files — a clean replay can still be semantically stale.
+2. Run the repo's generator (`mise run generate` where declared). Commit any
+   output as its own `chore:` commit. A generator that fails for an environment
+   reason (Docker unreachable) is a blocker to report, not a step to skip.
+3. If the repo allows one migration per service per PR, fold any migration the
+   generator emitted into the branch's existing one and delete the new file.
 
 ### 3. Finish the push
 

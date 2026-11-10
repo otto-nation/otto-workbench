@@ -288,6 +288,12 @@ class ResolutionTally:
     # How a successful default or --fix run resolved conflicts: none, generated,
     # or ai. Abort/pause paths never emit this.
     resolution: str = "none"
+    # SHA the replay started after when a landed prefix was skipped; empty
+    # when the whole branch was replayed.
+    fork_point: str = ""
+    # Original commits folded before replay. None when the run did not squash.
+    # RebaseSummary stores the same fact as 0 so older state files still load.
+    squashed_commits: int | None = None
 
     def note_one_sided(self, files: list[str], region: str) -> None:
         """Fold one stopped commit's one-sided files and rendered regions in.
@@ -496,6 +502,13 @@ class RebaseOutcome:
     aborted: bool = False
     classes: dict[str, str] = field(default_factory=dict)
     resolution: str = "none"
+    # SHA the replay started after when a landed prefix was skipped; empty
+    # when the whole branch was replayed. Defaulted so older constructors stay
+    # valid.
+    fork_point: str = ""
+    # Original commits folded before replay. None (not 0) when the run did
+    # not squash, so JSON cannot be read as "squashed zero commits".
+    squashed_commits: int | None = None
     # Keyword-only and required: the recorded base is what a caller reading
     # state.json uses to tell which branch a run actually replayed onto, so a
     # default here would let an outcome report a base the rebase never used.
@@ -517,6 +530,8 @@ class RebaseOutcome:
             pre_rebase_head=self.pre_rebase_head,
             aborted=self.aborted,
             classes=self.classes,
+            fork_point=self.fork_point,
+            squashed_commits=self.squashed_commits or 0,
             updated_at=pr.state.now_iso(),
         ))
         pr.state.save_state(ctx.target_dir, state)
@@ -532,6 +547,10 @@ class RebaseOutcome:
             "one_sided_regions": self.one_sided_regions,
             "pre_rebase_head": self.pre_rebase_head,
             "resolution": self.resolution,
+            # Always present: empty fork_point and a missing squash both
+            # become null, so a reader never has to treat a missing key as 0.
+            "fork_point": self.fork_point or None,
+            "squashed_commits": self.squashed_commits,
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed

@@ -164,6 +164,9 @@ def cmd_push(
         files_stale=state.rebase.files_stale,
         force_pushed=True,
         lease_expect=lease.expect,
+        fork_point=state.rebase.fork_point,
+        # Summary stores "no squash" as 0; the outcome reports that as null.
+        squashed_commits=state.rebase.squashed_commits or None,
         target_base=target_ref,
     ).save(ctx)
     core.log.ok("Force-pushed successfully.")

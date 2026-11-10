@@ -114,6 +114,14 @@ Without `--fix`, `pr rebase` classifies the stop and **aborts** (`tree: clean`, 
 
 `pr rebase` skips a landed prefix rather than replaying it. Those skipped commits have no rewrite record, so a `pr batch` publish then refuses `not_incorporated_remote` and names them. Confirm the skip is what you wanted before pushing; `--force` on the rebase replays the prefix in full.
 
+## `pr rebase` squashed my commits and I wanted them
+
+While the rebase is still paused, `pr rebase --abort` restores the original commits — the branch ref was never moved onto the squash. After a completed rebase, `git reset --hard <pre_rebase_head>` (also in the reflog as the tip before the replay) restores them. To stop it happening again:
+
+```bash
+otto-workbench config set rebase.squash never --project
+```
+
 ## `ssh: connect to host github.com port 22: Connection refused`
 
 Some networks — hotel and conference Wi-Fi, corporate egress filters, a few consumer ISPs — block or intermittently reset outbound TCP/22. Push and fetch fail; HTTPS traffic to GitHub keeps working, which is why `gh` commands succeed while git does not.

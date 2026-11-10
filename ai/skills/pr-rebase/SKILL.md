@@ -106,7 +106,10 @@ leave to a person, and say exactly which one it is:
 Go straight to step 1. `pr rebase` fetches, resolves its own base, detects an
 in-progress rebase, and refuses the branches step 2's exit 4 describes — and it
 records each of those decisions with its reason, so the answers arrive in the
-trail rather than costing a turn each up front. Running `git fetch`,
+trail rather than costing a turn each up front. When conflicts are expected to
+repeat on the same files, it may squash the replay itself (`rebase.squash`);
+do not preflight a squash, count commits, or inspect merge settings first.
+Running `git fetch`,
 `rev-list --count`, or `gh pr view` before it asks the script's own questions in
 a worse form: the answer you get is from a second fetch, a moment earlier, with
 no bearing on what the run then decides.
@@ -210,17 +213,24 @@ facility already has.
   "conflicts_resolved": 2,
   "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
   "files_stale": ["orc-lending/go.sum"],
-  "force_pushed": true
+  "force_pushed": true,
+  "fork_point": "abc1234",
+  "squashed_commits": 5
 }
 ```
 
-`commits_replayed` counts only commits replayed from the branch — commits the
-push recovery adds (regeneration, check fixes) are excluded. `conflicts_resolved`
-counts conflicted-file resolutions, matching `files_resolved`.
+`commits_replayed` counts only commits replayed from the branch after any
+squash — commits the push recovery adds (regeneration, check fixes) are
+excluded. `squashed_commits` is how many original commits were folded into
+one before that replay (`null` when the run did not squash — never `0`).
+`conflicts_resolved` counts conflicted-file resolutions, matching
+`files_resolved`.
 
-A detected skip is announced on the console as `Skipping already-landed
-commit(s): …` — report those subjects to the user; they are not in
-`commits_replayed`.
+`fork_point` is non-null when a landed prefix was skipped. A detected skip is
+also announced on the console as `Skipping already-landed commit(s): …` —
+report both the SHA and those subjects to the user; they are not in
+`commits_replayed`. Report `squashed_commits` the same way when it is not
+null.
 
 Every conflict a run meets is resolved by that run: git's rerere cache is held
 off for the whole rebase, so nothing is replayed from an earlier one and nothing
@@ -461,7 +471,13 @@ they then ask for the branch to be pushed.
   (`> ignore/rebase.json`). The job facility returns stdout on completion and
   `otto-log show` holds the detail; files written for the agent's own benefit are
   litter, which is why `pr` stopped writing its trail into working trees
-- Never preflight with `git fetch`, `rev-list`, or `gh pr view` — see step 0
+- Never preflight with `git fetch`, `rev-list`, or `gh pr view` — see step 0.
+  The CLI may squash on its own when conflicts would repeat; the skill does no
+  squash preflight either
+- `rebase.squash` is `auto` (default), `always`, or `never`. `auto` squashes
+  only in a squash-merge-only repo when the replay would conflict repeatedly
+  on the same files and the branch has one author. Opt out with
+  `otto-workbench config set rebase.squash never --project`
 - Never resolve a conflict in a hand-written file with a whole-file
   `git checkout --ours`/`--theirs`, or by copying either side's file in. It
   replaces every hunk, including the ones git merged cleanly, and the branch's

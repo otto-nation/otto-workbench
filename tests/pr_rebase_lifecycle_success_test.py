@@ -191,6 +191,50 @@ def test_rebase_success_conflicts_resolved_counts_files():
     assert mock_emit.call_args[0][0]["conflicts_resolved"] == 3
 
 
+def test_success_json_carries_squashed_commits_and_fork_point():
+    """The skill reports both; they have to survive into the JSON."""
+    ctx = mock.MagicMock()
+    tally = rebase.types.ResolutionTally(
+        fork_point="abc1234", squashed_commits=5,
+    )
+    saved = []
+
+    with mock.patch.object(git.client, "commits_ahead", return_value=1), \
+         mock.patch.object(
+             rebase.types.RebaseOutcome, "save",
+             lambda self, c: saved.append(self),
+         ), \
+         mock.patch.object(core.report, "emit_json") as mock_emit:
+        rebase.lifecycle.rebase_success(
+            "/fake", ctx, rebase.types.RunMode.PUSH, tally, target_ref=_TARGET,
+        )
+
+    report = mock_emit.call_args[0][0]
+    assert report["fork_point"] == "abc1234"
+    assert report["squashed_commits"] == 5
+    assert saved[0].fork_point == "abc1234"
+    assert saved[0].squashed_commits == 5
+
+
+def test_an_unsquashed_run_reports_null_not_zero():
+    """Missing squash is null. 0 would read as 'squashed zero commits'."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(git.client, "commits_ahead", return_value=2), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core.report, "emit_json") as mock_emit:
+        rebase.lifecycle.rebase_success(
+            "/fake", ctx, rebase.types.RunMode.PUSH,
+            rebase.types.ResolutionTally(), target_ref=_TARGET,
+        )
+
+    report = mock_emit.call_args[0][0]
+    assert "squashed_commits" in report
+    assert report["squashed_commits"] is None
+    assert "fork_point" in report
+    assert report["fork_point"] is None
+
+
 def test_rebase_success_in_fix_only_prints_the_push_command(capsys):
     """The force-push is handed to the user, not issued — repository policy.
 

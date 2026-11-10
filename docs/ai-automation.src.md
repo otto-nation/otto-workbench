@@ -316,6 +316,21 @@ source `detected`). `--force` turns the detection off and replays the whole
 branch. `--fork-point REF` overrides it and replays only the commits after REF,
 whether or not a prefix was detected.
 
+When the replay would conflict repeatedly on the same files, `pr rebase` may
+fold those commits into one first. `rebase.squash` is `auto` (the default),
+`always`, or `never`. `auto` squashes only in a squash-merge-only repo, when
+those repeated-conflict files exist, and when the branch has one author. If
+the repo's merge settings cannot be read, it does not squash. `always`
+squashes anyway (including a multi-author branch). Opt out with
+`otto-workbench config set rebase.squash never --project`.
+
+The squash commit's subject is the PR title, or the first original subject
+when there is no snapshot. The body is a bullet per original commit, then
+every footer line from those originals, de-duplicated. The branch ref is never
+moved onto that commit, so `pr rebase --abort` restores the original commits.
+Batch publish follows the recorded squash chain and treats those originals as
+incorporated.
+
 ### Which files the rebase fix pass is allowed to touch
 
 When a rebase's force-push is rejected by a pre-push check, `pr rebase` runs a

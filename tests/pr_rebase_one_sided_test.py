@@ -129,7 +129,8 @@ def test_fresh_records_the_tip_it_started_from():
 
 def test_a_resumed_rebase_continues_from_the_recorded_regions():
     prior = SimpleNamespace(rebase=SimpleNamespace(
-        status="conflicts", files_one_sided=["a.py"], one_sided_regions=["r1"]))
+        status="conflicts", files_one_sided=["a.py"], one_sided_regions=["r1"],
+        fork_point="", squashed_commits=0))
     with mock.patch.object(rebase.types, "load_or_init", return_value=prior), \
          mock.patch.object(rebase.inspect, "rebase_orig_head", return_value="orig1"):
         tally = rebase.lifecycle.resumed_tally("/fake", mock.MagicMock())

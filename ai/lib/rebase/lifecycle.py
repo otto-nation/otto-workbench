@@ -209,6 +209,8 @@ def _drive_loop(
         conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
+        fork_point=tally.fork_point,
+        squashed_commits=tally.squashed_commits,
         target_base=target_ref,
     ).save(ctx)
     git.client.run("rebase", "--abort", cwd=cwd)
@@ -256,6 +258,8 @@ def _stopped_outcome(
         pre_rebase_head=tally.pre_rebase_head,
         aborted=aborted,
         classes=dict(classes or {}),
+        fork_point=tally.fork_point,
+        squashed_commits=tally.squashed_commits,
         target_base=target_ref,
     )
 
@@ -272,6 +276,10 @@ def resumed_tally(cwd: str, ctx: pr.context.ResolvedContext) -> ResolutionTally:
     if prior.status == RebaseStatus.CONFLICTS.value:
         tally.one_sided = list(prior.files_one_sided)
         tally.one_sided_regions = list(prior.one_sided_regions)
+        tally.fork_point = prior.fork_point
+        # Summary stores "no squash" as 0 so older files load; the live
+        # tally uses None, which emit reports as null rather than 0.
+        tally.squashed_commits = prior.squashed_commits or None
     return tally
 
 
@@ -766,7 +774,11 @@ def fresh(
     # action may be to resolve a conflict this call left behind, and a tally
     # made inside it would not be the one the whole run accumulates into.
     # Made before the replay so it holds the tip the replay starts from.
-    tally = ResolutionTally(pre_rebase_head=git.client.head_sha(cwd=cwd))
+    tally = ResolutionTally(
+        pre_rebase_head=git.client.head_sha(cwd=cwd),
+        fork_point=start.sha,
+        squashed_commits=None if squash is None else squash.count,
+    )
     # The branch ref is never moved to the squash commit, so orig-head,
     # abort and resume all see the original commits. S is picked by
     # replacing the todo; `--continue` / `--skip` / resume never squash.
@@ -848,6 +860,8 @@ def rebase_success(
             pre_rebase_head=tally.pre_rebase_head,
             force_pushed=False,
             resolution=tally.resolution,
+            fork_point=tally.fork_point,
+            squashed_commits=tally.squashed_commits,
             target_base=target_ref,
         ).save(ctx)
         return 1
@@ -890,6 +904,8 @@ def rebase_success(
         # case where the push happens in a later process that can no longer read
         # this value for itself.
         lease_expect=lease.expect if lease is not None else "",
+        fork_point=tally.fork_point,
+        squashed_commits=tally.squashed_commits,
         target_base=target_ref,
     )
     outcome.save(ctx)

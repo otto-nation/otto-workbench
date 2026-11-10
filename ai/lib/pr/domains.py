@@ -653,6 +653,12 @@ class RebaseSummary(Domain):
     # (tree clean) from a paused --stop-on-conflict / --fix stop.
     aborted: bool = False
     classes: dict[str, str] = field(default_factory=dict)
+    # Defaulted so older state files load. Empty means the whole branch was
+    # replayed; a SHA means a landed prefix was skipped.
+    fork_point: str = ""
+    # Defaulted so older state files load. 0 means the run did not squash;
+    # the live JSON reports that as null rather than 0.
+    squashed_commits: int = 0
 
     def render_status(self) -> list[str]:
         if not self.updated_at:
@@ -669,6 +675,8 @@ class RebaseSummary(Domain):
         else:
             desc = (f"resolved {self.conflicts_resolved} file(s) across "
                     f"{self.commits_replayed} commit(s)")
+        if self.squashed_commits:
+            desc += f" — {self.squashed_commits} commits squashed"
         if self.force_pushed:
             desc += ", force-pushed"
         lines = [f"**Rebase**: {desc}"]

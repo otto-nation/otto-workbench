@@ -10,10 +10,11 @@ export function mono() {
   return settings().font_family ?? "Menlo";
 }
 
-// Applies a DESIGN.md typography role (TYPE key) to an element.
+// Applies a DESIGN.md typography role (TYPE key) to an element. The line height goes in as a px
+// string: a bare number is read as a multiple of the font size.
 export function type(el, role) {
   const r = TYPE[role] ?? TYPE.body;
-  let out = el.text_size(r.size).line_height(r.lh);
+  let out = el.text_size(r.size).line_height(`${r.lh}px`);
   out = out.font_weight(r.weight);
   return r.mono ? out.font_family(mono()) : out;
 }

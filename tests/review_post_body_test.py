@@ -19,7 +19,7 @@ import review.render  # noqa: E402
 from core.phases import Mode  # noqa: E402
 from pr.domains import ReviewStatus, ReviewVerdict  # noqa: E402
 from review.record import ProseSection, Question, VerifiedNote  # noqa: E402
-from review.store import read_review  # noqa: E402
+from review.store import read_review, update_review  # noqa: E402
 from review.types import ReviewMeta  # noqa: E402
 from review.verdict import resolve_review_verdict  # noqa: E402
 from review_focus_support import user_area  # noqa: E402
@@ -58,7 +58,7 @@ class TestCommentBody:
         assert "Clean." in result
         assert "### Nesting depth" in result
 
-    def test_no_findings_and_no_sections_is_empty(self):
+    def test_an_empty_pr_comment_is_the_approve_line(self):
         result = _comment([], False, {"M"})
         assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in result
         assert "Review findings" not in result
@@ -73,7 +73,7 @@ class TestCommentBody:
         assert "`handler.go:42`" in result
         assert "Fix it" in result
 
-    def test_no_body_findings_single_line(self):
+    def test_no_body_findings_still_has_the_inline_lead_in(self):
         text = _comment([], True, {"M", "S"})
         assert "Have some comments" in text
         assert "Review findings" not in text
@@ -150,6 +150,7 @@ class TestCommentBody:
         data = json.loads((tmp_path / "review.json").read_text())
         data["verdict"] = "Approve. Every remaining finding is minor."
         (tmp_path / "review.json").write_text(json.dumps(data))
+        update_review(path)
         stored = read_review(path)
         body = review.render.comment_body(
             stored.record, [], meta=stored.meta, has_inline=True,
@@ -198,7 +199,7 @@ class TestCommentBody:
         body = "**Verdict: Needs discussion.** 1 should-fix open."
         assert review.dedup._extract_body_findings(body) == []
 
-    def test_empty_summary_omitted(self):
+    def test_empty_summary_still_states_the_verdict_line(self):
         result = _comment([], True, {"M"})
         assert "## Summary" in result
         assert "**Verdict: Approve.**" in result

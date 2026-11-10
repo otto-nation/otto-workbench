@@ -137,7 +137,7 @@ class TestStaticAnalysisIntegration:
         result = review_file.read_text()
         assert "## Static Analysis" in result
         assert "Nesting depth" in result
-        assert "## Static Analysis" in result
+        assert result.index("## Summary") < result.index("## Static Analysis")
         assert "## Verdict" not in result
 
     def test_the_violations_reach_the_job_the_fix_pass_reads(self, ro, tmp_path):

@@ -1,5 +1,4 @@
-"""Tests for `review.verdict` — the open-finding tally, the call a review
-reaches, and the body a review has when no agent wrote one.
+"""Tests for `review.verdict`: open counts, the derived call, and counts prose.
 
 Absent and empty are the distinction these turn on — a review nobody wrote
 reaches no verdict, while one written with nothing in it approves.

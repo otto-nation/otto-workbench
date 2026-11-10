@@ -568,7 +568,7 @@ class TestACleanReviewStillPosts:
         [payload] = payloads
         assert payload["body"].endswith("<sub>Models: single m (low)</sub>")
 
-    def test_a_review_with_nothing_at_all_posts_nothing(self, rp, tmp_path):
+    def test_an_empty_pr_record_posts_its_verdict(self, rp, tmp_path):
         code, payloads, post_file = self._post(rp, tmp_path, record())
         assert code == 0
         [payload] = payloads

@@ -273,7 +273,7 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
         lines + _comment_findings(findings, has_inline)
         + _verified_comment(record) + _comment_tail(record),
     ).rstrip("\n")
-    # Only beside something else: a review with nothing to post still posts nothing.
+    # Only beside something else: a self-review with nothing to post still posts nothing.
     return f"{body}\n\n<sub>{_models_line(meta.models)}</sub>" if body and meta.models else body
 
 

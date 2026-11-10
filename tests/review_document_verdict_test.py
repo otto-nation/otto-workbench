@@ -5,6 +5,7 @@ Absent and empty are the distinction these turn on — a review nobody wrote
 reaches no verdict, while one written with nothing in it approves.
 """
 
+from collections import Counter
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument, ReviewHeader
 from review.record import Disposition, LedgerLine
-from review.types import PriorDisposition
+from review.types import PriorDisposition, ReviewMeta, SEVERITIES
 from review.verdict import (
     CLEAN_VERDICT, MECHANICAL_NOTE,
     counts_prose, mechanical_verdict,
@@ -24,12 +25,23 @@ from review.verdict import (
 )
 
 from review_document_support import _write
-from review_record_support import finding, record, store_record
+from review_record_support import finding, record
+
+_PR_DONE = ReviewMeta(mode=Mode.PR, status=ReviewStatus.COMPLETED)
+_PR_PARTIAL = ReviewMeta(mode=Mode.PR, status=ReviewStatus.PARTIAL)
 
 
 def _doc(*findings, status=None, **fields) -> ReviewDocument:
     header = ReviewHeader(status=status) if status is not None else ReviewHeader()
     return ReviewDocument(header=header, record=record(*findings, **fields))
+
+
+def _resolved(severity: str, disposition: Disposition) -> ReviewVerdict:
+    if severity in ("N", "I") or disposition in (Disposition.FIXED, Disposition.FALSIFIED):
+        return ReviewVerdict.APPROVE
+    if severity == "M":
+        return ReviewVerdict.CHANGES_REQUESTED
+    return ReviewVerdict.NEEDS_DISCUSSION
 
 
 class TestOpenCounts:
@@ -106,30 +118,6 @@ class TestOpenCounts:
         assert open_counts(document) == document.open_counts
 
 
-class TestVerdict:
-    @pytest.mark.parametrize("prose,expected", [
-        ("Approve", ReviewVerdict.APPROVE),
-        ("**Needs discussion**", ReviewVerdict.NEEDS_DISCUSSION),
-        ("Request changes", ReviewVerdict.CHANGES_REQUESTED),
-        ("Disapprove", ReviewVerdict.DISAPPROVE),
-        ("disapprove", ReviewVerdict.DISAPPROVE),
-    ])
-    def test_the_verdict_section_is_read_however_it_is_worded(self, prose, expected):
-        document = _doc(verdict=f"{prose} — rationale.")
-        assert document.verdict is expected
-
-    def test_wording_that_states_no_verdict_states_none(self):
-        assert _doc(verdict="Looks fine to me.").verdict is None
-
-    def test_a_document_with_no_verdict_section_states_none(self):
-        assert _doc(finding("M1", "bug", path=""), summary="Some findings.").verdict is None
-
-    def test_a_verdict_word_outside_the_section_is_not_the_verdict(self):
-        """Prose elsewhere describes the review; only the Verdict section
-        declares one."""
-        assert _doc(summary="I would approve this once the tests land.").verdict is None
-
-
 class TestStatesVerdict:
     """The one reading of which runs state a verdict at all.
 
@@ -150,75 +138,75 @@ class TestStatesVerdict:
 
 
 class TestResolveVerdict:
-    def test_the_counts_speak_when_the_prose_does_not(self):
-        document = _doc(finding("S1", "improvement", path="a.py", line=1))
-        assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
+    @pytest.mark.parametrize(
+        "severity,disposition,expected",
+        [
+            (sev, disposition, _resolved(sev, disposition))
+            for sev in ("M", "S", "N", "I")
+            for disposition in Disposition
+        ],
+    )
+    def test_completed_pr_verdict_follows_open_must_and_should(
+        self, severity, disposition, expected,
+    ):
+        rec = record(finding(
+            f"{severity}1", "x", path="",
+            disposition=disposition,
+        ))
+        assert resolve_review_verdict(rec, _PR_DONE) is expected
 
-    def test_prose_cannot_under_report_blocking_findings(self):
-        document = _doc(
-            finding("M1", "bug", path="a.py", line=1),
-            verdict="Approve — looks fine.",
-        )
-        assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
+    @pytest.mark.parametrize("findings,expected", [
+        ((finding("M1", "bug", path=""),), ReviewVerdict.CHANGES_REQUESTED),
+        ((finding("S1", "smell", path=""),), ReviewVerdict.NEEDS_DISCUSSION),
+        ((finding("N1", "nit", path=""), finding("I1", "idiom", path="")), None),
+        ((finding("M1", "bug", path="", disposition=Disposition.FIXED),), None),
+        ((), None),
+    ])
+    def test_a_partial_run_states_only_a_blocking_verdict(self, findings, expected):
+        assert resolve_review_verdict(record(*findings), _PR_PARTIAL) is expected
 
-    def test_counts_cannot_discard_a_stronger_call(self):
-        document = _doc(
-            finding("N1", "style", path="a.py", line=1),
-            verdict="Request changes — rework it.",
-        )
-        assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
+    def test_error_and_self_reviews_state_none(self):
+        blocker = record(finding("M1", "bug", path=""))
+        assert resolve_review_verdict(
+            blocker, ReviewMeta(mode=Mode.PR, status=ReviewStatus.ERROR),
+        ) is None
+        assert resolve_review_verdict(
+            blocker, ReviewMeta(mode=Mode.SELF, status=ReviewStatus.COMPLETED),
+        ) is None
+        assert resolve_review_verdict(
+            record(), ReviewMeta(mode=Mode.PR, status=ReviewStatus.ERROR),
+        ) is None
+        assert resolve_review_verdict(
+            blocker, ReviewMeta(mode=None, status=None),
+        ) is ReviewVerdict.CHANGES_REQUESTED
 
-    def test_disapprove_survives_any_counts(self):
-        document = _doc(verdict="Disapprove — wrong approach.")
-        assert resolve_review_verdict(document) is ReviewVerdict.DISAPPROVE
-
-    def test_a_self_review_is_advisory(self):
-        document = _doc(finding("M1", "bug", path="a.py", line=1))
-        assert resolve_review_verdict(document, mode=Mode.SELF) is None
-
-    def test_a_self_review_still_reports_disapprove(self):
-        """Disapprove judges the approach, which holds with or without a PR."""
-        document = _doc(verdict="Disapprove — wrong approach.")
-        assert resolve_review_verdict(document, mode=Mode.SELF) is ReviewVerdict.DISAPPROVE
-
-    def test_a_review_that_was_never_written_reaches_no_verdict(self):
-        assert resolve_review_verdict(None) is None
-
-    def test_a_review_that_found_nothing_approves(self):
-        """The other half of the distinction above: an empty document is a
-        review that ran and had nothing to say."""
-        assert resolve_review_verdict(ReviewDocument()) is ReviewVerdict.APPROVE
-
-    def test_a_review_where_nothing_ran_reaches_no_verdict(self):
-        """An empty tally under `status: error` is no agent reading anything.
-
-        Counted as a review that found nothing, it was reported as `approve`
-        by `--json-summary` and the listing alongside `status: error`.
-        """
-        document = _doc(summary="No group reported.", status=ReviewStatus.ERROR)
-        assert resolve_review_verdict(document) is None
-
-    def test_a_partial_review_still_reaches_one(self):
-        """The findings the surviving groups reported are real and still count."""
-        document = _doc(
-            finding("M1", "bug", path="a.py", line=1),
-            status=ReviewStatus.PARTIAL,
-        )
-        assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
-
-    def test_the_counts_come_from_the_document_it_was_handed(self, tmp_path):
-        """One document, read once — the verdict cannot be resolved against
-        counts from a file the caller re-read in between."""
-        document = ReviewDocument.read(
-            store_record(
-                tmp_path / "review.md",
-                record(
-                    finding("S1", "improvement", path="a.py", line=1),
-                    verdict="Approve — fine.",
-                ),
+    def test_the_agent_s_prose_is_not_read(self):
+        assert resolve_review_verdict(
+            record(
+                finding("S1", "smell", path=""),
+                verdict="Approve. Every remaining finding is minor.",
             ),
+            _PR_DONE,
+        ) is ReviewVerdict.NEEDS_DISCUSSION
+        assert resolve_review_verdict(
+            record(finding("N1", "nit", path=""), verdict="Request changes"),
+            _PR_DONE,
+        ) is ReviewVerdict.APPROVE
+
+    def test_counts_and_verdict_read_one_predicate(self):
+        rec = record(
+            finding("M1", "open", path=""),
+            finding("M2", "fixed", path="", disposition=Disposition.FIXED),
+            finding("S1", "declined", path="", disposition=Disposition.DECLINED),
+            finding("S2", "skipped", path="", disposition=Disposition.SKIPPED),
+            finding("N1", "unreached", path="", disposition=Disposition.UNREACHED),
+            finding("I1", "falsified", path="", disposition=Disposition.FALSIFIED),
         )
-        assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
+        tally = Counter(f.severity for f in rec.unfixed)
+        assert rec.open_counts == {s.key: tally[s.key] for s in SEVERITIES}
+        assert rec.unfixed == (
+            rec.findings[0], rec.findings[2], rec.findings[3], rec.findings[4],
+        )
 
 
 class TestVerdictFromCounts:

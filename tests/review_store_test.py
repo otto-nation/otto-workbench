@@ -12,7 +12,7 @@ if LIB_DIR not in sys.path:
 
 from dataclasses import replace
 
-from pr.domains import ReviewStatus, ReviewVerdict
+from pr.domains import ReviewStatus
 from review.document import ReviewDocument, ReviewHeader
 from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECORD, FILENAME_RECORD
 from review.render import BANNER
@@ -152,7 +152,6 @@ class TestARecordBackedDocument:
         doc = ReviewDocument.from_stored(read_review(_stored(tmp_path)))
         assert [f.id for f in doc.findings] == ["S1", "S2", "N1", "N2", "I1"]
         assert doc.open_counts == {"M": 0, "S": 2, "N": 2, "I": 1}
-        assert doc.verdict is ReviewVerdict.APPROVE
         assert doc.header.status is ReviewStatus.PARTIAL
         assert doc.section("Summary").startswith("Adds speech-to-text")
         assert doc.title.startswith("# Review: acme/widget#38")

@@ -1137,8 +1137,8 @@ This module owns the keys a review header may state, the sentence the title is,
 and `ReviewDocument` as the read view of a stored review. `ReviewHeader.render`
 and `ReviewHeader.from_meta` write the header from the sidecar; `covers` is
 whether a header SHA covers a commit; `review_title` is the `# ...` line
-derived from the same sidecar. `ReviewDocument` answers sections, findings,
-open counts and the verdict off the record, never by parsing `review.md`.
+derived from the same sidecar. `ReviewDocument` answers sections, findings
+and open counts off the record, never by parsing `review.md`.
 
 ### review/fix_logs.py
 
@@ -1690,10 +1690,10 @@ re-parsing every log.
 
 What a set of counts means, and the review a run without an agent writes.
 
-The policy layer over `review.document`: how many open findings of each
-severity add up to an approve or a request-for-changes, how that reads in
-prose, whether the run states a verdict at all, and the body a mechanically
-merged review carries when no synthesis agent produced one.
+The policy layer over `review.document`: the verdict is derived from the
+findings, status and mode, how that reads in prose, whether the run states a
+verdict at all, and the body a mechanically merged review carries when no
+synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
 a judgement — a stored review reads the same way whatever this module decides.
@@ -1702,7 +1702,8 @@ A review where no group reported — every agent failed, so its header says
 `status: error` — records no verdict: its empty tally means nothing was read,
 not that nothing was found. It states `NO_RUN_VERDICT` above its Agent Failures
 table, and `pr review` exits 1 once it has shown and recorded it. A partial run
-states `PARTIAL_VERDICT` and exits 0, since the surviving findings are real.
+records only a blocking verdict (none in place of Approve) and exits 0, since
+the surviving findings are real.
 
 ### review/worktree.py
 

@@ -273,9 +273,17 @@ class ReviewRecord:
         return tuple(f for f in self.findings if f.visible)
 
     @property
+    def unfixed(self) -> tuple[RecordFinding, ...]:
+        """Visible findings not yet fixed — declined, skipped and unreached included.
+
+        The one reading of "open" the counts and the verdict take, so the two cannot disagree.
+        """
+        return tuple(f for f in self.visible if f.disposition is not Disposition.FIXED)
+
+    @property
     def open_counts(self) -> dict[str, int]:
         """Visible findings not yet fixed, by severity key, every key present."""
-        tally = Counter(f.severity for f in self.visible if f.disposition is not Disposition.FIXED)
+        tally = Counter(f.severity for f in self.unfixed)
         return {s.key: tally[s.key] for s in SEVERITIES}
 
     def finding(self, finding_id: str) -> RecordFinding | None:

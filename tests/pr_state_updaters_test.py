@@ -290,11 +290,11 @@ def test_review_summary_status_completed_roundtrip():
 def test_review_summary_verdict_disapprove_roundtrip():
     state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
     apply(state, ReviewSummary(
-        verdict=ReviewVerdict.DISAPPROVE.value, updated_at="t1",
+        verdict="disapprove", updated_at="t1",
     ))
     d = state_to_dict(state)
     restored = state_from_dict(d)
-    assert restored.review.verdict == ReviewVerdict.DISAPPROVE.value
+    assert restored.review.verdict == "disapprove"
 
 
 def test_apply_replaces_comments():

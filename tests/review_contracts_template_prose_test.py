@@ -448,6 +448,48 @@ def test_the_synthesis_notes_step_states_the_caps():
         assert expected in (TEMPLATE_DIR / name).read_text()
 
 
+_APPROACH_SENTENCE = (
+    "Write no verdict: the harness derives it from the findings. If the approach "
+    "itself is wrong — the PR should not land in any form — file one must-fix "
+    "finding with `path` null that says what to do instead."
+)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        TEMPLATE_DIR / "synthesis.md",
+        TEMPLATE_DIR / "single-agent.md",
+        AGENTS_DIR / "reviewer.md",
+    ],
+    ids=lambda p: p.name,
+)
+def test_the_approach_instruction_is_identical_across_copies(path):
+    assert _APPROACH_SENTENCE in path.read_text()
+    for name in ("self-review.md", "self-review-synthesis.md"):
+        assert _APPROACH_SENTENCE not in (TEMPLATE_DIR / name).read_text()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        TEMPLATE_DIR / "synthesis.md",
+        TEMPLATE_DIR / "single-agent.md",
+        TEMPLATE_DIR / "self-review.md",
+        TEMPLATE_DIR / "self-review-synthesis.md",
+        TEMPLATE_DIR / "group.md",
+        TEMPLATE_DIR / "holistic.md",
+        AGENTS_DIR / "reviewer.md",
+        AGENTS_DIR / "reviewer-lite.md",
+    ],
+    ids=lambda p: p.name,
+)
+def test_no_writer_asks_for_a_verdict(path):
+    text = path.read_text()
+    for needle in ("verdict_options", "`verdict`", "Disapprove", "disapproval"):
+        assert needle not in text, f"{path.name} still asks for {needle!r}"
+
+
 def test_no_template_restates_the_old_summary():
     forbidden = (
         "overall quality assessment",

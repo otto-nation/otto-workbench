@@ -637,7 +637,7 @@ def test_the_single_agent_derives_after_dropping_an_out_of_delta_nit(
 def test_a_stale_single_json_is_not_this_runs_review(tmp_path, monkeypatch):
     job = _make_job(tmp_path)
     (tmp_path / "single.json").write_text(json.dumps({
-        "summary": "old run", "verdict": "Approve",
+        "summary": "old run",
     }))
 
     def _agent(inv, *_args, **_kwargs) -> int:

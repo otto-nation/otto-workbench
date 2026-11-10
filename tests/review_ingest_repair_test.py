@@ -313,7 +313,6 @@ GOOD_REVIEW_JSON = json.dumps({
         {"id": "N1", "path": "a.py", "line": 1, "body": "x"},
         {"id": "N2", "path": "b.py", "line": 1, "body": "y"},
     ],
-    "verdict": "Approve.",
     "focus": DERIVED_FOCUS,
 })
 BAD_REVIEW_JSON = json.dumps({
@@ -322,7 +321,6 @@ BAD_REVIEW_JSON = json.dumps({
         {"id": "N1", "path": "a.py", "line": 1, "body": "x"},
         {"id": "N1", "path": "b.py", "line": 1, "body": "y"},
     ],
-    "verdict": "Approve.",
 })
 
 

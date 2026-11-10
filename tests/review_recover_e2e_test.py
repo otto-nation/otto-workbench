@@ -50,13 +50,12 @@ _SCOUT_DOC = json.dumps({"leads": [], "focus": _FOCUS})
 _HOLISTIC_DOC = json.dumps({"assessment": "ok", "focus": _FOCUS})
 _DISPROVE_DOC = json.dumps({"verdicts": []})
 _REVIEW_BODY = json.dumps({
-    "summary": "Synthesized.", "verdict": "Approve",
+    "summary": "Synthesized.",
     "focus": [{"id": "", "title": "Retry", "rationale": "r", "paths": [], "coverage": "checked"}],
 })
 _REVIEW_WITH_FINDING = json.dumps({
     "summary": "Synthesized.",
     "findings": [{"id": "M1", "path": "a/one.py", "line": 1, "body": "bug"}],
-    "verdict": "Request changes",
     "focus": [{"id": "", "title": "Retry", "rationale": "r", "paths": [], "coverage": "checked"}],
 })
 
@@ -391,7 +390,8 @@ class TestAPartialReviewDoesNotReadAsClean:
         run(job, fails={"group-2"})
         review = _review(job)
         assert "Approve — clean review." not in review
-        assert "No verdict — part of this review did not run." in review
+        assert "**No verdict.**" in review
+        assert "Review incomplete" in review
 
     def test_the_failures_table_still_carries_the_detail(self, job, run):
         """The withheld verdict replaces nothing; it points at what was there."""

@@ -28,7 +28,6 @@ Rules:
 - Must-fix and should-fix findings must carry `evidence` copied verbatim from the referenced file
 - The Test hint is advisory: a file with no paired test is a finding only when the change needs one.
 - Leave `triage` as []
-- Leave `verdict` as ""
 - A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it
 - On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open
 - On a re-review — a `## Prior review` section is present below — fill `prior_findings` as it asks

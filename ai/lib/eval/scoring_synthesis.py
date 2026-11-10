@@ -46,7 +46,6 @@ from eval.task import RunArtifacts, RunOptions, create_temp_repo, outcome_for
 from review.artifact_format import output_format
 from review.artifacts import AgentFinding, ReviewArtifact
 from review.ingest import IngestRejected, load_artifact
-from review.prompt import VERDICT_OPTIONS
 from review.prompt_sections import _build_focus_section
 from review.record import RecordFinding, ReviewRecord
 from review.steps import Merged
@@ -111,7 +110,7 @@ def build_prompt(planted: list[Planted], output_path: str, repo_dir: str, max_tu
         focus_section=_build_focus_section((), derive=True),
         test_hint_section="",
         holistic_content=_HOLISTIC, merged_content=merged.text,
-        group_count="2", verdict_options=VERDICT_OPTIONS, wt_path=repo_dir,
+        group_count="2", wt_path=repo_dir,
         execution_claim_guard=agent.templates.build_execution_claim_guard(8),
         output_block=(
             f"{block}\n\n"

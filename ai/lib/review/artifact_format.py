@@ -106,7 +106,6 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "findings": "every finding, any severity, in any order",
         "triage": "a PR review: one entry per changed file; a self-review: []",
         "prior_findings": _LEDGER_NOTE,
-        "verdict": "a PR review: the verdict the task asks for, then why; a self-review: \"\"",
         "focus": "one entry for EVERY area in the prompt's Focus section, by its `id`; "
                   "add your own with id \"\" only where that section asks you to",
         "claims": "every distinct claim the Description or the Related issue (title, body, "

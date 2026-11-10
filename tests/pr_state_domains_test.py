@@ -73,7 +73,6 @@ def test_review_verdict_value_is_the_persisted_spelling():
     """Serialized state keeps the snake-case values it always held."""
     assert ReviewVerdict.APPROVE.value == "approve"
     assert ReviewVerdict.CHANGES_REQUESTED.value == "changes_requested"
-    assert ReviewVerdict.DISAPPROVE.value == "disapprove"
 
 
 def test_review_verdict_prose_is_the_spelling_reviews_are_written_in():
@@ -95,7 +94,6 @@ def test_review_verdict_from_counts(must, should, expected):
     ("Approve — looks good.", ReviewVerdict.APPROVE),
     ("**Needs discussion** — two open questions.", ReviewVerdict.NEEDS_DISCUSSION),
     ("request changes — a bug.", ReviewVerdict.CHANGES_REQUESTED),
-    ("  Disapprove — wrong approach.", ReviewVerdict.DISAPPROVE),
     ("Looks fine to me.", None),
     ("", None),
 ])
@@ -110,9 +108,3 @@ def test_review_verdict_outranks_orders_the_derivable_calls():
     assert not ReviewVerdict.APPROVE.outranks(ReviewVerdict.APPROVE)
 
 
-def test_review_verdict_disapprove_is_outside_the_ranking():
-    """No finding count implies Disapprove, and none refutes it."""
-    assert ReviewVerdict.DISAPPROVE.rank is None
-    assert not ReviewVerdict.DISAPPROVE.outranks(ReviewVerdict.APPROVE)
-    assert not ReviewVerdict.CHANGES_REQUESTED.outranks(ReviewVerdict.DISAPPROVE)
-    assert not ReviewVerdict.APPROVE.outranks(None)

@@ -343,24 +343,16 @@ class CIDomain(Domain):
 class ReviewVerdict(Enum):
     """The call a review reaches, in both spellings it is written in.
 
-    `value` is the persisted state value; `prose` is the word the synthesis
-    prompt asks for and the `## Verdict` section states. One member owns both,
-    so what a review says and what `pr status` reports cannot disagree.
+    `value` is the persisted state value; `prose` is the word the verdict line
+    states. One member owns both, so what a review says and what `pr status`
+    reports cannot disagree.
 
-    `rank` orders the verdicts the finding counts derive. Disapprove is
-    deliberately unranked: per `review-templates/synthesis.md` it means the
-    overall approach is wrong and the PR should not land in any form — a
-    holistic judgment no count implies and none refutes.
-
-    Declaration order is significant: `VERDICT_OPTIONS` in `review.prompt`
-    renders the options the synthesis prompt offers by iterating this enum, so
-    reordering these members reorders what agents are asked to choose from.
+    `rank` orders the verdicts the finding counts derive.
     """
 
     APPROVE = ("approve", "Approve", 0)
     NEEDS_DISCUSSION = ("needs_discussion", "Needs discussion", 1)
     CHANGES_REQUESTED = ("changes_requested", "Request changes", 2)
-    DISAPPROVE = ("disapprove", "Disapprove", None)
 
     def __new__(cls, value: str, prose: str, rank: int | None) -> ReviewVerdict:
         obj = object.__new__(cls)
@@ -392,8 +384,7 @@ class ReviewVerdict(Enum):
     def outranks(self, other: ReviewVerdict | None) -> bool:
         """Whether this verdict is a stronger call than `other`.
 
-        An unranked verdict outranks nothing and is outranked by nothing, which
-        is what leaves a stated Disapprove untouched by any count-derived call.
+        An unranked verdict outranks nothing and is outranked by nothing.
         """
         if other is None or self.rank is None or other.rank is None:
             return False
@@ -502,8 +493,6 @@ class ReviewSummary(Domain):
         elif self.status == ReviewStatus.ERROR.value:
             detail = f" — {self.failure_detail}" if self.failure_detail else ""
             suffixes.append(f"[ERROR{detail}]")
-        if self.verdict == ReviewVerdict.DISAPPROVE.value:
-            suffixes.append("[DISAPPROVED]")
         suffix = " " + " ".join(suffixes) if suffixes else ""
         # The dashboard shows the verdict the way the review states it, not the
         # way state serializes it. An unrecognised value is shown as stored

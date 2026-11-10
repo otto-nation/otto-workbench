@@ -4,7 +4,7 @@ description: "Complete a development branch — verify tests, self-review, then 
 source: otto-workbench/ai/skills/finishing-a-development-branch/SKILL.md
 invocation: "/finishing-a-development-branch"
 trigger: "Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch."
-skip: "Do not use while work is still in progress, or on a branch whose PR is already open — push and comment on the PR instead."
+skip: "Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR."
 ---
 
 <!-- Overrides superpowers:finishing-a-development-branch, which presents a
@@ -156,7 +156,7 @@ and the push owes `pr review --self --fix --push`
 | Situation | Action |
 |-----------|--------|
 | Tests failing | Stop. Report failures |
-| Something still on your list | Finish it now, or file it as a follow-up — do not open the PR yet |
+| Something still on your list | Finish it now — do not open the PR yet. Leftover work is a follow-up PR, not an issue |
 | Diff shows unrelated reversions | Stale base — rebase onto `origin/main` |
 | Uncommitted files in the tree | Commit them or say why not — the PR will not carry them |
 | Branch targets something other than `main` | Substitute it, and pass `--base` in Step 4 |
@@ -180,4 +180,4 @@ and the push owes `pr review --self --fix --push`
 | "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
 | "I'll push the last fix quietly by hand" | A branch with an open PR is shared. Say what changed. |
 | "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |
-| "The worktree is done, I'll clean it up" | Only after the merge, and only `wt-cleanup` (§ Worktree Cleanup). |
+| "The worktree is done, I'll clean it up" | Only after the merge, and only `wt-cleanup` (`git-operations.md` § Worktree Cleanup). |

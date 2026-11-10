@@ -47,11 +47,12 @@ straight into a command without reading it first. The selection is the hook's, s
 wide (an `AGENTS.md` edit reaches dozens of bats files that read it) — read it rather than
 trust a specific shape.
 
-The cost is not merely the wasted minutes. A hand-started suite competes with the hook's for
-the same cores (`CONTRIBUTING.md` § Running Tests) and oversubscribes the box and produces
-exactly those contention failures, in arbitrary tests that never repeat. Worse, a suite killed part-way (a timeout, an impatient Ctrl-C) leaves
-orphaned `bats` processes holding cores, and the next run inherits a machine that is already
-losing subprocesses. Two such piles, one of them hours old, are what prompted this rule.
+The cost is not merely the wasted minutes. A hand-started `bats` or `pytest` bypasses the
+slot pool that `bin/local/run-tests` shares (`CONTRIBUTING.md` § Running Tests), oversubscribes
+the box, and produces contention failures in arbitrary tests that never repeat. Worse, a
+suite killed part-way (a timeout, an impatient Ctrl-C) leaves orphaned `bats` processes
+holding cores, and the next run inherits a machine that is already losing subprocesses.
+Two such piles, one of them hours old, are what prompted this rule.
 
 When you must clean orphans up, scope the kill to a process tree you own. Find the roots — the
 listing names each one's worktree, which is what tells yours from someone else's — then kill

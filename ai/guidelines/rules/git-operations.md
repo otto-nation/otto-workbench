@@ -102,7 +102,7 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 
 ## Branch Completion
 
-- When implementation is complete, create a PR — never present a menu of completion options. Create the draft without asking when the review is clean; stop and ask only when findings remain open after the fix pass, or the fix pass changed the branch's intent (`self-review.md` § Before PR Creation). See PR Creation for the full invocation
+- When implementation is complete, create a PR — never present a menu of completion options. Whether to stop and ask before the draft is `self-review.md` § Before PR Creation. See PR Creation for the full invocation
 - When the user states a specific next step ("merge this", "push it", "just keep it"), execute it directly. If it fails, debug the failure — don't fall back to an options menu
 - Open the PR when the work is done, not when it is nearly done. Opening one is a claim that the branch is finished, and it is acted on as such: a reviewer reads it, marks it ready, and merges. Anything still on your list — a test you meant to add, a finding you meant to fix — belongs in the branch before the PR exists, or in a follow-up PR after it
 

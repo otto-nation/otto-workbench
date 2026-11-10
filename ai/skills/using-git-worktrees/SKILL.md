@@ -123,8 +123,8 @@ Branch naming, base branch, and worktree placement are all `wt`'s to decide. Do
 not pass a path, and do not fall back to `git worktree add` — the two produce
 different layouts, and the git form leaves state `wt` cannot see.
 
-If `wt switch -c` aborts on its pre-switch hook, the default branch is stale or
-diverged: fix it and re-run, never with `--no-hooks`
+If `wt switch -c` aborts on its pre-switch hook, the default branch has diverged
+or the worktree will not fast-forward: fix it and re-run, never with `--no-hooks`
 (`git-operations.md` § Branch Freshness).
 
 Any other `wt` failure — no `wt` on PATH, worktrunk unconfigured for this repo,
@@ -162,7 +162,8 @@ if [ -f go.mod ]; then go mod download; fi
 ## Step 3: Verify a Clean Baseline
 
 Run the baseline the repo's AGENTS.md prescribes; where it forbids whole-suite
-runs, run the files the planned work will touch.
+runs, run the files the planned work will touch; otherwise the test files the
+planned work will touch.
 
 Run them in this worktree, never another
 (`git-operations.md` § Cross-Worktree Safety).
@@ -205,6 +206,6 @@ Ready to implement <feature-name>
 | "`GIT_DIR != GIT_COMMON`, so I'm isolated" | `main/` is a linked worktree here too. Compare the branch against the container's HEAD before believing it. |
 | "`git worktree add` is quicker" | Only `wt` applies this machine's naming rules and pre-switch hooks. The git form puts the worktree somewhere the rest of these rules do not describe. |
 | "I'll put it in `.worktrees/`" | That is upstream Superpowers' default, not this machine's. Bare repos here place worktrees as peers of `main/`. |
-| "The hook abort is a flake — I'll pass `--no-hooks`" | The abort means the default branch is stale or diverged. Branching anyway bases your work on it. |
+| "The hook abort is a flake — I'll pass `--no-hooks`" | The abort means the default branch has diverged or the worktree will not fast-forward. Branching anyway bases your work on it. |
 | "It's a one-line change, I'll just edit here" | Never edit `main` in place, whatever the size. |
 | "I'll run the suite in the main worktree, it's the same code" | It is not. Cross-worktree test runs can corrupt the target's git state. |

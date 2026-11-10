@@ -466,8 +466,7 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 - One reply per thread. If our position changed, revise the existing reply via
   `--reply` — a second comment leaves the reviewer holding two answers and no
   way to tell which one stands
-- Back every factual claim with a SHA-pinned blob permalink (`git-operations.md`
-  § Replying to Review Comments).
+- Back every factual claim with a SHA-pinned blob permalink (`git-operations.md` § Replying to Review Comments).
 - Never file a `deferred` thread on the tracking issue without the user
   choosing to — deferral is a decision, not a fallback for a failed fix pass.
   Pass their chosen ids to `--track`; `--track-all` is the one blanket form,

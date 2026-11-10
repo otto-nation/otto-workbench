@@ -85,10 +85,8 @@ def build_parser() -> ToolParser:
     # one ref, <newbase> and <upstream> are the same and the whole branch is
     # replayed. Takes a value, unlike git's own boolean `--fork-point`.
     parser.add_argument("--fork-point", dest="fork_point", metavar="REF",
-                        help="Replay only the commits after REF, onto the "
-                             "target — for a branch whose earlier commits "
-                             "already landed. The partially-landed refusal "
-                             "names the ref to pass")
+                        help="Replay only the commits after REF, overriding "
+                             "the landed prefix pr rebase detects on its own")
     parser.add_argument("--fix", action="store_true",
                         help="Autonomous mode — resolve conflicts with AI and rebase "
                              "(force-pushes unless --no-push)")

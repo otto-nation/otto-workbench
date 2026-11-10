@@ -52,16 +52,10 @@ class RefusalSignal(StrEnum):
     """Which check refused the rebase.
 
     The first three found the branch's work already present in the target ref;
-    ``NO_MERGE_BASE``, ``PARTIALLY_LANDED`` and the two budget signals found
-    the rebase itself unsafe to run against that ref. ``TRACKER_REFUSED``
-    found neither — it refuses because whether the branch landed could not be
-    determined at all, the one signal that refuses on an absence rather than
-    on evidence.
-
-    ``PARTIALLY_LANDED`` is the only one whose remedy the tool can carry out
-    itself: it names the ref to pass to ``--fork-point``, which turns the
-    replay into ``git rebase --onto <base> <ref>`` and skips the prefix that
-    already landed.
+    ``NO_MERGE_BASE`` and the two budget signals found the rebase itself unsafe
+    to run against that ref. ``TRACKER_REFUSED`` found neither — it refuses
+    because whether the branch landed could not be determined at all, the one
+    signal that refuses on an absence rather than on evidence.
 
     The landed three take their wire values from ``branch_landed``, which owns
     both the checks and their names — ``push_intent`` reports on the same three
@@ -72,7 +66,6 @@ class RefusalSignal(StrEnum):
     EMPTY_DIFF = gh.landed.LandedSignal.EMPTY_DIFF.value
     COMMITS_UPSTREAM = gh.landed.LandedSignal.COMMITS_UPSTREAM.value
     NO_MERGE_BASE = "no_merge_base"
-    PARTIALLY_LANDED = "partially_landed"
     CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
     RESOLUTIONS_OVER_BUDGET = "resolutions_over_budget"
     TRACKER_REFUSED = "tracker_refused"
@@ -564,12 +557,6 @@ class RefusalReport:
     pr_number: int | None = None
     status: str = RebaseStatus.ALREADY_LANDED.value
     override: str = REFUSAL_OVERRIDE_FLAG
-    # The command that resolves this refusal without waiving it, for the one
-    # refusal that has one. Empty everywhere else, so a caller reads "there is
-    # a narrower way to do what you asked" from its presence rather than from
-    # knowing which signal fired. `override` remains the blunt way out of any
-    # of them.
-    remedy: str = ""
 
     def emit(self) -> None:
         core.report.emit_json(asdict(self))

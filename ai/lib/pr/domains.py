@@ -33,15 +33,14 @@ up to date (no block).
 
 #### Rebase refusals
 
-The already-landed signals answer "is this work already in the base?". Two more
-answer a different question — "is replaying this branch onto that base a safe
-thing to do at all?" — and refuse on the same exit code, with the same
+The already-landed signals answer "is this work already in the base?". Further
+signals answer a different question — "is replaying this branch onto that base a
+safe thing to do at all?" — and refuse on the same exit code, with the same
 ``--force`` override:
 
 | Signal | What it reads | When it fires |
 |---|---|---|
 | `no_merge_base` | `git merge-base <base> HEAD` exits nonzero | The branch and its base share no commit |
-| `partially_landed` | a prefix of the branch's commits already in the base | Some, but not all, of the branch landed |
 | `conflicts_over_budget` | distinct conflicted files across the whole rebase | The count passes `CONFLICT_FILE_BUDGET` |
 | `resolutions_over_budget` | resolution calls spent across the whole rebase | The count passes `CONFLICT_RESOLUTION_BUDGET` |
 
@@ -59,21 +58,13 @@ verifies the ref names a commit first and passes when it does not — refusing
 those as unrelated history would send the operator after a root they do not
 have, where git's own error for the missing ref says what actually went wrong.
 
-`partially_landed` is what the two landed signals above cannot express. Both ask
-whether the branch's work is *entirely* in the base, so a branch whose first six
-commits landed and whose seventh has not reads to them exactly like a branch
-that landed nothing. Replaying such a branch onto the base reapplies the six
-that are already there, conflicting each of them against itself — which is the
-shape that burns a resolution call per file per commit and rewrites the base's
-version back to the branch's. Patch ids do not catch it either: one amendment
-early in the landed prefix changes the context lines of every later commit's
-hunks, so `git cherry` reports every one of them as unlanded.
-
-It is the one refusal that carries a remedy the tool can execute. `--fork-point
-<ref>` supplies git's `<upstream>` argument, so the replay is
-`git rebase --onto <base> <ref>` — the landed prefix is skipped and only the
-commits after it are replayed. The refusal names the exact ref to pass, because
-a refusal whose remedy the tool cannot express is a dead end.
+A prefix of the branch already in the base is not a refusal. The two landed
+signals above ask whether the work is *entirely* in the base, so a branch whose
+first six commits landed and whose seventh has not reads to them like a branch
+that landed nothing. Replaying that prefix onto itself conflicts each commit
+against its landed version. `pr rebase` detects the prefix and replays only
+what is left (``git rebase --onto <base> <fork-point>``). ``--fork-point REF``
+overrides the detection; ``--force`` turns it off and replays the whole branch.
 
 The budgets are the circuit breaker for what all of this produces. Conflict
 resolution is an AI call per conflicted file, with edit access to the worktree,
@@ -388,8 +379,8 @@ class RebaseStatus(Enum):
     # Distinct from ALREADY_LANDED on purpose: that one asserts the work is in
     # the base, and this one asserts only that nobody could find out.
     TRACKER_UNREAD = "tracker_unread"
-    # Also distinct from ALREADY_LANDED: the branch has work left to replay, so
-    # the remedy is a narrower replay rather than deleting the branch.
+    # legacy — no longer produced; kept so state files written before the
+    # automatic fork point still render as a refusal
     PARTIALLY_LANDED = "partially_landed"
 
 
@@ -634,7 +625,7 @@ _REFUSAL_REASONS = {
     RebaseStatus.ALREADY_LANDED.value: "branch already landed",
     RebaseStatus.UNRELATED_HISTORY.value: "branch shares no history with its base",
     RebaseStatus.PARTIALLY_LANDED.value:
-        "part of the branch already landed — replay from the fork point",
+        "part of the branch already landed — re-run `pr rebase`; it now skips the landed part itself",
     RebaseStatus.CONFLICTS_OVER_BUDGET.value: "too many conflicts to resolve automatically",
     RebaseStatus.TRACKER_UNREAD.value: "GitHub was not asked whether the PR merged",
 }

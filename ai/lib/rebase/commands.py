@@ -347,8 +347,11 @@ def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
     # `--post` must not inherit it.
     with core.publishing.run(post=mode.reaches_remote):
         if args.force:
-            trail.decision("preflight", "waiving the already-landed check",
-                           reason=f"{rebase.types.REFUSAL_OVERRIDE_FLAG} flag set")
+            trail.decision(
+                "preflight",
+                "waiving the already-landed check and the landed-prefix skip",
+                reason=f"{rebase.types.REFUSAL_OVERRIDE_FLAG} flag set",
+            )
         verify = _verify(args, trail)
         rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
                        fork_point=args.fork_point or "", verify=verify,

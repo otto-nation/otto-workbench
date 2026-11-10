@@ -4,7 +4,7 @@ import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
 import { SP, TEXT, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, button, pill, inset, ciMark, addStat, delStat, card, placeholder, caption, paneBar, scrollBody, pane, mono } from "./_ui/ui.js";
+import { segment, segmented, button, tag, inset, ciMark, addStat, delStat, card, placeholder, caption, paneBar, scrollBody, pane, mono } from "./_ui/ui.js";
 
 function postTone(tone) {
   const t = theme();
@@ -108,7 +108,7 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
       .child(caption(r.when))
       .child(caption(r.shortSha)))
     .child(div().text_size(TEXT.small).child(r.findingsText))
-    .child(h_flex().gap(SP.sm).items_center().child(pill(r.post.label, postTone(r.post.tone)))
+    .child(h_flex().gap(SP.sm).items_center().child(tag(r.post.label, postTone(r.post.tone)))
       .when(Boolean(r.costText), (e) => e.child(caption(r.costText))))
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }

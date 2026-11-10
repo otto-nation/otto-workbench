@@ -68,8 +68,8 @@ def test_retries_504_then_succeeds(monkeypatch, tmp_path):
     sleeps, calls = _patch_fetch(
         monkeypatch, tmp_path, [_http(504, "Gateway Timeout"), blob],
     )
-    text = themes._fetch(pin)
-    assert "#112233" in text
+    loaded = themes._fetch(pin)
+    assert loaded.tokens["light"]["ow-canvas"] == "#112233"
     assert sleeps == [themes.FETCH_BACKOFF]
     assert len(calls) == 2
 
@@ -99,10 +99,27 @@ def test_timeout_then_success(monkeypatch, tmp_path):
     blob = _blob()
     pin = _pin(blob)
     sleeps, calls = _patch_fetch(monkeypatch, tmp_path, [TimeoutError(), blob])
-    text = themes._fetch(pin)
-    assert "#112233" in text
+    loaded = themes._fetch(pin)
+    assert loaded.tokens["light"]["ow-canvas"] == "#112233"
     assert sleeps == [themes.FETCH_BACKOFF]
     assert len(calls) == 2
+
+
+def test_old_cache_layout_is_ignored(tmp_path, monkeypatch):
+    blob = _blob()
+    pin = _pin(blob)
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    old = tmp_path / "state" / "herdr-app-themes" / "brand-1.2.0.tgz"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(blob)
+    assert themes._cached(pin) is None
+    new = themes._cache_path(pin)
+    new.parent.mkdir(parents=True, exist_ok=True)
+    new.write_bytes(blob)
+    loaded = themes._cached(pin)
+    assert loaded is not None
+    assert loaded.source == "cache"
+    assert loaded.tokens["light"]["ow-canvas"] == "#112233"
 
 
 def test_transient_ignores_permanent_oserrors():

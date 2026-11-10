@@ -287,7 +287,9 @@ export default class PrsBoard extends View {
     for (const ctx of this.activeTargets()) {
       const key = ctxKey(ctx);
       const prev = this.cache.get(key);
-      if (!prev?.repo || !owedDue(prev.owedAt, Date.now())) continue;
+      // Nothing cached yet (first pull still in flight): a full pull reads owed now that Mine shows.
+      if (!prev?.repo) { this.refresh(cx); continue; }
+      if (!owedDue(prev.owedAt, Date.now())) continue;
       cx.spawn(async (cx) => {
         const r = await loadOwed(exec, ctx, prev.repo.slug);
         if (!r.ok || !this.same(key)) return;

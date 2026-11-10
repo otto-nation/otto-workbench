@@ -12,6 +12,8 @@
  * "off" when there is no root, `main` is missing, or `main` is not hidden.
  * When `main.hidden` is truthy: "on" if `panel` exists, is not hidden, and
  * `panel-body.active` is "prs-panel"; otherwise "stranded".
+ * Only "on" and "off" are stable: "stranded" must be healed by a caller (prs-button does,
+ * via healDue) or the main area stays hidden.
  *
  * enterPlan(root) -> { savedPx, steps }. savedPx is panel.size.px when that is a
  * finite number > 0, else null. steps hide `main` then resize `panel` to weight 1.

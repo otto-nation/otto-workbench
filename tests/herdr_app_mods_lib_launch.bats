@@ -42,7 +42,7 @@ _js() {
 @test "hcRunArgv with on places --on right after --cwd value, labels have no prefix, and the command runs with the workbench bin on PATH" {
   _js 'm.hcRunArgv({repo:"o/n",number:7,action:"review",cwd:"/w",on:"homelab",argv:["pr","review"]})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.pr=o/n#7","--label","otto.action=review","--label","otto.app=pr","--","sh","-c","PATH=\"$HOME/.local/bin:$PATH\"; exec \"$@\"","sh","pr","review"]' ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.pr=o/n#7","--label","otto.action=review","--label","otto.app=pr","--","sh","-c","PATH=\"$HOME/.local/bin:$PATH\"; if [ -r \"$HOME/.env.local\" ] && ( . \"$HOME/.env.local\" ) >/dev/null 2>&1; then set -a; . \"$HOME/.env.local\" >/dev/null 2>&1; set +a; fi; exec \"$@\"","sh","pr","review"]' ]
 }
 
 @test "hcBatchArgv local exact" {
@@ -54,7 +54,7 @@ _js() {
 @test "hcBatchArgv with on places --on right after --cwd value, labels have no prefix, and the command runs with the workbench bin on PATH" {
   _js 'm.hcBatchArgv({repo:"o/n",cwd:"/w",on:"homelab",argv:["pr","batch","run"]})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.repo=o/n","--label","otto.action=batch","--label","otto.app=pr","--","sh","-c","PATH=\"$HOME/.local/bin:$PATH\"; exec \"$@\"","sh","pr","batch","run"]' ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.repo=o/n","--label","otto.action=batch","--label","otto.app=pr","--","sh","-c","PATH=\"$HOME/.local/bin:$PATH\"; if [ -r \"$HOME/.env.local\" ] && ( . \"$HOME/.env.local\" ) >/dev/null 2>&1; then set -a; . \"$HOME/.env.local\" >/dev/null 2>&1; set +a; fi; exec \"$@\"","sh","pr","batch","run"]' ]
 }
 
 @test "machineOf splits host prefix and returns null without one" {

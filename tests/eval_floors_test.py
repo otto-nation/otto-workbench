@@ -190,6 +190,38 @@ class TestCompareAgainstFloors:
         assert not result.ok
         assert (INCIDENT_ENTRY, "recall_mean") in result.missing_metrics
 
+    def test_cache_read_below_0_60_does_not_fail_when_recorded_floor_is_below(self):
+        from eval.floors import cache_read_fails_floor
+        recorded, current = 0.40, 0.20
+        floors = FloorSet(1, {STEM: {INCIDENT_ENTRY: {
+            "recall_mean": _record(1.0),
+            "cache_read_ratio_mean": _record(recorded),
+        }}})
+        baseline = _baseline(INCIDENT_ENTRY, 1.0)
+        baseline["entries"][INCIDENT_ENTRY]["cache_read_ratio_mean"] = current
+        result = compare_against_floors(floors, baseline, 3)
+        cache_breaches = [
+            b for b in result.breaches if b.metric == "cache_read_ratio_mean"
+        ]
+        assert bool(cache_breaches) is cache_read_fails_floor(recorded, current)
+        assert cache_breaches == []
+
+    def test_cache_read_at_or_above_0_60_is_still_held_to_the_absolute(self):
+        from eval.floors import cache_read_fails_floor
+        recorded, current = 0.60, 0.59
+        floors = FloorSet(1, {STEM: {INCIDENT_ENTRY: {
+            "recall_mean": _record(1.0),
+            "cache_read_ratio_mean": _record(recorded),
+        }}})
+        baseline = _baseline(INCIDENT_ENTRY, 1.0)
+        baseline["entries"][INCIDENT_ENTRY]["cache_read_ratio_mean"] = current
+        result = compare_against_floors(floors, baseline, 3)
+        cache_breaches = [
+            b for b in result.breaches if b.metric == "cache_read_ratio_mean"
+        ]
+        assert bool(cache_breaches) is cache_read_fails_floor(recorded, current)
+        assert cache_breaches
+
     def test_deleting_cache_read_ratio_mean_still_breaches(self):
         cache_floor = 0.9011053140137101
         floors = FloorSet(1, {STEM: {INCIDENT_ENTRY: {

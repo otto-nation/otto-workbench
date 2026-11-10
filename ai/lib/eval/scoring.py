@@ -10,14 +10,17 @@ that were recorded on the same backend, and exits `2` on a regression. A run
 whose backend has no file yet is a new baseline, not a failure. The gate is
 deliberately narrow, because a gate that flaps gets disabled: token growth,
 quality drops and false positives fail past the thresholds declared below, the
-cache-read ratio fails below its floor, and cost and duration are reported but
-never gated.
+cache-read ratio fails below 0.60 when the recorded floor is already at or
+above 0.60, and cost and duration are reported but never gated.
 
 Tokens are gated and cost is not because tokens are what a change controls; the
 dollar figure also moves with model prices, and duration moves with machine
-load. The cache-read floor is an absolute minimum rather than a delta: a
-prompt-prefix change that silently disables caching shows up as the ratio
-collapsing, and the value it collapsed from is not the interesting number.
+load. The cache-read floor is an absolute minimum rather than a delta, and it
+binds only where the recorded floor is already at or above 0.60
+(`eval.floors.cache_read_fails_floor`): a prompt-prefix change that silently
+disables caching shows up as the ratio collapsing, and the value it collapsed
+from is not the interesting number. Entries recorded below 0.60 (Pi baselines)
+are not held to 0.60, so a compare against them is not a permanent exit 2.
 
 A baseline written before a metric existed leaves it ungated rather than
 failing, so an older baseline still loads. The comparison table marks every
@@ -311,11 +314,9 @@ def validate_baseline_schema(data: object) -> list[str]:
 
 
 # Tokens are where the money is: 15% headroom on the two metrics that carry the
-# bill. The cache-read floor is a separate shape — an absolute minimum, not a
-# delta — because a caching regression shows up as the ratio collapsing, and the
-# baseline it collapsed from is not the interesting number.
+# bill. The cache-read floor lives in eval.floors: an absolute minimum that
+# binds only where the recorded floor is already at or above 0.60.
 TOKEN_REGRESSION_RATIO = 0.15
-CACHE_READ_FLOOR = 0.60
 
 # Single-run noise on a 3-run mean is ±1/3. Two -0.222 decay steps sum to
 # -0.444, which clears that floor; one step does not. 1e-9 keeps a drop of
@@ -378,13 +379,14 @@ def _compare_relative(baseline_val: float, current_val: float, ratio: float) -> 
     }
 
 
-def _compare_floor(baseline_val: float, current_val: float, floor: float) -> dict:
+def _compare_floor(baseline_val: float, current_val: float) -> dict:
     """An absolute minimum. Movement above the floor is noise, not a regression."""
+    from eval.floors import cache_read_fails_floor
     return {
         "baseline": baseline_val,
         "current": current_val,
         "delta": current_val - baseline_val,
-        "regression": current_val < floor,
+        "regression": cache_read_fails_floor(baseline_val, current_val),
         "gated": True,
     }
 
@@ -414,7 +416,7 @@ def _gate_token_metrics(base: dict, cur: dict) -> dict[str, dict]:
 
     key = "cache_read_ratio_mean"
     if key in base and key in cur:
-        metrics[key] = _compare_floor(base[key], cur[key], CACHE_READ_FLOOR)
+        metrics[key] = _compare_floor(base[key], cur[key])
     return metrics
 
 

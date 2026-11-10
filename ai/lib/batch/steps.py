@@ -42,10 +42,9 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
     `pr ci`: the `pr` dispatcher fetches into the repo's shared `.git` before the
     command starts, and a CI step that waits on GitHub must hold no git lock.
 
-    *fork_point* adds ``--fork-point``; the scheduler passes none. A stacked
-    child whose parent squash-landed is refused by ``pr rebase``, and
-    ``report.md`` prints the fork point as the remedy. Never ``--force``.
-    Only the review step takes *focus*.
+    *fork_point* adds ``--fork-point``; the scheduler passes none. ``pr rebase``
+    skips a landed parent itself, and publish gates the skipped commits.
+    Never ``--force``. Only the review step takes *focus*.
 
     *ai* defaults True. False drops `--fix` from rebase and CI; the CLI's
     default run passes False. Comments and review argv stay as they are (the

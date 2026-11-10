@@ -6,9 +6,12 @@
 
 import { BRAND } from "./brand.generated.js";
 
-// The brand's DESIGN.md is written in Tailwind classes; these are the app's pixel stand-ins.
-// SP follows its 4px spacing base (xs..xl are spacing 1, 2, 3, 4, 6).
-export const SP = { hair: 1, xxs: 2, xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
+// xs..xl are the brand's spacing 1, 2, 3, 4 and 6. hair and xxs sit below its 4px base: herdr
+// draws 1px rules and 2px track insets the brand has no step for.
+export const SP = {
+  hair: 1, xxs: 2,
+  xs: BRAND.space["1"], sm: BRAND.space["2"], md: BRAND.space["3"], lg: BRAND.space["4"], xl: BRAND.space["6"],
+};
 // DESIGN.md's app typography roles, read from the brand: meta (counts, timestamps), section
 // (section labels), label (buttons, segmented, tags), body (rows, default text), title (card and
 // pane titles), code (branches, SHAs, paths). Apply them with _ui/ui.js type() or text().
@@ -21,17 +24,23 @@ export const TYPE = {
   title: role(BRAND.font.title),
   code: role(BRAND.font.code, true),
 };
-// The brand keeps radii as DESIGN.md constants, not tokens.css values, so they stay literal:
 // tag is rounded.sm, control is rounded.md, card is rounded.lg.
-export const RADIUS = { tag: 4, control: 6, card: 8 };
+export const RADIUS = { tag: BRAND.radius.sm, control: BRAND.radius.md, card: BRAND.radius.lg };
 // hex alpha suffixes appended to a theme colour
 export const FILL = { lane: "55", add: "18", del: "18" };
 // spacing.control-height(-dense) and spacing.control-padding.
 export const CONTROL = { h: BRAND.controlHeight, hDense: BRAND.controlHeightDense, px: BRAND.controlPadding };
-// The tab bar's panel toggles (herdr's tabs mod draws Files/Changes at these sizes).
+// The tab bar's panel toggles. herdr's own tabs mod draws Files and Changes at these sizes, and
+// the PRs toggle sits beside them, so it matches herdr rather than a brand control height.
 export const PANEL_BUTTON = { h: 26, px: 8, gap: 5, icon: 14 };
-// spacing.row-height(-dense); sidebar rows hold two lines; diff is a code line.
-export const ROW_H = { list: BRAND.rowHeight, listDense: BRAND.rowHeightDense, sidebar: 40, diff: 20 };
-export const BREAKPOINT = { compact: 560, twoLine: 200 };
+// spacing.row-height(-dense). A sidebar row holds a body line and a meta line plus a 6px inset,
+// taller than any brand row; diff is a code line.
+export const ROW_H = {
+  list: BRAND.rowHeight, listDense: BRAND.rowHeightDense,
+  sidebar: BRAND.font.body.lineHeight + BRAND.font.meta.lineHeight + SP.xs + SP.xxs, diff: 20,
+};
+// compact is below the brand's board pane width. twoLine is herdr's own: the sidebar drops its
+// meta line below it.
+export const BREAKPOINT = { compact: BRAND.pane.board, twoLine: 200 };
 export const LAYOUT = { colMin: BRAND.columnMin, colMax: 400, titleLh: BRAND.font.title.lineHeight, headerH: 52, msgMaxW: 480, bodyMaxH: 420, titleMaxH: 40, filterLabelW: 56, monoEm: 0.62, gutterDigits: 5, statusW: 14, cardTitleMaxH: 2 * BRAND.font.title.lineHeight, iconSize: 14 };
 export const MONO = { charPx: Math.ceil(TYPE.code.size * LAYOUT.monoEm), gutterDigits: LAYOUT.gutterDigits, gutter: Math.ceil(TYPE.code.size * LAYOUT.monoEm) * LAYOUT.gutterDigits };

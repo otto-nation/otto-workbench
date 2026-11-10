@@ -20,12 +20,12 @@ themes = load_script(
 
 
 def _blob() -> bytes:
-    css = b":root { --ow-canvas: #112233; }\n"
+    tokens = b'{"schemaVersion":1,"colors":{"light":{"canvas":"#112233"},"dark":{}}}\n'
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        info = tarfile.TarInfo("package/src/tokens.css")
-        info.size = len(css)
-        tar.addfile(info, io.BytesIO(css))
+        info = tarfile.TarInfo("package/tokens.json")
+        info.size = len(tokens)
+        tar.addfile(info, io.BytesIO(tokens))
     return buf.getvalue()
 
 
@@ -109,7 +109,7 @@ def test_old_cache_layout_is_ignored(tmp_path, monkeypatch):
     blob = _blob()
     pin = _pin(blob)
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-    old = tmp_path / "state" / "herdr-app-themes" / "brand-1.2.0.tgz"
+    old = tmp_path / "state" / "herdr-app-themes" / "2" / "brand-1.2.0.tgz"
     old.parent.mkdir(parents=True)
     old.write_bytes(blob)
     assert themes._cached(pin) is None
@@ -120,6 +120,7 @@ def test_old_cache_layout_is_ignored(tmp_path, monkeypatch):
     assert loaded is not None
     assert loaded.source == "cache"
     assert loaded.tokens["light"]["ow-canvas"] == "#112233"
+    assert new == tmp_path / "state" / "herdr-app-themes" / "3" / "brand-1.2.0.tgz"
 
 
 def test_transient_ignores_permanent_oserrors():

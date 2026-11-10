@@ -59,12 +59,12 @@ _plist() {
   _plist "/Users/someone/old/place" 3600
   _refresh darwin22
   [ "$status" -eq 0 ]
+  [[ "$output" == *"Maintenance schedule re-installed"* ]]
   grep -q "<string>$STABLE/maintenance/bin/otto-workbench-maintenance</string>" "$PLIST"
-  ! grep -q "/old/place" "$PLIST"
   # The interval the machine chose survives the re-render.
   grep -A1 '<key>StartInterval</key>' "$PLIST" | grep -q '<integer>3600</integer>'
   grep -q "launchctl load $PLIST" "$CALLS"
-  [[ "$output" == *"Maintenance schedule re-installed"* ]]
+  run ! grep -q "/old/place" "$PLIST"
 }
 
 @test "a plist that already matches its template is left alone" {
@@ -87,9 +87,9 @@ _plist() {
   _plist "/Users/someone/old/place" 43200
   _refresh darwin22 LAUNCHCTL_UNLOADED=1
   [ "$status" -eq 0 ]
-  grep -q "<string>$STABLE/maintenance/bin/otto-workbench-maintenance</string>" "$PLIST"
-  ! grep -q "launchctl load" "$CALLS"
   [[ "$output" == *"(not loaded)"* ]]
+  grep -q "<string>$STABLE/maintenance/bin/otto-workbench-maintenance</string>" "$PLIST"
+  run ! grep -q "launchctl load" "$CALLS"
 }
 
 # Reloading the job from inside it would end the maintenance run in progress.

@@ -74,7 +74,7 @@ def test_run_plans_under_the_batch_lock_and_releases_it(monkeypatch, tmp_path):
     key = _repo_key(repo)
     seen = {}
 
-    def build_run_plan(dirs):
+    def build_run_plan(dirs, prs=None):
         seen["held"] = _batch_held(key)
         return Plan("me", [])
 
@@ -89,7 +89,7 @@ def test_run_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, tmp_
     key = _repo_key(repo)
     planned = []
     monkeypatch.setattr(batch.plan, "build_run_plan",
-                        lambda dirs: planned.append(dirs) or Plan("me", []))
+                        lambda dirs, prs=None: planned.append(dirs) or Plan("me", []))
     with live_pid() as pid, held_elsewhere(
             _batch_path(key),
             {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0",
@@ -122,7 +122,7 @@ def test_a_run_names_itself_on_the_batch_lock(monkeypatch, tmp_path):
     key = _repo_key(repo)
     row = PlanRow("acme/widget", str(repo), 1, "t", "feat/a", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")}, repo_key=key)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
     seen = {}
 
     def fake_run(self):
@@ -166,7 +166,7 @@ _HARNESS = textwrap.dedent("""\
     import cli.pr
     signals = pathlib.Path(signals)
 
-    def build_run_plan(dirs):
+    def build_run_plan(dirs, prs=None):
         (signals / f"{role}-planning").touch()
         deadline = time.monotonic() + 30
         while role == "a" and not (signals / "release").exists() and time.monotonic() < deadline:
@@ -224,7 +224,7 @@ def _target(repo, branch):
 def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_run_plan",
-                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
+                        lambda dirs, prs=None: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
     seen = {}
 
     def fake_run(self):
@@ -242,7 +242,7 @@ def test_a_queued_drop_pr_releases_that_items_target_while_the_run_goes_on(
         monkeypatch, tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_run_plan",
-                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
+                        lambda dirs, prs=None: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
     seen = {}
 
     def drop_one_then_drive(self):
@@ -301,7 +301,7 @@ def test_resume_does_not_take_back_a_dropped_or_done_items_target(monkeypatch, t
 def test_run_is_refused_whole_when_one_item_is_being_worked_on(monkeypatch, tmp_path, capsys):
     repo = repo_with_origin(tmp_path / "repo")
     monkeypatch.setattr(batch.plan, "build_run_plan",
-                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
+                        lambda dirs, prs=None: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
     driven = []
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: driven.append(1) or batch.model.RunStatus.DONE)
@@ -396,7 +396,7 @@ def test_a_refused_resume_of_a_terminal_run_hands_off_a_request_queued_against_i
 def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(batch.model.RunStatus.DONE))
     assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
@@ -414,7 +414,7 @@ _HOLDING_HARNESS = textwrap.dedent("""\
     signals = pathlib.Path(signals)
     row = batch.plan.PlanRow("acme/widget", repo, 1, "t", "feat/x", "h", False,
                              {batch.model.Step.REVIEW: batch.plan.StepNeed(True, "x")})
-    batch.plan.build_run_plan = lambda dirs: batch.plan.Plan("me", [row])
+    batch.plan.build_run_plan = lambda dirs, prs=None: batch.plan.Plan("me", [row])
 
     def run_until_blocked(self):
         (signals / "holding").touch()

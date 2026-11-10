@@ -34,7 +34,7 @@ def _plan_all(monkeypatch):
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER}),
             PlanRow("o/r", "/r", 2, "t", "b2", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
     return rows
 
 
@@ -142,3 +142,12 @@ def test_rebase_defaults_to_conflicts_and_behind_is_persisted_on_the_run(monkeyp
     assert _main(["batch", "run", "--checkout", "/r"]) == 0
     assert _main(["batch", "run", "--checkout", "/r", "--rebase", "behind"]) == 0
     assert seen == [batch.model.RebaseWhen.CONFLICTS, batch.model.RebaseWhen.BEHIND]
+
+
+def test_named_prs_are_planned_by_number_and_a_bare_run_searches(monkeypatch):
+    seen = []
+    monkeypatch.setattr(batch.plan, "build_run_plan",
+                        lambda dirs, prs=None: seen.append(prs) or Plan("me", []))
+    _main(["batch", "run", "--checkout", "/r", "--prs", "o/r#1,o/r#2"])
+    _main(["batch", "run", "--checkout", "/r"])
+    assert seen == [["o/r#1", "o/r#2"], None]

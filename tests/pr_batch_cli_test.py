@@ -70,7 +70,7 @@ def test_run_honours_select_and_prs(monkeypatch):
     rows = [PlanRow("o/r", "/r", n, "t", f"b{n}", "h", False,
                     {s: StepNeed(False, "x") for s in batch.model.STEP_ORDER}) for n in (1, 2)]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
 
     def fake_run(self):
         seen["items"] = [(i.key, [s.step.value for s in i.steps
@@ -382,7 +382,7 @@ def test_plan_does_not_drop_refs_when_the_reader_has_gone(monkeypatch):
 
 def test_run_drops_the_plans_refs_when_it_fails_before_saving(monkeypatch):
     dropped = []
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: _plan_with_refs())
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: _plan_with_refs())
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
 
     def broken_config(dirs):
@@ -398,7 +398,7 @@ def test_no_verify_reaches_the_run(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
 
     settle = stops_at(batch.model.RunStatus.DONE)
 
@@ -437,7 +437,7 @@ def test_run_stores_the_focus(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
 
     settle = stops_at(batch.model.RunStatus.DONE)
 
@@ -458,7 +458,7 @@ def test_focus_warns_about_items_without_a_review_step(monkeypatch, capsys):
                 {batch.model.Step.REBASE: StepNeed(True, "behind"),
                  batch.model.Step.REVIEW: StepNeed(False, "current")}),
     ]
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         stops_at(batch.model.RunStatus.DONE))
     assert _main(["batch", "run", "--checkout", "/r", "--focus", "x"]) == 0
@@ -475,7 +475,7 @@ def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsy
     # Revert: re-add next= to run_summary.
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
 
     def fake_run(self):
         self.run.status = batch.model.RunStatus.DONE
@@ -495,7 +495,7 @@ def test_verbose_reaches_the_scheduler(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     seen = {}
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: Plan("me", rows))
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
 
     def fake_run(self):
         seen["verbose"] = self._verbose
@@ -550,7 +550,7 @@ def test_a_started_run_takes_over_its_plans_namespace_from_the_claim(monkeypatch
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     plan.rows.extend(rows)
     batch.plan.write_claim(plan.ref_namespace, plan.ref_dirs)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs: plan)
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: plan)
     # Leave refs and claims alone so only the hand-over can retire the claim.
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: True)
     seen = {}

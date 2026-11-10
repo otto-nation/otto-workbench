@@ -196,7 +196,10 @@ def _cfg(dirs: list[str]):
 def _plan(args) -> batch.plan.Plan:
     if args.plan:
         return core.serde.from_dict(batch.plan.Plan, json.loads(Path(args.plan).read_text()))
-    return batch.plan.build_run_plan(args.checkout)
+    # Named PRs are read by number: a search would read every open PR only for
+    # _start_run to keep these.
+    keys = [k for k in args.prs.split(",") if k]
+    return batch.plan.build_run_plan(args.checkout, keys or None)
 
 
 class _Reporter:

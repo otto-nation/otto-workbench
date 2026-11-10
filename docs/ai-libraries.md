@@ -7577,9 +7577,17 @@ and file-level dispatch live in ``resolve_ai``.
 
 Where a rebase starts replaying from — a named, detected, or whole-branch start.
 
-``select`` is the one owner of that choice. An explicit ``--fork-point`` wins;
-``--force`` turns detection off and replays the whole branch; otherwise a
-landed prefix is skipped rather than refused.
+``select`` is the one owner of that choice. An explicit ``--fork-point REF``
+wins and replays only the commits after REF, whether or not a prefix was
+detected. ``--force`` turns detection off and replays the whole branch.
+Otherwise a landed prefix is skipped rather than refused.
+
+When a leading run of commits is already in the base — a squash-landed
+parent of a stacked child, or any other prefix that landed first — the
+replay is ``git rebase --onto <base> <fork-point>``. The skip is announced
+on the console as ``Skipping already-landed commit(s): …`` and recorded as
+a ``fork_point`` trail event (the SHAs, how many landed, the source
+``detected``).
 
 ### rebase/hooks_chain.py
 
@@ -7827,8 +7835,20 @@ Fold the replayed commits into one before git rebase starts.
 
 Never moves the branch. The squash commit is built with ``commit-tree`` and
 picked in place of the original todo, so orig-head, abort and resume still
-see the unsquashed tip. Each original is recorded as rewritten to that
-commit so ``git.replay.ReplayFinder`` and batch publish can follow the chain.
+see the unsquashed tip — ``pr rebase --abort`` restores the original
+commits. Each original is recorded as rewritten to that commit so
+``git.replay.ReplayFinder`` and batch publish can follow the chain and
+treat those originals as incorporated.
+
+``rebase.squash`` is ``auto`` (the default), ``always``, or ``never``.
+``auto`` squashes only in a squash-merge-only repo, when the replay would
+conflict repeatedly on the same files, and when the branch has one author.
+If the repo's merge settings cannot be read, it does not squash.
+``always`` squashes anyway (including a multi-author branch).
+
+The squash commit's subject is the PR title, or the first original subject
+when there is no snapshot. The body is a bullet per original commit, then
+every footer line from those originals, de-duplicated.
 
 ### rebase/stash.py
 

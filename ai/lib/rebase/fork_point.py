@@ -1,8 +1,16 @@
 """Where a rebase starts replaying from — a named, detected, or whole-branch start.
 
-``select`` is the one owner of that choice. An explicit ``--fork-point`` wins;
-``--force`` turns detection off and replays the whole branch; otherwise a
-landed prefix is skipped rather than refused.
+``select`` is the one owner of that choice. An explicit ``--fork-point REF``
+wins and replays only the commits after REF, whether or not a prefix was
+detected. ``--force`` turns detection off and replays the whole branch.
+Otherwise a landed prefix is skipped rather than refused.
+
+When a leading run of commits is already in the base — a squash-landed
+parent of a stacked child, or any other prefix that landed first — the
+replay is ``git rebase --onto <base> <fork-point>``. The skip is announced
+on the console as ``Skipping already-landed commit(s): …`` and recorded as
+a ``fork_point`` trail event (the SHAs, how many landed, the source
+``detected``).
 """
 
 # doc-group: platform

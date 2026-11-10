@@ -571,31 +571,13 @@ one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgat
 
 ### What pr rebase replays
 
-`pr rebase` does not always replay the whole branch. When a leading run of
-commits is already in the base — a squash-landed parent of a stacked child, or
-any other prefix that landed first — it skips that prefix and replays only what
-is left (`git rebase --onto <base> <fork-point>`).
-
-The skip is announced on the console as `Skipping already-landed commit(s): …`
-and recorded as a `fork_point` trail event (the SHAs, how many landed, the
-source `detected`). `--force` turns the detection off and replays the whole
-branch. `--fork-point REF` overrides it and replays only the commits after REF,
-whether or not a prefix was detected.
-
-When the replay would conflict repeatedly on the same files, `pr rebase` may
-fold those commits into one first. `rebase.squash` is `auto` (the default),
-`always`, or `never`. `auto` squashes only in a squash-merge-only repo, when
-those repeated-conflict files exist, and when the branch has one author. If
-the repo's merge settings cannot be read, it does not squash. `always`
-squashes anyway (including a multi-author branch). Opt out with
+`pr rebase` skips a prefix already in the base (`git rebase --onto <base>
+<fork-point>`) and may fold the rest into one commit first. `rebase.squash`
+is `auto` (the default), `always`, or `never`; opt out with
 `otto-workbench config set rebase.squash never --project`.
 
-The squash commit's subject is the PR title, or the first original subject
-when there is no snapshot. The body is a bullet per original commit, then
-every footer line from those originals, de-duplicated. The branch ref is never
-moved onto that commit, so `pr rebase --abort` restores the original commits.
-Batch publish follows the recorded squash chain and treats those originals as
-incorporated.
+Where the replay starts: [`rebase/fork_point.py`](ai-libraries.md#rebasefork_pointpy).
+When a squash happens: [`rebase/squash.py`](ai-libraries.md#rebasesquashpy).
 
 ### Which files the rebase fix pass is allowed to touch
 

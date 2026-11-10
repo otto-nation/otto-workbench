@@ -2,8 +2,20 @@
 
 Never moves the branch. The squash commit is built with ``commit-tree`` and
 picked in place of the original todo, so orig-head, abort and resume still
-see the unsquashed tip. Each original is recorded as rewritten to that
-commit so ``git.replay.ReplayFinder`` and batch publish can follow the chain.
+see the unsquashed tip — ``pr rebase --abort`` restores the original
+commits. Each original is recorded as rewritten to that commit so
+``git.replay.ReplayFinder`` and batch publish can follow the chain and
+treat those originals as incorporated.
+
+``rebase.squash`` is ``auto`` (the default), ``always``, or ``never``.
+``auto`` squashes only in a squash-merge-only repo, when the replay would
+conflict repeatedly on the same files, and when the branch has one author.
+If the repo's merge settings cannot be read, it does not squash.
+``always`` squashes anyway (including a multi-author branch).
+
+The squash commit's subject is the PR title, or the first original subject
+when there is no snapshot. The body is a bullet per original commit, then
+every footer line from those originals, de-duplicated.
 """
 
 # doc-group: platform

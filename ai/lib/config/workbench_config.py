@@ -225,6 +225,14 @@ class IssueProvider(StrEnum):
     JIRA = "jira"
 
 
+class SquashPolicy(StrEnum):
+    """Whether a rebase folds the branch into one commit before replaying it."""
+
+    AUTO = "auto"
+    ALWAYS = "always"
+    NEVER = "never"
+
+
 @dataclass(frozen=True)
 class PhaseOverride:
     """Per-phase settings, matching the two knobs the phase env keys expose.
@@ -575,7 +583,7 @@ class WikiConfig:
 
 @dataclass(frozen=True)
 class RebaseConfig:
-    """How a rebase rebuilds this repo's generated files.
+    """How a rebase rebuilds this repo's generated files, and whether it squashes.
 
     ``.gitattributes`` already says which files are generated, and
     ``git check-attr`` is how the rebase finds them — but a path-to-attribute
@@ -590,9 +598,14 @@ class RebaseConfig:
 
     Empty means fall back to the conventional ``generate`` task, which is right
     for most repos and wrong only where that task is incomplete.
+
+    ``squash`` is whether the rebase folds the branch into one commit before
+    replaying it: ``auto`` when the repo is squash-only and a file will
+    conflict more than once, ``always``, or ``never``. The default is ``auto``.
     """
 
     regenerate: list[str] = field(default_factory=list)
+    squash: SquashPolicy = SquashPolicy.AUTO
 
 
 @dataclass(frozen=True)

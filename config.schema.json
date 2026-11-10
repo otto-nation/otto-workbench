@@ -286,6 +286,14 @@
           "items": {
             "type": "string"
           }
+        },
+        "squash": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ]
         }
       }
     },

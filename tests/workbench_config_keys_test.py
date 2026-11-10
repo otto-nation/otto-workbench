@@ -164,6 +164,14 @@ def test_an_enum_keyed_section_is_writable_by_its_declared_keys(roots):
         config.workbench_config_write.set_value("agent.phases.nosuchphase.model", "sonnet")
 
 
+def test_rebase_squash_refuses_a_value_outside_the_enum(roots):
+    config_root, _ = roots
+    with pytest.raises(config.workbench_config.ConfigValueError) as exc:
+        config.workbench_config_write.set_value("rebase.squash", "bogus")
+    assert "rebase.squash" in str(exc.value) or "bogus" in str(exc.value)
+    assert not (config_root / config.workbench_config.CONFIG_NAME).exists()
+
+
 # ── Scope restrictions ─────────────────────────────────────────────────
 #
 # A key may declare which files are allowed to hold it. Declaring nothing means

@@ -180,6 +180,15 @@ class TestRecordAndLoad:
     def test_no_log_loads_as_nothing_recorded(self, repo):
         assert git.rewrites.load(repo) == {}
 
+    def test_fold_targets_are_shas_several_originals_map_to(self, repo):
+        s = "d" * 40
+        _record(git.rewrites.common_dir(repo), f"{A} {s}\n{B} {s}\n{C} {B}\n")
+        assert git.rewrites.fold_targets(repo) == frozenset({s})
+
+    def test_a_one_to_one_rewrite_is_not_a_fold_target(self, repo):
+        _record(git.rewrites.common_dir(repo), f"{A} {B}\n")
+        assert git.rewrites.fold_targets(repo) == frozenset()
+
     def test_a_worktree_shares_its_repository_log(self, repo, tmp_path):
         """A commit belongs to the repository, not to the checkout that rewrote it."""
         linked = tmp_path / "linked"

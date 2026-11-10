@@ -6,7 +6,7 @@ already merged. Two round trips for one PR, and each new question — is it a
 draft, who is reviewing it — would have added a third.
 
 So the PR is read once and the answer is passed around. ``gh pr view`` takes a
-field list, so asking for six costs exactly what asking for one did.
+field list, so asking for these costs exactly what asking for one did.
 
 The same read also settles whether to warn before a force-push reaches a
 shared branch: ``name_the_open_pr`` gates on ``state`` and ``isDraft`` and is
@@ -42,8 +42,10 @@ import pr.context
 
 # The fields one read collects. `state`, `number` and `url` answer the
 # already-landed refusal; `baseRefName` picks the ref to replay onto; the last
-# two are what a force-push notice needs to say whose PR it is about to rewrite.
-FIELDS = ("state", "number", "url", "baseRefName", "isDraft", "reviewDecision")
+# two are what a force-push notice needs to say whose PR it is about to rewrite;
+# `title` is the squash subject when a rebase folds the branch.
+FIELDS = ("state", "number", "url", "baseRefName", "isDraft", "reviewDecision",
+          "title")
 
 MERGED = "MERGED"
 OPEN = "OPEN"
@@ -59,6 +61,7 @@ class PRSnapshot:
     base_ref: str = ""
     is_draft: bool = False
     review_decision: str = ""
+    title: str = ""
     # Set only when the budget breaker declined the call. False covers both a
     # read that succeeded and one that failed for any other reason, so a caller
     # that does not care about the distinction sees today's behaviour.
@@ -161,4 +164,5 @@ def fetch(cwd: str, ctx: pr.context.ResolvedContext) -> PRSnapshot:
         base_ref=data.get("baseRefName") or "",
         is_draft=bool(data.get("isDraft")),
         review_decision=data.get("reviewDecision") or "",
+        title=data.get("title") or "",
     )

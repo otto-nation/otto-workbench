@@ -4263,7 +4263,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
-| diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
+| diverged, a remote commit has no patch-equivalent locally and no recorded squash replay | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
 `read_tree` is the publish-time reader: it fetches into
@@ -6873,6 +6873,19 @@ only a target refusal; the content is then judged as for an unknown/upstream
 group and still needs the cross-ref override. ``check_command`` never reads
 either override.
 
+### gh/repo_settings.py
+
+The merge buttons GitHub shows for a repository.
+
+`gh pr view` has no repository fields, so a rebase that needs to know whether
+the repo is squash-only cannot piggy-back on the PR snapshot. `gh repo view`
+answers with `squashMergeAllowed`, `mergeCommitAllowed` and
+`rebaseMergeAllowed` on one call.
+
+Best effort, like every other tracker read: gh missing, unauthenticated,
+rate-limited, or a payload that is not three booleans all arrive as None.
+Nothing here may invent a merge policy from a partial answer.
+
 ### gh/shell_lex.py
 
 How a command line splits into statements the way bash reads it.
@@ -7678,7 +7691,7 @@ already merged. Two round trips for one PR, and each new question — is it a
 draft, who is reviewing it — would have added a third.
 
 So the PR is read once and the answer is passed around. ``gh pr view`` takes a
-field list, so asking for six costs exactly what asking for one did.
+field list, so asking for these costs exactly what asking for one did.
 
 The same read also settles whether to warn before a force-push reaches a
 shared branch: ``name_the_open_pr`` gates on ``state`` and ``isDraft`` and is

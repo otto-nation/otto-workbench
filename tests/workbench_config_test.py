@@ -45,6 +45,20 @@ def test_missing_files_give_built_in_defaults(roots):
     assert cfg.models == config.workbench_config.ModelsConfig()
     assert cfg.agent.phases == {}
     assert cfg.issues.provider is None
+    assert cfg.rebase.squash is config.workbench_config.SquashPolicy.AUTO
+
+
+def test_rebase_squash_defaults_to_auto(roots):
+    _, project = roots
+    cfg = config.workbench_config.load_config(project)
+    assert cfg.rebase.squash is config.workbench_config.SquashPolicy.AUTO
+
+
+def test_rebase_squash_reads_an_enum_from_project_config(roots):
+    _, project = roots
+    _write(project / config.workbench_config.PROJECT_CONFIG_NAME, "rebase:\n  squash: never\n")
+    cfg = config.workbench_config.load_config(project)
+    assert cfg.rebase.squash is config.workbench_config.SquashPolicy.NEVER
 
 
 def test_global_config_is_typed(roots):

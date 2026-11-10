@@ -293,3 +293,18 @@ def load(wt_path: Path) -> dict[str, list[str]]:
         if rewrite.new not in news:
             news.append(rewrite.new)
     return rewrites
+
+
+def fold_targets(wt_path: Path) -> frozenset[str]:
+    """SHAs that two or more distinct original commits were rewritten to.
+
+    A squash or fixup records every folded commit against the one it became,
+    so several olds share one new. That shared new is a recorded squash. A
+    one-to-one replay — a pick, a conflict resolution — never qualifies:
+    only one original maps to its successor.
+    """
+    olds_by_new: dict[str, set[str]] = {}
+    for old, news in load(wt_path).items():
+        for new in news:
+            olds_by_new.setdefault(new, set()).add(old)
+    return frozenset(new for new, olds in olds_by_new.items() if len(olds) > 1)

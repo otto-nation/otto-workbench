@@ -200,6 +200,7 @@ Every key any of them accepts:
 | `github.host` | string | — |
 | `github.owners` | map of string to list of string | `{}` |
 | `rebase.regenerate` | list of string | `[]` |
+| `rebase.squash` | `auto`, `always`, `never` | `auto` |
 | `fix.verify_command` | string | — |
 | `fix.verify_timeout` | integer | `900` |
 | `wiki.dir` | string | `wiki` |

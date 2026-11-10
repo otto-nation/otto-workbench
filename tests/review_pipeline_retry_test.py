@@ -554,6 +554,29 @@ def test_the_single_agent_records_behaviours(tmp_path, monkeypatch):
     assert rec.behaviours is not None and rec.behaviours[0].id == "B1"
 
 
+def test_the_single_agent_records_questions_and_verified(tmp_path, monkeypatch):
+    job = _prompt_job(_make_preflight(prior_head_sha=""))
+    job.review_file = str(tmp_path / "review.md")
+    job.session_log = str(tmp_path / "session.jsonl")
+    job.wt_path = str(tmp_path)
+
+    def _agent(inv, *_args, **_kwargs) -> int:
+        Path(inv.output_path).write_text(json.dumps({
+            "summary": "Looks fine.", "focus": DERIVED_FOCUS, "claims": [], "behaviours": [],
+            "questions": [{"path": None, "line": None, "body": "Why?"}],
+            "verified": [{"path": None, "line": None, "body": "Sound."}],
+        }))
+        Path(job.session_log).write_text(_result("success") + "\n")
+        return 0
+
+    monkeypatch.setattr(review.phases, "run_agent", _agent)
+    review.pipeline.run_single_agent(job, disprove=False)
+    rec = load_record(tmp_path)
+    assert rec.questions[0].id == "Q1" and rec.verified[0].body == "Sound."
+    assert not any(rec.open_counts.values())
+    assert "## Questions" in Path(job.review_file).read_text()
+
+
 def test_the_single_agent_derives_claim_findings_before_disprove(tmp_path, monkeypatch):
     job = _prompt_job(_make_preflight(prior_head_sha=""))
     job.review_file = str(tmp_path / "review.md")

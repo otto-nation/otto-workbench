@@ -13,8 +13,8 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from review.record import (
-    Disposition, LedgerLine, ProseSection, RecordFinding, ReviewRecord,
-    SeveritySection, TriageEntry, load_record,
+    Disposition, LedgerLine, ProseSection, Question, RecordFinding, ReviewRecord,
+    SeveritySection, TriageEntry, VerifiedNote, load_record,
 )
 from review.document import MetaKey
 from review.render import (
@@ -323,3 +323,31 @@ def test_unassessed_behaviours_say_so():
 
 def test_assessed_empty_behaviours_render_nothing():
     assert "## Test evidence" not in render_body(record(summary="s", behaviours=()))
+
+
+def test_questions_render_after_focus_and_verified_after_the_findings():
+    body = render_body(record(
+        finding("M1", "bug"),
+        summary="s",
+        focus=(user_area("locks"),),
+        questions=(
+            Question("Q1", "a.py", 3, "Why 3?"),
+            Question("Q2", None, None, "Is the flag permanent?"),
+        ),
+        verified=(VerifiedNote("a.py", 9, "Closes the file."),),
+    ))
+    assert (
+        body.index("## Focus")
+        < body.index("## Questions")
+        < body.index("## Must fix")
+        < body.index("## Verified, no issue")
+    )
+    assert "- **[Q1]** `a.py:3` — Why 3?" in body
+    assert "- **[Q2]** Is the flag permanent?" in body
+    assert "- `a.py:9` — Closes the file." in body
+
+
+def test_no_questions_or_verified_render_no_section():
+    body = render_body(record(summary="s"))
+    assert "## Questions" not in body
+    assert "## Verified, no issue" not in body

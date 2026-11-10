@@ -12,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
-from review.record import TriageEntry
+from review.merge import merge_records
+from review.record import Question, TriageEntry, load_record
 from review.steps import Merged
 from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
 from review_record_support import finding, record
@@ -229,6 +230,31 @@ class TestRunSynthesisOrFallback:
         assert Phase.SYNTHESIS in state.done
         assert state.failed == {}
         assert "api.go:10" in Path(job.review_file).read_text()
+
+    def test_no_synthesis_publishes_the_groups_questions(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """`--no-synthesis` publishes the groups' questions through the merge."""
+        import review.steps
+
+        job = self._make_job(
+            ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
+        (tmp_path / "wt").mkdir()
+        (tmp_path / "wt" / "api.go").write_text("\n" * 20)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+        g1 = record(
+            finding("S1", "cleanup", path="api.go", line=10),
+            questions=(Question("Q1", None, None, "first?"),),
+        )
+        g2 = record(questions=(Question("Q1", None, None, "second?"),))
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, Merged(merge_records([g1, g2])), [], 0, 0.0, 20.0,
+        )
+        written = Path(job.review_file).read_text()
+        assert "**[Q1]**" in written and "**[Q2]**" in written
+        rec = load_record(tmp_path)
+        assert [q.body for q in rec.questions] == ["first?", "second?"]
 
     def test_no_synthesis_writes_a_summary_the_gate_can_resume_from(
         self, ro, tmp_path, monkeypatch,

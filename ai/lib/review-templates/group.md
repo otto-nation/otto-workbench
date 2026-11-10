@@ -27,6 +27,7 @@ Use finding IDs starting at M1, S1, N1, I1 — they will be renumbered during me
 Do NOT write a summary or a verdict — those are added in a synthesis step.
 Must-fix and should-fix findings must carry `evidence`: the lines of the referenced file that prove the claim, copied verbatim. Nit and idiom findings do not need evidence.
 Fill `behaviours` with each behaviour change, citing in `test_cited` the test that exercises it. Cite only a test you read; leave it "" otherwise. The harness checks the cited test exists.
+A finding states a defect. Put what you checked and found sound in `verified`, never in `findings` as "acceptable" or "not a defect". If any plausible answer would make the code wrong, file a finding that names that case; ask only what no answer would turn into a defect.
 Skip or downgrade to a nit any finding in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
 On a re-review, a prior finding marked `*(declined — reason)*` was adjudicated — carry it forward with `sid` set to the value in its `<!-- sid: … -->` marker and `declined` set to that reason, rather than re-raising it as open.

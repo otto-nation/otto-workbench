@@ -24,7 +24,7 @@ from core.phases import Mode
 from core.serde import HintKind, classify
 from core.text import join_or
 from review.artifacts import (
-    AgentFinding,
+    AgentFinding, AgentQuestion,
     AgentFocus,
     BehaviourReport,
     ClaimReport,
@@ -38,8 +38,9 @@ from review.artifacts import (
     QuietFile,
     ReviewArtifact,
     ScoutArtifact,
-    TriageEntry,
+    TriageEntry, VerifiedNote,
 )
+from review.budget import MAX_QUESTIONS, MAX_VERIFIED
 from review.types import SEVERITIES
 
 _SCAN_FOCUS_NOTE = (
@@ -55,6 +56,14 @@ _LEDGER_NOTE = (
     "only when the prompt has a `## Prior review` section: one entry for EVERY prior "
     "finding shown there; [] otherwise"
 )
+_QUESTIONS_NOTE = (
+    "what only the author can answer — intent; "
+    f"at most {MAX_QUESTIONS}; usually []. If any plausible answer would make the code wrong, file a finding that names that case; ask only what no answer would turn into a defect")
+_VERIFIED_NOTE = (
+    f"what you checked and found sound, one entry each; at most {MAX_VERIFIED}; [] when none. "
+    "Never a finding that ends \"acceptable\" or \"not a defect\"")
+_SUMMARY_NOTE = (
+    "markdown, 3–5 sentences: your assessment of the change — its overall quality and its top risk (when there is one), citing finding IDs; say what the change does only where the assessment needs it; no verdict words (approve, request changes)")
 
 FIELD_NOTES: dict[type, dict[str, str]] = {
     AgentFinding: {
@@ -90,9 +99,10 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "prior_findings": _LEDGER_NOTE,
         "behaviours": "each behaviour change in your files, one per entry; [] when the "
                        "change alters no behaviour",
+        "questions": _QUESTIONS_NOTE, "verified": _VERIFIED_NOTE,
     },
     ReviewArtifact: {
-        "summary": "markdown: what the change does and its overall quality",
+        "summary": _SUMMARY_NOTE,
         "findings": "every finding, any severity, in any order",
         "triage": "a PR review: one entry per changed file; a self-review: []",
         "prior_findings": _LEDGER_NOTE,
@@ -105,6 +115,7 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "behaviours": "every behaviour change in the PR — on synthesis, the merged groups' "
                        "lists with duplicates merged; at most 12; fold related behaviours "
                        "together; [] when nothing changes behaviour",
+        "questions": _QUESTIONS_NOTE, "verified": _VERIFIED_NOTE,
     },
     Lead: {
         "path": "the file the lead is about",
@@ -148,6 +159,14 @@ FIELD_NOTES: dict[type, dict[str, str]] = {
         "verdicts": "one per finding you challenged; a finding left out survives",
     },
 }
+FIELD_NOTES[AgentQuestion] = {
+    "path": "the file it is about, with no `:line`; null for the PR as a whole",
+    "line": "the line; null for the whole file",
+    "body": "the question, in a sentence or two"}
+FIELD_NOTES[VerifiedNote] = {
+    "path": "the file it is about, with no `:line`; null for the PR as a whole",
+    "line": "the line; null for the whole file",
+    "body": "what you checked and why it holds, in a sentence"}
 FIELD_NOTES[FocusReport] = {
     "id": "the area's id from the Focus section, or \"\" for one you add",
     "coverage": "what you checked and what you found, citing finding IDs",

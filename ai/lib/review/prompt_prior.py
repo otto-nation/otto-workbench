@@ -29,8 +29,8 @@ from dataclasses import replace
 import core.serde
 
 from review.document import (
-    SECTION_CLAIMS, SECTION_FILE_TRIAGE, SECTION_FOCUS, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS, SECTION_TEST_EVIDENCE,
+    NON_FINDING_SECTIONS, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
+    SECTION_STATIC_ANALYSIS,
 )
 from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
 from review.record import LedgerLine, RecordFinding, ReviewRecord
@@ -65,14 +65,10 @@ def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:
 
 
 # Coverage bookkeeping and machine-generated output, not prior reviewer claims.
-_PRIOR_EXCLUDED_SECTIONS = frozenset({
-    SECTION_FILE_TRIAGE,
-    SECTION_FOCUS,
-    SECTION_CLAIMS,
-    SECTION_TEST_EVIDENCE,
-    SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS,
-})
+# Questions are the round's own (until #1895 adds them).
+_PRIOR_EXCLUDED_SECTIONS = NON_FINDING_SECTIONS | {
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
+}
 
 
 def _prior_text(prior: StoredReview, file_filter: list[str] | None) -> str:

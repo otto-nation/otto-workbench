@@ -1764,7 +1764,7 @@ conversion, and `as_group_artifact` is its inverse for the one prompt that
 shows a merged record back to an agent (synthesis).
 
 A finding's severity is its ID's first letter, so the two cannot disagree.
-`TriageEntry` and `LedgerLine` are the record's own types: what an agent
+`TriageEntry`, `LedgerLine` and `VerifiedNote` are the record's own types: what an agent
 writes there is exactly what the record keeps.
 
 ### review/behaviour_types.py

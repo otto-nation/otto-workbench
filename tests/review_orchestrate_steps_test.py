@@ -16,7 +16,7 @@ import cli.review_orchestrate  # noqa: F401
 
 from core.phases import Phase
 from review.phases import PhaseResult
-from review.record import Disposition, FocusArea, FocusSource, LedgerLine, ProseSection, ReviewRecord, load_record
+from review.record import Disposition, FocusArea, FocusSource, LedgerLine, ProseSection, Question, ReviewRecord, VerifiedNote, load_record
 from review.steps import Merged, _phase_disprove
 from review.store import StoredReview
 from review.types import PriorDisposition, ReviewMeta
@@ -713,7 +713,7 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
         )["unaccounted_prior"] == []
 
 
-def test_disprove_is_never_shown_focus_claims_or_test_evidence(ro, tmp_path, monkeypatch):
+def test_disprove_is_never_shown_the_non_finding_sections(ro, tmp_path, monkeypatch):
     seen = {}
 
     def capture(*_a, review_content="", **_k):
@@ -726,8 +726,12 @@ def test_disprove_is_never_shown_focus_claims_or_test_evidence(ro, tmp_path, mon
         summary="s",
         focus=(FocusArea(id="F1", title="locks", source=FocusSource.USER),),
         claims=(claim(),), behaviours=(behaviour(),),
+        questions=(Question("Q1", None, None, "why?"),),
+        verified=(VerifiedNote(None, None, "sound"),),
     )
     _phase_disprove(TestPhaseSynthesis()._make_job(ro, tmp_path), rec)
     assert "## Focus" not in seen["body"]
     assert "## Claims" not in seen["body"]
     assert "## Test evidence" not in seen["body"]
+    assert "## Questions" not in seen["body"]
+    assert "## Verified" not in seen["body"]

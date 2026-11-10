@@ -12,13 +12,14 @@ from review.behaviour_types import BehaviourEntry
 from review.claim_types import ClaimEntry
 from review.document import (
     SECTION_CLAIMS, SECTION_FAILURES, SECTION_FILE_TRIAGE, SECTION_FOCUS,
-    SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
-    SECTION_TEST_EVIDENCE, SECTION_VERDICT, ReviewHeader, review_title,
+    SECTION_PRIOR_FINDINGS, SECTION_QUESTIONS, SECTION_STATIC_ANALYSIS,
+    SECTION_SUMMARY, SECTION_TEST_EVIDENCE, SECTION_VERDICT, SECTION_VERIFIED,
+    ReviewHeader, review_title,
 )
 from review.grammar import finding_tag, location_ref, posted_finding_tag, sid_marker
 from review.record import (
     AgentFailure, Disposition, FocusArea, FocusSource, LedgerLine, ProseSection,
-    RecordFinding, ReviewRecord, TriageEntry,
+    Question, RecordFinding, ReviewRecord, TriageEntry, VerifiedNote,
 )
 from review.types import SEVERITIES, Finding, ReviewMeta, severity_by_key
 
@@ -75,6 +76,21 @@ def _continued(text: str) -> str:
     """A list item's later lines must be indented, or markdown ends the item."""
     first, *rest = text.split("\n")
     return "\n".join([first, *("  " + line if line else "" for line in rest)])
+
+
+def _located(path: str | None, line: int | None, body: str) -> str:
+    where = f"{location_ref(path, line, None)} — " if path else ""
+    return f"{where}{_continued(body)}"
+
+
+def question_line(q: Question) -> str:
+    """One question, the same line in review.md and the comment. `[Q1]` is no severity key, so no finding reader matches it."""
+    return f"- {finding_tag(q.id)} {_located(q.path, q.line, q.body)}"
+
+
+def verified_line(v: VerifiedNote) -> str:
+    """One verified note, the same line in review.md and the comment."""
+    return f"- {_located(v.path, v.line, v.body)}"
 
 
 def _coverage(area: FocusArea) -> str:
@@ -184,6 +200,7 @@ def _comment_prose(record: ReviewRecord) -> list[str]:
     lines = [f"## {SECTION_SUMMARY}", "", summary, ""] if summary else []
     for heading, body in (
         (SECTION_FOCUS, focus_comment(record.focus)),
+        (SECTION_QUESTIONS, "\n".join(question_line(q) for q in record.questions)),
         (SECTION_CLAIMS, claims_comment(record.claims) if record.claims != () else ""),
         (SECTION_TEST_EVIDENCE, behaviours_comment(record.behaviours) if record.behaviours != () else ""),
         (SECTION_VERDICT, record.verdict),
@@ -257,7 +274,10 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
         lines.append(f"Have some comments marked as {labels}.")
     elif findings:
         lines.append(f"Review findings ({labels}):")
-    body = "\n".join(lines + _comment_findings(findings, has_inline) + _comment_tail(record)).rstrip("\n")
+    body = "\n".join(
+        lines + _comment_findings(findings, has_inline)
+        + _verified_comment(record) + _comment_tail(record),
+    ).rstrip("\n")
     # Only beside something else: a review with nothing to post still posts nothing.
     return f"{body}\n\n<sub>{_models_line(models)}</sub>" if body and models else body
 
@@ -274,8 +294,15 @@ def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list
     return out
 
 
+def _verified_comment(record: ReviewRecord) -> list[str]:
+    if not record.verified:
+        return []
+    head = f"<details><summary>{SECTION_VERIFIED} ({len(record.verified)})</summary>"
+    return ["", head, "", *(verified_line(v) for v in record.verified), "", "</details>"]
+
+
 def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
-    """Every section the record holds, in spec §2's order."""
+    """Every section the record holds, in spec §2's order, with today's Claims, Test evidence and harness sections slotted in: File Triage, Agent Failures, Summary, Focus, Questions, Claims, Test evidence, findings, Verified, Prior findings, extra, Static Analysis, Verdict."""
     sections: list[ProseSection] = []
     if record.triage is not None:
         sections.append(ProseSection(SECTION_FILE_TRIAGE, "\n".join(triage_line(e) for e in record.triage)))
@@ -287,11 +314,19 @@ def _sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSec
         sections.append(ProseSection(
             SECTION_FOCUS, "\n".join(focus_line(a) for a in record.focus),
         ))
+    if record.questions:
+        sections.append(ProseSection(
+            SECTION_QUESTIONS, "\n".join(question_line(q) for q in record.questions),
+        ))
     if record.claims is None or record.claims:
         sections.append(ProseSection(SECTION_CLAIMS, claims_body(record.claims)))
     if record.behaviours is None or record.behaviours:
         sections.append(ProseSection(SECTION_TEST_EVIDENCE, behaviours_body(record.behaviours)))
     sections += _severity_sections(record, sids, evidence)
+    if record.verified:
+        sections.append(ProseSection(
+            SECTION_VERIFIED, "\n".join(verified_line(v) for v in record.verified),
+        ))
     if record.ledger:
         sections.append(ProseSection(SECTION_PRIOR_FINDINGS, "\n".join(ledger_line(e) for e in record.ledger)))
     sections += list(record.extra)

@@ -1,6 +1,7 @@
 """Group reviews merged as records: shifted, deduplicated, renumbered."""
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
@@ -10,7 +11,7 @@ if LIB_DIR not in sys.path:
 from review.artifacts import GroupArtifact
 from review.ingest import load_artifact
 from review.merge import merge_records, renumber_record
-from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
+from review.record import Disposition, LedgerLine, Question, RecordFinding, ReviewRecord, VerifiedNote
 from review.render import render_body
 from review.types import PriorDisposition
 
@@ -145,6 +146,43 @@ def test_a_link_to_a_finding_that_is_gone_is_cleared():
     )
     out = renumber_record(rec)
     assert out.claims[0].finding == ""
+
+
+def test_group_questions_and_notes_merge_in_group_order():
+    g1 = record(
+        questions=(Question("Q1", "a.py", 1, "first?"),),
+        verified=(VerifiedNote("a.py", 2, "note one"),),
+    )
+    g2 = record(
+        questions=(Question("Q1", "b.py", 3, "second?"),),
+        verified=(VerifiedNote("b.py", 4, "note two"),),
+    )
+    merged = merge_records([g1, g2])
+    assert [(q.id, q.body) for q in merged.questions] == [
+        ("Q1", "first?"), ("Q2", "second?"),
+    ]
+    assert [v.body for v in merged.verified] == ["note one", "note two"]
+
+
+def test_a_question_s_finding_reference_follows_the_finding():
+    g1 = record(finding("S1", "a", path="x.py"))
+    g2 = record(
+        finding("S1", "b"),
+        questions=(Question("Q1", None, None, "see [S1]"),),
+    )
+    merged = merge_records([g1, g2])
+    assert merged.questions[0].body == "see [S2]"
+    after = renumber_record(replace(merged, findings=merged.findings[1:]))
+    assert after.questions[0].body == "see [S1]"
+
+
+def test_a_note_citing_a_dropped_finding_says_removed():
+    g = record(
+        finding("M1", "only"),
+        verified=(VerifiedNote(None, None, "unlike [M3]"),),
+    )
+    merged = merge_records([g])
+    assert merged.verified[0].body == "unlike [removed]"
 
 
 def test_the_stronger_verdict_wins_whichever_path_each_group_copied():

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, is_dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -153,6 +154,11 @@ class VerifiedNote:
     path: str | None = None
     line: int | None = None
     body: str = ""
+
+
+def numbered_questions(questions: Iterable[Question]) -> tuple[Question, ...]:
+    """`questions` numbered `Q1…` in order, whatever IDs they carried. The one place a question ID is made."""
+    return tuple(replace(q, id=f"Q{i}") for i, q in enumerate(questions, 1))
 
 
 @dataclass(frozen=True)

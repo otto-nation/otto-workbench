@@ -32,6 +32,8 @@ SECTION_SUMMARY = "Summary"
 SECTION_FOCUS = "Focus"
 SECTION_CLAIMS = "Claims"
 SECTION_TEST_EVIDENCE = "Test evidence"
+SECTION_QUESTIONS = "Questions"
+SECTION_VERIFIED = "Verified, no issue"
 SECTION_VERDICT = "Verdict"
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
@@ -42,6 +44,13 @@ SECTION_FAILURES = "Agent Failures"
 # on purpose from one it lost track of; it is stripped before the review is
 # posted, since its finding IDs number the prior review, not this one.
 SECTION_PRIOR_FINDINGS = "Prior findings"
+
+# What a review says that is not a finding. A prompt that judges or carries
+# findings (disprove, the prior round) leaves these out; declared once so a
+# new non-finding section cannot reach one of them and not the other.
+NON_FINDING_SECTIONS = frozenset({
+    SECTION_FOCUS, SECTION_CLAIMS, SECTION_TEST_EVIDENCE, SECTION_QUESTIONS, SECTION_VERIFIED,
+})
 
 
 class MetaKey(StrEnum):

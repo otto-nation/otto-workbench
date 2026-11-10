@@ -16,8 +16,9 @@ import cli.review_post  # noqa: E402,F401
 import review.dedup  # noqa: E402
 import review.render  # noqa: E402
 
-from review.record import ProseSection  # noqa: E402
-from review_record_support import record  # noqa: E402
+from review.record import ProseSection, Question, VerifiedNote  # noqa: E402
+from review_focus_support import user_area  # noqa: E402
+from review_record_support import FIXTURES, fixture_meta, fixture_record, record  # noqa: E402
 
 
 def _comment(findings, has_inline, severity_filter, **fields):
@@ -257,6 +258,43 @@ class TestCommentBody:
         assert "<sub>Models: single m nightly</sub>" in body
         inner = body[body.rfind("<sub>"):body.rfind("</sub>")]
         assert "\n" not in inner
+
+    def test_the_comment_asks_its_questions_under_the_summary(self):
+        result = _comment(
+            [], False, {"M"}, summary="Clean.", focus=(user_area("Locking"),),
+            questions=(Question("Q1", "pkg/client.go", 12, "Should a 429 count?"),),
+        )
+        assert result.index("## Summary") < result.index("### Focus") < result.index("### Questions") < result.index("---")
+        assert "- **[Q1]** `pkg/client.go:12` — Should a 429 count?" in result
+
+    def test_verified_notes_are_collapsed_after_the_findings(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="a.go", line=10,
+                       end_line=None, body="Fix it", posted_id="M1")
+        result = _comment(
+            [f], False, {"M", "S"}, summary="s",
+            extra=(ProseSection("Review gaps", "- group 2"),),
+            verified=(VerifiedNote("pkg/client.go", 30, "fetch closes the body."),
+                      VerifiedNote(None, None, "The flag defaults off.")),
+        )
+        head = "<details><summary>Verified, no issue (2)</summary>"
+        assert head in result and "</details>" in result[result.index(head):]
+        assert result.index("Fix it") < result.index(head) < result.index("## Review gaps")
+        assert "<details open>" not in result
+
+    def test_no_questions_or_verified_add_nothing_to_the_comment(self):
+        for case in sorted(p.name for p in FIXTURES.iterdir() if (p / "record.json").is_file()):
+            rec = fixture_record(case)
+            body = review.render.comment_body(rec, [], has_inline=False, severity_filter={"M", "S"})
+            rendered = review.render.render_review(rec, fixture_meta(case))
+            for text in (body, rendered):
+                assert "### Questions" not in text and "Verified, no issue" not in text
+
+    def test_question_and_verified_lines_are_not_read_back_as_findings(self):
+        body = "\n".join((
+            review.render.question_line(Question("Q1", "a.py", 3, "Why 3?")),
+            review.render.verified_line(VerifiedNote("a.py", 9, "Closes the file.")),
+        ))
+        assert review.dedup._extract_body_findings(body) == []
 
 
 class TestCommentBodyDetails:

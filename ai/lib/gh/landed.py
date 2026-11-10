@@ -232,8 +232,7 @@ class BranchCommit:
 class PartialLanding:
     """A leading run of the branch's commits is upstream; the rest is not.
 
-    ``fork_point`` is the last commit of that run — the ref to replay *from*,
-    which is what makes this the one finding here with an executable remedy.
+    ``fork_point`` is the last commit of that run — the ref to replay *from*.
     """
 
     landed: int

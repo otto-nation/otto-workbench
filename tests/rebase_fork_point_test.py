@@ -1,12 +1,12 @@
 """Replaying only what is left of a partially-landed branch.
 
-The refusal and the flag are one feature and are tested as one: a refusal
-whose remedy the tool cannot express is a dead end, which is what
-`--fork-point` exists to close. The replay half runs against a real repository,
-because what is under test is that git's ``--onto <newbase> <upstream>`` form
-reaches git at all — the two-argument form this used to build collapses
-<newbase> and <upstream> onto one ref, and no assertion about our own argv
-would have shown that the resulting replay was wrong.
+Detection skips the landed prefix without a flag. `--force` replays the whole
+branch. `--fork-point` names the start and does not ask detection. The replay
+half runs against a real repository, because what is under test is that git's
+``--onto <newbase> <upstream>`` form reaches git at all — the two-argument form
+this used to build collapses <newbase> and <upstream> onto one ref, and no
+assertion about our own argv would have shown that the resulting replay was
+wrong.
 """
 
 import sys
@@ -21,7 +21,6 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import gh.landed  # noqa: E402
-from pr.domains import RebaseStatus  # noqa: E402
 import rebase.lifecycle  # noqa: E402
 import rebase.refusals  # noqa: E402
 import rebase.types  # noqa: E402
@@ -39,61 +38,8 @@ def _ctx(branch="feat"):
     return ctx
 
 
-class TestTheRefusalCarriesAnExecutableRemedy:
-    def _refusal(self, landed=3, unlanded=1, fork="abc1234"):
-        partial = gh.landed.PartialLanding(
-            landed=landed, unlanded=unlanded,
-            fork_point=fork, fork_subject="feat: three",
-        )
-        with mock.patch.object(gh.landed, "partial_landing",
-                               return_value=partial):
-            return rebase.refusals.partially_landed_check(
-                "/fake", _ctx(), target_ref=_TARGET,
-            )
-
-    def test_it_names_the_flag_and_the_ref_to_pass(self):
-        report = self._refusal()
-        assert report.remedy == f"{rebase.refusals.FORK_POINT_FLAG} abc1234"
-
-    def test_the_remedy_is_the_flag_the_cli_actually_accepts(self):
-        """A remedy naming a flag that does not parse is the dead end.
-
-        Checked against the parser rather than against a second copy of the
-        string, so renaming the flag in one place fails here.
-        """
-        import cli.pr_rebase
-
-        flag, ref = self._refusal().remedy.split()
-        args = cli.pr_rebase.build_parser().parse_args([flag, ref])
-        assert args.fork_point == ref
-
-    def test_the_status_is_not_already_landed(self):
-        """The branch has work left, so the remedy is not deleting it."""
-        assert self._refusal().status == RebaseStatus.PARTIALLY_LANDED.value
-
-    def test_it_reports_the_whole_branch_not_just_the_prefix(self):
-        report = self._refusal(landed=3, unlanded=1)
-        assert report.commits_ahead == 4
-        assert "3 of 4" in report.detail
-
-    def test_nothing_found_is_no_refusal(self):
-        with mock.patch.object(gh.landed, "partial_landing", return_value=None):
-            assert rebase.refusals.partially_landed_check(
-                "/fake", _ctx(), target_ref=_TARGET,
-            ) is None
-
-    def test_the_refusal_prints_the_remedy_before_the_override(self, capsys):
-        """Offering `--force` first trains the operator past the actual fix."""
-        with mock.patch.object(rebase.types.RebaseOutcome, "save",
-                               lambda self, c: None):
-            rebase.refusals.refuse(_ctx(), self._refusal(), target_ref=_TARGET)
-
-        err = capsys.readouterr().err
-        assert err.index("--fork-point abc1234") < err.index("Pass --force")
-
-
 class TestForkPointReplay:
-    """The flag against a real repository — which commits actually land."""
+    """Detection and the flag against a real repository — which commits land."""
 
     def _partially_landed(self, tmp_path) -> Path:
         """`feat` has four commits; three equivalents are already on main."""
@@ -118,13 +64,13 @@ class TestForkPointReplay:
 
     def _fresh(
         self, repo: Path, fork_point: str, *, force: bool = False,
-        pause_on_conflict: bool = False,
+        pause_on_conflict: bool = False, trail=None,
     ) -> int:
         """`lifecycle.fresh` with everything outside the replay stubbed out.
 
         Only the *tracker* and the two all-or-nothing landed signals are
-        stubbed. The partially-landed check is deliberately live, since half
-        of what these tests assert is which runs it stops.
+        stubbed. Fork-point detection is deliberately live, since half of what
+        these tests assert is which commits it skips.
         """
         with mock.patch.object(git.topology, "default_branch",
                                return_value="main"), \
@@ -141,7 +87,7 @@ class TestForkPointReplay:
             return rebase.lifecycle.fresh(
                 str(repo), _ctx(), rebase.types.RunMode.REBASE_ONLY,
                 force=force, target_ref=_TARGET, fork_point=fork_point,
-                pause_on_conflict=pause_on_conflict,
+                pause_on_conflict=pause_on_conflict, trail=trail,
             )
 
     def test_only_the_commits_after_the_fork_point_are_replayed(self, tmp_path):
@@ -157,15 +103,22 @@ class TestForkPointReplay:
         ]
         assert subjects == ["feat: 3"]
 
-    def test_without_a_fork_point_the_run_is_refused(self, tmp_path):
-        """End to end: the same repo the flag fixes is the one that refuses."""
+    def test_a_partially_landed_branch_replays_only_what_is_left_without_a_flag(
+        self, tmp_path,
+    ):
+        """Detection, not a refusal: the same repo the flag used to fix."""
         repo = self._partially_landed(tmp_path)
 
-        assert self._fresh(repo, "") == rebase.types.REFUSAL_EXIT
-        assert not (repo / ".git" / "rebase-merge").exists()
+        assert self._fresh(repo, "") == 0
 
-    def test_forcing_past_the_refusal_replays_the_prefix_and_conflicts(self, tmp_path):
-        """What the refusal is protecting against, stated as what happens.
+        subjects = [
+            s for s in git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
+            if s
+        ]
+        assert subjects == ["feat: 3"]
+
+    def test_force_replays_the_whole_branch_and_conflicts(self, tmp_path):
+        """What detection is protecting against, stated as what happens.
 
         Replaying the landed prefix reapplies each commit on top of its own
         landed version, which conflicts — the shape that spends a resolution
@@ -177,6 +130,33 @@ class TestForkPointReplay:
 
         assert (repo / ".git" / "rebase-merge").exists()
         git_in(repo, "rebase", "--abort")
+
+    def test_a_detected_fork_point_is_announced_with_every_skipped_commit(
+        self, tmp_path, capsys,
+    ):
+        repo = self._partially_landed(tmp_path)
+        trail = mock.MagicMock()
+
+        assert self._fresh(repo, "", trail=trail) == 0
+
+        err = capsys.readouterr().err
+        warn_lines = [ln for ln in err.splitlines() if "feat: 0" in ln]
+        assert warn_lines
+        assert "feat: 1" in warn_lines[0]
+        assert "feat: 2" in warn_lines[0]
+        assert "feat: 3" not in warn_lines[0]
+        assert "Pass --force to replay the whole branch." in err
+
+        fork_calls = [
+            c for c in trail.decision.call_args_list
+            if c.args and c.args[0] == "fork_point"
+        ]
+        assert fork_calls
+        data = fork_calls[0].kwargs["data"]
+        assert data["source"] == "detected"
+        assert data["landed"] == 3
+        assert data["unlanded"] == 1
+        assert len(data["skipped"]) == 3
 
     def test_a_fork_point_that_is_not_on_the_branch_is_refused(self, tmp_path):
         """A ref that resolves but is not an ancestor replays the wrong set.
@@ -198,7 +178,7 @@ class TestForkPointReplay:
 
 class TestTheDetectionIsSkippedWhenTheRemedyIsAlreadyGiven:
     def test_naming_a_fork_point_skips_the_partial_landing_check(self, tmp_path):
-        """The refusal's only purpose is to ask for the flag now supplied."""
+        """An explicit start is the whole answer; detection is not consulted."""
         repo = init_repo(tmp_path / "repo")
         (repo / "a.txt").write_text("a\n")
         git_in(repo, "add", "a.txt")
@@ -208,7 +188,7 @@ class TestTheDetectionIsSkippedWhenTheRemedyIsAlreadyGiven:
         git_in(repo, "add", "b.txt")
         git_in(repo, "commit", "-q", "-m", "feat: b")
 
-        with mock.patch.object(rebase.refusals, "partially_landed_check") as check, \
+        with mock.patch.object(gh.landed, "partial_landing") as check, \
              mock.patch.object(git.topology, "default_branch",
                                return_value="main"), \
              mock.patch.object(rebase.lifecycle.rebase_lease, "remembered_tip",

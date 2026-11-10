@@ -35,16 +35,16 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
 A request to rebase is a request for a rebased, pushed branch. Drive every
 outcome below to that end yourself — run `--fix` from the start, resolve what the AI
-could not, take a refusal's `remedy`, fix a failing pre-push check, and push
-through step 3 — and report what you did once it is done. Do not stop to ask
+could not, fix a failing pre-push check, and push through step 3 — and report
+what you did once it is done. Do not stop to ask
 whether to continue, whether to use AI, or whether to push.
 
 Stop and hand back only where the next move is a decision the tooling exists to
 leave to a person, and say exactly which one it is:
 
-- an exit 4 that is not `partially_landed` — the branch already landed, shares
-  no history with its base, or conflicts past the budget, so the only way on is
-  `--force` or deleting the branch
+- an exit 4 — the branch already landed, shares no history with its base, or
+  conflicts past the budget, so the only way on is `--force` or deleting the
+  branch
 - a resolution that would drop changes git merged cleanly and that you cannot
   rebuild hunk by hunk — `WORKBENCH_ALLOW_DROPPED_CHANGES=1` is the user's to set
 - a pre-push check failure the branch caused and that you cannot fix
@@ -75,8 +75,10 @@ leave to a person, and say exactly which one it is:
   force-push command is printed for the user to run.
 - `--force` (optional): Rebase a branch the preflight refuses — one whose work
   already landed on its base, one sharing no history with it, or one conflicting
-  past the file budget. Only pass it when the user has seen the exit-4 refusal
-  and asked for the rebase anyway — never add it speculatively.
+  past the file budget — and also replay a landed prefix in full rather than
+  skipping it. Only pass it when the user has seen the exit-4 refusal and asked
+  for the rebase anyway, or when they say a detected skip is wrong — never add
+  it speculatively.
 - `--onto <ref>` (also spelled `--base`, optional): Rebase onto this ref
   verbatim, overriding the PR base and the default branch. Only pass it when
   the user names a base; the resolved default is right otherwise.
@@ -84,9 +86,10 @@ leave to a person, and say exactly which one it is:
   rather than the whole branch. This is git's `<upstream>` argument, which
   `--onto` alone cannot express — with one ref, git's `<newbase>` and
   `<upstream>` are the same and every commit since the merge base is replayed.
-  Only pass it when a `partially_landed` refusal named the ref in its `remedy`
-  field, or the user named one; it changes which commits end up on the branch.
-  Not git's boolean `--fork-point`, and it is ignored on a resumed rebase.
+  Only pass it when the user names one; detection of a landed prefix is
+  automatic, and the run warns listing every skipped commit. It changes which
+  commits end up on the branch. Not git's boolean `--fork-point`, and it is
+  ignored on a resumed rebase.
 - `--no-verify` (optional): Force-push without running the pre-push hook. The
   same rule as `pr create --draft --no-verify`: only for a hook failure already read
   and judged a flake or not the branch's doing — you make that judgement
@@ -103,7 +106,10 @@ leave to a person, and say exactly which one it is:
 Go straight to step 1. `pr rebase` fetches, resolves its own base, detects an
 in-progress rebase, and refuses the branches step 2's exit 4 describes — and it
 records each of those decisions with its reason, so the answers arrive in the
-trail rather than costing a turn each up front. Running `git fetch`,
+trail rather than costing a turn each up front. When conflicts are expected to
+repeat on the same files, it may squash the replay itself (`rebase.squash`);
+do not preflight a squash, count commits, or inspect merge settings first.
+Running `git fetch`,
 `rev-list --count`, or `gh pr view` before it asks the script's own questions in
 a worse form: the answer you get is from a second fetch, a moment earlier, with
 no bearing on what the run then decides.
@@ -207,13 +213,24 @@ facility already has.
   "conflicts_resolved": 2,
   "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
   "files_stale": ["orc-lending/go.sum"],
-  "force_pushed": true
+  "force_pushed": true,
+  "fork_point": "abc1234",
+  "squashed_commits": 5
 }
 ```
 
-`commits_replayed` counts only commits replayed from the branch — commits the
-push recovery adds (regeneration, check fixes) are excluded. `conflicts_resolved`
-counts conflicted-file resolutions, matching `files_resolved`.
+`commits_replayed` counts only commits replayed from the branch after any
+squash — commits the push recovery adds (regeneration, check fixes) are
+excluded. `squashed_commits` is how many original commits were folded into
+one before that replay (`null` when the run did not squash — never `0`).
+`conflicts_resolved` counts conflicted-file resolutions, matching
+`files_resolved`.
+
+`fork_point` is non-null when a landed prefix was skipped. A detected skip is
+also announced on the console as `Skipping already-landed commit(s): …` —
+report both the SHA and those subjects to the user; they are not in
+`commits_replayed`. Report `squashed_commits` the same way when it is not
+null.
 
 Every conflict a run meets is resolved by that run: git's rerere cache is held
 off for the whole rebase, so nothing is replayed from an earlier one and nothing
@@ -337,18 +354,15 @@ their uncommitted work comes back with `git stash pop` after the abort.
 | `empty_diff` | `already_landed` | The branch has commits but no diff against its base — what a squash merge leaves behind |
 | `commits_upstream` | `already_landed` | Every commit already has an equivalent upstream by patch id |
 | `no_merge_base` | `unrelated_history` | The branch and its base share no commit at all |
-| `partially_landed` | `partially_landed` | Some of the branch's commits are already in the base and some are not |
 | `conflicts_over_budget` | `conflicts_over_budget` | The rebase conflicted across more files than automatic resolution should attempt; it was aborted |
 | `resolutions_over_budget` | `conflicts_over_budget` | The rebase would have spent more AI resolution calls than the budget allows — the same files conflicting in commit after commit; it was aborted |
 
 `commits_ahead` is a count on the two git signals and `null` on `pr_merged`: the
 tracker is asked before the branch is checked out, so there is no honest count
-to report there. `pr_number` is set on `pr_merged` only. `remedy` is set on
-`partially_landed` only, and is the flag to re-run with.
+to report there. `pr_number` is set on `pr_merged` only.
 
-`partially_landed` is handled without asking — re-run with its `remedy`, as
-below. Every other status is a stop: report `detail` and what to suggest, which
-depends on `status`:
+Every status is a stop: report `detail` and what to suggest, which depends on
+`status`:
 
 - `already_landed` — rebasing would replay landed work and force-push a branch
   the merge deleted. Suggest deleting the worktree and branch instead.
@@ -356,29 +370,14 @@ depends on `status`:
   left by a re-initialised repo. Rebasing would replay its entire history onto a
   base it has nothing in common with. Suggest cherry-picking the wanted commits
   onto a fresh branch instead.
-- `partially_landed` — an earlier part of the branch already landed, usually
-  because someone merged a prefix of it or amended it on the way in. Replaying
-  the whole branch would reapply those commits on top of themselves. This is the
-  one refusal with a real fix rather than an override: re-run immediately, in
-  the background like any `--fix` run, with the flag the `remedy` field gives,
-  which replays only what is left. Then handle that run's result from the top
-  of step 2.
-
-  ```bash
-  pr rebase --fix --fork-point <sha from remedy> --branch <branch>
-  ```
-
-  Use `remedy` verbatim — do not pick a fork point yourself. Fall back to
-  `--force` only if the user says the detection is wrong, and say what forcing
-  will replay before they agree.
 - `conflicts_over_budget` — a branch conflicting this widely, or this
   repeatedly, has usually had its work land in another shape. The rebase was
   already aborted, so the worktree is clean; suggest checking whether the work is
   still wanted before forcing it. When the signal is `resolutions_over_budget`
   the spread was narrow and the *depth* was not — the same handful of files
-  conflicting in commit after commit, which is what a partially-landed branch
-  looks like once the replay is under way. Check for a landed prefix before
-  forcing.
+  conflicting in commit after commit, which is what a landed prefix looks like
+  once the replay is under way. Check whether part of the branch already landed
+  before forcing.
 
 If the user confirms they want the rebase anyway, re-run with the flag in
 `override`:
@@ -472,7 +471,13 @@ they then ask for the branch to be pushed.
   (`> ignore/rebase.json`). The job facility returns stdout on completion and
   `otto-log show` holds the detail; files written for the agent's own benefit are
   litter, which is why `pr` stopped writing its trail into working trees
-- Never preflight with `git fetch`, `rev-list`, or `gh pr view` — see step 0
+- Never preflight with `git fetch`, `rev-list`, or `gh pr view` — see step 0.
+  The CLI may squash on its own when conflicts would repeat; the skill does no
+  squash preflight either
+- `rebase.squash` is `auto` (default), `always`, or `never`. `auto` squashes
+  only in a squash-merge-only repo when the replay would conflict repeatedly
+  on the same files and the branch has one author. Opt out with
+  `otto-workbench config set rebase.squash never --project`
 - Never resolve a conflict in a hand-written file with a whole-file
   `git checkout --ours`/`--theirs`, or by copying either side's file in. It
   replaces every hunk, including the ones git merged cleanly, and the branch's

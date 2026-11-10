@@ -146,7 +146,7 @@ class TestPartialLandingIsSeenWherePatchIdsAreNot:
         assert not gh.landed.all_commits_upstream(str(repo), target_ref="main")
 
     def test_the_fork_point_is_what_replays_only_what_is_left(self, tmp_path):
-        """The remedy is executable, which is the whole point of the finding."""
+        """Replaying from the fork point leaves only the unlanded commit."""
         repo = self._landed_prefix_with_an_amendment(tmp_path)
         partial = gh.landed.partial_landing(str(repo), target_ref="main")
 
@@ -164,7 +164,7 @@ class TestPartialLandingStaysQuietWhereItShould:
         assert gh.landed.partial_landing(str(repo), target_ref="main") is None
 
     def test_a_wholly_landed_branch_is_not_partial(self, tmp_path):
-        """That is `by_git`'s finding, with a different remedy."""
+        """That is `by_git`'s finding, not a prefix."""
         repo = _base_repo(tmp_path)
         _branch_of(repo, ["feat: one", "feat: two"])
         git_in(repo, "checkout", "-q", "main")
@@ -184,7 +184,7 @@ class TestPartialLandingStaysQuietWhereItShould:
         """A cherry-pick out of the middle, which no fork point can express.
 
         Forking past it would drop the commit before it, so this must report
-        nothing rather than a remedy that loses work.
+        nothing rather than a fork point that loses work.
         """
         repo = _base_repo(tmp_path)
         _branch_of(repo, ["feat: one", "feat: two", "feat: three"])

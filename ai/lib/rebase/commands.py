@@ -164,6 +164,9 @@ def cmd_push(
         files_stale=state.rebase.files_stale,
         force_pushed=True,
         lease_expect=lease.expect,
+        fork_point=state.rebase.fork_point,
+        # Summary stores "no squash" as 0; the outcome reports that as null.
+        squashed_commits=state.rebase.squashed_commits or None,
         target_base=target_ref,
     ).save(ctx)
     core.log.ok("Force-pushed successfully.")
@@ -347,8 +350,11 @@ def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
     # `--post` must not inherit it.
     with core.publishing.run(post=mode.reaches_remote):
         if args.force:
-            trail.decision("preflight", "waiving the already-landed check",
-                           reason=f"{rebase.types.REFUSAL_OVERRIDE_FLAG} flag set")
+            trail.decision(
+                "preflight",
+                "waiving the already-landed check and the landed-prefix skip",
+                reason=f"{rebase.types.REFUSAL_OVERRIDE_FLAG} flag set",
+            )
         verify = _verify(args, trail)
         rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
                        fork_point=args.fork_point or "", verify=verify,

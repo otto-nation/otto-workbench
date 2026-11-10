@@ -1,4 +1,4 @@
-"""Finding detail, files, log path and remedy in report.md."""
+"""Finding detail, files and log path in report.md."""
 
 import sys
 from pathlib import Path
@@ -25,18 +25,17 @@ def _doc(findings):
     }
 
 
-def test_a_finding_renders_detail_files_log_and_remedy():
+def test_a_finding_renders_detail_files_and_log():
     md = batch.report_md.render_markdown(_doc([{
         "reason": "push_refused",
         "detail": "origin moved\n twice",
         "files": ["a.go", "b.go"],
         "log": "/l/x.log",
-        "data": {"remedy": "--fork-point abc"},
     }]))
     assert "- push_refused: origin moved twice" in md
     assert "  - files: a.go, b.go" in md
     assert "  - log: /l/x.log" in md
-    assert "  - remedy: --fork-point abc" in md
+    assert "remedy" not in md
 
 
 def test_empty_findings_render_none():

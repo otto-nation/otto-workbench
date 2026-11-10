@@ -16,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.publish  # noqa: E402
+import git.rewrites  # noqa: E402
 import batch.requests  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
@@ -200,6 +201,53 @@ def _fork_point_rebased(tmp_path):
     git_in(pair.work, "reset", "-q", "--hard", "origin/feat")
     git_in(pair.work, "rebase", "-q", "--onto", "origin/main", parent2, "feat")
     return pair, planned, [f"{parent1} feat", f"{parent2} chore: parent2"]
+
+
+def test_a_squashed_replay_recorded_by_git_is_incorporated(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    a = remote_tip(pair.origin, "feat")
+    b = advance(pair.seed, "feat", "two")
+    c = advance(pair.seed, "feat", "three")
+    git_in(pair.work, "fetch", "-q", "origin")
+    git_in(pair.work, "reset", "-q", "--hard", "origin/feat")
+    git_in(pair.seed, "checkout", "-q", "main")
+    (pair.seed / "upstream.txt").write_text("upstream\n")
+    commit_all(pair.seed, "chore: upstream")
+    git_in(pair.seed, "push", "-q", "origin", "main")
+    git_in(pair.work, "fetch", "-q", "origin")
+    tree = git_out(pair.work, "rev-parse", "HEAD^{tree}").strip()
+    squash = git_out(
+        pair.work, "commit-tree", tree, "-p", "origin/main", "-m", "feat: squashed",
+    ).strip()
+    git_in(pair.work, "reset", "-q", "--hard", squash)
+    common = git.rewrites.common_dir(pair.work)
+    git.rewrites.record(common, [
+        git.rewrites.Rewrite(a, squash),
+        git.rewrites.Rewrite(b, squash),
+        git.rewrites.Rewrite(c, squash),
+    ])
+    item = _item(worktree=str(pair.work), remote=c, base_ref="main")
+    state = batch.publish.read_tree(item)
+    got = batch.publish.plan(item, "pr", state)
+    assert state.unincorporated == ()
+    assert got.commands == [
+        ["pr", "rebase", "--push-only", "--expect", c, "--repo-dir", str(pair.work)]]
+
+
+def test_a_one_to_one_rewrite_is_still_refused(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    planned = advance(pair.seed, "feat", "elsewhere")
+    item = _item(worktree=str(pair.work), remote=planned, base_ref="main")
+    (pair.work / "fix.txt").write_text("fix\n")
+    commit_all(pair.work, "fix: x")
+    local = git_out(pair.work, "rev-parse", "HEAD").strip()
+    git.rewrites.record(git.rewrites.common_dir(pair.work), [
+        git.rewrites.Rewrite(planned, local),
+    ])
+    tree = batch.publish.read_tree(item)
+    got = batch.publish.plan(item, "pr", tree)
+    assert got.refusal is Refusal.NOT_INCORPORATED_REMOTE
+    assert f"{planned} chore: elsewhere" in got.commits
 
 
 @pytest.mark.parametrize("start", ["planned", "none"])

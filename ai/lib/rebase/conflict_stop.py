@@ -121,6 +121,8 @@ def abort_clean(
             aborted=False,
             classes=dict(classes),
             pre_rebase_head=pre,
+            fork_point=tally.fork_point,
+            squashed_commits=tally.squashed_commits,
             target_base=target_ref,
         ).save(ctx)
         rebase_types.ConflictReport.from_repo(
@@ -134,6 +136,8 @@ def abort_clean(
         aborted=True,
         classes=dict(classes),
         pre_rebase_head=pre,
+        fork_point=tally.fork_point,
+        squashed_commits=tally.squashed_commits,
         target_base=target_ref,
     ).save(ctx)
     clean.emit()

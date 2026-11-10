@@ -72,8 +72,7 @@ def findings_for(decision: Decision) -> list[Finding]:
         return [_finding(reason, decision, files=files, data=data)]
     if kind is DecisionKind.REBASE_REFUSED:
         return [_finding(FindingReason.FAILED_UNKNOWN, decision,
-                         detail=str(payload.get("detail") or payload.get("status") or ""),
-                         data={"remedy": payload.get("remedy", "")})]
+                         detail=str(payload.get("detail") or payload.get("status") or ""))]
     if kind is DecisionKind.STEP_REVIEW:
         return [_step_review(decision)]
     if kind is DecisionKind.COMMENT_ITEM:

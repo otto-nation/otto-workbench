@@ -417,6 +417,8 @@ def _push_state(lease_expect="abc123"):
     state.rebase.conflicts_resolved = 0
     state.rebase.files_resolved = []
     state.rebase.files_stale = []
+    state.rebase.fork_point = ""
+    state.rebase.squashed_commits = 0
     return state
 
 

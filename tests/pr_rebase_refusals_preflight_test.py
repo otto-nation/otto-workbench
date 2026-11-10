@@ -259,7 +259,6 @@ def test_refuse_renders_the_hint_for_every_refusal_status():
     statuses = {
         pr.domains.RebaseStatus.ALREADY_LANDED.value,
         pr.domains.RebaseStatus.UNRELATED_HISTORY.value,
-        pr.domains.RebaseStatus.PARTIALLY_LANDED.value,
         pr.domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
         pr.domains.RebaseStatus.TRACKER_UNREAD.value,
     }
@@ -282,7 +281,7 @@ def test_refuse_landed_emits_the_exit_4_payload(capsys):
         "branch": _LANDED_BRANCH, "signal": "pr_merged",
         "detail": f"PR #{_LANDED_PR} is merged", "commits_ahead": 18,
         "pr_number": _LANDED_PR, "status": "already_landed",
-        "override": "--force", "remedy": "",
+        "override": "--force",
     }
     assert f"Refusing to rebase {_LANDED_BRANCH}" in captured.err
     assert "--force" in captured.err
@@ -301,12 +300,9 @@ def test_refuse_landed_keeps_every_documented_key_when_unmeasured(capsys):
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {
         "branch", "signal", "detail", "commits_ahead",
-        "pr_number", "status", "override", "remedy",
+        "pr_number", "status", "override",
     }
     assert payload["commits_ahead"] is None
-    # Empty rather than absent: a caller reads "there is no narrower way to do
-    # this" from the value, not from the key being missing.
-    assert payload["remedy"] == ""
 
 
 def test_refuse_landed_records_the_status_for_the_dashboard():

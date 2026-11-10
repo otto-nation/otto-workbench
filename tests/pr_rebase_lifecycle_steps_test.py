@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -714,3 +715,16 @@ def test_fix_only_still_resolves_conflicts():
 
     assert rc is None
     assert tally.files == ["a.py"]
+
+
+def test_a_resume_keeps_the_squash_count_from_the_stop():
+    """A stop records the squash; the next process has to keep it."""
+    prior = SimpleNamespace(rebase=SimpleNamespace(
+        status="conflicts", files_one_sided=[], one_sided_regions=[],
+        fork_point="abc1234", squashed_commits=3,
+    ))
+    with mock.patch.object(rebase.types, "load_or_init", return_value=prior), \
+         mock.patch.object(rebase.inspect, "rebase_orig_head", return_value="orig1"):
+        tally = rebase.lifecycle.resumed_tally("/fake", mock.MagicMock())
+    assert tally.fork_point == "abc1234"
+    assert tally.squashed_commits == 3

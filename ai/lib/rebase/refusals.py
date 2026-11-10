@@ -1,4 +1,4 @@
-"""Preflight refusals — the four questions asked before a branch is replayed.
+"""Preflight refusals — the preflight questions asked before a branch is replayed.
 
 Each check answers with a ``RefusalReport`` or None, and ``refuse`` is what
 turns one into the shared exit code. A refusal leaves the worktree untouched
@@ -31,12 +31,6 @@ REFUSAL_OVERRIDE_FLAG = rebase_types.REFUSAL_OVERRIDE_FLAG
 RebaseOutcome = rebase_types.RebaseOutcome
 RefusalReport = rebase_types.RefusalReport
 RefusalSignal = rebase_types.RefusalSignal
-
-# The flag that turns a refusal into a narrower replay rather than waiving it.
-# Named here because both the refusal text and the CLI must spell it the same,
-# and a remedy naming a flag that does not parse is the dead end the partial
-# landing signal was added to avoid.
-FORK_POINT_FLAG = "--fork-point"
 
 
 @dataclass(frozen=True)
@@ -160,45 +154,6 @@ def git_landed_check(
     )
 
 
-def partially_landed_check(
-    cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
-) -> RefusalReport | None:
-    """Refuse a branch whose leading commits are already in the target ref.
-
-    The gap between the two landed signals. Both of those ask whether the
-    branch's work is *entirely* upstream, so a branch with six landed commits
-    and one unlanded reads to them exactly like a branch that landed nothing —
-    `git cherry` reports a `+` for the seventh and `all(...)` is False. There
-    is no count of unique commits at which that stops being true; a branch with
-    one commit left is structurally incapable of tripping it.
-
-    Replaying such a branch reapplies the landed prefix on top of itself, which
-    conflicts every one of those commits against the version of itself already
-    in the base — the shape that spends a resolution call per file per commit
-    and ends by rewriting the base's copy back to the branch's.
-
-    Unlike every other refusal here, this one has a remedy the tool can carry
-    out: the fork point it names is what `--fork-point` takes, and the replay
-    becomes `git rebase --onto <base> <fork-point>`. See
-    `branch_landed.partial_landing` for how the prefix is identified.
-    """
-    partial = gh.landed.partial_landing(cwd, target_ref=target_ref)
-    if partial is None:
-        return None
-    return RefusalReport(
-        branch=ctx.branch,
-        signal=RefusalSignal.PARTIALLY_LANDED.value,
-        detail=(
-            f"{partial.landed} of {partial.total} commit(s) are already in "
-            f"{target_ref} — the branch forked at {partial.fork_point} "
-            f"({partial.fork_subject})"
-        ),
-        commits_ahead=partial.total,
-        status=RebaseStatus.PARTIALLY_LANDED.value,
-        remedy=f"{FORK_POINT_FLAG} {partial.fork_point}",
-    )
-
-
 def unrelated_history_check(
     cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
 ) -> RefusalReport | None:
@@ -237,11 +192,6 @@ REFUSAL_HINTS = {
         "A branch conflicting this widely with {ref} has usually had its work "
         "land in another shape. Resolving that many conflicts unattended "
         "rewrites files the branch never touched.",
-    RebaseStatus.PARTIALLY_LANDED.value:
-        "Replaying the whole branch would reapply the commits already in "
-        "{ref} on top of themselves, conflicting each against its own landed "
-        "version. Replay only what is left instead — the fork point to skip "
-        "to is in the refusal above.",
     RebaseStatus.TRACKER_UNREAD.value:
         "Whether this branch's PR already merged is the one thing a squash "
         "merge leaves no trace of in git, and the quota to ask ran out. "
@@ -258,11 +208,6 @@ def refuse(
     terr(trail, "preflight", f"refusing to rebase ({report.signal})", data=asdict(report))
     core.log.error(f"Refusing to rebase {report.branch} — {report.detail}.")
     core.log.dim(REFUSAL_HINTS[report.status].format(ref=target_ref))
-    # The narrower way out before the blunt one, where there is a narrower way.
-    # `--force` waives every check at once, so offering it first to a refusal
-    # that has an exact remedy trains the operator to reach past the fix.
-    if report.remedy:
-        core.log.dim(f"Re-run with {report.remedy} to replay only what is left.")
     core.log.dim(f"Pass {REFUSAL_OVERRIDE_FLAG} to rebase it anyway.")
     RebaseOutcome(status=RebaseStatus(report.status), target_base=target_ref).save(ctx)
     report.emit()

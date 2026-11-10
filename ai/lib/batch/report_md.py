@@ -2,7 +2,7 @@
 
 Rendered from the JSON only. Filing commands go in a trailing
 "File follow-up issues (only on request)" block, never on the stdout line.
-Each finding renders its reason, detail, files, log path and remedy.
+Each finding renders its reason, detail, files and log path.
 """
 
 # doc-group: batch
@@ -54,9 +54,6 @@ def _finding_lines(findings: list[dict]) -> list[str]:
             lines.append(f"  - files: {', '.join(f['files'])}")
         if f.get("log"):
             lines.append(f"  - log: {f['log']}")
-        remedy = (f.get("data") or {}).get("remedy")
-        if remedy:
-            lines.append(f"  - remedy: {remedy}")
     return lines
 
 

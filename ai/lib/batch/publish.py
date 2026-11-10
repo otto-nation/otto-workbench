@@ -15,7 +15,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
-| diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
+| diverged, a remote commit has no patch-equivalent locally and no recorded squash replay | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
 `read_tree` is the publish-time reader: it fetches into
@@ -45,6 +45,7 @@ import batch.steps
 import git.client
 import git.push
 import git.replay
+import git.rewrites
 from batch.model import Item, Step
 from pr.comments_fix import CloseoutDebt
 from rebase.target import local_vs_remote
@@ -127,6 +128,35 @@ def _unincorporated(item: Item, cwd: str, upstream: str = "") -> tuple[str, ...]
                            item.remote_sha, cwd=cwd) if item.base_ref else ""
     return _cherry_plus(cwd, upstream or f"refs/heads/{item.branch}", item.remote_sha,
                         limit, verbose=True)
+
+
+def _not_replayed(wt: str, found: tuple[str, ...],
+                  finder: git.replay.ReplayFinder) -> tuple[str, ...]:
+    """Remote cherry-plus labels whose rewrite chain did not pass through a squash.
+
+    A recorded squash is a SHA that two or more distinct original commits were
+    rewritten to (`git.rewrites.fold_targets`). A remote commit is incorporated
+    when its first rewrite hop lands on such a SHA and `ReplayFinder` then
+    reports FOUND or AMBIGUOUS on the local branch. A one-to-one rewrite — an
+    AI-resolved pick — is left listed, so publish still refuses it. UNKNOWN
+    stays listed and fails closed.
+    """
+    targets = git.rewrites.fold_targets(Path(wt))
+    if not targets:
+        return found
+    mapping = git.rewrites.load(Path(wt))
+    kept: list[str] = []
+    for label in found:
+        sha = label.split(None, 1)[0]
+        hops = mapping.get(sha, [])
+        if not hops or hops[0] not in targets:
+            kept.append(label)
+            continue
+        status = finder.find(sha).status
+        if status in (git.replay.ReplayStatus.FOUND, git.replay.ReplayStatus.AMBIGUOUS):
+            continue
+        kept.append(label)
+    return tuple(kept)
 
 
 def _start_incorporated(item: Item, cwd: str) -> bool:
@@ -233,7 +263,8 @@ def _tree_from(item: Item, remote_sha: str, fetched: bool) -> TreeState:
             # "nothing to lose", so the refs are reported not comparable.
             divergence = RefDivergence()
         else:
-            unincorporated = found
+            unincorporated = _not_replayed(
+                wt, found, git.replay.ReplayFinder(Path(wt)))
     dropped = _dropped(item, wt) if item.worktree else ()
     return TreeState(local, remote_sha, divergence, fetched, incorporated, unincorporated,
                      dropped, batch.steps.checked_out_branch(wt))

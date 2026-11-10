@@ -23,6 +23,7 @@ import pr.context
 from pr.domains import RebaseStatus
 
 from . import conflict_stop
+from . import fork_point as rebase_fork_point
 from . import hooks_chain
 from . import inspect as rebase_inspect
 from . import land as rebase_land
@@ -31,6 +32,7 @@ from . import pr_snapshot as rebase_pr_snapshot
 from . import refusals
 from . import replay_audit
 from . import resolve_ai as rebase_resolve
+from . import squash as rebase_squash
 from . import target as rebase_target
 from . import types as rebase_types
 
@@ -103,12 +105,18 @@ def _continue_command(mode: RunMode) -> str:
     return "pr rebase --fix"
 
 
-def _git_rebase(cwd: str, *args: str) -> CmdResult:
+def _git_rebase(
+    cwd: str, *args: str, squash: rebase_squash.SquashPlan | None = None,
+) -> CmdResult:
     """One rebase git child, with REBASE_CONFIG and chained hooks."""
+    pins = squash.git_config() if squash is not None else {}
+    env = unattended_env()
+    if squash is not None:
+        env.update(squash.git_env())
     with hooks_chain.override(cwd) as extra:
         return git.client.run(
-            *args, cwd=cwd, config={**REBASE_CONFIG, **extra},
-            env=unattended_env(),
+            *args, cwd=cwd, config={**REBASE_CONFIG, **extra, **pins},
+            env=env,
         )
 
 
@@ -201,6 +209,8 @@ def _drive_loop(
         conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
+        fork_point=tally.fork_point,
+        squashed_commits=tally.squashed_commits,
         target_base=target_ref,
     ).save(ctx)
     git.client.run("rebase", "--abort", cwd=cwd)
@@ -248,6 +258,8 @@ def _stopped_outcome(
         pre_rebase_head=tally.pre_rebase_head,
         aborted=aborted,
         classes=dict(classes or {}),
+        fork_point=tally.fork_point,
+        squashed_commits=tally.squashed_commits,
         target_base=target_ref,
     )
 
@@ -264,6 +276,10 @@ def resumed_tally(cwd: str, ctx: pr.context.ResolvedContext) -> ResolutionTally:
     if prior.status == RebaseStatus.CONFLICTS.value:
         tally.one_sided = list(prior.files_one_sided)
         tally.one_sided_regions = list(prior.one_sided_regions)
+        tally.fork_point = prior.fork_point
+        # Summary stores "no squash" as 0 so older files load; the live
+        # tally uses None, which emit reports as null rather than 0.
+        tally.squashed_commits = prior.squashed_commits or None
     return tally
 
 
@@ -634,24 +650,6 @@ def step_advance(
     return 1
 
 
-def _resolved_fork_point(cwd: str, fork_point: str) -> str:
-    """*fork_point* as a sha, or "" if it is not a commit reachable from HEAD.
-
-    Checked before the replay rather than left to git, because git's own
-    failure for a bad ``<upstream>`` is indistinguishable from a rebase that
-    went wrong — and because a ref that resolves but is *not* an ancestor of
-    HEAD silently replays a different set of commits than the operator asked
-    for, which git reports as success.
-    """
-    sha = git.client.out("rev-parse", "--verify", f"{fork_point}^{{commit}}",
-                         cwd=cwd)
-    if not sha:
-        return ""
-    if not git.client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=cwd):
-        return ""
-    return sha
-
-
 def fresh(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str, fork_point: str = "",
@@ -664,12 +662,10 @@ def fresh(
 
     ``fork_point`` is git's ``<upstream>`` argument, and naming it makes the
     replay ``git rebase --onto <target_ref> <fork_point>`` — only the commits
-    after it. Without it, ``<newbase>`` and ``<upstream>`` are the same ref and
-    the whole branch is replayed, which is right for every ordinary rebase and
-    wrong for the one `refusals.partially_landed_check` catches: a branch whose
-    prefix already landed. That refusal names the fork point to pass here, and
-    before this parameter existed the tool could not express the fix it was
-    recommending.
+    after it, overriding detection. Without it, a landed prefix is skipped the
+    same way: detection names the fork point. ``--force`` turns that off and
+    replays the whole branch, which is ``<newbase>`` and ``<upstream>`` as the
+    same ref.
     """
     default = git.topology.default_branch(cwd)
     if ctx.branch == default:
@@ -745,32 +741,17 @@ def fresh(
     if landed is not None:
         return refusals.refuse(ctx, landed, target_ref=target_ref, trail=trail)
 
-    # After the all-or-nothing landed signals, which are cheaper and whose
-    # finding is stronger: a branch entirely upstream is not partially
-    # upstream, and this walk costs a git call per commit in the prefix.
-    # Skipped when the operator has already named a fork point, since the
-    # refusal's only purpose is to ask for one.
-    if not force and not fork_point:
-        partial = refusals.partially_landed_check(cwd, ctx, target_ref=target_ref)
-        if partial is not None:
-            return refusals.refuse(ctx, partial, target_ref=target_ref, trail=trail)
+    start = rebase_fork_point.select(
+        cwd, ctx, target_ref=target_ref, requested=fork_point,
+        force=force, trail=trail,
+    )
+    if start is None:
+        return 1
 
-    replay_from = ""
-    if fork_point:
-        replay_from = _resolved_fork_point(cwd, fork_point)
-        if not replay_from:
-            terr(trail, "preflight", f"unusable fork point {fork_point}")
-            core.log.error(f"Cannot replay from {fork_point} — it is not a commit "
-                      f"on {ctx.branch}.")
-            core.log.dim("Pass a commit the branch descends from; the "
-                    "partially-landed refusal names the one to use.")
-            return 1
-        tdecision(
-            trail, "fork_point", f"replaying only the commits after {replay_from}",
-            reason=f"{refusals.FORK_POINT_FLAG} {fork_point}",
-            data={"fork_point": replay_from, "requested": fork_point},
-        )
-        core.log.info(f"Replaying only the commits after {replay_from[:8]}.")
+    squash = rebase_squash.plan(
+        cwd, ctx, target_ref=target_ref, replay_from=start.sha,
+        snapshot=snapshot, trail=trail,
+    )
 
     core.log.info(f"Rebasing onto {target_ref}...")
     # --autosquash unconditionally: it acts only on commits whose subject starts
@@ -784,18 +765,24 @@ def fresh(
     # is a no-op, so nothing here waits on one.
     #
     # `--onto <target> <fork>` rather than a bare `<target>` when a fork point
-    # was named: git collapses <newbase> and <upstream> onto one ref only in
-    # the two-argument form, and keeping that form was what made the
-    # partially-landed remedy unreachable through this tool.
+    # was named or detected: git collapses <newbase> and <upstream> onto one
+    # ref only in the two-argument form.
     replay = (
-        ["--onto", target_ref, replay_from] if replay_from else [target_ref]
+        ["--onto", target_ref, start.sha] if start.sha else [target_ref]
     )
     # Threaded into the loop below rather than created there: the loop's first
     # action may be to resolve a conflict this call left behind, and a tally
     # made inside it would not be the one the whole run accumulates into.
     # Made before the replay so it holds the tip the replay starts from.
-    tally = ResolutionTally(pre_rebase_head=git.client.head_sha(cwd=cwd))
-    r = _git_rebase(cwd, "rebase", *AUTOSQUASH_ARGS, *replay)
+    tally = ResolutionTally(
+        pre_rebase_head=git.client.head_sha(cwd=cwd),
+        fork_point=start.sha,
+        squashed_commits=None if squash is None else squash.count,
+    )
+    # The branch ref is never moved to the squash commit, so orig-head,
+    # abort and resume all see the original commits. S is picked by
+    # replacing the todo; `--continue` / `--skip` / resume never squash.
+    r = _git_rebase(cwd, "rebase", *AUTOSQUASH_ARGS, *replay, squash=squash)
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
@@ -873,6 +860,8 @@ def rebase_success(
             pre_rebase_head=tally.pre_rebase_head,
             force_pushed=False,
             resolution=tally.resolution,
+            fork_point=tally.fork_point,
+            squashed_commits=tally.squashed_commits,
             target_base=target_ref,
         ).save(ctx)
         return 1
@@ -915,6 +904,8 @@ def rebase_success(
         # case where the push happens in a later process that can no longer read
         # this value for itself.
         lease_expect=lease.expect if lease is not None else "",
+        fork_point=tally.fork_point,
+        squashed_commits=tally.squashed_commits,
         target_base=target_ref,
     )
     outcome.save(ctx)

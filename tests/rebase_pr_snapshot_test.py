@@ -43,6 +43,19 @@ class TestFetch:
         assert snapshot.review_decision == "APPROVED"
         assert snapshot.answered
 
+    def test_title_is_read_with_the_same_call(self):
+        with _answers({
+            "state": "OPEN", "number": 42, "url": "https://gh/42",
+            "baseRefName": "main", "isDraft": False,
+            "reviewDecision": "", "title": "feat: a very long PR title that is not conventional",
+        }) as view:
+            snapshot = rebase.pr_snapshot.fetch("/wt", _ctx())
+
+        view.assert_called_once()
+        assert "title" in rebase.pr_snapshot.FIELDS
+        assert set(rebase.pr_snapshot.FIELDS) == set(view.call_args[0][1:])
+        assert snapshot.title == "feat: a very long PR title that is not conventional"
+
     def test_it_asks_by_number_when_one_is_resolved(self):
         with _answers({"state": "OPEN"}) as view:
             rebase.pr_snapshot.fetch("/wt", _ctx(pr_number=42))

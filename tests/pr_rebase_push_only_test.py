@@ -32,6 +32,8 @@ def _no_record():
     state.rebase.conflicts_resolved = 0
     state.rebase.files_resolved = []
     state.rebase.files_stale = []
+    state.rebase.fork_point = ""
+    state.rebase.squashed_commits = 0
     return state
 
 
@@ -96,3 +98,28 @@ def test_the_rebase_force_push_goes_through_the_one_push_path():
          mock.patch.object(rebase.commands, "push_head", push_head):
         assert rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET, expect="deadbee") == 0
     assert (seen["cwd"], seen["branch"], seen["expect"]) == ("/fake", "isaac/feat/x", "deadbee")
+
+
+def test_push_only_preserves_the_recorded_replay_shape():
+    """`--push-only` must not wipe the squash and fork-point the rebase recorded."""
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    state = _no_record()
+    state.rebase.updated_at = "t"
+    state.rebase.lease_expect = "deadbee"
+    state.rebase.fork_point = "abc1234"
+    state.rebase.squashed_commits = 4
+    saved = []
+
+    with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase.types, "load_or_init", return_value=state), \
+         mock.patch.object(
+             rebase.types.RebaseOutcome, "save",
+             lambda self, c: saved.append(self),
+         ), \
+         mock.patch.object(git.client, "commits_ahead", return_value=1), \
+         _lands(_pushed()):
+        assert rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET) == 0
+
+    assert saved[0].fork_point == "abc1234"
+    assert saved[0].squashed_commits == 4

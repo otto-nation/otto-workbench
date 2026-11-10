@@ -575,6 +575,16 @@ verdict.
 Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
 one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).
 
+### What pr rebase replays
+
+`pr rebase` skips a prefix already in the base (`git rebase --onto <base>
+<fork-point>`) and may fold the rest into one commit first. `rebase.squash`
+is `auto` (the default), `always`, or `never`; opt out with
+`otto-workbench config set rebase.squash never --project`.
+
+Where the replay starts: [`rebase/fork_point.py`](ai-libraries.md#rebasefork_pointpy).
+When a squash happens: [`rebase/squash.py`](ai-libraries.md#rebasesquashpy).
+
 ### Which files the rebase fix pass is allowed to touch
 
 When a rebase's force-push is rejected by a pre-push check, `pr rebase` runs a

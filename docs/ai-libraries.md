@@ -3529,15 +3529,14 @@ up to date (no block).
 
 #### Rebase refusals
 
-The already-landed signals answer "is this work already in the base?". Two more
-answer a different question — "is replaying this branch onto that base a safe
-thing to do at all?" — and refuse on the same exit code, with the same
+The already-landed signals answer "is this work already in the base?". Further
+signals answer a different question — "is replaying this branch onto that base a
+safe thing to do at all?" — and refuse on the same exit code, with the same
 ``--force`` override:
 
 | Signal | What it reads | When it fires |
 |---|---|---|
 | `no_merge_base` | `git merge-base <base> HEAD` exits nonzero | The branch and its base share no commit |
-| `partially_landed` | a prefix of the branch's commits already in the base | Some, but not all, of the branch landed |
 | `conflicts_over_budget` | distinct conflicted files across the whole rebase | The count passes `CONFLICT_FILE_BUDGET` |
 | `resolutions_over_budget` | resolution calls spent across the whole rebase | The count passes `CONFLICT_RESOLUTION_BUDGET` |
 
@@ -3555,21 +3554,13 @@ verifies the ref names a commit first and passes when it does not — refusing
 those as unrelated history would send the operator after a root they do not
 have, where git's own error for the missing ref says what actually went wrong.
 
-`partially_landed` is what the two landed signals above cannot express. Both ask
-whether the branch's work is *entirely* in the base, so a branch whose first six
-commits landed and whose seventh has not reads to them exactly like a branch
-that landed nothing. Replaying such a branch onto the base reapplies the six
-that are already there, conflicting each of them against itself — which is the
-shape that burns a resolution call per file per commit and rewrites the base's
-version back to the branch's. Patch ids do not catch it either: one amendment
-early in the landed prefix changes the context lines of every later commit's
-hunks, so `git cherry` reports every one of them as unlanded.
-
-It is the one refusal that carries a remedy the tool can execute. `--fork-point
-<ref>` supplies git's `<upstream>` argument, so the replay is
-`git rebase --onto <base> <ref>` — the landed prefix is skipped and only the
-commits after it are replayed. The refusal names the exact ref to pass, because
-a refusal whose remedy the tool cannot express is a dead end.
+A prefix of the branch already in the base is not a refusal. The two landed
+signals above ask whether the work is *entirely* in the base, so a branch whose
+first six commits landed and whose seventh has not reads to them like a branch
+that landed nothing. Replaying that prefix onto itself conflicts each commit
+against its landed version. `pr rebase` detects the prefix and replays only
+what is left (``git rebase --onto <base> <fork-point>``). ``--fork-point REF``
+overrides the detection; ``--force`` turns it off and replays the whole branch.
 
 The budgets are the circuit breaker for what all of this produces. Conflict
 resolution is an AI call per conflicted file, with edit access to the worktree,
@@ -4272,7 +4263,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
-| diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
+| diverged, a remote commit has no patch-equivalent locally and no recorded squash replay | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
 `read_tree` is the publish-time reader: it fetches into
@@ -4311,7 +4302,7 @@ Markdown and stdout projections of a session report dict.
 
 Rendered from the JSON only. Filing commands go in a trailing
 "File follow-up issues (only on request)" block, never on the stdout line.
-Each finding renders its reason, detail, files, log path and remedy.
+Each finding renders its reason, detail, files and log path.
 
 ### batch/requests.py
 
@@ -6882,6 +6873,19 @@ only a target refusal; the content is then judged as for an unknown/upstream
 group and still needs the cross-ref override. ``check_command`` never reads
 either override.
 
+### gh/repo_settings.py
+
+The merge buttons GitHub shows for a repository.
+
+`gh pr view` has no repository fields, so a rebase that needs to know whether
+the repo is squash-only cannot piggy-back on the PR snapshot. `gh repo view`
+answers with `squashMergeAllowed`, `mergeCommitAllowed` and
+`rebaseMergeAllowed` on one call.
+
+Best effort, like every other tracker read: gh missing, unauthenticated,
+rate-limited, or a payload that is not three booleans all arrive as None.
+Nothing here may invent a merge policy from a partial answer.
+
 ### gh/shell_lex.py
 
 How a command line splits into statements the way bash reads it.
@@ -7569,6 +7573,22 @@ Conflict classification, parsing, and git-level resolution.
 Pure conflict-analysis functions — prompt construction, AI invocation,
 and file-level dispatch live in ``resolve_ai``.
 
+### rebase/fork_point.py
+
+Where a rebase starts replaying from — a named, detected, or whole-branch start.
+
+``select`` is the one owner of that choice. An explicit ``--fork-point REF``
+wins and replays only the commits after REF, whether or not a prefix was
+detected. ``--force`` turns detection off and replays the whole branch.
+Otherwise a landed prefix is skipped rather than refused.
+
+When a leading run of commits is already in the base — a squash-landed
+parent of a stacked child, or any other prefix that landed first — the
+replay is ``git rebase --onto <base> <fork-point>``. The skip is announced
+on the console as ``Skipping already-landed commit(s): …`` and recorded as
+a ``fork_point`` trail event (the SHAs, how many landed, the source
+``detected``).
+
 ### rebase/hooks_chain.py
 
 Chain workbench git hooks in front of a repo that set ``core.hooksPath``.
@@ -7679,7 +7699,7 @@ already merged. Two round trips for one PR, and each new question — is it a
 draft, who is reviewing it — would have added a third.
 
 So the PR is read once and the answer is passed around. ``gh pr view`` takes a
-field list, so asking for six costs exactly what asking for one did.
+field list, so asking for these costs exactly what asking for one did.
 
 The same read also settles whether to warn before a force-push reaches a
 shared branch: ``name_the_open_pr`` gates on ``state`` and ``isDraft`` and is
@@ -7735,7 +7755,7 @@ artifacts.
 
 ### rebase/refusals.py
 
-Preflight refusals — the four questions asked before a branch is replayed.
+Preflight refusals — the preflight questions asked before a branch is replayed.
 
 Each check answers with a ``RefusalReport`` or None, and ``refuse`` is what
 turns one into the shared exit code. A refusal leaves the worktree untouched
@@ -7808,6 +7828,27 @@ AI-backed conflict resolution — prompts, parsing, dispatch.
 Builds on the pure analysis in ``conflicts`` to drive agent-based file
 resolution during a rebase.  Every function that calls the AI backend
 accepts a ``trail`` parameter for audit logging.
+
+### rebase/squash.py
+
+Fold the replayed commits into one before git rebase starts.
+
+Never moves the branch. The squash commit is built with ``commit-tree`` and
+picked in place of the original todo, so orig-head, abort and resume still
+see the unsquashed tip — ``pr rebase --abort`` restores the original
+commits. Each original is recorded as rewritten to that commit so
+``git.replay.ReplayFinder`` and batch publish can follow the chain and
+treat those originals as incorporated.
+
+``rebase.squash`` is ``auto`` (the default), ``always``, or ``never``.
+``auto`` squashes only in a squash-merge-only repo, when the replay would
+conflict repeatedly on the same files, and when the branch has one author.
+If the repo's merge settings cannot be read, it does not squash.
+``always`` squashes anyway (including a multi-author branch).
+
+The squash commit's subject is the PR title, or the first original subject
+when there is no snapshot. The body is a bullet per original commit, then
+every footer line from those originals, de-duplicated.
 
 ### rebase/stash.py
 

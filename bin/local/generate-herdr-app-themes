@@ -85,6 +85,7 @@ LENGTHS = (
 FONT_ROLES = ("meta", "section", "label", "body", "title", "code")
 RADIUS_NAMES = ("sm", "md", "lg")
 SPACE_NAMES = ("1", "2", "3", "4", "5", "6")
+PANE_NAMES = ("compact", "board", "wide")
 # The hosted runners see transient 5xx, 429 and timeouts from the registry; retry
 # those, never any other 4xx.
 FETCH_ATTEMPTS = 3
@@ -219,6 +220,7 @@ def _render_brand_module(design: dict) -> str:
     brand["font"] = {role: _font_role(typography, role) for role in FONT_ROLES}
     brand["radius"] = _named_px(_section(design, "radii"), RADIUS_NAMES, "radii")
     brand["space"] = _named_px(_section(design, "spacing"), SPACE_NAMES, "spacing")
+    brand["pane"] = _named_px(_section(design, "panes"), PANE_NAMES, "panes")
     return f"{BRAND_HEADER}\nexport const BRAND = {json.dumps(brand, indent=2)};\n"
 
 

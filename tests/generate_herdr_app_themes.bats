@@ -63,7 +63,8 @@ _tokens() {
     "column-min": "270px"
   },
   "radii": { "sm": "4px", "md": "6px", "lg": "8px" },
-  "spacing": { "1": "4px", "2": "8px", "3": "12px", "4": "16px", "5": "20px", "6": "24px" }
+  "spacing": { "1": "4px", "2": "8px", "3": "12px", "4": "16px", "5": "20px", "6": "24px" },
+  "panes": { "compact": "150px", "board": "550px", "wide": "1050px" }
 }
 EOF
 }
@@ -595,6 +596,11 @@ export const BRAND = {
     "4": 16,
     "5": 20,
     "6": 24
+  },
+  "pane": {
+    "compact": 150,
+    "board": 550,
+    "wide": 1050
   }
 };
 EOF

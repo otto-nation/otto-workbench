@@ -51,5 +51,10 @@ export const BRAND = {
     "4": 16,
     "5": 20,
     "6": 24
+  },
+  "pane": {
+    "compact": 160,
+    "board": 560,
+    "wide": 1100
   }
 };

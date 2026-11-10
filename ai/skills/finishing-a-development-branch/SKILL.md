@@ -153,12 +153,12 @@ branch is now shared — someone may be reading it, may have marked it ready, ma
 be merging it.
 
 Cleanup happens after the PR merges, and it is `wt-cleanup` that does it —
-never `wt remove` (it leaves a squash-merged branch behind), never `git worktree
-remove`, and never on `main` or the default branch. Run it without asking; it
-removes every merged worktree and its branch. A merged tree that is still dirty is
-reported, not removed: read what it names before forcing anything. Plans and
-specs are not among it — those live in the repository's workspace at the
-container (`resolve-workspace`), which cleanup does not touch.
+never `wt remove` (it leaves a squash-merged branch behind), never
+`git worktree remove`, and never on `main` or the default branch. Run it
+without asking; it removes every merged worktree and its branch. A merged tree
+that is still dirty is reported, not removed: read what it names before forcing
+anything. Plans and specs are not among it — those live in the repository's
+workspace at the container (`resolve-workspace`), which cleanup does not touch.
 
 If you do have to push again before the PR merges:
 - A push you make by hand needs a PR comment naming what changed and why. A

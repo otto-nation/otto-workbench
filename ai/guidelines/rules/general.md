@@ -60,7 +60,7 @@ one script owns it and the guards below refuse what disagrees with it.
 
 A plan is about the repository, not about one branch of it, which is the whole
 reason it does not live in a worktree: written there it is duplicated across every
-sibling checkout, invisible from the others, and deleted by the `wt remove` that
+sibling checkout, invisible from the others, and deleted by the `wt-cleanup` that
 retires the branch — taking the reasoning with it while the work it explains lives
 on in `main`. Nothing at the container is inside a checkout, so there is no
 `.gitignore` entry to keep and no chance of committing one by accident.

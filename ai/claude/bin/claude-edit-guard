@@ -137,7 +137,7 @@ case "$_rel" in
     # The suggestion is the resolver's own answer, never a path built here —
     # two spellings of one location is what the resolver exists to prevent.
     if _ws=$("$_resolve_workspace" "$repo_dir" 2>/dev/null); then
-      block "A plan or spec belongs to the repository, not to this branch. Written here it is duplicated across every sibling worktree, invisible from them, and deleted by the \`wt remove\` that retires the branch — while the work it explains lives on in main. Write it under $_ws instead (plans/ or specs/), which is outside every checkout."
+      block "A plan or spec belongs to the repository, not to this branch. Written here it is duplicated across every sibling worktree, invisible from them, and deleted by the \`wt-cleanup\` that retires the branch — while the work it explains lives on in main. Write it under $_ws instead (plans/ or specs/), which is outside every checkout."
     fi
     block "A plan or spec belongs at the repository's container, and this is an ordinary clone — it has no container, so there is nowhere correct to put one. Convert the repo with \`wt-init\`, then write it under the path \`resolve-workspace\` prints. Writing it inside the checkout is the arrangement this refuses."
     ;;

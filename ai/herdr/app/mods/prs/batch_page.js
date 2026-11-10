@@ -7,7 +7,7 @@ import { prKey } from "./_lib/launch.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
   scrollBody, button, solidButton, pane, paneBar, chip as chipOf, filterGroup,
-  sectionLabel, text, type, statusText,
+  sectionLabel, text, type, statusText, dangerColor,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
 
@@ -67,7 +67,7 @@ function renderRunning({ launcher: L, workflows, run }) {
         .when(Boolean(terminal), (e) => e.child(
           button(`log-${killKey}`, "Log", () => run("terminal.keep", { terminal }))))
         .child(button(`cancel-${killKey}`, "Cancel", () => { void L.cancel(on, id, false); }))
-        .when(confirm, (e) => e.child(text("body", "Kills the run's processes", t.ansi1)))
+        .when(confirm, (e) => e.child(text("body", "Kills the run's processes", dangerColor())))
         .child(button(`kill-${killKey}`, confirm ? "Confirm kill" : "Kill", () => { void L.cancel(on, id, true); }));
     }));
 }
@@ -172,7 +172,7 @@ function renderForm({ launcher: L, prs }) {
       .when(Boolean(reason), (e) => e.child(text("body", reason, t.muted)))
       .when(hiddenSelected > 0, (e) => e.child(
         text("body", `${hiddenSelected} selected PR(s) hidden by filters won't run`, t.muted)))
-      .when(Boolean(L.note), (e) => e.child(text("body", L.note, t.ansi1)))
+      .when(Boolean(L.note), (e) => e.child(text("body", L.note, dangerColor())))
       .child(h_flex().gap(SP.md).items_center()
         .child(solidButton(
           "batch-start",

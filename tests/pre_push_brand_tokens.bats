@@ -94,3 +94,13 @@ _run_hook() {
   [ "$second" = "dev-deps --check" ]
   [[ "$first" != *"--offline"* ]]
 }
+
+@test "the hook fetches brand tokens before check when the fetch succeeds" {
+  _run_hook
+  [ -f "$FETCHED" ]
+  [ "$(sed -n '1p' "$CALLS")" = "generate-herdr-app-themes --resolve-brand" ]
+  [ "$(sed -n '2p' "$CALLS")" = "dev-deps --check" ]
+  # the cache the fetch filled now satisfies the offline probe
+  run "$FIXTURE/bin/local/generate-herdr-app-themes" --offline
+  [ "$status" -eq 0 ]
+}

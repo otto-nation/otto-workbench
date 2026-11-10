@@ -4,14 +4,16 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run, props,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run, props, layout,
 } from "herdr";
 import { locate } from "./_lib/location.js";
-import { boardTabId, offersOpenBoard } from "./_lib/tabs.js";
+import { fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
+import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadOwed, loadRepo, loadUser,
+  owedDue,
 } from "./_lib/board_data.js";
 import {
   TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, filterLabels, filterFacets, filterOn,
@@ -48,6 +50,16 @@ function targetsOf() {
 
 function ctxKey(ctx) {
   return JSON.stringify({ on: ctx?.on ?? null, cwd: ctx?.cwd ?? null });
+}
+
+function owedStamp(pair) {
+  const at = pair?.owedAt;
+  return Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+}
+
+// A comments-only read can land while a full or listing pull is still in flight; keep the newer pair.
+function newerOwed(cached, read) {
+  return owedStamp(cached) > owedStamp(read) ? cached : read;
 }
 
 function filtersOf() {
@@ -92,8 +104,18 @@ export default class PrsBoard extends View {
   // cx is dropped or delayed, so they go through the long-lived context init receives.
   init(_props, cx) {
     this.acx = cx;
-    // Where the copy is mounted, not how wide it is, decides whether it offers the board tab.
-    this.inPanel = offersOpenBoard(props());
+    // The copy mounted in the side panel (not its width) decides whether it offers Full screen.
+    this.inPanel = isPanelCopy(props());
+    this.fsState = null;
+    if (this.inPanel) {
+      cx.timer.every(1000, (cx) => {
+        const s = fullscreenState(layout());
+        if (s !== this.fsState) {
+          this.fsState = s;
+          cx.notify();
+        }
+      });
+    }
     this.workflows = new Workflows(cx, () => this.activeTargets());
     // The Batch form's Drafts chip is the Mine tab's: one setting, so the list and the form agree.
     // The Batch form's chips are the board's: one prs.filters, so a view and the form agree.
@@ -245,19 +267,54 @@ export default class PrsBoard extends View {
     }
   }
 
-  // Has Comments is read only while Mine shows; opening Mine reads it now rather than at the
-  // next full refresh.
+  // Has Comments is read only while Mine shows, and only when the last comments read is older than a minute.
   showMine() {
     setShared("prs.tab", "mine");
-    this.refresh(this.acx);
+    this.refreshOwed(this.acx);
   }
 
-  // What `pr` says each PR is owed, read only for Mine. A failed read keeps the last good answer
+  // What `pr` says each PR is owed, read only for Mine. A failed read keeps the last good pair
   // rather than emptying the column.
   async owedFor(ctx, slug, prev) {
-    if (tabOf() !== "mine") return prev ?? null;
+    if (tabOf() !== "mine") return { owed: prev?.owed ?? null, owedAt: prev?.owedAt ?? null };
     const r = await loadOwed(exec, ctx, slug);
-    return r.ok ? r.owed : (prev ?? null);
+    if (r.ok) return { owed: r.owed, owedAt: Date.now() };
+    return { owed: prev?.owed ?? null, owedAt: prev?.owedAt ?? null };
+  }
+
+  // Rebuild the board from cached rows after a comments-only read; skip when nothing is cached or the last read is still fresh.
+  refreshOwed(cx) {
+    for (const ctx of this.activeTargets()) {
+      const key = ctxKey(ctx);
+      const prev = this.cache.get(key);
+      // Nothing cached yet (first pull still in flight): a full pull reads owed now that Mine shows.
+      if (!prev?.repo) { this.refresh(cx); continue; }
+      if (!owedDue(prev.owedAt, Date.now())) continue;
+      cx.spawn(async (cx) => {
+        const r = await loadOwed(exec, ctx, prev.repo.slug);
+        if (!r.ok || !this.same(key)) return;
+        const cur = this.cache.get(key);
+        if (!cur?.repo) return;
+        const now = Date.now();
+        this.commit(key, {
+          ...cur,
+          owed: r.owed,
+          owedAt: now,
+          prs: assemble({
+            openPrs: cur.openPrs ?? [],
+            landedPrs: cur.landedPrs ?? [],
+            listing: cur.listing,
+            slug: cur.repo.slug,
+            host: cur.repo.host,
+            login: cur.me ?? "",
+            busy: cur.busy,
+            running: cur.running,
+            owed: r.owed,
+          }),
+        }, ctx, cx);
+        cx.notify();
+      });
+    }
   }
 
   async pullFull(ctx, key, cx, cycle) {
@@ -269,12 +326,12 @@ export default class PrsBoard extends View {
     this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, doc, terms, owed] = await Promise.all([
+    const [open, listing, doc, terms, owedRead] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
       this.listingFor(ctx, cycle),
       this.batchDocFor(ctx, cycle),
       this.terminalsFor(ctx, cycle),
-      this.owedFor(ctx, repo.slug, this.cache.get(key)?.owed),
+      this.owedFor(ctx, repo.slug, this.cache.get(key)),
     ]);
     const running = runningFor(terms.entries, repo.slug);
     if (!this.same(key)) return;
@@ -283,10 +340,11 @@ export default class PrsBoard extends View {
     const busy = busyPrs(doc.doc, repo.slug);
     const landedPrs = await this.landed(ctx, key, repo, listing.listing, open.prs);
     if (landedPrs == null || !this.same(key)) return;
+    const { owed, owedAt } = newerOwed(this.cache.get(key), owedRead);
     this.commit(key, {
       repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null, cwd: ctx.cwd }, me: login, tools: have,
       listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
-      openPrs: open.prs, landedPrs, owed,
+      openPrs: open.prs, landedPrs, running, owed, owedAt,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
         slug: repo.slug, host: repo.host, login, busy, running, owed,
@@ -320,12 +378,14 @@ export default class PrsBoard extends View {
       landedPrs = await this.landed(ctx, key, prev.repo, listing.listing, prev.openPrs ?? []);
       if (landedPrs == null || !this.same(key)) return;
     }
+    const { owed, owedAt } = newerOwed(this.cache.get(key), { owed: prev.owed, owedAt: prev.owedAt });
     this.commit(key, {
       ...prev, listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy, landedPrs,
+      running, owed, owedAt,
       prs: assemble({
         openPrs: prev.openPrs ?? [], landedPrs, listing: listing.listing,
         slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy, running,
-        owed: prev.owed,
+        owed,
       }),
     }, ctx, cx);
   }
@@ -474,14 +534,17 @@ export default class PrsBoard extends View {
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
-          .when(this.inPanel, (e) => e.child(this.openBoardButton()))));
+          .when(this.inPanel, (e) => e.child(this.fullscreenButton()))));
   }
 
-  openBoardButton() {
-    return button("open-board", "Open board", () => {
-      const id = boardTabId(spaces(), "PRs");
-      if (id) run("tab.select", { id });
-      else run("tab.new", { name: "PRs", mod: "prs" });
+  fullscreenButton() {
+    const state = fullscreenState(layout());
+    return button("fullscreen", state === "on" ? "Exit full screen" : "Full screen", () => {
+      if (state === "on" || state === "stranded") {
+        exitFullscreen();
+        return;
+      }
+      enterFullscreen();
     });
   }
 
@@ -555,7 +618,7 @@ export default class PrsBoard extends View {
         segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
       ]))
-      .when(this.inPanel, (e) => e.child(this.openBoardButton()))
+      .when(this.inPanel, (e) => e.child(this.fullscreenButton()))
       .child(this.refreshButton());
   }
 }

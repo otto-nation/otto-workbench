@@ -192,17 +192,10 @@ step_herdr_app_theme() {
 # step_herdr_app_mods — copies workbench herdr-app mods into HERDR_APP_DIR/mods
 # and, once the launcher has created it, HERDR_UNTRUSTED_APP_DIR/mods, so both
 # windows carry the same mods. No-op when herdr-app is not installed.
-# Prints a keys.json binding suggestion the first time the prs mod is installed;
-# never edits keys.json. Non-fatal: always returns 0.
+# Non-fatal: always returns 0.
 step_herdr_app_mods() {
   _herdr_app_present || return 0
   _herdr_app_install_mods
-  local name
-  for name in "${HERDR_APP_MODS_NEWLY_INSTALLED[@]}"; do
-    [[ "$name" == prs ]] || continue
-    info 'herdr-app: bind a key to open the PR board by adding to keys.json: "<key>": {"command": "tab.new", "args": {"name": "PRs", "mod": "prs"}}'
-    break
-  done
   [[ -d "$HERDR_UNTRUSTED_APP_DIR" ]] && _herdr_app_install_mods "$HERDR_UNTRUSTED_APP_DIR"
   return 0
 }

@@ -65,3 +65,22 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[["2 unresolved threads",null],null]' ]
 }
+
+@test "owedDue is true when owedAt is missing or the ttl has elapsed" {
+  _js '
+    const t = 1e12;
+    const ttl = m.OWED_TTL_MS;
+    process.stdout.write(JSON.stringify([
+      m.owedDue(undefined, t),
+      m.owedDue(null, t),
+      m.owedDue(NaN, t),
+      m.owedDue(t - ttl, t),
+      m.owedDue(t - ttl - 1, t),
+      m.owedDue(t - ttl + 1, t),
+      m.owedDue(t - 10, t, 10),
+      m.owedDue(t - 9, t, 10),
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,true,true,true,true,false,true,false]' ]
+}

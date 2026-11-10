@@ -78,7 +78,7 @@ _run_step() {
   jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["prs"]' <<< "$output"
 }
 
-@test "jq marks the panel copy of the board so it offers Open board" {
+@test "jq marks the panel copy of the board so it offers Full screen" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
   jq -e '[.. | objects | select(.id? == "prs-panel") | .content.props] == [{"placement":"panel"}]' <<< "$output"

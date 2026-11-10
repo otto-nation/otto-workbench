@@ -361,6 +361,15 @@ export function runningFor(entries, slug) {
   return busyMap(entries ?? [], slug);
 }
 
+// Comments cache is stale after this many milliseconds.
+export const OWED_TTL_MS = 60000;
+
+// True when owedAt is not a finite number, or now - owedAt is at least ttlMs.
+export function owedDue(owedAt, now, ttlMs = OWED_TTL_MS) {
+  if (!Number.isFinite(owedAt)) return true;
+  return now - owedAt >= ttlMs;
+}
+
 // `owed` maps a PR number to what `pr` says it is owed an answer for (see owedFrom); a PR
 // absent from it has nothing owed, or nothing known yet.
 export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy, running, owed }) {

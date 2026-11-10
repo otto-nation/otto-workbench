@@ -36,6 +36,7 @@ DEV_DEPS_INSTALLABLE=(
   jq
   yq
   node
+  bun
 )
 
 # CMD LABEL HINT — needs root, so checked only. HINT is the command to run.

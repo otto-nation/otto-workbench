@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="">
+<title>PRs · {{name}}</title>
+<link rel="stylesheet" href="/gen/theme.css">
+<link rel="stylesheet" href="/gen/tokens.css">
+<link rel="stylesheet" href="/web/public/style.css">
+<link rel="stylesheet" href="/web/public/wrap.css" media="{{wrapMedia}}">
+<link rel="stylesheet" href="/web/public/compact.css" media="{{compactMedia}}">
+<link rel="stylesheet" href="/web/public/wide.css" media="{{wideMedia}}">
+<script type="module" src="/web/public/app.js"></script>
+</head>
+<body data-version="{{version}}">
+<header>
+  <div class="brand">PRs <small>· {{name}}</small></div>
+  <div class="status-line" id="headStatus"></div>
+  <div class="spacer"></div>
+  <div class="head-extra" id="headExtra"></div>
+  <div class="seg" id="tabSeg" role="tablist"><button data-tab="team">Team</button><button data-tab="mine">Mine</button></div>
+  <button class="btn mfilters" id="mfilters">Filters</button>
+  <span class="mfstate" id="mfstate"></span>
+  <span class="updated" id="updated"></span>
+  <button class="icon-btn" id="themeBtn" title="Theme" aria-label="Theme">◐</button>
+  <button class="icon-btn" id="refresh" title="Refresh" aria-label="Refresh"><span class="glyph">↻</span></button>
+</header>
+<div class="errors" id="errors"></div>
+<div class="filters" id="filters"></div>
+<main>
+  <div class="board" id="board"></div>
+  <div class="msections" id="msections"></div>
+  <aside class="detail" id="detail"></aside>
+</main>
+<dialog class="dialog" id="dialog"></dialog>
+<div class="sheet" id="sheet"></div>
+<div class="toast" id="toast" hidden></div>
+</body>
+</html>

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# pr-board-release — assemble a self-contained PR board release tree from this checkout.
+#
+# Usage:
+#   ai/herdr/web/bin/pr-board-release --out DIR --ref REF
+#
+#   --out DIR   where the tree goes; must not exist, or be an empty directory
+#   --ref REF   the workbench ref the tree is built from (^[A-Za-z0-9._/-]+$); written to DIR/VERSION
+#
+# Copies exactly what the server loads at run time, keeping the paths it has in the repo so its
+# relative imports resolve unchanged:
+#   ai/herdr/web/{package.json,.bun-version,server/,lib/,public/}
+#   ai/herdr/app/mods/_lib/*.js
+#   ai/herdr/app/themes/otto-{light,dark}.generated.json
+# then writes DIR/VERSION and DIR/MANIFEST.sha256 ("<sha256>  <path>", LC_ALL=C sorted). No network,
+# no package install: the server has no dependencies. Run it with: bun DIR/ai/herdr/web/server/main.js
+#
+# Side effects: creates DIR. Never writes anywhere else.
+# Exit codes: 0 built; 1 a copy or checksum failed; 2 bad arguments, or DIR exists and is not empty.
+
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO="$(cd "$(dirname "$SELF")/../../../.." && pwd)"
+
+usage() { sed -n '2,20p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+out="" ref=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) [[ -n "${2:-}" ]] || { echo "Error: --out requires an argument" >&2; exit 2; }; out="$2"; shift 2 ;;
+    --ref) [[ -n "${2:-}" ]] || { echo "Error: --ref requires an argument" >&2; exit 2; }; ref="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Error: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+[[ -n "$out" && -n "$ref" ]] || { usage >&2; exit 2; }
+[[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "Error: --ref must match ^[A-Za-z0-9._/-]+\$" >&2; exit 2; }
+if [[ -e "$out" ]]; then
+  [[ -d "$out" && -z "$(ls -A "$out")" ]] || { echo "Error: $out exists and is not an empty directory" >&2; exit 2; }
+fi
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
+
+copy() {
+  local rel="$1"
+  mkdir -p "$out/$(dirname "$rel")"
+  cp -R "$REPO/$rel" "$out/$rel" || { echo "Error: could not copy $rel" >&2; exit 1; }
+}
+
+mkdir -p "$out"
+for rel in ai/herdr/web/package.json ai/herdr/web/.bun-version ai/herdr/web/server ai/herdr/web/lib ai/herdr/web/public \
+           ai/herdr/app/themes/otto-light.generated.json ai/herdr/app/themes/otto-dark.generated.json; do
+  copy "$rel"
+done
+mkdir -p "$out/ai/herdr/app/mods/_lib"
+cp "$REPO"/ai/herdr/app/mods/_lib/*.js "$out/ai/herdr/app/mods/_lib/" || { echo "Error: could not copy _lib" >&2; exit 1; }
+[[ -f "$out/ai/herdr/web/server/main.js" ]] || { echo "Error: entry point missing after copy" >&2; exit 1; }
+
+printf '%s\n' "$ref" > "$out/VERSION"
+files="$(cd "$out" && find . -type f ! -name MANIFEST.sha256 | sed 's|^\./||' | LC_ALL=C sort)"
+(cd "$out" && while IFS= read -r f || [[ -n "$f" ]]; do sha256 "$f"; done <<< "$files") > "$out/MANIFEST.sha256" \
+  || { echo "Error: could not write the manifest" >&2; exit 1; }
+echo "pr-board release $ref in $out"

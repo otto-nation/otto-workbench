@@ -1,0 +1,4 @@
+/* Layout from workspace specs/pr-board-web/mockup.html; look from the brand's DESIGN.md. Colours: /gen/theme.css. Sizes and type: /gen/tokens.css. */
+body.detail-open .board, body.detail-open .filters { display: flex; }
+.detail { flex: none; width: min(560px, 46vw); border-left: 1px solid var(--border); }
+.mback { display: none; }

@@ -65,7 +65,7 @@ def repo_path(filepath: str, sha: str, wt_path: Path | None) -> str:
     files would link the claim to code it is not about.
     """
     cited = filepath.removeprefix("./").lstrip("/")
-    if not wt_path or not sha:
+    if not wt_path or not sha or not Path(wt_path).is_dir():
         return cited
     tree = _tree_paths(str(wt_path), sha)
     if not tree or cited in tree:

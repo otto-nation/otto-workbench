@@ -99,6 +99,8 @@ CORE_COMPONENTS="bin git zsh"
 # ─── Docker / Colima ──────────────────────────────────────────────────────────
 DOCKER_RUN_DIR="$HOME/.docker/run"
 COLIMA_DIR="$HOME/.colima"
+# System Docker daemon sockets on Linux, in preference order: systemd-managed, then legacy.
+DOCKER_SYSTEM_SOCKETS=(/run/docker.sock /var/run/docker.sock)
 TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 # Symlink written by docker/setup.sh pointing to docker/<runtime>/aliases.zsh.
 # Sourced by zsh/config.d/aliases/docker.zsh to load runtime-specific config.

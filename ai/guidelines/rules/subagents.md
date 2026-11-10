@@ -19,5 +19,5 @@ between models is the harness's job; this is about the prompt and the review.
 
 ## Reading the result
 
-- The controller keeps the gates: validators, the selected tests, a revert check. A subagent's "passed" is a claim about its own run, in its own cwd (see `bash-tool.md` § Subagents Reset the Working Directory)
+- The controller keeps the gates: validators, the selected tests, a revert check. A subagent's "passed" is a claim about its own run, in its own cwd (see `git-operations.md` § Cross-Worktree Safety)
 - Look at the artifact — the diff, the screenshot, the output file — not the summary of it

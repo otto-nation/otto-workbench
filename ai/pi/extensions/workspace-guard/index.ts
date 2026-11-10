@@ -4,7 +4,7 @@
  *
  * A plan is about the repository, not about one branch of it. Written in a
  * worktree it is duplicated across every sibling checkout, invisible from the
- * others, and destroyed by the `wt remove` that retires the branch — taking the
+ * others, and destroyed by the `wt-cleanup` that retires the branch — taking the
  * reasoning with it while the work it explains lives on in main. The workspace
  * sits at the container, above every checkout, and `bin/resolve-workspace` is
  * the one thing that names it.

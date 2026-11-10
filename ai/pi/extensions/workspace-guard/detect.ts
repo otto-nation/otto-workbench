@@ -56,7 +56,7 @@ export function refusalFor(workspace: string): string {
     return (
       "A plan or spec belongs to the repository, not to this branch. Written " +
       "here it is duplicated across every sibling worktree, invisible from " +
-      "them, and deleted by the `wt remove` that retires the branch — while " +
+      "them, and deleted by the `wt-cleanup` that retires the branch — while " +
       "the work it explains lives on in main. Write it under " +
       `${workspace} instead (plans/ or specs/), which is outside every checkout.`
     );

@@ -107,7 +107,7 @@ tools:
   - name: validate-prose-refs
     permission: false
     visibility: brief
-    description: "Fails when agent, skill, rule or doc prose names a slash command no skill or hook answers, or a CLI command or flag the tool's own parser does not accept"
+    description: "Fails when agent, skill, rule or doc prose names a slash command no skill or hook answers, a CLI command or flag the tool's own parser does not accept, or a rules heading pointer that does not resolve"
 
   - name: validate-import-form
     permission: false

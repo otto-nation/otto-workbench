@@ -149,7 +149,7 @@ Complete a development branch — verify tests, self-review, then open a draft P
 /finishing-a-development-branch
 ```
 **Trigger:** Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch.
-**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — push and comment on the PR instead.
+**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR.
 
 ### `/machine`
 

@@ -47,12 +47,12 @@ straight into a command without reading it first. The selection is the hook's, s
 wide (an `AGENTS.md` edit reaches dozens of bats files that read it) — read it rather than
 trust a specific shape.
 
-The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine
-is not already using — the sizing described below — so a hand-started suite racing the hook's
-own oversubscribes the box and produces exactly those contention failures, in arbitrary tests
-that never repeat. Worse, a suite killed part-way (a timeout, an impatient Ctrl-C) leaves
-orphaned `bats` processes holding cores, and the next run inherits a machine that is already
-losing subprocesses. Two such piles, one of them hours old, are what prompted this rule.
+The cost is not merely the wasted minutes. A hand-started `bats` or `pytest` bypasses the
+slot pool that `bin/local/run-tests` shares (`CONTRIBUTING.md` § Running Tests), oversubscribes
+the box, and produces contention failures in arbitrary tests that never repeat. Worse, a
+suite killed part-way (a timeout, an impatient Ctrl-C) leaves orphaned `bats` processes
+holding cores, and the next run inherits a machine that is already losing subprocesses.
+Two such piles, one of them hours old, are what prompted this rule.
 
 When you must clean orphans up, scope the kill to a process tree you own. Find the roots — the
 listing names each one's worktree, which is what tells yours from someone else's — then kill
@@ -93,25 +93,10 @@ runs serially only when none do. Install it into the same pipx venv as pytest �
 `pipx inject pytest pytest-xdist` — to get the parallel run locally when no
 other pytest on PATH already has it. CI installs it explicitly.
 
-The runner sizes the run from the cores the machine is *not* already using: the core count
-less the one-minute load average, floored at 2 and capped at 12. A second whole-suite run
-therefore takes the share the first left rather than oversubscribing the box, which is
-what neither suite survives — a test subprocess that cannot get scheduled surfaces as a
-timeout, a SIGPIPE, or a git daemon that will not answer, in arbitrary tests that never
-repeat. `TEST_JOBS` overrides the sizing outright, and `TEST_JOBS=1` restores the serial
-ordering. When contention does get through, `tests/conftest.py` raises `MachineContention`
-and names it in the message: re-run it, do not bisect it.
-
-It arrives in two shapes, and only the first is an exception. A subprocess a *fixture* ran
-raises `MachineContention` at the line that ran it. A subprocess the *code under test* ran
-does not: `proc.run` hands a timeout or an external-signal death back as an ordinary
-failure result — which is what its callers need — so the code handles it as designed and
-the assertion that trips afterwards looks like any other. For those, conftest attaches a
-`MachineContention — the code under test lost a subprocess` section to the failure report,
-listing what `proc.run` saw the machine end during that test. A failure carrying one is
-read the same way as the exception: re-run it before believing the assertion. A failure
-carrying no section is a failure with nothing in the record — which is evidence, not
-merely the absence of a marker.
+A failure carrying `MachineContention`, as an exception or as a section in the report,
+means the machine starved a subprocess: re-run it, do not bisect it. `TEST_JOBS=1` gives
+the serial ordering. How the runner sizes itself and what the two shapes mean is in
+`CONTRIBUTING.md` § Running Tests.
 
 ## UI and styling
 
@@ -142,10 +127,10 @@ or styling work, starting at Do's and Don'ts and Components.
 - A migration returns `0` when it changed something and `MIGRATION_NOOP` when it found the target already in the shape it produces. Both are recorded and never retried; only a change is announced. Returning `0` for a no-op reports work that did not happen — which for a scoped migration is every sync, since each one visits the targets registered since the last (see `docs/execution-flow.md` § Migrations).
 - A migration whose target does not exist *yet* returns `MIGRATION_DEFERRED` instead — nothing is recorded, nothing is printed, and the next sync asks again once the file has been written. `MIGRATION_NOOP` there retires the migration against a file it never saw, which is how the issue-tracker lift missed a `config.yml` a session created half an hour after it ran. `bin/local/validate-migrations` rejects a bare `return 0` under an absent-path guard and accepts `MIGRATION_DEFERRED` only from one, so the status nothing records cannot be reached from a condition that never resolves. A migration that *removes* something stays `MIGRATION_NOOP`: a file arriving later is a fresh install whose contents the operator chose.
 - Generated files (`tools.generated*.md`, `git.generated.md`, `config.schema.json`, `ai/herdr/app/themes/*.generated.json`) are never edited directly — edit the source and regenerate.
-- **Prose names what exists** — a command, flag or slash command written into an agent, skill, rule or doc must resolve against its owner: a `pr …` span against `pr`'s own parsers (every registry tool declaring `parser:` is checked the same way), a slash-command span against `ai/skills/`, a hook-answered command, or a harness built-in. Write the real invocation rather than a description of it, and when a command or skill is renamed or removed the check names every page still pointing at the old one (enforced by `bin/local/validate-prose-refs`).
+- **Prose names what exists** — a command, flag, slash command or rules heading pointer written into an agent, skill, rule or doc must resolve against its owner: a `pr …` span against `pr`'s own parsers (every registry tool declaring `parser:` is checked the same way), a slash-command span against `ai/skills/`, a hook-answered command, or a harness built-in, and a `` `x.md` `` pointer against that rules file's headings on one line. Write the real invocation rather than a description of it, and when a command or skill is renamed or removed the check names every page still pointing at the old one (enforced by `bin/local/validate-prose-refs`).
 - Docs are composed, not spliced — a `docs/<name>.md` carrying a compose-docs banner is an artifact of `docs/<name>.src.md`. Prose goes in the `.src.md`; a generated section is an `<!-- include: bin/local/<generator> --emit <block> -->` directive, so a doc names the block it wants and no dispatch table sits between them.
 - A `lib/` doc comment is published — the module's header block and the first paragraph of each function's comment are what `docs/libraries.md` prints. For `ai/lib/` (Python), only the module docstring is published into `docs/ai-libraries.md`; per-function docstrings are not rendered. Keep the first paragraph to the contract, including what each argument does, and put implementation rationale below a blank comment line (or below a blank line in a Python docstring).
-- **A lifted helper's return type is new** — moving a helper onto a `lib/` module's published surface republishes everything about it, its return type included, so `ai/guidelines/rules/general.md` § Types Over Tuples applies from that moment. The pre-existing-tuple exemption there covers a tuple left where it is, not one a refactor renames, relocates, or promotes: `_section_bounds` returning `(start, end)` inside `review_findings` was grandfathered, and `section_span` returning the same pair from `review_document` was a new tuple and took a frozen dataclass. Give it the type in the tranche that lifts it — every caller the lift exists to attract is one the tuple would teach to unpack by position. This one is prose, not a validator: `ai/lib/` carries some forty grandfathered tuple returns, so a check would ship as an allowlist rather than a rule.
+- **A lifted helper's return type is new** — moving a helper onto a `lib/` module's published surface republishes everything about it, its return type included, so (`ai/guidelines/rules/general.md` § Types Over Tuples) applies from that moment. The pre-existing-tuple exemption there covers a tuple left where it is, not one a refactor renames, relocates, or promotes: `_section_bounds` returning `(start, end)` inside `review_findings` was grandfathered, and `section_span` returning the same pair from `review_document` was a new tuple and took a frozen dataclass. Give it the type in the tranche that lifts it — every caller the lift exists to attract is one the tuple would teach to unpack by position. This one is prose, not a validator: `ai/lib/` carries some forty grandfathered tuple returns, so a check would ship as an allowlist rather than a rule.
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.
 - **Idempotency is required** — all setup scripts, sync functions, and migrations must be safe to re-run. Guard installs with presence checks, use `install_symlink` (not raw `ln`), and ensure repeated execution produces the same result with no side effects.
 - Migrations are state-tracked in `~/.local/state/workbench/migrations.applied` and auto-pruned when removed. A migration that drains a path under the config or state root must carry a `# adoption-sensitive: <reason>` header line — legacy-root adoption re-seeds such a path and would otherwise leave the work permanently undone (see `docs/execution-flow.md` § Migrations).

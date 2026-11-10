@@ -123,11 +123,9 @@ Branch naming, base branch, and worktree placement are all `wt`'s to decide. Do
 not pass a path, and do not fall back to `git worktree add` — the two produce
 different layouts, and the git form leaves state `wt` cannot see.
 
-`wt switch -c` brings the default branch up to date before cutting the new one,
-through the `fetch-default` pre-switch hook. **If it aborts, that is the
-guarantee working**, not an error to route around: the default branch has
-diverged from origin or will not fast-forward. Fix the default branch and
-re-run. Never re-run with `--no-hooks` to get past it.
+If `wt switch -c` aborts on its pre-switch hook, the default branch has diverged
+or the worktree will not fast-forward: fix it and re-run, never with `--no-hooks`
+(`git-operations.md` § Branch Freshness).
 
 Any other `wt` failure — no `wt` on PATH, worktrunk unconfigured for this repo,
 a sandbox denying the write — stops the work. Report what failed and ask. Both
@@ -163,12 +161,12 @@ if [ -f go.mod ]; then go mod download; fi
 
 ## Step 3: Verify a Clean Baseline
 
-Run the project's tests so the workspace starts green. Use the project's own
-command — `task test`, `npm test`, `cargo test`, `pytest`, `go test ./...`.
+Run the baseline the repo's AGENTS.md prescribes; where it forbids whole-suite
+runs, run the files the planned work will touch; otherwise the test files the
+planned work will touch.
 
-Run them **in this worktree**, never in another. A test harness that creates
-temporary git repos can corrupt the branch and commit state of whatever tree it
-runs in.
+Run them in this worktree, never another
+(`git-operations.md` § Cross-Worktree Safety).
 
 **If tests fail:** report the failures and ask whether to proceed or
 investigate. A dirty baseline makes every later failure ambiguous.
@@ -208,6 +206,6 @@ Ready to implement <feature-name>
 | "`GIT_DIR != GIT_COMMON`, so I'm isolated" | `main/` is a linked worktree here too. Compare the branch against the container's HEAD before believing it. |
 | "`git worktree add` is quicker" | Only `wt` applies this machine's naming rules and pre-switch hooks. The git form puts the worktree somewhere the rest of these rules do not describe. |
 | "I'll put it in `.worktrees/`" | That is upstream Superpowers' default, not this machine's. Bare repos here place worktrees as peers of `main/`. |
-| "The hook abort is a flake — I'll pass `--no-hooks`" | The abort means the default branch is stale or diverged. Branching anyway bases your work on it. |
+| "The hook abort is a flake — I'll pass `--no-hooks`" | The abort means the default branch has diverged or the worktree will not fast-forward. Branching anyway bases your work on it. |
 | "It's a one-line change, I'll just edit here" | Never edit `main` in place, whatever the size. |
 | "I'll run the suite in the main worktree, it's the same code" | It is not. Cross-worktree test runs can corrupt the target's git state. |

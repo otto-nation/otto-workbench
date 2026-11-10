@@ -142,6 +142,12 @@ _throws() {
   [ "$output" = '[{"repos":[],"labels":[]},{"repos":[],"labels":[]},{"repos":["a/one"],"labels":[]}]' ]
 }
 
+@test "filterForm drops drafts only when drafts is false, alongside the repo chip" {
+  _js '(() => { const prs = [{n:1,repoSlug:"a/one",isDraft:true},{n:2,repoSlug:"a/one"},{n:3,repoSlug:"b/two",isDraft:true},{n:4,repoSlug:"b/two"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}),ids({drafts:true}),ids({drafts:false}),ids({drafts:false,repos:["b/two"]})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2,3,4],[1,2,3,4],[2,4],[4]]' ]
+}
+
 @test "filterForm empty, repo, labels OR, repo AND label, stale ignored, unlabeled hidden" {
   _js '(() => { const prs = [{n:1,repoSlug:"a/one",labels:["bug"]},{n:2,repoSlug:"b/two",labels:["docs"]},{n:3,repoSlug:"a/one",labels:[]},{n:4,repoSlug:"A/One",labels:["BUG"]},{n:5,repoSlug:"c/three",labels:["help"]},{n:6,repoSlug:"c/three"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}),ids({repos:[],labels:[]}),ids({repos:["A/ONE"]}),ids({labels:["BUG","docs"]}),ids({repos:["a/one"],labels:["bug"]}),ids({repos:["gone/x"]}),ids({repos:["gone/x","b/two"]}),ids({labels:["nope"]}),ids({labels:["nope","help"]})]; })()'
   [ "$status" -eq 0 ]

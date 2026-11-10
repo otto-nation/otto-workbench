@@ -91,9 +91,8 @@ function renderFormFilters(L, prs) {
   const facets = formFacets(prs);
   const repoOn = new Set([...L.repoFilter].map((r) => r.toLowerCase()));
   const labelOn = new Set([...L.labelFilter].map((n) => n.toLowerCase()));
-  const any = L.repoFilter.size > 0 || L.labelFilter.size > 0;
-  if (facets.repos.length <= 1 && facets.labels.length === 0 && !any) return null;
-  const out = v_flex().gap(SP.xs);
+  const out = v_flex().gap(SP.xs)
+    .child(filterGroup("Show", [chipOf("chip-drafts", "Drafts", L.drafts.on(), () => L.drafts.toggle())]));
   if (facets.repos.length > 1) {
     out.child(filterGroup("Repo", facets.repos.map((slug) => chipOf(
       `chip-repo:${slug}`, shortRepo(slug), repoOn.has(slug.toLowerCase()),
@@ -157,7 +156,7 @@ function renderForm({ launcher: L, prs }) {
   const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
     .child(sectionHeading("Start a batch"))
-    .when(Boolean(filters), (e) => e.child(filters))
+    .child(filters)
     .child(renderPrs(L, all, t))
     .child(v_flex().gap(SP.sm)
       .child(text("title", "Steps"))

@@ -69,8 +69,8 @@ export function formFacets(prs) {
   return { repos, labels };
 }
 
-/** Keep PRs matching repo AND label chips; empty or stale chips match everything. */
-export function filterForm(prs, { repos = [], labels = [] } = {}) {
+/** Keep PRs matching repo AND label chips, dropping drafts when `drafts` is false; empty or stale chips match everything. */
+export function filterForm(prs, { repos = [], labels = [], drafts = true } = {}) {
   const list = prs ?? [];
   const facets = formFacets(list);
   const knownRepos = new Set(facets.repos.map(fold));
@@ -78,6 +78,7 @@ export function filterForm(prs, { repos = [], labels = [] } = {}) {
   const repoSet = new Set((repos ?? []).map(fold).filter((r) => knownRepos.has(r)));
   const labelSet = new Set((labels ?? []).map(fold).filter((l) => knownLabels.has(l)));
   return list.filter((pr) => {
+    if (!drafts && pr.isDraft) return false;
     if (repoSet.size > 0 && !repoSet.has(fold(pr.repoSlug))) return false;
     if (labelSet.size > 0) {
       const names = (pr.labels ?? []).map(fold);

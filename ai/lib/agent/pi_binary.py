@@ -119,7 +119,8 @@ class PiBinary:
             # ceiling: _mise_global_node already resolves mise's global node;
             # only a machine where mise gives no global node still falls back
             # to the launcher, so `env node` finds it and a trusted repo's
-            # mise [env] still reaches pi.
+            # mise [env] still reaches pi. Upgrade trigger: once a run is refused
+            # for the repo's environment on such a machine, refuse to spawn instead.
             return PiSpawn((self.path,), dict(env))
         out = dict(env)
         if self.install_root:

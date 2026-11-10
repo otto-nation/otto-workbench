@@ -566,6 +566,7 @@ session with stdin closed, and runs drafted. Nothing is pushed unless `--auto-pu
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
+pr batch plan --checkout DIR --needs comments  # only the comments need; reads no branches
 pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff] [--rebase behind]
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps

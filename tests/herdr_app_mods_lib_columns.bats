@@ -180,6 +180,19 @@ _filter() {
   [ "$output" = "ci-failing" ]
 }
 
+@test "mineColumn: owed feedback -> has-comments, ahead of changes requested and draft" {
+  _mine '{"owedFeedback":"2 unresolved threads","reviewDecision":"CHANGES_REQUESTED","isDraft":true}'
+  [ "$status" -eq 0 ]
+  [ "$output" = "has-comments" ]
+}
+
+@test "mineColumn: conflicts and failing CI still come before has-comments" {
+  _mine '{"owedFeedback":"x","mergeable":"CONFLICTING"}'
+  [ "$output" = "has-conflicts" ]
+  _mine '{"owedFeedback":"x","ciStatus":"failing"}'
+  [ "$output" = "ci-failing" ]
+}
+
 @test "mineColumn: CHANGES_REQUESTED -> changes-requested" {
   _mine '{"reviewDecision":"CHANGES_REQUESTED"}'
   [ "$status" -eq 0 ]

@@ -11,7 +11,7 @@ import { boardTabId, offersOpenBoard } from "./_lib/tabs.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
-  assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadRepo, loadUser,
+  assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadOwed, loadRepo, loadUser,
 } from "./_lib/board_data.js";
 import { TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, filterOn, isMine, groupColumns } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
@@ -232,6 +232,21 @@ export default class PrsBoard extends View {
     }
   }
 
+  // Has Comments is read only while Mine shows; opening Mine reads it now rather than at the
+  // next full refresh.
+  showMine() {
+    setShared("prs.tab", "mine");
+    this.refresh(this.acx);
+  }
+
+  // What `pr` says each PR is owed, read only for Mine. A failed read keeps the last good answer
+  // rather than emptying the column.
+  async owedFor(ctx, slug, prev) {
+    if (tabOf() !== "mine") return prev ?? null;
+    const r = await loadOwed(exec, ctx, slug);
+    return r.ok ? r.owed : (prev ?? null);
+  }
+
   async pullFull(ctx, key, cx, cycle) {
     const have = await this.ensureTools(ctx, key);
     if (!have || !this.same(key)) return;
@@ -241,11 +256,12 @@ export default class PrsBoard extends View {
     this.repoByKey.set(key, repoId(repo));
     const login = await this.loginOf(ctx, key);
     if (login == null || !this.same(key)) return;
-    const [open, listing, doc, terms] = await Promise.all([
+    const [open, listing, doc, terms, owed] = await Promise.all([
       loadOpenPrs(exec, ctx, repo.slug),
       this.listingFor(ctx, cycle),
       this.batchDocFor(ctx, cycle),
       this.terminalsFor(ctx, cycle),
+      this.owedFor(ctx, repo.slug, this.cache.get(key)?.owed),
     ]);
     const running = runningFor(terms.entries, repo.slug);
     if (!this.same(key)) return;
@@ -257,10 +273,10 @@ export default class PrsBoard extends View {
     this.commit(key, {
       repo: { slug: repo.slug, host: repo.host, on: ctx.on ?? null, cwd: ctx.cwd }, me: login, tools: have,
       listing: listing.listing, reviewsRoot: listing.reviewsRoot, busy,
-      openPrs: open.prs, landedPrs,
+      openPrs: open.prs, landedPrs, owed,
       prs: assemble({
         openPrs: open.prs, landedPrs, listing: listing.listing,
-        slug: repo.slug, host: repo.host, login, busy, running,
+        slug: repo.slug, host: repo.host, login, busy, running, owed,
       }),
     }, ctx, cx);
   }
@@ -296,6 +312,7 @@ export default class PrsBoard extends View {
       prs: assemble({
         openPrs: prev.openPrs ?? [], landedPrs, listing: listing.listing,
         slug: prev.repo.slug, host: prev.repo.host, login: prev.me ?? "", busy, running,
+        owed: prev.owed,
       }),
     }, ctx, cx);
   }
@@ -435,7 +452,7 @@ export default class PrsBoard extends View {
       .child(h_flex().items_center().justify_between()
         .child(segmented([
           segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
-          segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
+          segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
@@ -516,7 +533,7 @@ export default class PrsBoard extends View {
       .child(this.scopeToggle())
       .child(segmented([
         segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
-        segment("tab-mine", "Mine", tab === "mine", () => setShared("prs.tab", "mine")),
+        segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
       ]))
       .when(this.inPanel, (e) => e.child(this.openBoardButton()))
       .child(this.refreshButton());

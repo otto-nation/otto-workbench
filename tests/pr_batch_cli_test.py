@@ -59,7 +59,7 @@ def test_no_batch_flag_is_a_prefix_of_a_global_flag():
 
 def test_plan_prints_the_matrix(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {batch.model.Step.REBASE: StepNeed(True, "behind")})
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, steps=None: Plan("me", [row]))
     assert _main(["batch", "plan", "--checkout", "/r"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["schema_version"] == 1
@@ -368,7 +368,7 @@ def _plan_with_refs():
 
 def test_plan_does_not_drop_refs_when_the_reader_has_gone(monkeypatch):
     dropped = []
-    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", []))
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs, steps=None: Plan("me", []))
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
 
     def gone(_payload):

@@ -118,6 +118,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("plan", help="Show which PRs need which steps")
     p.add_argument("--checkout", action="append", required=True, metavar="DIR",
                    help="A checkout whose open PRs to plan for; repeatable")
+    p.add_argument("--needs", type=_steps, default=None, metavar="STEPS",
+                   help=f"Judge only these steps' needs, any of {','.join(STEP_ORDER)}; "
+                        "without rebase no branch is read or fetched (default: every step)")
 
     r = sub.add_parser("run", help="Start a run", epilog=_RUN_EPILOG,
                        formatter_class=argparse.RawDescriptionHelpFormatter)

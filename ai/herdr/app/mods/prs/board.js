@@ -51,6 +51,7 @@ function badges(pr, { hideBusy } = {}) {
   if (pr.state === "MERGED") out.push(statusText("pass", "Merged"));
   if (pr.inMergeQueue) out.push(statusText("running", "In merge queue"));
   if (pr.busy && !hideBusy) out.push(statusText("running", "Batch working"));
+  if (pr.owedFeedback) out.push(text("meta", pr.owedFeedback, t.muted));
   const runs = pr.reviewRuns.length;
   if (runs > 0) out.push(text("meta", `${runs} reviews`, t.muted));
   for (const name of pr.labels.slice(0, 2)) out.push(tag(name));

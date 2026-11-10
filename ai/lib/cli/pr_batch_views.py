@@ -96,7 +96,8 @@ def _github(run: Run, offline: bool) -> dict:
 def cmd_plan(args) -> int:
     # A standalone plan is a read: no namespace, nothing to drop. `run --plan`
     # from a saved file reads mergeStateStatus instead of namespaced refs.
-    core.report.emit_json(core.serde.to_dict(batch.plan.build_plan(args.checkout)))
+    steps = frozenset(args.needs) if args.needs else None
+    core.report.emit_json(core.serde.to_dict(batch.plan.build_plan(args.checkout, steps)))
     return EXIT_OK
 
 

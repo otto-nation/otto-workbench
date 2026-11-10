@@ -13,6 +13,7 @@
  *   hasNewChangesSinceReview: boolean
  *   reviewing: boolean — ui-code's isReviewQueued, stored on the PR here
  *   author: login
+ *   owedFeedback: string | null — what `pr comments` would answer, from pr's own plan
  *   reviewRuns: array NEWEST FIRST of { postedEvent: null | string }
  *     null = unposted; any non-null, including 'dismissed', counts as posted
  */
@@ -29,6 +30,7 @@ export const TEAM_COLUMNS = [
 export const MINE_COLUMNS = [
   { key: 'has-conflicts', label: 'Has Conflicts' },
   { key: 'ci-failing', label: 'CI Failing' },
+  { key: 'has-comments', label: 'Has Comments' },
   { key: 'changes-requested', label: 'Changes Requested' },
   { key: 'draft', label: 'Draft' },
   { key: 'pending-review', label: 'Pending Review' },
@@ -69,6 +71,9 @@ export function mineColumn(pr) {
   if (pr.inMergeQueue) return 'in-queue';
   if (pr.mergeable === 'CONFLICTING') return 'has-conflicts';
   if (pr.ciStatus === 'failing') return 'ci-failing';
+  // Before Changes Requested: feedback still owed is the author's work, while a request with
+  // every comment answered waits on the reviewer.
+  if (pr.owedFeedback) return 'has-comments';
   if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'changes-requested';
   if (pr.isDraft) return 'draft';
   if (pr.reviewDecision === 'APPROVED' && (pr.ciStatus === 'passing' || pr.ciStatus === 'none'))

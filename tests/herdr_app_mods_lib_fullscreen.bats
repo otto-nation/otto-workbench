@@ -49,3 +49,8 @@ _js() {
   _js '[m.isPanelCopy({placement:"panel"}), m.isPanelCopy({}), m.isPanelCopy(undefined), m.isPanelCopy({placement:"tab"})]'
   [ "$output" = '[true,false,false,false]' ]
 }
+
+@test "healDue is true only for stranded at or after pendingUntil" {
+  _js '[m.healDue("stranded", undefined, 1), m.healDue("stranded", 20, 10), m.healDue("stranded", 10, 10), m.healDue("stranded", 10, 11), m.healDue("on", undefined, 1), m.healDue("off", undefined, 1), m.healDue("stranded", null, 1), m.healDue("stranded", NaN, 1)]'
+  [ "$output" = '[true,false,true,true,false,false,true,true]' ]
+}

@@ -18,6 +18,9 @@
  *
  * exitSteps(savedPx) -> show `main`, then resize `panel` to savedPx only when that
  * is a finite number > 0. With no saved width, only show `main`.
+ *
+ * healDue(state, pendingUntil, now) -> true only when state is "stranded" and
+ * now >= pendingUntil. A missing, null, or NaN pendingUntil counts as 0.
  */
 export function findNode(root, id) {
   if (root?.id === id) return root;
@@ -60,4 +63,9 @@ export function exitSteps(savedPx) {
     steps.push({ command: "layout.resize", args: { id: "panel", px: savedPx } });
   }
   return steps;
+}
+
+export function healDue(state, pendingUntil, now) {
+  const pending = Number.isFinite(pendingUntil) ? pendingUntil : 0;
+  return state === "stranded" && now >= pending;
 }

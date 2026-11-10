@@ -8,7 +8,8 @@ import {
 } from "herdr";
 import { locate } from "./_lib/location.js";
 import { boardTabId } from "./_lib/tabs.js";
-import { enterPlan, exitSteps, fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
+import { fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
+import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
@@ -492,13 +493,10 @@ export default class PrsBoard extends View {
     const state = fullscreenState(layout());
     return button("fullscreen", state === "on" ? "Exit full screen" : "Full screen", () => {
       if (state === "on" || state === "stranded") {
-        for (const step of exitSteps(shared("prs.panelPx"))) run(step.command, step.args);
-        setShared("prs.panelPx", null);
+        exitFullscreen();
         return;
       }
-      const plan = enterPlan(layout());
-      if (plan.savedPx !== null) setShared("prs.panelPx", plan.savedPx);
-      for (const step of plan.steps) run(step.command, step.args);
+      enterFullscreen();
     });
   }
 

@@ -13,7 +13,7 @@ teardown() {
   common_teardown
 }
 
-@test "no hover callback changes a border colour" {
+@test "no hover callback changes a border colour (single-line match only)" {
   run grep -nE '\.hover\([^)]*\)[^;]*border_color|\.hover\(\(s\) => s[^;]*border_color' \
     "$MODS"/_ui/*.js "$MODS"/team-prs/*.js
   [ "$status" -eq 1 ]

@@ -27,7 +27,8 @@ Options:
   --palettes DIR   Read palettes from DIR (default: ai/herdr/app/palettes)
   --out DIR        Write themes to DIR (default: ai/herdr/app/themes)
   --mods-lib DIR   Write brand.generated.js to DIR. Default: ai/herdr/app/mods/_lib
-                   on a default run; skipped when --palettes is given without it.
+                   on a default run; skipped when --palettes is given without it
+                   (--check then ignores the module too).
   --tokens FILE    Read brand tokens from FILE instead of the pinned install
   --terminal DIR   Read otto-{light,dark}.json from DIR instead of the pin
   --site DIR       Site package root (default: <repo>/site)
@@ -543,15 +544,13 @@ def main(argv: list[str]) -> int:
         print(f"generate-herdr-app-themes: {err}", file=sys.stderr)
         return 2
 
-    stale = [path for path, text in outputs if not path.is_file() or path.read_text() != text]
+    stale = [(path, text) for path, text in outputs if not path.is_file() or path.read_text() != text]
     if args.check:
-        for path in stale:
+        for path, _ in stale:
             print(f"{path} is stale — run bin/local/generate-herdr-app-themes", file=sys.stderr)
         return 1 if stale else 0
     out_dir.mkdir(parents=True, exist_ok=True)
-    for path, text in outputs:
-        if path not in stale:
-            continue
+    for path, text in stale:
         # A sibling temp file and an atomic replace: sync links these files
         # into herdr-app's config, so a half-written one would be read live.
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -4,7 +4,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { STEP_NAMES, STEP_HELP, formFacets } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
-import { SP } from "./_lib/tokens.js";
+import { SP, RADIUS } from "./_lib/tokens.js";
 import {
   scrollBody, button, solidButton, pane, paneBar, chip as chipOf, filterGroup,
   sectionLabel, text, type, statusText,
@@ -21,7 +21,7 @@ function machineOf(on) {
 
 function cardCheckbox(on) {
   const t = theme();
-  return div().flex_none().w(SP.md).h(SP.md).rounded(SP.xxs).border_1().border_color(t.dim)
+  return div().flex_none().w(SP.md).h(SP.md).rounded(RADIUS.tag).border_1().border_color(t.input)
     .when(Boolean(on), (e) => e.bg(t.foreground));
 }
 

@@ -133,7 +133,8 @@ export function boardState(targets, states, scope) {
   targets.forEach((t, i) => {
     const st = states[i] ?? {};
     if (scope === 'all' && skippable(st.error)) { skipped++; return; }
-    if (st.error) errors.push({ on: t.on ?? null, cwd: t.cwd ?? null, error: st.error });
+    // updatedAt is the last successful load, so a failed refresh over older data reads as stale.
+    if (st.error) errors.push({ on: t.on ?? null, cwd: t.cwd ?? null, error: st.error, updatedAt: st.updatedAt ?? null });
     else if (st.prs == null) loading++;
     shown.push(st);
   });

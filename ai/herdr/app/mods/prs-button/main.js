@@ -35,8 +35,10 @@ export default class PrsButton extends View {
     return h_flex().size_full().items_center().pr(SP.sm).bg(t.chrome).border_b_1().border_color(t.border)
       .child(type(h_flex().id("panel-prs").h(PANEL_BUTTON.h).px(PANEL_BUTTON.px).gap(PANEL_BUTTON.gap).flex_none().items_center()
         .rounded(RADIUS.control).cursor_pointer()
-        .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
-        .hover((s) => s.bg(t.hover))
+        // DESIGN.md: selected is never fill alone, so the open board also takes a 2px accent rule
+        // under the label; hover fills only the closed toggle, so it never hides the selection.
+        .when(on, (e) => e.bg(t.selected).text_color(t.foreground).border_b_2().border_color(t.accent))
+        .when(!on, (e) => e.bg(t.chrome).text_color(t.muted).hover((s) => s.bg(t.hover)))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => {
           if (on) run("layout.hide", { id: "panel" });

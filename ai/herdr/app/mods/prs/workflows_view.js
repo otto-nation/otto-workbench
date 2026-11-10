@@ -8,7 +8,7 @@ import {
 import { relativeTime } from "./_lib/history.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
-  hoverRow, card, inset, scrollBody, type, text, statusText, caption, placeholder,
+  hoverRow, card, inset, scrollBody, type, text, statusText, caption, placeholder, errorLine,
 } from "./_ui/ui.js";
 
 function runKind(status) {
@@ -59,7 +59,7 @@ export function renderRunPanel(state, expanded) {
   const t = theme();
   const { runs, runId, pinnedOn, error, nowMs, onPickRun } = state;
   if (error) {
-    return placeholder(error.message ?? String(error));
+    return errorLine(error.message ?? String(error));
   }
   if (!runs.length) {
     return placeholder("No batch runs yet");
@@ -74,7 +74,7 @@ export function renderRunPanel(state, expanded) {
         .child(text("meta", open ? "▾" : "▸", t.muted))
         .child(text("meta", i === 0 ? "Latest" : relativeTime(r.startedAt ?? "", nowMs)))
         .child(text("meta", `${prCount(r.items)} · ${(r.repos ?? []).join(", ")}`, t.muted))
-        .when(Boolean(r.error), (e) => e.child(text("body", r.error, t.ansi1)))
+        .when(Boolean(r.error), (e) => e.child(errorLine(r.error)))
         .child(div().flex_1())
         .child(statusText(runKind(r.status), runWord(r.status)));
       return open && expanded ? [row, expanded(r)] : [row];
@@ -89,7 +89,7 @@ export function renderRunItems(doc, { repos = [], prOf, onOpen }) {
     return placeholder("Loading…").pl(SP.xl).py(SP.xs);
   }
   if (!doc.ok) {
-    return placeholder(doc.error?.message ?? "Could not read this run").pl(SP.xl).py(SP.xs);
+    return errorLine(doc.error?.message ?? "Could not read this run").pl(SP.xl).py(SP.xs);
   }
   return v_flex().pl(SP.xl).gap(SP.xxs)
     .children((doc.items ?? []).map((item) => {
@@ -149,7 +149,7 @@ function renderLog(state) {
     return placeholder("Loading log…");
   }
   if (log.error) {
-    return placeholder(log.error);
+    return errorLine(log.error);
   }
   const lines = String(log.text ?? "").split("\n");
   return type(inset().text_color(theme().foreground), "code")

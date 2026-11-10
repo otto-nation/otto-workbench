@@ -263,14 +263,14 @@ _gql() {
   [[ "$output" == *'"every":true'* ]]
 }
 
-@test "loadListing asks for a 120 s timeout" {
+@test "loadListing uses the exec default timeout" {
   _bd '
     const table = [{ prefix: "pr review --list", stdout: JSON.stringify({ reviews_root: "/r" }) }];
     await m.loadListing(exec, ctx);
-    process.stdout.write(JSON.stringify({ t: calls.find(c => c.cmd === "pr").timeout }));
+    process.stdout.write(JSON.stringify({ t: calls.find(c => c.cmd === "pr").timeout ?? "default" }));
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"t":120000'* ]]
+  [[ "$output" == *'"t":"default"'* ]]
 }
 
 @test "loadListing ok and missing pr" {

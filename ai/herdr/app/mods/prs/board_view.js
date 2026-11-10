@@ -4,10 +4,11 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
-  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run, props,
+  exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run, props, layout,
 } from "herdr";
 import { locate } from "./_lib/location.js";
-import { boardTabId, offersOpenBoard } from "./_lib/tabs.js";
+import { boardTabId } from "./_lib/tabs.js";
+import { enterPlan, exitSteps, fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
@@ -93,7 +94,17 @@ export default class PrsBoard extends View {
   init(_props, cx) {
     this.acx = cx;
     // Where the copy is mounted, not how wide it is, decides whether it offers the board tab.
-    this.inPanel = offersOpenBoard(props());
+    this.inPanel = isPanelCopy(props());
+    this.fsState = null;
+    if (this.inPanel) {
+      cx.timer.every(1000, (cx) => {
+        const s = fullscreenState(layout());
+        if (s !== this.fsState) {
+          this.fsState = s;
+          cx.notify();
+        }
+      });
+    }
     this.workflows = new Workflows(cx, () => this.activeTargets());
     // The Batch form's Drafts chip is the Mine tab's: one setting, so the list and the form agree.
     // The Batch form's chips are the board's: one prs.filters, so a view and the form agree.
@@ -474,7 +485,21 @@ export default class PrsBoard extends View {
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
-          .when(this.inPanel, (e) => e.child(this.openBoardButton()))));
+          .when(this.inPanel, (e) => e.child(this.fullscreenButton()).child(this.openBoardButton()))));
+  }
+
+  fullscreenButton() {
+    const state = fullscreenState(layout());
+    return button("fullscreen", state === "on" ? "Exit full screen" : "Full screen", () => {
+      if (state === "on" || state === "stranded") {
+        for (const step of exitSteps(shared("prs.panelPx"))) run(step.command, step.args);
+        setShared("prs.panelPx", null);
+        return;
+      }
+      const plan = enterPlan(layout());
+      if (plan.savedPx !== null) setShared("prs.panelPx", plan.savedPx);
+      for (const step of plan.steps) run(step.command, step.args);
+    });
   }
 
   openBoardButton() {
@@ -555,7 +580,7 @@ export default class PrsBoard extends View {
         segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
         segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
       ]))
-      .when(this.inPanel, (e) => e.child(this.openBoardButton()))
+      .when(this.inPanel, (e) => e.child(this.fullscreenButton()).child(this.openBoardButton()))
       .child(this.refreshButton());
   }
 }

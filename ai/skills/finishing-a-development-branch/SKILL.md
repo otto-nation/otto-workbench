@@ -146,10 +146,10 @@ After the PR merges, cleanup is `wt-cleanup`, run without asking
 (`git-operations.md` § Worktree Cleanup). Plans and specs live in the
 workspace, which cleanup does not touch.
 
-Prefer a follow-up PR. If you must push before merge, `git-operations.md` § A
-Branch With an Open PR Is Shared says when to comment, and the push owes
-`pr review --self --fix --push` (`self-review.md` § The Review Covers One
-Commit).
+Prefer a follow-up PR. If you must push before merge,
+`git-operations.md` § A Branch With an Open PR Is Shared says when to comment,
+and the push owes `pr review --self --fix --push`
+(`self-review.md` § The Review Covers One Commit).
 
 ## Quick Reference
 

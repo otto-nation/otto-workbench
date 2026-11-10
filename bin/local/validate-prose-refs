@@ -10,7 +10,7 @@ reviewer protocol sent agents to a `/pr-review` skill for years after the
 skill was deleted, and an agent asked to post a review hand-rolled a `gh api`
 call because the command it was told to use did not exist.
 
-Two checks, each against the live source of truth rather than a list kept here:
+Three checks, each against the live source of truth rather than a list kept here:
 
   CLI invocations   A code span or fenced code line starting with a registered
                     tool's name (every registry entry declaring `parser:`) is
@@ -21,6 +21,8 @@ Two checks, each against the live source of truth rather than a list kept here:
   Slash commands    A code span `/name ...` must name a skill under ai/skills/,
                     a command a workbench hook answers, a harness built-in, or
                     a filesystem root (`/tmp`), which is a path and not a command.
+  Rule pointers     A `` `name.md` § Heading `` span whose `name.md` lives under
+                    ai/guidelines/rules/ must prefix-match a heading in that file.
 
 With no files, scans every hand-written markdown file: ai/claude/agents/,
 ai/skills/, ai/guidelines/rules/, docs/ and the top-level AGENTS.md, README.md
@@ -72,6 +74,7 @@ FILESYSTEM_ROOTS = frozenset({
 })
 
 CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+POINTER = re.compile(r"`([^`\n]+\.md)`\s*§\s*")
 # CommonMark: a backtick fence's info string may not contain a backtick.
 FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})(.*)$")
 SLASH_REF = re.compile(r"^/([A-Za-z][A-Za-z0-9_-]*)(?:\s|$)")
@@ -204,6 +207,34 @@ def check_invocation(text: str, tools: dict[str, ToolFlags]) -> list[str]:
     return [f"`{label}`: no such flag {flag}" for flag in _flags(rest) if flag not in accepted]
 
 
+def load_rule_headings(root: Path) -> dict[str, tuple[str, ...]]:
+    """Each `*.md` under ai/guidelines/rules/, mapped to its heading texts."""
+    rules = root / "ai" / "guidelines" / "rules"
+    out: dict[str, tuple[str, ...]] = {}
+    if not rules.is_dir():
+        return out
+    for path in sorted(rules.glob("*.md")):
+        heads = tuple(line.lstrip("#").strip()
+                      for line in path.read_text(encoding="utf-8").splitlines()
+                      if line.startswith("#") and line.lstrip("#").strip())
+        out[path.name] = heads
+    return out
+
+
+def check_pointer(line: str, headings: dict[str, tuple[str, ...]]) -> list[str]:
+    """Reasons a `name.md` § Heading pointer names no heading in that rules file."""
+    reasons: list[str] = []
+    for match in POINTER.finditer(line):
+        name = match.group(1)
+        if name not in headings:
+            continue
+        text = line[match.end():].lstrip()
+        if not any(text.startswith(head) for head in headings[name]):
+            shown = text.split(")", 1)[0].strip() or "(empty)"
+            reasons.append(f"`{name}` § {shown}: no such heading")
+    return reasons
+
+
 def check_slash(text: str, names: frozenset[str]) -> list[str]:
     m = SLASH_REF.match(text)
     if not m or m.group(1) in names:
@@ -212,12 +243,14 @@ def check_slash(text: str, names: frozenset[str]) -> list[str]:
 
 
 def _line_reasons(line: str, in_fence: bool, tools: dict[str, ToolFlags],
-                  names: frozenset[str]) -> list[str]:
+                  names: frozenset[str],
+                  headings: dict[str, tuple[str, ...]]) -> list[str]:
     """Reasons one non-fence line fails. Inside a fence the whole line is a command."""
     if in_fence:
         return check_invocation(line.strip(), tools)
-    return [r for span in CODE_SPAN.findall(line)
-            for r in check_invocation(span, tools) + check_slash(span, names)]
+    return check_pointer(line, headings) + [
+        r for span in CODE_SPAN.findall(line)
+        for r in check_invocation(span, tools) + check_slash(span, names)]
 
 
 def _fence_after(line: str, opened: str | None) -> str | None:
@@ -238,7 +271,10 @@ def _fence_after(line: str, opened: str | None) -> str | None:
     return opened
 
 
-def check_file(path: Path, tools: dict[str, ToolFlags], names: frozenset[str]) -> list[Violation]:
+def check_file(path: Path, tools: dict[str, ToolFlags], names: frozenset[str],
+               headings: dict[str, tuple[str, ...]] | None = None) -> list[Violation]:
+    if headings is None:
+        headings = {}
     violations: list[Violation] = []
     opened: str | None = None
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -246,7 +282,8 @@ def check_file(path: Path, tools: dict[str, ToolFlags], names: frozenset[str]) -
         if opened != before:
             continue
         violations.extend(Violation(path, number, r)
-                          for r in _line_reasons(line, opened is not None, tools, names))
+                          for r in _line_reasons(
+                              line, opened is not None, tools, names, headings))
     return violations
 
 
@@ -274,8 +311,9 @@ def main(argv: list[str] | None = None) -> int:
 
     tools = load_tools(REPO_ROOT)
     names = load_slash_names(REPO_ROOT)
+    headings = load_rule_headings(REPO_ROOT)
     files = args.files or discover(REPO_ROOT)
-    violations = [v for f in files for v in check_file(f, tools, names)]
+    violations = [v for f in files for v in check_file(f, tools, names, headings)]
     for v in violations:
         rel = v.path.relative_to(REPO_ROOT) if v.path.is_relative_to(REPO_ROOT) else v.path
         print(f"  {RED}✗{NC} {rel}:{v.line}: {v.reason}", file=sys.stderr)

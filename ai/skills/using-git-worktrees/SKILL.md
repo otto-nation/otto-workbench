@@ -124,8 +124,8 @@ not pass a path, and do not fall back to `git worktree add` — the two produce
 different layouts, and the git form leaves state `wt` cannot see.
 
 If `wt switch -c` aborts on its pre-switch hook, the default branch is stale or
-diverged: fix it and re-run, never with `--no-hooks` (`git-operations.md` §
-Branch Freshness).
+diverged: fix it and re-run, never with `--no-hooks`
+(`git-operations.md` § Branch Freshness).
 
 Any other `wt` failure — no `wt` on PATH, worktrunk unconfigured for this repo,
 a sandbox denying the write — stops the work. Report what failed and ask. Both
@@ -164,8 +164,8 @@ if [ -f go.mod ]; then go mod download; fi
 Run the baseline the repo's AGENTS.md prescribes; where it forbids whole-suite
 runs, run the files the planned work will touch.
 
-Run them in this worktree, never another (`git-operations.md` § Cross-Worktree
-Safety).
+Run them in this worktree, never another
+(`git-operations.md` § Cross-Worktree Safety).
 
 **If tests fail:** report the failures and ask whether to proceed or
 investigate. A dirty baseline makes every later failure ambiguous.

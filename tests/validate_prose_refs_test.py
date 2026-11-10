@@ -22,10 +22,10 @@ def names():
     return vpr.load_slash_names(REPO_ROOT)
 
 
-def _reasons(tmp_path, text, tools, names):
+def _reasons(tmp_path, text, tools, names, headings=None):
     page = tmp_path / "page.md"
     page.write_text(text)
-    return [v.reason for v in vpr.check_file(page, tools, names)]
+    return [v.reason for v in vpr.check_file(page, tools, names, headings)]
 
 
 def test_the_repo_prose_resolves():
@@ -103,6 +103,22 @@ def test_framework_flags_are_read_from_the_parsers():
 def test_unregistered_commands_and_arguments_are_not_invocations(tmp_path, tools, names):
     text = "`git push --force` and `pr ENG-123` and `review`\n"
     assert _reasons(tmp_path, text, tools, names) == []
+
+
+def test_a_pointer_to_a_missing_heading_fails(tmp_path, tools, names):
+    headings = vpr.load_rule_headings(REPO_ROOT)
+    reasons = _reasons(
+        tmp_path, "`git-operations.md` § No Such Heading\n", tools, names,
+        headings)
+    assert reasons == [
+        "`git-operations.md` § No Such Heading: no such heading"]
+
+
+def test_a_pointer_to_a_real_heading_passes(tmp_path, tools, names):
+    headings = vpr.load_rule_headings(REPO_ROOT)
+    assert _reasons(
+        tmp_path, "`git-operations.md` § PR Creation\n", tools, names,
+        headings) == []
 
 
 def test_discover_skips_generated_and_composed_pages(tmp_path):

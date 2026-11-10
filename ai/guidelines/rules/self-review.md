@@ -182,8 +182,8 @@ green the review file looks.
    a hand commit beneath it
 3. If the branch already has an open PR and you have pushed to it, re-run the review with
    `--fix --push` (see Before PR Creation above). A push you made by hand needs a PR comment
-   saying what changed; the review's own push does not. See `git-operations.md` § A Branch
-   With an Open PR Is Shared
+   saying what changed; the review's own push does not. See
+   `git-operations.md` § A Branch With an Open PR Is Shared
 
 Re-running is not cheap. Six rounds on one branch cost about $13 and 44 minutes, two
 thirds of it in verify runs, while every round's fix commit invalidated the review that

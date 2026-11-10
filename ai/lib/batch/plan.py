@@ -645,6 +645,9 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     cached: dict[str, str] = {}
 
     # Asked of GitHub only when the refs cannot answer, then shared by both modes.
+    # ceiling: one request per PR on that fallback, so a repo whose fetch failed
+    # outright costs a request per row. Batch the lookups (aliases, as _by_number
+    # does) once a plan is seen falling back for more than a handful of PRs.
     def merge_state() -> str:
         if "v" not in cached:
             cached["v"] = node.get("mergeStateStatus") or _merge_state(repo, int(node["number"]))

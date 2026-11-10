@@ -9,6 +9,8 @@ import { getArgv, terminalsOf } from "./_lib/busy.js";
 // inside this many lines.
 const WATCH_MS = 3000;
 const READ_LINES = "400";
+// Consecutive looks at a terminal hc could not answer for (about a minute) before giving up on it.
+const MAX_UNREADABLE = 20;
 
 function termKey(on, repo) {
   return `${on ?? ""}\0${repo}`;
@@ -162,15 +164,26 @@ export class BatchLauncher {
     cx.timer.after(WATCH_MS, async (cx) => {
       const p = this.pending.get(tk);
       if (!p) return;
-      let output = "", live = false;
+      // Only an answer from hc decides: a failed read or lookup is looked at again rather than
+      // read as an ended terminal, which would hand the PRs back while their run may be starting.
+      let output = null, state = null;
       try {
         const read = await exec("hc", ["read", p.terminal, "--lines", READ_LINES], {});
-        output = read.code === 0 ? read.stdout : "";
+        if (read.code === 0) output = read.stdout;
         const got = await exec("hc", getArgv(p.terminal), {});
-        live = terminalsOf(got.code === 0 ? [JSON.parse(got.stdout)] : null)[0]?.state === "live";
-      } catch { this.watchLaunch(cx, tk); return; }
+        if (got.code === 0) state = terminalsOf([JSON.parse(got.stdout)])[0]?.state ?? null;
+      } catch { output = state = null; }
+      if (output == null || state == null) {
+        p.unreadable = (p.unreadable ?? 0) + 1;
+        if (p.unreadable < MAX_UNREADABLE) { this.watchLaunch(cx, tk); return; }
+        this.pending.delete(tk);
+        this.addNote(`${p.repo}: could not read its terminal ${p.terminal}; check it before starting again`);
+        cx.notify();
+        return;
+      }
+      p.unreadable = 0;
       const outcome = launchOutcome(output);
-      if (!outcome.started && live) { this.watchLaunch(cx, tk); return; }
+      if (!outcome.started && state === "live") { this.watchLaunch(cx, tk); return; }
       this.pending.delete(tk);
       if (outcome.started) {
         for (const key of p.keys) this.selected.delete(key);

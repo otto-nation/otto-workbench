@@ -108,6 +108,8 @@ _detect_native_docker_sock() {
 # _remove_unusable_docker_link — removes the canonical symlink when it points at a
 # system daemon socket this user cannot write. Earlier syncs linked it without
 # checking access, and the zsh config exports DOCKER_HOST from it.
+# Only links to DOCKER_SYSTEM_SOCKETS are touched (a missing target also counts as
+# unwritable); a stale link to a vanished rootless socket is deliberately left alone.
 _remove_unusable_docker_link() {
   local link="$DOCKER_RUN_DIR/docker.sock" target candidate
   target=$(readlink "$link" 2>/dev/null || true)

@@ -16,11 +16,14 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from core.phases import Mode
+from pr.domains import ReviewStatus
 from review.claim_types import ClaimVerdict
 from review.document import SECTION_PRIOR_FINDINGS
 from review.record import LedgerLine, SeveritySection
 from review.render import render_body
-from review.types import PriorDisposition
+from review.types import PriorDisposition, ReviewMeta
+from review.verdict import verdict_line
 from review.verify import post_process_record
 
 from review_claims_support import claim
@@ -209,6 +212,15 @@ class TestReconcileDroppedFindings:
         # M2 survived and took M1's number — citing the dropped ID would point
         # the reader at it.
         assert "- **[M1]** `kept.py:1`" in result
+
+    def test_the_rendered_line_approves_after_a_drop(self, tmp_path):
+        rec = self._sample(tmp_path)
+        done = post_process_record(rec, str(tmp_path))
+        line = verdict_line(
+            done.record, ReviewMeta(mode=Mode.PR, status=ReviewStatus.COMPLETED),
+        )
+        assert line.startswith("**Verdict: Approve.**")
+        assert "Request changes" not in line
 
     def test_no_note_when_nothing_dropped(self, tmp_path):
         (tmp_path / "kept.py").write_text("x = 1\n")

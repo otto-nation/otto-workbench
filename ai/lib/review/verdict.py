@@ -10,12 +10,11 @@ a judgement — a stored review reads the same way whatever this module decides.
 
 A review where no group reported — every agent failed, so its header says
 `status: error` — states no verdict: its empty tally means nothing was read,
-not that nothing was found. The generated line closes the Summary (after Agent
-Failures) with `NO_RUN_VERDICT`, and `pr review` exits 1 once it has shown and
-recorded it. A partial run states only a blocking verdict (none in place of
-Approve) and exits 0, since the surviving findings are real. A self-review
-states none: `resolve_review_verdict` and `verdict_line` are the one reading
-of that rule.
+not that nothing was found. On review.md the generated line closes the Summary
+with `NO_RUN_VERDICT`; `pr review` exits 1 once it has shown and recorded it.
+A partial run states only a blocking verdict (none in place of Approve) and
+exits 0, since the surviving findings are real. A self-review states none:
+`resolve_review_verdict` and `verdict_line` both consult `_is_self_review`.
 """
 
 # doc-group: pipeline
@@ -50,9 +49,8 @@ def counts_prose(counts: dict[str, int]) -> str:
     """A tally read out as prose — `2 must-fix, 1 nit` — or "" when it is empty.
 
     Severities in the order `SEVERITIES` declares them, and one the review has
-    none of is left out rather than written as a zero. What a caller says
-    instead of the empty string is its own: a verdict reads "no findings" where
-    a count summary reads nothing at all.
+    none of is left out rather than written as a zero. A caller that needs a
+    sentence when the tally is empty writes that sentence itself.
     """
     return ", ".join(f"{counts[s.key]} {s.label}" for s in SEVERITIES if counts.get(s.key))
 
@@ -76,6 +74,10 @@ PARTIAL_NOTE = (
 )
 
 
+def _is_self_review(meta: ReviewMeta) -> bool:
+    return meta.mode is Mode.SELF
+
+
 def resolve_review_verdict(record: ReviewRecord, meta: ReviewMeta) -> ReviewVerdict | None:
     """The verdict a review states, from its findings, how its run ended and its mode.
 
@@ -87,7 +89,7 @@ def resolve_review_verdict(record: ReviewRecord, meta: ReviewMeta) -> ReviewVerd
     vouch for the absence of findings. Open is `ReviewRecord.unfixed`: only a fixed
     finding closes. Nothing an agent wrote is read.
     """
-    if meta.mode is Mode.SELF or meta.status is ReviewStatus.ERROR:
+    if _is_self_review(meta) or meta.status is ReviewStatus.ERROR:
         return None
     counts = record.open_counts
     verdict = ReviewVerdict.from_counts(counts[SEVERITY_MUST], counts[SEVERITY_SHOULD])
@@ -117,7 +119,7 @@ def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
     and a partial run with nothing blocking open, say why they state none; a partial
     run's blocking verdict says the review is incomplete.
     """
-    if meta.mode is Mode.SELF:
+    if _is_self_review(meta):
         return ""
     if meta.status is ReviewStatus.ERROR:
         return f"**No verdict.** {NO_RUN_VERDICT}"

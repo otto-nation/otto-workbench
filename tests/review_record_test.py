@@ -107,7 +107,6 @@ class TestOnDisk:
         assert loaded.triage is None
 
 
-
 class TestWhatTheReadApiSees:
     def test_a_string_disposition_is_the_enum(self):
         f = RecordFinding(id="N2", severity="N", body="gone", disposition="falsified")

@@ -322,9 +322,7 @@ def _post_process_review(job: ReviewJob, record: ReviewRecord,
 
 def _write_mechanical_fallback(job: ReviewJob, group_count: int, merged: ReviewRecord,
                                skipped_groups: int = 0) -> None:
-    # Today's `_write_mechanical_fallback` did not pass `pipeline_state`; Task
-    # 10's `_inject_failures_and_status` adds the failures. Keep that: this
-    # writer passes no state.
+    # This writer passes no pipeline_state; failures are injected afterwards.
     record = _build_mechanical_fallback(job, group_count, _reconcile_and_verify(job, merged),
                                         skipped_groups=skipped_groups)
     _publish(job, record, skipped_groups=skipped_groups, total_groups=group_count,

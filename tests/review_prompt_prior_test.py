@@ -240,7 +240,7 @@ class TestPriorTextOmitsBookkeeping:
         assert "**[M1]**" in result
         assert "## Must fix" in result
         assert "## Verdict" not in result
-        assert "Request changes." not in result
+        assert "**Verdict:" not in result
 
     def test_section_after_excluded_one_resumes(self):
         rec = record(

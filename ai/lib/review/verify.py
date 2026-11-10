@@ -34,10 +34,10 @@ reconstruct from counts. So the prose stays and the review says what left it:
   severity and path — not by ID, since renumbering has already reassigned
   those — and why it was dropped.
 
-Both are idempotent — a review that already carries the note is left alone, so
+The note is idempotent — a review that already carries it is left alone, so
 re-running post-processing does not stack notes. A finding's evidence is the
-code on the record, and the file it is checked
-against is `path` — resolved with the poster's `review.format.resolve_path`
+code on the record, and the file it is checked against is `path` — resolved
+with the poster's `review.format.resolve_path`
 against the files the diff changed first, as the poster does, and the tracked
 tree only when the diff has no match — so a finding is not placed against one
 file and verified against another. A finding with no path names no file, and

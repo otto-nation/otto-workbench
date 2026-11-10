@@ -87,6 +87,7 @@ def test_a_settled_round_carries_the_claims_and_their_findings(tmp_path):
         review.claims.input_sha(job)
     )
     assert stored.record.open_counts["S"] == 1
+    assert "**Verdict: Needs discussion.**" in Path(job.review_file).read_text()
 
 
 def test_a_carried_claim_finding_keeps_its_answer(tmp_path):

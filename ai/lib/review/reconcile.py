@@ -54,7 +54,7 @@ import core.serde
 import review.convergence
 from review.grammar import SID_MARKER_RE
 from review.paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
-from review.record import Disposition, LedgerLine, RecordFinding, ReviewRecord
+from review.record import Disposition, LedgerLine, ReviewRecord
 from review.render import finding_line
 from review.store import StoredReview
 from review.types import FindingRef, PriorDisposition, PriorFinding, ReviewMeta

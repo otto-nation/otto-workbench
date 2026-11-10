@@ -16,6 +16,7 @@ from review.paths import FILENAME_META, FILENAME_PRIOR_META, FILENAME_PRIOR_RECO
 from review.render import BANNER
 from review.store import archive_prior, clear_prior, read_prior, read_review, update_review, write_review
 from review.types import ReviewMeta, SEVERITIES
+from review.verdict import verdict_line
 
 from review_record_support import FIXTURES, fixture_meta, fixture_record
 
@@ -50,7 +51,8 @@ class TestTheStore:
     def test_reading_back_returns_record_and_meta(self, tmp_path):
         stored = read_review(_stored(tmp_path))
         assert stored.meta.status is ReviewStatus.PARTIAL
-        assert stored.record.summary
+        assert stored.record.findings
+        assert "Needs discussion" in verdict_line(stored.record, stored.meta)
 
     def test_a_directory_without_review_json_is_stale(self, tmp_path):
         (tmp_path / "review.md").write_text("# old\n## Summary\nx\n")

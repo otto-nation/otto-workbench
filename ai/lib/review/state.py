@@ -124,17 +124,6 @@ class PipelineState:
         return f"group-{idx}"
 
     @property
-    def partial(self) -> bool:
-        """Whether some but not all groups failed.
-
-        The wording and the withheld verdict both key on this: a run that
-        produced nothing is `all_groups_failed`, and a run that produced
-        everything needs neither qualification.
-        """
-        failed = len(self.groups_failed)
-        return bool(failed) and not failed >= self.group_count > 0
-
-    @property
     def all_groups_failed(self) -> bool:
         """Whether the run produced no usable group output at all."""
         synthesis = self.failed.get(Phase.SYNTHESIS)

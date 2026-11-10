@@ -17,6 +17,7 @@ tests that matter most here are the ones asserting it stays shut.
 """
 
 import io
+import json
 import sys
 from contextlib import redirect_stdout
 from dataclasses import replace
@@ -35,7 +36,8 @@ from core.phases import Effort, Mode
 from gh.types import PRContext, PRMetadata
 from pr.domains import ReviewVerdict
 from review.document import ReviewDocument
-from review.store import read_review
+from review.paths import FILENAME_RECORD
+from review.store import read_review, update_review
 from review.verdict import resolve_review_verdict
 import review.claims
 from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
@@ -50,12 +52,6 @@ _BIG_PR = {
     "changed_files": _PRESET.multi_phase_file_threshold * 12,
 }
 _PRIOR = record(
-    finding("M1", "a bug nobody has fixed"),
-    summary="Synthesized.",
-)
-# A prior run that approved while holding a finding the fast path must not
-# clear: its stale verdict is the one a document carrying two would report.
-_PRIOR_APPROVED = record(
     finding("M1", "a bug nobody has fixed"),
     summary="Synthesized.",
 )
@@ -385,20 +381,22 @@ class TestTheEmptyDeltaFastPath:
     def test_a_stale_approve_does_not_survive_its_findings(
         self, tmp_path, run_phases,
     ):
-        """The inversion the duplicate sections caused, asserted end to end."""
-        job = _job(tmp_path, prior_review=_PRIOR_APPROVED, **_BIG_PR)
-        job.preflight = _preflight(
-            delta_files=[], delta_weighted_lines=0,
-            delta_attribution=DeltaAttribution.ATTRIBUTED,
-            prior_head_sha="0ldc0de",
-        )
+        """A leftover stored verdict cannot override the counts."""
+        job = self._merge_only(tmp_path)
 
         run_phases(job)
 
-        written = Path(job.review_file).read_text()
-        stored = read_review(Path(job.review_file))
+        path = Path(job.review_file)
+        data = json.loads((path.parent / FILENAME_RECORD).read_text())
+        data["verdict"] = "Approve. the prior run's call"
+        (path.parent / FILENAME_RECORD).write_text(json.dumps(data))
+        update_review(path)
+        written = path.read_text()
+        stored = read_review(path)
         assert resolve_review_verdict(stored.record, stored.meta) is ReviewVerdict.CHANGES_REQUESTED
+        assert "Approve" not in written
         assert "the prior run's call" not in written
+        assert "**Verdict: Request changes.**" in written
 
     def test_the_prior_runs_own_framing_is_not_carried_in(
         self, tmp_path, run_phases,

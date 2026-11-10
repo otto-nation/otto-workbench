@@ -1700,12 +1700,11 @@ a judgement — a stored review reads the same way whatever this module decides.
 
 A review where no group reported — every agent failed, so its header says
 `status: error` — states no verdict: its empty tally means nothing was read,
-not that nothing was found. The generated line closes the Summary (after Agent
-Failures) with `NO_RUN_VERDICT`, and `pr review` exits 1 once it has shown and
-recorded it. A partial run states only a blocking verdict (none in place of
-Approve) and exits 0, since the surviving findings are real. A self-review
-states none: `resolve_review_verdict` and `verdict_line` are the one reading
-of that rule.
+not that nothing was found. On review.md the generated line closes the Summary
+with `NO_RUN_VERDICT`; `pr review` exits 1 once it has shown and recorded it.
+A partial run states only a blocking verdict (none in place of Approve) and
+exits 0, since the surviving findings are real. A self-review states none:
+`resolve_review_verdict` and `verdict_line` both consult `_is_self_review`.
 
 ### review/worktree.py
 
@@ -2153,10 +2152,10 @@ reconstruct from counts. So the prose stays and the review says what left it:
   severity and path — not by ID, since renumbering has already reassigned
   those — and why it was dropped.
 
-Both are idempotent — a review that already carries the note is left alone, so
+The note is idempotent — a review that already carries it is left alone, so
 re-running post-processing does not stack notes. A finding's evidence is the
-code on the record, and the file it is checked
-against is `path` — resolved with the poster's `review.format.resolve_path`
+code on the record, and the file it is checked against is `path` — resolved
+with the poster's `review.format.resolve_path`
 against the files the diff changed first, as the poster does, and the tracked
 tree only when the diff has no match — so a finding is not placed against one
 file and verified against another. A finding with no path names no file, and

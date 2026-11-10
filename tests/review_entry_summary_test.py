@@ -20,6 +20,7 @@ from review.convergence import fix_candidates
 from review.document import ReviewDocument
 from review.record import Disposition
 from review.types import ReviewMeta
+from review.paths import FILENAME_RECORD
 from review_record_support import finding, record, store_record
 
 # cr is a pytest fixture: imported by name so tests here can request it.
@@ -424,11 +425,19 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
     assert data["duration_ms"] == 90000
 
 
+def _inject_legacy_verdict(review, verdict):
+    path = Path(review).parent / FILENAME_RECORD
+    payload = json.loads(path.read_text())
+    payload["verdict"] = verdict
+    path.write_text(json.dumps(payload))
+
+
 def test_a_stated_disapprove_is_not_recorded(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-42"
     review_dir.mkdir(parents=True)
     review = review_dir / "review.md"
     store_record(review, record())
+    _inject_legacy_verdict(review, "disapprove")
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["verdict"] == "approve"
@@ -440,6 +449,7 @@ def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
     store_record(review, record(
         finding("M1", "path:1 — bug", path=""),
     ))
+    _inject_legacy_verdict(review, "Approve.")
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
@@ -451,6 +461,7 @@ def test_json_summary_verdict_is_the_counts_not_the_prose(cr, tmp_path):
     store_record(review, record(
         finding("N1", "path:1 — style", path=""),
     ))
+    _inject_legacy_verdict(review, "Request changes.")
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["verdict"] == ReviewVerdict.APPROVE.value
@@ -602,6 +613,7 @@ def test_format_verdict_with_must_fix(tmp_path):
 def test_format_verdict_explicit_disapprove(tmp_path):
     review = tmp_path / "review.md"
     store_record(review, record())
+    _inject_legacy_verdict(review, "disapprove")
     report = build_review_summary("org/repo", "1", str(review))
     assert format_verdict(report) == "Approve"
 

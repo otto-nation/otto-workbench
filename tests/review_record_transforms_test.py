@@ -9,6 +9,7 @@ if LIB_DIR not in sys.path:
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Phase
+from pr.domains import ReviewStatus
 from review.record import Disposition, LedgerLine, TriageEntry
 from review.render import render_review
 from review.state import PipelineState, failures_of
@@ -115,5 +116,5 @@ class TestFailures:
             head_sha="x", group_names=[],
             groups_failed={1: Diagnosis(DiagnosisKind.OUTPUT_MISSING)},
         )
-        assert state.partial
+        assert state.status is ReviewStatus.PARTIAL
         assert not state.all_groups_failed

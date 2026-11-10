@@ -12,7 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 import review.claims
+from agent.diagnosis import Diagnosis, DiagnosisKind
+from core.phases import Mode, Phase
+from pr.domains import ReviewStatus
 from review.record import FocusSource, Question, ReviewRecord, TriageEntry, load_record
+from review.render import render_review
+from review.state import PipelineState
+from review.types import ReviewMeta
+from review.verdict import NO_RUN_VERDICT, PARTIAL_VERDICT
 from review_behaviours_support import behaviour
 from review_claims_support import claim
 from review_focus_support import area, user_area
@@ -184,9 +191,6 @@ class TestBuildMechanicalFallback:
         contributed to, which is how a review of two thirds of a PR was acted
         on as a review of all of it.
         """
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.state import PipelineState
-
         state = PipelineState(group_names=["a", "b", "c"])
         state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
         result = ro._build_mechanical_fallback(
@@ -197,19 +201,11 @@ class TestBuildMechanicalFallback:
 
     def test_a_partial_run_withholds_the_clean_verdict(self, ro, tmp_path):
         """Approve over source no agent opened is the line a reader acts on."""
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.state import PipelineState
-
         state = PipelineState(group_names=["a", "b", "c"])
         state.groups_failed[2] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
         result = ro._build_mechanical_fallback(
             self._partial_job(ro, tmp_path), 3, record(), pipeline_state=state,
         )
-        from core.phases import Mode
-        from pr.domains import ReviewStatus
-        from review.render import render_review
-        from review.types import ReviewMeta
-        from review.verdict import PARTIAL_VERDICT
         text = render_review(
             result, ReviewMeta(mode=Mode.PR, status=ReviewStatus.PARTIAL),
         )
@@ -234,9 +230,6 @@ class TestBuildMechanicalFallback:
         three groups hit the turn cap, and the review reported a clean read of
         all of them above a failures table listing all three.
         """
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from review.state import PipelineState
-
         state = PipelineState(group_names=["a", "b", "c"])
         for n in range(3):
             state.groups_failed[n] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=15)
@@ -255,14 +248,6 @@ class TestBuildMechanicalFallback:
         review still closed on "Approve — no findings" — the one line a
         reader acts on without opening the failures table.
         """
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from core.phases import Mode
-        from pr.domains import ReviewStatus
-        from review.render import render_review
-        from review.state import PipelineState
-        from review.types import ReviewMeta
-        from review.verdict import NO_RUN_VERDICT
-
         state = PipelineState(group_names=["a", "b", "c"])
         for n in range(3):
             state.groups_failed[n] = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="boom")
@@ -277,15 +262,6 @@ class TestBuildMechanicalFallback:
 
     def test_a_run_synthesis_diagnosed_as_all_failed_states_no_verdict(self, ro, tmp_path):
         """`all_groups_failed` has a second source: synthesis's own diagnosis."""
-        from agent.diagnosis import Diagnosis, DiagnosisKind
-        from core.phases import Phase
-        from review.state import PipelineState
-        from core.phases import Mode
-        from pr.domains import ReviewStatus
-        from review.render import render_review
-        from review.types import ReviewMeta
-        from review.verdict import NO_RUN_VERDICT
-
         state = PipelineState(group_names=["a", "b"])
         state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
         result = ro._build_mechanical_fallback(

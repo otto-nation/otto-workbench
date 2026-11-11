@@ -46,5 +46,5 @@ export const ROW_H = {
 // compact is below the brand's board pane width. twoLine is herdr's own: the sidebar drops its
 // meta line below it.
 export const BREAKPOINT = { compact: BRAND.pane.board, twoLine: 200 };
-export const LAYOUT = { colMin: BRAND.columnMin, colMax: 400, titleLh: BRAND.font.title.lineHeight, headerH: 52, msgMaxW: 480, bodyMaxH: 420, titleMaxH: 40, filterLabelW: 56, monoEm: 0.62, gutterDigits: 5, statusW: 14, cardTitleMaxH: 2 * BRAND.font.title.lineHeight, iconSize: 14 };
+export const LAYOUT = { colMin: BRAND.columnMin, colMax: 400, titleLh: BRAND.font.title.lineHeight, headerH: 52, msgMaxW: 480, bodyMaxH: 420, titleMaxH: 40, monoEm: 0.62, gutterDigits: 5, statusW: 14, cardTitleMaxH: 2 * BRAND.font.title.lineHeight, iconSize: 14 };
 export const MONO = { charPx: Math.ceil(TYPE.code.size * LAYOUT.monoEm), gutterDigits: LAYOUT.gutterDigits, gutter: Math.ceil(TYPE.code.size * LAYOUT.monoEm) * LAYOUT.gutterDigits };

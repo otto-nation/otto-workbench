@@ -12,7 +12,7 @@ export class FilterBar {
     this.acx = acx;
     this.open = null;
     this.query = "";
-    this.search = InputState.new({ placeholder: "Search authors" });
+    this.search = InputState.new({ placeholder: "Search" });
     this.search.on("change", () => {
       this.query = this.search.value();
       acx.notify();

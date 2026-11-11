@@ -38,9 +38,8 @@ import pr.target
 from batch.model import Item, Run
 
 # The markers a child must not inherit from the batch: it holds every item's
-# target, and no checkout or global lock a step could use.
-_MARKERS = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV,
-            core.run_lock.GLOBAL_LOCK_ENV)
+# target, and no checkout lock a step could use.
+_MARKERS = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV)
 
 
 def origin_key(directory: str) -> str:

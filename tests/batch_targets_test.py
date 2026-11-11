@@ -23,7 +23,7 @@ from batch_scheduler_support import (  # noqa: E402,F401
     NEED, Harness, _close_open_sessions, _quiet_outcomes, attach_scheduler, ff_tree, row,
 )
 from conftest import seed_repo  # noqa: E402
-from core.run_lock import GLOBAL_LOCK_ENV, LOCK_ENV, TARGET, TREE_LOCK_ENV  # noqa: E402
+from core.run_lock import LOCK_ENV, TARGET, TREE_LOCK_ENV  # noqa: E402
 from run_lock_support import repo_with_origin  # noqa: E402
 
 _PROC_TIMEOUT = 60
@@ -94,24 +94,20 @@ def test_item_repo_key_for_a_relative_repo_dir_uses_the_slug_not_cwd(tmp_path, m
 def test_child_env_names_only_the_items_target_when_this_process_holds_it(repo, monkeypatch):
     monkeypatch.setenv(LOCK_ENV, "/x:/y")
     monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
-    monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
     item = _item(repo, "feat/a", 1)
     target = batch.targets.item_target_dir(item)
     with core.run_lock.hold({TARGET}, target_dir=target, command="pr batch run", started="t"):
         env = batch.targets.child_env(item)
     assert env[LOCK_ENV] == str(target)
     assert TREE_LOCK_ENV not in env
-    assert GLOBAL_LOCK_ENV not in env
 
 
 def test_child_env_strips_markers_when_this_process_does_not_hold_the_target(repo, monkeypatch):
     monkeypatch.setenv(LOCK_ENV, "/x:/y")
     monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
-    monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
     env = batch.targets.child_env(_item(repo, "feat/a", 1))
     assert LOCK_ENV not in env
     assert TREE_LOCK_ENV not in env
-    assert GLOBAL_LOCK_ENV not in env
 
 
 def test_child_env_without_a_target_carries_no_marker(tmp_path, monkeypatch):

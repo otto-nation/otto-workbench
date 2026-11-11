@@ -16,7 +16,6 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 import cli.review_modes  # noqa: E402
-import core.run_lock  # noqa: E402
 from cli.needs import (  # noqa: E402
     LOCAL, NO_LOCK, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED, REVIEW_SELF_NEED,
     TARGET_AND_CHECKOUT, TARGET_ONLY, Need, ReviewMode, ci_need, comments_need, has_flag,
@@ -57,10 +56,9 @@ def test_holding_the_target_records_a_trail():
     assert Need(NONE, update=False, locks=TARGET_ONLY).records_a_trail is True
 
 
-def test_a_global_lock_alone_records_no_dispatch_trail():
-    """`pr batch run` names no repo, PR or branch, and keeps a trail of its own."""
-    need = Need(NONE, update=False, locks={core.run_lock.Global("batch")})
-    assert need.records_a_trail is False
+def test_resolving_nothing_and_holding_nothing_records_no_dispatch_trail():
+    """`pr batch` names no repo, PR or branch, and keeps a trail of its own."""
+    assert Need(NONE, update=False, locks=NO_LOCK).records_a_trail is False
 
 
 def test_resolving_a_target_records_a_trail():

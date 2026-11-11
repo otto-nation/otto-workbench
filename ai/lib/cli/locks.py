@@ -4,9 +4,9 @@ Every `pr` command declares the locks it holds on its `Need`, in
 `cli.registry`, as a set of `core.run_lock` scopes; no handler chooses its own.
 This module is the one place they are taken for a command:
 
-* `hold_declared` — `pr`'s dispatcher, for the whole dispatch. Globals before
-  the context is resolved; target and checkout once it is, before the worktree
-  is fetched and before the handler runs.
+* `hold_declared` — `pr`'s dispatcher, for the whole dispatch. Target and
+  checkout once the context is resolved, before the worktree is fetched and
+  before the handler runs.
 * `claim_declared` — the entry points that can be run without `pr` (`review`,
   `ci-check`, `review-threads`, `pr-rebase`, `pr-describe`), for the rest of
   the process. Under `pr` the lock is already held and this passes through;
@@ -14,8 +14,8 @@ This module is the one place they are taken for a command:
 
 | Command / mode | Holds |
 |---|---|
-| `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
-| `batch cancel`, `batch release` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can — never the global, so it reaches a live run |
+| `batch run`, `batch resume` | nothing declared; the handler holds every item's target, and each item's worktree once assigned, until that item settles. Nothing is held per repo, so several runs may cover one |
+| `batch cancel`, `batch release` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can, so it reaches a live run |
 | `batch status`, `report`, `plan` | nothing |
 | `rebase`, `push`, `describe`, `fix` | target + checkout |
 | `comments` | target + checkout; `--reply` / `--settle` the target only |
@@ -64,17 +64,13 @@ def _label(ctx: pr.context.ResolvedContext) -> str:
 
 
 def hold_declared(scopes: Iterable[core.run_lock.LockScope],
-                  ctx: pr.context.ResolvedContext | None, *, command: str):
-    """A context manager holding *scopes* for *ctx*, in the Global → TARGET → CHECKOUT order.
+                  ctx: pr.context.ResolvedContext, *, command: str):
+    """A context manager holding *scopes* for *ctx*, in the TARGET → CHECKOUT order.
 
-    *ctx* is None for the globals `pr` takes before it resolves anything; a
-    TARGET among *scopes* then raises ValueError. The checkout is the context's
-    worktree, skipped when it has none. *command* is what a contender's refusal
+    The checkout is the context's worktree, skipped when it has none. *command* is what a contender's refusal
     names. Raises LockBusy, having released what it took, when any scope is
     held elsewhere.
     """
-    if ctx is None:
-        return core.run_lock.hold(scopes, command=command, started=pr.state.now_iso())
     # A test, not `or None`: validate-worktree-guards reads the AST, and only a
     # test is visible to it as the deliberate opt-out.
     worktree = ctx.worktree_root if ctx.worktree_root else None
@@ -93,13 +89,9 @@ def claim_declared(name: str, argv: Sequence[str], ctx: pr.context.ResolvedConte
     Under `pr` the locks are already held — by this process, or by the parent
     named in `WORKBENCH_RUN_LOCK` — and this passes through.
 
-    *command* is what a contender's refusal names. A command declaring a global
-    raises ValueError: a global is held for one dispatch by `pr`, never claimed
-    for a process lifetime by a delegate.
+    *command* is what a contender's refusal names.
     """
     scopes = cli.registry.need_for(cli.registry.COMMANDS[name], argv).locks
-    if core.run_lock.globals_in(scopes):
-        raise ValueError(f"{name} declares a global lock, which only pr's dispatcher holds")
     if core.run_lock.TARGET not in scopes:
         return
     worktree = (ctx.worktree_root

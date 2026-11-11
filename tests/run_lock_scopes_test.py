@@ -1,4 +1,4 @@
-"""Tests for the run lock's scopes: a global lock, and the one order every holder takes them in."""
+"""Tests for the run lock's scopes and the one order every holder takes them in."""
 
 import json
 import sys
@@ -12,28 +12,13 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 import core.run_lock  # noqa: E402
-import core.workbench_paths  # noqa: E402
-from core.run_lock import CHECKOUT, NO_LOCK, TARGET, Global, LockBusy  # noqa: E402
+from core.run_lock import CHECKOUT, NO_LOCK, TARGET, LockBusy  # noqa: E402
 from run_lock_support import flocked, git_dir, held_elsewhere, live_pid  # noqa: E402
 
-BATCH = Global("batch")
 
-
-def test_a_global_lock_lives_under_the_state_root():
-    assert core.run_lock.global_lock_path("batch") == (
-        core.workbench_paths.state_dir() / "locks" / "batch.lock")
-
-
-@pytest.mark.parametrize("name", ["", "a/b", ".hidden"])
-def test_a_global_lock_is_named_by_one_plain_component(name):
-    with pytest.raises(ValueError):
-        Global(name)
-
-
-def test_scopes_are_ordered_globals_then_target_then_checkout():
+def test_scopes_are_ordered_target_then_checkout():
     """One order for every holder is what rules out two `pr` processes deadlocking."""
-    assert core.run_lock.ordered({CHECKOUT, TARGET, Global("z"), Global("a")}) == [
-        Global("a"), Global("z"), TARGET, CHECKOUT]
+    assert core.run_lock.ordered({CHECKOUT, TARGET}) == [TARGET, CHECKOUT]
 
 
 def test_hold_takes_every_scope_in_that_order(worktree, tmp_path, monkeypatch):
@@ -45,13 +30,10 @@ def test_hold_takes_every_scope_in_that_order(worktree, tmp_path, monkeypatch):
         return real(spec, command, started)
 
     monkeypatch.setattr(core.run_lock, "_take", spy)
-    with core.run_lock.hold({CHECKOUT, Global("b"), TARGET, Global("a")},
-                            command="pr x", started="t",
+    with core.run_lock.hold({CHECKOUT, TARGET}, command="pr x", started="t",
                             target_dir=tmp_path / "t", worktree=worktree):
         pass
     assert taken == [
-        (core.run_lock.GLOBAL_LOCK_ENV, "a.lock"),
-        (core.run_lock.GLOBAL_LOCK_ENV, "b.lock"),
         (core.run_lock.LOCK_ENV, core.run_lock.LOCK_FILE),
         (core.run_lock.TREE_LOCK_ENV, core.run_lock.TREE_LOCK_FILE),
     ]
@@ -62,45 +44,23 @@ def test_no_lock_takes_nothing(tmp_path):
                             target_dir=tmp_path / "t"):
         pass
     assert not (tmp_path / "t").exists()
-    assert not core.run_lock.global_lock_path("batch").parent.exists()
 
 
 def test_a_target_lock_needs_its_target_dir():
-    """Refused before anything is taken, so the global beside it is never held."""
     with pytest.raises(ValueError):
-        with core.run_lock.hold({BATCH, TARGET}, command="pr x", started="t"):
+        with core.run_lock.hold({TARGET}, command="pr x", started="t"):
             pytest.fail("a TARGET with no target_dir must not enter the block")
-    assert not core.run_lock.global_lock_path("batch").exists()
 
 
-def test_the_global_lock_is_held_for_the_block_and_released_after():
-    with core.run_lock.hold({BATCH}, command="pr batch run", started="t"):
-        assert core.run_lock.is_global_held(BATCH)
-    assert not core.run_lock.is_global_held(BATCH)
-
-
-def test_a_refused_global_says_which_and_names_the_holder():
-    with live_pid() as pid, \
-         held_elsewhere(core.run_lock.global_lock_path("batch"), {
-             "pid": pid, "command": "pr batch run --checkout /r", "started": "t0",
-         }), \
-         pytest.raises(LockBusy) as exc:
-        seen = pid
-        with core.run_lock.hold({BATCH}, command="pr batch run", started="t"):
-            pytest.fail("a held global lock must refuse the block")
-    assert exc.value.kind == "global"
-    assert (f"owns this global batch: pr batch run --checkout /r (pid {seen}, started t0)"
-            in str(exc.value))
-
-
-def test_a_refusal_later_in_the_order_releases_what_was_taken(tmp_path):
+def test_a_refusal_later_in_the_order_releases_what_was_taken(worktree, tmp_path):
     target = tmp_path / "t"
-    with held_elsewhere(target / core.run_lock.LOCK_FILE, {"pid": 1}), \
+    with live_pid() as pid, \
+         held_elsewhere(git_dir(worktree) / core.run_lock.TREE_LOCK_FILE, {"pid": pid}), \
          pytest.raises(LockBusy):
-        with core.run_lock.hold({BATCH, TARGET}, command="pr x", started="t",
-                                target_dir=target):
-            pytest.fail("a held target must refuse the block")
-    assert not core.run_lock.is_global_held(BATCH)
+        with core.run_lock.hold({TARGET, CHECKOUT}, command="pr x", started="t",
+                                target_dir=target, worktree=worktree):
+            pytest.fail("a held checkout must refuse the block")
+    assert not core.run_lock.is_held(target)
 
 
 # ── the late checkout lock ────────────────────────────────────────────────────

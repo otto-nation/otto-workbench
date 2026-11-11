@@ -37,7 +37,6 @@ def test_a_resource_appears_in_no_marker(tmp_path):
     with core.run_lock.hold_resource(lock, command="pr batch run", started="t"):
         assert core.run_lock.LOCK_ENV not in os.environ
         assert core.run_lock.TREE_LOCK_ENV not in os.environ
-        assert core.run_lock.GLOBAL_LOCK_ENV not in os.environ
         assert core.run_lock.holds(lock_file)
     assert not core.run_lock.holds(lock_file)
 

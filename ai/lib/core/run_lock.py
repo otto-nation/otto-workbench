@@ -28,13 +28,11 @@ cannot deadlock against another pair.
 A caller that writes to no checkout, or whose worktree git cannot resolve, takes
 the target lock alone.
 
-A third scope is keyed on nothing a run resolves. ``Global(name)`` is a
-machine-wide lock on ``<state_dir>/locks/<name>.lock``, for a command that must
-be the only one of its kind running. Every holder takes its scopes through
-``hold``, in one order — globals by name, then the target, then the checkout —
-so with every take non-blocking no two ``pr`` processes can deadlock.
+Every holder takes its scopes through ``hold``, in one order — the target,
+then the checkout — so with every take non-blocking no two ``pr`` processes can
+deadlock.
 
-A fourth kind sits outside those scopes. ``Resource`` is a lock on a path
+A third kind sits outside those scopes. ``Resource`` is a lock on a path
 the caller names, with no env marker: a child neither inherits it nor
 passes through it. ``hold_resource`` takes it. ``create=False`` (the default)
 refuses a missing parent directory rather than creating it, so a late
@@ -75,8 +73,8 @@ the five entry points that can be run without ``pr`` — ``review``,
 ``ci-check``, ``review-threads``, ``pr-rebase`` and ``pr-describe`` — so
 bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
 finds the lock already in this process's registry, or in
-``WORKBENCH_RUN_LOCK``, ``WORKBENCH_RUN_LOCK_TREE`` or
-``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through.
+``WORKBENCH_RUN_LOCK`` or ``WORKBENCH_RUN_LOCK_TREE`` when it is a child,
+and passes through.
 ``bin/local/validate-run-locks`` refuses a lock taken anywhere else.
 
 The one late acquisition is ``lock_checkout``, for a review that learns which
@@ -140,7 +138,6 @@ from pathlib import Path
 
 import core.log
 import core.timeouts
-import core.workbench_paths
 
 LOCK_FILE = "run.lock"
 LOCK_ENV = "WORKBENCH_RUN_LOCK"
@@ -153,11 +150,6 @@ LOCK_ENV = "WORKBENCH_RUN_LOCK"
 TREE_LOCK_FILE = "workbench-run-tree.lock"
 TREE_LOCK_ENV = "WORKBENCH_RUN_LOCK_TREE"
 
-# Machine-wide locks, keyed on a fixed name rather than on anything a run
-# resolves, and their marker.
-GLOBAL_LOCK_ENV = "WORKBENCH_RUN_LOCK_GLOBAL"
-GLOBAL_LOCKS_DIR = "locks"
-
 # Bounded wait when the flock is held by a vacated record (a prober, a
 # process exiting, or a holder that has not yet written its record). Real
 # contention — released is null and the pid is alive and not ours — is still
@@ -166,24 +158,6 @@ GLOBAL_LOCKS_DIR = "locks"
 VACATED_PAUSE_S = 0.01
 VACATED_PAUSE_MAX_S = 0.2
 VACATED_BUDGET_S = 2.0
-
-
-@dataclasses.dataclass(frozen=True)
-class Global:
-    """A machine-wide lock, keyed on a fixed name rather than on what a run targets.
-
-    For a command that names no target of its own but must still be the only
-    one of its kind running — `pr batch run` and `resume`, which plan across
-    every open PR and would otherwise both pass "is a run active?" in the
-    seconds before either has started one.
-    """
-
-    name: str
-
-    def __post_init__(self) -> None:
-        if not self.name or "/" in self.name or self.name.startswith("."):
-            raise ValueError(
-                f"a global lock is named by one plain path component, not {self.name!r}")
 
 
 class Scope(enum.Enum):
@@ -196,10 +170,8 @@ class Scope(enum.Enum):
 TARGET = Scope.TARGET
 CHECKOUT = Scope.CHECKOUT
 
-# What a command declares it holds: any mix of the three. A union rather than
-# a base class because the kinds carry different data — a Global its name, the
-# Scope members nothing until a run resolves what they key on.
-LockScope = Global | Scope
+# What a command declares it holds: any mix of the two.
+LockScope = Scope
 
 # The explicit spelling of "takes nothing", so a declaration reads as a decision.
 NO_LOCK: frozenset[LockScope] = frozenset()
@@ -622,29 +594,13 @@ def acquire(target_dir: Path, command: str, started: str, *,
             yield
 
 
-def global_lock_path(name: str) -> Path:
-    """Where the global lock *name* lives: ``<state_dir>/locks/<name>.lock``.
-
-    Resolved per call, like every state-root path, so ``WORKBENCH_STATE_DIR``
-    reaches it.
-    """
-    return core.workbench_paths.state_dir() / GLOBAL_LOCKS_DIR / f"{name}.lock"
-
-
-def _global_spec(scope: Global) -> _LockSpec:
-    path = global_lock_path(scope.name)
-    return _LockSpec(str(path), path, GLOBAL_LOCK_ENV, f"global {scope.name}", "global")
-
-
-def _rank(scope: LockScope) -> tuple[int, str]:
+def _rank(scope: LockScope) -> int:
     """Sort key for the one acquisition order."""
-    if isinstance(scope, Global):
-        return (0, scope.name)
-    return (1, "") if scope is TARGET else (2, "")
+    return 0 if scope is TARGET else 1
 
 
 def ordered(scopes: Iterable[LockScope]) -> list[LockScope]:
-    """*scopes* in the order every holder takes them: globals by name, target, checkout.
+    """*scopes* in the order every holder takes them: target, then checkout.
 
     Every take is non-blocking, and every `pr` process takes its scopes in this
     one order, so no two of them can deadlock however their sets overlap.
@@ -652,16 +608,9 @@ def ordered(scopes: Iterable[LockScope]) -> list[LockScope]:
     return sorted(set(scopes), key=_rank)
 
 
-def globals_in(scopes: Iterable[LockScope]) -> frozenset[Global]:
-    """The global scopes among *scopes*."""
-    return frozenset(s for s in scopes if isinstance(s, Global))
-
-
 def _scope_spec(scope: LockScope, *, target_dir: Path | None, worktree: Path | None,
                 target_label: str) -> _LockSpec | None:
     """Name one scope's lock, or None for a checkout git cannot name."""
-    if isinstance(scope, Global):
-        return _global_spec(scope)
     if scope is CHECKOUT:
         return _tree_spec(worktree)
     return _target_spec(target_dir, target_label)
@@ -859,11 +808,6 @@ def is_held(target_dir: Path) -> bool:
     descriptor already reports our own lock as held.
     """
     return _probe(Path(target_dir) / LOCK_FILE)
-
-
-def is_global_held(scope: Global) -> bool:
-    """Whether anyone holds the global lock *scope* — asked of the kernel, like `is_held`."""
-    return _probe(global_lock_path(scope.name))
 
 
 def _probe(path: Path) -> bool:

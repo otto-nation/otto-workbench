@@ -101,6 +101,8 @@ main { flex: 1; min-height: 0; display: flex; }
 /* selected is never fill alone: the selected fill, a 2px primary rule on the left, ink text. */
 .card.sel { background: var(--selected); border-left: var(--rule-selected) solid var(--accent); padding-left: calc(var(--sp-md) - var(--rule-selected) + 1px); }
 .card .title { font: var(--font-title); max-height: var(--card-title-max-h); overflow: hidden; }
+.card .title-row { display: flex; gap: var(--sp-sm); align-items: flex-start; min-width: 0; }
+.card .title-row .title { flex: 1; min-width: 0; }
 .card .row { display: flex; gap: var(--sp-sm); align-items: center; min-width: 0; font: var(--font-meta); color: var(--muted); }
 .card .branch { font: var(--font-code); color: var(--muted); }
 .card .badges { display: flex; flex-wrap: wrap; gap: var(--sp-xs); align-items: center; }

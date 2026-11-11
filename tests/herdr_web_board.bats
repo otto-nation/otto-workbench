@@ -88,6 +88,32 @@ const table = (terminals) => [
   [ "$output" = '[2,1,0,1]' ]
 }
 
+@test "board: each repo is published as it loads, before the slowest repo finishes" {
+  _web "$BOARD_TABLE
+        const { createBoard } = await import(W + '/server/board.js');
+        const inner = fakeExec(table([{ address: 't1', cwd: '/w/box' }, { address: 't2', cwd: '/w/kit' }]));
+        let release;
+        const gate = new Promise((r) => { release = r; });
+        const exec = async (cmd, args, opts = {}) => {
+          if (cmd === 'git' && opts.cwd === '/w/kit') return { code: 0, stdout: 'git@github.com:acme/kit.git\\n', stderr: '' };
+          if (cmd === 'gh' && args.includes('/repos/acme/kit/pulls')) { await gate; return { code: 0, stdout: '[]\\n', stderr: '' }; }
+          return inner(cmd, args, opts);
+        };
+        const seen = [];
+        const b = createBoard({ exec, name: 'srv', version: 'v1', onChange: (s) => seen.push(s) });
+        const done = b.refresh();
+        let early = null;
+        for (let i = 0; i < 200 && !early; i++) {
+          early = seen.find((s) => s.prs.length === 1);
+          if (!early) await new Promise((r) => setTimeout(r, 5));
+        }
+        release();
+        await done;
+        out({ early: [early.refreshing, early.loading, early.prs[0].repoSlug], last: seen.at(-1).refreshing });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"early":[true,true,"acme/box"],"last":false}' ]
+}
+
 @test "board: refreshes asked for during a pull collapse into one more pull" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');

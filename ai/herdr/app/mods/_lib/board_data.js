@@ -133,6 +133,7 @@ function emptyEnrich() {
     inMergeQueue: false,
     mergeable: 'UNKNOWN',
     ciStatus: 'none',
+    ciUnknown: false,
     reviewDecision: null,
     additions: 0,
     deletions: 0,
@@ -152,6 +153,8 @@ function asOpen(pull, extra) {
     inMergeQueue: e.inMergeQueue ?? false,
     mergeable: e.mergeable ?? 'UNKNOWN',
     ciStatus: e.ciStatus ?? 'none',
+    // Enrichment missing: failed batch or null alias, so CI/mergeability/reviews unknown.
+    ciUnknown: extra == null,
     reviewDecision: e.reviewDecision ?? null,
     additions: e.additions ?? 0,
     deletions: e.deletions ?? 0,
@@ -161,22 +164,37 @@ function asOpen(pull, extra) {
   };
 }
 
+// Stay well under GitHub concurrency limits.
+// ceiling: the mod has no process cap so fan-out is up to 4 per repo across all repos at once;
+// if many repos on one remote hit ssh MaxSessions or GitHub secondary rate limits, add a per-target cap.
+const GRAPHQL_CONCURRENCY = 4;
+
 async function graphqlByNumber(exec, ctx, slug, numbers, argvOf) {
   let partial = false;
   const byNumber = {};
-  for (const batch of batches(numbers, 20)) {
-    const ran = await invoke(exec, ctx, 'gh', argvOf(slug, batch));
-    if (!ran.ok) {
-      partial = true;
-      continue;
+  const groups = batches(numbers);
+  let next = 0;
+  const workerCount = Math.min(GRAPHQL_CONCURRENCY, groups.length);
+  async function worker() {
+    while (true) {
+      const i = next;
+      next += 1;
+      if (i >= groups.length) return;
+      const batch = groups[i];
+      const ran = await invoke(exec, ctx, 'gh', argvOf(slug, batch));
+      if (!ran.ok) {
+        partial = true;
+        continue;
+      }
+      const parsed = readJson(ran.stdout);
+      if (!parsed.ok) {
+        partial = true;
+        continue;
+      }
+      Object.assign(byNumber, mapGraphql(parsed.value, batch));
     }
-    const parsed = readJson(ran.stdout);
-    if (!parsed.ok) {
-      partial = true;
-      continue;
-    }
-    Object.assign(byNumber, mapGraphql(parsed.value, batch));
   }
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
   return { byNumber, partial };
 }
 

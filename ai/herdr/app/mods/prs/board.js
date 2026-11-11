@@ -1,12 +1,12 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
+import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns, prIssues } from "./_lib/columns.js";
 import { columnPreset } from "./_lib/batch_launch.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import {
-  button, chip as chipOf, filterGroup, ciMark, addStat, delStat, card, placeholder, scrollBody,
+  button, chip as chipOf, filterGroup, addStat, delStat, card, placeholder, scrollBody,
   laneTitle, tag, text, type, statusText,
 } from "./_ui/ui.js";
 import { cardStateLine } from "./workflows_view.js";
@@ -53,14 +53,18 @@ export function renderBoard({
   })));
 }
 
+export function stateTags(pr) {
+  const out = [];
+  if (pr.state === "MERGED") out.push(tag("Merged"));
+  if (pr.inMergeQueue) out.push(tag("In merge queue"));
+  if (pr.isDraft) out.push(tag("Draft"));
+  return out;
+}
+
 function badges(pr, { hideBusy } = {}) {
   const t = theme();
-  const out = [];
-  if (pr.isDraft) out.push(tag("Draft"));
-  if (pr.state === "MERGED") out.push(statusText("pass", "Merged"));
-  if (pr.inMergeQueue) out.push(statusText("running", "In merge queue"));
+  const out = prIssues(pr).map((i) => statusText(i.status, i.label));
   if (pr.busy && !hideBusy) out.push(statusText("running", "Batch working"));
-  if (pr.owedFeedback) out.push(text("meta", pr.owedFeedback, t.muted));
   const runs = pr.reviewRuns.length;
   if (runs > 0) out.push(text("meta", `${runs} reviews`, t.muted));
   for (const name of pr.labels.slice(0, 2)) out.push(tag(name));
@@ -71,14 +75,15 @@ export function renderCard(pr, {
   onOpen, spinner, showRepo, workflowOf,
 }) {
   const t = theme();
-  const mark = pr.ciStatus === "passing" || pr.ciStatus === "failing" || pr.ciStatus === "pending";
   const item = workflowOf?.(pr);
   const stateLine = item ? cardStateLine(item) : null;
   const num = showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`;
+  const b = badges(pr, { hideBusy: Boolean(stateLine) });
   return card(cardId(pr)).gap(SP.sm).on_click(() => onOpen(pr))
-    .child(h_flex().gap(SP.sm).items_center()
+    .child(h_flex().gap(SP.sm).items_start()
       .child(type(div().flex_1().min_w(0).max_h(LAYOUT.cardTitleMaxH).overflow_hidden(), "title")
-        .child(pr.title ?? "")))
+        .child(pr.title ?? ""))
+      .children(stateTags(pr)))
     .child(h_flex().gap(SP.sm).items_center()
       .child(text("meta", num, t.muted).flex_none())
       .child(text("meta", pr.author ?? "", t.muted).min_w(0).truncate())
@@ -87,9 +92,8 @@ export function renderCard(pr, {
       .child(type(addStat(pr.additions ?? 0), "meta"))
       .child(type(delStat(pr.deletions ?? 0), "meta"))
       .child(text("meta", `${pr.changedFiles ?? 0} files`, t.muted))
-      .when(Boolean(mark), (e) => e.child(ciMark(pr.ciStatus)))
       .when(Boolean(pr.reviewing), (e) => e.child(div().text_color(t.working).child(spinner))))
-    .child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(badges(pr, { hideBusy: Boolean(stateLine) })))
+    .when(b.length > 0, (e) => e.child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(b)))
     .when(Boolean(stateLine), (e) => e.child(stateLine));
 }
 

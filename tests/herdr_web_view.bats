@@ -59,10 +59,28 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
 
 @test "view: card badges are text, status or tag (never pills), as prs/board.js badges()" {
   _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
-        const p = pr(1, { isDraft: true, state: 'MERGED', inMergeQueue: true, busy: true, reviewRuns: [{}, {}], labels: ['a', 'b', 'c'] });
+        const p = pr(1, { isDraft: true, state: 'OPEN', inMergeQueue: true, mergeable: 'CONFLICTING', ciStatus: 'failing', reviewDecision: 'CHANGES_REQUESTED', busy: true, reviewRuns: [{}, {}], labels: ['a', 'b', 'c'] });
         out([v.cardBadges(p), v.cardBadges(p, { hideBusy: true }).map((b) => b.text)]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[[{"kind":"text","text":"Draft"},{"kind":"status","status":"pass","text":"Merged"},{"kind":"status","status":"running","text":"In merge queue"},{"kind":"status","status":"running","text":"Batch working"},{"kind":"text","text":"2 reviews"},{"kind":"tag","text":"a"},{"kind":"tag","text":"b"}],["Draft","Merged","In merge queue","2 reviews","a","b"]]' ]
+  [ "$output" = '[[{"kind":"status","status":"fail","text":"Conflicts"},{"kind":"status","status":"fail","text":"CI failing"},{"kind":"status","status":"warn","text":"Changes requested"},{"kind":"status","status":"running","text":"Batch working"},{"kind":"text","text":"2 reviews"},{"kind":"tag","text":"a"},{"kind":"tag","text":"b"}],["Conflicts","CI failing","Changes requested","2 reviews","a","b"]]' ]
+}
+
+@test "view: ciUnknown is a CI unknown status badge" {
+  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
+        const s = await import(W + '/lib/snapshot.js');
+        const p = pr(1, { ciUnknown: true, ciStatus: 'none' });
+        const shot = s.toSnapshot({ prs: [p] }, { name: 'n', version: '1' });
+        out(v.cardBadges(shot.prs[0]));"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"kind":"status","status":"none","text":"CI unknown"}]' ]
+}
+
+@test "view: state tags (Merged, In merge queue, Draft) are cardTags, not badges" {
+  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
+        const p = pr(1, { state: 'MERGED', isDraft: true });
+        out([v.cardTags(p), v.cardBadges(p).some((b) => b.text === 'Draft' || b.text === 'Merged')]);"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["Merged","Draft"],false]' ]
 }
 
 @test "view: h() puts untrusted text in a text node, never innerHTML" {

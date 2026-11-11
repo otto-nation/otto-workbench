@@ -6,7 +6,7 @@
  */
 import {
   TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, isMine, groupColumns, visibleColumns,
-  DEFAULT_FILTERS, filterOn,
+  DEFAULT_FILTERS, filterOn, prIssues,
 } from '../../app/mods/_lib/columns.js';
 import { compactSections } from '../../app/mods/_lib/compact.js';
 import { relativeTime } from '../../app/mods/_lib/history.js';
@@ -74,13 +74,19 @@ export function toggleFilter(ui, name) {
   return ui;
 }
 
-// prs/board.js badges(): states are coloured text with a glyph, labels are tags, nothing is a pill.
+// prs/board.js stateTags(): Merged, In merge queue, Draft — title-row tags, not badges.
+export function cardTags(pr) {
+  const out = [];
+  if (pr.state === 'MERGED') out.push('Merged');
+  if (pr.inMergeQueue) out.push('In merge queue');
+  if (pr.isDraft) out.push('Draft');
+  return out;
+}
+
+// prs/board.js badges(): issue statuses, batch working, review count, then labels as tags; never pills.
 // hideBusy: the card shows the batch state line instead (phase 4).
 export function cardBadges(pr, { hideBusy = false } = {}) {
-  const out = [];
-  if (pr.isDraft) out.push({ kind: 'text', text: 'Draft' });
-  if (pr.state === 'MERGED') out.push({ kind: 'status', status: 'pass', text: 'Merged' });
-  if (pr.inMergeQueue) out.push({ kind: 'status', status: 'running', text: 'In merge queue' });
+  const out = prIssues(pr).map((i) => ({ kind: 'status', status: i.status, text: i.label }));
   if (pr.busy && !hideBusy) out.push({ kind: 'status', status: 'running', text: 'Batch working' });
   const runs = (pr.reviewRuns ?? []).length;
   if (runs > 0) out.push({ kind: 'text', text: `${runs} reviews` });

@@ -3,7 +3,6 @@
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
-    <state_dir>/locks/batch-<repo-key>.lock     held by a live `pr batch run`/`resume` covering that repo
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
@@ -12,9 +11,9 @@
 
 `state.json` is written only by a `Session` that loaded it under the run's
 resource. The resource has no `WORKBENCH_RUN_LOCK` marker: a child neither
-inherits it nor passes through it. Lock order is `Global("batch-<repo_key>")`
-for each repo the batch covers, then the run resource, then item TARGETs, then
-CHECKOUT. Every take is non-blocking, so the order cannot deadlock. One
+inherits it nor passes through it. Lock order is the run resource, then item
+TARGETs, then CHECKOUT. Nothing is held per repo: several runs may cover one
+repo at once, kept apart by their items' TARGETs. Every take is non-blocking, so the order cannot deadlock. One
 exception: `pr gc`'s dispatcher takes its own TARGET before `reap` takes run
 resources.
 
@@ -77,14 +76,6 @@ STATE_FILE = "state.json"
 LEGACY_CANCEL_FILE = "cancel"
 REQUESTS_DIR = "requests"
 REJECTED_DIR = "rejected"
-
-# One lock per repo a `pr batch run`/`resume` covers, held for its life.
-# The lock itself refuses a second batch over that repo; there is no
-# separate active-run check. Outside run_dir: it guards the choice of run,
-# not one run's files. Repo keys are a slug+digest, a valid path component.
-def batch_lock(repo_key: str) -> core.run_lock.Global:
-    return core.run_lock.Global(f"batch-{repo_key}")
-
 
 @dataclass(frozen=True)
 class RepoRef:

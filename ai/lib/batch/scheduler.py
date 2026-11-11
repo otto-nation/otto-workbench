@@ -36,10 +36,12 @@ from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure
 from config.workbench_config import BatchConfig
 from pr.comments_fix import CloseoutDebt
 
-# Steps that fetch into the repo's shared `.git`. Two at once contend for its
-# locks, which today degrades to a "potentially stale" warning mid-rebase. A
-# CI step started with --wait is not counted while live: it runs `ci-check`
-# directly, which makes no startup fetch (see `_repo_busy`).
+# Steps that fetch into the repo's shared `.git`. This run starts one at a time
+# per repo, so its own steps never queue on the fetch behind each other; a step
+# from another run over the same repo is kept from racing it by `git.client`'s
+# fetch mutex instead, which every fetch takes. A CI step started with --wait is
+# not counted while live: it runs `ci-check` directly, which makes no startup
+# fetch (see `_repo_busy`).
 _FETCHING = frozenset({Step.REBASE, Step.CI})
 
 

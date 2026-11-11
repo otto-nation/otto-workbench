@@ -191,7 +191,7 @@ class PlanRow:
     # What pr's saved state says is owed (CloseoutDebt.describe()), "" when nothing is.
     closeout: str = ""
     # Origin key of the repo (pr.target.repo_key_from_origin) taken at plan time;
-    # the per-repo batch lock is named after it. "" when the checkout had no origin.
+    # it names the item's TARGET lock. "" when the checkout had no origin.
     repo_key: str = ""
     # None in a plan saved before the field existed; need_for then falls back
     # to needs[Step.REBASE].

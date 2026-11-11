@@ -984,8 +984,8 @@ so `resume` keeps it. `comments` is needed when `pr comments` would find somethi
 `ci` runs `ci-check --no-rebase --head-sha <planned remote head>` (not `pr ci`)
 when the rollup failed, with `--wait` if still running; `--fix` and the rate-limit
 rerun only under `--with-ai=ci`. Fork heads skip both. A stacked PR records
-`stack_wait_base` and is not rebased in the run. One fetching rebase or CI step
-per repo at a time. No start in a dirty worktree except restoring generated files.
+`stack_wait_base` and is not rebased in the run. One fetching rebase or CI step per repo at a time per run; runs may share a repo (item targets keep them apart, the fetch mutex serializes fetches).
+No start in a dirty worktree except restoring generated files.
 
 A default run never opens a decision; items end `done` or `needs_session` with
 `findings` (`batch/findings.py`), shown by `pr batch report`. A stored waiting

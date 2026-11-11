@@ -87,16 +87,6 @@ def item_target_dir(item: Item) -> Path | None:
     return pr.target.target_dir(key, item.branch) if key else None
 
 
-def run_repo_keys(run: Run) -> list[str]:
-    """Sorted, deduplicated origin keys of every item in *run*; skips unknown."""
-    keys = []
-    for item in run.items:
-        key = item_repo_key(item)
-        if key:
-            keys.append(key)
-    return sorted(set(keys))
-
-
 def checkout_git_dir(worktree: str) -> Path | None:
     """The private git dir *worktree*'s checkout lock is keyed on, or None.
 

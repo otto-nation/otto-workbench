@@ -103,19 +103,6 @@ def test_a_refusal_later_in_the_order_releases_what_was_taken(tmp_path):
     assert not core.run_lock.is_global_held(BATCH)
 
 
-def test_a_noted_run_reaches_a_contenders_message():
-    with core.run_lock.hold({BATCH}, command="pr batch run", started="t"):
-        core.run_lock.note_holder(BATCH, run="20261013T000000-abcd")
-        record = json.loads(core.run_lock.global_lock_path("batch").read_text())
-    assert record["run"] == "20261013T000000-abcd"
-    assert "run 20261013T000000-abcd" in str(LockBusy(record, Path("x"), "global batch"))
-
-
-def test_noting_a_lock_this_process_does_not_hold_changes_nothing():
-    core.run_lock.note_holder(BATCH, run="x")
-    assert not core.run_lock.global_lock_path("batch").exists()
-
-
 # ── the late checkout lock ────────────────────────────────────────────────────
 
 

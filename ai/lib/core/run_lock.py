@@ -274,8 +274,8 @@ class LockBusy(RuntimeError):
         pid = self.holder.get("pid", "?")
         command = self.holder.get("command", "unknown command")
         started = self.holder.get("started", "unknown time")
-        # A holder that learned its run id after taking the lock records it
-        # (`note_holder`), and a contender is told which run to wait for.
+        # A holder record carrying a run id (a batch run's resource) tells a
+        # contender which run to wait for.
         run = self.holder.get("run")
         tail = f", run {run}" if run else ""
         return f"{command} (pid {pid}, started {started}{tail})"
@@ -688,25 +688,6 @@ def hold(scopes: Iterable[LockScope], *, command: str, started: str,
                                target_label=target_label)
             stack.enter_context(_holding(spec, command, started))
         yield
-
-
-def note_holder(scope: Global, **fields: str) -> None:
-    """Add *fields* to the holder record of a global lock this process holds.
-
-    For a holder that learns something worth telling a contender only after it
-    took the lock: `pr batch run` mints its run id after planning, under the
-    batch lock it took first, and a refused second batch is then told the run.
-
-    A no-op when this process does not hold *scope*. The record is diagnostic,
-    and a caller reached without the lock — a test driving a handler directly —
-    loses nothing but that detail in someone else's message.
-    """
-    held = _HELD.get(str(global_lock_path(scope.name)))
-    if held is None:
-        return
-    record = _read_holder(held.path)
-    record.update(fields)
-    _write_record(held.handle, record)
 
 
 @contextlib.contextmanager

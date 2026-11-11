@@ -52,7 +52,7 @@ query($owner: String!, $name: String!, $pr: Int!) {{
           minimizedReason
           submittedAt
           lastEditedAt
-          author {{ login }}
+          author {{ login __typename }}
         }}
       }}
       reviewThreads(first: {gh.pr_pages.GQL_THREADS_LIMIT}) {{
@@ -174,9 +174,10 @@ class PRData:
         return list(by_user.values())
 
     def review_body_comments(self, my_login: str) -> list[dict]:
-        """Non-self reviews with substantive body text.
+        """Non-self, non-bot reviews with substantive body text.
 
-        ``[{id, user, body, state, submitted_at, last_edited_at}]``.
+        Pending and dismissed reviews are omitted. ``[{id, user, body, state,
+        submitted_at, last_edited_at}]``.
 
         ``last_edited_at`` is what lets a caller tell a review it has already
         read from the same review re-worded since. An edit keeps the id and
@@ -190,8 +191,10 @@ class PRData:
             login = author.get("login", "")
             if login.lower() == my_lower:
                 continue
+            if author.get("__typename") == "Bot":
+                continue
             state = r.get("state", "")
-            if state == "PENDING":
+            if state in ("PENDING", "DISMISSED"):
                 continue
             if r.get("minimizedReason"):
                 continue

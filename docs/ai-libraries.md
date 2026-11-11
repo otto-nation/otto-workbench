@@ -2578,9 +2578,10 @@ stderr, so a failure can never be captured into ``GH_TOKEN``.
 
 What a PR is owed an answer for — the one definition `pr comments` and `pr batch` share.
 
-Owed feedback is three things: unresolved review threads nobody has settled;
-review bodies from someone else that carry text and are neither pending nor
-minimized (`PRData.review_body_comments`); and PR comments from someone else
+Owed feedback is three things: review threads triage would still classify
+(not RESOLVED or ADDRESSED, and nobody has settled); review bodies from
+someone else that carry text and are neither pending, dismissed, minimized,
+nor a bot's (`PRData.review_body_comments`); and PR comments from someone else
 that are not a bot's (`PRData.non_self_issue_comments`). The two top-level
 kinds are then filtered through the seen record a successful triage writes
 (`CommentsSummary.seen_*`), keyed on comment id *and* edit stamp.

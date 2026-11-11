@@ -112,3 +112,7 @@ class TestFlagUntested:
         outcome = ItemOutcome(id="M1", outcome=FixOutcome.DECLINED)
         assert _flag([outcome], {"src/mod.py"}) == 0
         assert outcome.verified is None
+
+
+def test_a_jvm_suffix_test_anchor_is_a_test_file():
+    assert fix.regression._is_test_file("src/FooTest.java")

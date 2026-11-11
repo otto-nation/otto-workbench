@@ -114,9 +114,9 @@ def _fold(name: str) -> str:
     """*name* compared the way a repo's naming styles agree on it.
 
     `ProductCatalog`, `product_catalog` and `product-catalog` are one subject.
-    Case is folded and `-` read as `_`; a Pascal word boundary is not
+    Case is folded and `-`/`_` are dropped; a Pascal word boundary is not
     inferred, so `ProductCatalog` and `product_catalog` agree only because
-    both flatten to the same letters once `_` is dropped.
+    both flatten to the same letters.
     """
     return name.lower().replace("-", "").replace("_", "")
 
@@ -145,6 +145,10 @@ def _colocated_tests(sources: set[str]) -> set[str]:
     name through `_is_test_for`: this repo has 189 such files and none
     colocated, so requiring the same directory would drop the very test the
     pass was told to write.
+
+    `_is_test_for` also matches a colocated test by folded name: exact
+    names cover the plain shapes, and folding covers `ProductCatalog.test.tsx`
+    beside `product-catalog.tsx`, which no exact path spells.
 
     Only the stem has to match, so an unrelated suite the agent edited in
     passing is still the intended leave-behind.

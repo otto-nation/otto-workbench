@@ -15,7 +15,6 @@ hedges an unverified fix carries the reason.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Collection, Iterable
 from pathlib import Path
 
@@ -41,13 +40,6 @@ _NON_BEHAVIOUR_NAMES = frozenset({
 # What `verify_detail` opens with on a fix this module hedged; callers that
 # count such fixes match on it rather than restating the words.
 UNTESTED_DETAIL_PREFIX = "no test for"
-
-_TEST_DIRS = frozenset({"tests", "test", "spec", "specs", "__tests__"})
-_TEST_NAME = re.compile(
-    r"(?:^test[_-]|[_.-](?:test|tests|spec)\.|_support\.|^conftest\.)",
-    re.IGNORECASE,
-)
-
 
 def is_behaviour_bearing(path: str) -> bool:
     """Whether editing *path* can change what the program does."""
@@ -123,9 +115,9 @@ def _is_test_file(path: str) -> bool:
     A fix whose anchor is a test file has no further test to ask for.
     """
     p = Path(path)
-    if any(part.lower() in _TEST_DIRS for part in p.parts[:-1]):
-        return True
-    return bool(_TEST_NAME.search(p.name))
+    return (fix.scope._in_test_dir(p)
+            or bool(fix.scope._candidate_subject(p))
+            or p.name == "conftest.py")
 
 
 def check(

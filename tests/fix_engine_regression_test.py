@@ -55,8 +55,8 @@ class TestRequiresTests:
     ):
         verdict = fix.gate.Verdict(ok=True, detail="looks right")
         seen = _run(tmp_path, snapshots, requires=True, verdict=verdict)
-        assert seen == [(False, "no test for a.py in this commit")] or \
-            seen[0][0] is False and seen[0][1].startswith("no test for a.py")
+        assert seen == [
+            (False, "no test for a.py in this commit (gate: looks right)")]
 
     def test_a_test_in_the_commit_leaves_the_verdict_alone(
         self, tmp_path, landed, head, snapshots,

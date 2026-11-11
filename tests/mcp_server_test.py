@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from conftest import load_script
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
@@ -446,15 +447,6 @@ class TestDuplicateNames:
 GOLDEN_TOOLS = Path(__file__).resolve().parent / "fixtures" / "mcp_tools.json"
 
 
-def _served_tools() -> dict:
-    """`discover_tools()` with each absolute script path made repo-relative."""
-    return {
-        name: {**schema,
-               "_script": str(Path(schema["_script"]).relative_to(WORKBENCH_DIR))}
-        for name, schema in discover_tools().items()
-    }
-
-
 class TestServedSchemas:
     """What the server offers, recorded so a rewrite of discovery can be checked.
 
@@ -464,13 +456,16 @@ class TestServedSchemas:
     *whole* served set, so a schema silently gained or lost would pass every
     case above.
 
-    Regenerate the fixture by writing ``json.dumps(_served_tools(), indent=2,
-    sort_keys=True)`` to it. A diff here is a change to the MCP surface and is
-    read as one.
+    Regenerate with bin/local/generate-mcp-tools-fixture. A diff here is a
+    change to the MCP surface and is read as one.
     """
 
     def test_the_served_set_matches_the_golden(self):
         if not (WORKBENCH_DIR / "ai" / "bin" / "pr").exists():
             pytest.skip("scripts not found")
 
-        assert _served_tools() == json.loads(GOLDEN_TOOLS.read_text())
+        fixture = load_script(
+            "generate_mcp_tools_fixture",
+            WORKBENCH_DIR / "bin" / "local" / "generate-mcp-tools-fixture",
+        )
+        assert json.loads(fixture.render()) == json.loads(GOLDEN_TOOLS.read_text())

@@ -7619,8 +7619,9 @@ tree and exit 3. ``--stop-on-conflict`` and a resumed rebase keep the paused
 tree instead — those paths stay in ``lifecycle._report_conflicts_and_stop``.
 
 ``rebase.regenerate`` must be declared for ACCEPT_THEIRS files; the conventional
-``mise run generate`` fallback is ``--fix``-only. REGENERATE files still use
-``git.regenerate.LOCKFILE_REGENERATORS``.
+``mise run generate`` fallback is ``--fix``-only. ``rebase.regenerate_paths``
+limits which generated files those commands cover; an unmatched path is
+reported stale. REGENERATE files still use ``git.regenerate.LOCKFILE_REGENERATORS``.
 
 ### rebase/conflicts.py
 
@@ -7873,9 +7874,12 @@ The repo-specific half of regeneration — what *this* repo rebuilds, and how.
 
 ``git.regenerate`` owns the repo-agnostic half: which command rebuilds a
 lockfile of a given kind. This module answers the question that needs a repo to
-answer it — what a repo declares under ``rebase.regenerate``, or what its task
-runner conventionally offers — which is why it sits at layer 6 with ``config``
-in reach rather than beside the registry at layer 2.
+answer it — what a repo declares under ``rebase.regenerate`` and
+``rebase.regenerate_paths``, or what its task runner conventionally offers —
+which is why it sits at layer 6 with ``config`` in reach rather than beside
+the registry at layer 2. An uncovered generated file is reported stale rather
+than queued, so a command that does not produce that file cannot silently
+keep the branch's copy.
 
 ### rebase/resolve_ai.py
 

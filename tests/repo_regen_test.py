@@ -27,10 +27,12 @@ def _forget_cached_repo_reads():
 
 
 @contextlib.contextmanager
-def _repo_declaring(commands, *, root, mise_task=False):
+def _repo_declaring(commands, *, root, mise_task=False, paths=()):
     """Stand in for the two sources ``repo_regenerators`` consults."""
     cfg = config.workbench_config.WorkbenchConfig(
-        rebase=config.workbench_config.RebaseConfig(regenerate=list(commands)),
+        rebase=config.workbench_config.RebaseConfig(
+            regenerate=list(commands), regenerate_paths=list(paths),
+        ),
     )
     with mock.patch.object(config.workbench_config, "load_config_or_default",
                            return_value=cfg), \
@@ -87,6 +89,71 @@ def test_queue_repo_regeneration_false_when_unknown(tmp_path):
         assert not rebase.repo_regen.queue_repo_regeneration("x.gen", str(tmp_path), queue)
 
     assert list(queue) == []
+
+
+def test_queue_repo_regeneration_false_when_path_uncovered(tmp_path):
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring(["mise run generate"], root=tmp_path, paths=("docs/*.md",)):
+        assert not rebase.repo_regen.queue_repo_regeneration(
+            "CHANGELOG.md", str(tmp_path), queue,
+        )
+
+    assert list(queue) == []
+
+
+def test_queue_repo_regeneration_covered_glob_queues_every_command(tmp_path):
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring(
+        ["bin/local/a", "bin/local/b"], root=tmp_path, paths=("docs/*.md",),
+    ):
+        assert rebase.repo_regen.queue_repo_regeneration(
+            "docs/tools.md", str(tmp_path), queue,
+        )
+
+    assert [job.cmd for job in queue] == [("bin/local/a",), ("bin/local/b",)]
+
+
+def test_queue_repo_regeneration_empty_paths_covers_everything(tmp_path):
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring(["mise run generate"], root=tmp_path, paths=()):
+        assert rebase.repo_regen.queue_repo_regeneration(
+            "CHANGELOG.md", str(tmp_path), queue,
+        )
+
+    assert list(queue)
+
+
+def test_queue_repo_regeneration_match_is_anchored(tmp_path):
+    """`docs/tools.md` must not cover `x/docs/tools.md`."""
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring(
+        ["mise run generate"], root=tmp_path, paths=("docs/tools.md",),
+    ):
+        assert not rebase.repo_regen.queue_repo_regeneration(
+            "x/docs/tools.md", str(tmp_path), queue,
+        )
+        assert rebase.repo_regen.queue_repo_regeneration(
+            "docs/tools.md", str(tmp_path), queue,
+        )
+
+    assert list(queue) and all(
+        "x/docs/tools.md" not in job.files for job in queue
+    )
+
+
+def test_queue_repo_regeneration_limits_the_conventional_fallback(tmp_path):
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring([], root=tmp_path, mise_task=True, paths=("gen.txt",)):
+        assert not rebase.repo_regen.queue_repo_regeneration(
+            "CHANGELOG.md", str(tmp_path), queue, conventional=True,
+        )
+        assert rebase.repo_regen.queue_repo_regeneration(
+            "gen.txt", str(tmp_path), queue, conventional=True,
+        )
+
+    jobs = list(queue)
+    assert len(jobs) == 1
+    assert jobs[0].files == ["gen.txt"]
 
 
 class TestMiseHasTask:

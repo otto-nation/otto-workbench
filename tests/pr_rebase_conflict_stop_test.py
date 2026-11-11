@@ -147,6 +147,38 @@ def test_conventional_generate_task_does_not_qualify(tmp_path, capsys):
     assert report["tree"] == "clean"
 
 
+def test_uncovered_generated_file_aborts_even_with_declared_regenerator(
+    tmp_path, capsys,
+):
+    """A generated file outside regenerate_paths stays stale — CHANGELOG-shaped.
+
+    Revert-check: deleting the regenerate_paths guard in queue_repo_regeneration
+    lets the declared command succeed without covering this file, and this
+    case would continue instead of aborting.
+    """
+    repo, pre = _conflicted(tmp_path, {
+        "CHANGELOG.md": (
+            "DO NOT EDIT\nbase\n",
+            "DO NOT EDIT\nmain\n",
+            "DO NOT EDIT\nfeat\n",
+        ),
+    })
+    _write(
+        repo, ".workbench.yml",
+        "rebase:\n  regenerate:\n    - true\n  regenerate_paths:\n    - gen.txt\n",
+    )
+    rebase.repo_regen.clear_caches()
+    rc = rebase.lifecycle.step_conflicts(
+        str(repo), _ctx(repo), rebase.types.RunMode.PUSH,
+        rebase.inspect.detect_conflicts(str(repo)), _tally(pre),
+        target_ref="main",
+    )
+    report = _report(capsys)
+    assert rc == rebase.types.CONFLICTS_EXIT
+    assert report["aborted"] is True
+    assert "CHANGELOG.md" in report["files_stale"]
+
+
 def test_failed_rebuild_aborts(tmp_path, capsys):
     repo, pre = _conflicted(tmp_path, {
         "gen.txt": (

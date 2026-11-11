@@ -239,6 +239,11 @@ tools:
     visibility: brief
     description: "Generates config.schema.json and the docs key reference from WorkbenchConfig"
 
+  - name: generate-mcp-tools-fixture
+    permission: false
+    visibility: brief
+    description: "Generates tests/fixtures/mcp_tools.json from the pr tool schema and the registries"
+
   - name: generate-herdr-app-themes
     permission: false
     visibility: brief

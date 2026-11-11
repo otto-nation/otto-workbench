@@ -2,15 +2,19 @@
 
 ``git.regenerate`` owns the repo-agnostic half: which command rebuilds a
 lockfile of a given kind. This module answers the question that needs a repo to
-answer it — what a repo declares under ``rebase.regenerate``, or what its task
-runner conventionally offers — which is why it sits at layer 6 with ``config``
-in reach rather than beside the registry at layer 2.
+answer it — what a repo declares under ``rebase.regenerate`` and
+``rebase.regenerate_paths``, or what its task runner conventionally offers —
+which is why it sits at layer 6 with ``config`` in reach rather than beside
+the registry at layer 2. An uncovered generated file is reported stale rather
+than queued, so a command that does not produce that file cannot silently
+keep the branch's copy.
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
+import fnmatch
 import shlex
 import shutil
 from functools import cache
@@ -29,7 +33,7 @@ RegenQueue = git.regenerate.RegenQueue
 CONVENTIONAL_REGEN_TASK = "generate"
 
 
-# The three reads below are cached for the run, not for the process: neither
+# The cached reads below last for the run, not the process: neither
 # `.workbench.yml` nor a repo's task list changes under a rebase that is only
 # replaying commits, and each is asked once per generated file. A caller that
 # outlives one repo state — a test suite, in practice — clears them.
@@ -86,6 +90,20 @@ def repo_regenerators(cwd: str, *, conventional: bool = True) -> tuple[Regenerat
     return ()
 
 
+@cache
+def regenerate_paths(cwd: str) -> tuple[str, ...]:
+    """Globs of generated files ``rebase.regenerate`` actually rebuilds.
+
+    Empty means every generated file. A non-empty list that matches nothing
+    for a given path is how that file is reported stale without queuing.
+    """
+    return tuple(
+        config.workbench_config.load_config_or_default(
+            repo_root(cwd),
+        ).rebase.regenerate_paths
+    )
+
+
 def queue_repo_regeneration(
     filepath: str, cwd: str, queue: RegenQueue, *, conventional: bool = True,
 ) -> bool:
@@ -94,9 +112,20 @@ def queue_repo_regeneration(
     Keyed on the repo root rather than the file's directory, so the dozen
     generated files one rebase touches collapse into a single run of each
     command — RegenQueue dedupes on (directory, command).
+
+    Returns False — so the caller reports the file stale — when no regenerator
+    exists, or when ``rebase.regenerate_paths`` is non-empty and no glob
+    matches ``filepath``. The match is ``fnmatch.fnmatchcase`` against the
+    repo-relative path; empty paths cover everything, including the
+    conventional fallback.
     """
     regenerators = repo_regenerators(cwd, conventional=conventional)
     if not regenerators:
+        return False
+    patterns = regenerate_paths(cwd)
+    if patterns and not any(
+        fnmatch.fnmatchcase(filepath, pattern) for pattern in patterns
+    ):
         return False
     for regenerator in regenerators:
         queue.add(Path(repo_root(cwd)), filepath, regenerator.cmd, stage_dir=True)
@@ -113,3 +142,4 @@ def clear_caches() -> None:
     mise_has_task.cache_clear()
     repo_root.cache_clear()
     repo_regenerators.cache_clear()
+    regenerate_paths.cache_clear()

@@ -130,10 +130,11 @@ no bearing on what the run then decides.
 
   Generated-class files (`accept_theirs` with a declared `rebase.regenerate`,
   or lockfiles in `LOCKFILE_REGENERATORS`) rebuild and the rebase continues.
-  The conventional `mise run generate` fallback does **not** qualify here — it
-  stays `--fix`-only. Any other class, a missing declaration, a failed rebuild,
-  or `files_stale` aborts (`tree: clean`, exit 3). Foreground is fine: there is
-  no AI call.
+  `rebase.regenerate_paths` limits which generated files those commands cover;
+  an unmatched path lands in `files_stale`. The conventional `mise run generate`
+  fallback does **not** qualify here — it stays `--fix`-only. Any other class,
+  a missing declaration, a failed rebuild, or `files_stale` aborts
+  (`tree: clean`, exit 3). Foreground is fine: there is no AI call.
 
 - **`--fix` mode** (AI resolution). The first run, unless the user asked for no
   AI; if a default-mode run exits 3, rerun with this without asking:
@@ -212,10 +213,11 @@ no unreviewed resolution is recorded for a later rebase.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
 non-empty, those files were staged from the incoming side and never rebuilt —
-either the repo's regeneration command failed, or it declares none and has no
-conventional `generate` task. Regenerate them yourself — see *After the rebase* — then finish at
+either the repo's regeneration command failed, the path is outside
+`rebase.regenerate_paths`, or it declares none and has no conventional
+`generate` task. Regenerate them yourself — see *After the rebase* — then finish at
 step 3. A repo that keeps landing in the second case wants a
-`rebase.regenerate` entry in its `.workbench.yml`.
+`rebase.regenerate` / `rebase.regenerate_paths` entry in its `.workbench.yml`.
 
 **Exit 3 — conflicts a human must look at.** Parse the JSON. `aborted` and
 `tree` say whether the replay was thrown away (`tree: clean`) or left paused

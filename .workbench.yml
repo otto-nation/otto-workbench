@@ -10,3 +10,19 @@ fix:
   # and the branch as a whole stay the pre-push gate's job.
   verify_command: bin/local/run-tests --changed --direct
   verify_timeout: 900
+rebase:
+  regenerate:
+    - bin/local/generate-config-schema
+    - bin/local/generate-herdr-app-themes
+    - bin/local/generate-mcp-tools-fixture
+    - bin/local/compose-docs
+  regenerate_paths:
+    - config.schema.json
+    - docs/ai-automation.md
+    - docs/ai-libraries.md
+    - docs/components.md
+    - docs/getting-started.md
+    - docs/libraries.md
+    - docs/tools.md
+    - ai/herdr/app/themes/*.generated.json
+    - tests/fixtures/mcp_tools.json

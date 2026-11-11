@@ -7,8 +7,9 @@ tree and exit 3. ``--stop-on-conflict`` and a resumed rebase keep the paused
 tree instead — those paths stay in ``lifecycle._report_conflicts_and_stop``.
 
 ``rebase.regenerate`` must be declared for ACCEPT_THEIRS files; the conventional
-``mise run generate`` fallback is ``--fix``-only. REGENERATE files still use
-``git.regenerate.LOCKFILE_REGENERATORS``.
+``mise run generate`` fallback is ``--fix``-only. ``rebase.regenerate_paths``
+limits which generated files those commands cover; an unmatched path is
+reported stale. REGENERATE files still use ``git.regenerate.LOCKFILE_REGENERATORS``.
 """
 # doc-group: platform
 

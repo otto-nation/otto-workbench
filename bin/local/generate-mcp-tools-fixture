@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Generate the MCP tools fixture from live tool discovery.
+
+Usage: bin/local/generate-mcp-tools-fixture [--check]
+       bin/local/generate-mcp-tools-fixture -h|--help
+
+The fixture records ``server.discover_tools()`` with each script path made
+repo-relative, so a rewrite of discovery can be checked against a committed
+shape. Nothing is spawned: discovery reads the registries and imports schemas.
+
+Options:
+  --check              Exit 1 if the committed fixture is stale, without rewriting it
+  -h, --help           Show this help
+
+Exit codes: 0 on success; 1 if --check finds the fixture stale; 2 on usage error.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE = REPO_ROOT / "tests" / "fixtures" / "mcp_tools.json"
+
+
+def render() -> str:
+    """The fixture text: sorted JSON plus a trailing newline."""
+    lib = str(REPO_ROOT / "ai" / "lib")
+    mcps = str(REPO_ROOT / "ai" / "claude" / "mcps")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    if mcps not in sys.path:
+        sys.path.insert(0, mcps)
+    import server
+
+    tools = {
+        name: {
+            **schema,
+            "_script": str(Path(schema["_script"]).relative_to(server.WORKBENCH_DIR)),
+        }
+        for name, schema in server.discover_tools().items()
+    }
+    return json.dumps(tools, indent=2, sort_keys=True) + "\n"
+
+
+def main(argv: list[str]) -> int:
+    if argv and argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if len(argv) > 1 or (argv and argv[0] != "--check"):
+        extra = argv[0] if argv else ""
+        print(f"Unknown argument: {extra}\n\n{__doc__.strip()}", file=sys.stderr)
+        return 2
+
+    text = render()
+    if argv and argv[0] == "--check":
+        current = FIXTURE.read_text() if FIXTURE.is_file() else ""
+        if current != text:
+            print(
+                "tests/fixtures/mcp_tools.json is stale — "
+                "run bin/local/generate-mcp-tools-fixture",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
+    tmp = FIXTURE.with_name(f".{FIXTURE.name}.tmp")
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, FIXTURE)
+    finally:
+        tmp.unlink(missing_ok=True)
+    print("Generated tests/fixtures/mcp_tools.json")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

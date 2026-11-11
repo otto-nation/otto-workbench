@@ -24,6 +24,9 @@ tests/weights.tsv linguist-generated=true
 # bin/local/generate-herdr-app-themes, from ai/herdr/app/palettes/*.toml
 ai/herdr/app/themes/*.generated.json linguist-generated=true
 
+# bin/local/generate-mcp-tools-fixture, from the pr tool schema (ai/lib/cli/schema.py) and the registries
+tests/fixtures/mcp_tools.json linguist-generated=true
+
 # release-please
 CHANGELOG.md linguist-generated=true
 .github/.release-please-manifest.json linguist-generated=true

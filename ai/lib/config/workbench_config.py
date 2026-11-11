@@ -599,12 +599,21 @@ class RebaseConfig:
     Empty means fall back to the conventional ``generate`` task, which is right
     for most repos and wrong only where that task is incomplete.
 
+    ``regenerate_paths`` limits which generated files those commands cover.
+    Each entry is a glob matched with ``fnmatch.fnmatchcase`` against the
+    repo-relative conflict path. Empty means every generated file, which is
+    today's behaviour for other repos. A non-empty list that matches nothing
+    for a path leaves that file stale rather than reporting it regenerated —
+    the commands are not per-file, so an unmatched path would otherwise keep
+    the branch's copy and continue.
+
     ``squash`` is whether the rebase folds the branch into one commit before
     replaying it: ``auto`` when the repo is squash-only and a file will
     conflict more than once, ``always``, or ``never``. The default is ``auto``.
     """
 
     regenerate: list[str] = field(default_factory=list)
+    regenerate_paths: list[str] = field(default_factory=list)
     squash: SquashPolicy = SquashPolicy.AUTO
 
 

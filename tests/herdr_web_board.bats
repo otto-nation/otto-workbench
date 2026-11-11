@@ -36,9 +36,22 @@ const table = (terminals) => [
         const s = b.snapshot();
         out({ me: s.me, slugs: s.repoSlugs, n: s.prs.length, pr: s.prs[0].repoSlug + '#' + s.prs[0].number, cwd: 'cwd' in s.prs[0],
               checkout: s.prs[0].hasCheckout, errors: s.errors, loading: s.loading, at: s.updatedAt, version: s.version,
-              rec: b.findPr('acme/box', 3).cwd, root: b.reviewsRootFor(null) });"
+              rec: b.findPr('acme/box', 3).cwd, root: b.reviewsRootFor(null), repoStates: s.repoStates });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"me":"ada","slugs":["acme/box"],"n":1,"pr":"acme/box#3","cwd":false,"checkout":true,"errors":[],"loading":false,"at":5,"version":"v1","rec":"/w/box","root":"/r"}' ]
+  [ "$output" = '{"me":"ada","slugs":["acme/box"],"n":1,"pr":"acme/box#3","cwd":false,"checkout":true,"errors":[],"loading":false,"at":5,"version":"v1","rec":"/w/box","root":"/r","repoStates":[{"slug":"acme/box","folder":"box","on":null,"phase":"loaded","partial":false,"updatedAt":5,"error":null}]}' ]
+}
+
+@test "board: a gh api graphql row with code 1 still loads PRs as partial" {
+  _web "$BOARD_TABLE
+        const { createBoard } = await import(W + '/server/board.js');
+        const rows = table([{ address: 't1', cwd: '/w/box', state: 'live' }]);
+        rows.unshift({ prefix: 'gh api graphql', code: 1, stderr: 'boom' });
+        const b = createBoard({ exec: fakeExec(rows), name: 'srv', version: 'v1', now: () => 5 });
+        await b.refresh();
+        const s = b.snapshot();
+        out({ n: s.prs.length, partial: s.repoStates[0].partial, phase: s.repoStates[0].phase });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"n":1,"partial":true,"phase":"loaded"}' ]
 }
 
 @test "board: snapshot listing rows keep review file paths off the page" {
@@ -109,9 +122,13 @@ const table = (terminals) => [
         }
         release();
         await done;
-        out({ early: [early.refreshing, early.loading, early.prs[0].repoSlug], last: seen.at(-1).refreshing });"
+        const box = early.repoStates.find((r) => r.folder === 'box');
+        const kit = early.repoStates.find((r) => r.folder === 'kit');
+        out({ early: [early.refreshing, early.loading, early.prs[0].repoSlug], last: seen.at(-1).refreshing,
+              box: { slug: box.slug, folder: box.folder, phase: box.phase },
+              kit: { slug: kit.slug, folder: kit.folder, phase: kit.phase } });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"early":[true,true,"acme/box"],"last":false}' ]
+  [ "$output" = '{"early":[true,true,"acme/box"],"last":false,"box":{"slug":"acme/box","folder":"box","phase":"loaded"},"kit":{"slug":null,"folder":"kit","phase":"loading"}}' ]
 }
 
 @test "board: refreshes asked for during a pull collapse into one more pull" {
@@ -151,9 +168,9 @@ const table = (terminals) => [
         rows = [{ prefix: 'gh api /repos/acme/box/pulls', code: 1, stderr: 'boom' }, ...rows];
         await b.refresh();
         const s = b.snapshot();
-        out({ prs: s.prs.length, n: s.errors.length, at: s.errors[0].updatedAt });"
+        out({ prs: s.prs.length, n: s.errors.length, at: s.errors[0].updatedAt, phase: s.repoStates[0].phase });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"prs":1,"n":1,"at":5}' ]
+  [ "$output" = '{"prs":1,"n":1,"at":5,"phase":"stale"}' ]
 }
 
 @test "poller: wakes a never-pulled board fully, a recent one not at all, and polls only with a page connected" {

@@ -37,6 +37,14 @@ export function createBoard({ exec, name, version, now = Date.now, onChange = ()
 
   const fail = (key, error) => cache.set(key, { ...(cache.get(key) ?? {}), error, stale: true });
   const commit = (key, data) => cache.set(key, { ...data, error: null, stale: false, updatedAt: now() });
+  const begin = (key) => cache.set(key, { ...(cache.get(key) ?? {}), pulling: true });
+  const end = (key) => {
+    const cur = cache.get(key);
+    if (!cur?.pulling) return;
+    const next = { ...cur };
+    delete next.pulling;
+    cache.set(key, next);
+  };
   const active = () => representatives(targets, (c) => repoByKey.get(ctxKey(c)));
 
   async function discover() {
@@ -133,6 +141,7 @@ export function createBoard({ exec, name, version, now = Date.now, onChange = ()
         openPrs: open.prs, landedPrs, listing: listing.listing, slug: repo.slug, host: repo.host, login, busy,
         running: runningFor(terms.entries, repo.slug),
       }),
+      partial: Boolean(open.partial),
     });
   }
 
@@ -166,9 +175,16 @@ export function createBoard({ exec, name, version, now = Date.now, onChange = ()
       view = boardState(act, act.map((c) => cache.get(ctxKey(c)) ?? {}), 'all');
       onChange(snapshot());
     };
-    await Promise.all(active().map(async (ctx) => {
+    const act = active();
+    for (const ctx of act) begin(ctxKey(ctx));
+    publish();
+    await Promise.all(act.map(async (ctx) => {
       const key = ctxKey(ctx);
-      await (listingOnly ? pullListing(ctx, key, cycle) : pullFull(ctx, key, cycle));
+      try {
+        await (listingOnly ? pullListing(ctx, key, cycle) : pullFull(ctx, key, cycle));
+      } finally {
+        end(key);
+      }
       publish();
     }));
     for (const k of staleKeys(cache.keys(), targets.map(ctxKey))) {
@@ -179,8 +195,8 @@ export function createBoard({ exec, name, version, now = Date.now, onChange = ()
       const t = await cycle.get('terminals');
       if (t.ok) terminals = t.entries;
     }
-    const act = active();
-    view = boardState(act, act.map((c) => cache.get(ctxKey(c)) ?? {}), 'all');
+    const done = active();
+    view = boardState(done, done.map((c) => cache.get(ctxKey(c)) ?? {}), 'all');
     pulledAt = now();
   }
 

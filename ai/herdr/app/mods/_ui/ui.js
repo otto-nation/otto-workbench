@@ -54,6 +54,7 @@ export function solidButton(id, label, onClick, { disabled = false } = {}) {
     .child(label);
 }
 
+// ceiling: refresh keeps glyph.spin(900); once gpui-kit exposes reduce-motion, skip spin.
 // A square ghost button holding an svg (tinted with the text colour). `label` is its tooltip and
 // accessible name; `spinning` turns the icon while work runs.
 export function iconButton(id, icon, label, onClick, { disabled = false, spinning = false } = {}) {
@@ -85,10 +86,10 @@ const STATUS = {
 
 // Status is coloured text plus a glyph, never a pill. Without `label` the glyph stands alone and
 // `aria` names it.
-export function statusText(kind, label, { role = "meta", aria } = {}) {
+export function statusText(kind, label, { role = "meta", aria, gap = SP.xxs } = {}) {
   const s = STATUS[kind] ?? STATUS.none;
   const color = s.color(theme());
-  const row = type(h_flex(), role).flex_none().gap(SP.xxs).items_center().text_color(color)
+  const row = type(h_flex(), role).flex_none().gap(gap).items_center().text_color(color)
     .child(div().child(s.glyph));
   if (label) return row.child(div().child(label));
   return row.accessibility_label(aria ?? kind);

@@ -17,3 +17,6 @@ The web view of the `prs` board (`ai/herdr/app/mods/prs`). Spec and deploy contr
   owns each value). Here colours are `/gen/theme.css` variables (from `ai/herdr/app/themes/otto-*.generated.json`) and sizes
   and type roles are `/gen/tokens.css` (from `_lib/tokens.js`), both computed by `lib/css.js`; no literal colours or sizes in
   `public/` or `lib/`. `tests/herdr_web_style.bats` checks what a grep can.
+- Loading: `public/load_status.js` reads `_lib/load_state.js`. After a second the header shows the load line over a native
+  `<progress>`, a strip after the filters marks each repo, and lanes are static dashed placeholders until the first repo
+  lands. No CSS animation on those indicators.

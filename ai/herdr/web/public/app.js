@@ -3,8 +3,10 @@ import { events, getJson, postJson, q } from './api.js';
 import { h, keepScroll, status } from './dom.js';
 import { loadUi, saveUi } from './prefs.js';
 import { renderBoard, renderFilters, renderSections } from './board_view.js';
+import { renderLoad } from './load_status.js';
 import { renderDetail } from './detail_view.js';
 import { boardModel, errorStatus, GLYPH, toggleFilter } from '../lib/view.js';
+import { loadState, LOAD_DELAY_MS } from '../../app/mods/_lib/load_state.js';
 import { viewOf } from '../../app/mods/_lib/compact.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
 import { patchRows } from '../../app/mods/_lib/diff.js';
@@ -13,7 +15,7 @@ import { relativeTime } from '../../app/mods/_lib/history.js';
 
 const $ = (s) => document.querySelector(s);
 const freshDetail = () => ({ tab: 'history', openStamp: null, bodies: new Map(), files: null, openFile: null, diff: null, slots: null });
-const S = { ui: loadUi(), snap: null, sel: null, collapsed: new Set(['landed', 'merged']), refreshing: false, detail: freshDetail() };
+const S = { ui: loadUi(), snap: null, sel: null, collapsed: new Set(['landed', 'merged']), refreshing: false, loadSince: null, detail: freshDetail() };
 // Later phases register here: detailSlots (Phase 2/3/4), onBoard, onRun (Phase 2), headExtra, cardLine and
 // boardOverride (Phase 4: the Batch page replaces the Mine board).
 export const hooks = { detailSlots: null, onBoard: [], headExtra: null, cardLine: null, boardOverride: null };
@@ -122,6 +124,8 @@ export function render() {
   $('#mfilters').title = model.filterCount ? `${model.filterCount} filters on` : 'No filters on';
   $('#mfstate').textContent = model.filterCount ? `${model.filterCount} on` : '';
   renderErrors(S.snap?.errors ?? [], now);
+  renderLoad({ head: $('#headStatus'), strip: $('#loadStrip'), bar: $('#loadProgress') },
+    loadState(S.snap?.repoStates, { since: S.loadSince, now }));
   $('#headExtra').replaceChildren(...(hooks.headExtra ? [hooks.headExtra(S)].flat().filter(Boolean) : []));
   const refreshing = S.refreshing || Boolean(S.snap?.refreshing);
   $('#refresh').classList.toggle('spinning', refreshing);
@@ -132,13 +136,14 @@ export function render() {
   keepScroll(document.body, () => {
     // Phase 4's Batch page replaces the Mine board in whichever container this width shows.
     const override = hooks.boardOverride?.(S, model);
+    const loading = S.snap == null || Boolean(S.snap.loading && !S.snap.repos);
     if (override) {
       (compact ? $('#msections') : $('#board')).replaceChildren(override);
     } else if (compact) {
-      renderSections($('#msections'), model, { collapsed: S.collapsed, selectedId: S.sel, onOpen: (pr) => openPr(pr), extraLine: hooks.cardLine,
+      renderSections($('#msections'), model, { loading, collapsed: S.collapsed, selectedId: S.sel, onOpen: (pr) => openPr(pr), extraLine: hooks.cardLine,
         onToggleSection: (key) => { S.collapsed.has(key) ? S.collapsed.delete(key) : S.collapsed.add(key); render(); } });
     } else {
-      renderBoard($('#board'), model, { loading: S.snap?.loading, selectedId: S.sel, onOpen: (pr) => openPr(pr), extraLine: hooks.cardLine });
+      renderBoard($('#board'), model, { loading, tab: S.ui.tab, selectedId: S.sel, onOpen: (pr) => openPr(pr), extraLine: hooks.cardLine });
     }
     const pr = selectedPr();
     if (pr && S.detail.tab === 'files') loadFiles(pr);
@@ -164,7 +169,13 @@ function boot() {
   setInterval(render, 30000);
   applyTheme();
   events({
-    board: (snap) => { S.snap = snap; if (!snap.refreshing) S.refreshing = false; for (const fn of hooks.onBoard) fn(snap, S); render(); },
+    board: (snap) => {
+      S.snap = snap; if (!snap.refreshing) S.refreshing = false;
+      const busy = loadState(snap.repoStates).busy;
+      if (busy && S.loadSince == null) { S.loadSince = Date.now(); setTimeout(render, LOAD_DELAY_MS); }
+      else if (!busy) S.loadSince = null;
+      for (const fn of hooks.onBoard) fn(snap, S); render();
+    },
     status: (st) => { if (S.snap) Object.assign(S.snap, st); if (!st.refreshing) S.refreshing = false; render(); },
   });
   routeFromHash();

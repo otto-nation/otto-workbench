@@ -45,7 +45,7 @@ export function publicPr(pr) {
 }
 
 export function toSnapshot(view, { name, version, updatedAt = null, refreshing = false, discoveryError = null }) {
-  const v = view ?? { prs: [], me: '', repos: 0, repoSlugs: [], errors: [], skipped: 0, loading: 0 };
+  const v = view ?? { prs: [], me: '', repos: 0, repoSlugs: [], errors: [], skipped: 0, loading: 0, repoStates: [] };
   const errors = [];
   if (discoveryError) errors.push({ where: name, folder: '', message: `herdr-core: ${discoveryError}` });
   for (const e of v.errors ?? []) {
@@ -61,5 +61,14 @@ export function toSnapshot(view, { name, version, updatedAt = null, refreshing =
     skipped: v.skipped ?? 0,
     errors,
     prs: (v.prs ?? []).map(publicPr),
+    repoStates: (v.repoStates ?? []).map((r) => ({
+      slug: r.slug,
+      folder: r.folder,
+      on: r.on,
+      phase: r.phase,
+      partial: r.partial,
+      updatedAt: r.updatedAt,
+      error: r.error == null ? null : friendlyError(r.error, r.on, 'all', name),
+    })),
   };
 }

@@ -11,6 +11,7 @@ import {
   sectionHeading, text, type, statusText, dangerColor,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
+import { loadPlaceholder, renderLoadLine } from "./load_status.js";
 
 function shortRepo(slug) {
   return String(slug ?? "").split("/").pop();
@@ -108,12 +109,14 @@ function renderFormFilters(L, prs) {
   return out;
 }
 
-function renderPrs(L, prs, t) {
+function renderPrs(L, prs, t, load) {
   const shown = L.shown(prs);
   if (!prs.length) {
     return v_flex().gap(SP.sm)
       .child(text("title", "PRs"))
-      .child(text("body", "No open PRs of yours match the filters", t.muted));
+      .child(load?.busy
+        ? loadPlaceholder(load)
+        : text("body", "No open PRs of yours match the filters", t.muted));
   }
   if (!shown.length) {
     return v_flex().gap(SP.sm)
@@ -143,7 +146,7 @@ function checkLine(id, on, label, extra, onToggle) {
     .when(Boolean(extra), (e) => e.child(text("meta", extra, t.muted).min_w(0)));
 }
 
-function renderForm({ launcher: L, prs }) {
+function renderForm({ launcher: L, prs, load }) {
   const t = theme();
   const all = prs ?? [];
   const shown = L.shown(all);
@@ -158,7 +161,7 @@ function renderForm({ launcher: L, prs }) {
   const filters = renderFormFilters(L, all);
   return v_flex().gap(SP.lg)
     .child(filters)
-    .child(renderPrs(L, all, t))
+    .child(renderPrs(L, all, t, load))
     .child(v_flex().gap(SP.sm)
       .child(text("title", "Steps"))
       .children(STEP_NAMES.map((s) => checkLine(
@@ -182,7 +185,7 @@ function renderForm({ launcher: L, prs }) {
         .when(L.starting, (e) => e.child(statusText("running", "Starting")))));
 }
 
-export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOpenPr, run }) {
+export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOpenPr, run, load }) {
   const byKey = new Map((allPrs ?? prs ?? []).map((p) => [prKey(p.repoSlug, p.number).toLowerCase(), p]));
   const prOf = (item) => byKey.get(String(item.key ?? "").toLowerCase()) ?? null;
   const expanded = (r) => renderRunItems(workflows.docOf(r.on, r.id), { repos: r.repos ?? [], prOf, onOpen: onOpenPr });
@@ -191,10 +194,11 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
     // One row and no rule: the page's title is the only header, and the form is its content.
     .child(h_flex().flex_none().gap(SP.md).items_center().px(SP.lg).pt(SP.lg)
       .child(button("batch-back", "← Back", onBack))
-      .child(text("heading", "Batch")))
+      .child(text("heading", "Batch"))
+      .when(Boolean(load?.shown), (e) => e.child(renderLoadLine(load))))
     .child(scrollBody().id("batch-body").px(SP.lg).py(SP.lg).gap(SP.xl)
       .when(Boolean(running), (e) => e.child(running))
-      .child(renderForm({ launcher, prs }))
+      .child(renderForm({ launcher, prs, load }))
       .child(v_flex().gap(SP.sm)
         .child(sectionHeading("Recent runs"))
         .child(renderRunPanel(workflows.barState(), expanded))));

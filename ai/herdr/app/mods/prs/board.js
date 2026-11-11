@@ -10,6 +10,7 @@ import {
   laneTitle, tag, text, type, statusText,
 } from "./_ui/ui.js";
 import { cardStateLine } from "./workflows_view.js";
+import { skeletonLanes } from "./load_status.js";
 
 const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
 
@@ -45,8 +46,9 @@ export function renderBoard({
   const shown = visibleColumns(cols, filterOn(filters, "empty"));
   const board = type(h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
     .bg(t.background).text_color(t.foreground).overflow_x_scrollbar(), "body");
+  if (loading) return board.children(skeletonLanes(spec));
   if (!shown.length) {
-    return board.child(placeholder(loading ? "Loading…" : "No pull requests").p(SP.lg));
+    return board.child(placeholder("No pull requests").p(SP.lg));
   }
   return board.children(shown.map((c) => column(c, {
     onOpen, spinner, showRepo, workflowOf, onBatch: mine ? onBatch : null,

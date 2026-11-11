@@ -10,6 +10,7 @@ import { locate } from "./_lib/location.js";
 import { fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
 import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
+import { LOAD_DELAY_MS, loadState } from "./_lib/load_state.js";
 import { busyPrs } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadOwed, loadRepo, loadUser,
@@ -21,6 +22,7 @@ import {
 } from "./_lib/columns.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
 import { renderBoard, renderChips } from "./board.js";
+import { loadPlaceholder, renderLoadLine, renderLoadProgress, renderLoadStrip } from "./load_status.js";
 import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
@@ -187,6 +189,18 @@ export default class PrsBoard extends View {
 
   same(key) { return this.activeTargets().some((c) => ctxKey(c) === key); }
 
+  begin(key) {
+    this.cache.set(key, { ...(this.cache.get(key) ?? {}), pulling: true });
+  }
+
+  end(key) {
+    const cur = this.cache.get(key);
+    if (!cur?.pulling) return;
+    const next = { ...cur };
+    delete next.pulling;
+    this.cache.set(key, next);
+  }
+
   fail(key, error) {
     this.cache.set(key, { ...(this.cache.get(key) ?? {}), error, stale: true });
   }
@@ -250,15 +264,24 @@ export default class PrsBoard extends View {
 
   async pull(cx, listingOnly) {
     const cycle = new Map();
-    await Promise.all(this.activeTargets().map(async (ctx) => {
+    const targets = this.activeTargets();
+    for (const ctx of targets) this.begin(ctxKey(ctx));
+    this.pullStartedAt = Date.now();
+    cx.timer.after(LOAD_DELAY_MS, (cx) => cx.notify());
+    cx.notify();
+    await Promise.all(targets.map(async (ctx) => {
       const key = ctxKey(ctx);
-      if (!ctx.cwd) {
-        this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
-        return;
+      try {
+        if (!ctx.cwd) {
+          this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
+          return;
+        }
+        if (listingOnly) await this.pullListing(ctx, key, cx, cycle);
+        else await this.pullFull(ctx, key, cx, cycle);
+        cx.notify();
+      } finally {
+        this.end(key);
       }
-      if (listingOnly) await this.pullListing(ctx, key, cx, cycle);
-      else await this.pullFull(ctx, key, cx, cycle);
-      cx.notify();
     }));
     const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces(), panes()).map(ctxKey)];
     for (const k of staleKeys(this.cache.keys(), keep)) {
@@ -349,6 +372,7 @@ export default class PrsBoard extends View {
         openPrs: open.prs, landedPrs, listing: listing.listing,
         slug: repo.slug, host: repo.host, login, busy, running, owed,
       }),
+      partial: Boolean(open.partial),
     }, ctx, cx);
   }
 
@@ -442,6 +466,7 @@ export default class PrsBoard extends View {
     const states = targets.map((c) => this.cache.get(ctxKey(c)) ?? {});
     const scope = scopeOf();
     const view = boardState(targets, states, scope);
+    const load = loadState(view.repoStates, { since: this.pullStartedAt ?? null, now: Date.now() });
     const errLine = (e) => {
       const base = String(e.cwd).split("/").filter(Boolean).pop();
       return `${base ?? ""}${e.on != null ? " on " + e.on : ""}: ${friendlyError(e.error, e.on, scope)}`;
@@ -463,6 +488,7 @@ export default class PrsBoard extends View {
         onOpenPr: (pr) => this.openDetail(pr, cx, "batch"),
         onBack: () => { this.batchOpen = false; this.acx.notify(); },
         run,
+        load,
       }));
     }
     if (view.repos === 0 && view.errors.length && !view.loading) {
@@ -476,8 +502,8 @@ export default class PrsBoard extends View {
         .child(placeholder("No open space is in a GitHub repository").max_w(LAYOUT.msgMaxW))
         .child(this.scopeToggle());
     }
-    if (mode === "compact") return this.compactView(view, t, cx);
-    return this.boardView(cx, targets[0], view, t);
+    if (mode === "compact") return this.compactView(view, t, cx, load);
+    return this.boardView(cx, targets[0], view, t, load);
   }
 
   listed(state) {
@@ -521,7 +547,7 @@ export default class PrsBoard extends View {
 
   onSize(size, cx) { this.size = size; cx.notify(); }
 
-  compactHeader(tab) {
+  compactHeader(tab, load) {
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
       .child(h_flex().items_center()
         .child(this.scopeToggle())
@@ -534,7 +560,8 @@ export default class PrsBoard extends View {
         ]))
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
-          .when(this.inPanel, (e) => e.child(this.fullscreenButton()))));
+          .when(this.inPanel, (e) => e.child(this.fullscreenButton()))))
+      .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)));
   }
 
   fullscreenButton() {
@@ -548,16 +575,19 @@ export default class PrsBoard extends View {
     });
   }
 
-  compactView(state, t, cx) {
+  compactView(state, t, cx, load) {
     const tab = tabOf(), mine = tab === "mine";
     const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
+    const empty = state.loading && !state.repos ? loadPlaceholder(load) : placeholder("No pull requests");
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(this.compactHeader(tab))
+      .child(this.compactHeader(tab, load))
+      .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
       .child(renderCompact({
         sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
         width: this.size?.width, onBatch: mine ? (items, preset) => this.batchFor(items, preset) : null,
+        empty,
       }));
   }
 
@@ -569,7 +599,7 @@ export default class PrsBoard extends View {
     ]);
   }
 
-  boardView(cx, ctx, state, t) {
+  boardView(cx, ctx, state, t, load) {
     const filters = filtersOf(), tab = tabOf();
     // Team view is about teammates: the viewer has the Mine tab.
     const me = String(state.me ?? "").toLowerCase();
@@ -578,8 +608,10 @@ export default class PrsBoard extends View {
     const labels = filterFacets(tabList(state, filters, tab)).labels;
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(this.header(ctx, state, tab, t))
+      .child(this.header(ctx, state, tab, t, load))
+      .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
       .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos, labels }))
+      .when(load.strip.length > 0, (e) => e.child(renderLoadStrip(load)))
       .child(renderBoard({
         tab, prs: this.listed(state), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
@@ -589,18 +621,19 @@ export default class PrsBoard extends View {
       }));
   }
 
-  header(ctx, state, tab, t) {
+  header(ctx, state, tab, t, load) {
     const loading = state.loading && !state.repos;
     const nFail = state.errors?.length ?? 0;
     const first = state.errors?.[0];
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "Loading…" : (state.slug ?? "No repo"));
-    const note = all ? (loading ? "Loading…" : `${state.repos} repos`) : null;
+    const note = all && !load.shown ? (loading ? "Loading…" : `${state.repos} repos`) : null;
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
     return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(type(div().min_w(0).truncate(), "title").child(title))
         .when(Boolean(note), (e) => e.child(text("meta", note, t.muted).flex_none()))
+        .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)))
         .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on))))
         .when(nFail && !all, (e) => e
           // DESIGN.md: stale is warn plus how old the shown data is; with nothing loaded yet it is

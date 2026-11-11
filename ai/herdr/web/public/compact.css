@@ -20,3 +20,4 @@ header { padding: var(--sp-sm) var(--sp-md); gap: var(--sp-sm); }
 .sheet .btn { height: 40px; }
 body:has(.detail.open) .toast { bottom: calc(56px + env(safe-area-inset-bottom) + var(--sp-md)); }
 .output, .tabs, .scroll { margin-left: var(--sp-md); margin-right: var(--sp-md); padding-left: 0; padding-right: 0; }
+.load-strip { padding: 0 var(--sp-md) var(--sp-xs); }

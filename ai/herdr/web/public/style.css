@@ -45,6 +45,7 @@ button, input { font: inherit; color: inherit; }
 .status.pass { color: var(--status-pass); } .status.fail { color: var(--status-fail); } .status.running { color: var(--status-running); }
 .status.warn { color: var(--status-warn); } .status.none { color: var(--status-none); }
 .status.body { font: var(--font-body); }
+.status.wide { gap: var(--sp-sm); }
 .add { color: var(--done); } .del { color: var(--ansi1); }
 .spin { color: var(--working); }
 /* section-label: sentence case, muted. */
@@ -83,6 +84,13 @@ header { display: flex; align-items: center; gap: var(--sp-md); padding: var(--s
 .chip:hover:not(.on) { background: var(--hover); }
 .chip.on { background: var(--solid); border-color: var(--solid); color: var(--solid-foreground); }
 .mfilters, .mfstate { display: none; }
+.load-strip { display: flex; flex-wrap: wrap; gap: var(--sp-md); padding: 0 var(--sp-lg) var(--sp-xs); }
+.load-strip:empty { display: none; }
+.load-progress { appearance: none; display: block; width: 100%; height: var(--sp-xxs); border: 0; background: var(--border); }
+.load-progress[hidden] { display: none; }
+.load-progress::-webkit-progress-bar { background: var(--border); }
+.load-progress::-webkit-progress-value { background: var(--status-running); }
+.load-progress::-moz-progress-bar { background: var(--status-running); }
 
 /* board: lanes on raised at FILL.lane; heading is title role with a meta count. */
 main { flex: 1; min-height: 0; display: flex; }
@@ -94,6 +102,8 @@ main { flex: 1; min-height: 0; display: flex; }
 .lane-title .count { font: var(--font-meta); color: var(--muted); }
 .lane { flex: 1; overflow-y: auto; padding: var(--sp-sm); display: flex; flex-direction: column; gap: var(--sp-sm); }
 .none { font: var(--font-body); color: var(--muted); padding: 0 var(--sp-md); }
+.skel { border: 1px dashed var(--border); border-radius: var(--radius-card); height: calc(var(--row-h-list) * 2); flex: none; }
+.skel.short { height: var(--row-h-list); }
 /* card-linked as the mod draws it: hairline card on canvas; hover fills, the border stays. */
 .card { padding: var(--sp-md); border-radius: var(--radius-card); border: 1px solid var(--border); background: var(--canvas);
   display: flex; flex-direction: column; gap: var(--sp-sm); cursor: pointer; text-align: left; width: 100%; color: var(--foreground); }

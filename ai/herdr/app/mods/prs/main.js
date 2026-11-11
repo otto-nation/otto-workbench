@@ -7,7 +7,7 @@ import { renderBatchTab } from "./workflows_view.js";
 import { renderFileList, renderDiff } from "./files_view.js";
 import { MONO, LAYOUT } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
-import { readReview, loadFiles, loadPatch } from "./_lib/board_data.js";
+import { readReview, loadFilesIncremental, loadPatch } from "./_lib/board_data.js";
 import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
@@ -29,6 +29,7 @@ export default class PrsBoard extends Board {
     this.reviews = new Map();
     this.tab = "history";
     this.filesByPr = new Map();
+    this.patchCacheByPr = new Map();
     this.openFile = null;
     this.diff = null;
     this.opening = false;
@@ -67,7 +68,7 @@ export default class PrsBoard extends Board {
     if (hit && hit.stamp !== stamp) this.reviews.delete(key);
     this.reviews.set(key, { stamp, result: undefined });
     this.acx.spawn(async (cx) => {
-      const result = await readReview(readTextFile, run.reviewFile, this.detail.on);
+      const result = await readReview(readTextFile, run.reviewFile, this.detail.on, exec);
       const cur = this.reviews.get(key);
       if (!cur || cur.stamp !== stamp) return;
       this.reviews.set(key, { stamp, result });
@@ -190,17 +191,25 @@ export default class PrsBoard extends Board {
   ensureFiles(d) {
     const key = this.filesKey(d);
     if (this.filesByPr.has(key)) return this.filesByPr.get(key);
-    if (this.filesByPr.size >= 10) this.filesByPr.delete(this.filesByPr.keys().next().value);
+    if (this.filesByPr.size >= 10) {
+      const drop = this.filesByPr.keys().next().value;
+      this.filesByPr.delete(drop);
+      this.patchCacheByPr.delete(drop);
+    }
     this.filesByPr.set(key, null);
+    // detailView overwrites `d.files` with summarize() once a page lands; capture the listing
+    // count first so later pages still know how many to fetch.
+    const total = d.changedFiles ?? d.files;
     this.acx.spawn(async (cx) => {
-      let result;
       try {
-        result = await loadFiles(exec, { cwd: d.cwd, on: d.on }, d.repo, d.number);
+        await loadFilesIncremental(exec, { cwd: d.cwd, on: d.on }, d.repo, d.number, total, (result) => {
+          this.filesByPr.set(key, result);
+          cx.notify();
+        });
       } catch (err) {
-        result = { ok: false, error: { message: String(err?.message ?? err) } };
+        this.filesByPr.set(key, { ok: false, error: { message: String(err?.message ?? err) } });
+        cx.notify();
       }
-      this.filesByPr.set(key, result);
-      cx.notify();
     });
     return null;
   }
@@ -216,10 +225,13 @@ export default class PrsBoard extends Board {
 
   fetchPatch(f, path) {
     const d = this.detail;
+    const key = this.filesKey(d);
+    if (!this.patchCacheByPr.has(key)) this.patchCacheByPr.set(key, new Map());
+    const cache = this.patchCacheByPr.get(key);
     f.patchError = null;
     f.loadingPatch = true;
     this.acx.spawn(async (cx) => {
-      const r = await loadPatch(exec, { cwd: d.cwd, on: d.on }, d.repo, d.number, f);
+      const r = await loadPatch(exec, { cwd: d.cwd, on: d.on }, d.repo, d.number, f, cache);
       f.loadingPatch = false;
       if (r.ok) { f.patch = r.patch; f.hasPatch = r.patch != null; } else f.patchError = r.error?.message ?? "Could not load the diff";
       if (this.openFile === path) this.diff = patchRows(f.patch, MONO.charPx);

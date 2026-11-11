@@ -5,7 +5,7 @@ import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
 import { theme } from "herdr";
 import { MAX_LINES } from "./_lib/diff.js";
 import { SP, ROW_H, LAYOUT, CONTROL, FILL, MONO } from "./_lib/tokens.js";
-import { button, addStat, delStat, hoverRow, placeholder, caption, scrollBody, type, text } from "./_ui/ui.js";
+import { button, addStat, delStat, hoverRow, placeholder, caption, scrollBody, type, text, errorLine } from "./_ui/ui.js";
 
 function fileMarkColor(t, s) {
   if (s === "A") return t.done;
@@ -35,9 +35,15 @@ export function renderFileList(files, { onPick }) {
   const body = (() => {
     if (files == null) return dim("Loading changed files…");
     if (files.ok === false) return dim(files.error?.message ?? "Could not load changed files");
-    if (!files.files.length) return dim("No changed files");
-    return v_flex().gap(SP.xxs).children([...files.files.filter((f) => !f.generated), ...files.files.filter((f) => f.generated)]
-      .map((f) => fileRow(f, onPick)));
+    if (!files.files.length && !files.loading) return dim("No changed files");
+    const rows = [...files.files.filter((f) => !f.generated), ...files.files.filter((f) => f.generated)]
+      .map((f) => fileRow(f, onPick));
+    if (files.loading) {
+      const n = Math.max(1, (files.total ?? 0) - files.files.length);
+      rows.push(dim(`Loading ${n} more files…`));
+    }
+    if (files.pageError) rows.push(errorLine(files.pageError));
+    return v_flex().gap(SP.xxs).children(rows);
   })();
   return scrollBody().id("prs-files").px(SP.lg).pb(SP.lg).child(body);
 }

@@ -14,7 +14,7 @@ const DEFAULT_CHAR_PX = 7;
 const LETTER = { added: 'A', removed: 'D', renamed: 'R', copied: 'C' };
 
 // A file list carries has_patch instead of patch; the patch is fetched by page when opened.
-export function mapFiles(json, perPage = 100) {
+export function mapFiles(json, perPage = 100, firstPage = 1) {
   const pages = Array.isArray(json) && Array.isArray(json[0]) ? json.flat() : json;
   if (!Array.isArray(pages)) return [];
   return pages.map((f, i) => ({
@@ -25,7 +25,7 @@ export function mapFiles(json, perPage = 100) {
     del: f.deletions ?? 0,
     patch: typeof f.patch === 'string' ? f.patch : null,
     // GitHub fills every page but the last, so the index alone gives the page.
-    page: Math.floor(i / perPage) + 1,
+    page: firstPage + Math.floor(i / perPage),
     hasPatch: typeof f.patch === 'string' || f.has_patch === true,
     generated: false,
   }));

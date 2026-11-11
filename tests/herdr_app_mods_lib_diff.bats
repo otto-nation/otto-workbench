@@ -46,6 +46,12 @@ _js() {
   [ "$output" = '[1,2]' ]
 }
 
+@test "mapFiles firstPage offsets page" {
+  _js 'd.mapFiles([{filename:"a"},{filename:"b"}], 1, 3).map(f=>[f.path,f.page])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["a",3],["b",4]]' ]
+}
+
 @test "diffRows numbers old and new sides from each hunk header" {
   _js 'd.diffRows(["@@ -5,2 +7,3 @@ f","-a"," b","+c","+","\\ No newline"]).map(r=>[r.kind,r.number,r.text])'
   [ "$output" = '[["@",null,"@@ -5,2 +7,3 @@ f"],["-",5,"a"],[" ",7,"b"],["+",8,"c"],["+",9," "],["",null,"\\ No newline"]]' ]

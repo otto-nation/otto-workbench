@@ -58,7 +58,8 @@ exactly that file. The pass does not fail: the status becomes `PARTIAL` (the
 same unverified trailer a green run over left-out files already uses), the
 tally names the restored files, and a `fix_suite_rewrote_files` trail event
 records them. Untracked or ignored build outputs the suite writes are not
-this case.
+this case. A repo avoids the case by pointing `fix.verify_command` at the
+check-only form of its tools (e.g. `--check`, `--diff`), never one that writes.
 
 The command is argv, split with `shlex` and run without a shell. Not a security
 boundary — the agent that just ran had unrestricted bash — but a repo's gate is

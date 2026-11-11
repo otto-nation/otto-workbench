@@ -332,7 +332,8 @@ class TestRunRegeneration:
 
         def fake_run(cmd, **kwargs):
             calls.append((list(cmd), kwargs.get("cwd")))
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            listing = "go.sum\0" if "diff" in cmd and "--diff-filter=U" not in cmd else ""
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=listing, stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
              mock.patch.object(git.regenerate, "detect_mise", return_value=False):
@@ -346,7 +347,7 @@ class TestRunRegeneration:
 
         assert result is True
         cmds = [c[0] for c in calls]
-        assert ["git", "add", "-u", "--", "."] in cmds
+        assert ["git", "add", "-u", "--", ":(literal)go.sum"] in cmds
 
     def testrun_regeneration_stage_dir_skips_unmerged_handwritten(self, tmp_path):
         """stage_dir must not git-add still-unmerged hand-written files."""

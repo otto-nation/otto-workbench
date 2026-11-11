@@ -23,6 +23,13 @@ EXCLUDED = {
 _NONE = frozenset({None, "set", "unset", "unspecified"})
 
 
+def _parse_attr(item: str) -> tuple[str, str]:
+    if item.startswith("-"):
+        return item[1:], "unset"
+    name, sep, value = item.partition("=")
+    return (name, value) if sep else (name, "set")
+
+
 def _attr_lines() -> list[tuple[str, dict[str, str]]]:
     entries: list[tuple[str, dict[str, str]]] = []
     for raw in (REPO_ROOT / ".gitattributes").read_text().splitlines():
@@ -30,16 +37,7 @@ def _attr_lines() -> list[tuple[str, dict[str, str]]]:
         if not line:
             continue
         pattern, *items = line.split()
-        parsed: dict[str, str] = {}
-        for item in items:
-            if item.startswith("-"):
-                parsed[item[1:]] = "unset"
-            elif "=" in item:
-                name, value = item.split("=", 1)
-                parsed[name] = value
-            else:
-                parsed[item] = "set"
-        entries.append((pattern, parsed))
+        entries.append((pattern, dict(_parse_attr(i) for i in items)))
     return entries
 
 

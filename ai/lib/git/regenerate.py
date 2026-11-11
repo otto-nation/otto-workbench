@@ -218,20 +218,26 @@ def _stage_regenerated(
         results = [git.client.ok("add", f, cwd=cwd) for f in job.files]
         return all(results)
 
-    listed = git.client.run(
-        "diff", "--name-only", "--diff-filter=U", "--relative",
+    unmerged = git.client.run(
+        "diff", "--name-only", "--diff-filter=U", "--relative", "-z",
         cwd=job.regen_dir,
     )
-    if not listed.ok:
+    changed = git.client.run(
+        "diff", "--name-only", "--relative", "-z", cwd=job.regen_dir,
+    )
+    if not (unmerged.ok and changed.ok):
         return _stage_dir_failed(job, trail)
 
-    job_rel = _job_files_relative_to_regen(job, cwd=cwd)
-    excludes = [
-        f":(exclude,literal){path}"
-        for path in listed.stdout.splitlines()
-        if path and path not in job_rel
-    ]
-    if git.client.ok("add", "-u", "--", ".", *excludes, cwd=job.regen_dir):
+    # An exclude pathspec does not hold back an unmerged entry from
+    # `add -u`, so name what to stage instead of what to skip.
+    held = set(unmerged.stdout.split("\0")) - _job_files_relative_to_regen(
+        job, cwd=cwd,
+    )
+    paths = [p for p in changed.stdout.split("\0") if p and p not in held]
+    if not paths:
+        return True
+    literal = [f":(literal){p}" for p in paths]
+    if git.client.ok("add", "-u", "--", *literal, cwd=job.regen_dir):
         return True
     return _stage_dir_failed(job, trail)
 

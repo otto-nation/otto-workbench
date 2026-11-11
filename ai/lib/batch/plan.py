@@ -84,7 +84,7 @@ _PR_FIELDS = """
       nodes { createdAt lastEditedAt author { login } } } }
   }
   reviews(last: %(reviews)d) {
-    nodes { databaseId state body minimizedReason lastEditedAt author { login } }
+    nodes { databaseId state body minimizedReason lastEditedAt author { login __typename } }
   }
   comments(last: %(comments)d) { nodes { databaseId lastEditedAt author { login __typename } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }

@@ -23,6 +23,7 @@ from pr_pages_support import _GQL_FAILED, _make_thread, _review_threads_node
 def _make_review(
     database_id=1, state="APPROVED", body="", login="alice",
     minimized_reason=None, submitted_at="2026-01-01T00:00:00Z",
+    typename=None,
 ):
     r = {
         "databaseId": database_id,
@@ -31,6 +32,8 @@ def _make_review(
         "submittedAt": submitted_at,
         "author": {"login": login},
     }
+    if typename is not None:
+        r["author"]["__typename"] = typename
     if minimized_reason is not None:
         r["minimizedReason"] = minimized_reason
     return r
@@ -298,6 +301,20 @@ class TestReviewBodyComments:
         pd = _make_pr_data(reviews=[
             _make_review(database_id=1, login="reviewer", state="PENDING",
                          body="draft review"),
+        ])
+        assert pd.review_body_comments("me") == []
+
+    def test_excludes_dismissed(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="reviewer", state="DISMISSED",
+                         body="stale review"),
+        ])
+        assert pd.review_body_comments("me") == []
+
+    def test_excludes_bot(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="codecov", state="COMMENTED",
+                         body="coverage dropped", typename="Bot"),
         ])
         assert pd.review_body_comments("me") == []
 

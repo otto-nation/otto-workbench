@@ -140,9 +140,9 @@ def _data(*, threads=(), reviews=(), comments=()):
 
 
 def _review(rid, *, state="COMMENTED", body="please fix", login="rev", minimized=None,
-            edited=None):
+            edited=None, typename="User"):
     return {"databaseId": rid, "state": state, "body": body, "minimizedReason": minimized,
-            "lastEditedAt": edited, "author": {"login": login}}
+            "lastEditedAt": edited, "author": {"login": login, "__typename": typename}}
 
 
 def _comment(cid, *, login="rev", typename="User", edited=None):
@@ -170,6 +170,48 @@ def test_threads_drop_resolved_and_settled_ones():
                           {"id": "T2", "isResolved": True},
                           {"id": "T3", "isResolved": False}])
     assert owed_feedback(data, {"T3"}, None) == OwedFeedback(threads=1)
+
+
+def _thread(tid, comments, *, resolved=False):
+    return {"id": tid, "isResolved": resolved, "comments": {"nodes": list(comments)}}
+
+
+def _tcomment(login, *, created="2026-01-01T00:00:00Z", edited=None):
+    return {"author": {"login": login}, "createdAt": created, "lastEditedAt": edited,
+            "body": "x"}
+
+
+def test_an_addressed_thread_is_not_owed():
+    """My reply is last and nobody edited after — triage skips ADDRESSED."""
+    data = _data(threads=[_thread("T1", [
+        _tcomment("rev", created="2026-01-01T00:00:00Z"),
+        _tcomment("me", created="2026-01-02T00:00:00Z"),
+    ])])
+    assert owed_feedback(data, set(), None) == OwedFeedback()
+
+
+def test_a_thread_edited_after_my_reply_is_owed():
+    """A rewrite after our reply is AMBIGUOUS, which triage still classifies."""
+    data = _data(threads=[_thread("T1", [
+        _tcomment("rev", created="2026-01-01T00:00:00Z", edited="2026-01-03T00:00:00Z"),
+        _tcomment("me", created="2026-01-02T00:00:00Z"),
+    ])])
+    assert owed_feedback(data, set(), None) == OwedFeedback(threads=1)
+
+
+def test_a_dismissed_review_body_is_not_owed():
+    data = _data(reviews=[_review(1, state="DISMISSED")])
+    assert owed_feedback(data, set(), None) == OwedFeedback()
+
+
+def test_a_bot_review_body_is_not_owed():
+    data = _data(reviews=[_review(1, login="codecov", typename="Bot")])
+    assert owed_feedback(data, set(), None) == OwedFeedback()
+
+
+def test_a_human_review_body_is_still_owed():
+    data = _data(reviews=[_review(1)])
+    assert owed_feedback(data, set(), None) == OwedFeedback(review_bodies=1)
 
 
 def test_an_edited_review_body_is_owed_again():

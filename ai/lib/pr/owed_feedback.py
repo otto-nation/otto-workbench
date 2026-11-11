@@ -1,8 +1,9 @@
 """What a PR is owed an answer for — the one definition `pr comments` and `pr batch` share.
 
-Owed feedback is three things: unresolved review threads nobody has settled;
-review bodies from someone else that carry text and are neither pending nor
-minimized (`PRData.review_body_comments`); and PR comments from someone else
+Owed feedback is three things: review threads triage would still classify
+(not RESOLVED or ADDRESSED, and nobody has settled); review bodies from
+someone else that carry text and are neither pending, dismissed, minimized,
+nor a bot's (`PRData.review_body_comments`); and PR comments from someone else
 that are not a bot's (`PRData.non_self_issue_comments`). The two top-level
 kinds are then filtered through the seen record a successful triage writes
 (`CommentsSummary.seen_*`), keyed on comment id *and* edit stamp.
@@ -21,6 +22,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gh.pr_data import PRData
+from pr.comments import compute_thread_state
+from pr.comments_state import ThreadState
 
 if TYPE_CHECKING:
     # Type-only: `pr.domains` renders an `OwedFeedback` on the status line, so
@@ -114,15 +117,20 @@ def owed_feedback(pr_data: PRData, settled: set[str],
 
     *settled* is the thread ids a recorded fix outcome already settled, and
     *seen* the PR's saved comments summary — None when `pr comments` has never
-    run, which leaves every top-level comment unseen. Reads only `pr_data`'s
-    review threads (``id``, ``isResolved``), reviews and issue comments.
+    run, which leaves every top-level comment unseen. Reads `pr_data`'s review
+    threads (``id``, ``isResolved``, comment nodes), reviews and issue comments.
+    A thread whose last word is ours (ADDRESSED) is not owed, matching triage.
     """
     seen_bodies = seen.seen_review_body_comments if seen is not None else {}
     seen_comments = seen.seen_issue_comments if seen is not None else {}
     me = pr_data.viewer_login
     return OwedFeedback(
         threads=sum(1 for t in pr_data.review_threads
-                    if not t.get("isResolved") and t.get("id") not in settled),
+                    if t.get("id") not in settled
+                    and compute_thread_state(
+                        (t.get("comments") or {}).get("nodes") or [],
+                        bool(t.get("isResolved")), me,
+                    ) not in (ThreadState.RESOLVED, ThreadState.ADDRESSED)),
         review_bodies=sum(1 for c in pr_data.review_body_comments(me)
                           if not is_seen(c, seen_bodies)),
         issue_comments=sum(1 for c in pr_data.non_self_issue_comments(me)

@@ -1,7 +1,6 @@
-"""`pr batch run` and `resume` hold one batch lock per repo they cover for their whole life,
-and each item's target until that item is terminal."""
+"""`pr batch run` and `resume` hold each item's target until that item is terminal, and
+nothing per repo: two runs over one repo proceed side by side."""
 
-import json
 import subprocess
 import sys
 import textwrap
@@ -43,22 +42,6 @@ def _main(argv):
         return exc.code
 
 
-def _repo_key(repo):
-    return pr.target.repo_key_from_origin(str(repo))
-
-
-def _batch_scope(key):
-    return batch.store.batch_lock(key)
-
-
-def _batch_held(key):
-    return core.run_lock.is_global_held(_batch_scope(key))
-
-
-def _batch_path(key):
-    return core.run_lock.global_lock_path(_batch_scope(key).name)
-
-
 def _saved_run(rows=None):
     rows = rows or [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                             {batch.model.Step.REVIEW: StepNeed(True, "x")},
@@ -69,95 +52,12 @@ def _saved_run(rows=None):
     return seed(run)
 
 
-def test_run_plans_under_the_batch_lock_and_releases_it(monkeypatch, tmp_path):
-    repo = repo_with_origin(tmp_path / "repo")
-    key = _repo_key(repo)
-    seen = {}
-
-    def build_run_plan(dirs, prs=None):
-        seen["held"] = _batch_held(key)
-        return Plan("me", [])
-
-    monkeypatch.setattr(batch.plan, "build_run_plan", build_run_plan)
-    assert _main(["batch", "run", "--checkout", str(repo)]) == 0
-    assert seen["held"] is True
-    assert not _batch_held(key)
-
-
-def test_run_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, tmp_path, capsys):
-    repo = repo_with_origin(tmp_path / "repo")
-    key = _repo_key(repo)
-    planned = []
-    monkeypatch.setattr(batch.plan, "build_run_plan",
-                        lambda dirs, prs=None: planned.append(dirs) or Plan("me", []))
-    with live_pid() as pid, held_elsewhere(
-            _batch_path(key),
-            {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0",
-             "run": "20261013T000000-abcd"}):
-        code = _main(["batch", "run", "--checkout", str(repo)])
-    assert code == 1
-    assert planned == []
-    err = capsys.readouterr().err
-    assert f"owns this global batch-{key}" in err
-    assert "run 20261013T000000-abcd" in err
-    assert f"pid {pid}" in err
-
-
-def test_resume_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, capsys):
-    run = _saved_run()
-    key = run.items[0].repo_key
-    driven = []
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
-    with live_pid() as pid, held_elsewhere(_batch_path(key),
-                                           {"pid": pid, "command": "pr batch run"}):
-        code = _main(["batch", "resume", run.id])
-    assert code == 1
-    assert driven == []
-    assert f"owns this global batch-{key}" in capsys.readouterr().err
-
-
-def test_a_run_names_itself_on_the_batch_lock(monkeypatch, tmp_path):
-    repo = repo_with_origin(tmp_path / "repo")
-    key = _repo_key(repo)
-    row = PlanRow("acme/widget", str(repo), 1, "t", "feat/a", "h", False,
-                  {batch.model.Step.REVIEW: StepNeed(True, "x")}, repo_key=key)
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
-    seen = {}
-
-    def fake_run(self):
-        seen["record"] = json.loads(_batch_path(key).read_text())
-        self.run.status = batch.model.RunStatus.DONE
-        return batch.model.RunStatus.DONE
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", str(repo), "--with-review"]) == 0
-    assert seen["record"]["run"] == batch.store.latest_run_id()
-
-
-def test_resume_holds_the_batch_lock_and_names_the_run(monkeypatch):
-    run = _saved_run()
-    key = run.items[0].repo_key
-    seen = {}
-
-    def fake_run(self):
-        seen["held"] = _batch_held(key)
-        seen["record"] = json.loads(_batch_path(key).read_text())
-        self.run.status = batch.model.RunStatus.DONE
-        return batch.model.RunStatus.DONE
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "resume", run.id]) == 0
-    assert seen["held"] is True
-    assert seen["record"]["run"] == run.id
-    assert not _batch_held(key)
-
-
 # ── two real processes ────────────────────────────────────────────────────────
 
 # One `pr batch run` per process. Role "a" parks inside planning until the test
 # writes `release`; role "b" plans at once. Each touches `<role>-planning` when
-# it gets that far, which is what tells the test whether "b" was let in.
+# it gets that far, which is what tells the test "b" was let in while "a" was
+# still live over the same repo.
 _HARNESS = textwrap.dedent("""\
     import pathlib, sys, time
     lib, signals, role, bin_dir, repo = sys.argv[1:6]
@@ -192,7 +92,7 @@ def _wait_for(path, proc):
     assert path.exists(), f"never saw {path.name}: {proc.communicate(timeout=_PROC_TIMEOUT)}"
 
 
-def test_two_concurrent_runs_exactly_one_proceeds(tmp_path):
+def test_two_concurrent_runs_over_one_repo_both_proceed(tmp_path):
     repo = repo_with_origin(tmp_path / "repo")
     first = subprocess.Popen(_harness(tmp_path, "a", repo), stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True)
@@ -203,9 +103,8 @@ def test_two_concurrent_runs_exactly_one_proceeds(tmp_path):
     finally:
         (tmp_path / "release").touch()
         _, first_err = first.communicate(timeout=_PROC_TIMEOUT)
-    assert second.returncode == 1, second.stderr
-    assert "owns this global batch-" in second.stderr
-    assert not (tmp_path / "b-planning").exists()
+    assert second.returncode == 0, second.stderr
+    assert (tmp_path / "b-planning").exists()
     assert first.returncode == 0, first_err
 
 

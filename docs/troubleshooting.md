@@ -238,7 +238,7 @@ Messages that report the *repository's shape* rather than a command's exit — `
 
 ## "another pr run already owns this target"
 
-A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the scope that was refused (`global batch-<repo-key>`, `target <repo>@<branch>`, or `checkout <path>`) and the holder:
+A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the scope that was refused (`global <name>`, `target <repo>@<branch>`, or `checkout <path>`) and the holder:
 
 ```
 ✗ another pr run already owns this target acme/widget@feat/x: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
@@ -258,7 +258,7 @@ Three scopes, three paths — target and global locks are rooted at `WORKBENCH_S
 
 - **target** — `~/.local/state/workbench/pr/<repo-key>-<branch-slug>/run.lock`, beside that target's `state.json`. The two path components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the target lock reach across checkouts. `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
 - **checkout** — `<git-dir>/workbench-run-tree.lock`, keyed on the checkout's `--absolute-git-dir`.
-- **global** — `~/.local/state/workbench/locks/<name>.lock` (a live batch is `batch-<repo-key>.lock`).
+- **global** — `~/.local/state/workbench/locks/<name>.lock`, for a command that must be the only one of its kind running.
 
 None of these is a file in the working tree, so there is no `.gitignore` entry to maintain.
 
@@ -270,7 +270,7 @@ run 20261014T000000-abcd is busy: applying a request (pr batch cancel, pid 4242,
 
 The clause after `busy:` is the holder's role: `driving it` (`pr batch run` / `resume`), `applying a request` (`cancel`, `release`, or a hand-off), `removing it` (`pr gc`), or `holding it` (a record written before roles existed). Wait for that process, or stop it with the printed pid.
 
-A `pr batch run` or `pr batch resume` refused with `owns this global batch-<repo-key>` met another batch that still covers that repo. One lock is held per repo (`~/.local/state/workbench/locks/batch-<repo-key>.lock`) for the life of `run`/`resume`, so batches over different repos run at once and a second batch over a repo already in a live batch is refused, naming that lock. Once the live run has an id the message names it (`run <id>`); `pr batch status RUN_ID` shows it and `pr batch cancel RUN_ID` stops it. Omitting the id on `resume` or `cancel` acts only on a run covering the current repo.
+`pr batch run` and `pr batch resume` hold nothing per repo, so several batches can cover one repo at once — over different repos or the same one. What keeps them apart is each item's target, below: a PR already in a live batch is skipped when a second run is planned (naming the run that holds it), and one a live batch takes in the meantime refuses the second run whole. Their rebase and CI steps fetch into the repo's shared `.git` under `git.client`'s fetch mutex (`<git-common-dir>/workbench-fetch.mutex`), so a fetch in one run waits for one in another instead of racing it. The wait is bounded by the transfer timeout: a fetch still queued past it fails its step, so many runs over one busy repo can turn waiting into step failures — resume the run once the others finish. `pr batch status RUN_ID` shows a run and `pr batch cancel RUN_ID` stops it. Omitting the id on `resume` or `cancel` acts only on a run covering the current repo, and is refused naming the candidates when more than one unfinished run covers it.
 
 While a batch run or resume is live it also holds every item's target, so `pr fix`, `pr rebase`, or any other locking `pr` command on one of its PRs is refused, naming `pr batch run|resume RUN_ID` as the holder. Once an item has a worktree the batch holds that checkout too, released with the target, so a locking `pr` command run in that worktree is refused whatever branch it names. The batch's own steps get through because each child is handed only its own item's target in `WORKBENCH_RUN_LOCK` and its checkout in `WORKBENCH_RUN_LOCK_TREE`. A batch that would start while one of its PRs is already being worked on is refused whole, naming that PR; leave it out with `pr batch run --prs`, or wait for the holder. A resume is refused the same way while another `pr` command holds a worktree the run recorded; a worktree that is busy when the batch first assigns it becomes a `worktree_collision` or `failed_unknown` finding (`lock_busy`).
 

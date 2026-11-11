@@ -300,37 +300,6 @@ class _Refused(Exception):
     """A run or resume that may not start, and why. Printed as its refusal."""
 
 
-def _held_batch_key(key: str) -> bool:
-    return core.run_lock.holds(
-        core.run_lock.global_lock_path(batch.store.batch_lock(key).name))
-
-
-def _require_batch_locks(keys: list[str], refused: str) -> None:
-    """Raise `_Refused` unless this process holds every per-repo batch lock in *keys*.
-
-    The dispatcher took the locks `_batch_need` declared before this handler
-    chose the run; a run whose repos differ from those (a plan file edited, a
-    covering run that changed in between) is refused rather than driven
-    unlocked. *refused* opens the message: "run not started", "run X not resumed".
-    """
-    missing = [k for k in keys if not _held_batch_key(k)]
-    if missing:
-        raise _Refused(
-            f"{refused}: the batch lock for {', '.join(missing)} is not held — "
-            "the repos changed since the command started; re-run")
-
-
-def _row_repo_keys(rows: list[batch.plan.PlanRow]) -> list[str]:
-    """The origin keys *rows* cover: recorded at plan time, or read from a saved
-    plan's checkout that predates the field."""
-    return sorted({k for r in rows if (k := r.repo_key or batch.targets.origin_key(r.repo_dir))})
-
-
-def _note_batch_locks(run: Run) -> None:
-    for key in batch.targets.run_repo_keys(run):
-        core.run_lock.note_holder(batch.store.batch_lock(key), run=run.id)
-
-
 @dataclass(frozen=True)
 class _Started:
     """A run that has been planned, opened, item-locked and first committed, ready to drive."""
@@ -460,7 +429,6 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
         keys = {k for k in args.prs.split(",") if k}
         rows = [r for r in plan.rows if not keys or r.key in keys]
         rows = _skip_held(rows)
-        _require_batch_locks(_row_repo_keys(rows), "run not started")
         selected = {s.key: s.steps for s in args.select} if args.select else None
         dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
         cfg = _cfg(dirs)
@@ -476,9 +444,6 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
             _warn_focus_without_review(run)
         session = held.enter_context(batch.store.create(run, inbox=inbox,
                                                         command=f"pr batch run {run.id}"))
-        # The id exists only now. From here a batch refused the lock is told
-        # which run to wait for or cancel, not only a pid.
-        _note_batch_locks(run)
         holds = _hold_items(held, run, "run")
         trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
         run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
@@ -556,7 +521,6 @@ def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
         return _NarrowOnly(
             "resume can only narrow steps; start a new run to add one")
     try:
-        _note_batch_locks(run)
         holds = _hold_items(held, run, "resume")
     except _Refused as exc:
         return exc
@@ -599,13 +563,6 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     run_id = cli.pr_batch_common.resolve_run_id(args.run_id, covering_only=not args.run_id)
     if not run_id:
         return cli.pr_batch_common.fail("no batch run covers this repo; pass a run id")
-    try:
-        _require_batch_locks(batch.targets.run_repo_keys(batch.store.load(run_id)),
-                             f"run {run_id} not resumed")
-    except batch.store.RunNotFound:
-        return cli.pr_batch_common.fail(f"no run {run_id}")
-    except _Refused as exc:
-        return cli.pr_batch_common.fail(str(exc))
     reporter = _Reporter()
     try:
         stopped = _resume(run_id, reporter, bin_dir, args.verbose, steps=args.steps)

@@ -17,13 +17,11 @@ import batch.scheduler  # noqa: E402
 import batch.targets  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
-from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step  # noqa: E402
-from batch.plan import PlanRow  # noqa: E402
+from batch.model import Item, ItemStatus, Run, Step  # noqa: E402
 # `_quiet_outcomes` is an autouse fixture; imported only so pytest registers it here.
 from batch_scheduler_support import (  # noqa: E402,F401
     NEED, Harness, _close_open_sessions, _quiet_outcomes, attach_scheduler, ff_tree, row,
 )
-from config.workbench_config import BatchConfig  # noqa: E402
 from conftest import seed_repo  # noqa: E402
 from core.run_lock import GLOBAL_LOCK_ENV, LOCK_ENV, TARGET, TREE_LOCK_ENV  # noqa: E402
 from run_lock_support import repo_with_origin  # noqa: E402
@@ -91,17 +89,6 @@ def test_item_repo_key_for_a_relative_repo_dir_uses_the_slug_not_cwd(tmp_path, m
     got = batch.targets.item_repo_key(item)
     assert got == pr.target.repo_key_for_slug("Other/Repo")
     assert got != pr.target.repo_key_from_origin(str(cwd_repo))
-
-
-def test_run_repo_keys_are_sorted_and_deduplicated(repo):
-    key = pr.target.repo_key_from_origin(str(repo))
-    a = _item(repo, "feat/a", 1)
-    a.repo_key = key
-    b = _item(repo, "feat/b", 2)
-    b.repo_key = key
-    c = _item("/missing", "feat/c", 3)
-    run = Run(id="r", started_at="t", steps=[], pool=1, auto_publish=[], items=[a, b, c])
-    assert batch.targets.run_repo_keys(run) == [key]
 
 
 def test_child_env_names_only_the_items_target_when_this_process_holds_it(repo, monkeypatch):

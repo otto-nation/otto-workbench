@@ -13,8 +13,8 @@
 resource. The resource has no `WORKBENCH_RUN_LOCK` marker: a child neither
 inherits it nor passes through it. Lock order is the run resource, then item
 TARGETs, then CHECKOUT. Nothing is held per repo: several runs may cover one
-repo at once, kept apart by their items' TARGETs. Every take is non-blocking, so the order cannot deadlock. One
-exception: `pr gc`'s dispatcher takes its own TARGET before `reap` takes run
+repo at once, kept apart by their items' TARGETs. Every take is
+non-blocking, so the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own TARGET before `reap` takes run
 resources.
 
 `reap` renames the run directory to the tombstone while still holding the

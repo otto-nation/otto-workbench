@@ -39,7 +39,9 @@ from pr.comments_fix import CloseoutDebt
 # Steps that fetch into the repo's shared `.git`. This run starts one at a time
 # per repo, so its own steps never queue on the fetch behind each other; a step
 # from another run over the same repo is kept from racing it by `git.client`'s
-# fetch mutex instead, which every fetch takes. A CI step started with --wait is
+# fetch mutex instead, which every fetch takes. A fetch waits at most
+# `git.client`'s transfer timeout for the mutex, then fails the step, so a long
+# queue of runs on one repo can turn the wait into a step failure. A CI step started with --wait is
 # not counted while live: it runs `ci-check` directly, which makes no startup
 # fetch (see `_repo_busy`).
 _FETCHING = frozenset({Step.REBASE, Step.CI})

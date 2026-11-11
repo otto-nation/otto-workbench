@@ -2,7 +2,7 @@
 import { h, sectionLabel, setChildren, status, tag } from './dom.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
 import { filterOn } from '../../app/mods/_lib/columns.js';
-import { cardBadges, cardNumber } from '../lib/view.js';
+import { cardBadges, cardNumber, cardTags } from '../lib/view.js';
 
 const CI = { passing: 'pass', failing: 'fail', pending: 'running' };
 
@@ -24,11 +24,11 @@ export function card(pr, { selected, onOpen, extraLine }) {
   const line = extraLine?.(pr) ?? null;
   const badges = cardBadges(pr, { hideBusy: Boolean(line) });
   return h('button', { class: `card${selected ? ' sel' : ''}`, id: cardId(pr), 'aria-current': selected ? 'true' : null, onclick: () => onOpen(pr) },
-    h('div', { class: 'title' }, pr.title ?? ''),
+    h('div', { class: 'title-row' }, h('div', { class: 'title' }, pr.title ?? ''), ...cardTags(pr).map((name) => tag(name))),
     h('div', { class: 'row' }, h('span', {}, cardNumber(pr)), h('span', { class: 'trunc' }, pr.author ?? ''),
       h('span', { class: 'trunc grow branch' }, pr.branch ?? '')),
     h('div', { class: 'row' }, h('span', { class: 'add' }, `+${pr.additions ?? 0}`), h('span', { class: 'del' }, `-${pr.deletions ?? 0}`),
-      h('span', {}, `${pr.changedFiles ?? 0} files`), ciMark(pr.ciStatus),
+      h('span', {}, `${pr.changedFiles ?? 0} files`),
       pr.reviewing ? h('span', { class: 'spin', title: 'Review running', 'aria-label': 'Review running' }, '⠋') : null),
     badges.length ? h('div', { class: 'badges' }, badges.map(badge)) : null,
     line);

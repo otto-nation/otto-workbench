@@ -2,6 +2,8 @@
  * The web board's data: the checkouts the agent's herdr-core terminals sit in, pulled through _lib
  * in the order prs/board_view.js pullFull/pullListing use (tools → repo → login → open PRs ∥
  * listing ∥ batch doc ∥ terminals → landed → assemble), merged with scope.js boardState(…, 'all').
+ * Each repo is published as it loads. changeFeed in sse.js broadcasts a whole snapshot when the board
+ * changed, or a small status event (updatedAt, refreshing) when only the clock moved.
  * One pull at a time; refreshes asked for meanwhile collapse into one more (full wins over listing).
  */
 import { boardState, repoId, representatives, staleKeys } from '../../app/mods/_lib/scope.js';
@@ -159,9 +161,15 @@ export function createBoard({ exec, name, version, now = Date.now, onChange = ()
   async function pull(listingOnly) {
     await discover();
     const cycle = new Map();
-    await Promise.all(active().map((ctx) => {
+    const publish = () => {
+      const act = active();
+      view = boardState(act, act.map((c) => cache.get(ctxKey(c)) ?? {}), 'all');
+      onChange(snapshot());
+    };
+    await Promise.all(active().map(async (ctx) => {
       const key = ctxKey(ctx);
-      return listingOnly ? pullListing(ctx, key, cycle) : pullFull(ctx, key, cycle);
+      await (listingOnly ? pullListing(ctx, key, cycle) : pullFull(ctx, key, cycle));
+      publish();
     }));
     for (const k of staleKeys(cache.keys(), targets.map(ctxKey))) {
       cache.delete(k);

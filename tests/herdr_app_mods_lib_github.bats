@@ -92,18 +92,18 @@ _js() {
   [[ "$output" != *'number: x'* ]]
 }
 
-@test "batches boundaries 0, 1, 20, 21" {
+@test "batches boundaries 0, 1, 50, 51" {
   _js 'm.batches([])'
   [ "$status" -eq 0 ]
   [ "$output" = '[]' ]
   _js 'm.batches([1])'
   [ "$output" = '[[1]]' ]
-  _js 'm.batches(Array.from({length:20},(_,i)=>i))[0].length'
-  [ "$output" = '20' ]
-  _js 'm.batches(Array.from({length:20},(_,i)=>i)).length'
+  _js 'm.batches(Array.from({length:50},(_,i)=>i))[0].length'
+  [ "$output" = '50' ]
+  _js 'm.batches(Array.from({length:50},(_,i)=>i)).length'
   [ "$output" = '1' ]
-  _js 'm.batches(Array.from({length:21},(_,i)=>i)).map(b=>b.length)'
-  [ "$output" = '[20,1]' ]
+  _js 'm.batches(Array.from({length:51},(_,i)=>i)).map(b=>b.length)'
+  [ "$output" = '[50,1]' ]
 }
 
 @test "pulls --jq filter tolerates null labels" {
@@ -171,13 +171,13 @@ _mapg() {
   [[ "$output" == *'"ciStatus":"pending"'* ]]
 }
 
-@test "mapGraphql ciStatus missing or other is none; draft forces none" {
+@test "mapGraphql ciStatus missing or other is none; a draft keeps its real CI" {
   _mapg '{"commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}'
   [[ "$output" == *'"ciStatus":"none"'* ]]
   _mapg '{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"WEIRD"}}}]}}'
   [[ "$output" == *'"ciStatus":"none"'* ]]
   _mapg '{"isDraft":true,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}}'
-  [[ "$output" == *'"ciStatus":"none"'* ]]
+  [[ "$output" == *'"ciStatus":"failing"'* ]]
 }
 
 @test "mapGraphql mergeable MERGEABLE CONFLICTING else UNKNOWN" {

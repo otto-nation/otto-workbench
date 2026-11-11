@@ -7,6 +7,7 @@
  *   inMergeQueue: boolean
  *   mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
  *   ciStatus: 'passing' | 'failing' | 'pending' | 'none'
+ *   ciUnknown: boolean
  *   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | ... | null
  *   myReviewState: string | null
  *   isRequestedReviewer: boolean
@@ -82,6 +83,19 @@ export function mineColumn(pr) {
   if (pr.reviewDecision === 'APPROVED' && (pr.ciStatus === 'passing' || pr.ciStatus === 'none'))
     return 'approved';
   return 'awaiting-review';
+}
+
+// Every problem a PR has, independent of its lane, in mineColumn's precedence order.
+export function prIssues(pr) {
+  if (pr.state === 'MERGED') return [];
+  const out = [];
+  if (pr.mergeable === 'CONFLICTING') out.push({ kind: 'conflicts', label: 'Conflicts', status: 'fail' });
+  if (pr.ciStatus === 'failing') out.push({ kind: 'ci-failing', label: 'CI failing', status: 'fail' });
+  else if (pr.ciStatus === 'pending') out.push({ kind: 'ci-running', label: 'CI running', status: 'running' });
+  else if (pr.ciUnknown) out.push({ kind: 'ci-unknown', label: 'CI unknown', status: 'none' });
+  if (pr.owedFeedback) out.push({ kind: 'has-comments', label: String(pr.owedFeedback).split(',')[0], status: 'warn' });
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') out.push({ kind: 'changes-requested', label: 'Changes requested', status: 'warn' });
+  return out;
 }
 
 // Owner of the four Show-chip defaults; unset stored values take these.

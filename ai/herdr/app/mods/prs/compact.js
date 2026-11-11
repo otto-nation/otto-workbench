@@ -1,9 +1,10 @@
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
+import { prIssues } from "./_lib/columns.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, ROW_H, BREAKPOINT } from "./_lib/tokens.js";
-import { sectionLabel, ciMark, hoverRow, tag, text, type } from "./_ui/ui.js";
-import { batchAction } from "./board.js";
+import { sectionLabel, hoverRow, text, type, statusText } from "./_ui/ui.js";
+import { batchAction, stateTags } from "./board.js";
 
 function numOf(pr, showRepo) {
   return showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`;
@@ -19,9 +20,10 @@ export function renderCompact({ sections, onOpen, showRepo, width, onBatch }) {
       .flex_none().px(SP.md).mx(SP.xs).justify_center()
       .on_click(() => onOpen(pr))
       .child(h_flex().gap(SP.sm).items_center().child(title)
-        .when(Boolean(pr.isDraft), (e) => e.child(tag("Draft")))
-        .when(two, (e) => e.child(ciMark(pr.ciStatus))))
-      .when(two, (e) => e.child(text("meta", meta, t.muted).truncate()));
+        .children(stateTags(pr)))
+      .when(two, (e) => e.child(h_flex().gap(SP.sm).items_center()
+        .child(text("meta", meta, t.muted).min_w(0).flex_1().truncate())
+        .children(prIssues(pr).map((i) => statusText(i.status, i.label)))));
   };
   return v_flex().size_full().min_h(0).overflow_y_scrollbar()
     .children((sections ?? []).map((s) => v_flex().flex_none()

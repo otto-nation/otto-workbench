@@ -136,7 +136,11 @@ export function landedArgv(repo, numbers) {
   ];
 }
 
-export function batches(numbers, size = 20) {
+// About 31 nodes per PR against GitHub's 500k node limit; ~19 KB query and
+// <=~125 KB output at 50. github.js owns the query shape so owns the size.
+export const GRAPHQL_BATCH = 50;
+
+export function batches(numbers, size = GRAPHQL_BATCH) {
   const src = numbers ?? [];
   if (src.length === 0) return [];
   const out = [];
@@ -176,7 +180,6 @@ function mergeableOf(value) {
 
 function ciStatusOf(pr) {
   // ceiling: rollup only; add ui-code's check-runs fallback if a repo reports no rollup
-  if (pr.isDraft) return 'none';
   const state = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state;
   if (state === 'FAILURE' || state === 'ERROR') return 'failing';
   if (state === 'PENDING' || state === 'EXPECTED') return 'pending';

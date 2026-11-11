@@ -50,6 +50,11 @@ export function sectionLabel(text, count = null) {
   return h('div', { class: 'section-label' }, text, count == null ? null : h('span', { class: 'count' }, String(count)));
 }
 
+// A board lane's heading (_ui/ui.js laneTitle): title-role label and a meta count when given.
+export function laneTitle(label, count = null) {
+  return h('div', { class: 'lane-title' }, h('span', { class: 'label trunc' }, label), count == null ? null : h('span', { class: 'count' }, String(count)));
+}
+
 // lib/markdown.js escapes its whole input before any rule runs; nothing else may reach innerHTML.
 export function trustedMarkdown(el, html) {
   el.innerHTML = html;

@@ -130,12 +130,6 @@ _throws() {
   [ "$output" = '[{"done":4,"total":7},{"done":0,"total":0},{"done":0,"total":0}]' ]
 }
 
-@test "STEP_NAMES lists the four batch steps" {
-  _js 'm.STEP_NAMES'
-  [ "$status" -eq 0 ]
-  [ "$output" = '["rebase","ci","comments","review"]' ]
-}
-
 @test "filterForm hides drafts by default; drafts:true shows them; repo chip still ANDs" {
   _js '(() => { const prs = [{n:1,repoSlug:"a/one",isDraft:true},{n:2,repoSlug:"a/one"},{n:3,repoSlug:"b/two",isDraft:true},{n:4,repoSlug:"b/two"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}),ids({drafts:true}),ids({drafts:false}),ids({drafts:false,repos:["b/two"]})]; })()'
   [ "$status" -eq 0 ]

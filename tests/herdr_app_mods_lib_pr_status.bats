@@ -108,3 +108,18 @@ print(json.dumps($1))
   [ "$status" -eq 0 ]
   [ "$output" = '[{"pass":"✓","fail":"×","running":"…","warn":"!","none":"·"},true,["add","del","mod"],{"add":"done","del":"ansi1","mod":"muted"}]' ]
 }
+
+@test "RUN_STATUS and STEP_STATUS keys are batch.model RunStatus and StepStatus, in order" {
+  _js "[Object.keys(b.RUN_STATUS), Object.keys(b.STEP_STATUS)]"
+  [ "$status" -eq 0 ]
+  js="$output"
+  _py "[[s.value for s in batch.model.RunStatus],[s.value for s in batch.model.StepStatus]]"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c . <<<"$js")" = "$(jq -c . <<<"$output")" ]
+}
+
+@test "itemStatus: batchStatus, else the raw status as none" {
+  _js "[m.itemStatus({status:'queued',steps:{},findings:[]}), m.itemStatus({status:'skipped_closed',steps:{},findings:[]})]"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"kind":"status","status":"running","text":"queued"},{"kind":"status","status":"none","text":"skipped closed"}]' ]
+}

@@ -73,7 +73,19 @@ teardown() {
   for s in ref title tags author branch stats badges; do
     grep -qE "\\bp\\.$s\\b" "$WEB/public/board_view.js"
   done
+  grep -qE '\bp\.row_badges\b' "$WEB/public/board_view.js"
   for s in ref title tags author branch base_branch stats detail_issues ci decision review busy; do
     grep -qE "\\bp\\.$s\\b" "$WEB/public/detail_view.js"
   done
+}
+
+@test "lane titles are drawn by dom.js laneTitle only" {
+  run grep -rn "class: 'lane-title'" "$WEB/public"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "$output" == *"/public/dom.js:"* ]]
+}
+
+@test "load-error status wording lives only in _lib/load_state.js" {
+  run grep -rnE 'stale ·|\} failed`|errorStatus *\(error' "$WEB/public" "$WEB/lib"
+  [ "$status" -eq 1 ]
 }

@@ -1,5 +1,5 @@
 // Delayed load line, progress bar, per-repo strip, and static lane placeholders.
-import { h, setChildren, status } from './dom.js';
+import { h, laneTitle, setChildren, status } from './dom.js';
 import { MINE_COLUMNS, TEAM_COLUMNS } from '../../app/mods/_lib/columns.js';
 
 export function renderLoad({ head, strip, bar }, load) {
@@ -16,7 +16,7 @@ export function renderLoad({ head, strip, bar }, load) {
 export function skeletonLanes(tab) {
   const spec = tab === 'mine' ? MINE_COLUMNS : TEAM_COLUMNS;
   return spec.map((c) => h('section', { class: 'col' },
-    h('div', { class: 'lane-title' }, h('span', { class: 'label trunc' }, c.label)),
+    laneTitle(c.label),
     h('div', { class: 'skel' }),
     h('div', { class: 'skel short' })));
 }

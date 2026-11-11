@@ -10,8 +10,8 @@ import { locate } from "./_lib/location.js";
 import { fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
 import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
 import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
-import { LOAD_DELAY_MS, loadState } from "./_lib/load_state.js";
-import { busyPrs } from "./_lib/batch.js";
+import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
+import { busyPrs, runStatus } from "./_lib/batch.js";
 import {
   assemble, checkTools, loadBatchDoc, loadTerminals, runningFor, loadLanded, loadListing, loadOpenPrs, loadOwed, loadRepo, loadUser,
   owedDue,
@@ -31,8 +31,7 @@ import { renderBatchPage } from "./batch_page.js";
 import { FilterBar } from "./filter_bar.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder, errorLine } from "./_ui/ui.js";
-import { relativeTime } from "./_lib/history.js";
+import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, badge, placeholder, errorLine } from "./_ui/ui.js";
 
 function ctxOf() {
   return locate(spaces(), panes(), focused());
@@ -72,10 +71,6 @@ function filtersOf() {
 
 function tabOf() {
   return shared("prs.tab") === "mine" ? "mine" : "team";
-}
-
-function errorText(err, ctx) {
-  return friendlyError(err, ctx?.on, scopeOf());
 }
 
 // Unfiltered: the Batch form applies the shared chips itself (BatchLauncher.shown), so a selected
@@ -525,12 +520,21 @@ export default class PrsBoard extends View {
     const running = this.workflows.activeRuns().length > 0;
     return h_flex().gap(SP.sm).items_center()
       .child(button("batch", "Batch", () => { this.batchOpen = true; this.acx.notify(); }))
-      .when(running, (e) => e.child(statusText("running", "Running")));
+      .when(running, (e) => e.child(badge(runStatus("running"))));
   }
 
   onSize(size, cx) { this.size = size; cx.notify(); }
 
-  compactHeader(tab, load) {
+  errorStatus(state) {
+    const s = errorsStatus(state.errors, Date.now());
+    if (!s) return null;
+    const first = state.errors[0];
+    return h_flex().min_w(0).gap(SP.sm).items_center().child(badge(s))
+      .child(text("meta", friendlyError(first.error, first.on, scopeOf()), theme().muted).min_w(0).truncate());
+  }
+
+  compactHeader(state, tab, load) {
+    const err = this.errorStatus(state);
     return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
       .child(h_flex().items_center()
         .child(this.scopeToggle())
@@ -544,7 +548,8 @@ export default class PrsBoard extends View {
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
           .when(this.inPanel, (e) => e.child(this.fullscreenButton()))))
-      .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)));
+      .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)))
+      .when(Boolean(err), (e) => e.child(err));
   }
 
   fullscreenButton() {
@@ -565,7 +570,7 @@ export default class PrsBoard extends View {
     const empty = state.loading && !state.repos ? loadPlaceholder(load) : placeholder("No pull requests");
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(this.compactHeader(tab, load))
+      .child(this.compactHeader(state, tab, load))
       .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
       .child(renderCompact({
         sections, onOpen: (pr) => this.openDetail(pr, cx),
@@ -606,8 +611,7 @@ export default class PrsBoard extends View {
 
   header(ctx, state, tab, t, load) {
     const loading = state.loading && !state.repos;
-    const nFail = state.errors?.length ?? 0;
-    const first = state.errors?.[0];
+    const err = this.errorStatus(state);
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "Loading…" : (state.slug ?? "No repo"));
     const note = all && !load.shown ? (loading ? "Loading…" : `${state.repos} repos`) : null;
@@ -618,16 +622,7 @@ export default class PrsBoard extends View {
         .when(Boolean(note), (e) => e.child(text("meta", note, t.muted).flex_none()))
         .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)))
         .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on))))
-        .when(nFail && !all, (e) => e
-          // DESIGN.md: stale is warn plus how old the shown data is; with nothing loaded yet it is
-          // an error, not stale.
-          .child(first.updatedAt != null
-            ? statusText("warn", `stale · ${relativeTime(new Date(first.updatedAt).toISOString(), Date.now())}`)
-            : statusText("fail", "failed"))
-          .child(text("meta", errorText(first.error, ctx), t.muted).min_w(0).truncate()))
-        .when(nFail && all, (e) => e
-          .child(statusText("fail", `${nFail} failed`))
-          .child(text("meta", friendlyError(first.error, first.on, "all"), t.muted).min_w(0).truncate())))
+        .when(Boolean(err), (e) => e.child(err)))
       .when(tab === "mine", (e) => e.child(this.batchControl()))
       .child(this.scopeToggle())
       .child(segmented([

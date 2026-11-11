@@ -2,14 +2,10 @@
  * Argv and grouping for launching `pr batch` from the herdr board.
  */
 
-import { BUSY_STATES, laneOf } from './batch.js';
+import { AI_STEPS, BUSY_STATES, laneOf } from './batch.js';
 import { DEFAULT_FILTERS } from './columns.js';
 import { facetView } from './filters.js';
 
-/** Step names a batch launch can request. */
-export const STEP_NAMES = ['rebase', 'ci', 'comments', 'review'];
-
-const AI_STEPS = new Set(['rebase', 'ci', 'comments']);
 const DONE_LANES = new Set(['done', 'closed', 'attention']);
 
 /** Group board PRs by machine+repo; PRs with no cwd are unrunnable. */
@@ -70,11 +66,12 @@ export function filterForm(prs, {
  * Comments, because the comments step does not run without it. CI Failing leaves AI off:
  * a plain CI step reruns infrastructure flakes, and fixing code is the larger step to opt into.
  */
+const rebaseOnly = Object.freeze(AI_STEPS.filter((s) => s === 'rebase'));
 export const COLUMN_BATCH = Object.freeze({
-  'has-conflicts': { steps: ['rebase'], ai: true },
+  'has-conflicts': { steps: rebaseOnly, ai: true },
   'ci-failing': { steps: ['ci'], ai: false },
   'has-comments': { steps: ['comments'], ai: true },
-  approved: { steps: ['rebase'], ai: false, rebaseBehind: true },
+  approved: { steps: rebaseOnly, ai: false, rebaseBehind: true },
 });
 
 /** The shortcut a column `{key, items}` offers, or null: none for a column without a preset or PRs. */
@@ -127,7 +124,7 @@ export function runArgv({
   }
   if (wantsReview || reviewOnly) argv.push('--with-review');
 
-  const ai = withAi.filter((s) => AI_STEPS.has(s));
+  const ai = withAi.filter((s) => AI_STEPS.includes(s));
   if (ai.length > 0) argv.push('--with-ai', ai.join(','));
   if (autoPublish) argv.push('--auto-publish', 'ff');
   // pr batch rebases only conflicting PRs unless told otherwise; the flag is sent only when it
@@ -169,14 +166,6 @@ export function runProgress(parsed) {
   }
   return { done, total: items.length };
 }
-
-/** The Start form's label for each launchable step. */
-export const STEP_LABEL = {
-  rebase: 'Rebase conflicting PRs',
-  ci: 'Fix CI',
-  comments: 'Answer comments',
-  review: 'Self-review',
-};
 
 /**
  * What a launched `pr batch run` terminal's output says so far.

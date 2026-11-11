@@ -2,14 +2,14 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { STEP_NAMES, STEP_LABEL } from "./_lib/batch_launch.js";
+import { STEP_ORDER, STEP_LABEL, AI_STEPS, runStatus } from "./_lib/batch.js";
 import { filterFacets } from "./_lib/columns.js";
 import { barModel } from "./_lib/filters.js";
 import { prKey } from "./_lib/launch.js";
 import { SP } from "./_lib/tokens.js";
 import {
   scrollBody, button, solidButton, pane, checkbox,
-  sectionHeading, text, type, statusText, dangerColor,
+  sectionHeading, text, type, statusText, badge, dangerColor,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
 import { loadPlaceholder, renderLoadLine } from "./load_status.js";
@@ -58,7 +58,7 @@ function renderRunning({ launcher: L, workflows, run }) {
       return h_flex().id(`run-${killKey}`).gap(SP.md).items_center()
         .child(text("body", repos))
         .child(text("meta", machineOf(on), t.muted))
-        .child(statusText("running", "Running"))
+        .child(badge(runStatus("running")))
         .child(text("meta", `${progress.done} of ${progress.total} done`, t.muted))
         .child(div().flex_1())
         .when(Boolean(terminal), (e) => e.child(
@@ -146,11 +146,11 @@ function renderForm({ launcher: L, prs, load, filterBar }) {
     .child(renderPrs(L, all, t, load))
     .child(v_flex().gap(SP.sm)
       .child(text("title", "Steps"))
-      .children(STEP_NAMES.map((s) => checkLine(
-        `step-${s}`, L.steps.has(s), STEP_LABEL[s] ?? s, "", () => L.toggleStep(s)))))
+      .children(STEP_ORDER.map((s) => checkLine(
+        `step-${s}`, L.steps.has(s), STEP_LABEL[s], "", () => L.toggleStep(s)))))
     .child(v_flex().gap(SP.sm)
       .child(text("title", "Options"))
-      .children(["rebase", "ci", "comments"].map((s) => checkLine(
+      .children(AI_STEPS.map((s) => checkLine(
         `ai-${s}`, L.withAi.has(s), `Use AI for ${s}`, "", () => L.toggleAi(s))))
       .when(L.steps.has("rebase"), (e) => e.child(checkLine(
         "rebase-behind", L.rebaseBehind, "Also rebase PRs that are only behind", "",

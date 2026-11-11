@@ -1,5 +1,6 @@
 // Starts `pr batch run` from Mine: form state, per-repo hc terminals, cancel/kill.
 import { exec } from "herdr";
+import { AI_STEPS } from "./_lib/batch.js";
 import { groupByRepo, runArgv, filterForm, launchOutcome, presetForm } from "./_lib/batch_launch.js";
 import { filterOn } from "./_lib/columns.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
@@ -32,7 +33,7 @@ export class BatchLauncher {
     this.loaded = undefined;
     this.knownLabels = undefined;
     this.selected = new Set();
-    this.steps = new Set(["rebase", "ci", "comments"]);
+    this.steps = new Set(AI_STEPS);
     this.withAi = new Set();
     this.autoPublish = false;
     this.rebaseBehind = false;

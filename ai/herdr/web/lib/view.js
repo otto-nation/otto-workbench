@@ -1,7 +1,6 @@
 /**
  * The board page's view model: which lanes, cards and states to draw for a snapshot and the page's UI
- * state, through the same _lib/columns.js functions prs/board.js uses, with the mod's DESIGN.md
- * readings (the header's stale/failed). Pure; runs in the browser.
+ * state, through the same _lib/columns.js functions prs/board.js uses. Pure; runs in the browser.
  */
 import {
   TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns, visibleColumns,
@@ -9,7 +8,6 @@ import {
 } from '../../app/mods/_lib/columns.js';
 import { barModel, facetView, filterAction, normalizeFilters } from '../../app/mods/_lib/filters.js';
 import { compactSections } from '../../app/mods/_lib/compact.js';
-import { relativeTime } from '../../app/mods/_lib/history.js';
 
 // Flag defaults are _lib's DEFAULT_FILTERS (one owner for the mod and the web; drafts hidden on Team,
 // Mine and the Batch form), never restated here. There is no repo scope: the board always covers every
@@ -57,14 +55,6 @@ export function boardModel(snapshot, ui) {
 export function toggleFilter(ui, name) {
   const next = filterAction(ui.filters, name);
   return next === ui.filters ? ui : { ...ui, filters: next };
-}
-
-// DESIGN.md: stale is warn plus how old the shown data is; with nothing loaded yet it is an error.
-export function errorStatus(error, nowMs) {
-  if (error?.updatedAt != null) {
-    return { status: 'warn', text: `stale · ${relativeTime(new Date(error.updatedAt).toISOString(), nowMs)}` };
-  }
-  return { status: 'fail', text: 'failed' };
 }
 
 // The PR's GitHub page; only a credential-free https URL is ever put in an href.

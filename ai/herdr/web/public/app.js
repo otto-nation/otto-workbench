@@ -1,13 +1,13 @@
 // The board page: state, the event stream, and one render() for everything.
 import { events, getJson, postJson, q } from './api.js';
-import { h, keepScroll, status } from './dom.js';
+import { h, keepScroll, status, badge } from './dom.js';
 import { loadUi, saveUi } from './prefs.js';
 import { renderBoard, renderSections } from './board_view.js';
 import { renderFilterBar } from './filter_bar.js';
 import { renderLoad } from './load_status.js';
 import { renderDetail } from './detail_view.js';
-import { boardModel, errorStatus, toggleFilter } from '../lib/view.js';
-import { loadState, LOAD_DELAY_MS } from '../../app/mods/_lib/load_state.js';
+import { boardModel, toggleFilter } from '../lib/view.js';
+import { loadState, LOAD_DELAY_MS, errorStatus, errorsStatus } from '../../app/mods/_lib/load_state.js';
 import { GLYPH } from '../../app/mods/_lib/status.js';
 import { viewOf } from '../../app/mods/_lib/compact.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
@@ -104,13 +104,10 @@ function refreshNow() {
 
 function renderErrors(errors, now) {
   // The header names the first failure as the mod's does; the strip lists up to three with Retry.
-  const first = errors[0];
-  $('#headStatus').replaceChildren(...(first ? [
-    status(errors.length > 1 ? 'fail' : errorStatus(first, now).status, errors.length > 1 ? `${errors.length} failed` : errorStatus(first, now).text),
-    h('span', { class: 'why trunc' }, first.message),
-  ] : []));
+  const head = errorsStatus(errors, now);
+  $('#headStatus').replaceChildren(...(head ? [badge(head), h('span', { class: 'why trunc' }, errors[0].message)] : []));
   $('#errors').replaceChildren(...errors.slice(0, 3).map((e) => h('div', { class: 'row' },
-    status(errorStatus(e, now).status, errorStatus(e, now).text), h('span', { class: 'trunc' }, `${e.folder ? `${e.folder} on ` : ''}${e.where}: ${e.message}`))),
+    badge(errorStatus(e, now)), h('span', { class: 'trunc' }, `${e.folder ? `${e.folder} on ` : ''}${e.where}: ${e.message}`))),
     ...(errors.length && !(S.snap?.prs ?? []).length ? [h('button', { class: 'btn', onclick: refreshNow }, 'Retry')] : []));
 }
 

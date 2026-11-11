@@ -67,9 +67,9 @@ def hold_declared(scopes: Iterable[core.run_lock.LockScope],
                   ctx: pr.context.ResolvedContext, *, command: str):
     """A context manager holding *scopes* for *ctx*, in the TARGET → CHECKOUT order.
 
-    The checkout is the context's worktree, skipped when it has none. *command* is what a contender's refusal
-    names. Raises LockBusy, having released what it took, when any scope is
-    held elsewhere.
+    The checkout is the context's worktree, skipped when it has none. *command*
+    is what a contender's refusal names. Raises LockBusy, having released what
+    it took, when any scope is held elsewhere.
     """
     # A test, not `or None`: validate-worktree-guards reads the AST, and only a
     # test is visible to it as the deliberate opt-out.

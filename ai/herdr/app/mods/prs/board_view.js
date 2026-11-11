@@ -588,10 +588,12 @@ export default class PrsBoard extends View {
     const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(this.header(ctx, state, tab, t))
+      .child(this.header(ctx, state, tab, t, load))
+      .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
       .child(this.filterBar.render(barModel(filters, {
         tab, options: { repos, labels: fv.options.labels, authors: fv.options.authors },
       }), (a) => this.toggleChip(a, this.acx)))
+      .when(load.strip.length > 0, (e) => e.child(renderLoadStrip(load)))
       .child(renderBoard({
         tab, prs: this.listed(state), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),

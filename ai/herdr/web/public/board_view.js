@@ -1,5 +1,6 @@
 // Header status, filters, lanes and the compact list: the mockup's layout with prs/board.js's look.
 import { h, status, tag } from './dom.js';
+import { skeletonLanes } from './load_status.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
 import { cardBadges, cardNumber, cardTags } from '../lib/view.js';
 
@@ -33,7 +34,11 @@ export function card(pr, { selected, onOpen, extraLine }) {
     line);
 }
 
-export function renderBoard(el, model, { loading, selectedId, onOpen, extraLine }) {
+export function renderBoard(el, model, { loading, tab, selectedId, onOpen, extraLine }) {
+  if (loading) {
+    el.replaceChildren(...skeletonLanes(tab));
+    return;
+  }
   if (!model.columns.length) {
     el.replaceChildren(h('div', { class: 'none pad' }, 'No pull requests'));
     return;

@@ -3,11 +3,12 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { STEP_NAMES, STEP_LABEL } from "./_lib/batch_launch.js";
-import { filterFacets, filterOn } from "./_lib/columns.js";
+import { filterFacets } from "./_lib/columns.js";
+import { barModel } from "./_lib/filters.js";
 import { prKey } from "./_lib/launch.js";
-import { SP, RADIUS } from "./_lib/tokens.js";
+import { SP } from "./_lib/tokens.js";
 import {
-  scrollBody, button, solidButton, pane, chip as chipOf, filterGroup,
+  scrollBody, button, solidButton, pane, checkbox,
   sectionHeading, text, type, statusText, dangerColor,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
@@ -19,12 +20,6 @@ function shortRepo(slug) {
 
 function machineOf(on) {
   return on ?? "this computer";
-}
-
-function cardCheckbox(on) {
-  const t = theme();
-  return div().flex_none().w(SP.md).h(SP.md).rounded(RADIUS.tag).border_1().border_color(t.input)
-    .when(Boolean(on), (e) => e.bg(t.foreground));
 }
 
 function groupPrs(prs) {
@@ -78,7 +73,7 @@ function prRow(pr, L, t) {
   const key = prKey(pr.repoSlug, pr.number);
   const runnable = Boolean(pr.cwd);
   const row = h_flex().id(`pr-${key}`).gap(SP.md).items_center().px(SP.sm).py(SP.xs)
-    .when(runnable, (e) => e.cursor_pointer().on_click(() => L.toggle(key)).child(cardCheckbox(L.selected.has(key))))
+    .when(runnable, (e) => e.cursor_pointer().on_click(() => L.toggle(key)).child(checkbox(L.selected.has(key))))
     .child(text("body", `#${pr.number}`, t.muted).flex_none())
     .child(type(div().min_w(0).flex_1().truncate(), "body")
       .text_color(runnable ? t.foreground : t.muted).child(pr.title ?? ""))
@@ -89,24 +84,11 @@ function prRow(pr, L, t) {
     .child(text("body", "No checkout of this repo on its machine", t.muted).px(SP.sm));
 }
 
-// The board's chips (shared prs.filters): toggling one here toggles it on Mine and Team too.
-function renderFormFilters(L, prs) {
-  const f = L.filters.get();
-  const facets = filterFacets(prs);
-  const repoOn = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
-  const labelOn = new Set((f.labels ?? []).map((n) => String(n).toLowerCase()));
-  const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => L.filters.toggle(name));
-  const out = v_flex().gap(SP.xs)
-    .child(filterGroup("Show", [chip("Drafts", "mineDrafts", filterOn(f, "mineDrafts"))]));
-  if (facets.repos.length > 1) {
-    out.child(filterGroup("Repo", facets.repos.map((slug) => chip(
-      shortRepo(slug), `repo:${slug}`, repoOn.has(slug.toLowerCase())))));
-  }
-  if (facets.labels.length > 0) {
-    out.child(filterGroup("Label", facets.labels.map((name) => chip(
-      name, `label:${name}`, labelOn.has(name.toLowerCase())))));
-  }
-  return out;
+function renderFormFilters(L, prs, filterBar) {
+  return filterBar.render(
+    barModel(L.filters.get(), { tab: "batch", options: { ...filterFacets(prs), authors: [] } }),
+    (a) => L.filters.toggle(a),
+  );
 }
 
 function renderPrs(L, prs, t, load) {
@@ -131,7 +113,7 @@ function renderPrs(L, prs, t, load) {
       return v_flex().id(`repo-${g.on ?? ""}-${g.repo}`).gap(SP.xs)
         .child(h_flex().gap(SP.md).items_center()
           .when(keys.length > 0, (e) => e.cursor_pointer().on_click(() => L.toggleRepo(keys))
-            .child(cardCheckbox(allOn)))
+            .child(checkbox(allOn)))
           .child(text("body", shortRepo(g.repo)))
           .child(text("meta", machineOf(g.on), t.muted)))
         .children(g.prs.map((pr) => prRow(pr, L, t)));
@@ -141,12 +123,12 @@ function renderPrs(L, prs, t, load) {
 function checkLine(id, on, label, extra, onToggle) {
   const t = theme();
   return h_flex().id(id).gap(SP.md).items_center().cursor_pointer().on_click(onToggle)
-    .child(cardCheckbox(on))
+    .child(checkbox(on))
     .child(text("body", label))
     .when(Boolean(extra), (e) => e.child(text("meta", extra, t.muted).min_w(0)));
 }
 
-function renderForm({ launcher: L, prs, load }) {
+function renderForm({ launcher: L, prs, load, filterBar }) {
   const t = theme();
   const all = prs ?? [];
   const shown = L.shown(all);
@@ -158,7 +140,7 @@ function renderForm({ launcher: L, prs, load }) {
     : selectedPrs.length === 0 ? "Select at least one PR"
     : L.steps.size === 0 ? "Turn on at least one step"
     : null;
-  const filters = renderFormFilters(L, all);
+  const filters = renderFormFilters(L, all, filterBar);
   return v_flex().gap(SP.lg)
     .child(filters)
     .child(renderPrs(L, all, t, load))
@@ -185,7 +167,7 @@ function renderForm({ launcher: L, prs, load }) {
         .when(L.starting, (e) => e.child(statusText("running", "Starting")))));
 }
 
-export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOpenPr, run, load }) {
+export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOpenPr, run, load, filterBar }) {
   const byKey = new Map((allPrs ?? prs ?? []).map((p) => [prKey(p.repoSlug, p.number).toLowerCase(), p]));
   const prOf = (item) => byKey.get(String(item.key ?? "").toLowerCase()) ?? null;
   const expanded = (r) => renderRunItems(workflows.docOf(r.on, r.id), { repos: r.repos ?? [], prOf, onOpen: onOpenPr });
@@ -198,7 +180,7 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
       .when(Boolean(load?.shown), (e) => e.child(renderLoadLine(load))))
     .child(scrollBody().id("batch-body").px(SP.lg).py(SP.lg).gap(SP.xl)
       .when(Boolean(running), (e) => e.child(running))
-      .child(renderForm({ launcher, prs, load }))
+      .child(renderForm({ launcher, prs, load, filterBar }))
       .child(v_flex().gap(SP.sm)
         .child(sectionHeading("Recent runs"))
         .child(renderRunPanel(workflows.barState(), expanded))));

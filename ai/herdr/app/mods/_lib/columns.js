@@ -104,12 +104,13 @@ export function prIssues(pr) {
   return out;
 }
 
-// Owner of the four Show-chip defaults; unset stored values take these.
+// Show-menu flag defaults
 export const DEFAULT_FILTERS = Object.freeze({
   drafts: false,
   mineDrafts: false,
   landed: false,
   empty: false,
+  hideBots: false,
 });
 
 // Stored boolean wins; otherwise DEFAULT_FILTERS[key], or false for an unknown key.
@@ -175,15 +176,10 @@ export function filterLabels(prs, labels, knownLabels) {
 export function filterPrs(prs, filters, me) {
   const drafts = filterOn(filters, 'drafts');
   const landed = filterOn(filters, 'landed');
-  const authors = Array.isArray(filters?.authors) ? filters.authors : [];
-  // The viewer is never an author filter: Team excludes them by design, and the Mine tab is theirs.
-  const who = String(me ?? '').toLowerCase();
-  const authorSet = new Set(authors.map((a) => String(a).toLowerCase()).filter((a) => a !== who));
+  // facets are _lib/filters.js facetView
   return prs.filter((pr) => {
-    const login = String(pr.author ?? '').toLowerCase();
     if (!drafts && pr.isDraft) return false;
     if (!landed && teamColumn(pr) === 'landed') return false;
-    if (authorSet.size > 0 && !authorSet.has(login)) return false;
     return true;
   });
 }

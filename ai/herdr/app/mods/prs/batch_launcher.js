@@ -97,7 +97,9 @@ export class BatchLauncher {
   shown(prs) {
     const f = this.filters.get();
     return filterForm(prs, {
-      repos: f.repos, labels: f.labels, drafts: filterOn(f, "mineDrafts"),
+      repos: f.repos, labels: f.labels,
+      excludeRepos: f.excludeRepos, excludeLabels: f.excludeLabels,
+      drafts: filterOn(f, "mineDrafts"),
       loaded: this.loaded, knownLabels: this.knownLabels,
     });
   }

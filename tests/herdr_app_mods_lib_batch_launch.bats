@@ -177,3 +177,9 @@ _throws() {
   [ "$status" -eq 0 ]
   [ "$output" = '[[1,2],[],[1]]' ]
 }
+
+@test "filterForm: excludeRepos/excludeLabels drop matches; include+exclude same value is exclude" {
+  _js '(() => { const prs = [{n:1,repoSlug:"a/one",labels:["bug"]},{n:2,repoSlug:"b/two",labels:["docs"]},{n:3,repoSlug:"a/one",labels:["docs"]}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({excludeRepos:["a/one"]}), ids({excludeLabels:["docs"]}), ids({repos:["a/one"],excludeRepos:["a/one"]}), ids({labels:["bug"],excludeLabels:["bug"]})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[2],[1],[2],[2,3]]' ]
+}

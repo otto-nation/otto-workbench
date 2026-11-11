@@ -5,9 +5,10 @@
  * stale/failed). Pure; runs in the browser.
  */
 import {
-  TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, isMine, groupColumns, visibleColumns,
+  TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns, visibleColumns,
   DEFAULT_FILTERS, filterOn, prIssues,
 } from '../../app/mods/_lib/columns.js';
+import { barModel, facetView, filterAction, normalizeFilters } from '../../app/mods/_lib/filters.js';
 import { compactSections } from '../../app/mods/_lib/compact.js';
 import { relativeTime } from '../../app/mods/_lib/history.js';
 
@@ -16,25 +17,12 @@ export const GLYPH = Object.freeze({ pass: '✓', fail: '×', running: '…', wa
 
 // Flag defaults are _lib's DEFAULT_FILTERS (one owner for the mod and the web; drafts hidden on Team,
 // Mine and the Batch form), never restated here. There is no repo scope: the board always covers every
-// repo the server discovers (the mod's "All spaces"), and the Repo chips are the only repo filter.
+// repo the server discovers (the mod's "All spaces"), and the filter bar is the only repo filter.
 export const DEFAULT_UI = Object.freeze({
   tab: 'team',
   theme: 'auto',
-  filters: Object.freeze({ ...DEFAULT_FILTERS, authors: Object.freeze([]), repos: Object.freeze([]) }),
+  filters: Object.freeze(normalizeFilters(DEFAULT_FILTERS)),
 });
-
-const FLAGS = new Set(Object.keys(DEFAULT_FILTERS));
-
-// Chips off default (filterOn), plus selected authors/repos. Drafts is per-tab: Team counts
-// `drafts`, Mine counts `mineDrafts`. The other tab's chip is not on the page.
-function activeFilterCount(filters, tab) {
-  const skip = tab === 'mine' ? 'drafts' : 'mineDrafts';
-  let n = filters.authors.length + filters.repos.length;
-  for (const key of FLAGS) {
-    if (key !== skip && filterOn(filters, key)) n += 1;
-  }
-  return n;
-}
 
 // The viewer's PRs on Mine, as prs/board.js renderBoard: isMine, and drafts only with the Mine Drafts chip.
 // With drafts hidden (the default) Mine's Draft lane is empty, so hidden unless Empty lanes; intended.
@@ -46,32 +34,33 @@ export function boardModel(snapshot, ui) {
   const prs = snapshot?.prs ?? [];
   const me = snapshot?.me ?? '';
   const f = ui.filters;
-  const base = filterRepos(prs, f.repos, snapshot?.repoSlugs);
   const mine = ui.tab === 'mine';
-  const list = mine ? mineList(base, me, f) : filterPrs(base, f, me);
-  const grouped = groupColumns(list, mine ? mineColumn : teamColumn, mine ? MINE_COLUMNS : TEAM_COLUMNS);
-  const meLower = me.toLowerCase();
+  const base = mine ? mineList(prs, me, f) : filterPrs(prs, f, me);
+  const fv = facetView(base, f, {
+    tab: ui.tab,
+    me,
+    loadedRepos: snapshot?.repoSlugs,
+    authorsFrom: prs,
+  });
+  const repoSlugs = [...(snapshot?.repoSlugs ?? [])].sort();
+  const bar = barModel(f, {
+    tab: ui.tab,
+    options: { repos: repoSlugs, labels: fv.options.labels, authors: fv.options.authors },
+  });
+  const grouped = groupColumns(fv.list, mine ? mineColumn : teamColumn, mine ? MINE_COLUMNS : TEAM_COLUMNS);
   return {
     columns: visibleColumns(grouped, filterOn(f, 'empty')),
     sections: compactSections(grouped),
-    authors: [...new Set(prs.map((p) => String(p.author ?? '').toLowerCase()).filter((a) => a && a !== meLower))].sort(),
-    repoSlugs: [...(snapshot?.repoSlugs ?? [])].sort(),
-    filterCount: activeFilterCount(f, ui.tab),
+    authors: fv.options.authors,
+    repoSlugs,
+    bar,
+    filterCount: bar.count,
   };
 }
 
-const toggleIn = (list, value) => (list.includes(value) ? list.filter((x) => x !== value) : [...list, value]);
-
 export function toggleFilter(ui, name) {
-  const f = ui.filters;
-  if (FLAGS.has(name)) {
-    // A stored boolean wins, else _lib's default (filterOn), as the desktop board reads it.
-    const now = filterOn(f, name);
-    return { ...ui, filters: { ...f, [name]: !now } };
-  }
-  if (name.startsWith('repo:')) return { ...ui, filters: { ...f, repos: toggleIn(f.repos, name.slice(5).toLowerCase()) } };
-  if (name.startsWith('author:')) return { ...ui, filters: { ...f, authors: toggleIn(f.authors, name.slice(7).toLowerCase()) } };
-  return ui;
+  const next = filterAction(ui.filters, name);
+  return next === ui.filters ? ui : { ...ui, filters: next };
 }
 
 // prs/board.js stateTags(): Merged, In merge queue, Draft — title-row tags, not badges.

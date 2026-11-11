@@ -4,7 +4,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 
 ## Where things live
 
-- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `chip`, `inset`, `segment`/`segmented`, `filterGroup`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `type`/`text`, `tag`, `statusText`, `sectionLabel`, `ciMark`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
+- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `ghostButton`, `checkbox`, `popoverSurface`, `inset`, `segment`/`segmented`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `type`/`text`, `tag`, `statusText`, `sectionLabel`, `ciMark`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
 - Every top-level `_*/` directory under `mods/` is a shared tree installed into every mod, so only put real libraries there (no scratch dirs like `_tmp/`)
 - Sizes, spacing, fills and breakpoints: `_lib/tokens.js`. Colours come only from `theme()`. No literal pixel or colour values in views
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`
@@ -16,7 +16,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 - Card problems come from `_lib/columns.js` `prIssues`, shared by prs/board.js, prs/compact.js and web/lib/view.js, independent of lane (`mineColumn` precedence alone decides the lane); state tags sit top right in the title row
 - Has Comments is feedback `pr comments` would answer, read with `pr batch plan --needs comments` only while Mine shows. It ranks above Changes Requested: owed feedback is the author's work, while a request with every comment answered waits on the reviewer
 - A lane's Batch button opens the Batch page with the lane's shown PRs selected and its step set, and starts nothing. `COLUMN_BATCH` in `_lib/batch_launch.js` owns which lanes have one (Has Conflicts and Has Comments with AI on, CI Failing, Approved with PRs only behind); a lane that waits on someone else has none
-- Team, Mine and the Batch page share one `prs.filters` (Repo, Label, Drafts, Author on Team only). Drafts is one setting for Team and one for Mine and Batch; a draft sits in the lane for its real state with a Draft tag, never in a lane of its own, and keeps its real CI status; add a filter in `_lib/columns.js` so the board and the form share its matcher
+- Team, Mine and the Batch page share one `prs.filters`. `_lib/filters.js` owns `filterAction`/`facetView`/`barModel` (shared with the web); `prs/filter_bar.js` and `web/public/filter_bar.js` only draw. Each value is included or hidden; exclude wins; Author and Hide bots are Team only; a stale include is ignored; a stale exclude is kept as a tag. Drafts is one setting for Team and one for Mine and Batch; a draft sits in the lane for its real state with a Draft tag, never in a lane of its own, and keeps its real CI status
 
 ## Full screen
 

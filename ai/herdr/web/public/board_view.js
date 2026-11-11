@@ -1,8 +1,6 @@
 // Header status, filters, lanes and the compact list: the mockup's layout with prs/board.js's look.
-import { h, sectionLabel, setChildren, status, tag } from './dom.js';
-import { skeletonLanes } from './load_status.js';
+import { h, status, tag } from './dom.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
-import { filterOn } from '../../app/mods/_lib/columns.js';
 import { cardBadges, cardNumber, cardTags } from '../lib/view.js';
 
 const CI = { passing: 'pass', failing: 'fail', pending: 'running' };
@@ -35,26 +33,7 @@ export function card(pr, { selected, onOpen, extraLine }) {
     line);
 }
 
-export function renderFilters(el, model, ui, { onToggle }) {
-  const f = ui.filters;
-  const chip = (label, name, on) => h('button', { class: `chip${on ? ' on' : ''}`, 'aria-pressed': on ? 'true' : 'false', onclick: () => onToggle(name) }, label);
-  const group = (label, items) => h('div', { class: 'fgroup' }, sectionLabel(label), h('div', { class: 'chips' }, items));
-  const drafts = ui.tab === 'mine' ? chip('Drafts', 'mineDrafts', filterOn(f, 'mineDrafts')) : chip('Drafts', 'drafts', filterOn(f, 'drafts'));
-  setChildren(el,
-    group('Show', [drafts, chip('Landed', 'landed', filterOn(f, 'landed')), chip('Empty lanes', 'empty', filterOn(f, 'empty'))]),
-    // The only repo filter: the board always spans every discovered repo, so the chips show whenever there is a choice.
-    model.repoSlugs.length > 1
-      ? group('Repo', model.repoSlugs.map((s) => chip(s.split('/').pop(), `repo:${s}`, f.repos.includes(s.toLowerCase())))) : null,
-    ui.tab !== 'mine' && model.authors.length
-      ? group('Author', model.authors.map((a) => chip(a, `author:${a}`, f.authors.includes(a)))) : null,
-  );
-}
-
-export function renderBoard(el, model, { loading, tab, selectedId, onOpen, extraLine }) {
-  if (loading) {
-    el.replaceChildren(...skeletonLanes(tab));
-    return;
-  }
+export function renderBoard(el, model, { loading, selectedId, onOpen, extraLine }) {
   if (!model.columns.length) {
     el.replaceChildren(h('div', { class: 'none pad' }, 'No pull requests'));
     return;

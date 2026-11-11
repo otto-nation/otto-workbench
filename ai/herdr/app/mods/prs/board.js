@@ -6,7 +6,7 @@ import { columnPreset } from "./_lib/batch_launch.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import {
-  button, chip as chipOf, filterGroup, addStat, delStat, card, placeholder, scrollBody,
+  button, addStat, delStat, card, placeholder, scrollBody,
   laneTitle, tag, text, type, statusText,
 } from "./_ui/ui.js";
 import { cardStateLine } from "./workflows_view.js";
@@ -99,24 +99,3 @@ export function renderCard(pr, {
     .when(Boolean(stateLine), (e) => e.child(stateLine));
 }
 
-export function renderChips(filters, authors, { onToggle, tab, repos = [], labels = [] }) {
-  const t = theme();
-  const f = filters ?? {};
-  const set = new Set((f.authors ?? []).map((a) => String(a).toLowerCase()));
-  const activeSet = new Set((f.repos ?? []).map((r) => String(r).toLowerCase()));
-  const labelSet = new Set((f.labels ?? []).map((l) => String(l).toLowerCase()));
-  const chip = (label, name, on) => chipOf(`chip-${name}`, label, on, () => onToggle(name));
-  const showItems = [];
-  if (tab === "mine") showItems.push(chip("Drafts", "mineDrafts", filterOn(f, "mineDrafts")));
-  else showItems.push(chip("Drafts", "drafts", filterOn(f, "drafts")));
-  showItems.push(chip("Landed", "landed", filterOn(f, "landed")));
-  showItems.push(chip("Empty lanes", "empty", filterOn(f, "empty")));
-  return v_flex().id("prs-chips").gap(SP.xs).px(SP.lg).py(SP.sm).flex_none().bg(t.background)
-    .child(filterGroup("Show", showItems))
-    .when(repos.length > 1, (e) => e.child(
-      filterGroup("Repo", repos.map((slug) => chip(slug.split("/").pop(), `repo:${slug}`, activeSet.has(slug.toLowerCase()))))))
-    .when(labels.length > 0, (e) => e.child(
-      filterGroup("Label", labels.map((name) => chip(name, `label:${name}`, labelSet.has(String(name).toLowerCase()))))))
-    .when(tab !== "mine" && authors.length > 0, (e) => e.child(
-      filterGroup("Author", authors.map((a) => chip(a, `author:${a}`, set.has(String(a).toLowerCase()))))));
-}

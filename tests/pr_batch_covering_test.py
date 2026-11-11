@@ -77,6 +77,26 @@ def test_noid_cancel_refuses_when_no_run_covers_the_cwd_repo(monkeypatch, capsys
     assert batch.store.load(other.id).status is batch.model.RunStatus.WAITING
 
 
+def _two_covering(monkeypatch):
+    a = _saved(repo_key="cwd-key-eeeeeeee", run_id="20261001T120000-aaaa")
+    b = _saved(repo_key="cwd-key-eeeeeeee", run_id="20261001T130000-bbbb")
+    monkeypatch.setattr(
+        pr.target, "repo_identity_from_origin",
+        lambda cwd=None: pr.target.RepoIdentity(label="cwd/repo", key="cwd-key-eeeeeeee"))
+    return a, b
+
+
+def test_noid_resume_and_cancel_refuse_when_several_runs_cover_the_repo(monkeypatch, capsys):
+    a, b = _two_covering(monkeypatch)
+    for verb in ("resume", "cancel"):
+        assert _main(["batch", verb]) == 1
+        err = capsys.readouterr().err
+        assert "more than one unfinished run" in err
+        assert a.id in err and b.id in err
+    for run in (a, b):
+        assert batch.store.load(run.id).status is batch.model.RunStatus.WAITING
+
+
 def test_status_noid_outside_any_covering_repo_notes_stderr(monkeypatch, tmp_path, capsys):
     run = _saved(repo="other/r", repo_key="other-key-dddddddd")
     monkeypatch.chdir(tmp_path)

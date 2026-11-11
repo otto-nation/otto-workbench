@@ -68,7 +68,7 @@ export function tokensCss({ SP, TYPE, RADIUS, CONTROL, ROW_H, FILL, LAYOUT }) {
     `--control-h:${CONTROL.h}px`, `--control-h-dense:${CONTROL.hDense}px`, `--control-px:${CONTROL.px}px`,
     `--row-h-list:${ROW_H.list}px`, `--row-h-list-dense:${ROW_H.listDense}px`, `--row-h-diff:${ROW_H.diff}px`,
     `--col-min:${LAYOUT.colMin}px`, `--col-max:${LAYOUT.colMax}px`, `--header-h:${LAYOUT.headerH}px`,
-    `--filter-label-w:${LAYOUT.filterLabelW}px`, `--card-title-max-h:${LAYOUT.cardTitleMaxH}px`,
+    `--card-title-max-h:${LAYOUT.cardTitleMaxH}px`,
     `--title-max-h:${LAYOUT.titleMaxH}px`, `--msg-max-w:${LAYOUT.msgMaxW}px`, `--status-w:${LAYOUT.statusW}px`,
     `--body-max-h:${LAYOUT.bodyMaxH}px`, `--icon-size:${LAYOUT.iconSize}px`,
     // DESIGN.md --ow-rule-selected / --ow-focus-width / --ow-focus-offset; brand.generated.js does not

@@ -36,7 +36,7 @@ teardown() { common_teardown; }
         const want = ['--sp-sm:' + t.SP.sm + 'px', '--radius-tag:' + t.RADIUS.tag + 'px', '--radius-card:' + t.RADIUS.card + 'px',
           '--col-min:' + t.LAYOUT.colMin + 'px', '--control-h:' + t.CONTROL.h + 'px', '--control-h-dense:' + t.CONTROL.hDense + 'px',
           '--control-px:' + t.CONTROL.px + 'px', '--row-h-list:' + t.ROW_H.list + 'px', '--row-h-diff:' + t.ROW_H.diff + 'px',
-          '--fill-lane:' + c.fillPercent(t.FILL.lane) + '%', '--filter-label-w:' + t.LAYOUT.filterLabelW + 'px',
+          '--fill-lane:' + c.fillPercent(t.FILL.lane) + '%',
           font('body', '--font-sans'), font('title', '--font-sans'), font('code', '--font-mono'), '--rule-selected:2px', '--focus-width:2px'];
         const m = c.mediaQueries(t, BRAND);
         out([want.filter((v) => !css.includes(v)), !/--text-|--control-h-compact/.test(css),

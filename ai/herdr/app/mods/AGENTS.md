@@ -56,7 +56,7 @@ and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 - Owners: `_lib/scope.js` `repoStates`, `_lib/load_state.js`, `prs/load_status.js`
 - Indicators are static glyphs (queued `·`, loading/hydrating `…`, stale `!`, failed `×`): no spin, frames, loop, or CSS animation
 - The header line, progress, and strip appear only after 1s (`LOAD_DELAY_MS`); before that, empty boards stay muted "Loading…"
-- A PR with `hydrated: false` is CI pending (`prIssues`), not an empty CI column
+- `hydrating` and `hydrated: false` (CI pending in `prIssues`) are consumer support for the `pr board` document; the JS loaders never set them, so those branches stay idle until that producer replaces them
 
 ## Checking and installing
 

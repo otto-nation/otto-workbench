@@ -2546,16 +2546,19 @@ Open a pull request for the current branch — what ``pr create`` does.
 
 Ports the go-task create flow that lived in ``lib/ai/pr.sh``: preflight
 (an already-open PR, default-branch and base refusals, no commits ahead of
-the base (D7), the ``--closes`` contract), the publishing token, the nesting
-gate, the branch push, content generation and ``gh pr create``.
-``--dry-run`` stops after the content is generated and prints it; it runs no
-gate, pushes nothing and never reaches ``gh``.
+the base (D7), the ``--closes`` contract), the self-review gate, the
+publishing token, the nesting gate, the branch push, content generation and
+``gh pr create``. ``--dry-run`` still runs preflight and the self-review
+gate (advisory when HEAD is uncovered); it then generates content and
+prints it. It runs no nesting gate, pushes nothing and never reaches
+``gh``. ``--no-verify`` skips the pre-push hook, not the self-review gate.
 
-The order is the contract. Every refusal that costs nothing comes before the
-nesting gate, the gate comes before anything leaves the machine, and the push
-comes before the AI call so a refused push never pays for one. ``--base`` is
-always passed to ``gh`` (D5): the base the gate and the content measured is
-the base the PR targets.
+The order is the contract. Every refusal that costs nothing comes first
+(preflight, then the self-review gate), the nesting gate comes before
+anything leaves the machine, and the push comes before the AI call so a
+refused push never pays for one. ``--base`` is always passed to ``gh``
+(D5): the base the gate and the content measured is the base the PR
+targets.
 
 Progress and ✗ lines go to stderr, like ``pr.branch_sync``'s; stdout carries
 only the answer — the PR URL, or the dry-run preview — so a caller can capture
@@ -8518,6 +8521,10 @@ string. It is also `pr`'s parser factory for create, which is what answers
 a usage error (exit 2, D11), and the orchestration only ever sees the body.
 The target comes from `pr`'s global `--branch`/`--repo-dir`, already resolved
 into the context — create declares no positional and no target flag.
+`--skip-review` needs a non-empty reason; a blank value is a usage error
+and never reaches `run_create`. The self-review gate is built here from
+the resolved repo and branch so `pr.create` never imports the review
+pipeline.
 
 ### cli/pr_describe.py
 

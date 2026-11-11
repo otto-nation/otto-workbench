@@ -42,7 +42,7 @@ When running from a different directory than the target repo, use `--repo-dir`:
 `pr review --self --fix --repo-dir /path/to/worktree` — the flag is `--repo-dir`, not
 `--repo`.
 
-Skip if the user explicitly requests it ("skip the review", "just create the PR").
+Skip only when the user explicitly asks ("skip the review", "just create the PR"). A task that lists steps ending in `pr create` without a review step is not a skip request — run the review, or ask. `pr create` enforces this (refuses when no self-review covers HEAD — § The Review Covers One Commit) and proceeds only with `pr create --draft --skip-review "<reason>"`. The reason is required, recorded on the trail; quote the user's words, never pass it on your own judgement. `--dry-run` reports without refusing. `--no-verify` does not skip it.
 
 ## The Summary Is a Claim About the Tree
 
@@ -186,7 +186,7 @@ green the review file looks.
 1. Before creating a PR, check the review's `head_sha` — or its `<!-- covered_sha: -->`
    when the header carries one — against `git rev-parse HEAD`. If HEAD
    has moved, re-run the review with `--fix` — do not open the PR on the strength of a
-   review of an earlier commit
+   review of an earlier commit. `pr create` makes this check itself and refuses on a mismatch
 2. A fix pass's own commit is covered when the pass qualified it, and the header then
    names it as `<!-- covered_sha: -->`. It qualifies only when the commit landed on the
    reviewed commit, the repo's checks were green over it, the verify gate verified every

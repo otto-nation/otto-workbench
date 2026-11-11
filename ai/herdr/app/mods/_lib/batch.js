@@ -34,6 +34,19 @@ export function busyPrs(status, repo) {
 
 export const STEP_ORDER = ['rebase', 'ci', 'comments', 'review'];
 
+// Underscores as spaces: a status or finding reason as words.
+export const words = (s) => String(s ?? '').replace(/_/g, ' ');
+// The Start form's label per step (STEP_ORDER keys).
+export const STEP_LABEL = Object.freeze({ rebase: 'Rebase conflicting PRs', ci: 'Fix CI', comments: 'Answer comments', review: 'Self-review' });
+// Steps --with-ai accepts: every step but review (pr batch refuses review there).
+export const AI_STEPS = Object.freeze(STEP_ORDER.filter((s) => s !== 'review'));
+// batch.model.RunStatus / StepStatus as status kinds and labels, in enum order (parity test).
+export const RUN_STATUS = Object.freeze({ running: ['running','running'], waiting: ['running','waiting'], done: ['pass','finished'], cancelled: ['fail','cancelled'], interrupted: ['fail','interrupted'] });
+export const STEP_STATUS = Object.freeze({ pending: ['none','pending'], running: ['running','running'], done: ['pass','done'], skipped: ['none','skipped'], needs_decision: ['warn','needs decision'], failed: ['fail','failed'], interrupted: ['warn','interrupted'] });
+const badgeOf = (table, v) => { const e = table[v]; return { kind: 'status', status: e ? e[0] : 'none', text: e ? e[1] : words(v) }; };
+export const runStatus = (s) => badgeOf(RUN_STATUS, s);
+export const stepStatus = (s) => badgeOf(STEP_STATUS, s);
+
 export function listArgv() {
   return ['--schema-version', '2', 'batch', 'status', '--list'];
 }
@@ -141,22 +154,6 @@ export function parseRunDoc(doc) {
 }
 
 const ITEM_ATTENTION = new Set(['awaiting_decision', 'needs_session', 'ready_to_publish']);
-
-export function itemTone(status) {
-  if (BUSY_STATES.includes(status)) return 'busy';
-  if (ITEM_ATTENTION.has(status)) return 'attention';
-  if (status === 'done') return 'done';
-  return 'muted';
-}
-
-export function stepTone(status) {
-  if (status === 'running') return 'busy';
-  if (status === 'failed' || status === 'needs_decision' || status === 'interrupted') {
-    return 'attention';
-  }
-  if (status === 'done') return 'done';
-  return 'muted';
-}
 
 export function stateChanged(paths, runDir) {
   const dir = String(runDir ?? '').replace(/\/+$/, '');

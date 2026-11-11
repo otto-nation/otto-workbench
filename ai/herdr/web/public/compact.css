@@ -21,3 +21,10 @@ header { padding: var(--sp-sm) var(--sp-md); gap: var(--sp-sm); }
 body:has(.detail.open) .toast { bottom: calc(56px + env(safe-area-inset-bottom) + var(--sp-md)); }
 .output, .tabs, .scroll { margin-left: var(--sp-md); margin-right: var(--sp-md); padding-left: 0; padding-right: 0; }
 .load-strip { padding: 0 var(--sp-md) var(--sp-xs); }
+.mlist { display: flex; flex-direction: column; }
+.mrow { display: flex; flex-direction: column; justify-content: center; gap: var(--sp-xxs); min-height: var(--row-h-sidebar); padding: 0 var(--sp-md); margin: 0 var(--sp-xs); border: 0; border-radius: var(--radius-control); background: none; color: inherit; text-align: left; cursor: pointer; }
+.mrow:hover { background: var(--hover); }
+.mrow.sel { background: var(--selected); border-left: var(--rule-selected) solid var(--accent); padding-left: calc(var(--sp-md) - var(--rule-selected)); }
+.mrow .title-row { display: flex; gap: var(--sp-sm); align-items: center; min-width: 0; font: var(--font-body); }
+.mrow .title { flex: 1; }
+.mrow .meta-row { display: flex; gap: var(--sp-sm); align-items: center; min-width: 0; font: var(--font-meta); color: var(--muted); }

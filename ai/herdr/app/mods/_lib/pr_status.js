@@ -6,7 +6,7 @@
  * (CI passing, Approved, a finished batch) is for the detail's ci, decision and busy slots.
  */
 import { prIssues } from './columns.js';
-import { cardState } from './batch.js';
+import { cardState, words } from './batch.js';
 
 // ceiling: an interim client twin of board.presentation, kept equal by the golden fixture. Upgrade
 // trigger: once the mod and the web read `pr board` rows, draw row.presentation and delete this.
@@ -36,6 +36,11 @@ export function batchStatus(item) {
   const state = item ? cardState(item) : null;
   if (state == null) return null;
   return status(TONE_STATUS[state.tone] ?? 'none', state.text);
+}
+
+// A run row's item state: batchStatus, or the raw status as none for a closed item.
+export function itemStatus(item) {
+  return batchStatus(item) ?? { kind: 'status', status: 'none', text: words(item?.status) };
 }
 
 function busyOf(pr, item) {

@@ -56,3 +56,9 @@ _js() {
   [ "$status" -eq 0 ]
   jq -e '.busy==false and .shown==false and .line==null and .progress==null and (.strip|length)==0' <<<"$output"
 }
+
+@test "errorStatus and errorsStatus: stale with age, failed, one reads as errorStatus, several as N failed" {
+  _js '[m.errorStatus({updatedAt:1000},121000), m.errorStatus({updatedAt:null},5), m.errorsStatus([],5), m.errorsStatus([{updatedAt:1000}],121000), m.errorsStatus([{updatedAt:1000},{updatedAt:null}],5)]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"kind":"status","status":"warn","text":"stale · 2m ago"},{"kind":"status","status":"fail","text":"failed"},null,{"kind":"status","status":"warn","text":"stale · 2m ago"},{"kind":"status","status":"fail","text":"2 failed"}]' ]
+}

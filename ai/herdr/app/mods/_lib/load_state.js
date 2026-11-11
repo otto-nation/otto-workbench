@@ -1,7 +1,8 @@
 /**
  * Delayed loading line, progress, and per-repo strip from boardState.repoStates.
- * Pure; no imports.
+ * Pure; imports history.js.
  */
+import { relativeTime } from './history.js';
 
 export const LOAD_DELAY_MS = 1000;
 
@@ -58,4 +59,17 @@ export function loadState(repoStates, { since = null, now = Date.now(), delayMs 
     }
   }
   return { busy, shown, line, progress, strip };
+}
+
+// DESIGN.md: stale is warn plus how old the shown data is; with nothing loaded yet it is an error.
+export function errorStatus(error, nowMs) {
+  if (error?.updatedAt != null) return { kind: 'status', status: 'warn', text: `stale · ${relativeTime(new Date(error.updatedAt).toISOString(), nowMs)}` };
+  return { kind: 'status', status: 'fail', text: 'failed' };
+}
+// The header's status for a board's load errors (scope.js boardState / snapshot errors): one reads as
+// errorStatus, several as `N failed`; null with none.
+export function errorsStatus(errors, nowMs) {
+  const list = errors ?? [];
+  if (!list.length) return null;
+  return list.length === 1 ? errorStatus(list[0], nowMs) : { kind: 'status', status: 'fail', text: `${list.length} failed` };
 }

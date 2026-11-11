@@ -154,8 +154,6 @@ _parse() {
   _parse parseRunDoc '{"run":{"id":"r","items":[{"key":"o/r#1","status":"mystery"}]}}'
   [ "$status" -eq 0 ]
   jq -e '.ok == true and .items[0].status == "mystery"' <<<"$output"
-  _js 'm.itemTone("mystery")'
-  [ "$output" = '"muted"' ]
 }
 
 @test "parseRunDoc missing steps and findings become empty" {
@@ -177,12 +175,10 @@ _parse() {
   jq -e '.ok == false and .error.kind == "bad-json"' <<<"$output"
 }
 
-@test "itemTone and stepTone table" {
-  _js '({queued:m.itemTone("queued"),waiting_admission:m.itemTone("waiting_admission"),running:m.itemTone("running"),awaiting_decision:m.itemTone("awaiting_decision"),needs_session:m.itemTone("needs_session"),ready_to_publish:m.itemTone("ready_to_publish"),done:m.itemTone("done"),dropped:m.itemTone("dropped"),skipped_closed:m.itemTone("skipped_closed"),unknown:m.itemTone("nope")})'
+@test "runStatus and stepStatus: kinds, labels, unknown is none with words" {
+  _js '[["running","waiting","done","cancelled","interrupted","mystery_x",null].map((s) => m.runStatus(s).status),["running","waiting","done","cancelled","interrupted","mystery_x",null].map((s) => m.runStatus(s).text),["pending","running","done","skipped","needs_decision","failed","interrupted"].map((s) => m.stepStatus(s).status),["pending","running","done","skipped","needs_decision","failed","interrupted"].map((s) => m.stepStatus(s).text),Object.keys(m.STEP_LABEL),m.AI_STEPS]'
   [ "$status" -eq 0 ]
-  jq -e '.queued=="busy" and .waiting_admission=="busy" and .running=="busy" and .awaiting_decision=="attention" and .needs_session=="attention" and .ready_to_publish=="attention" and .done=="done" and .dropped=="muted" and .skipped_closed=="muted" and .unknown=="muted"' <<<"$output"
-  _js '({running:m.stepTone("running"),failed:m.stepTone("failed"),needs_decision:m.stepTone("needs_decision"),interrupted:m.stepTone("interrupted"),done:m.stepTone("done"),pending:m.stepTone("pending"),skipped:m.stepTone("skipped"),unknown:m.stepTone("nope"),nil:m.stepTone(null)})'
-  jq -e '.running=="busy" and .failed=="attention" and .needs_decision=="attention" and .interrupted=="attention" and .done=="done" and .pending=="muted" and .skipped=="muted" and .unknown=="muted" and .nil=="muted"' <<<"$output"
+  [ "$output" = '[["running","running","pass","fail","fail","none","none"],["running","waiting","finished","cancelled","interrupted","mystery x",""],["none","running","pass","none","warn","fail","warn"],["pending","running","done","skipped","needs decision","failed","interrupted"],["rebase","ci","comments","review"],["rebase","ci","comments"]]' ]
 }
 
 @test "stateChanged true for state.json and runDir, false for report and log" {

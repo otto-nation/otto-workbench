@@ -2,7 +2,7 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme } from "herdr";
 import { SP, RADIUS, LAYOUT, FILL, ROW_H } from "./_lib/tokens.js";
-import { statusText, placeholder, text, scrollBody } from "./_ui/ui.js";
+import { statusText, placeholder, laneTitle, scrollBody } from "./_ui/ui.js";
 
 export function renderLoadLine(load) {
   if (!load.shown) return null;
@@ -30,8 +30,7 @@ export function skeletonLanes(spec) {
   const t = theme();
   return spec.map((col) => v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card)
     .bg(`${t.raised}${FILL.lane}`).flex_1().min_w(LAYOUT.colMin).max_w(LAYOUT.colMax)
-    .child(h_flex().flex_none().px(SP.md).py(SP.md).gap(SP.sm).items_center()
-      .child(text("title", col.label).min_w(0).truncate()))
+    .child(laneTitle(col.label))
     .child(scrollBody().p(SP.sm).gap(SP.sm)
       .child(div().border_1().border_dashed().border_color(t.border).rounded(RADIUS.card)
         .h(2 * ROW_H.list))

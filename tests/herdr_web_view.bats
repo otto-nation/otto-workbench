@@ -126,13 +126,13 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
   [ "$output" = '["","<img src=x onerror=alert(1)>","<b>nope</b>","t"]' ]
 }
 
-@test "view: https-only PR URL, generated files last, stale vs failed" {
+@test "view: https-only PR URL, generated files last" {
   _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
         out([v.prUrl({ url: 'https://github.com/a/b/pull/1' }), v.prUrl({ url: 'javascript:alert(1)', repoSlug: 'a/b', number: 1 }),
-             v.sortedFiles([{ path: 'g', generated: true }, { path: 'a', generated: false }]).map((f) => f.path),
-             v.errorStatus({ updatedAt: 1000 }, 121000), v.errorStatus({ updatedAt: null }, 5)]);"
+             v.sortedFiles([{ path: 'g', generated: true }, { path: 'a', generated: false }]).map((f) => f.path)]);
+"
   [ "$status" -eq 0 ]
-  [ "$output" = '["https://github.com/a/b/pull/1","https://github.com/a/b/pull/1",["a","g"],{"status":"warn","text":"stale · 2m ago"},{"status":"fail","text":"failed"}]' ]
+  [ "$output" = '["https://github.com/a/b/pull/1","https://github.com/a/b/pull/1",["a","g"]]' ]
 }
 
 @test "view: empty-lanes is read with filterOn, not Boolean" {
@@ -287,4 +287,16 @@ FAKE_DOM='class N {}
         out({ shown, hidden: bar.hidden, stripAfter: strip.children.map((c) => c.className) });"
   [ "$status" -eq 0 ]
   [ "$output" = '{"shown":{"headClass":"status running wide","headText":"Loading 1 of 3 repos","bar":{"hidden":false,"max":100,"value":33,"aria":"Loading 1 of 3 repos"},"strip":[["status running wide","box"],["status none wide","kit"]]},"hidden":true,"stripAfter":["status fail wide"]}' ]
+}
+
+@test "view: renderSections draws dense rows from row_badges, not cards" {
+  _web "$FAKE_DOM $VIEW_FIX
+        const { renderSections } = await import(W + '/public/board_view.js');
+        const txt = (n) => n.text ?? (n.children ?? []).map(txt).join('');
+        const el = document.createElement('div');
+        renderSections(el, { sections: [{ key: 'open', label: 'Open', count: 1, items: [snap.prs[2]] }] }, { loading: false, collapsed: new Set(), onOpen: () => {} });
+        const row = el.children[0].children[1].children[0];
+        out([row.className, txt(row.children[0]), txt(row.children[1]), el.children[0].children[1].className]);"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["mrow","t3","box#3 · ada×Conflicts","mlist"]' ]
 }

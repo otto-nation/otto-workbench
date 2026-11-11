@@ -3,43 +3,18 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  STEP_ORDER, durationText, laneOf, shortKey,
+  STEP_ORDER, durationText, laneOf, shortKey, runStatus, stepStatus, words,
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
-import { batchStatus } from "./_lib/pr_status.js";
+import { itemStatus } from "./_lib/pr_status.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
-  hoverRow, card, inset, scrollBody, type, text, statusText, caption, placeholder, errorLine,
+  hoverRow, card, inset, scrollBody, type, text, caption, placeholder, errorLine,
   badge,
 } from "./_ui/ui.js";
 
-function runKind(status) {
-  if (status === "done") return "pass";
-  if (status === "running" || status === "waiting" || status === "queued") return "running";
-  if (status === "cancelled" || status === "interrupted" || status === "failed") return "fail";
-  return "none";
-}
-
-function stepKind(status) {
-  if (status === "failed") return "fail";
-  if (status === "needs_decision" || status === "interrupted") return "warn";
-  if (status === "running" || status === "queued") return "running";
-  if (status === "done") return "pass";
-  return "none";
-}
-
-const RUN_WORD = { running: "running", waiting: "waiting", done: "finished", cancelled: "cancelled", interrupted: "interrupted" };
-
-function runWord(status) {
-  return RUN_WORD[status] ?? pretty(status);
-}
-
 function prCount(n) {
   return n === 1 ? "1 PR" : `${n} PRs`;
-}
-
-function pretty(s) {
-  return String(s ?? "").replace(/_/g, " ");
 }
 
 function cardShell(id) {
@@ -70,7 +45,7 @@ export function renderRunPanel(state, expanded) {
         .child(text("meta", `${prCount(r.items)} · ${(r.repos ?? []).join(", ")}`, t.muted))
         .when(Boolean(r.error), (e) => e.child(errorLine(r.error)))
         .child(div().flex_1())
-        .child(statusText(runKind(r.status), runWord(r.status)));
+        .child(badge(runStatus(r.status)));
       return open && expanded ? [row, expanded(r)] : [row];
     }));
 }
@@ -88,12 +63,12 @@ export function renderRunItems(doc, { repos = [], prOf, onOpen }) {
   return v_flex().pl(SP.xl).gap(SP.xxs)
     .children((doc.items ?? []).map((item) => {
       const pr = prOf(item);
-      const s = batchStatus(item);
+      const s = itemStatus(item);
       const row = h_flex().px(SP.sm).py(SP.xxs).gap(SP.md).items_center().min_w(0)
         .child(type(div().flex_none(), "code").text_color(t.muted).child(shortKey(item.key, repos)))
         .child(type(div().flex_1().min_w(0).truncate(), "body")
           .text_color(pr ? t.foreground : t.muted).child(pr?.title ?? item.branch ?? ""))
-        .child(s ? badge(s) : text("meta", String(item.status ?? ""), t.muted));
+        .child(badge(s));
       if (!pr) return row;
       return hoverRow(`run-item-${item.key}`).on_click(() => onOpen(pr)).child(row);
     }));
@@ -118,7 +93,7 @@ function renderNotes(item) {
     .children(findings.map((f, i) => {
       const files = (f.files ?? []).join(", ");
       return v_flex().id(`finding-${i}`).gap(SP.xxs)
-        .child(text("body", pretty(f.reason)))
+        .child(text("body", words(f.reason)))
         .when(Boolean(f.detail), (e) => e.child(text("body", f.detail, t.muted)))
         .when(Boolean(files), (e) => e.child(type(div(), "code").text_color(t.muted).child(files)));
     }))
@@ -146,7 +121,7 @@ function renderStepCard(item, name, state) {
   const dur = durationText(rec.startedAt, rec.endedAt, state.nowMs);
   const head = h_flex().gap(SP.sm).items_center()
     .child(text("title", name))
-    .child(statusText(stepKind(rec.status), pretty(rec.status)))
+    .child(badge(stepStatus(rec.status)))
     .when(Boolean(dur), (e) => e.child(caption(dur)))
     .when(rec.exitCode != null, (e) => e.child(
       caption(`exit ${rec.exitCode}`, rec.exitCode !== 0 ? t.ansi1 : t.muted)));

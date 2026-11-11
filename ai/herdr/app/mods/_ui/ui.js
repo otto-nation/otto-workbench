@@ -210,11 +210,11 @@ export function popoverSurface() {
 
 // A board lane's heading: title in ink with its count in meta beside it, and an optional
 // control at the far end.
-export function laneTitle(label, count, action = null) {
+export function laneTitle(label, count = null, action = null) {
   const t = theme();
   return h_flex().flex_none().px(SP.md).py(SP.md).gap(SP.sm).items_center()
     .child(text("title", label).min_w(0).truncate())
-    .child(text("meta", String(count), t.muted))
+    .when(count != null, (e) => e.child(text("meta", String(count), t.muted)))
     .when(Boolean(action), (e) => e.child(div().flex_1()).child(action));
 }
 

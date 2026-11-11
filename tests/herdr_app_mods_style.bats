@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Style guards for the herdr-app mods: the brand DESIGN.md rules a grep can see.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/_lib/status.js ai/herdr/app/mods/_lib/pr_status.js
+# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/_lib/*.js
 
 setup() {
   load 'test_helper'
@@ -66,4 +66,18 @@ teardown() {
   for s in ref title tags author branch base_branch stats detail_issues ci decision review busy; do
     grep -qE "\\bp\\.$s\\b" "$MODS/prs/detail.js"
   done
+}
+
+@test "load-error status wording lives only in _lib/load_state.js" {
+  run grep -nE 'stale ·|\} failed`' "$MODS"/_ui/*.js "$MODS"/prs/*.js
+  [ "$status" -eq 1 ]
+}
+
+@test "batch run, step and item status and step labels have one owner in _lib" {
+  run grep -nwE 'runKind|stepKind|runWord|RUN_WORD|itemTone|stepTone|STEP_NAMES' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/_lib/*.js
+  [ "$status" -eq 1 ]
+  run grep -lE '^export const (STEP_ORDER|STEP_LABEL|AI_STEPS|RUN_STATUS|STEP_STATUS)\b' "$MODS"/_lib/*.js
+  [ "$output" = "$MODS/_lib/batch.js" ]
+  run bash -c "grep -nE \"\\[ *['\\\"]rebase['\\\"]\" '$MODS'/_ui/*.js '$MODS'/prs/*.js '$MODS'/_lib/*.js | grep -v '/_lib/batch.js:'"
+  [ "$status" -eq 1 ]
 }

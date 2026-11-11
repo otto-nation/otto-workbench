@@ -12,6 +12,7 @@ import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
+import { statsText } from "./_lib/pr_status.js";
 
 export default class PrsBoard extends Board {
   init(p, cx) {
@@ -273,7 +274,8 @@ export default class PrsBoard extends Board {
   // Switching PRs starts a clean slate for the transient action state.
   detailView(pr, cx) {
     const prev = this.detail;
-    this.detail = detailOf(pr);
+    const item = this.workflows.itemFor(pr.repoSlug, pr.number);
+    this.detail = detailOf(pr, { item });
     if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
       this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
       this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
@@ -287,9 +289,12 @@ export default class PrsBoard extends Board {
     if (files?.ok) {
       const sum = summarize(files.files);
       Object.assign(this.detail, { files: sum.files, additions: sum.add, deletions: sum.del, generated: sum.generated });
+      this.detail.presentation = {
+        ...this.detail.presentation,
+        stats: statsText({ additions: sum.add, deletions: sum.del, files: sum.files }),
+      };
     }
     const file = this.openFile && files?.files?.find((f) => f.path === this.openFile);
-    const item = this.workflows.itemFor(this.detail.repo, this.detail.number);
     if (!item && this.tab === "batch") this.tab = "history";
     if (item && this.tab === "batch") this.workflows.openItem(item.key);
     return renderDetail(this.detail, {

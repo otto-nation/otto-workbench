@@ -4482,6 +4482,21 @@ Comments-owed map from a comments-only `batch.plan`.
 Ports `_lib/board_data.js` `owedFrom` / `loadOwed`. Each owed PR carries the
 plan row's head SHA so a later document can drop a stale reason.
 
+### board/presentation.py
+
+How a board row reads: the slots every PR view draws, decided once.
+
+`present` turns a `Row` into a `Presentation`: the ref, title, state tags,
+author, branch, stats text, problems, and the status slots (review running,
+batch, CI, review decision), plus the ordered badge lists a card
+(``badges``) and a compact row (``row_badges``) draw. Cards and compact rows
+never carry a ``pass`` status; positive state (CI passing, Approved, a
+finished batch) is for the detail's ``ci``, ``decision`` and ``busy`` slots.
+*reviewing* and *batch* are what a client's terminals and batch run know;
+the board document passes neither. ``ai/herdr/app/mods/_lib/pr_status.js``
+``prPresentation`` is the client twin, held to the same output by
+``tests/fixtures/board_presentation.json``.
+
 ### board/reviews.py
 
 Join `pr review` listing rows onto GitHub PR records.

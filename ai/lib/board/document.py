@@ -24,6 +24,7 @@ import board.cache
 import board.columns
 import board.github
 import board.owed
+import board.presentation
 import board.reviews
 import core.serde
 import gh.client
@@ -601,6 +602,7 @@ def _emit_row(row: Row) -> dict:
     payload = core.serde.to_dict(row)
     payload["lanes"] = core.serde.to_dict(board.columns.lanes(row))
     payload["issues"] = [core.serde.to_dict(issue) for issue in board.columns.issues(row)]
+    payload["presentation"] = core.serde.to_dict(board.presentation.present(row))
     return payload
 
 

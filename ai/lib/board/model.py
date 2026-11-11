@@ -86,11 +86,14 @@ class IssueKind(StrEnum):
     CHANGES_REQUESTED = "changes-requested"
 
 
-class IssueStatus(StrEnum):
+class StatusKind(StrEnum):
+    """DESIGN.md's status kinds; ``_lib/status.js`` keys them in this order."""
+
+    PASS = "pass"
     FAIL = "fail"
     RUNNING = "running"
-    NONE = "none"
     WARN = "warn"
+    NONE = "none"
 
 
 class ReviewHealth(StrEnum):
@@ -111,7 +114,7 @@ class Column:
 class Issue:
     kind: IssueKind
     label: str
-    status: IssueStatus
+    status: StatusKind
 
 
 @dataclass(frozen=True)

@@ -53,3 +53,27 @@ teardown() {
   run grep -nE '\.status\.wide[^{]*\{[^}]*gap:\s*var\(--sp-sm\)' "$WEB/public/style.css"
   [ "$status" -eq 0 ]
 }
+
+@test "PR state is read from prPresentation, never re-derived" {
+  run grep -rnwE 'prIssues|ciMark|cardTags|cardBadges|cardNumber|decisionText|postKind|healthKind|fileMark' "$WEB/public" "$WEB/lib"
+  [ "$status" -eq 1 ]
+}
+
+@test "status glyphs and Batch working never live in the web views" {
+  run grep -rnE 'GLYPH *=|glyph:|Batch working' "$WEB/public" "$WEB/lib"
+  [ "$status" -eq 1 ]
+}
+
+@test "css.js does not hard-code --status-* values" {
+  run grep -nE 'status-(pass|fail|running|warn|none):var' "$WEB/lib/css.js"
+  [ "$status" -eq 1 ]
+}
+
+@test "web card and detail header draw every presentation slot" {
+  for s in ref title tags author branch stats badges; do
+    grep -qE "\\bp\\.$s\\b" "$WEB/public/board_view.js"
+  done
+  for s in ref title tags author branch base_branch stats detail_issues ci decision review busy; do
+    grep -qE "\\bp\\.$s\\b" "$WEB/public/detail_view.js"
+  done
+}

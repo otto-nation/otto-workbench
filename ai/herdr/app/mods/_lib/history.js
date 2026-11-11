@@ -4,14 +4,16 @@
  */
 
 const POST_BY_EVENT = {
-  comment: { label: 'posted as comment', tone: 'info' },
-  approve: { label: 'approved', tone: 'success' },
-  requested_changes: { label: 'changes requested', tone: 'warning' },
-  dismissed: { label: 'dismissed', tone: 'muted' },
+  comment: { label: 'posted as comment', status: 'none' },
+  approve: { label: 'approved', status: 'pass' },
+  requested_changes: { label: 'changes requested', status: 'warn' },
+  dismissed: { label: 'dismissed', status: 'none' },
 };
 
-const UNPOSTED = { label: 'unposted', tone: 'muted' };
-const POSTED = { label: 'posted', tone: 'default' };
+const UNPOSTED = { label: 'unposted', status: 'none' };
+const POSTED = { label: 'posted', status: 'none' };
+
+const HEALTH_STATUS = { Partial: 'warn', Error: 'fail' };
 
 const FINDING_PARTS = [
   ['must_fix', 'must-fix'],
@@ -78,6 +80,7 @@ export function historyRows(runs, nowMs) {
   return list.map((run) => {
     const structured = run.structured !== false;
     const sha = structured && run.head_sha ? String(run.head_sha).slice(0, 7) : '';
+    const health = healthOf(run);
     return {
       stamp: run.stamp ?? '',
       when: relativeTime(run.reviewed_at, nowMs) || run.stamp || '',
@@ -86,7 +89,8 @@ export function historyRows(runs, nowMs) {
       costText: costText(run),
       shortSha: sha,
       post: postOf(run),
-      health: healthOf(run),
+      health,
+      healthStatus: HEALTH_STATUS[health] ?? null,
       structured,
       reviewFile: run.review_file ?? '',
     };

@@ -4,13 +4,12 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
 import { theme } from "herdr";
 import { MAX_LINES } from "./_lib/diff.js";
+import { DIFF, fileMarkKind } from "./_lib/status.js";
 import { SP, ROW_H, LAYOUT, CONTROL, FILL, MONO } from "./_lib/tokens.js";
 import { button, addStat, delStat, hoverRow, placeholder, caption, scrollBody, type, text, errorLine } from "./_ui/ui.js";
 
 function fileMarkColor(t, s) {
-  if (s === "A") return t.done;
-  if (s === "D") return t.ansi1;
-  return t.muted;
+  return t[DIFF[fileMarkKind(s)]];
 }
 
 function fileRow(f, onPick) {

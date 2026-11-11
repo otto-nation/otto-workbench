@@ -328,8 +328,8 @@ def run_create(
 
     After preflight, the self-review gate must cover worktree HEAD (or
     ``opts.skip_review`` must name why it is skipped) before the publishing
-    token, nesting gate, push, or AI call. *self_review* is required so a
-    caller cannot omit it. *trail* is the dispatch's, threaded to the push
+    token, nesting gate, push, or AI call. *self_review* (called with the HEAD sha,
+    returns a ``SelfReviewVerdict``) is required so a caller cannot omit it. *trail* is the dispatch's, threaded to the push
     so it is recorded there. ``--no-verify`` does not skip the self-review
     gate.
     """

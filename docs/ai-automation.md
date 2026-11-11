@@ -646,24 +646,6 @@ Module detail: [`review/convergence.py`](ai-libraries.md#reviewconvergencepy),
 [`fix/baseline.py`](ai-libraries.md#fixbaselinepy),
 [`review/fix_logs.py`](ai-libraries.md#reviewfix_logspy).
 
-### pr create refuses a HEAD no self-review covers
-
-`pr create` compares the worktree HEAD to the self-review's `covered_sha`, else
-its `head_sha`, via `review.document.covers`. The review file is the one
-`review.paths.self_review_file_path` names for the resolved repo and branch
-(under `~/.local/state/workbench/reviews/`). The check runs after preflight
-(an already-open PR, the default branch, a missing base, nothing ahead of the
-base, `--closes`) and before the publishing token, the nesting gate, the
-push, or the AI call. `--dry-run` reports the same mismatch without refusing.
-`--no-verify` does not bypass it.
-
-`--skip-review "<reason>"` proceeds anyway; the reason must be non-empty and
-is recorded on the trail. The decision is `self_review_gate`; find it with
-`otto-log query --script pr --event-type decision`.
-
-Module detail: [`pr/create.py`](ai-libraries.md#prcreatepy),
-[`review/currency.py`](ai-libraries.md#reviewcurrencypy).
-
 ### Steering a review: focus and the related issue
 
 `pr review --focus TEXT` / `pr review --focus-file PATH` name areas the review

@@ -9,6 +9,13 @@ gate (advisory when HEAD is uncovered); it then generates content and
 prints it. It runs no nesting gate, pushes nothing and never reaches
 ``gh``. ``--no-verify`` skips the pre-push hook, not the self-review gate.
 
+The gate compares the worktree HEAD to the self-review's ``covered_sha``,
+else its ``head_sha`` (``review.document.covers``), in the review file
+``review.paths.self_review_file_path`` names. ``--skip-review "<reason>"``
+proceeds anyway; the reason must be non-empty and is recorded on the trail
+as the ``self_review_gate`` decision (``otto-log query --script pr
+--event-type decision``).
+
 The order is the contract. Every refusal that costs nothing comes first
 (preflight, then the self-review gate), the nesting gate comes before
 anything leaves the machine, and the push comes before the AI call so a

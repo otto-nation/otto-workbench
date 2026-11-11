@@ -47,9 +47,8 @@ import pr.state
 import pr.target
 import rebase.inspect
 import rebase.need
-import review.document
+import review.currency
 import review.paths
-import review.store
 from batch.model import STEP_ORDER, RebaseWhen, Step
 from gh.pr_data import PRData
 from pr.comments_fix import CloseoutDebt
@@ -556,17 +555,11 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
     A fix commit the review counts as reviewed (`ReviewMeta.covered_sha`) covers
     the subject too.
     """
-    stored = review.store.read_review(review_file)
-    if stored is None:
-        return StepNeed(
-            True,
-            "self-review predates review.json" if review_file.is_file() else "no self-review yet",
-        )
     subject = local_head or head_sha
-    reviewed = stored.meta.reviewed_through
-    if review.document.covers(reviewed, subject):
+    v = review.currency.self_review_verdict(review_file, subject)
+    if v.covered:
         return StepNeed(False, "self-review is current")
-    of = f"self-review is of {git.client.abbrev(reviewed) or 'an unknown head'}"
+    of = v.reason
     if local_head and local_head != head_sha:
         return StepNeed(True, f"{of}; local HEAD {git.client.abbrev(local_head)} "
                               f"differs from GitHub's {git.client.abbrev(head_sha)}")

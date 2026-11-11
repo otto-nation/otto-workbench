@@ -1143,6 +1143,13 @@ HEAD past the review that produced it.
 
 `change_set` is what "did not change" means for all of them.
 
+### review/currency.py
+
+Whether a stored self-review covers a commit.
+
+`self_review_verdict` is the one owner of that answer: batch planning and
+`pr create` both ask it, so they cannot disagree about currency.
+
 ### review/document.py
 
 The header vocabulary of a review, and the read view of a stored one.
@@ -2653,6 +2660,14 @@ for each other.
 What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`)
 and the reading of a comment written before markers existed
 (`summary_scope.published_rows`, `thread_replies.is_generated_reply`).
+
+### pr/self_review_gate.py
+
+The verdict type and callable contract for whether a self-review covers HEAD.
+
+`SelfReviewVerdict` is what a gate returns; `SelfReviewGate` is a callable
+from a HEAD sha to that verdict. `pr create` takes the callable so this
+layer never reads the review pipeline.
 
 ### pr/settlement.py
 

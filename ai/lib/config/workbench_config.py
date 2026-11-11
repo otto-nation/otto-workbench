@@ -585,27 +585,20 @@ class WikiConfig:
 class RebaseConfig:
     """How a rebase rebuilds this repo's generated files, and whether it squashes.
 
-    ``.gitattributes`` already says which files are generated, and
-    ``git check-attr`` is how the rebase finds them — but a path-to-attribute
-    map carries no producer, so nothing in git can say what rebuilds one. This
-    is that missing half, and the only reason it is configuration rather than
-    detection.
+    The preferred owner of which command rebuilds a generated file is the
+    ``regenerate=<command>`` attribute in ``.gitattributes``, next to
+    ``linguist-generated=true``. ``git check-attr regenerate`` is how the rebase
+    reads it.
 
+    ``regenerate`` is the fallback for repos that have not set that attribute.
     Each entry is one command line, run from the repo root in order. A list
     because a repo's generators are not always reachable from one task:
     a top-level ``generate`` that excludes i18n needs both named, and a repo
     that has to run them in sequence cannot say so with a single string.
 
     Empty means fall back to the conventional ``generate`` task, which is right
-    for most repos and wrong only where that task is incomplete.
-
-    ``regenerate_paths`` limits which generated files those commands cover.
-    Each entry is a glob matched with ``fnmatch.fnmatchcase`` against the
-    repo-relative conflict path. Empty means every generated file, which is
-    today's behaviour for other repos. A non-empty list that matches nothing
-    for a path leaves that file stale rather than reporting it regenerated —
-    the commands are not per-file, so an unmatched path would otherwise keep
-    the branch's copy and continue.
+    for most repos and wrong only where that task is incomplete. A file that
+    carries the attribute is rebuilt with that command regardless of this list.
 
     ``squash`` is whether the rebase folds the branch into one commit before
     replaying it: ``auto`` when the repo is squash-only and a file will
@@ -613,7 +606,6 @@ class RebaseConfig:
     """
 
     regenerate: list[str] = field(default_factory=list)
-    regenerate_paths: list[str] = field(default_factory=list)
     squash: SquashPolicy = SquashPolicy.AUTO
 
 

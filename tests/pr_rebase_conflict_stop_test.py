@@ -147,13 +147,45 @@ def test_conventional_generate_task_does_not_qualify(tmp_path, capsys):
     assert report["tree"] == "clean"
 
 
-def test_uncovered_generated_file_aborts_even_with_declared_regenerator(
+def test_generated_only_with_regenerate_attribute_continues(tmp_path):
+    repo, pre = _conflicted(tmp_path, {
+        "gen.txt": (
+            "DO NOT EDIT\nbase\n",
+            "DO NOT EDIT\nmain\n",
+            "DO NOT EDIT\nfeat\n",
+        ),
+    })
+    (repo / "regen.py").write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "Path('gen.txt').write_text('DO NOT EDIT\\nregen\\n')\n"
+    )
+    (repo / "regen.py").chmod(0o755)
+    _write(
+        repo, ".gitattributes",
+        "gen.txt linguist-generated=true regenerate=./regen.py\n",
+    )
+    rebase.repo_regen.clear_caches()
+    tally = _tally(pre)
+    rc = rebase.lifecycle.step_conflicts(
+        str(repo), _ctx(repo), rebase.types.RunMode.REBASE_ONLY,
+        rebase.inspect.detect_conflicts(str(repo)), tally,
+        target_ref="main",
+    )
+    assert rc is None
+    assert tally.resolution == "generated"
+    assert tally.stale == []
+    assert not rebase.inspect.rebase_in_progress(str(repo))
+    assert "regen" in (repo / "gen.txt").read_text()
+
+
+def test_unattributed_generated_file_aborts_without_declared_fallback(
     tmp_path, capsys,
 ):
-    """A generated file outside regenerate_paths stays stale — CHANGELOG-shaped.
+    """A generated file with no regenerate= attribute stays stale.
 
-    Revert-check: deleting the regenerate_paths guard in queue_repo_regeneration
-    lets the declared command succeed without covering this file, and this
+    Revert-check: falling through to a declared/conventional command when the
+    repo has neither would queue a rebuild this file does not have, and this
     case would continue instead of aborting.
     """
     repo, pre = _conflicted(tmp_path, {
@@ -164,8 +196,8 @@ def test_uncovered_generated_file_aborts_even_with_declared_regenerator(
         ),
     })
     _write(
-        repo, ".workbench.yml",
-        "rebase:\n  regenerate:\n    - true\n  regenerate_paths:\n    - gen.txt\n",
+        repo, ".gitattributes",
+        "gen.txt linguist-generated=true regenerate=./regen.py\n",
     )
     rebase.repo_regen.clear_caches()
     rc = rebase.lifecycle.step_conflicts(

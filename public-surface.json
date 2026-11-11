@@ -95,7 +95,6 @@
     "config:models.standard",
     "config:rebase",
     "config:rebase.regenerate",
-    "config:rebase.regenerate_paths",
     "config:rebase.squash",
     "config:rebase.squash=always",
     "config:rebase.squash=auto",

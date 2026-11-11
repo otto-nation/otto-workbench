@@ -287,12 +287,6 @@
             "type": "string"
           }
         },
-        "regenerate_paths": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "squash": {
           "type": "string",
           "enum": [

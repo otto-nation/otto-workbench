@@ -147,7 +147,7 @@ Component installation state is recorded in `$INSTALL_YML_FILE` — `~/.local/st
 
 ## Generated Files
 
-These files are derived from source data and must never be edited directly. Edit the source and regenerate.
+These files are derived from source data and must never be edited directly. Edit the source and regenerate. A file a rebase can rebuild carries `regenerate=<command>` next to `linguist-generated=true` in [`.gitattributes`](../.gitattributes). Unattributed generated files (release-please outputs, `tests/weights.tsv`) are reported stale rather than rebuilt.
 
 | File | Generator | Source |
 |------|-----------|--------|

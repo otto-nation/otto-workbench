@@ -20,6 +20,7 @@ from typing import Any, Sequence
 
 import batch.plan
 import board.cache
+import board.columns
 import board.github
 import board.owed
 import board.reviews
@@ -270,6 +271,7 @@ def _status_repo(
                 found.path, board.github.pull_list_error(listed), found=found,
             ), []
         pulls = listed.pulls
+        _write_listing_cache(found.key, pulls, now, replace=True)
     if prs is not None:
         want = set(prs)
         pulls = [pull for pull in pulls if pull.number in want]
@@ -278,8 +280,6 @@ def _status_repo(
         landed_nums = board.reviews.landed_candidates(
             pulls, listing, found.slug, found.host,
         )
-    if fetched_listing:
-        _write_listing_cache(found.key, pulls, now, replace=prs is None)
     numbers = [pull.number for pull in pulls]
     for num in landed_nums:
         if num not in numbers:

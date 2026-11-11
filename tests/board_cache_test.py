@@ -6,6 +6,7 @@ import os
 import time
 
 from board.cache import (
+    VIEWER_TTL_S,
     merged,
     path_for,
     read,
@@ -133,7 +134,7 @@ def test_viewer_refresh_when_older_than_one_hour(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
     write_viewer("old")
     path = viewer_path()
-    past = time.time() - 3601
+    past = time.time() - (VIEWER_TTL_S + 1)
     os.utime(path, (past, past))
     monkeypatch.setattr("gh.client.login", lambda: "new")
     assert viewer(refresh=True) == "new"

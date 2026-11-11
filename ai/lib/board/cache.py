@@ -155,7 +155,11 @@ def _viewer_stale() -> bool:
 
 
 def viewer(*, refresh: bool = True) -> str:
-    """GitHub login from cache, refreshed online when older than 1 h."""
+    """GitHub login from cache, refreshed online when older than 1 h.
+
+    With ``refresh=False`` (offline) a missing cache returns ``""``: that means
+    cache-miss, not a real empty login.
+    """
     cached = read_viewer()
     if not refresh:
         return cached or ""

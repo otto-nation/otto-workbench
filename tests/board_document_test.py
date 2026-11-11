@@ -299,6 +299,23 @@ def test_status_refetches_listing_when_cache_is_stale(tmp_path, monkeypatch):
     assert calls["n"] == 1
 
 
+def test_status_prs_does_not_freshen_partial_listing(tmp_path, monkeypatch):
+    seven, eight = _pull(7, "aaa"), _pull(8, "bbb")
+    found = _env(tmp_path, monkeypatch, pulls=[seven, eight])
+    write(found.key, Phase.LISTING, {
+        "fetched_at": "2020-01-01T00:00:00Z",
+        "rows": [core.serde.to_dict(seven)],
+    })
+    build(Phase.STATUS, [found.path], prs=[7])
+
+    def boom(slug):
+        raise AssertionError("list_pulls")
+
+    monkeypatch.setattr("board.github.list_pulls", boom)
+    doc = build(Phase.STATUS, [found.path])
+    assert {row["number"] for row in doc["rows"]} == {7, 8}
+
+
 def _offline_gh_raises(monkeypatch):
     def boom(*_a, **_k):
         raise AssertionError("gh call")

@@ -145,7 +145,7 @@ _make_project() {
 
 # ─── Cross-validation with the Python owner ──────────────────────────────────
 #
-# Every name below is spelled in two languages, which CLAUDE.md allows only
+# Every name below is spelled in two languages, which AGENTS.md allows only
 # with a test that fails when they drift. Both sides create and read the same
 # two files, so a mismatch means one machine's config is written where the
 # other never looks, or validated against a schema the other does not serve.

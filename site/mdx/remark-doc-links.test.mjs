@@ -30,8 +30,8 @@ test('repo directory link becomes a GitHub tree URL', () => {
 
 test('repo markdown outside the collection becomes a GitHub URL, not a route', () => {
   assert.equal(
-    rewrite('../CLAUDE.md#conventions'),
-    'https://github.com/otto-nation/otto-workbench/blob/main/CLAUDE.md#conventions',
+    rewrite('../AGENTS.md#conventions'),
+    'https://github.com/otto-nation/otto-workbench/blob/main/AGENTS.md#conventions',
   );
 });
 

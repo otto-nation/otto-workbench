@@ -220,14 +220,17 @@ EOF
   grep -q "new rule" "$repo/AGENTS.md"
 }
 
-@test "project add: a repo still on CLAUDE.md gets the rule there" {
+@test "project add: a repo with only a CLAUDE.md is refused, never written to" {
   local repo="$TMPDIR/myrepo"
   _make_repo "$repo"
   printf '# My Project\n\n## Conventions\n' > "$repo/CLAUDE.md"
   cd "$repo"
   _run_rules project add "legacy rule"
-  [ "$status" -eq 0 ]
-  grep -q "legacy rule" "$repo/CLAUDE.md"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"No AGENTS.md found"* ]]
+  [[ "$output" == *"git mv CLAUDE.md AGENTS.md"* ]]
+  run grep -q "legacy rule" "$repo/CLAUDE.md"
+  [ "$status" -ne 0 ]
   [ ! -e "$repo/AGENTS.md" ]
 }
 

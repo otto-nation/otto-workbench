@@ -5850,28 +5850,26 @@ should be free to depend on, and pulling in `log`, `agent.usage`, or
 
 Which file holds a repo's agent instructions — resolved in one place.
 
-``AGENTS.md`` is the project instructions file: Pi prefers it over ``CLAUDE.md``
-(first match per directory) and Claude Code reads it natively from
-``CLAUDE_CODE_MIN_VERSION``. ``CLAUDE.md`` is still honoured, as a fallback for
-repos that have not moved, and the legacy ``.claude/CLAUDE.md`` after it.
+``AGENTS.md`` is the only name. Pi reads it, and Claude Code reads it natively
+from ``CLAUDE_CODE_MIN_VERSION`` — but only when no ``CLAUDE.md`` exists in the
+directory chain. A ``CLAUDE.md`` anywhere in that chain, even a pointer file,
+shadows the sibling ``AGENTS.md`` for Claude Code, so the workbench never
+creates one and treats every tracked one as something to remove.
 
 Every caller that reads or appends to the file — review preflight,
-``workbench-rules project``, the SessionStart hook, ``ai sync``'s migration
-nudge — asks here rather than carrying its own candidate list, so the order is
-spelled once. Bash reads through the CLI below, the way it asks
-``pr_template.py`` for a template.
-
-A repo with both ``AGENTS.md`` and ``CLAUDE.md`` is reported as split: by
-default Claude Code then reads ``CLAUDE.md`` only while Pi reads ``AGENTS.md``,
-so the two harnesses follow different instructions. The resolver answers
-``AGENTS.md`` (what the workbench writes to) and says the other is there.
+``workbench-rules project``, the SessionStart hook, ``ai sync``'s report —
+asks here rather than carrying its own candidate list. Bash reads through the
+CLI below, the way it asks ``pr_template.py`` for a template. A ``CLAUDE.md`` is
+never read as instructions: it is only detected, so it can be reported.
 
 The CLI prints one record:
 
     <relative path or empty><newline><state>
 
-where state is ``agents``, ``legacy``, ``split`` or ``none`` (``ContextState``).
-Exit 0 for every repo state; non-zero only for a root that is not a directory.
+where state is ``agents``, ``legacy`` (a CLAUDE.md and no AGENTS.md), ``split``
+(both) or ``none`` (``ContextState``). Exit 0 for every repo state; non-zero
+only for a root that is not a directory. ``--shadows`` lists the CLAUDE.md
+files instead, one per line.
 
 ### core/quota_throttle.py
 

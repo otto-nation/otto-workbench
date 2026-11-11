@@ -181,7 +181,7 @@ export function sectionFor(ctx: ContainerContext, loaded: readonly string[] = []
 
   const files = loaded.length
     ? `Its context files have been loaded below as project instructions: ${loaded.join(", ")}.`
-    : "That worktree has no context file (AGENTS.md, CLAUDE.md or an override), so none was loaded.";
+    : "That worktree has no context file (AGENTS.md or an override), so none was loaded.";
 
   return (
     `This session started at ${ctx.container}, a bare-repo container. The ` +

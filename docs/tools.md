@@ -103,6 +103,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-doc-reference` | Validates that a source doc renders every module group its source set declares |
 | `validate-doc-budget` | Validates that a doc declaring a line budget stays within it and holds no '####' heading |
 | `validate-tracked-ignored` | Validates that no tracked file lives under a path .gitignore claims to ignore |
+| `validate-no-claude-md` | Validates that a repo tracks no CLAUDE.md — one anywhere in the directory chain makes Claude Code ignore AGENTS.md |
 | `validate-rules` | Validates rule frontmatter conventions — harness scoping resolves, no Claude-only tool vocabulary in a rule that reaches Pi |
 | `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
 | `generate-doc-reference` | Renders a module reference from the doc blocks of a source set's own modules |
@@ -1386,8 +1387,8 @@ workbench-rules <command> [<args>]
 | `list` | List all local rule files with line counts |
 | `status` | Show local rules not tracked in workbench |
 | `open [domain]` | Open a local rule file in `$EDITOR` |
-| `project add "rule"` | Append a convention to the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
-| `project show` | Display the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
+| `project add "rule"` | Append a convention to the current repo's `AGENTS.md` |
+| `project show` | Display the current repo's `AGENTS.md` |
 | `-V`, `--version` | Show version |
 | `-h`, `--help` | Show help |
 

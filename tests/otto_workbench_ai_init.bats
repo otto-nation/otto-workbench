@@ -102,8 +102,8 @@ _run_in() {
 }
 
 @test "ai init leaves a repo still on CLAUDE.md alone and suggests the rename" {
-  # A fresh AGENTS.md beside it would split the harnesses: Claude Code would
-  # read only CLAUDE.md and Pi only AGENTS.md.
+  # A fresh AGENTS.md beside it would be ignored by Claude Code, which reads
+  # AGENTS.md only when no CLAUDE.md is in the directory chain.
   local container="$TMPDIR/c"
   make_worktree_container "$container" "$SEED"
   printf 'LEGACY RULES\n' > "$container/main/CLAUDE.md"
@@ -124,5 +124,5 @@ _run_in() {
   [ "$status" -eq 0 ]
   [ -f "$container/main/AGENTS.md" ]
   [ "$(cat "$container/main/CLAUDE.md")" = "LEGACY RULES" ]
-  [[ "$output" == *"CLAUDE.md is still here"* ]]
+  [[ "$output" == *"CLAUDE.md shadows AGENTS.md"* ]]
 }

@@ -4,7 +4,7 @@
 # own (composed into docs/components.md from a generate-tool-context block), and
 # its ITEMS list restates README's "What's Included" entries with their doc links.
 # Generating the page from those sources is the thorough fix; until then this is
-# the cross-validation test CLAUDE.md prescribes when one set of defaults has to
+# the cross-validation test AGENTS.md prescribes when one set of defaults has to
 # appear in more than one format.
 #
 # Both lists live in app/page.tsx: the components rendering them come from

@@ -57,7 +57,7 @@ def test_says_so_when_no_tracker_is_configured(rss, tmp_path, capsys):
     assert config.workbench_config.ISSUE_PROVIDER_KEY in out
 
 
-def test_a_repo_still_on_claude_md_is_told_to_rename_it(rss, tmp_path, capsys):
+def test_a_repo_with_only_claude_md_is_told_to_rename_it(rss, tmp_path, capsys):
     """A suggestion, not a rename: the file stays where it is."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -69,13 +69,13 @@ def test_a_repo_still_on_claude_md_is_told_to_rename_it(rss, tmp_path, capsys):
     assert (repo / "CLAUDE.md").is_file() and not (repo / "AGENTS.md").exists()
 
 
-def test_a_repo_with_both_files_is_told_the_harnesses_disagree(rss, tmp_path, capsys):
+def test_a_repo_with_both_files_is_told_claude_md_shadows_agents_md(rss, tmp_path, capsys):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "AGENTS.md").write_text("# a\n")
     (repo / "CLAUDE.md").write_text("# c\n")
     _run(rss, repo)
-    assert "Claude Code reads only CLAUDE.md" in capsys.readouterr().out
+    assert "CLAUDE.md shadows AGENTS.md" in capsys.readouterr().out
 
 
 def test_a_repo_on_agents_md_gets_no_instructions_line(rss, tmp_path, capsys):

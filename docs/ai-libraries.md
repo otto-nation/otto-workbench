@@ -4431,6 +4431,63 @@ the checkout's `origin`, and the item's branch — so the lock the batch holds i
 the one its child resolves. An item whose checkout has no `origin` has no
 target: nothing can hold one for it, and its steps fail to resolve on their own.
 
+## Board
+
+The PR board's document: facts, lanes, badges and columns, assembled from listing, status and owed phases.
+
+### board/cache.py
+
+Per-repo board cache: listing, status and owed JSON under cache_dir("board").
+
+### board/columns.py
+
+Classify a PR row into team / mine lanes and issue badges.
+
+Python emits both the resting lanes and the reviewing overrides; a client
+picks ``lanes.*_reviewing`` when its terminals show a review running. A draft
+is not a lane.
+
+### board/document.py
+
+Assemble the PR board document from listing, status and owed phases.
+
+`build` always returns a document. Per-checkout failures live on
+``repos[].error``; ``--if-changed`` matching the current stamp returns the
+unchanged envelope. The stamp hashes canonical JSON of the document without
+``stamp`` and every ``fetched_at``.
+
+### board/github.py
+
+GitHub REST listing and GraphQL status fetches for the PR board.
+
+Listing is one paginated REST call per slug. Status is aliased GraphQL
+``pullRequest`` fields, fifty numbers per request, with ``owner`` and ``name``
+as variables. A pool of four runs those batches; a failed batch is partial
+and its numbers stay unhydrated.
+
+### board/model.py
+
+The PR board's vocabulary: schema version, lanes, badges, and row facts.
+
+Stdlib only. Enum string values are the wire spellings; renaming a member is
+free, changing a value is a schema break. Optional fields do not bump
+``schema_version``; a removed or renamed field or a changed type does, and
+enforcement comes from ``SCHEMA_VERSIONS`` being allowed to shrink.
+
+### board/owed.py
+
+Comments-owed map from a comments-only `batch.plan`.
+
+Ports `_lib/board_data.js` `owedFrom` / `loadOwed`. Each owed PR carries the
+plan row's head SHA so a later document can drop a stale reason.
+
+### board/reviews.py
+
+Join `pr review` listing rows onto GitHub PR records.
+
+Ports `_lib/reviews.js`. Listing rows may be `review.listing.ReviewRow`
+objects or the dicts that document emits; field names are snake_case.
+
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
@@ -8050,7 +8107,7 @@ What a knowledge base reports about itself: status, findings, index.
 
 ## Command entry points
 
-The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
+The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 9.
 
 ### cli/ai_usage_log.py
 
@@ -8348,6 +8405,15 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 Read-only `pr batch` views: plan, status and report.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
+
+### cli/pr_board.py
+
+`pr board`: the PR board document as versioned JSON.
+
+Usage:
+  pr board --schema-version 1 --checkout DIR --phase listing|status|owed
+  pr board --schema-version 1 --checkout DIR --phase status --prs N,N
+  pr board --schema-version 1 --checkout DIR --phase listing --if-changed STAMP
 
 ### cli/pr_commands.py
 

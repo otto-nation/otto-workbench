@@ -758,13 +758,13 @@ Without `--schema-version`, stdout is the state dump (or empty when there is non
 
 `pr stack` prints the repo's open PRs as a stack graph (`{schema_version, trunk, nodes, cycles}`). Parent authority, in order: an open native GitHub stack (closed stacks do not count), the PR's base branch when another open PR owns it, `git.topology.stack_parent`, else the trunk. Health is `up-to-date`, `needs-rebase`, `has-conflicts`, `base-closed`, or `unknown`. `--pr N` prints that PR's ladder, bottom first.
 
+### pr board
+
+`pr board --schema-version 1 --checkout DIR [--checkout DIR ...] --phase listing|status|owed [--prs N,N] [--if-changed STAMP]` prints the board document (facts, lanes, badges, columns as JSON). Missing `--schema-version` exits 2. `--prs` only with `--phase status` (else exit 2). Exit 0 whenever a document prints; per-repo failures live in `repos[].error`. `--if-changed` matching the stamp returns `{schema_version, phase, stamp, unchanged: true}`. Python owns every fact, lane, badge and column; no draft CI exemption; clients hide a row whose effective team lane is `landed`. `complete` is false for `status --prs` and `owed` (clients merge by `(repo, number)`).
+
 ### The Pi package the sync declares, and who gets it
 
-Pi reads *and writes* `~/.pi/agent/settings.json` — `pi install`, `pi config` and
-Ctrl+S in `/model` all land there — so `step_pi_settings` ([`ai/pi/steps.sh`](../ai/pi/steps.sh))
-merges the workbench's template into that file rather than copying over it. Scalar
-keys are seeds: one the live file already carries stays as whatever set it first,
-so a changed template default never reaches a machine that has the key; delete it there to be re-seeded. Model keys come from `models.*` instead (`otto-workbench config models`), and per-model compaction reserves from `context.compact_at` (`otto-workbench config context`, written by `step_pi_compaction` after the package refresh). `models.session: auto` starts Pi on `workbench/auto`, the virtual model the `model-router` extension registers to route each request to a tier, and Claude Code on `opusplan`. A
+Pi reads *and writes* `~/.pi/agent/settings.json` — `pi install`, `pi config` and Ctrl+S in `/model` all land there — so `step_pi_settings` ([`ai/pi/steps.sh`](../ai/pi/steps.sh)) merges the workbench's template into that file rather than copying over it. Scalar keys are seeds: one the live file already carries stays as whatever set it first, so a changed template default never reaches a machine that has the key; delete it there to be re-seeded. Model keys come from `models.*` instead (`otto-workbench config models`), and per-model compaction reserves from `context.compact_at` (`otto-workbench config context`, written by `step_pi_compaction` after the package refresh). `models.session: auto` starts Pi on `workbench/auto`, the virtual model the `model-router` extension registers to route each request to a tier, and Claude Code on `opusplan`. A
 `defaultModel` or `enabledModels` entry `pi --list-models` does not list is a
 sync warning, not a failure, whoever wrote it. That check (`step_pi_models`)
 runs after the package refresh and asks the user's own pi from `$HOME`, so neither

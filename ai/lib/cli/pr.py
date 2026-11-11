@@ -207,6 +207,17 @@ def cmd_create(argv: list[str], ctx: pr.context.ResolvedContext, **kw) -> int:
     return cli.dispatch.resolve(COMMANDS["create"].handler)(argv, ctx, **kw)
 
 
+def cmd_board(argv: list[str], ctx: pr.context.ResolvedContext, **kw) -> int:
+    """Run `pr board`'s handler, imported only when board is dispatched.
+
+    A lazy hop rather than an import: `cli.pr_board` pulls in the board
+    document, and `pr --help` must load no delegate
+    (test_pr_help_imports_no_delegate). The registry's handler string is the
+    one name for it.
+    """
+    return cli.dispatch.resolve(COMMANDS["board"].handler)(argv, ctx, **kw)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 # Custom handlers for commands that need more than passthrough.
@@ -218,6 +229,7 @@ _CUSTOM = {
     "fix":      cmd_fix,
     "batch":    cmd_batch,
     "gc":       cmd_gc,
+    "board":    cmd_board,
 }
 
 def build_global_parser() -> argparse.ArgumentParser:

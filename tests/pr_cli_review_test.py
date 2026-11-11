@@ -614,6 +614,7 @@ def test_the_schema_contracts_are_read_off_the_mode_table():
         "pr batch report",
         "pr status",
         "pr stack",
+        "pr board",
     ]
     assert cli.schema.served_schema_versions("review", ["--list"]) == \
         review.listing.SCHEMA_VERSIONS

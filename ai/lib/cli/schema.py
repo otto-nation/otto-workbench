@@ -37,6 +37,7 @@ import cli.review_modes
 from cli.dispatch import PARSER_FACTORIES, resolve
 from cli.registry import COMMANDS
 from core.tool_parser import ToolParser
+import board.model
 
 # The command this module describes. Not `Path(__file__).name`: the document
 # names the binary a consumer runs, not the module that built it.
@@ -129,7 +130,7 @@ def schema_contracts() -> list[str]:
               if mode.schema_versions]
     # `batch plan` still serves version 1; status/report serve version 2.
     batch = [f"{SCRIPT} batch {sub}" for sub in ("plan", "status", "report")]
-    return review + batch + [f"{SCRIPT} status", f"{SCRIPT} stack"]
+    return review + batch + [f"{SCRIPT} status", f"{SCRIPT} stack", f"{SCRIPT} board"]
 
 
 def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
@@ -143,6 +144,8 @@ def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
         if sub in ("run", "resume"):
             return (1,)
         return ()
+    if command == "board":
+        return board.model.SCHEMA_VERSIONS
     if command in ("status", "stack"):
         return (1,)
     if command != "review":

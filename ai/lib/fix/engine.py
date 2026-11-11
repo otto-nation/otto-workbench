@@ -57,6 +57,7 @@ import fix.containment
 import fix.dirty_backup
 import fix.head_guard
 import fix.leftovers
+import fix.regression
 import fix.scope
 import fix.suite
 import fix.tracking
@@ -263,6 +264,11 @@ class FixAdapter(ABC):
     # is every domain but one. `rebase.prepush` turns it off and says why
     # there — the checks it would run are the ones about to run on its push.
     verifies_with_suite: bool = True
+    # Whether a claimed fix to behaviour-bearing code must come with a test in
+    # the same commit. Off by default: a domain whose oracle is something else
+    # (a failing CI check, a rebase) has no test to ask for. A domain turning it
+    # on lists the items exempt from the ask in `test_exempt_ids`.
+    requires_tests: bool = False
     # Which phase sizes and prompts the verify gate, for a domain that runs one.
     # Separate from `phase` because the gate is a different agent asking a
     # different question: sizing it as the fix pass gives it the fix pass's
@@ -405,6 +411,10 @@ class FixAdapter(ABC):
         filtered out so it cannot undo the pass's own edits.
         """
         return []
+
+    def test_exempt_ids(self) -> frozenset[str]:
+        """Item ids that owe no test when `requires_tests` is on; none by default."""
+        return frozenset()
 
     def after_verify(self, outcomes: list[ItemOutcome]) -> None:
         """A domain's last word before the commit is landed and pushed.
@@ -1201,8 +1211,12 @@ def _run_contained_pass(
             base=head_before, left_out=left_out,
             baseline_ref=baseline_ref, dirty_before=frozenset(dirty_before))
     adapter.suite = fix.suite.with_rewrites(
-        adapter.suite, writes.paths, adapter.workdir, trail,
-    )
+        adapter.suite, writes.paths, adapter.workdir, trail)
+
+    # After both gates so a regression reason leads and the gate's text follows
+    # it, and before `after_verify` so a domain's last word sees the final verdict.
+    fix.regression.check(
+        adapter, settled.outcomes, committed, _anchors(settled.outcomes, by_id), trail)
 
     # Between the verdicts and the push, which is the only window that works:
     # both gates have spoken here — the per-item one above and the batch suite

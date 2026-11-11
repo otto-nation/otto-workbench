@@ -33,12 +33,46 @@ from __future__ import annotations
 
 import re
 import textwrap
+from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
 
 import core.log
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
+
+
+# The exact prefix a `fixed` box's reason opens with to say no test applies.
+# Owned here because three things read it: the template tells the agent to
+# write it, `classify_test_evidence` recognises it, and `fix.regression`
+# decides from that whether a change with no test in the commit is hedged.
+NO_TEST_PREFIX = "No test:"
+
+
+class RegressionEvidence(StrEnum):
+    """What a claimed fix's reason says about the test behind it."""
+
+    NAMED = "named"
+    EXEMPT = "exempt"
+    MISSING = "missing"
+    # Not a pytest test class, whatever the name of the module that uses it.
+    __test__ = False
+
+
+def classify_test_evidence(reason: str) -> RegressionEvidence:
+    """EXEMPT for `No test: <why>`, MISSING for an empty reason, else NAMED.
+
+    The prefix is matched case-insensitively and needs text after it: a bare
+    `No test:` is the empty `<why>` the template calls not an answer, so it
+    reads as NAMED (it names nothing, but it is not an exemption either).
+    """
+    text = reason.strip()
+    if not text:
+        return RegressionEvidence.MISSING
+    if (text[:len(NO_TEST_PREFIX)].casefold() == NO_TEST_PREFIX.casefold()
+            and text[len(NO_TEST_PREFIX):].strip()):
+        return RegressionEvidence.EXEMPT
+    return RegressionEvidence.NAMED
 
 
 class _Box(NamedTuple):

@@ -57,8 +57,10 @@ from pathlib import Path
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
 import fix.engine
+import fix.regression
 import fix.scope
 import fix.suite
+import fix.tracking
 import fix.types
 import fix.verify
 import core.log
@@ -656,6 +658,8 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
     title = "Review Fix Tracking"
     action = "applying review findings"
     item_noun = "finding"
+    # A finding's fix changes behaviour, and the test is what holds it.
+    requires_tests = True
 
     def __init__(
         self, job: ReviewJob, findings: list[Finding],
@@ -780,7 +784,12 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             "branch_base": self.job.pr.base or "HEAD",
             "branch_files": _bullet_paths(self._branch_files()),
             "finding_anchors": _bullet_paths(self._anchor_files()),
+            "no_test_prefix": fix.tracking.NO_TEST_PREFIX,
         }
+
+    def test_exempt_ids(self) -> frozenset[str]:
+        """Static-analysis violations: the checker is their oracle, not a test."""
+        return frozenset(self.violations)
 
     def commit_scope(self, changed: set[str] | None) -> set[str] | None:
         """The files the agent touched that are finding anchors or their tests.
@@ -836,8 +845,14 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"
         if fixed:
-            message += "\n\n" + fix.suite.qualify_tally(
-                f"{fixed} fixed, {skipped} skipped", self.suite)
+            untested = sum(
+                1 for o in outcomes
+                if o.outcome.counts_as_fixed
+                and o.verify_detail.startswith(fix.regression.UNTESTED_DETAIL_PREFIX))
+            tally = f"{fixed} fixed, {skipped} skipped"
+            if untested:
+                tally += f" ({untested} without a test)"
+            message += "\n\n" + fix.suite.qualify_tally(tally, self.suite)
         if self.summary:
             message += f"\n\n{self.summary}"
         return fix.engine.LandSpec(

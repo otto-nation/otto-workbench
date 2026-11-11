@@ -279,6 +279,66 @@ class TestDropOutside:
         )
         assert kept == set()
 
+    @pytest.mark.parametrize("candidate,source", [
+        # A `__tests__` sibling directory, the Jest default.
+        ("src/__tests__/foo.test.ts", "src/foo.ts"),
+        ("src/__tests__/foo.spec.ts", "src/foo.ts"),
+        # `.spec` and `_spec`, beside the source and under a test root.
+        ("src/foo.spec.ts", "src/foo.ts"),
+        ("spec/foo_spec.rb", "lib/foo.rb"),
+        ("src/foo_spec.rb", "src/foo.rb"),
+        # The `Test` suffix.
+        ("src/FooTest.java", "src/Foo.java"),
+        # JS/TS suffixes are interchangeable between source and test.
+        ("src/foo.test.ts", "src/foo.tsx"),
+        ("src/__tests__/foo.test.js", "src/foo.tsx"),
+        ("src/foo.spec.mjs", "src/foo.cjs"),
+        # Case and `-`/`_` folded.
+        ("src/ProductCatalog.test.tsx", "src/product-catalog.tsx"),
+        ("src/product_catalog.test.tsx", "src/product-catalog.tsx"),
+        ("web/__tests__/ProductCatalog.test.tsx", "web/product-catalog.tsx"),
+    ])
+    def test_the_wider_test_naming_shapes_are_kept(
+        self, tmp_path, capsys, candidate, source,
+    ):
+        kept = fix.scope.drop_outside(
+            {candidate},
+            fix.scope.commit_allowed({source}, set()),
+            tmp_path,
+            {source},
+        )
+        assert kept == {candidate}
+        assert "not committing" not in capsys.readouterr().err
+        assert fix.scope.anchor_or_test(candidate, {source})
+
+    @pytest.mark.parametrize("candidate,source", [
+        # An unrelated suite in the same subtree or test directory.
+        ("src/__tests__/bar.test.ts", "src/foo.ts"),
+        ("src/bar.spec.ts", "src/foo.ts"),
+        ("src/BarTest.java", "src/Foo.java"),
+        ("src/ProductList.test.tsx", "src/product-catalog.tsx"),
+        # A test-named file in another directory, outside any test root.
+        ("other/foo.test.ts", "src/foo.ts"),
+        # The suffix family is JS/TS only.
+        ("src/foo.test.py", "src/foo.ts"),
+        ("src/foo_test.go", "src/foo.ts"),
+        # A name that merely ends in a marker is not a test of a prefix.
+        ("src/latest.py", "src/la.py"),
+        # A non-test sibling named like the source is not its test.
+        ("src/foo.ts", "src/foo.tsx"),
+    ])
+    def test_an_unrelated_or_cross_language_suite_is_still_dropped(
+        self, tmp_path, candidate, source,
+    ):
+        kept = fix.scope.drop_outside(
+            {candidate},
+            fix.scope.commit_allowed({source}, set()),
+            tmp_path,
+            {source},
+        )
+        assert kept == set()
+        assert not fix.scope.anchor_or_test(candidate, {source})
+
     def test_a_finding_anchor_not_on_the_branch_is_kept(self, tmp_path):
         kept = fix.scope.drop_outside(
             {"helper.py"},

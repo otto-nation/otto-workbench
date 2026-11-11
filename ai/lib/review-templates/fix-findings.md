@@ -17,9 +17,10 @@ are not in the list above:
 
 ${finding_anchors}
 
-A path outside those lists, and a colocated test of either (same directory,
-named `test_<stem>`, `<stem>_test`, or `<stem>.test`), is `needs a person`,
-not an edit. Never bundle unrelated fixes into commits on a feature branch
+A path outside those lists is `needs a person`, not an edit. A test named for
+an anchor — `test_<stem>`, `<stem>_test`, `<stem>.test`, `<stem>.spec`, colocated
+or in a `__tests__/` or `tests/` root — is in scope and expected: the fix owes
+one, so write it. Never bundle unrelated fixes into commits on a feature branch
 — if you spot an issue outside the branch's scope, create a separate branch
 for it. You do not create branches; tick `needs a person` and name the path.
 
@@ -143,8 +144,18 @@ it: a case added beside the fix that passes either way records nothing.
 
 Prefer a case added to the suite that already covers the file over a new file.
 Where a finding's own severity makes a test disproportionate — a comment, a
-doc wording fix, a rename with no behaviour behind it — write that in the box
-in those words. "No test: prose change" is an answer. An empty `<why>` is not.
+doc wording fix, a rename with no behaviour behind it — say so.
+
+The `fixed` box must do one of two things, and an empty one is neither:
+
+- `Test: <name> — <what it asserts>` — the test that fails without your change
+- `${no_test_prefix} <reason>` — the exact prefix `${no_test_prefix}`, then why none
+  applies ("${no_test_prefix} prose change" is an answer; an empty `<why>` is not)
+
+A change to behaviour that claims `${no_test_prefix}` is checked by the verify gate,
+which does not take the exemption on trust. A fix that moves code and names
+neither is reported unverified in the commit body, because the commit holds
+nothing that says the change works.
 
 ## Rules
 

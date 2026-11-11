@@ -117,7 +117,8 @@ the result qualifies the tally in the line itself:
 | `3 fixed, 1 skipped` | The repo's checks ran and came back green |
 | `3 fixed, 1 skipped — but the repo's checks are RED with these changes` | At least one of those fixes is wrong, or a test beside one is stale. The failing output is in the body |
 | `3 fixed, 1 skipped (unverified: no fix.verify_command declared)` | Nothing ran. This is the pre-gate behaviour, and the parenthetical is there so it stops reading like the green case |
-| `3 fixed, 1 skipped (unverified: the repo's checks did not answer)` | The command timed out or could not start. Neither a pass nor a fail |
+| `3 fixed, 1 skipped (unverified: the repo's checks did not answer)` | The command timed out or could not start. Neither a pass nor a fail. Rows the gate did not verify stay unverified, and the fix commit is never counted as reviewed (`covered_sha`) |
+| `3 fixed, 1 skipped (2 without a test)` | Two claimed fixes changed behaviour-bearing code and the commit holds no test for their anchor. Each row reads `no test for <file> in this commit`, is unverified, and blocks `covered_sha` |
 | `3 fixed, 1 skipped (unverified: the checks ran with N file(s) this commit leaves out)` | Green, but over a tree holding files the pass touched and did not commit, so it says nothing about the commit. The body names the files. `Fix-Checks: partial` |
 | `3 fixed, 1 skipped (unverified: the checks rewrote N tracked file(s), which were restored)` | Green, but the checks rewrote tracked files that containment restored, so they passed against content the commit does not hold. CI will likely fail on exactly those files. `Fix-Checks: partial` |
 
@@ -125,6 +126,21 @@ This closes the *collateral* half of the problem — an edit that breaks somethi
 named. It does not close the attribution half above: one command over the whole pass cannot
 say which of sixteen items broke the tree, which is why a red run marks every claimed fix
 unverified rather than demoting one of them. Read the diff either way.
+
+### The fix pass owes a test for every behaviour change
+
+Every `fixed` box that changes behaviour names the test that fails without the change
+(`Test: <name> — <what it asserts>`), or says `No test: <reason>`. A rename, comment or
+formatting fix is exempt, and so is a static-analysis item, whose oracle is the checker.
+The pass checks this mechanically after the verify gate: a claimed fix whose anchor is
+behaviour-bearing code, with no test for that anchor in the commit and no `No test:`
+reason, is reported unverified in its row, the commit body and `review.md`, and the
+tally carries `(N without a test)`. The check attributes by path, like the rest of this
+section, so a test written for another finding in the same file satisfies it — read the
+test against the finding. A `No test:` reason on a change that does alter behaviour is
+`not verified` at the gate. A new test is committed with its fix when it is named for the
+anchor (`foo_test.py`, `test_foo.py`, `foo.test.ts`, `foo.spec.ts`, under `tests/` or
+`__tests__/`); any other new test file stays in the worktree with a warning.
 
 A green tally is not a green review. It means the selected checks pass with those edits in
 the tree, which is weaker than every fix being right — that judgement is the verify gate's,

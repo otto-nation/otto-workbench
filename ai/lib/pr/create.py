@@ -2,16 +2,19 @@
 
 Ports the go-task create flow that lived in ``lib/ai/pr.sh``: preflight
 (an already-open PR, default-branch and base refusals, no commits ahead of
-the base (D7), the ``--closes`` contract), the publishing token, the nesting
-gate, the branch push, content generation and ``gh pr create``.
-``--dry-run`` stops after the content is generated and prints it; it runs no
-gate, pushes nothing and never reaches ``gh``.
+the base (D7), the ``--closes`` contract), the self-review gate, the
+publishing token, the nesting gate, the branch push, content generation and
+``gh pr create``. ``--dry-run`` still runs preflight and the self-review
+gate (advisory when HEAD is uncovered); it then generates content and
+prints it. It runs no nesting gate, pushes nothing and never reaches
+``gh``. ``--no-verify`` skips the pre-push hook, not the self-review gate.
 
-The order is the contract. Every refusal that costs nothing comes before the
-nesting gate, the gate comes before anything leaves the machine, and the push
-comes before the AI call so a refused push never pays for one. ``--base`` is
-always passed to ``gh`` (D5): the base the gate and the content measured is
-the base the PR targets.
+The order is the contract. Every refusal that costs nothing comes first
+(preflight, then the self-review gate), the nesting gate comes before
+anything leaves the machine, and the push comes before the AI call so a
+refused push never pays for one. ``--base`` is always passed to ``gh``
+(D5): the base the gate and the content measured is the base the PR
+targets.
 
 Progress and ✗ lines go to stderr, like ``pr.branch_sync``'s; stdout carries
 only the answer — the PR URL, or the dry-run preview — so a caller can capture
@@ -30,7 +33,7 @@ from pathlib import Path
 
 import core.proc
 import core.timeouts
-from core.trail import Trail
+from core.trail import Trail, tdecision
 import gh.client
 import git.client
 import git.push
@@ -38,6 +41,7 @@ import git.topology
 import pr.branch_sync
 import pr.create_content
 import pr.gh_token
+from pr.self_review_gate import SelfReviewGate
 from pr.branch_sync import SyncOutcome
 from pr.close_refs import CloseRefError, normalise_all
 from pr.context import ResolvedContext
@@ -82,6 +86,7 @@ class CreateOptions:
     body: str = ""
     issue: str = ""
     closes: tuple[str, ...] = ()
+    skip_review: str = ""
 
 
 def _say(msg: str) -> None:
@@ -258,12 +263,75 @@ def _gh_create(wt: Path, title: str, body: str, base: str, draft: bool) -> int:
     return 0
 
 
+def _self_review_gate(
+    wt: Path, opts: CreateOptions, gate: SelfReviewGate, trail: Trail | None,
+) -> bool:
+    """True when create should continue past the self-review check."""
+    head = git.client.head_sha(wt)
+    v = gate(head)
+    data = {
+        "head_sha": head,
+        "review_file": v.review_file,
+        "reviewed_through": v.reviewed_through,
+        "dry_run": opts.dry_run,
+        "covered": v.covered,
+    }
+    if opts.skip_review:
+        extra = " (a self-review already covers HEAD)" if v.covered else ""
+        _say(f"⚠ Self-review skipped: {opts.skip_review}{extra}")
+        data["outcome"] = "skipped"
+        tdecision(
+            trail, "self_review_gate", "self-review skipped",
+            reason=opts.skip_review, data=data,
+        )
+        return True
+    if v.covered:
+        data["outcome"] = "covered"
+        tdecision(
+            trail, "self_review_gate", "self-review covers HEAD",
+            reason=v.reason, data=data,
+        )
+        return True
+    if opts.dry_run:
+        _say(
+            f"⚠ {v.reason} — pr create without --dry-run would refuse; "
+            f"run: pr review --self --fix"
+        )
+        data["outcome"] = "preview"
+        tdecision(
+            trail, "self_review_gate", "self-review would refuse",
+            reason=v.reason, data=data,
+        )
+        return True
+    _say(
+        f"✗ No self-review covers HEAD {git.client.abbrev(head)} ({v.reason}) "
+        f"— run: pr review --self --fix"
+    )
+    _say(f"→ Review file: {v.review_file}")
+    _say(
+        "→ Only if the user asked to skip the review: "
+        'pr create --draft --skip-review "<their reason>"'
+    )
+    data["outcome"] = "refused"
+    tdecision(
+        trail, "self_review_gate", "self-review does not cover HEAD",
+        reason=v.reason, data=data,
+    )
+    return False
+
+
 def run_create(
-    ctx: ResolvedContext, opts: CreateOptions, *, trail: Trail | None = None,
+    ctx: ResolvedContext, opts: CreateOptions, *,
+    self_review: SelfReviewGate, trail: Trail | None = None,
 ) -> int:
     """Open the PR *opts* describes for ``ctx.branch``, or preview it. 0 on success.
 
-    *trail* is the dispatch's, threaded to the push so it is recorded there.
+    After preflight, the self-review gate must cover worktree HEAD (or
+    ``opts.skip_review`` must name why it is skipped) before the publishing
+    token, nesting gate, push, or AI call. *self_review* is required so a
+    caller cannot omit it. *trail* is the dispatch's, threaded to the push
+    so it is recorded there. ``--no-verify`` does not skip the self-review
+    gate.
     """
     wt = ctx.worktree_root
     branch = ctx.branch
@@ -276,6 +344,9 @@ def run_create(
     if closes is None:
         return 1
     base = opts.base or default
+
+    if not _self_review_gate(wt, opts, self_review, trail):
+        return 1
 
     if not opts.dry_run and not _publishable(wt, base, branch, opts, trail):
         return 1

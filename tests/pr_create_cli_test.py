@@ -52,15 +52,17 @@ def created(tmp_path):
     calls: list[CreateOptions] = []
     trails: list[object] = []
 
-    def run_create(c, opts, *, trail=None):
+    def run_create(c, opts, *, trail=None, self_review=None):
         calls.append(opts)
         trails.append(trail)
+        gates.append(self_review)
         return 0
 
+    gates: list[object] = []
     with patch("pr.context.resolve", return_value=ctx) as resolve, \
          patch("pr.context.resolve_local", return_value=ctx), \
          patch.object(pr.create, "run_create", run_create):
-        yield MagicMock(calls=calls, trails=trails, resolve=resolve)
+        yield MagicMock(calls=calls, trails=trails, gates=gates, resolve=resolve)
 
 
 @pytest.mark.parametrize("flag,field,value", [
@@ -68,6 +70,7 @@ def created(tmp_path):
     ("--body", "body", "## What\n\nA body with a blank line."),
     ("--base", "base", "release/v2"),
     ("--issue", "issue", "ENG-42"),
+    ("--skip-review", "skip_review", "user asked to skip"),
 ])
 def test_a_value_flag_reaches_create_options_intact(created, flag, field, value):
     assert _main("create", "--no-issue", "--draft", flag, value) == 0
@@ -92,6 +95,7 @@ def test_closes_is_repeatable_and_keeps_order(created):
 def test_the_valueless_flags_default_off_and_turn_on(created):
     assert _main("create") == 0
     assert created.calls[-1] == CreateOptions()
+    assert created.calls[-1].skip_review == ""
     assert _main("create", "--draft", "--no-verify", "--dry-run") == 0
     opts = created.calls[-1]
     assert (opts.draft, opts.no_verify, opts.dry_run) == (True, True, True)
@@ -109,13 +113,44 @@ def test_no_issue_is_accepted(created):
     assert len(created.calls) == 1
 
 
+@pytest.mark.parametrize("value", ["", "   "])
+def test_a_blank_skip_review_reason_is_a_usage_error(created, capsys, value):
+    assert _main("create", "--skip-review", value) == 2
+    assert "✗ --skip-review needs a reason" in capsys.readouterr().err
+    assert not created.calls
+
+
+def test_skip_review_strips_the_reason(created):
+    assert _main("create", "--skip-review", "  user asked  ") == 0
+    assert created.calls[-1].skip_review == "user asked"
+
+
+def test_the_gate_resolves_the_review_for_the_resolved_repo_and_branch(
+    created, tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    from review.paths import self_review_file_path
+    from review.types import ReviewMeta
+    from review_record_support import record, store_record
+
+    sha = "abcdef0123456789"
+    path = self_review_file_path("owner/repo", "feat/x")
+    store_record(path, record(), ReviewMeta(head_sha=sha))
+    assert _main("create") == 0
+    gate = created.gates[-1]
+    v = gate(sha)
+    assert v.covered is True
+    assert v.review_file == str(path)
+
+
 def test_an_unknown_flag_is_a_usage_error(created):
     assert _main("create", "--bogus") == 2
     assert not created.calls
 
 
-def test_a_value_flag_without_its_value_is_a_usage_error(created):
-    assert _main("create", "--title") == 2
+@pytest.mark.parametrize("flag", ["--title", "--skip-review"])
+def test_a_value_flag_without_its_value_is_a_usage_error(created, flag):
+    assert _main("create", flag) == 2
     assert not created.calls
 
 

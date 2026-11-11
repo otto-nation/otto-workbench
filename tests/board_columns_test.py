@@ -15,12 +15,12 @@ from board.model import (
     Column,
     Issue,
     IssueKind,
-    IssueStatus,
     Mergeable,
     MineLane,
     PrState,
     ReviewRunRef,
     Row,
+    StatusKind,
     TeamLane,
 )
 import pytest
@@ -195,7 +195,7 @@ MINE_LANE_CASES = [
 ]
 
 
-def _issue(kind: IssueKind, status: IssueStatus, label: str) -> Issue:
+def _issue(kind: IssueKind, status: StatusKind, label: str) -> Issue:
     return Issue(kind=kind, label=label, status=status)
 
 
@@ -210,31 +210,31 @@ ISSUES_CASES = [
             review_decision="CHANGES_REQUESTED",
         ),
         (
-            _issue(IssueKind.CONFLICTS, IssueStatus.FAIL, "Conflicts"),
-            _issue(IssueKind.CI_FAILING, IssueStatus.FAIL, "CI failing"),
-            _issue(IssueKind.HAS_COMMENTS, IssueStatus.WARN, "2 unresolved threads"),
-            _issue(IssueKind.CHANGES_REQUESTED, IssueStatus.WARN, "Changes requested"),
+            _issue(IssueKind.CONFLICTS, StatusKind.FAIL, "Conflicts"),
+            _issue(IssueKind.CI_FAILING, StatusKind.FAIL, "CI failing"),
+            _issue(IssueKind.HAS_COMMENTS, StatusKind.WARN, "2 unresolved threads"),
+            _issue(IssueKind.CHANGES_REQUESTED, StatusKind.WARN, "Changes requested"),
         ),
     ),
     (
         "pending CI is ci-running",
         dict(ci_status=CiStatus.PENDING),
-        (_issue(IssueKind.CI_RUNNING, IssueStatus.RUNNING, "CI running"),),
+        (_issue(IssueKind.CI_RUNNING, StatusKind.RUNNING, "CI running"),),
     ),
     (
         "ciUnknown with none is ci-unknown",
         dict(ci_unknown=True, ci_status=CiStatus.NONE),
-        (_issue(IssueKind.CI_UNKNOWN, IssueStatus.NONE, "CI unknown"),),
+        (_issue(IssueKind.CI_UNKNOWN, StatusKind.NONE, "CI unknown"),),
     ),
     (
         "failing CI takes the one CI slot",
         dict(ci_unknown=True, ci_status=CiStatus.FAILING),
-        (_issue(IssueKind.CI_FAILING, IssueStatus.FAIL, "CI failing"),),
+        (_issue(IssueKind.CI_FAILING, StatusKind.FAIL, "CI failing"),),
     ),
     (
         "owed feedback label is the first clause",
         dict(owed="2 unresolved threads, 1 new comment, 3 drafts"),
-        (_issue(IssueKind.HAS_COMMENTS, IssueStatus.WARN, "2 unresolved threads"),),
+        (_issue(IssueKind.HAS_COMMENTS, StatusKind.WARN, "2 unresolved threads"),),
     ),
     (
         "MERGED with conflicts is empty",
@@ -244,7 +244,7 @@ ISSUES_CASES = [
     (
         "conflicting reviewing PR still lists conflicts",
         dict(mergeable=Mergeable.CONFLICTING),
-        (_issue(IssueKind.CONFLICTS, IssueStatus.FAIL, "Conflicts"),),
+        (_issue(IssueKind.CONFLICTS, StatusKind.FAIL, "Conflicts"),),
     ),
 ]
 
@@ -342,11 +342,11 @@ def test_columns_golden():
 
 def test_unhydrated_issues_are_ci_pending_plus_owed():
     assert issues(_row(hydrated=False)) == (
-        _issue(IssueKind.CI_PENDING, IssueStatus.NONE, "CI pending"),
+        _issue(IssueKind.CI_PENDING, StatusKind.NONE, "CI loading"),
     )
     assert issues(_row(hydrated=False, owed="2 unresolved threads, extra")) == (
-        _issue(IssueKind.CI_PENDING, IssueStatus.NONE, "CI pending"),
-        _issue(IssueKind.HAS_COMMENTS, IssueStatus.WARN, "2 unresolved threads"),
+        _issue(IssueKind.CI_PENDING, StatusKind.NONE, "CI loading"),
+        _issue(IssueKind.HAS_COMMENTS, StatusKind.WARN, "2 unresolved threads"),
     )
     assert issues(_row(
         hydrated=False,
@@ -354,5 +354,5 @@ def test_unhydrated_issues_are_ci_pending_plus_owed():
         ci_status=CiStatus.FAILING,
         review_decision="CHANGES_REQUESTED",
     )) == (
-        _issue(IssueKind.CI_PENDING, IssueStatus.NONE, "CI pending"),
+        _issue(IssueKind.CI_PENDING, StatusKind.NONE, "CI loading"),
     )

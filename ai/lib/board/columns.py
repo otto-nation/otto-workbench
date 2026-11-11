@@ -15,12 +15,12 @@ from board.model import (
     Column,
     Issue,
     IssueKind,
-    IssueStatus,
     Lanes,
     Mergeable,
     MineLane,
     PrState,
     Row,
+    StatusKind,
     TeamLane,
 )
 
@@ -118,8 +118,8 @@ def issues(row: Row) -> tuple[Issue, ...]:
     if not row.hydrated:
         pending = Issue(
             kind=IssueKind.CI_PENDING,
-            label="CI pending",
-            status=IssueStatus.NONE,
+            label="CI loading",
+            status=StatusKind.NONE,
         )
         if not row.owed:
             return (pending,)
@@ -129,25 +129,25 @@ def issues(row: Row) -> tuple[Issue, ...]:
         out.append(Issue(
             kind=IssueKind.CONFLICTS,
             label="Conflicts",
-            status=IssueStatus.FAIL,
+            status=StatusKind.FAIL,
         ))
     if row.ci_status is CiStatus.FAILING:
         out.append(Issue(
             kind=IssueKind.CI_FAILING,
             label="CI failing",
-            status=IssueStatus.FAIL,
+            status=StatusKind.FAIL,
         ))
     elif row.ci_status is CiStatus.PENDING:
         out.append(Issue(
             kind=IssueKind.CI_RUNNING,
             label="CI running",
-            status=IssueStatus.RUNNING,
+            status=StatusKind.RUNNING,
         ))
     elif row.ci_unknown:
         out.append(Issue(
             kind=IssueKind.CI_UNKNOWN,
             label="CI unknown",
-            status=IssueStatus.NONE,
+            status=StatusKind.NONE,
         ))
     if row.owed:
         out.append(_owed_issue(row.owed))
@@ -155,7 +155,7 @@ def issues(row: Row) -> tuple[Issue, ...]:
         out.append(Issue(
             kind=IssueKind.CHANGES_REQUESTED,
             label="Changes requested",
-            status=IssueStatus.WARN,
+            status=StatusKind.WARN,
         ))
     return tuple(out)
 
@@ -168,5 +168,5 @@ def _owed_issue(owed: str) -> Issue:
     return Issue(
         kind=IssueKind.HAS_COMMENTS,
         label=owed.split(",")[0],
-        status=IssueStatus.WARN,
+        status=StatusKind.WARN,
     )

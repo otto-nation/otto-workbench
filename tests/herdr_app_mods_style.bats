@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Style guards for the herdr-app mods: the brand DESIGN.md rules a grep can see.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js
+# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/_lib/status.js ai/herdr/app/mods/_lib/pr_status.js
 
 setup() {
   load 'test_helper'
@@ -25,9 +25,9 @@ teardown() {
 }
 
 @test "the fail status glyph is ×, never ✗, which no brand font draws" {
-  run grep -n '✗' "$MODS"/_ui/*.js "$MODS"/prs/*.js
+  run grep -n '✗' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/_lib/*.js
   [ "$status" -eq 1 ]
-  grep -q 'fail: { glyph: "×"' "$MODS/_ui/ui.js"
+  grep -q "fail: Object.freeze({ glyph: '×'" "$MODS/_lib/status.js"
 }
 
 @test "load_status indicators are static: no spin, frames, loop, or transition" {
@@ -37,4 +37,33 @@ teardown() {
 
 @test "load_status uses SP.sm gap on status text" {
   grep -q 'gap: SP.sm' "$MODS/prs/load_status.js"
+}
+
+@test "PR state is read from prPresentation, never re-derived" {
+  run grep -nwE 'prIssues|stateTags|ciMark|cardStateLine|toneKind|postKind|healthKind|decisionText' \
+    "$MODS"/_ui/*.js "$MODS"/prs/*.js
+  [ "$status" -eq 1 ]
+}
+
+@test "no inline decision lowercasing or CI/batch wording in views" {
+  run grep -nE "toLowerCase\(\)\\.replace\(/_/g|[\"']CI (passing|failing|running|unknown|loading|pending)[\"']|Batch working" \
+    "$MODS"/_ui/*.js "$MODS"/prs/*.js
+  [ "$status" -eq 1 ]
+}
+
+@test "status glyphs live only in _lib/status.js" {
+  run grep -n 'glyph:' "$MODS"/_ui/*.js "$MODS"/prs/*.js
+  [ "$status" -eq 1 ]
+}
+
+@test "card, compact row and detail header draw every presentation slot" {
+  for s in ref title tags author branch stats badges; do
+    grep -qE "\\bp\\.$s\\b" "$MODS/prs/board.js"
+  done
+  for s in ref title tags author row_badges; do
+    grep -qE "\\bp\\.$s\\b" "$MODS/prs/compact.js"
+  done
+  for s in ref title tags author branch base_branch stats detail_issues ci decision review busy; do
+    grep -qE "\\bp\\.$s\\b" "$MODS/prs/detail.js"
+  done
 }

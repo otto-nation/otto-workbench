@@ -166,6 +166,11 @@ def test_owed_flips_mine_lane_to_has_comments(tmp_path, monkeypatch):
     assert row["owed_known"] is True
     assert row["is_mine"] is True
     assert row["lanes"]["mine"] == "has-comments"
+    assert row["presentation"]["ref"] == "box#7"
+    assert list(row["presentation"]["row_badges"]) == [
+        {"kind": "status", "status": "none", "text": "CI loading"},
+        {"kind": "status", "status": "warn", "text": "2 unresolved threads"},
+    ]
 
 
 def test_stamp_stable_across_fetched_at(tmp_path, monkeypatch):

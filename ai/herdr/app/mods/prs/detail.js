@@ -4,16 +4,12 @@ import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
 import { tailLines } from "./_lib/output.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
+import { prPresentation } from "./_lib/pr_status.js";
 import {
-  segment, segmented, button, inset, ciMark, addStat, delStat, card, placeholder, caption,
+  segment, segmented, button, inset, card, placeholder, caption,
   paneBar, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
+  badgeRow, statsRow, tag,
 } from "./_ui/ui.js";
-
-function postKind(tone) {
-  if (tone === "success") return "pass";
-  if (tone === "warning") return "warn";
-  return "none";
-}
 
 function reviewBody(stamp, body) {
   if (body == null) return placeholder("Loading…");
@@ -47,14 +43,15 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
 }
 
 // What the detail view needs from a board card.
-export function detailOf(pr) {
+export function detailOf(pr, { item = null } = {}) {
   return {
     repo: pr.repoSlug, host: pr.host, number: pr.number, title: pr.title, author: pr.author,
-    branch: pr.branch, ci: pr.ciStatus, decision: pr.reviewDecision, additions: pr.additions,
+    branch: pr.branch, additions: pr.additions,
     deletions: pr.deletions, files: pr.changedFiles, changedFiles: pr.changedFiles, url: pr.url, on: pr.on ?? null,
     runs: (pr.reviewRuns ?? []).map((r) => r.run),
     cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
     batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null, sha: pr.headSha ?? "",
+    presentation: prPresentation(pr, { item }),
   };
 }
 
@@ -90,6 +87,8 @@ export function prUrl(d) {
 
 export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }) {
   const t = theme();
+  const p = d.presentation;
+  const marks = [p.ci, p.decision, ...p.detail_issues, p.review, p.busy].filter(Boolean);
   return paneBar().p(SP.lg)
     .child(h_flex().gap(SP.sm).flex_wrap().items_center().justify_between()
       .child(button("detail-back", "← Back", () => onClose()))
@@ -97,18 +96,16 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
         .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled }))
         .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))))
     .when(!reviewState.enabled, (e) => e.child(caption(reviewState.reason)))
-    .child(h_flex().gap(SP.sm).items_center().min_w(0)
-      .child(text("body", `#${d.number}`, t.muted).flex_none())
-      .child(type(div().min_w(0).max_h(LAYOUT.titleMaxH).overflow_hidden(), "title").child(d.title ?? "")))
+    .child(h_flex().gap(SP.sm).items_start().min_w(0)
+      .child(text("body", p.ref, t.muted).flex_none())
+      .child(type(div().flex_1().min_w(0).max_h(LAYOUT.titleMaxH).overflow_hidden(), "title").child(p.title))
+      .children(p.tags.map(tag)))
     .child(h_flex().gap_x(SP.md).gap_y(SP.xs).flex_wrap().items_center()
-      .child(text("body", d.author ?? "", t.muted))
-      .child(type(div().truncate(), "code").text_color(t.muted).child(d.branch ?? ""))
-      .child(type(addStat(d.additions ?? 0), "meta"))
-      .child(type(delStat(d.deletions ?? 0), "meta"))
-      .child(text("meta", `${d.files ?? 0} files`, t.muted))
-      .when(d.generated > 0, (e) => e.child(text("meta", `excl. ${d.generated} generated`, t.muted)))
-      .child(ciMark(d.ci))
-      .child(text("meta", d.decision ? String(d.decision).toLowerCase().replace(/_/g, " ") : "", t.muted)));
+      .child(text("body", p.author, t.muted))
+      .child(type(div().truncate(), "code").text_color(t.muted).child(p.base_branch ? `${p.branch} → ${p.base_branch}` : p.branch))
+      .child(statsRow(p.stats))
+      .when(d.generated > 0, (e) => e.child(text("meta", `excl. ${d.generated} generated`, t.muted))))
+    .when(marks.length > 0, (e) => e.child(badgeRow(marks)));
 }
 
 function runCard(r, { openStamp, bodyFor, onToggle }) {
@@ -119,7 +116,8 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
       .child(caption(r.when))
       .child(type(div(), "code").child(r.shortSha)))
     .child(text("body", r.findingsText))
-    .child(h_flex().gap(SP.sm).items_center().child(statusText(postKind(r.post.tone), r.post.label))
+    .child(h_flex().gap(SP.sm).items_center().child(statusText(r.post.status, r.post.label))
+      .when(Boolean(r.healthStatus), (e) => e.child(statusText(r.healthStatus, r.health)))
       .when(Boolean(r.costText), (e) => e.child(caption(r.costText))))
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }

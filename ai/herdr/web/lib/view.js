@@ -1,19 +1,15 @@
 /**
  * The board page's view model: which lanes, cards and states to draw for a snapshot and the page's UI
  * state, through the same _lib/columns.js functions prs/board.js uses, with the mod's DESIGN.md
- * readings (prs/board.js badges, prs/detail.js postKind, prs/files_view.js fileMarkColor, the header's
- * stale/failed). Pure; runs in the browser.
+ * readings (the header's stale/failed). Pure; runs in the browser.
  */
 import {
   TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns, visibleColumns,
-  DEFAULT_FILTERS, filterOn, prIssues,
+  DEFAULT_FILTERS, filterOn,
 } from '../../app/mods/_lib/columns.js';
 import { barModel, facetView, filterAction, normalizeFilters } from '../../app/mods/_lib/filters.js';
 import { compactSections } from '../../app/mods/_lib/compact.js';
 import { relativeTime } from '../../app/mods/_lib/history.js';
-
-// DESIGN.md status glyphs, as _ui/ui.js STATUS. Fail is × (U+00D7): no brand font draws U+2717.
-export const GLYPH = Object.freeze({ pass: '✓', fail: '×', running: '…', warn: '!', none: '·' });
 
 // Flag defaults are _lib's DEFAULT_FILTERS (one owner for the mod and the web; drafts hidden on Team,
 // Mine and the Batch form), never restated here. There is no repo scope: the board always covers every
@@ -61,57 +57,6 @@ export function boardModel(snapshot, ui) {
 export function toggleFilter(ui, name) {
   const next = filterAction(ui.filters, name);
   return next === ui.filters ? ui : { ...ui, filters: next };
-}
-
-// prs/board.js stateTags(): Merged, In merge queue, Draft — title-row tags, not badges.
-export function cardTags(pr) {
-  const out = [];
-  if (pr.state === 'MERGED') out.push('Merged');
-  if (pr.inMergeQueue) out.push('In merge queue');
-  if (pr.isDraft) out.push('Draft');
-  return out;
-}
-
-// prs/board.js badges(): issue statuses, batch working, review count, then labels as tags; never pills.
-// hideBusy: the card shows the batch state line instead (phase 4).
-export function cardBadges(pr, { hideBusy = false } = {}) {
-  const out = prIssues(pr).map((i) => ({ kind: 'status', status: i.status, text: i.label }));
-  if (pr.busy && !hideBusy) out.push({ kind: 'status', status: 'running', text: 'Batch working' });
-  const runs = (pr.reviewRuns ?? []).length;
-  if (runs > 0) out.push({ kind: 'text', text: `${runs} reviews` });
-  for (const name of (pr.labels ?? []).slice(0, 2)) out.push({ kind: 'tag', text: name });
-  return out;
-}
-
-// Every card names its repo, since the board always spans every discovered repo: "kit #4". (The
-// desktop card writes "kit#4", and only under All spaces.)
-export function cardNumber(pr) {
-  return pr.repoSlug ? `${pr.repoSlug.split('/').pop()} #${pr.number}` : `#${pr.number}`;
-}
-
-export function decisionText(decision) {
-  return decision ? String(decision).toLowerCase().replace(/_/g, ' ') : '';
-}
-
-// prs/detail.js postKind: a history row's post state as a status kind.
-export function postKind(tone) {
-  if (tone === 'success') return 'pass';
-  if (tone === 'warning') return 'warn';
-  return 'none';
-}
-
-// historyRows health: 'ok' shows nothing.
-export function healthKind(health) {
-  if (health === 'Partial') return 'warn';
-  if (health === 'Error') return 'fail';
-  return null;
-}
-
-// prs/files_view.js fileMarkColor: A in done, D in danger, the rest muted (CSS classes add/del/mod).
-export function fileMark(status) {
-  if (status === 'A') return 'add';
-  if (status === 'D') return 'del';
-  return 'mod';
 }
 
 // DESIGN.md: stale is warn plus how old the shown data is; with nothing loaded yet it is an error.

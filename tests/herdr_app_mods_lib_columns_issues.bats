@@ -70,10 +70,10 @@ _issues() {
   [ "$output" = "[]" ]
 }
 
-@test "prIssues: hydrated false is CI pending plus owed" {
+@test "prIssues: hydrated false is CI loading plus owed" {
   _issues '{"hydrated":false,"owedFeedback":"2 unresolved threads","ciStatus":"failing"}'
   [ "$status" -eq 0 ]
-  [ "$output" = '[["ci-pending","none","CI pending"],["has-comments","warn","2 unresolved threads"]]' ]
+  [ "$output" = '[["ci-pending","none","CI loading"],["has-comments","warn","2 unresolved threads"]]' ]
 }
 
 @test "prIssues: hydrated absent still reports failing CI" {

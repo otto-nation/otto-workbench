@@ -44,3 +44,13 @@ teardown() { common_teardown; }
   [ "$status" -eq 0 ]
   [ "$output" = '[[],true,true,true,"(max-width: 760px)",33]' ]
 }
+
+@test "css: --status-* and --diff-* are derived from _lib/status.js" {
+  _web "const c = await import(W + '/lib/css.js');
+        const { STATUS } = await import(L + '/status.js');
+        const css = c.themeCss({ colors: { canvas: '#fff' } }, { colors: { canvas: '#000' } });
+        const status = Object.keys(STATUS).every((k) => css.includes('--status-' + k + ':var(--' + STATUS[k].field + ')'));
+        out({ status, diffAdd: css.includes('--diff-add:var(--done)') });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"status":true,"diffAdd":true}' ]
+}

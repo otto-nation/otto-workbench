@@ -3,12 +3,14 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  STEP_ORDER, durationText, laneOf, cardState, shortKey,
+  STEP_ORDER, durationText, laneOf, shortKey,
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
+import { batchStatus } from "./_lib/pr_status.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
   hoverRow, card, inset, scrollBody, type, text, statusText, caption, placeholder, errorLine,
+  badge,
 } from "./_ui/ui.js";
 
 function runKind(status) {
@@ -23,14 +25,6 @@ function stepKind(status) {
   if (status === "needs_decision" || status === "interrupted") return "warn";
   if (status === "running" || status === "queued") return "running";
   if (status === "done") return "pass";
-  return "none";
-}
-
-function toneKind(tone) {
-  if (tone === "failed") return "fail";
-  if (tone === "attention") return "warn";
-  if (tone === "busy") return "running";
-  if (tone === "done") return "pass";
   return "none";
 }
 
@@ -94,26 +88,15 @@ export function renderRunItems(doc, { repos = [], prOf, onOpen }) {
   return v_flex().pl(SP.xl).gap(SP.xxs)
     .children((doc.items ?? []).map((item) => {
       const pr = prOf(item);
-      const state = cardState(item);
+      const s = batchStatus(item);
       const row = h_flex().px(SP.sm).py(SP.xxs).gap(SP.md).items_center().min_w(0)
         .child(type(div().flex_none(), "code").text_color(t.muted).child(shortKey(item.key, repos)))
         .child(type(div().flex_1().min_w(0).truncate(), "body")
           .text_color(pr ? t.foreground : t.muted).child(pr?.title ?? item.branch ?? ""))
-        .child(state
-          ? statusText(toneKind(state.tone), state.text)
-          : text("meta", String(item.status ?? ""), t.muted));
+        .child(s ? badge(s) : text("meta", String(item.status ?? ""), t.muted));
       if (!pr) return row;
       return hoverRow(`run-item-${item.key}`).on_click(() => onOpen(pr)).child(row);
     }));
-}
-
-export function cardStateLine(item) {
-  const t = theme();
-  const state = cardState(item);
-  if (state == null) return null;
-  return h_flex().gap(SP.xxs).items_center()
-    .child(text("meta", "Batch · ", t.muted))
-    .child(statusText(toneKind(state.tone), state.text));
 }
 
 // The steps this run was asked for, in pipeline order: a step it never ran gets no column.

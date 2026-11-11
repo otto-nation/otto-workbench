@@ -568,9 +568,10 @@ export default class PrsBoard extends View {
       .child(this.compactHeader(tab, load))
       .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
       .child(renderCompact({
-        sections, onOpen: (pr) => this.openDetail(pr, cx), showRepo: scopeOf() === "all",
+        sections, onOpen: (pr) => this.openDetail(pr, cx),
         width: this.size?.width, onBatch: mine ? (items, preset) => this.batchFor(items, preset) : null,
         empty,
+        workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));
   }
 
@@ -598,7 +599,7 @@ export default class PrsBoard extends View {
         tab, prs: this.listed(state), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         onBatch: (items, preset) => this.batchFor(items, preset),
-        spinner: "⠋", showRepo: scopeOf() === "all", loading: Boolean(state.loading && !state.repos),
+        loading: Boolean(state.loading && !state.repos),
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));
   }

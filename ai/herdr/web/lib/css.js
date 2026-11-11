@@ -5,6 +5,7 @@
  * variables from _lib/tokens.js (which reads _lib/brand.generated.js). Computed by the server at
  * start, never committed. Pure.
  */
+import { DIFF, STATUS } from '../../app/mods/_lib/status.js';
 
 // The width under which the header drops its "updated" text; it also lets the remaining controls
 // wrap, which they do only if they still do not fit. Web-only: the brand defines no header
@@ -30,11 +31,11 @@ export function themeVars(theme) {
   return out.join(';');
 }
 
-// The status kinds DESIGN.md gives a colour, mapped to theme fields exactly as the mod's _ui/ui.js
-// STATUS does (the palette puts danger on ANSI 1 and warn on ANSI 3).
+// The status kinds DESIGN.md gives a colour, mapped to theme fields from _lib/status.js
+// (the palette puts danger on ANSI 1 and warn on ANSI 3).
 const STATUS_VARS = [
-  '--status-pass:var(--done)', '--status-fail:var(--ansi1)', '--status-running:var(--working)',
-  '--status-warn:var(--ansi3)', '--status-none:var(--muted)',
+  ...Object.entries(STATUS).map(([k, s]) => `--status-${k}:var(--${s.field})`),
+  ...Object.entries(DIFF).map(([k, f]) => `--diff-${k}:var(--${f})`),
 ].join(';');
 // DESIGN.md --ow-scrim: block at 50 % on light, canvas at 70 % on dark.
 // ceiling: the theme JSON carries no block colour; the brand's light block is its ink, so light uses

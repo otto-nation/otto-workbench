@@ -1,15 +1,15 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns, prIssues } from "./_lib/columns.js";
+import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { columnPreset } from "./_lib/batch_launch.js";
+import { prPresentation } from "./_lib/pr_status.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import {
-  button, addStat, delStat, card, placeholder, scrollBody,
-  laneTitle, tag, text, type, statusText,
+  button, badgeRow, statsRow, card, placeholder, scrollBody,
+  laneTitle, tag, text, type,
 } from "./_ui/ui.js";
-import { cardStateLine } from "./workflows_view.js";
 import { skeletonLanes } from "./load_status.js";
 
 const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
@@ -34,7 +34,7 @@ export function batchAction(col, onBatch) {
 }
 
 export function renderBoard({
-  tab, prs, filters, me, onOpen, spinner, showRepo, loading, workflowOf, onBatch,
+  tab, prs, filters, me, onOpen, loading, workflowOf, onBatch,
 }) {
   const t = theme();
   const mine = tab === "mine";
@@ -51,51 +51,22 @@ export function renderBoard({
     return board.child(placeholder("No pull requests").p(SP.lg));
   }
   return board.children(shown.map((c) => column(c, {
-    onOpen, spinner, showRepo, workflowOf, onBatch: mine ? onBatch : null,
+    onOpen, workflowOf, onBatch: mine ? onBatch : null,
   })));
 }
 
-export function stateTags(pr) {
-  const out = [];
-  if (pr.state === "MERGED") out.push(tag("Merged"));
-  if (pr.inMergeQueue) out.push(tag("In merge queue"));
-  if (pr.isDraft) out.push(tag("Draft"));
-  return out;
-}
-
-function badges(pr, { hideBusy } = {}) {
+export function renderCard(pr, { onOpen, workflowOf }) {
   const t = theme();
-  const out = prIssues(pr).map((i) => statusText(i.status, i.label));
-  if (pr.busy && !hideBusy) out.push(statusText("running", "Batch working"));
-  const runs = pr.reviewRuns.length;
-  if (runs > 0) out.push(text("meta", `${runs} reviews`, t.muted));
-  for (const name of pr.labels.slice(0, 2)) out.push(tag(name));
-  return out;
-}
-
-export function renderCard(pr, {
-  onOpen, spinner, showRepo, workflowOf,
-}) {
-  const t = theme();
-  const item = workflowOf?.(pr);
-  const stateLine = item ? cardStateLine(item) : null;
-  const num = showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`;
-  const b = badges(pr, { hideBusy: Boolean(stateLine) });
+  const p = prPresentation(pr, { item: workflowOf?.(pr) ?? null });
   return card(cardId(pr)).gap(SP.sm).on_click(() => onOpen(pr))
     .child(h_flex().gap(SP.sm).items_start()
-      .child(type(div().flex_1().min_w(0).max_h(LAYOUT.cardTitleMaxH).overflow_hidden(), "title")
-        .child(pr.title ?? ""))
-      .children(stateTags(pr)))
+      .child(type(div().flex_1().min_w(0).max_h(LAYOUT.cardTitleMaxH).overflow_hidden(), "title").child(p.title))
+      .children(p.tags.map(tag)))
     .child(h_flex().gap(SP.sm).items_center()
-      .child(text("meta", num, t.muted).flex_none())
-      .child(text("meta", pr.author ?? "", t.muted).min_w(0).truncate())
-      .child(type(div().flex_1().min_w(0).truncate(), "code").text_color(t.muted).child(pr.branch ?? "")))
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(type(addStat(pr.additions ?? 0), "meta"))
-      .child(type(delStat(pr.deletions ?? 0), "meta"))
-      .child(text("meta", `${pr.changedFiles ?? 0} files`, t.muted))
-      .when(Boolean(pr.reviewing), (e) => e.child(div().text_color(t.working).child(spinner))))
-    .when(b.length > 0, (e) => e.child(h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(b)))
-    .when(Boolean(stateLine), (e) => e.child(stateLine));
+      .child(text("meta", p.ref, t.muted).flex_none())
+      .child(text("meta", p.author, t.muted).min_w(0).truncate())
+      .child(type(div().flex_1().min_w(0).truncate(), "code").text_color(t.muted).child(p.branch)))
+    .child(statsRow(p.stats))
+    .when(p.badges.length > 0, (e) => e.child(badgeRow(p.badges)));
 }
 

@@ -1,25 +1,29 @@
 // The PR detail: header, Review history (expandable bodies), Files and one file's diff.
 // Phase 2 adds the action bar, phone bar and output panel through `slots`; Phase 4 the Batch tab.
-import { h, setChildren, status, trustedMarkdown } from './dom.js';
-import { ciMark } from './board_view.js';
+import { badge, h, setChildren, status, tag, trustedMarkdown } from './dom.js';
 import { historyRows } from '../../app/mods/_lib/history.js';
 import { MAX_LINES, summarize } from '../../app/mods/_lib/diff.js';
+import { prPresentation, statsText } from '../../app/mods/_lib/pr_status.js';
+import { fileMarkKind } from '../../app/mods/_lib/status.js';
 import { renderMarkdown } from '../lib/markdown.js';
-import { decisionText, fileMark, healthKind, postKind, prUrl, sortedFiles } from '../lib/view.js';
+import { prUrl, sortedFiles } from '../lib/view.js';
 
-function header(pr, files, { onClose, slots }) {
+function header(pr, files, { onClose, slots, itemOf }) {
+  const p = prPresentation(pr, { item: itemOf?.(pr) ?? null });
   const sum = files?.ok ? summarize(files.files) : null;
+  const stats = sum ? statsText({ additions: sum.add, deletions: sum.del, files: sum.files }) : p.stats;
+  const marks = [p.ci, p.decision, ...p.detail_issues, p.review, p.busy].filter(Boolean);
   const url = prUrl(pr);
   return h('div', { class: 'dhead' },
     h('div', { class: 'row' }, h('button', { class: 'btn ghost mback', onclick: onClose }, '‹ Back'),
-      h('span', { class: 'num' }, `#${pr.number}`), h('h2', {}, pr.title ?? ''),
+      h('span', { class: 'num' }, p.ref), h('h2', {}, p.title), ...p.tags.map((name) => tag(name)),
       h('button', { class: 'icon-btn desk', title: 'Close', 'aria-label': 'Close', onclick: onClose }, '×')),
-    h('div', { class: 'sub' }, h('span', {}, `${(pr.repoSlug ?? '').split('/').pop()} · ${pr.author ?? ''}`),
-      h('span', { class: 'code' }, `${pr.branch ?? ''}${pr.baseBranch ? ` → ${pr.baseBranch}` : ''}`),
-      h('span', { class: 'meta add' }, `+${sum ? sum.add : pr.additions ?? 0}`), h('span', { class: 'meta del' }, `-${sum ? sum.del : pr.deletions ?? 0}`),
-      h('span', { class: 'meta' }, `${sum ? sum.files : pr.changedFiles ?? 0} files`),
-      sum?.generated ? h('span', { class: 'meta' }, `excl. ${sum.generated} generated`) : null, ciMark(pr.ciStatus, 'body'),
-      h('span', { class: 'meta' }, decisionText(pr.reviewDecision))),
+    h('div', { class: 'sub' }, h('span', {}, p.author),
+      h('span', { class: 'code' }, `${p.branch}${p.base_branch ? ` → ${p.base_branch}` : ''}`),
+      h('span', { class: 'meta add' }, stats.additions), h('span', { class: 'meta del' }, stats.deletions),
+      h('span', { class: 'meta' }, stats.files),
+      sum?.generated ? h('span', { class: 'meta' }, `excl. ${sum.generated} generated`) : null),
+    marks.length ? h('div', { class: 'badges' }, marks.map(badge)) : null,
     h('div', { class: 'row desk-btns' }, slots?.headerButtons ?? null,
       url ? h('a', { class: 'btn', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'View on GitHub ↗') : null));
 }
@@ -35,13 +39,12 @@ function history(pr, { openStamp, bodies, onToggleRun, now }) {
   const rows = historyRows((pr.reviewRuns ?? []).map((r) => r.run), now);
   if (!rows.length) return [h('div', { class: 'none' }, 'No reviews yet')];
   return rows.map((r) => {
-    const health = healthKind(r.health);
     const open = openStamp === r.stamp;
     return [
       h('button', { class: 'card run', type: 'button', 'aria-expanded': open ? 'true' : 'false', onclick: () => onToggleRun(r.stamp) },
         h('div', { class: 'top' }, h('span', {}, r.verdict || 'review'), h('span', { class: 'meta-text' }, r.when), h('span', { class: 'code' }, r.shortSha)),
         h('div', {}, r.findingsText),
-        h('div', { class: 'top' }, status(postKind(r.post.tone), r.post.label), health ? status(health, r.health) : null,
+        h('div', { class: 'top' }, status(r.post.status, r.post.label), r.healthStatus ? status(r.healthStatus, r.health) : null,
           r.costText ? h('span', { class: 'meta-text' }, r.costText) : null)),
       open ? h('div', { onclick: (e) => e.stopPropagation() }, reviewBody(bodies.get(r.stamp))) : null,
     ];
@@ -56,7 +59,7 @@ function fileList(files, { onPick }) {
     const parts = f.path.split('/');
     const name = parts.pop();
     return h('button', { class: `file${f.generated ? ' gen' : ''}`, type: 'button', onclick: () => onPick(f.path) },
-      h('span', { class: `st ${fileMark(f.status)}` }, f.status),
+      h('span', { class: `st ${fileMarkKind(f.status)}` }, f.status),
       h('span', { class: 'p' }, h('span', { class: 'dir trunc' }, parts.length ? `${parts.join('/')}/` : ''), h('span', { class: 'trunc' }, name)),
       f.generated ? h('span', { class: 'gen-note' }, 'generated') : null,
       f.add > 0 ? h('span', { class: 'add' }, `+${f.add}`) : null, f.del > 0 ? h('span', { class: 'del' }, `-${f.del}`) : null);

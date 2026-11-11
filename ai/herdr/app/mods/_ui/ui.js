@@ -5,6 +5,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, settings } from "herdr";
 import { SP, TYPE, RADIUS, CONTROL, LAYOUT } from "../_lib/tokens.js";
+import { STATUS, DIFF, statusOf } from "../_lib/status.js";
 
 export function mono() {
   return settings().font_family ?? "Menlo";
@@ -83,21 +84,11 @@ export function tag(content) {
     .text_color(t.muted).child(content);
 }
 
-// The status kinds DESIGN.md gives a glyph and colour. Fail is × (U+00D7), which the brand fonts
-// draw; the ballot X (U+2717) is in none. The theme's terminal mapping puts danger on ANSI 1.
-const STATUS = {
-  pass: { glyph: "✓", color: (t) => t.done },
-  fail: { glyph: "×", color: (t) => t.ansi1 },
-  running: { glyph: "…", color: (t) => t.working },
-  warn: { glyph: "!", color: (t) => t.ansi3 },
-  none: { glyph: "·", color: (t) => t.muted },
-};
-
 // Status is coloured text plus a glyph, never a pill. Without `label` the glyph stands alone and
 // `aria` names it.
 export function statusText(kind, label, { role = "meta", aria, gap = SP.xxs } = {}) {
-  const s = STATUS[kind] ?? STATUS.none;
-  const color = s.color(theme());
+  const s = statusOf(kind);
+  const color = theme()[s.field];
   const row = type(h_flex(), role).flex_none().gap(gap).items_center().text_color(color)
     .child(div().child(s.glyph));
   if (label) return row.child(div().child(label));
@@ -154,7 +145,7 @@ export function placeholder(content) {
 
 // DESIGN.md's error state: a one-line reason in the danger colour. Callers that can reload add
 // an outline "Retry" button beside it.
-export const dangerColor = () => STATUS.fail.color(theme());
+export const dangerColor = () => theme()[STATUS.fail.field];
 
 export function errorLine(content) {
   return text("body", content, dangerColor());
@@ -227,23 +218,33 @@ export function laneTitle(label, count, action = null) {
     .when(Boolean(action), (e) => e.child(div().flex_1()).child(action));
 }
 
-const CI = { passing: "pass", failing: "fail", pending: "running" };
-
-// A PR's CI as a status glyph alone; no CI is nothing.
-export function ciMark(status) {
-  const kind = CI[status];
-  if (!kind) return div().flex_none();
-  return statusText(kind, null, { role: "body", aria: `CI ${status}` });
-}
-
 export function pane(id) {
   return v_flex().id(id).size_full().min_h(0).bg(theme().background).text_color(theme().foreground);
 }
 
 export function addStat(n) {
-  return div().text_color(theme().done).child(`+${n}`);
+  return div().text_color(theme()[DIFF.add]).child(`+${n}`);
 }
 
 export function delStat(n) {
-  return div().text_color(theme().ansi1).child(`-${n}`);
+  return div().text_color(theme()[DIFF.del]).child(`-${n}`);
+}
+
+// One presentation badge (_lib/pr_status.js): status text, a tag, or muted meta text.
+export function badge(b) {
+  if (b.kind === "status") return statusText(b.status, b.text);
+  if (b.kind === "tag") return tag(b.text);
+  return text("meta", b.text, theme().muted);
+}
+// A wrapping row of badges: a card's badge row, the detail's status row.
+export function badgeRow(list) {
+  return h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(list.map(badge));
+}
+// A presentation's stats (+N, -N, N files) in meta, coloured by DIFF.
+export function statsRow(stats) {
+  const t = theme();
+  return h_flex().gap(SP.sm).items_center()
+    .child(text("meta", stats.additions, t[DIFF.add]))
+    .child(text("meta", stats.deletions, t[DIFF.del]))
+    .child(text("meta", stats.files, t[DIFF.mod]));
 }

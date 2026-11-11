@@ -5,9 +5,8 @@ The web view of the `prs` board (`ai/herdr/app/mods/prs`). Spec and deploy contr
 - Logic lives in `ai/herdr/app/mods/_lib/` and is shared with the herdr-app mod: change it only in ways that keep the
   mod behaving the same and its `tests/herdr_app_mods_lib_*.bats` green.
 - `lib/view.js` `boardModel().bar` comes from `_lib/filters.js` `barModel`; `public/filter_bar.js` draws it; filters persist in `localStorage` `pr-board.ui` via `prefs.js` `normalizeFilters`.
-- Cards show state tags (Merged, In merge queue, Draft) top right and every `prIssues` problem except owed feedback
-  as coloured status text in the badge row, independent of lane (`lib/view.js` `cardTags` / `cardBadges`); a draft keeps
-  its real CI status. The web server does not read owed feedback.
+- Cards and detail draw `_lib/pr_status.js` `prPresentation` slots (`public/board_view.js card`, `public/detail_view.js header`).
+  A draft keeps its real CI status. The web server does not read owed feedback.
 - Import `_lib` as `../../app/mods/_lib/<file>.js`. Static URLs mirror `ai/herdr/`, so the same spelling works in the
   browser; the release tree (`bin/pr-board-release`) keeps the same paths.
 - Only `server/main.js` touches `Bun`. Everything else is node-testable: `tests/herdr_web_*.bats` drive it with

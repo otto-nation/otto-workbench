@@ -6,8 +6,9 @@ import { renderBoard, renderSections } from './board_view.js';
 import { renderFilterBar } from './filter_bar.js';
 import { renderLoad } from './load_status.js';
 import { renderDetail } from './detail_view.js';
-import { boardModel, errorStatus, GLYPH, toggleFilter } from '../lib/view.js';
+import { boardModel, errorStatus, toggleFilter } from '../lib/view.js';
 import { loadState, LOAD_DELAY_MS } from '../../app/mods/_lib/load_state.js';
+import { GLYPH } from '../../app/mods/_lib/status.js';
 import { viewOf } from '../../app/mods/_lib/compact.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
 import { patchRows } from '../../app/mods/_lib/diff.js';
@@ -17,9 +18,9 @@ import { relativeTime } from '../../app/mods/_lib/history.js';
 const $ = (s) => document.querySelector(s);
 const freshDetail = () => ({ tab: 'history', openStamp: null, bodies: new Map(), files: null, openFile: null, diff: null, slots: null });
 const S = { ui: loadUi(), snap: null, sel: null, collapsed: new Set(['landed', 'merged']), refreshing: false, loadSince: null, detail: freshDetail() };
-// Later phases register here: detailSlots (Phase 2/3/4), onBoard, onRun (Phase 2), headExtra, cardLine and
+// Later phases register here: detailSlots (Phase 2/3/4), onBoard, onRun (Phase 2), headExtra, cardItem and
 // boardOverride (Phase 4: the Batch page replaces the Mine board).
-export const hooks = { detailSlots: null, onBoard: [], headExtra: null, cardLine: null, boardOverride: null };
+export const hooks = { detailSlots: null, onBoard: [], headExtra: null, cardItem: null, boardOverride: null };
 
 const selectedPr = () => (S.sel ? S.snap?.prs.find((p) => cardId(p) === S.sel) ?? null : null);
 
@@ -141,10 +142,10 @@ export function render() {
     if (override) {
       (compact ? $('#msections') : $('#board')).replaceChildren(override);
     } else if (compact) {
-      renderSections($('#msections'), model, { loading, collapsed: S.collapsed, selectedId: S.sel, onOpen: (pr) => openPr(pr), extraLine: hooks.cardLine,
+      renderSections($('#msections'), model, { loading, collapsed: S.collapsed, selectedId: S.sel, onOpen: (pr) => openPr(pr), itemOf: hooks.cardItem,
         onToggleSection: (key) => { S.collapsed.has(key) ? S.collapsed.delete(key) : S.collapsed.add(key); render(); } });
     } else {
-      renderBoard($('#board'), model, { loading, tab: S.ui.tab, selectedId: S.sel, onOpen: (pr) => openPr(pr), extraLine: hooks.cardLine });
+      renderBoard($('#board'), model, { loading, tab: S.ui.tab, selectedId: S.sel, onOpen: (pr) => openPr(pr), itemOf: hooks.cardItem });
     }
     const pr = selectedPr();
     if (pr && S.detail.tab === 'files') loadFiles(pr);
@@ -155,6 +156,7 @@ export function render() {
       onToggleRun: (stamp) => toggleRun(pr, stamp),
       onPick: (path) => pickFile(pr, path),
       onBack: () => { S.detail.openFile = null; S.detail.diff = null; render(); },
+      itemOf: hooks.cardItem,
     });
   });
 }

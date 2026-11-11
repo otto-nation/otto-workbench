@@ -90,7 +90,7 @@ export function mineColumn(pr) {
 export function prIssues(pr) {
   if (pr.state === 'MERGED') return [];
   if (pr.hydrated === false) {
-    const out = [{ kind: 'ci-pending', label: 'CI pending', status: 'none' }];
+    const out = [{ kind: 'ci-pending', label: 'CI loading', status: 'none' }];
     if (pr.owedFeedback) out.push({ kind: 'has-comments', label: String(pr.owedFeedback).split(',')[0], status: 'warn' });
     return out;
   }

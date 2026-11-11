@@ -70,20 +70,20 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
   [ "$output" = '[[1,3],[3],["not kit","not bug","not cy","Bots hidden"],["show","repos","labels","authors"],["show","repos","labels"]]' ]
 }
 
-@test "view: card badges are text, status or tag (never pills), as prs/board.js badges()" {
-  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
+@test "view: card badges are text, status or tag (never pills), as prPresentation().badges" {
+  _web "$VIEW_FIX const m = await import(L + '/pr_status.js');
         const p = pr(1, { isDraft: true, state: 'OPEN', inMergeQueue: true, mergeable: 'CONFLICTING', ciStatus: 'failing', reviewDecision: 'CHANGES_REQUESTED', busy: true, reviewRuns: [{}, {}], labels: ['a', 'b', 'c'] });
-        out([v.cardBadges(p), v.cardBadges(p, { hideBusy: true }).map((b) => b.text)]);"
+        out(m.prPresentation(p).badges);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[[{"kind":"status","status":"fail","text":"Conflicts"},{"kind":"status","status":"fail","text":"CI failing"},{"kind":"status","status":"warn","text":"Changes requested"},{"kind":"status","status":"running","text":"Batch working"},{"kind":"text","text":"2 reviews"},{"kind":"tag","text":"a"},{"kind":"tag","text":"b"}],["Conflicts","CI failing","Changes requested","2 reviews","a","b"]]' ]
+  [ "$output" = '[{"kind":"status","status":"fail","text":"Conflicts"},{"kind":"status","status":"fail","text":"CI failing"},{"kind":"status","status":"warn","text":"Changes requested"},{"kind":"status","status":"running","text":"Batch · working"},{"kind":"text","status":null,"text":"2 reviews"},{"kind":"tag","status":null,"text":"a"},{"kind":"tag","status":null,"text":"b"}]' ]
 }
 
 @test "view: ciUnknown is a CI unknown status badge" {
-  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
+  _web "$VIEW_FIX const m = await import(L + '/pr_status.js');
         const s = await import(W + '/lib/snapshot.js');
         const p = pr(1, { ciUnknown: true, ciStatus: 'none' });
         const shot = s.toSnapshot({ prs: [p] }, { name: 'n', version: '1' });
-        out(v.cardBadges(shot.prs[0]));"
+        out(m.prPresentation(shot.prs[0]).badges);"
   [ "$status" -eq 0 ]
   [ "$output" = '[{"kind":"status","status":"none","text":"CI unknown"}]' ]
 }
@@ -100,10 +100,11 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
   [ "$output" = '{"keys":["error","folder","on","partial","phase","slug","updatedAt"],"cwd":false,"extra":false,"error":"boom"}' ]
 }
 
-@test "view: state tags (Merged, In merge queue, Draft) are cardTags, not badges" {
-  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
+@test "view: state tags (Merged, In merge queue, Draft) are presentation tags, not badges" {
+  _web "$VIEW_FIX const m = await import(L + '/pr_status.js');
         const p = pr(1, { state: 'MERGED', isDraft: true });
-        out([v.cardTags(p), v.cardBadges(p).some((b) => b.text === 'Draft' || b.text === 'Merged')]);"
+        const pres = m.prPresentation(p);
+        out([pres.tags, pres.badges.some((b) => b.text === 'Draft' || b.text === 'Merged')]);"
   [ "$status" -eq 0 ]
   [ "$output" = '[["Merged","Draft"],false]' ]
 }
@@ -125,15 +126,13 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
   [ "$output" = '["","<img src=x onerror=alert(1)>","<b>nope</b>","t"]' ]
 }
 
-@test "view: numbers, decision text, https-only PR URL, generated files last, status kinds, stale vs failed" {
+@test "view: https-only PR URL, generated files last, stale vs failed" {
   _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
-        out([v.cardNumber(pr(7)), v.cardNumber({ number: 7 }), v.decisionText('CHANGES_REQUESTED'),
-             v.prUrl({ url: 'https://github.com/a/b/pull/1' }), v.prUrl({ url: 'javascript:alert(1)', repoSlug: 'a/b', number: 1 }),
+        out([v.prUrl({ url: 'https://github.com/a/b/pull/1' }), v.prUrl({ url: 'javascript:alert(1)', repoSlug: 'a/b', number: 1 }),
              v.sortedFiles([{ path: 'g', generated: true }, { path: 'a', generated: false }]).map((f) => f.path),
-             ['success', 'warning', 'info', 'muted'].map(v.postKind), ['ok', 'Partial', 'Error'].map(v.healthKind), ['A', 'D', 'M'].map(v.fileMark),
-             v.errorStatus({ updatedAt: 1000 }, 121000), v.errorStatus({ updatedAt: null }, 5), v.GLYPH]);"
+             v.errorStatus({ updatedAt: 1000 }, 121000), v.errorStatus({ updatedAt: null }, 5)]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '["box #7","#7","changes requested","https://github.com/a/b/pull/1","https://github.com/a/b/pull/1",["a","g"],["pass","warn","none","none"],[null,"warn","fail"],["add","del","mod"],{"status":"warn","text":"stale · 2m ago"},{"status":"fail","text":"failed"},{"pass":"✓","fail":"×","running":"…","warn":"!","none":"·"}]' ]
+  [ "$output" = '["https://github.com/a/b/pull/1","https://github.com/a/b/pull/1",["a","g"],{"status":"warn","text":"stale · 2m ago"},{"status":"fail","text":"failed"}]' ]
 }
 
 @test "view: empty-lanes is read with filterOn, not Boolean" {

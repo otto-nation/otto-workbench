@@ -1,5 +1,5 @@
 // The page's DOM builder: text always goes in as text. The one exception is trustedMarkdown.
-import { GLYPH } from '../lib/view.js';
+import { GLYPH } from '../../app/mods/_lib/status.js';
 
 // replaceChildren stringifies null/false to "null"/"false"; drop them like h() does.
 export function setChildren(el, ...kids) {
@@ -37,6 +37,13 @@ export function status(kind, label, { aria, role, wide } = {}) {
 
 export function tag(text) {
   return h('span', { class: 'tag' }, text);
+}
+
+// One presentation badge (_lib/pr_status.js): status text, a tag, or muted meta text.
+export function badge(b) {
+  if (b.kind === 'status') return status(b.status, b.text);
+  if (b.kind === 'tag') return tag(b.text);
+  return h('span', { class: 'meta-text' }, b.text);
 }
 
 export function sectionLabel(text, count = null) {

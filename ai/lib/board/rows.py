@@ -1,4 +1,9 @@
-"""Assemble board rows from the merged cache, reviews listing and busy set."""
+"""Assemble board rows from the merged cache, reviews listing and busy set.
+
+Ports the row assembly of `_lib/board_data.js`. Each row merges the listing
+and status cache entries, marks the viewer's own PRs, and attaches the lanes
+and issues from `board.columns` plus any owed or busy state.
+"""
 
 # doc-group: board
 

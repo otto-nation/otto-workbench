@@ -486,8 +486,7 @@ def _held_scopes(spec, extra: list[str], ctx: pr.context.ResolvedContext,
                  original_pr: str | None) -> frozenset:
     """The target and checkout scopes this invocation holds, read once the context is known."""
     argv = _review_argv(extra, ctx, original_pr) if spec.name == "review" else extra
-    locks = need_for(spec, argv).locks
-    return locks - core.run_lock.globals_in(locks)
+    return need_for(spec, argv).locks
 
 
 def _own_parser_printed_help(spec, extra: list[str]) -> bool:
@@ -516,24 +515,19 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
                                original_pr: str | None,
                                original_branch: str | None,
                                original_repo_dir: str | None) -> int:
-    """Lock, resolve, lock, fetch and dispatch — in that order, every lock held on *held*.
+    """Resolve, lock, fetch and dispatch — in that order, every lock held on *held*.
 
-    The order is the guarantee. A global lock is taken before the context is
-    resolved, so a command whose subject is machine-wide (`pr batch run`)
-    holds it before it reads any state. Target and checkout need the resolved
-    context to name them, and are taken before `update_to_remote` fetches and
+    The order is the guarantee. Target and checkout need the resolved context
+    to name them, and are taken before `update_to_remote` fetches and
     fast-forwards the worktree — a write to the checkout — and before the
-    handler runs. Global → target → checkout is the one order every `pr`
-    process takes them in, so no two can deadlock.
+    handler runs. Target → checkout is the one order every `pr` process takes
+    them in, so no two can deadlock.
 
     Real help is the command's own parser exiting 0, not a `--help` token in
-    extra: a live `pr batch run` must still print `pr batch run --help`.
+    extra: help takes no lock, so it prints while another run holds the target.
     """
     if _own_parser_printed_help(spec, extra):
         return 0
-
-    held.enter_context(cli.locks.hold_declared(
-        core.run_lock.globals_in(need.locks), None, command=command))
 
     ctx = pr.context.resolve_at(
         need.depth,

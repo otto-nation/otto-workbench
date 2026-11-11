@@ -5865,13 +5865,11 @@ cannot deadlock against another pair.
 A caller that writes to no checkout, or whose worktree git cannot resolve, takes
 the target lock alone.
 
-A third scope is keyed on nothing a run resolves. ``Global(name)`` is a
-machine-wide lock on ``<state_dir>/locks/<name>.lock``, for a command that must
-be the only one of its kind running. Every holder takes its scopes through
-``hold``, in one order — globals by name, then the target, then the checkout —
-so with every take non-blocking no two ``pr`` processes can deadlock.
+Every holder takes its scopes through ``hold``, in one order — the target,
+then the checkout — so with every take non-blocking no two ``pr`` processes can
+deadlock.
 
-A fourth kind sits outside those scopes. ``Resource`` is a lock on a path
+A third kind sits outside those scopes. ``Resource`` is a lock on a path
 the caller names, with no env marker: a child neither inherits it nor
 passes through it. ``hold_resource`` takes it. ``create=False`` (the default)
 refuses a missing parent directory rather than creating it, so a late
@@ -5912,8 +5910,8 @@ the five entry points that can be run without ``pr`` — ``review``,
 ``ci-check``, ``review-threads``, ``pr-rebase`` and ``pr-describe`` — so
 bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
 finds the lock already in this process's registry, or in
-``WORKBENCH_RUN_LOCK``, ``WORKBENCH_RUN_LOCK_TREE`` or
-``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through.
+``WORKBENCH_RUN_LOCK`` or ``WORKBENCH_RUN_LOCK_TREE`` when it is a child,
+and passes through.
 ``bin/local/validate-run-locks`` refuses a lock taken anywhere else.
 
 The one late acquisition is ``lock_checkout``, for a review that learns which
@@ -8173,9 +8171,9 @@ Every `pr` command declares the locks it holds on its `Need`, in
 `cli.registry`, as a set of `core.run_lock` scopes; no handler chooses its own.
 This module is the one place they are taken for a command:
 
-* `hold_declared` — `pr`'s dispatcher, for the whole dispatch. Globals before
-  the context is resolved; target and checkout once it is, before the worktree
-  is fetched and before the handler runs.
+* `hold_declared` — `pr`'s dispatcher, for the whole dispatch. Target and
+  checkout once the context is resolved, before the worktree is fetched and
+  before the handler runs.
 * `claim_declared` — the entry points that can be run without `pr` (`review`,
   `ci-check`, `review-threads`, `pr-rebase`, `pr-describe`), for the rest of
   the process. Under `pr` the lock is already held and this passes through;
@@ -8183,8 +8181,8 @@ This module is the one place they are taken for a command:
 
 | Command / mode | Holds |
 |---|---|
-| `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
-| `batch cancel`, `batch release` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can — never the global, so it reaches a live run |
+| `batch run`, `batch resume` | nothing declared; the handler holds every item's target, and each item's worktree once assigned, until that item settles. Nothing is held per repo, so several runs may cover one |
+| `batch cancel`, `batch release` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can, so it reaches a live run |
 | `batch status`, `report`, `plan` | nothing |
 | `rebase`, `push`, `describe`, `fix` | target + checkout |
 | `comments` | target + checkout; `--reply` / `--settle` the target only |

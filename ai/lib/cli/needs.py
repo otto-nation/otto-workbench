@@ -42,8 +42,7 @@ class Need:
       (``update_to_remote``) before the handler runs.
     * ``locks`` — the run locks held for the whole dispatch, as ``core.run_lock``
       scopes: ``TARGET`` (this PR is being worked on), ``CHECKOUT`` (this
-      working tree is being written to), a ``Global`` (only one of these may run
-      on the machine). ``NO_LOCK`` only for a command that neither writes
+      working tree is being written to). ``NO_LOCK`` only for a command that neither writes
       ``state.json`` nor touches the worktree, so it is safe alongside another
       run. `cli.locks` takes them, and its docstring tables every command's.
     * ``worktree`` — whether dispatch may create a checkout of the requested
@@ -85,15 +84,11 @@ class Need:
         because the listing is built to be polled. Two records a tick is more
         expensive than the query itself, and it lands in the file every
         `otto-log` query then has to read — see `trail.TRAIL_KEEP_MONTHS`,
-        which bounds that file for the writers this does not cover.
-
-        A global lock alone does not count. It names no repo, PR or branch to
-        record against, and the command that holds one — `pr batch run` —
-        keeps a trail of its own.
+        which bounds that file for the writers this does not cover. `pr batch`
+        is that shape too, and keeps a trail of its own.
         """
         resolves_nothing = self.depth is pr.context.ContextDepth.NONE
-        holds_a_target = any(not isinstance(s, core.run_lock.Global) for s in self.locks)
-        return holds_a_target or not resolves_nothing
+        return bool(self.locks) or not resolves_nothing
 
 
 # The lock sets commands declare. Named once so a declaration reads as one of a

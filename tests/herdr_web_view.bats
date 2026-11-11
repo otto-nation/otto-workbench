@@ -35,14 +35,14 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
   [ "$output" = '{"cols":["open:1,3,4"],"kit":[4],"authors":["bob","cy"],"repos":["acme/box","acme/kit"],"count":[0,1],"ui":["tab","theme","filters"]}' ]
 }
 
-@test "view: mine tab buckets the viewer's PRs with MINE_COLUMNS; drafts hidden by default (Draft lane empty, so hidden), shown with its own Drafts chip" {
+@test "view: mine tab buckets the viewer's PRs with MINE_COLUMNS; drafts hidden by default, shown with the Drafts chip in the lane for their real state" {
   _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
         const off = v.boardModel(snap, { ...v.DEFAULT_UI, tab: 'mine' });
         const on = v.boardModel(snap, v.toggleFilter({ ...v.DEFAULT_UI, tab: 'mine' }, 'mineDrafts'));
         const stored = v.boardModel(snap, { ...v.DEFAULT_UI, tab: 'mine', filters: { ...v.DEFAULT_UI.filters, mineDrafts: true } });
         out([off.columns.map((c) => c.key), off.sections.map((s) => s.key + ':' + s.count), on.columns.map((c) => c.key), on.sections.map((s) => s.key + ':' + s.count), stored.columns.map((c) => c.key)]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[["has-conflicts"],["has-conflicts:1"],["has-conflicts","draft"],["has-conflicts:1","draft:1"],["has-conflicts","draft"]]' ]
+  [ "$output" = '[["has-conflicts"],["has-conflicts:1"],["has-conflicts","awaiting-review"],["has-conflicts:1","awaiting-review:1"],["has-conflicts","awaiting-review"]]' ]
 }
 
 @test "view: toggleFilter is immutable and counts every chip off its default, including Drafts" {

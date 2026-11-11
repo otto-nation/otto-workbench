@@ -51,6 +51,13 @@ restates none of their contents:
 Where `DESIGN.md` is silent, keep to those owners rather than inventing a value,
 and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 
+## Loading
+
+- Owners: `_lib/scope.js` `repoStates`, `_lib/load_state.js`, `prs/load_status.js`
+- Indicators are static glyphs (queued `·`, loading/hydrating `…`, stale `!`, failed `×`): no spin, frames, loop, or CSS animation
+- The header line, progress, and strip appear only after 1s (`LOAD_DELAY_MS`); before that, empty boards stay muted "Loading…"
+- A PR with `hydrated: false` is CI pending (`prIssues`), not an empty CI column
+
 ## Checking and installing
 
 - Check an assembled copy, not the source tree: `_herdr_app_install_mods "$tmp"` then `herdr-app check "$tmp/mods/prs"` (source `lib/ui.sh`, `lib/constants.sh` and `ai/herdr/steps.sh` first)

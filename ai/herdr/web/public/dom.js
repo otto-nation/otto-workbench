@@ -29,9 +29,9 @@ export function h(tag, props = {}, ...children) {
 }
 
 // DESIGN.md status: coloured text plus a glyph; without a label the glyph stands alone and aria names it.
-export function status(kind, label, { aria, role } = {}) {
+export function status(kind, label, { aria, role, wide } = {}) {
   const k = GLYPH[kind] ? kind : 'none';
-  return h('span', { class: `status ${k}${role === 'body' ? ' body' : ''}`, 'aria-label': label ? null : (aria ?? k) },
+  return h('span', { class: `status ${k}${role === 'body' ? ' body' : ''}${wide ? ' wide' : ''}`, 'aria-label': label ? null : (aria ?? k) },
     h('span', { 'aria-hidden': 'true' }, GLYPH[k]), label ?? null);
 }
 

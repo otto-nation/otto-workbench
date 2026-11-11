@@ -15,6 +15,7 @@
  *   reviewing: boolean — ui-code's isReviewQueued, stored on the PR here
  *   author: login
  *   owedFeedback: string | null — what `pr comments` would answer, from pr's own plan
+ *   hydrated: boolean — false means listing-only; CI and review fields are not loaded yet
  *   reviewRuns: array NEWEST FIRST of { postedEvent: null | string }
  *     null = unposted; any non-null, including 'dismissed', counts as posted
  */
@@ -88,6 +89,11 @@ export function mineColumn(pr) {
 // Every problem a PR has, independent of its lane, in mineColumn's precedence order.
 export function prIssues(pr) {
   if (pr.state === 'MERGED') return [];
+  if (pr.hydrated === false) {
+    const out = [{ kind: 'ci-pending', label: 'CI pending', status: 'none' }];
+    if (pr.owedFeedback) out.push({ kind: 'has-comments', label: String(pr.owedFeedback).split(',')[0], status: 'warn' });
+    return out;
+  }
   const out = [];
   if (pr.mergeable === 'CONFLICTING') out.push({ kind: 'conflicts', label: 'Conflicts', status: 'fail' });
   if (pr.ciStatus === 'failing') out.push({ kind: 'ci-failing', label: 'CI failing', status: 'fail' });

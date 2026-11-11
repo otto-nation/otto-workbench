@@ -123,6 +123,22 @@ const call = async (path, init = {}) => { const r = await app.fetch(new Request(
   [ "$output" = '["text/event-stream; charset=utf-8","no-store","no","nosniff","no-referrer","same-origin","same-origin",true,1,["event: board","event: board","event: status","event: board"]]' ]
 }
 
+@test "sse: changeFeed treats repoStates updatedAt as clock and phase as board" {
+  _web "const { createHub, changeFeed } = await import(W + '/server/sse.js');
+        const hub = createHub({ every: () => 0, stopEvery: () => {} });
+        const res = hub.subscribe([]);
+        const reader = res.body.getReader(); const dec = new TextDecoder();
+        const feed = changeFeed(hub);
+        const row = (phase, at) => ({ slug: 'acme/box', folder: 'box', on: null, phase, partial: false, updatedAt: at, error: null });
+        feed({ repoStates: [row('loaded', 1)], updatedAt: 1, refreshing: false });
+        feed({ repoStates: [row('loaded', 2)], updatedAt: 2, refreshing: false });
+        feed({ repoStates: [row('stale', 2)], updatedAt: 2, refreshing: false });
+        let text = ''; for (let i = 0; i < 3; i++) text += dec.decode((await reader.read()).value);
+        out(text.split('\n\n').filter(Boolean).map((f) => f.split('\n')[0]));"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["event: board","event: status","event: board"]' ]
+}
+
 @test "sse: a throwing enqueue drops the client and stops its heartbeat" {
   _web "const { createHub } = await import(W + '/server/sse.js');
         const proto = ReadableStreamDefaultController.prototype;

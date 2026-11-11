@@ -10,9 +10,13 @@ function numOf(pr, showRepo) {
   return showRepo && pr.repoSlug ? `${pr.repoSlug.split("/").pop()}#${pr.number}` : `#${pr.number}`;
 }
 
-export function renderCompact({ sections, onOpen, showRepo, width, onBatch }) {
+export function renderCompact({ sections, onOpen, showRepo, width, onBatch, empty }) {
   const t = theme();
   const two = (width ?? 0) >= BREAKPOINT.twoLine;
+  const list = sections ?? [];
+  if (!list.length && empty) {
+    return v_flex().size_full().p(SP.md).child(empty);
+  }
   const row = (pr) => {
     const title = type(h_flex().min_w(0).flex_1().truncate(), "body").child(pr.title ?? "");
     const meta = `${numOf(pr, showRepo)} · ${pr.author ?? ""}`;
@@ -26,7 +30,7 @@ export function renderCompact({ sections, onOpen, showRepo, width, onBatch }) {
         .children(prIssues(pr).map((i) => statusText(i.status, i.label)))));
   };
   return v_flex().size_full().min_h(0).overflow_y_scrollbar()
-    .children((sections ?? []).map((s) => v_flex().flex_none()
+    .children(list.map((s) => v_flex().flex_none()
       .child(h_flex().items_center().px(SP.md).pt(SP.md).pb(SP.xs)
         .child(sectionLabel(s.label, s.count))
         .child(h_flex().flex_1())

@@ -29,3 +29,12 @@ teardown() {
   [ "$status" -eq 1 ]
   grep -q 'fail: { glyph: "×"' "$MODS/_ui/ui.js"
 }
+
+@test "load_status indicators are static: no spin, frames, loop, or transition" {
+  run grep -nE '\.(spin|frames|loop|transition)\(' "$MODS/prs/load_status.js"
+  [ "$status" -eq 1 ]
+}
+
+@test "load_status uses SP.sm gap on status text" {
+  grep -q 'gap: SP.sm' "$MODS/prs/load_status.js"
+}

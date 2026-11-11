@@ -75,6 +75,18 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
   [ "$output" = '[{"kind":"status","status":"none","text":"CI unknown"}]' ]
 }
 
+@test "view: toSnapshot whitelists repoStates and stringifies error" {
+  _web "const s = await import(W + '/lib/snapshot.js');
+        const shot = s.toSnapshot({
+          repoStates: [{ slug: 'acme/x', folder: 'x', on: null, phase: 'failed', partial: false, updatedAt: 1,
+            error: { message: 'boom' }, cwd: '/w/x', extra: 'nope' }],
+        }, { name: 'n', version: '1' });
+        const row = shot.repoStates[0];
+        out({ keys: Object.keys(row).sort(), cwd: 'cwd' in row, extra: 'extra' in row, error: row.error });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"keys":["error","folder","on","partial","phase","slug","updatedAt"],"cwd":false,"extra":false,"error":"boom"}' ]
+}
+
 @test "view: state tags (Merged, In merge queue, Draft) are cardTags, not badges" {
   _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
         const p = pr(1, { state: 'MERGED', isDraft: true });
@@ -138,6 +150,7 @@ FAKE_DOM='class N {}
           setAttribute(k, v) { this.attrs[k] = v; }
           addEventListener(type, fn) { this.listeners.push([type, fn]); }
           append(...c) { this.children.push(...c); }
+          prepend(...c) { this.children.unshift(...c); }
           replaceChildren(...c) { this.children = [...c]; }
         }
         globalThis.Node = N;
@@ -199,4 +212,67 @@ FAKE_DOM='class N {}
         out({ afterErrors, threw, got, fetches, url: es.url });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"afterErrors":1,"threw":false,"got":[{"ok":1}],"fetches":["/api/board","/api/board"],"url":"/api/events"}' ]
+}
+
+@test "view: status wide adds class wide; skeletonLanes uses column labels without a count" {
+  _web "$FAKE_DOM
+        const { status } = await import(W + '/public/dom.js');
+        const { skeletonLanes } = await import(W + '/public/load_status.js');
+        const { MINE_COLUMNS, TEAM_COLUMNS } = await import(L + '/columns.js');
+        const wide = status('running', 'Loading 1 of 3 repos', { wide: true });
+        const plain = status('running', 'x');
+        const mine = skeletonLanes('mine');
+        const team = skeletonLanes('team');
+        const titleKids = (col) => col.children[0].children.map((c) => c.className);
+        out({
+          wide: wide.className, plain: plain.className,
+          mineN: mine.length, teamN: team.length,
+          mineLabel: mine[0].children[0].children[0].children[0].text,
+          teamLabel: team[0].children[0].children[0].children[0].text,
+          wantMine: MINE_COLUMNS[0].label, wantTeam: TEAM_COLUMNS[0].label,
+          mineKeys: mine.map((c) => c.className),
+          skel: [mine[0].children[1].className, mine[0].children[2].className],
+          titleKids: titleKids(mine[0]),
+        });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"wide":"status running wide","plain":"status running","mineN":9,"teamN":6,"mineLabel":"Has Conflicts","teamLabel":"Open","wantMine":"Has Conflicts","wantTeam":"Open","mineKeys":["col","col","col","col","col","col","col","col","col"],"skel":["skel","skel short"],"titleKids":["label trunc"]}' ]
+}
+
+@test "view: renderBoard loading draws skeletons; empty not-loading is No pull requests" {
+  _web "$FAKE_DOM
+        const { renderBoard, renderSections } = await import(W + '/public/board_view.js');
+        const board = document.createElement('div');
+        renderBoard(board, { columns: [] }, { loading: true, tab: 'team' });
+        const loadingCols = board.children.map((c) => c.className);
+        renderBoard(board, { columns: [] }, { loading: false });
+        const empty = board.children[0].children[0].text;
+        const secs = document.createElement('div');
+        renderSections(secs, { sections: [] }, { loading: true, collapsed: new Set() });
+        const loadMsg = secs.children[0].children[0].text;
+        renderSections(secs, { sections: [] }, { loading: false, collapsed: new Set() });
+        const noneMsg = secs.children[0].children[0].text;
+        out({ loadingCols, empty, loadMsg, noneMsg });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"loadingCols":["col","col","col","col","col","col"],"empty":"No pull requests","loadMsg":"Loading…","noneMsg":"No pull requests"}' ]
+}
+
+@test "view: renderLoad prepends a wide running line, fills progress, and paints the strip" {
+  _web "$FAKE_DOM
+        const { renderLoad } = await import(W + '/public/load_status.js');
+        const head = document.createElement('div');
+        const strip = document.createElement('div');
+        const bar = { hidden: true, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+        renderLoad({ head, strip, bar }, {
+          shown: true, line: 'Loading 1 of 3 repos', progress: 33,
+          strip: [{ name: 'box', kind: 'running' }, { name: 'kit', kind: 'none' }],
+        });
+        const shown = {
+          headClass: head.children[0].className, headText: head.children[0].children[1].text,
+          bar: { hidden: bar.hidden, max: bar.max, value: bar.value, aria: bar.attrs['aria-label'] },
+          strip: strip.children.map((c) => [c.className, c.children[1].text]),
+        };
+        renderLoad({ head, strip, bar }, { shown: false, line: null, progress: null, strip: [{ name: 'box', kind: 'fail' }] });
+        out({ shown, hidden: bar.hidden, stripAfter: strip.children.map((c) => c.className) });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"shown":{"headClass":"status running wide","headText":"Loading 1 of 3 repos","bar":{"hidden":false,"max":100,"value":33,"aria":"Loading 1 of 3 repos"},"strip":[["status running wide","box"],["status none wide","kit"]]},"hidden":true,"stripAfter":["status fail wide"]}' ]
 }

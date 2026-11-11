@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/scope.js');
-    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId, representatives, staleKeys, cardId } = m;
+    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId, representatives, staleKeys, cardId, REPO_PHASES, repoPhase } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -126,7 +126,7 @@ _js() {
 @test "boardState: missing state is loading" {
   _js 'boardState([{cwd:"/a"}],[],"this")'
   [ "$status" -eq 0 ]
-  jq -e '.loading==1' <<<"$output"
+  jq -e '.loading==1 and .repoStates[0].phase=="queued" and .repoStates[0].folder=="a"' <<<"$output"
 }
 
 @test "repoId: missing host is slash-slug" {
@@ -181,6 +181,60 @@ _js() {
   _js 'boardState([{cwd:"/a"},{cwd:"/b"}],[{error:{kind:"timeout"},updatedAt:1000,prs:[]},{error:{kind:"timeout"}}],"this").errors.map((e) => e.updatedAt)'
   [ "$status" -eq 0 ]
   [ "$output" = "[1000,null]" ]
+}
+
+@test "REPO_PHASES lists six phases; repoPhase passes hydrating through" {
+  _js '({phases:REPO_PHASES,p:repoPhase({phase:"hydrating"})})'
+  [ "$status" -eq 0 ]
+  jq -e '.phases==["queued","loading","hydrating","loaded","failed","stale"] and .p=="hydrating"' <<<"$output"
+}
+
+@test "boardState: pulling is loading" {
+  _js 'boardState([{cwd:"/a"}],[{pulling:true}],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '.loading==1 and .repoStates[0].phase=="loading"' <<<"$output"
+}
+
+@test "boardState: loaded with partial true" {
+  _js 'boardState([{on:null,cwd:"/work/box"}],[{repo:{slug:"acme/box"},prs:[],partial:true,updatedAt:5}],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '.repoStates[0].phase=="loaded" and .repoStates[0].partial==true and .repoStates[0].folder=="box" and .repoStates[0].slug=="acme/box" and .repoStates[0].updatedAt==5 and .repoStates[0].error==null' <<<"$output"
+}
+
+@test "boardState: error with updatedAt is stale; without is failed" {
+  _js 'boardState([{cwd:"/a"},{cwd:"/b"}],[{error:{kind:"timeout"},updatedAt:1000},{error:{kind:"timeout"}}],"this").repoStates.map((r) => r.phase)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["stale","failed"]' ]
+}
+
+@test "boardState: skippable target is absent from repoStates in all scope" {
+  _js 'boardState([{cwd:"/a"},{cwd:"/tmp"}],[{repo:{slug:"o/r",host:"github.com"},prs:[{number:1}]},{error:{kind:"failed",message:"fatal: not a git repository"}}],"all")'
+  [ "$status" -eq 0 ]
+  jq -e '.skipped==1 and (.repoStates|length)==1 and .repoStates[0].phase=="loaded"' <<<"$output"
+}
+
+@test "boardState: two targets same repo is one repoStates entry" {
+  _js 'boardState([{cwd:"/a"},{cwd:"/b"}],[{repo:{slug:"o/r",host:"github.com"},prs:[],partial:true},{repo:{slug:"o/r",host:"github.com"},prs:[],partial:false}],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '(.repoStates|length)==1 and .repoStates[0].partial==true and .repoStates[0].folder=="a"' <<<"$output"
+}
+
+@test "boardState: st.phase hydrating is passed through" {
+  _js 'boardState([{cwd:"/a"}],[{phase:"hydrating",prs:[]}],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '.repoStates[0].phase=="hydrating"' <<<"$output"
+}
+
+@test "boardState: bogus st.phase is ignored" {
+  _js '({a:boardState([{cwd:"/a"}],[{phase:"nope",prs:[]}],"this").repoStates[0].phase,b:boardState([{cwd:"/a"}],[{phase:"nope"}],"this").repoStates[0].phase})'
+  [ "$status" -eq 0 ]
+  jq -e '.a=="loaded" and .b=="queued"' <<<"$output"
+}
+
+@test "boardState: repoStates has no cwd key" {
+  _js 'boardState([{cwd:"/a"}],[{repo:{slug:"o/r"},prs:[]}],"this")'
+  [ "$status" -eq 0 ]
+  jq -e '.repoStates[0]|has("cwd")|not' <<<"$output"
 }
 
 @test "friendlyError: a fourth argument names the local machine; three arguments still say this Mac" {

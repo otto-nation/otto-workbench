@@ -70,6 +70,31 @@ _issues() {
   [ "$output" = "[]" ]
 }
 
+@test "prIssues: hydrated false is CI pending plus owed" {
+  _issues '{"hydrated":false,"owedFeedback":"2 unresolved threads","ciStatus":"failing"}'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["ci-pending","none","CI pending"],["has-comments","warn","2 unresolved threads"]]' ]
+}
+
+@test "prIssues: hydrated absent still reports failing CI" {
+  _issues '{"ciStatus":"failing"}'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["ci-failing","fail","CI failing"]]' ]
+}
+
+# passes-at-base: un-hydrated rows need no mineColumn change; pins the CLI contract
+@test "mineColumn: hydrated false stays awaiting-review" {
+  run node --input-type=module -e "
+    const { mineColumn } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    const pr = Object.assign({
+      ${_EMPTY_PR}
+    }, {hydrated: false});
+    process.stdout.write(mineColumn(pr));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "awaiting-review" ]
+}
+
 @test "prIssues: conflicting reviewing PR still lists conflicts; mineColumn is in-review" {
   _issues '{"mergeable":"CONFLICTING","reviewing":true}'
   [ "$status" -eq 0 ]

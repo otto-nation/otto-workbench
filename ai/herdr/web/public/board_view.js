@@ -1,5 +1,6 @@
 // Header status, filters, lanes and the compact list: the mockup's layout with prs/board.js's look.
 import { h, sectionLabel, setChildren, status, tag } from './dom.js';
+import { skeletonLanes } from './load_status.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
 import { filterOn } from '../../app/mods/_lib/columns.js';
 import { cardBadges, cardNumber, cardTags } from '../lib/view.js';
@@ -49,9 +50,13 @@ export function renderFilters(el, model, ui, { onToggle }) {
   );
 }
 
-export function renderBoard(el, model, { loading, selectedId, onOpen, extraLine }) {
+export function renderBoard(el, model, { loading, tab, selectedId, onOpen, extraLine }) {
+  if (loading) {
+    el.replaceChildren(...skeletonLanes(tab));
+    return;
+  }
   if (!model.columns.length) {
-    el.replaceChildren(h('div', { class: 'none pad' }, loading ? 'Loading…' : 'No pull requests'));
+    el.replaceChildren(h('div', { class: 'none pad' }, 'No pull requests'));
     return;
   }
   el.replaceChildren(...model.columns.map((c) => h('section', { class: 'col' },
@@ -61,7 +66,11 @@ export function renderBoard(el, model, { loading, selectedId, onOpen, extraLine 
         : h('div', { class: 'none' }, 'None')))));
 }
 
-export function renderSections(el, model, { collapsed, onToggleSection, selectedId, onOpen, extraLine }) {
+export function renderSections(el, model, { loading, collapsed, onToggleSection, selectedId, onOpen, extraLine }) {
+  if (!model.sections.length) {
+    el.replaceChildren(h('div', { class: 'none pad' }, loading ? 'Loading…' : 'No pull requests'));
+    return;
+  }
   el.replaceChildren(...model.sections.map((s) => h('section', { class: 'msec' },
     h('button', { 'aria-expanded': collapsed.has(s.key) ? 'false' : 'true', onclick: () => onToggleSection(s.key) },
       `${collapsed.has(s.key) ? '▸' : '▾'} ${s.label}`, h('span', { class: 'meta-text' }, String(s.count))),

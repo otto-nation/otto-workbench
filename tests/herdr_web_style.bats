@@ -41,3 +41,15 @@ teardown() {
   run grep -rnE "['\"\`]#[0-9a-fA-F]{3,8}['\"\`]" "$WEB/public" "$WEB/lib" --include='*.js'
   [ "$status" -eq 1 ]
 }
+
+@test "loading indicators are static: no animation or transition on .load-progress or .skel" {
+  run grep -nE '\.(load-progress|skel)' "$WEB/public/style.css"
+  [ "$status" -eq 0 ]
+  run grep -E '\b(animation|transition)\b' <<<"$output"
+  [ "$status" -eq 1 ]
+}
+
+@test ".status.wide sets gap var(--sp-sm)" {
+  run grep -nE '\.status\.wide[^{]*\{[^}]*gap:\s*var\(--sp-sm\)' "$WEB/public/style.css"
+  [ "$status" -eq 0 ]
+}

@@ -101,6 +101,22 @@ export function repoId(repo) {
   return `${repo.host ?? ''}/${repo.slug}`;
 }
 
+export const REPO_PHASES = Object.freeze([
+  'queued', 'loading', 'hydrating', 'loaded', 'failed', 'stale',
+]);
+
+export function repoPhase(st) {
+  if (REPO_PHASES.includes(st?.phase)) return st.phase;
+  if (st?.error) return st.updatedAt != null ? 'stale' : 'failed';
+  if (st?.prs == null && st?.pulling) return 'loading';
+  if (st?.prs == null) return 'queued';
+  return 'loaded';
+}
+
+function folderName(cwd) {
+  return String(cwd ?? '').split('/').filter(Boolean).pop() ?? '';
+}
+
 // Cache keys no longer in the keep set.
 export function staleKeys(keys, keep) {
   const hold = new Set(keep);
@@ -127,10 +143,12 @@ export function representatives(targets, repoOf) {
 }
 
 // What the board shows for these targets: merged PRs, each failure with the
-// target it belongs to, and counts of skipped and still-loading targets.
+// target it belongs to, counts of skipped and still-loading targets, and one
+// repoStates entry per distinct repo (unknown-repo targets all stay).
 export function boardState(targets, states, scope) {
-  const shown = [], errors = [];
+  const shown = [], errors = [], repoStates = [];
   let skipped = 0, loading = 0;
+  const seen = new Set();
   targets.forEach((t, i) => {
     const st = states[i] ?? {};
     if (scope === 'all' && skippable(st.error)) { skipped++; return; }
@@ -138,6 +156,20 @@ export function boardState(targets, states, scope) {
     if (st.error) errors.push({ on: t.on ?? null, cwd: t.cwd ?? null, error: st.error, updatedAt: st.updatedAt ?? null });
     else if (st.prs == null) loading++;
     shown.push(st);
+    if (st.repo) {
+      const id = repoId(st.repo);
+      if (seen.has(id)) return;
+      seen.add(id);
+    }
+    repoStates.push({
+      slug: st.repo?.slug ?? null,
+      folder: folderName(t.cwd),
+      on: t.on ?? null,
+      phase: repoPhase(st),
+      error: st.error ?? null,
+      partial: Boolean(st.partial),
+      updatedAt: st.updatedAt ?? null,
+    });
   });
-  return { ...mergeStates(shown), errors, skipped, loading };
+  return { ...mergeStates(shown), errors, skipped, loading, repoStates };
 }

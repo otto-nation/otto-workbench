@@ -71,10 +71,19 @@ export function createHub({
 }
 
 // A whole snapshot only when the board changed; a small status event when only the clock moved.
+// repoStates[].updatedAt is the per-repo clock: a 15s poll that only refreshes it is not a board change.
+function feedSignature(snap) {
+  const repoStates = (snap.repoStates ?? []).map((r) => {
+    const { updatedAt, ...rest } = r;
+    return rest;
+  });
+  return JSON.stringify({ ...snap, updatedAt: 0, refreshing: false, repoStates });
+}
+
 export function changeFeed(hub) {
   let last = null;
   return (snap) => {
-    const sig = JSON.stringify({ ...snap, updatedAt: 0, refreshing: false });
+    const sig = feedSignature(snap);
     if (sig !== last) {
       last = sig;
       hub.broadcast('board', snap);

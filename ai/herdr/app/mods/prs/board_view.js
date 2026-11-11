@@ -17,16 +17,18 @@ import {
   owedDue,
 } from "./_lib/board_data.js";
 import {
-  TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterRepos, filterLabels, filterFacets, filterOn,
+  TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterOn,
   isMine, groupColumns,
 } from "./_lib/columns.js";
+import { normalizeFilters, filterAction, facetView, barModel } from "./_lib/filters.js";
 import { viewOf, compactSections } from "./_lib/compact.js";
-import { renderBoard, renderChips } from "./board.js";
+import { renderBoard } from "./board.js";
 import { loadPlaceholder, renderLoadLine, renderLoadProgress, renderLoadStrip } from "./load_status.js";
 import { renderCompact } from "./compact.js";
 import { Workflows } from "./workflows.js";
 import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
+import { FilterBar } from "./filter_bar.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, placeholder, errorLine } from "./_ui/ui.js";
@@ -65,16 +67,7 @@ function newerOwed(cached, read) {
 }
 
 function filtersOf() {
-  const f = shared("prs.filters") ?? {};
-  return {
-    drafts: f.drafts,
-    mineDrafts: f.mineDrafts,
-    landed: f.landed,
-    empty: f.empty,
-    authors: [...(f.authors ?? [])],
-    repos: [...(f.repos ?? [])],
-    labels: [...(f.labels ?? [])],
-  };
+  return normalizeFilters(shared("prs.filters"));
 }
 
 function tabOf() {
@@ -92,12 +85,18 @@ function mineOpen(state) {
     .filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED");
 }
 
-// The PRs a tab lists before the label chips: the label chips offered are those among them.
-function tabList(state, filters, tab) {
-  const base = filterRepos(state.prs ?? [], filters.repos, state.repoSlugs);
+function tabBase(state, filters, tab) {
   const me = state.me ?? "";
-  if (tab === "mine") return base.filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft));
-  return filterPrs(base, filters, me);
+  if (tab === "mine") {
+    return (state.prs ?? []).filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft));
+  }
+  return filterPrs(state.prs ?? [], filters, me);
+}
+
+function tabView(state, filters, tab) {
+  return facetView(tabBase(state, filters, tab), filters, {
+    tab, me: state.me ?? "", loadedRepos: state.repoSlugs, authorsFrom: state.prs ?? [],
+  });
 }
 
 
@@ -125,6 +124,7 @@ export default class PrsBoard extends View {
       get: () => filtersOf(),
       toggle: (name) => this.toggleChip(name, this.acx),
     });
+    this.filterBar = new FilterBar(cx);
     this.batchOpen = false;
     this.cache = new Map();
     this.toolsByOn = new Map();
@@ -431,28 +431,11 @@ export default class PrsBoard extends View {
   }
 
   toggleChip(name, cx) {
-    const f = filtersOf();
-    if (name === "drafts" || name === "mineDrafts" || name === "landed" || name === "empty") {
-      f[name] = !filterOn(f, name);
-      setShared("prs.filters", f);
-      if (name === "landed" && f.landed) this.refresh(cx);
-      return;
-    }
-    for (const [prefix, field] of [["repo:", "repos"], ["label:", "labels"]]) {
-      if (!name.startsWith(prefix)) continue;
-      const value = name.slice(prefix.length).toLowerCase();
-      const set = new Set(f[field].map((r) => String(r).toLowerCase()));
-      if (set.has(value)) set.delete(value); else set.add(value);
-      f[field] = [...set];
-      setShared("prs.filters", f);
-      return;
-    }
-    if (!name.startsWith("author:")) return;
-    const login = name.slice(7).toLowerCase();
-    const set = new Set(f.authors.map((a) => String(a).toLowerCase()));
-    if (set.has(login)) set.delete(login); else set.add(login);
-    f.authors = [...set];
+    const before = filtersOf();
+    const f = filterAction(before, name);
+    if (f === before) return;
     setShared("prs.filters", f);
+    if (name === "landed" && filterOn(f, "landed")) this.refresh(cx);
   }
 
   render(cx) {
@@ -479,12 +462,13 @@ export default class PrsBoard extends View {
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (this.batchOpen && tabOf() === "mine") {
       this.launcher.loaded = view.repoSlugs;
-      this.launcher.knownLabels = filterFacets(tabList(view, filtersOf(), "mine")).labels;
+      this.launcher.knownLabels = tabView(view, filtersOf(), "mine").options.labels;
       return note(renderBatchPage({
         launcher: this.launcher,
         workflows: this.workflows,
         prs: mineOpen(view),
         allPrs: view.prs,
+        filterBar: this.filterBar,
         onOpenPr: (pr) => this.openDetail(pr, cx, "batch"),
         onBack: () => { this.batchOpen = false; this.acx.notify(); },
         run,
@@ -507,8 +491,7 @@ export default class PrsBoard extends View {
   }
 
   listed(state) {
-    const filters = filtersOf();
-    return filterLabels(tabList(state, filters, tabOf()), filters.labels);
+    return tabView(state, filtersOf(), tabOf()).list;
   }
 
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
@@ -601,16 +584,15 @@ export default class PrsBoard extends View {
 
   boardView(cx, ctx, state, t, load) {
     const filters = filtersOf(), tab = tabOf();
-    // Team view is about teammates: the viewer has the Mine tab.
-    const me = String(state.me ?? "").toLowerCase();
-    const authors = [...new Set((state.prs ?? []).map((p) => String(p.author ?? "").toLowerCase()).filter((a) => a && a !== me))].sort();
+    const fv = tabView(state, filters, tab);
     const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
-    const labels = filterFacets(tabList(state, filters, tab)).labels;
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, t, load))
       .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
-      .child(renderChips(filters, authors, { onToggle: (name) => this.toggleChip(name, cx), tab, repos, labels }))
+      .child(this.filterBar.render(barModel(filters, {
+        tab, options: { repos, labels: fv.options.labels, authors: fv.options.authors },
+      }), (a) => this.toggleChip(a, this.acx)))
       .when(load.strip.length > 0, (e) => e.child(renderLoadStrip(load)))
       .child(renderBoard({
         tab, prs: this.listed(state), filters, me: state.me ?? "",

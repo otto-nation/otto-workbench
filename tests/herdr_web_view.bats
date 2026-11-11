@@ -46,15 +46,28 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
 }
 
 @test "view: toggleFilter is immutable and counts every chip off its default, including Drafts" {
-  _web "const v = await import(W + '/lib/view.js');
+  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
         const a = v.DEFAULT_UI; const b = v.toggleFilter(v.toggleFilter(v.toggleFilter(a, 'author:Bob'), 'repo:acme/box'), 'landed');
         const c = v.toggleFilter(b, 'author:bob');
         const d = v.toggleFilter(a, 'drafts');
         const m = v.toggleFilter({ ...a, tab: 'mine' }, 'mineDrafts');
         out([a.filters.authors, b.filters.authors, b.filters.repos, b.filters.landed, c.filters.authors,
-             v.boardModel({ prs: [] }, b).filterCount, v.boardModel({ prs: [] }, d).filterCount, v.boardModel({ prs: [] }, m).filterCount]);"
+             v.boardModel(snap, b).filterCount, v.boardModel(snap, d).filterCount, v.boardModel(snap, m).filterCount]);"
   [ "$status" -eq 0 ]
   [ "$output" = '[[],["bob"],["acme/box"],true,[],3,1,1]' ]
+}
+
+@test "view: boardModel exclude facets, hideBots, and stale author include; bar keys per tab" {
+  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
+        const shot = { ...snap, prs: [...snap.prs, pr(7, { author: 'dependabot[bot]' }), pr(8, { labels: ['bug'] })] };
+        const filters = { ...v.DEFAULT_UI.filters, excludeRepos: ['acme/kit'], excludeLabels: ['bug'],
+          excludeAuthors: ['cy'], authors: ['stale-login'], hideBots: true };
+        const team = v.boardModel(shot, { ...v.DEFAULT_UI, filters });
+        const mine = v.boardModel(shot, { ...v.DEFAULT_UI, tab: 'mine', filters });
+        const nums = (m) => m.columns.flatMap((c) => c.items.map((p) => p.number)).sort((a, b) => a - b);
+        out([nums(team), nums(mine), team.bar.tags.map((t) => t.text), team.bar.facets.map((f) => f.key), mine.bar.facets.map((f) => f.key)]);"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,3],[3],["not kit","not bug","not cy","Bots hidden"],["show","repos","labels","authors"],["show","repos","labels"]]' ]
 }
 
 @test "view: card badges are text, status or tag (never pills), as prs/board.js badges()" {

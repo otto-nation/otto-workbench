@@ -2,7 +2,8 @@
 import { events, getJson, postJson, q } from './api.js';
 import { h, keepScroll, status } from './dom.js';
 import { loadUi, saveUi } from './prefs.js';
-import { renderBoard, renderFilters, renderSections } from './board_view.js';
+import { renderBoard, renderSections } from './board_view.js';
+import { renderFilterBar } from './filter_bar.js';
 import { renderLoad } from './load_status.js';
 import { renderDetail } from './detail_view.js';
 import { boardModel, errorStatus, GLYPH, toggleFilter } from '../lib/view.js';
@@ -119,7 +120,7 @@ export function render() {
     b.classList.toggle('on', b.dataset.tab === S.ui.tab);
     b.setAttribute('aria-selected', b.dataset.tab === S.ui.tab ? 'true' : 'false');
   }
-  renderFilters($('#filters'), model, S.ui, { onToggle: (name) => setUi(toggleFilter(S.ui, name)) });
+  renderFilterBar($('#filters'), model.bar, { onAction: (a) => setUi(toggleFilter(S.ui, a)) });
   $('#mfilters').textContent = 'Filters';
   $('#mfilters').title = model.filterCount ? `${model.filterCount} filters on` : 'No filters on';
   $('#mfstate').textContent = model.filterCount ? `${model.filterCount} on` : '';

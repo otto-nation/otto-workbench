@@ -1,6 +1,6 @@
 // Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid, ghost,
-// icon), tag, status glyph, section label, segmented control, filter toggle, card, list row.
-// Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
+// icon), checkbox, popover surface, tag, status glyph, section label, segmented control, card,
+// list row. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, settings } from "herdr";
@@ -51,6 +51,15 @@ export function solidButton(id, label, onClick, { disabled = false } = {}) {
   return type(control(id, { disabled, onClick }), "label").px(CONTROL.px)
     .bg(t.solid).text_color(t.solid_foreground)
     .when(disabled, (e) => e.opacity(0.5))
+    .child(label);
+}
+
+// Ghost: label type, control padding, no border. Hover fills on its own line.
+export function ghostButton(id, label, onClick) {
+  const t = theme();
+  return type(control(id, { onClick }), "label").px(CONTROL.px)
+    .text_color(t.foreground)
+    .hover((s) => s.bg(t.hover))
     .child(label);
 }
 
@@ -191,22 +200,21 @@ export function segmented(items) {
     .children(items);
 }
 
-// An independent on/off filter: off is an outline control with a muted label, on is ink fill
-// with a canvas label (the segmented selected treatment, so fill is not the only cue).
-export function chip(id, label, on, onClick) {
+// Checkbox indicator: outline edge, tag radius, SP.lg. Checked is ring fill and a canvas tick,
+// never the accent colour.
+export function checkbox(on) {
   const t = theme();
-  return type(div().id(id).px(CONTROL.px).h(CONTROL.hDense).flex().items_center().rounded(RADIUS.control), "label")
-    .cursor_pointer().border_1()
-    .when(on, (e) => e.border_color(t.solid).bg(t.solid).text_color(t.solid_foreground))
-    .when(!on, (e) => e.border_color(t.border).text_color(t.muted).hover((s) => s.bg(t.hover)))
-    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-    .on_click(() => onClick()).child(label);
+  return type(div().flex_none().size(SP.lg).flex().items_center().justify_center()
+    .rounded(RADIUS.tag).border_1().border_color(t.input).bg(t.background), "meta")
+    .when(on, (e) => e.bg(t.ring).border_color(t.ring).text_color(t.background).child("✓"));
 }
 
-export function filterGroup(label, items) {
-  return h_flex().gap(SP.sm).items_center()
-    .child(text("section", label, theme().muted).w(LAYOUT.filterLabelW).flex_none())
-    .child(h_flex().flex_1().min_w(0).flex_wrap().gap(SP.xs).items_center().children(items));
+// Anchored menu surface: popover fill, input edge, card radius and padding.
+export function popoverSurface() {
+  const t = theme();
+  return v_flex().p(SP.md).gap(SP.xxs).rounded(RADIUS.card)
+    .border_1().border_color(t.input).bg(t.popover).text_color(t.foreground)
+    .min_w(LAYOUT.colMin);
 }
 
 // A board lane's heading: title in ink with its count in meta beside it, and an optional

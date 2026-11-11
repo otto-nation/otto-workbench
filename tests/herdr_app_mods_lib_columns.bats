@@ -272,19 +272,13 @@ _filter() {
   jq -e '.a and .b' <<<"$output"
 }
 
-@test "filterPrs: the viewer is dropped from the authors filter, case-insensitively" {
-  _filter '[{"number":1,"author":"Alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":["alice"]}' 'ALICE'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[1,2]" ]
-}
-
 @test "DEFAULT_FILTERS hides drafts, mine drafts, landed, and empty" {
   run node --input-type=module -e "
     const { DEFAULT_FILTERS } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
     process.stdout.write(JSON.stringify(DEFAULT_FILTERS));
   "
   [ "$status" -eq 0 ]
-  [ "$output" = '{"drafts":false,"mineDrafts":false,"landed":false,"empty":false}' ]
+  [ "$output" = '{"drafts":false,"mineDrafts":false,"landed":false,"empty":false,"hideBots":false}' ]
 }
 
 @test "filterOn: unset takes DEFAULT_FILTERS; stored boolean wins; unknown key is false" {
@@ -324,24 +318,6 @@ _filter() {
   _filter '[{"number":1,"author":"bob","isDraft":false,"state":"MERGED","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"landed":true}' 'alice'
   [ "$status" -eq 0 ]
   [ "$output" = "[1,2]" ]
-}
-
-@test "filterPrs: authors filter is case-insensitive" {
-  _filter '[{"number":1,"author":"Alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"Bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":["alice"]}' 'x'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[1]" ]
-}
-
-@test "filterPrs: empty authors keeps all" {
-  _filter '[{"number":1,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":[]}' 'x'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[1,2]" ]
-}
-
-@test "filterPrs: a teammate author filter still narrows when the viewer is also listed" {
-  _filter '[{"number":1,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"authors":["alice","bob"]}' 'alice'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[2]" ]
 }
 
 @test "visibleColumns: drops empty columns when showEmpty is false" {

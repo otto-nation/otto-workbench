@@ -3,7 +3,8 @@
  */
 
 import { BUSY_STATES, laneOf } from './batch.js';
-import { DEFAULT_FILTERS, filterLabels, filterRepos } from './columns.js';
+import { DEFAULT_FILTERS } from './columns.js';
+import { facetView } from './filters.js';
 
 /** Step names a batch launch can request. */
 export const STEP_NAMES = ['rebase', 'ci', 'comments', 'review'];
@@ -43,9 +44,21 @@ export function groupByRepo(prs) {
  * `loaded` is every repo the board has loaded, as for filterRepos (`knownLabels` likewise for labels): a repo chip on one where none
  * of `prs` lives empties the form, as it empties the board, instead of being read as stale.
  */
-export function filterForm(prs, { repos = [], labels = [], drafts = DEFAULT_FILTERS.mineDrafts, loaded, knownLabels } = {}) {
+export function filterForm(prs, {
+  repos = [],
+  labels = [],
+  excludeRepos = [],
+  excludeLabels = [],
+  drafts = DEFAULT_FILTERS.mineDrafts,
+  loaded,
+  knownLabels,
+} = {}) {
   const list = (prs ?? []).filter((pr) => drafts || !pr.isDraft);
-  return filterLabels(filterRepos(list, repos, loaded), labels, knownLabels);
+  return facetView(list, { repos, labels, excludeRepos, excludeLabels }, {
+    tab: 'batch',
+    loadedRepos: loaded,
+    knownLabels,
+  }).list;
 }
 
 /**

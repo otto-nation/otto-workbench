@@ -32,6 +32,7 @@ export const MINE_COLUMNS = [
   { key: 'ci-failing', label: 'CI Failing' },
   { key: 'has-comments', label: 'Has Comments' },
   { key: 'changes-requested', label: 'Changes Requested' },
+  { key: 'in-review', label: 'In Review' },
   { key: 'awaiting-review', label: 'Awaiting Review' },
   { key: 'approved', label: 'Approved' },
   { key: 'in-queue', label: 'In Queue' },
@@ -68,6 +69,8 @@ export function teamColumn(pr) {
 export function mineColumn(pr) {
   if (pr.state === 'MERGED') return 'merged';
   if (pr.inMergeQueue) return 'in-queue';
+  // A review running right now: the PR is the reviewer's until it finishes, whatever else is wrong.
+  if (pr.reviewing) return 'in-review';
   if (pr.mergeable === 'CONFLICTING') return 'has-conflicts';
   if (pr.ciStatus === 'failing') return 'ci-failing';
   // Before Changes Requested: feedback still owed is the author's work, while a request with

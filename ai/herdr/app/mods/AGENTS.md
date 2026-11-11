@@ -12,7 +12,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 
 ## The Mine board
 
-- Lanes, in precedence order: Has Conflicts, CI Failing, Has Comments, Changes Requested, Awaiting Review, Approved, In Queue, Merged (`_lib/columns.js` `mineColumn`)
+- Lanes, in precedence order: Merged, In Queue, In Review (a review running now), Has Conflicts, CI Failing, Has Comments, Changes Requested, Approved, Awaiting Review (`_lib/columns.js` `mineColumn`)
 - Has Comments is feedback `pr comments` would answer, read with `pr batch plan --needs comments` only while Mine shows. It ranks above Changes Requested: owed feedback is the author's work, while a request with every comment answered waits on the reviewer
 - A lane's Batch button opens the Batch page with the lane's shown PRs selected and its step set, and starts nothing. `COLUMN_BATCH` in `_lib/batch_launch.js` owns which lanes have one (Has Conflicts and Has Comments with AI on, CI Failing, Approved with PRs only behind); a lane that waits on someone else has none
 - Team, Mine and the Batch page share one `prs.filters` (Repo, Label, Drafts, Author on Team only). Drafts is one setting for Team and one for Mine and Batch; a draft sits in the lane for its real state with a Draft tag, never in a lane of its own; add a filter in `_lib/columns.js` so the board and the form share its matcher

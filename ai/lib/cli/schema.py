@@ -32,12 +32,12 @@ from __future__ import annotations
 
 import sys
 
+import board.model
 import core.log
 import cli.review_modes
 from cli.dispatch import PARSER_FACTORIES, resolve
 from cli.registry import COMMANDS
 from core.tool_parser import ToolParser
-import board.model
 
 # The command this module describes. Not `Path(__file__).name`: the document
 # names the binary a consumer runs, not the module that built it.

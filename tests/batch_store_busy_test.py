@@ -69,6 +69,7 @@ def test_covering_matches_by_repo_key_even_when_the_label_differs():
 
 def test_covering_falls_back_to_the_label_when_an_item_has_no_repo_key():
     seed(_run(repo="o/r"))
+    # "O/R" against stored "o/r" is deliberate: the label fallback is case-insensitive.
     assert batch.store.busy_prs(_ref("O/R", key="unrelated-key-00000000")) == frozenset({1})
 
 

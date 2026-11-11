@@ -13,7 +13,7 @@ from board.reviews import (
 )
 
 
-def _row(**over):
+def _row(**overlay):
     base = {
         "repo": "o/n",
         "mode": "pr",
@@ -25,18 +25,18 @@ def _row(**over):
         "status": "completed",
         "history": [],
     }
-    base.update(over)
+    base.update(overlay)
     return base
 
 
-def _pr(**over):
+def _pr(**overlay):
     base = {
         "number": 7,
         "head_sha": "a",
         "latest_reviews": [],
         "requested_reviewers": [],
     }
-    base.update(over)
+    base.update(overlay)
     return base
 
 

@@ -206,3 +206,14 @@ def test_missing_checkout_is_repo_error_and_still_a_document(tmp_path, monkeypat
     assert repo["checkout"] == missing
     assert repo["phase"] == "failed"
     assert repo["error"]["kind"] == "no-checkout"
+
+
+def test_failed_listing_fetch_keeps_cache_and_reports_error(tmp_path, monkeypatch):
+    found = _env(tmp_path, monkeypatch)
+    write(found.key, Phase.LISTING, {"rows": [{"number": 7, "head_sha": "a"}]})
+    monkeypatch.setattr("board.document.github.list_pulls", lambda slug: None)
+    for phase in (Phase.LISTING, Phase.STATUS):
+        doc = build(phase, [found.path])
+        assert doc["repos"][0]["phase"] == "failed"
+        assert doc["repos"][0]["error"]["kind"] == "gh-failed"
+        assert read(found.key, Phase.LISTING)["rows"][0]["number"] == 7

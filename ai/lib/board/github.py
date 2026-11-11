@@ -131,7 +131,8 @@ def map_graphql(payload: object, numbers: Sequence[int] | None = None) -> dict[i
     return out
 
 
-def list_pulls(slug: str) -> list[PullFacts]:
+def list_pulls(slug: str) -> list[PullFacts] | None:
+    """Open PRs, or None when the fetch failed (distinct from no open PRs)."""
     # gh.client.api omits --method on GET, and -F/-f would switch gh to POST.
     # Query parameters keep this a GET, matching pr.stack's open-PR listing.
     result = gh.client.api(
@@ -140,11 +141,11 @@ def list_pulls(slug: str) -> list[PullFacts]:
         jq=PULLS_JQ,
     )
     if not result.ok:
-        return []
+        return None
     try:
         raw = _parse_pulls_stdout(result.stdout)
     except (json.JSONDecodeError, TypeError, ValueError):
-        return []
+        return None
     return [map_pull(pr, slug) for pr in raw if isinstance(pr, dict)]
 
 
@@ -264,11 +265,7 @@ def _flatten_pull_pages(payload: object) -> list[Any]:
     if not payload:
         return []
     if isinstance(payload[0], list):
-        flat: list[Any] = []
-        for page in payload:
-            if isinstance(page, list):
-                flat.extend(page)
-        return flat
+        return [item for page in payload if isinstance(page, list) for item in page]
     return payload
 
 

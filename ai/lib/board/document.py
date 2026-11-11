@@ -124,6 +124,9 @@ def _int_prs(prs: Sequence[int] | None) -> list[int] | None:
     return [n for n in prs if type(n) is int]
 
 
+_LIST_FAILED = RepoError(kind="gh-failed", message="listing open pull requests failed")
+
+
 def _assemble(
     phase: Phase,
     checkouts: list[str],
@@ -166,6 +169,9 @@ def _listing_phase(
             repos.append(_failed(path, found))
             continue
         pulls = github.list_pulls(found.slug)
+        if pulls is None:
+            repos.append(_failed(path, _LIST_FAILED, found=found))
+            continue
         cache.write(found.key, Phase.LISTING, {
             "fetched_at": now,
             "rows": [core.serde.to_dict(pull) for pull in pulls],
@@ -187,13 +193,24 @@ def _status_phase(
     complete = prs is None
     with ThreadPoolExecutor(max_workers=POOL_WORKERS) as pool:
         for path, found in resolved:
-            if isinstance(found, RepoError):
-                repos.append(_failed(path, found))
-                continue
-            repo, repo_rows = _status_repo(found, prs, listing, viewer, now, pool)
+            repo, repo_rows = _status_one(path, found, prs, listing, viewer, now, pool)
             repos.append(repo)
             rows.extend(repo_rows)
     return repos, rows, complete
+
+
+def _status_one(
+    path: str,
+    found: Checkout | RepoError,
+    prs: list[int] | None,
+    listing,
+    viewer: str,
+    now: str,
+    pool: ThreadPoolExecutor,
+) -> tuple[RepoStatus, list[dict]]:
+    if isinstance(found, RepoError):
+        return _failed(path, found), []
+    return _status_repo(found, prs, listing, viewer, now, pool)
 
 
 def _status_repo(
@@ -205,6 +222,8 @@ def _status_repo(
     pool: ThreadPoolExecutor,
 ) -> tuple[RepoStatus, list[dict]]:
     pulls = github.list_pulls(found.slug)
+    if pulls is None:
+        return _failed(found.path, _LIST_FAILED, found=found), []
     if prs is not None:
         want = set(prs)
         pulls = [pull for pull in pulls if pull.number in want]

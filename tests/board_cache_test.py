@@ -56,6 +56,7 @@ def test_merged_overlays_owed_by_number(tmp_path, monkeypatch):
         "rows": [{"number": 7, "reason": "2 unresolved threads", "head_sha": "a"}],
     })
     row = merged("k")[7]
+    # The OWED phase row's `reason` key surfaces as `owed` on the merged row.
     assert row["owed"] == "2 unresolved threads"
     assert row["owed_known"] is True
     assert row["owed_head_sha"] == "a"

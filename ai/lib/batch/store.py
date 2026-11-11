@@ -367,14 +367,13 @@ def busy_prs(ref: RepoRef | None) -> frozenset[int]:
     """
     if ref is None:
         return frozenset()
-    numbers: set[int] = set()
-    for run in _covering_runs(ref):
-        if run.status in FINISHED_RUN:
-            continue
-        for item in run.items:
-            if _item_covers(item, ref) and item.status in BUSY_ITEM:
-                numbers.add(item.pr)
-    return frozenset(numbers)
+    return frozenset(
+        item.pr
+        for run in _covering_runs(ref)
+        if run.status not in FINISHED_RUN
+        for item in run.items
+        if _item_covers(item, ref) and item.status in BUSY_ITEM
+    )
 
 
 def covering_run_id(ref: RepoRef | None) -> str | None:

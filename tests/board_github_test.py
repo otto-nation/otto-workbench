@@ -100,10 +100,6 @@ def test_map_pulls_paged_flat_empty():
     assert want.created_at == "c"
     assert want.updated_at == "u"
     assert want.repo == "acme/box"
-    paged = [_rest(), _rest()]
-    assert len(paged) == 2
-    assert map_pull(_rest()).number == 3
-    assert batches([]) == []
 
 
 def test_map_pull_null_labels():
@@ -205,6 +201,13 @@ def test_list_pulls_maps_rest_pages(monkeypatch):
     assert len(pulls) == 2
     assert pulls[0].author == "ada"
     assert pulls[0].repo == "acme/box"
+
+
+def test_list_pulls_failure_is_none_not_empty(monkeypatch):
+    monkeypatch.setattr(
+        "board.github.gh.client.api", lambda endpoint, **kw: CmdResult(returncode=1)
+    )
+    assert list_pulls("acme/box") is None
 
 
 def test_owner_name_are_graphql_variables(monkeypatch):

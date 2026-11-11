@@ -538,11 +538,11 @@ def test_only_the_listing_is_exempt_from_the_trail():
     hole is declared by the same three axes as everything else — no command
     carries a trail opt-out of its own for someone to add themselves to.
 
-    `review --list` and `batch` both answer from the state root and take no
+    `review --list`, `batch` and `board` all answer from the state root and take no
     target lock; `batch run` opens its own `pr-batch` trail.
     """
     for name, spec in cli.registry.COMMANDS.items():
-        if name == "batch":
+        if name in {"batch", "board"}:
             assert not cli.registry.need_for(spec, []).records_a_trail, name
             continue
         assert cli.registry.need_for(spec, []).records_a_trail, name

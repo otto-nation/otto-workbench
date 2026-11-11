@@ -184,6 +184,10 @@ TERMINAL_ITEM = frozenset({
     ItemStatus.DONE, ItemStatus.NEEDS_SESSION, ItemStatus.DROPPED, ItemStatus.SKIPPED_CLOSED,
 })
 
+BUSY_ITEM = frozenset({
+    ItemStatus.QUEUED, ItemStatus.WAITING_ADMISSION, ItemStatus.RUNNING,
+})
+
 # The one owner of "a run that has ended": statuses a run never leaves.
 # store (refs drop on commit), inbox (settle_idle), gc (removal candidates),
 # report and the CLI all read this set rather than spelling it out.

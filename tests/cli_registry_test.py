@@ -44,7 +44,7 @@ CREATE = pr.context.WorktreeNeed.CREATE
 
 def test_the_registry_names_every_subcommand():
     assert set(COMMANDS) == {"create", "status", "ci", "review", "comments",
-                             "fix", "rebase", "push", "describe", "stack", "batch", "gc"}
+                             "fix", "rebase", "push", "describe", "stack", "board", "batch", "gc"}
 
 
 def test_no_command_is_declared_twice():
@@ -80,7 +80,7 @@ def test_the_delegating_commands_name_their_script():
 
 
 def test_the_internal_commands_name_no_script():
-    for name in ("create", "status", "fix", "gc", "push", "stack"):
+    for name in ("create", "status", "fix", "gc", "push", "stack", "board"):
         assert COMMANDS[name].script is None, name
 
 
@@ -99,7 +99,7 @@ def test_a_script_is_a_name_and_not_a_path():
 def test_only_create_takes_no_target():
     """`takes_target` replaced a hand-maintained set; the membership is the same."""
     assert {name for name, spec in COMMANDS.items() if not spec.takes_target} \
-        == {"create", "batch"}
+        == {"create", "batch", "board"}
 
 
 # ── handler paths ─────────────────────────────────────────────────────────
@@ -125,6 +125,7 @@ _HANDLERS = {
     "push":     "cli.pr_push:main",
     "describe": "cli.pr_describe:main",
     "stack":    "cli.pr_stack:main",
+    "board":    "cli.pr_board:cmd_board",
     "batch":    "cli.pr_batch:cmd_batch",
     "gc":       "cli.pr_commands:cmd_gc",
 }
@@ -160,7 +161,7 @@ def test_the_registry_is_the_only_list_of_subcommands():
 # the order tracks whatever the registry says, which is the one thing the
 # reordering would change.
 _DISPLAY_ORDER = ["create", "status", "ci", "review", "comments",
-                  "fix", "rebase", "push", "describe", "stack", "batch", "gc"]
+                  "fix", "rebase", "push", "describe", "stack", "board", "batch", "gc"]
 
 
 def test_the_declaration_order_is_the_display_order():

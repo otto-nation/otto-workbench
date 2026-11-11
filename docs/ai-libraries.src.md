@@ -51,6 +51,12 @@ Running rebase, CI fixes, comments and self-review across many open PRs at once:
 
 <!-- include: bin/local/generate-doc-reference --set ai-lib --group batch -->
 
+## Board
+
+The PR board's document: facts, lanes, badges and columns, assembled from listing, status and owed phases.
+
+<!-- include: bin/local/generate-doc-reference --set ai-lib --group board -->
+
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
@@ -71,6 +77,6 @@ The shared substrate — process execution, logging, the structured trail, seria
 
 ## Command entry points
 
-The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
+The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 9.
 
 <!-- include: bin/local/generate-doc-reference --set ai-lib --group cli -->

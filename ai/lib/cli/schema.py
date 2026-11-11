@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import sys
 
+import board.model
 import core.log
 import cli.review_modes
 from cli.dispatch import PARSER_FACTORIES, resolve
@@ -129,7 +130,7 @@ def schema_contracts() -> list[str]:
               if mode.schema_versions]
     # `batch plan` still serves version 1; status/report serve version 2.
     batch = [f"{SCRIPT} batch {sub}" for sub in ("plan", "status", "report")]
-    return review + batch + [f"{SCRIPT} status", f"{SCRIPT} stack"]
+    return review + batch + [f"{SCRIPT} status", f"{SCRIPT} stack", f"{SCRIPT} board"]
 
 
 def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
@@ -143,6 +144,8 @@ def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
         if sub in ("run", "resume"):
             return (1,)
         return ()
+    if command == "board":
+        return board.model.SCHEMA_VERSIONS
     if command in ("status", "stack"):
         return (1,)
     if command != "review":

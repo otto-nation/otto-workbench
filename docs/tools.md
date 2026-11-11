@@ -962,6 +962,15 @@ Takes no flags.
 
 Takes no flags.
 
+**`pr board`** — PR board document: facts, lanes, badges (JSON)
+
+| Flag | Description |
+|------|-------------|
+| `--checkout` `<dir>` | A checkout whose open PRs to include; repeatable. Required. |
+| `--phase` `<phase>` | listing, status, or owed. Required. |
+| `--prs` `<n,n>` | Comma-separated PR numbers; only with --phase status. |
+| `--if-changed` `<stamp>` | Return the unchanged envelope when this stamp still matches. |
+
 **`pr batch plan`** — Show which PRs need which steps
 
 | Flag | Description |

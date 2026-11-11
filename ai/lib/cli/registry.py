@@ -160,6 +160,9 @@ _SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("stack",    "Show the repo's PR stack graph (JSON)",
                 Need(LOCAL,  update=False, locks=NO_LOCK),
                 handler="cli.pr_stack:main"),
+    CommandSpec("board",    "PR board document: facts, lanes, badges (JSON)",
+                Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
+                handler="cli.pr_board:cmd_board"),
     # Orchestrates other commands across many PRs, so it resolves no target of
     # its own and declares no lock. `run` and `resume` hold every item's TARGET
     # and worktree CHECKOUT themselves, since only planning can name them;

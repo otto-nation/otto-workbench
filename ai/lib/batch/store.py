@@ -67,7 +67,7 @@ import batch.targets
 import core.run_lock
 import core.serde
 import core.workbench_paths
-from batch.model import FINISHED_RUN, CancelState, Item, Run
+from batch.model import BUSY_ITEM, FINISHED_RUN, CancelState, Item, Run
 from batch.requests import Cancel, Envelope, Malformed, Outcome, Release, Request
 
 STATE_FILE = "state.json"
@@ -356,6 +356,24 @@ def ids_covering(ref: RepoRef | None) -> list[str]:
 def unfinished_covering(ref: RepoRef | None) -> list[str]:
     """`ids_covering(ref)` narrowed to runs not yet finished, oldest first."""
     return [run.id for run in _covering_runs(ref) if run.status not in FINISHED_RUN]
+
+
+def busy_prs(ref: RepoRef | None) -> frozenset[int]:
+    """PR numbers whose covering item is in `BUSY_ITEM` on an unfinished run.
+
+    Empty when *ref* is None, when no unfinished run covers it, or when every
+    covering item is already terminal. Matching is `_item_covers`: origin key
+    when the item has one, else the label.
+    """
+    if ref is None:
+        return frozenset()
+    return frozenset(
+        item.pr
+        for run in _covering_runs(ref)
+        if run.status not in FINISHED_RUN
+        for item in run.items
+        if _item_covers(item, ref) and item.status in BUSY_ITEM
+    )
 
 
 def covering_run_id(ref: RepoRef | None) -> str | None:

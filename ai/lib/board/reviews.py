@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from board.model import ReviewHealth, ReviewRunRef
+from board.model import ReviewHealth, ReviewRunRef, RunPostRef
 
 
 POST_STATE_BY_EVENT = {
@@ -71,6 +71,15 @@ def posted(run) -> bool:
     return run is not None and _field(run, "post") is not None
 
 
+def _post_ref(post) -> RunPostRef | None:
+    if post is None:
+        return None
+    return RunPostRef(
+        event=_field(post, "event") or "",
+        posted_at=_field(post, "posted_at") or "",
+    )
+
+
 def _run_ref(run) -> ReviewRunRef:
     post = _field(run, "post")
     if post is None:
@@ -85,6 +94,12 @@ def _run_ref(run) -> ReviewRunRef:
         review_file=_field(run, "review_file") or "",
         verdict=_field(run, "verdict") or "",
         findings=_field(run, "findings"),
+        stamp=_field(run, "stamp") or "",
+        structured=_field(run, "structured", True),
+        cost_usd=_field(run, "cost_usd"),
+        input_tokens=_field(run, "input_tokens") or 0,
+        output_tokens=_field(run, "output_tokens") or 0,
+        post=_post_ref(post),
     )
 
 

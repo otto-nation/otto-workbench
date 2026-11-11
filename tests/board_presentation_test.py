@@ -77,6 +77,19 @@ def test_lanes_match_the_golden_case(case):
     assert {"team": team.value, "mine": mine.value} == case["lanes"]
 
 
+@pytest.mark.parametrize("case", CASES, ids=[case["name"] for case in CASES])
+def test_document_presentation_is_present_without_client_context(case):
+    pr = _pr(case)
+    got = board.presentation.present(_row(pr))
+    assert _wire(got) == case["document_presentation"]
+
+
+@pytest.mark.parametrize("case", CASES, ids=[case["name"] for case in CASES])
+def test_document_lanes_are_lanes_of_the_row(case):
+    pr = _pr(case)
+    assert _wire(board.columns.lanes(_row(pr))) == case["document_lanes"]
+
+
 def test_cards_and_rows_never_carry_a_pass_status():
     for case in CASES:
         pr = _pr(case)

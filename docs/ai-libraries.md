@@ -4504,6 +4504,14 @@ Join `pr review` listing rows onto GitHub PR records.
 Ports `_lib/reviews.js`. Listing rows may be `review.listing.ReviewRow`
 objects or the dicts that document emits; field names are snake_case.
 
+### board/rows.py
+
+Assemble board rows from the merged cache, reviews listing and busy set.
+
+Ports the row assembly of `_lib/board_data.js`. Each row merges the listing
+and status cache entries, marks the viewer's own PRs, and attaches the lanes
+and issues from `board.columns` plus any owed or busy state.
+
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
@@ -5902,9 +5910,9 @@ on a different inode — the flock follows the inode, not the path.
 How a tool writes a machine-readable report to stdout.
 
 A tool's stdout is its contract with whatever launched it, and the shape of
-that contract is the same everywhere: one indented JSON object, or a stream of
-them a reader can tell apart. Neither is domain vocabulary, so it lives here
-rather than being spelled out again in each binary that reports.
+that contract is the same everywhere: one JSON object (indented by default),
+or a stream of them a reader can tell apart. Neither is domain vocabulary, so
+it lives here rather than being spelled out again in each binary that reports.
 
 ### core/run_lock.py
 
@@ -8430,6 +8438,7 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 Usage:
   pr board --schema-version 1 --checkout DIR --phase listing|status|owed
   pr board --schema-version 1 --checkout DIR --phase status --prs N,N
+  pr board --schema-version 1 --checkout DIR --phase listing --offline
   pr board --schema-version 1 --checkout DIR --phase listing --if-changed STAMP
 
 ### cli/pr_commands.py

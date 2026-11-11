@@ -1026,7 +1026,7 @@ Without `--schema-version`, stdout is the state dump (or empty when there is non
 
 ### pr board
 
-`pr board --schema-version 1 --checkout DIR [--checkout DIR ...] --phase listing|status|owed [--prs N,N] [--if-changed STAMP]` prints the board document (facts, lanes, badges, per-row `presentation` slots, columns as JSON). Missing `--schema-version` exits 2. `--prs` only with `--phase status` (else exit 2). Exit 0 whenever a document prints; per-repo failures live in `repos[].error`. `--if-changed` matching the stamp returns `{schema_version, phase, stamp, unchanged: true}`. Python owns every fact, lane, badge, presentation slot and column; no draft CI exemption; clients hide a row whose effective team lane is `landed`. `complete` is false for `status --prs` and `owed` (clients merge by `(repo, number)`).
+`pr board --schema-version 1 --checkout DIR [--checkout DIR ...] --phase listing|status|owed [--prs N,N] [--if-changed STAMP] [--offline]` prints the board document (facts, lanes, badges, per-row `presentation` slots, columns as JSON, `reviews_root`). Missing `--schema-version` exits 2. `--prs` only with `--phase status` (else exit 2); `--offline` only with `--phase listing`. Exit 0 whenever a document prints; per-repo failures live in `repos[].error`. `--if-changed` matching the stamp returns `{schema_version, phase, stamp, unchanged: true}`. Python owns every fact, lane, badge, presentation slot and column; no draft CI exemption; clients hide a row whose effective team lane is `landed`. `complete` is false for `status --prs` and `owed` (clients merge by `(repo, number)`).
 
 ### The Pi package the sync declares, and who gets it
 

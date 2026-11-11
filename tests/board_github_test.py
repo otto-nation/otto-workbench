@@ -14,6 +14,7 @@ from board.github import (
     map_graphql,
     map_pull,
     map_status,
+    pull_list_error,
     status_query,
 )
 from board.model import CiStatus, Mergeable
@@ -197,17 +198,48 @@ def test_list_pulls_maps_rest_pages(monkeypatch):
         return CmdResult(stdout=json.dumps([rest]) + "\n" + json.dumps([rest]))
 
     monkeypatch.setattr("board.github.gh.client.api", fake_api)
-    pulls = list_pulls("acme/box")
-    assert len(pulls) == 2
-    assert pulls[0].author == "ada"
-    assert pulls[0].repo == "acme/box"
+    listed = list_pulls("acme/box")
+    assert listed.pulls is not None
+    assert len(listed.pulls) == 2
+    assert listed.pulls[0].author == "ada"
+    assert listed.pulls[0].repo == "acme/box"
+    assert listed.error == ""
 
 
 def test_list_pulls_failure_is_none_not_empty(monkeypatch):
     monkeypatch.setattr(
-        "board.github.gh.client.api", lambda endpoint, **kw: CmdResult(returncode=1)
+        "board.github.gh.client.api",
+        lambda endpoint, **kw: CmdResult(
+            returncode=1, stderr="API rate limit exceeded\nretry later\n",
+        ),
     )
-    assert list_pulls("acme/box") is None
+    listed = list_pulls("acme/box")
+    assert listed.pulls is None
+    assert listed.error == "API rate limit exceeded"
+    err = pull_list_error(listed)
+    assert err.kind == "gh-failed"
+    assert err.message == "API rate limit exceeded"
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "gh: To get started, run: gh auth login",
+        "authentication required",
+        "HTTP 401: Bad credentials",
+    ],
+)
+def test_list_pulls_auth_stderr_is_auth(monkeypatch, stderr):
+    monkeypatch.setattr(
+        "board.github.gh.client.api",
+        lambda endpoint, **kw: CmdResult(returncode=1, stderr=stderr + "\nmore\n"),
+    )
+    listed = list_pulls("acme/box")
+    assert listed.pulls is None
+    assert listed.error == stderr
+    err = pull_list_error(listed)
+    assert err.kind == "auth"
+    assert err.message == stderr
 
 
 def test_owner_name_are_graphql_variables(monkeypatch):

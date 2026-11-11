@@ -970,6 +970,7 @@ Takes no flags.
 | `--phase` `<phase>` | listing, status, or owed. Required. |
 | `--prs` `<n,n>` | Comma-separated PR numbers; only with --phase status. |
 | `--if-changed` `<stamp>` | Return the unchanged envelope when this stamp still matches. |
+| `--offline` | Listing from cache only; only with --phase listing. |
 
 **`pr batch plan`** — Show which PRs need which steps
 

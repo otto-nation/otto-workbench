@@ -2,7 +2,20 @@
 
 import json
 
-from board.cache import merged, path_for, read, write
+import os
+import time
+
+from board.cache import (
+    VIEWER_TTL_S,
+    merged,
+    path_for,
+    read,
+    read_viewer,
+    viewer,
+    viewer_path,
+    write,
+    write_viewer,
+)
 from board.model import Phase
 
 
@@ -49,6 +62,42 @@ def test_merged_applies_status_only_when_head_sha_matches(tmp_path, monkeypatch)
     assert "ci_status" not in rows[8]
 
 
+def test_merged_does_not_resurrect_open_status_only_row(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    write("k", Phase.LISTING, {
+        "rows": [{"number": 1, "head_sha": "a", "title": "open"}],
+    })
+    write("k", Phase.STATUS, {
+        "rows": [
+            {"number": 1, "head_sha": "a", "ci_status": "passing"},
+            {
+                "number": 9,
+                "head_sha": "z",
+                "state": "OPEN",
+                "title": "closed-on-github",
+            },
+            {
+                "number": 10,
+                "head_sha": "m",
+                "state": "MERGED",
+                "title": "landed",
+            },
+            {
+                "number": 11,
+                "head_sha": "c",
+                "state": "CLOSED",
+                "title": "closed",
+            },
+        ],
+    })
+    rows = merged("k")
+    assert 9 not in rows
+    assert rows[10]["hydrated"] is True
+    assert rows[10]["title"] == "landed"
+    assert rows[11]["hydrated"] is True
+    assert 1 in rows
+
+
 def test_merged_overlays_owed_by_number(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
     write("k", Phase.LISTING, {"rows": [{"number": 7, "head_sha": "a"}]})
@@ -60,3 +109,55 @@ def test_merged_overlays_owed_by_number(tmp_path, monkeypatch):
     assert row["owed"] == "2 unresolved threads"
     assert row["owed_known"] is True
     assert row["owed_head_sha"] == "a"
+
+
+def test_viewer_writes_under_board_cache_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr("gh.client.login", lambda: "me")
+    assert viewer(refresh=True) == "me"
+    assert viewer_path() == tmp_path / "board" / "viewer.json"
+    assert read_viewer() == "me"
+
+
+def test_viewer_fresh_skips_login(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    write_viewer("cached")
+
+    def boom():
+        raise AssertionError("login")
+
+    monkeypatch.setattr("gh.client.login", boom)
+    assert viewer(refresh=True) == "cached"
+
+
+def test_viewer_refresh_when_older_than_one_hour(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    write_viewer("old")
+    path = viewer_path()
+    past = time.time() - (VIEWER_TTL_S + 1)
+    os.utime(path, (past, past))
+    monkeypatch.setattr("gh.client.login", lambda: "new")
+    assert viewer(refresh=True) == "new"
+    assert read_viewer() == "new"
+
+
+def test_viewer_offline_skips_login(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    write_viewer("cached")
+
+    def boom():
+        raise AssertionError("login")
+
+    monkeypatch.setattr("gh.client.login", boom)
+    assert viewer(refresh=False) == "cached"
+    assert viewer(refresh=False) == "cached"
+
+
+def test_viewer_offline_missing_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+
+    def boom():
+        raise AssertionError("login")
+
+    monkeypatch.setattr("gh.client.login", boom)
+    assert viewer(refresh=False) == ""

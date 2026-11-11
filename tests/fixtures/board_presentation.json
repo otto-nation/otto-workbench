@@ -1,36 +1,319 @@
 {
-  "base": {"number": 4, "repoSlug": "acme/kit", "title": "Add kit", "author": "ada", "branch": "ada/feat/kit", "baseBranch": "main", "additions": 10, "deletions": 2, "changedFiles": 3, "labels": [], "state": "OPEN", "isDraft": false, "inMergeQueue": false, "mergeable": "MERGEABLE", "ciStatus": "none", "ciUnknown": false, "hydrated": true, "reviewDecision": null, "myReviewState": null, "isRequestedReviewer": false, "hasNewChangesSinceReview": false, "reviewing": false, "busy": false, "reviewRuns": [], "owedFeedback": null},
+  "base": {
+    "number": 4,
+    "repoSlug": "acme/kit",
+    "title": "Add kit",
+    "author": "ada",
+    "branch": "ada/feat/kit",
+    "baseBranch": "main",
+    "additions": 10,
+    "deletions": 2,
+    "changedFiles": 3,
+    "labels": [],
+    "state": "OPEN",
+    "isDraft": false,
+    "inMergeQueue": false,
+    "mergeable": "MERGEABLE",
+    "ciStatus": "none",
+    "ciUnknown": false,
+    "hydrated": true,
+    "reviewDecision": null,
+    "myReviewState": null,
+    "isRequestedReviewer": false,
+    "hasNewChangesSinceReview": false,
+    "reviewing": false,
+    "busy": false,
+    "reviewRuns": [],
+    "owedFeedback": null
+  },
   "cases": [
     {
       "name": "draft, conflicts, failing CI, changes requested, owed feedback",
-      "pr": {"isDraft": true, "mergeable": "CONFLICTING", "ciStatus": "failing", "reviewDecision": "CHANGES_REQUESTED", "owedFeedback": "2 unresolved threads, 1 review body", "labels": ["infra", "ui", "extra"], "reviewRuns": [{"postedEvent": "comment"}, {"postedEvent": null}]},
+      "pr": {
+        "isDraft": true,
+        "mergeable": "CONFLICTING",
+        "ciStatus": "failing",
+        "reviewDecision": "CHANGES_REQUESTED",
+        "owedFeedback": "2 unresolved threads, 1 review body",
+        "labels": [
+          "infra",
+          "ui",
+          "extra"
+        ],
+        "reviewRuns": [
+          {
+            "postedEvent": "comment"
+          },
+          {
+            "postedEvent": null
+          }
+        ]
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "reviewed", "mine": "has-conflicts"},
+      "lanes": {
+        "team": "reviewed",
+        "mine": "has-conflicts"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
-        "tags": ["Draft"],
+        "tags": [
+          "Draft"
+        ],
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
-        "issues": [{"kind": "status", "status": "fail", "text": "Conflicts"}, {"kind": "status", "status": "fail", "text": "CI failing"}, {"kind": "status", "status": "warn", "text": "2 unresolved threads"}, {"kind": "status", "status": "warn", "text": "Changes requested"}],
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Changes requested"
+          }
+        ],
         "review": null,
         "busy": null,
-        "ci": {"kind": "status", "status": "fail", "text": "CI failing"},
-        "decision": {"kind": "status", "status": "warn", "text": "Changes requested"},
-        "detail_issues": [{"kind": "status", "status": "fail", "text": "Conflicts"}, {"kind": "status", "status": "warn", "text": "2 unresolved threads"}],
-        "badges": [{"kind": "status", "status": "fail", "text": "Conflicts"}, {"kind": "status", "status": "fail", "text": "CI failing"}, {"kind": "status", "status": "warn", "text": "2 unresolved threads"}, {"kind": "status", "status": "warn", "text": "Changes requested"}, {"kind": "text", "status": null, "text": "2 reviews"}, {"kind": "tag", "status": null, "text": "infra"}, {"kind": "tag", "status": null, "text": "ui"}],
-        "row_badges": [{"kind": "status", "status": "fail", "text": "Conflicts"}, {"kind": "status", "status": "fail", "text": "CI failing"}, {"kind": "status", "status": "warn", "text": "2 unresolved threads"}, {"kind": "status", "status": "warn", "text": "Changes requested"}]
+        "ci": {
+          "kind": "status",
+          "status": "fail",
+          "text": "CI failing"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "warn",
+          "text": "Changes requested"
+        },
+        "detail_issues": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          }
+        ],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Changes requested"
+          },
+          {
+            "kind": "text",
+            "status": null,
+            "text": "2 reviews"
+          },
+          {
+            "kind": "tag",
+            "status": null,
+            "text": "infra"
+          },
+          {
+            "kind": "tag",
+            "status": null,
+            "text": "ui"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Changes requested"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "reviewed",
+        "mine": "has-conflicts",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [
+          "Draft"
+        ],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Changes requested"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "fail",
+          "text": "CI failing"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "warn",
+          "text": "Changes requested"
+        },
+        "detail_issues": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          }
+        ],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Changes requested"
+          },
+          {
+            "kind": "text",
+            "status": null,
+            "text": "2 reviews"
+          },
+          {
+            "kind": "tag",
+            "status": null,
+            "text": "infra"
+          },
+          {
+            "kind": "tag",
+            "status": null,
+            "text": "ui"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Conflicts"
+          },
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Changes requested"
+          }
+        ]
       }
     },
     {
       "name": "approved and passing",
-      "pr": {"reviewDecision": "APPROVED", "ciStatus": "passing"},
+      "pr": {
+        "reviewDecision": "APPROVED",
+        "ciStatus": "passing"
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "approved"},
+      "lanes": {
+        "team": "open",
+        "mine": "approved"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -38,12 +321,59 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
         "busy": null,
-        "ci": {"kind": "status", "status": "pass", "text": "CI passing"},
-        "decision": {"kind": "status", "status": "pass", "text": "Approved"},
+        "ci": {
+          "kind": "status",
+          "status": "pass",
+          "text": "CI passing"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Approved"
+        },
+        "detail_issues": [],
+        "badges": [],
+        "row_badges": []
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "approved",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "pass",
+          "text": "CI passing"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Approved"
+        },
         "detail_issues": [],
         "badges": [],
         "row_badges": []
@@ -51,10 +381,17 @@
     },
     {
       "name": "unhydrated with owed feedback",
-      "pr": {"hydrated": false, "ciUnknown": true, "owedFeedback": "1 unresolved thread"},
+      "pr": {
+        "hydrated": false,
+        "ciUnknown": true,
+        "owedFeedback": "1 unresolved thread"
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "has-comments"},
+      "lanes": {
+        "team": "open",
+        "mine": "has-comments"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -62,23 +399,145 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
-        "issues": [{"kind": "status", "status": "none", "text": "CI loading"}, {"kind": "status", "status": "warn", "text": "1 unresolved thread"}],
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ],
         "review": null,
         "busy": null,
-        "ci": {"kind": "status", "status": "none", "text": "CI loading"},
+        "ci": {
+          "kind": "status",
+          "status": "none",
+          "text": "CI loading"
+        },
         "decision": null,
-        "detail_issues": [{"kind": "status", "status": "warn", "text": "1 unresolved thread"}],
-        "badges": [{"kind": "status", "status": "none", "text": "CI loading"}, {"kind": "status", "status": "warn", "text": "1 unresolved thread"}],
-        "row_badges": [{"kind": "status", "status": "none", "text": "CI loading"}, {"kind": "status", "status": "warn", "text": "1 unresolved thread"}]
+        "detail_issues": [
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "has-comments",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "none",
+          "text": "CI loading"
+        },
+        "decision": null,
+        "detail_issues": [
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "1 unresolved thread"
+          }
+        ]
       }
     },
     {
       "name": "CI running",
-      "pr": {"ciStatus": "pending"},
+      "pr": {
+        "ciStatus": "pending"
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -86,23 +545,103 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
-        "issues": [{"kind": "status", "status": "running", "text": "CI running"}],
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
         "review": null,
         "busy": null,
-        "ci": {"kind": "status", "status": "running", "text": "CI running"},
+        "ci": {
+          "kind": "status",
+          "status": "running",
+          "text": "CI running"
+        },
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "running", "text": "CI running"}],
-        "row_badges": [{"kind": "status", "status": "running", "text": "CI running"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "running",
+          "text": "CI running"
+        },
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ]
       }
     },
     {
       "name": "CI unknown",
-      "pr": {"ciUnknown": true},
+      "pr": {
+        "ciUnknown": true
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -110,36 +649,162 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
-        "issues": [{"kind": "status", "status": "none", "text": "CI unknown"}],
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI unknown"
+          }
+        ],
         "review": null,
         "busy": null,
-        "ci": {"kind": "status", "status": "none", "text": "CI unknown"},
+        "ci": {
+          "kind": "status",
+          "status": "none",
+          "text": "CI unknown"
+        },
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "none", "text": "CI unknown"}],
-        "row_badges": [{"kind": "status", "status": "none", "text": "CI unknown"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI unknown"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI unknown"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI unknown"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "none",
+          "text": "CI unknown"
+        },
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI unknown"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI unknown"
+          }
+        ]
       }
     },
     {
       "name": "merged",
-      "pr": {"state": "MERGED", "mergeable": "CONFLICTING", "ciStatus": "passing", "reviewDecision": "APPROVED"},
+      "pr": {
+        "state": "MERGED",
+        "mergeable": "CONFLICTING",
+        "ciStatus": "passing",
+        "reviewDecision": "APPROVED"
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "landed", "mine": "merged"},
+      "lanes": {
+        "team": "landed",
+        "mine": "merged"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
-        "tags": ["Merged"],
+        "tags": [
+          "Merged"
+        ],
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
         "busy": null,
         "ci": null,
-        "decision": {"kind": "status", "status": "pass", "text": "Approved"},
+        "decision": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Approved"
+        },
+        "detail_issues": [],
+        "badges": [],
+        "row_badges": []
+      },
+      "document_lanes": {
+        "team": "landed",
+        "mine": "merged",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "merged"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [
+          "Merged"
+        ],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": null,
+        "decision": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Approved"
+        },
         "detail_issues": [],
         "badges": [],
         "row_badges": []
@@ -147,34 +812,148 @@
     },
     {
       "name": "in merge queue",
-      "pr": {"inMergeQueue": true, "ciStatus": "pending", "reviewDecision": "APPROVED"},
+      "pr": {
+        "inMergeQueue": true,
+        "ciStatus": "pending",
+        "reviewDecision": "APPROVED"
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "landed", "mine": "in-queue"},
+      "lanes": {
+        "team": "landed",
+        "mine": "in-queue"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
-        "tags": ["In merge queue"],
+        "tags": [
+          "In merge queue"
+        ],
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
-        "issues": [{"kind": "status", "status": "running", "text": "CI running"}],
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
         "review": null,
         "busy": null,
-        "ci": {"kind": "status", "status": "running", "text": "CI running"},
-        "decision": {"kind": "status", "status": "pass", "text": "Approved"},
+        "ci": {
+          "kind": "status",
+          "status": "running",
+          "text": "CI running"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Approved"
+        },
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "running", "text": "CI running"}],
-        "row_badges": [{"kind": "status", "status": "running", "text": "CI running"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "landed",
+        "mine": "in-queue",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-queue"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [
+          "In merge queue"
+        ],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "running",
+          "text": "CI running"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Approved"
+        },
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "CI running"
+          }
+        ]
       }
     },
     {
       "name": "batch busy, running rebase",
-      "pr": {"busy": true},
-      "item": {"key": "acme/kit#4", "status": "running", "steps": {"rebase": {"status": "running"}, "ci": null, "comments": null, "review": null}, "findings": []},
-      "batch_state": {"text": "running rebase", "tone": "busy"},
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "pr": {
+        "busy": true
+      },
+      "item": {
+        "key": "acme/kit#4",
+        "status": "running",
+        "steps": {
+          "rebase": {
+            "status": "running"
+          },
+          "ci": null,
+          "comments": null,
+          "review": null
+        },
+        "findings": []
+      },
+      "batch_state": {
+        "text": "running rebase",
+        "tone": "busy"
+      },
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -182,23 +961,104 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
-        "busy": {"kind": "status", "status": "running", "text": "Batch · running rebase"},
+        "busy": {
+          "kind": "status",
+          "status": "running",
+          "text": "Batch \u00b7 running rebase"
+        },
         "ci": null,
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "running", "text": "Batch · running rebase"}],
-        "row_badges": [{"kind": "status", "status": "running", "text": "Batch · running rebase"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 running rebase"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 running rebase"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": {
+          "kind": "status",
+          "status": "running",
+          "text": "Batch \u00b7 working"
+        },
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ]
       }
     },
     {
       "name": "batch needs you, CI failing",
-      "pr": {"ciStatus": "failing"},
-      "item": {"key": "acme/kit#4", "status": "needs_session", "steps": {"rebase": null, "ci": null, "comments": null, "review": null}, "findings": []},
-      "batch_state": {"text": "needs you", "tone": "attention"},
-      "lanes": {"team": "open", "mine": "ci-failing"},
+      "pr": {
+        "ciStatus": "failing"
+      },
+      "item": {
+        "key": "acme/kit#4",
+        "status": "needs_session",
+        "steps": {
+          "rebase": null,
+          "ci": null,
+          "comments": null,
+          "review": null
+        },
+        "findings": []
+      },
+      "batch_state": {
+        "text": "needs you",
+        "tone": "attention"
+      },
+      "lanes": {
+        "team": "open",
+        "mine": "ci-failing"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -206,23 +1066,117 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
-        "issues": [{"kind": "status", "status": "fail", "text": "CI failing"}],
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          }
+        ],
         "review": null,
-        "busy": {"kind": "status", "status": "warn", "text": "Batch · needs you"},
-        "ci": {"kind": "status", "status": "fail", "text": "CI failing"},
+        "busy": {
+          "kind": "status",
+          "status": "warn",
+          "text": "Batch \u00b7 needs you"
+        },
+        "ci": {
+          "kind": "status",
+          "status": "fail",
+          "text": "CI failing"
+        },
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "fail", "text": "CI failing"}, {"kind": "status", "status": "warn", "text": "Batch · needs you"}],
-        "row_badges": [{"kind": "status", "status": "fail", "text": "CI failing"}, {"kind": "status", "status": "warn", "text": "Batch · needs you"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Batch \u00b7 needs you"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          },
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "Batch \u00b7 needs you"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "ci-failing",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "fail",
+          "text": "CI failing"
+        },
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "CI failing"
+          }
+        ]
       }
     },
     {
       "name": "batch busy without a run item",
-      "pr": {"busy": true},
+      "pr": {
+        "busy": true
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -230,23 +1184,108 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
-        "busy": {"kind": "status", "status": "running", "text": "Batch · working"},
+        "busy": {
+          "kind": "status",
+          "status": "running",
+          "text": "Batch \u00b7 working"
+        },
         "ci": null,
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "running", "text": "Batch · working"}],
-        "row_badges": [{"kind": "status", "status": "running", "text": "Batch · working"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": {
+          "kind": "status",
+          "status": "running",
+          "text": "Batch \u00b7 working"
+        },
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ]
       }
     },
     {
       "name": "batch step failed",
-      "pr": {"busy": true},
-      "item": {"key": "acme/kit#4", "status": "running", "steps": {"rebase": {"status": "failed"}, "ci": {"status": "running"}, "comments": null, "review": null}, "findings": []},
-      "batch_state": {"text": "rebase failed", "tone": "failed"},
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "pr": {
+        "busy": true
+      },
+      "item": {
+        "key": "acme/kit#4",
+        "status": "running",
+        "steps": {
+          "rebase": {
+            "status": "failed"
+          },
+          "ci": {
+            "status": "running"
+          },
+          "comments": null,
+          "review": null
+        },
+        "findings": []
+      },
+      "batch_state": {
+        "text": "rebase failed",
+        "tone": "failed"
+      },
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -254,23 +1293,104 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
-        "busy": {"kind": "status", "status": "fail", "text": "Batch · rebase failed"},
+        "busy": {
+          "kind": "status",
+          "status": "fail",
+          "text": "Batch \u00b7 rebase failed"
+        },
         "ci": null,
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "fail", "text": "Batch · rebase failed"}],
-        "row_badges": [{"kind": "status", "status": "fail", "text": "Batch · rebase failed"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Batch \u00b7 rebase failed"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "fail",
+            "text": "Batch \u00b7 rebase failed"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": {
+          "kind": "status",
+          "status": "running",
+          "text": "Batch \u00b7 working"
+        },
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Batch \u00b7 working"
+          }
+        ]
       }
     },
     {
       "name": "batch done is detail only",
       "pr": {},
-      "item": {"key": "acme/kit#4", "status": "done", "steps": {"rebase": {"status": "done"}, "ci": null, "comments": null, "review": null}, "findings": []},
-      "batch_state": {"text": "done", "tone": "done"},
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "item": {
+        "key": "acme/kit#4",
+        "status": "done",
+        "steps": {
+          "rebase": {
+            "status": "done"
+          },
+          "ci": null,
+          "comments": null,
+          "review": null
+        },
+        "findings": []
+      },
+      "batch_state": {
+        "text": "done",
+        "tone": "done"
+      },
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -278,10 +1398,45 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
-        "busy": {"kind": "status", "status": "pass", "text": "Batch · done"},
+        "busy": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Batch \u00b7 done"
+        },
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [],
+        "row_badges": []
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
         "ci": null,
         "decision": null,
         "detail_issues": [],
@@ -291,10 +1446,20 @@
     },
     {
       "name": "review running",
-      "pr": {"reviewing": true, "reviewRuns": [{"postedEvent": null}]},
+      "pr": {
+        "reviewing": true,
+        "reviewRuns": [
+          {
+            "postedEvent": null
+          }
+        ]
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "in-queue", "mine": "in-review"},
+      "lanes": {
+        "team": "in-queue",
+        "mine": "in-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -302,23 +1467,87 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
-        "review": {"kind": "status", "status": "running", "text": "Review running"},
+        "review": {
+          "kind": "status",
+          "status": "running",
+          "text": "Review running"
+        },
         "busy": null,
         "ci": null,
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "status", "status": "running", "text": "Review running"}, {"kind": "text", "status": null, "text": "1 review"}],
-        "row_badges": [{"kind": "status", "status": "running", "text": "Review running"}]
+        "badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Review running"
+          },
+          {
+            "kind": "text",
+            "status": null,
+            "text": "1 review"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "running",
+            "text": "Review running"
+          }
+        ]
+      },
+      "document_lanes": {
+        "team": "review-ready",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "text",
+            "status": null,
+            "text": "1 review"
+          }
+        ],
+        "row_badges": []
       }
     },
     {
       "name": "review required, CI passing",
-      "pr": {"reviewDecision": "REVIEW_REQUIRED", "ciStatus": "passing"},
+      "pr": {
+        "reviewDecision": "REVIEW_REQUIRED",
+        "ciStatus": "passing"
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -326,12 +1555,59 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
         "busy": null,
-        "ci": {"kind": "status", "status": "pass", "text": "CI passing"},
-        "decision": {"kind": "status", "status": "none", "text": "Review required"},
+        "ci": {
+          "kind": "status",
+          "status": "pass",
+          "text": "CI passing"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "none",
+          "text": "Review required"
+        },
+        "detail_issues": [],
+        "badges": [],
+        "row_badges": []
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "pass",
+          "text": "CI passing"
+        },
+        "decision": {
+          "kind": "status",
+          "status": "none",
+          "text": "Review required"
+        },
         "detail_issues": [],
         "badges": [],
         "row_badges": []
@@ -339,10 +1615,15 @@
     },
     {
       "name": "unknown decision is sentence case",
-      "pr": {"reviewDecision": "COMMENTED"},
+      "pr": {
+        "reviewDecision": "COMMENTED"
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -350,12 +1631,51 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
         "busy": null,
         "ci": null,
-        "decision": {"kind": "status", "status": "none", "text": "Commented"},
+        "decision": {
+          "kind": "status",
+          "status": "none",
+          "text": "Commented"
+        },
+        "detail_issues": [],
+        "badges": [],
+        "row_badges": []
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": null,
+        "decision": {
+          "kind": "status",
+          "status": "none",
+          "text": "Commented"
+        },
         "detail_issues": [],
         "badges": [],
         "row_badges": []
@@ -366,7 +1686,10 @@
       "pr": {},
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "kit#4",
         "title": "Add kit",
@@ -374,7 +1697,38 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+10", "deletions": "-2", "files": "3 files"},
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [],
+        "row_badges": []
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "kit#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+10",
+          "deletions": "-2",
+          "files": "3 files"
+        },
         "issues": [],
         "review": null,
         "busy": null,
@@ -387,10 +1741,21 @@
     },
     {
       "name": "no repo, one file, one label",
-      "pr": {"repoSlug": "", "changedFiles": 1, "additions": 0, "deletions": 0, "labels": ["only"]},
+      "pr": {
+        "repoSlug": "",
+        "changedFiles": 1,
+        "additions": 0,
+        "deletions": 0,
+        "labels": [
+          "only"
+        ]
+      },
       "item": null,
       "batch_state": null,
-      "lanes": {"team": "open", "mine": "awaiting-review"},
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review"
+      },
       "presentation": {
         "ref": "#4",
         "title": "Add kit",
@@ -398,14 +1763,57 @@
         "author": "ada",
         "branch": "ada/feat/kit",
         "base_branch": "main",
-        "stats": {"additions": "+0", "deletions": "-0", "files": "1 file"},
+        "stats": {
+          "additions": "+0",
+          "deletions": "-0",
+          "files": "1 file"
+        },
         "issues": [],
         "review": null,
         "busy": null,
         "ci": null,
         "decision": null,
         "detail_issues": [],
-        "badges": [{"kind": "tag", "status": null, "text": "only"}],
+        "badges": [
+          {
+            "kind": "tag",
+            "status": null,
+            "text": "only"
+          }
+        ],
+        "row_badges": []
+      },
+      "document_lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "document_presentation": {
+        "ref": "#4",
+        "title": "Add kit",
+        "tags": [],
+        "author": "ada",
+        "branch": "ada/feat/kit",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+0",
+          "deletions": "-0",
+          "files": "1 file"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "tag",
+            "status": null,
+            "text": "only"
+          }
+        ],
         "row_badges": []
       }
     }

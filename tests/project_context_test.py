@@ -43,6 +43,13 @@ def test_a_claude_md_alone_is_never_read_as_instructions(tmp_path):
     assert ctx.shadows == ("CLAUDE.md",)
 
 
+def test_legacy_hint_with_two_shadows_says_what_to_do_with_the_rest(tmp_path):
+    _write(tmp_path, "CLAUDE.md")
+    _write(tmp_path, ".claude/CLAUDE.md")
+    hint = core.project_context.migration_hint(core.project_context.resolve(tmp_path))
+    assert "fold the others into AGENTS.md, then delete them" in hint
+
+
 def test_the_nested_claude_md_is_a_shadow_too(tmp_path):
     _write(tmp_path, ".claude/CLAUDE.md")
     ctx = core.project_context.resolve(tmp_path)

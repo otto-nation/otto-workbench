@@ -166,7 +166,7 @@ ai_warn_model_exports() {
 }
 
 # step_instructions_report — lists the registered repos that carry a CLAUDE.md,
-# with what to do about each. A CLAUDE.md anywhere in the directory chain makes
+# with one combined suggestion per repo. A CLAUDE.md anywhere in the directory chain makes
 # Claude Code ignore AGENTS.md. Read-only: the file is tracked in a repo the
 # workbench does not own, so it suggests and never renames or deletes. Silent
 # when no registered repo has one.

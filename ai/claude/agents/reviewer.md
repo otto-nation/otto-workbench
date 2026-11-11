@@ -173,7 +173,7 @@ When the prompt's Output section has a `questions` field, use `questions` and `v
   - When the same value appears in multiple files, flag it as a SSOT violation regardless of whether it's a constant or config
 
 ### 6. AI Configuration
-- A newly added CLAUDE.md (or a modified one) is itself a **should-fix** finding: Claude Code reads AGENTS.md only when no CLAUDE.md exists in the directory chain, so it hides the sibling AGENTS.md — the content belongs in AGENTS.md
+- A CLAUDE.md added or modified in the PR is itself a **should-fix** finding: Claude Code reads AGENTS.md only when no CLAUDE.md exists in the directory chain, so it hides the sibling AGENTS.md — the content belongs in AGENTS.md
 - If AGENTS.md, .cursorrules, or similar AI instruction files are added or modified, review them with the same rigor as code:
   - **Accuracy** — do commands, file paths, and tool references actually exist? Verify each claim against the codebase
   - **Conventions** — does the content follow the project's existing instructions-file style and structure? Check for inconsistencies with parent AGENTS.md files

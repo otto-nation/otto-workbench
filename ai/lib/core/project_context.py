@@ -124,7 +124,7 @@ def resolve(root: Path) -> ProjectContext:
 
 
 def migration_hint(ctx: ProjectContext) -> str:
-    """One sentence naming the CLAUDE.md files to remove, or "" when none exist.
+    """One sentence naming the CLAUDE.md files to rename or fold into AGENTS.md, or "" when none exist.
 
     Suggests, never performs: the file is tracked in a repo the workbench does
     not own, and renaming it is the repo's decision.
@@ -137,7 +137,9 @@ def migration_hint(ctx: ProjectContext) -> str:
                 if ctx.shadows[0] == ".claude/CLAUDE.md"
                 else f"git mv {ctx.shadows[0]} {Path(ctx.shadows[0]).with_name(AGENTS_FILE)}")
         return (f"{names} — {AGENTS_FILE} is the only instructions file name; "
-                f"rename it: {move}")
+                f"rename it: {move}"
+                + (" and fold the others into "
+                   f"{AGENTS_FILE}, then delete them" if len(ctx.shadows) > 1 else ""))
     return (f"{names} shadows {AGENTS_FILE} — Claude Code (>= {CLAUDE_CODE_MIN_VERSION}) "
             f"reads {AGENTS_FILE} only when no CLAUDE.md is in the directory chain; "
             f"fold it into {AGENTS_FILE} and delete it")

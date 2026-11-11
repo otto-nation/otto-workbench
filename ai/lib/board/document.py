@@ -20,6 +20,11 @@ from typing import Any, Sequence
 
 import batch.plan
 import batch.store
+import board.cache
+import board.columns
+import board.github
+import board.owed
+import board.reviews
 import core.serde
 import gh.client
 import git.client
@@ -27,7 +32,6 @@ import pr.target
 import review.listing
 from batch.model import Step
 from batch.store import RepoRef
-from board import cache, columns, github, owed, reviews
 from board.github import POOL_WORKERS
 from board.model import (
     SCHEMA_VERSIONS,
@@ -102,7 +106,7 @@ def build(
         "phase": wanted.value,
         "complete": complete,
         "viewer": viewer,
-        "columns": [core.serde.to_dict(col) for col in columns.columns()],
+        "columns": [core.serde.to_dict(col) for col in board.columns.columns()],
         "repos": [core.serde.to_dict(repo) for repo in repos],
         "rows": rows,
     }
@@ -168,11 +172,11 @@ def _listing_phase(
         if isinstance(found, RepoError):
             repos.append(_failed(path, found))
             continue
-        pulls = github.list_pulls(found.slug)
+        pulls = board.github.list_pulls(found.slug)
         if pulls is None:
             repos.append(_failed(path, _LIST_FAILED, found=found))
             continue
-        cache.write(found.key, Phase.LISTING, {
+        board.cache.write(found.key, Phase.LISTING, {
             "fetched_at": now,
             "rows": [core.serde.to_dict(pull) for pull in pulls],
         })
@@ -221,7 +225,7 @@ def _status_repo(
     now: str,
     pool: ThreadPoolExecutor,
 ) -> tuple[RepoStatus, list[dict]]:
-    pulls = github.list_pulls(found.slug)
+    pulls = board.github.list_pulls(found.slug)
     if pulls is None:
         return _failed(found.path, _LIST_FAILED, found=found), []
     if prs is not None:
@@ -229,13 +233,13 @@ def _status_repo(
         pulls = [pull for pull in pulls if pull.number in want]
         landed_nums: list[int] = []
     else:
-        landed_nums = reviews.landed_candidates(pulls, listing, found.slug, found.host)
+        landed_nums = board.reviews.landed_candidates(pulls, listing, found.slug, found.host)
     _write_listing_cache(found.key, pulls, now, replace=prs is None)
     numbers = [pull.number for pull in pulls]
     for num in landed_nums:
         if num not in numbers:
             numbers.append(num)
-    fetched = github.fetch_status(found.slug, numbers, executor=pool)
+    fetched = board.github.fetch_status(found.slug, numbers, executor=pool)
     status_rows = _status_cache_rows(pulls, fetched.by_number, listing, found, landed_nums)
     _write_status_cache(found.key, status_rows, now, replace=prs is None)
     kept_landed = _kept_landed(landed_nums, fetched.by_number, listing, found)
@@ -300,9 +304,9 @@ def _write_listing_cache(
 ) -> None:
     rows = [core.serde.to_dict(pull) for pull in pulls]
     if replace:
-        cache.write(repo_key, Phase.LISTING, {"fetched_at": now, "rows": rows})
+        board.cache.write(repo_key, Phase.LISTING, {"fetched_at": now, "rows": rows})
         return
-    previous = cache.read(repo_key, Phase.LISTING) or {}
+    previous = board.cache.read(repo_key, Phase.LISTING) or {}
     by_number = {
         row["number"]: row
         for row in previous.get("rows") or []
@@ -310,7 +314,7 @@ def _write_listing_cache(
     }
     for row in rows:
         by_number[row["number"]] = row
-    cache.write(repo_key, Phase.LISTING, {
+    board.cache.write(repo_key, Phase.LISTING, {
         "fetched_at": now,
         "rows": list(by_number.values()),
     })
@@ -318,9 +322,9 @@ def _write_listing_cache(
 
 def _write_status_cache(repo_key: str, rows: list[dict], now: str, *, replace: bool) -> None:
     if replace:
-        cache.write(repo_key, Phase.STATUS, {"fetched_at": now, "rows": rows})
+        board.cache.write(repo_key, Phase.STATUS, {"fetched_at": now, "rows": rows})
         return
-    previous = cache.read(repo_key, Phase.STATUS) or {}
+    previous = board.cache.read(repo_key, Phase.STATUS) or {}
     by_number = {
         row["number"]: row
         for row in previous.get("rows") or []
@@ -328,7 +332,7 @@ def _write_status_cache(repo_key: str, rows: list[dict], now: str, *, replace: b
     }
     for row in rows:
         by_number[row["number"]] = row
-    cache.write(repo_key, Phase.STATUS, {
+    board.cache.write(repo_key, Phase.STATUS, {
         "fetched_at": now,
         "rows": list(by_number.values()),
     })
@@ -346,7 +350,7 @@ def _kept_landed(
         if facts is None:
             continue
         entries.append({"number": num, "merged_at": facts.merged_at, "facts": facts})
-    kept = reviews.keep_landed(entries)
+    kept = board.reviews.keep_landed(entries)
     return [_landed_pull(entry["number"], entry["facts"], listing, found) for entry in kept]
 
 
@@ -371,7 +375,7 @@ def _listing_match(listing, found: Checkout, number: int):
     best_at = ""
     rows = listing if isinstance(listing, (list, tuple)) else ()
     for row in rows:
-        if not reviews.matches_repo(row, found.slug, found.host):
+        if not board.reviews.matches_repo(row, found.slug, found.host):
             continue
         if _attr(row, "pr_number") != number:
             continue
@@ -393,7 +397,7 @@ def _attr(obj, name: str, default=None):
 def _merge_landed_into_listing(found: Checkout, landed: list[PullFacts], now: str) -> None:
     if not landed:
         return
-    previous = cache.read(found.key, Phase.LISTING) or {}
+    previous = board.cache.read(found.key, Phase.LISTING) or {}
     rows = [
         row for row in previous.get("rows") or []
         if isinstance(row, dict) and "number" in row
@@ -404,7 +408,7 @@ def _merge_landed_into_listing(found: Checkout, landed: list[PullFacts], now: st
             continue
         rows.append(core.serde.to_dict(pull))
         have.add(pull.number)
-    cache.write(found.key, Phase.LISTING, {"fetched_at": now, "rows": rows})
+    board.cache.write(found.key, Phase.LISTING, {"fetched_at": now, "rows": rows})
 
 
 def _owed_phase(
@@ -433,8 +437,8 @@ def _owed_phase(
         if plan_error is not None:
             repos.append(_failed(path, plan_error, found=found))
             continue
-        mapped = owed.owed_from(plan, found.slug)
-        cache.write(found.key, Phase.OWED, {
+        mapped = board.owed.owed_from(plan, found.slug)
+        board.cache.write(found.key, Phase.OWED, {
             "fetched_at": now,
             "rows": [
                 {"number": number, "reason": entry.reason, "head_sha": entry.head_sha}
@@ -454,14 +458,14 @@ def _rows_from_cache(
     only: list[int] | None = None,
     mine_only: bool = False,
 ) -> list[dict]:
-    merged = cache.merged(found.key)
+    merged = board.cache.merged(found.key)
     if only is not None:
         want = set(only)
         merged = {number: row for number, row in merged.items() if number in want}
     prs = [_join_pr(row, found.slug) for row in merged.values()]
     joined = {
         item.number: item
-        for item in reviews.join(prs, listing, found.slug, found.host, viewer)
+        for item in board.reviews.join(prs, listing, found.slug, found.host, viewer)
     }
     busy = batch.store.busy_prs(RepoRef(key=found.key, label=found.slug))
     out: list[dict] = []
@@ -595,8 +599,8 @@ def _enum(cls, value, default):
 
 def _emit_row(row: Row) -> dict:
     payload = core.serde.to_dict(row)
-    payload["lanes"] = core.serde.to_dict(columns.lanes(row))
-    payload["issues"] = [core.serde.to_dict(issue) for issue in columns.issues(row)]
+    payload["lanes"] = core.serde.to_dict(board.columns.lanes(row))
+    payload["issues"] = [core.serde.to_dict(issue) for issue in board.columns.issues(row)]
     return payload
 
 

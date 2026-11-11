@@ -3437,7 +3437,7 @@ behind the repo key (`acme/widget`) rather than from `gh`. An explicit
 can report, and the branch is half the target key.
 
 `pr review --list` is `NONE` because there is nothing to resolve, not because it
-is the only such command — every `batch` subcommand is `NONE` too, as it names
+is the only such command — every `batch` subcommand and `pr board` are `NONE` too, as they name
 no target of its own. The listing answers from the user's own state
 root, so it has no repo, no branch, and no target, and unlike `LOCAL` it works
 from a directory that is not a git repository at all. `--pr` does not escalate
@@ -3445,7 +3445,7 @@ it: there is no target for a PR number to name at that depth, so honouring one
 would spend a `gh` call on a value the handler never reads.
 
 Every `NONE` need that holds no target lock writes no dispatch trail
-(`Need.records_a_trail`): `--list`, and every `batch` subcommand. A global lock
+(`Need.records_a_trail`): `--list`, `pr board`, and every `batch` subcommand. A global lock
 alone does not count — it names no repo, PR or branch to record against — so
 `batch run` / `resume` skip the dispatch trail too and keep one of their own
 (`pr-batch`). Resolving nothing and holding no target lock is the shape of a

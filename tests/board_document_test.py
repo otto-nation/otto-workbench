@@ -20,7 +20,7 @@ def _env(tmp_path, monkeypatch, *, checkout=None, pulls=None, status=None, owed_
     monkeypatch.setattr("board.document.batch.store.busy_prs", lambda ref: frozenset())
     monkeypatch.setattr("board.document._resolve", lambda path: found)
     monkeypatch.setattr(
-        "board.document.github.list_pulls",
+        "board.github.list_pulls",
         lambda slug: pulls if pulls is not None else [],
     )
 
@@ -29,7 +29,7 @@ def _env(tmp_path, monkeypatch, *, checkout=None, pulls=None, status=None, owed_
             return status
         return StatusFetch(by_number={}, partial=False)
 
-    monkeypatch.setattr("board.document.github.fetch_status", fake_fetch)
+    monkeypatch.setattr("board.github.fetch_status", fake_fetch)
     if owed_plan is not None:
         monkeypatch.setattr(
             "board.document.batch.plan.build_plan",
@@ -211,7 +211,7 @@ def test_missing_checkout_is_repo_error_and_still_a_document(tmp_path, monkeypat
 def test_failed_listing_fetch_keeps_cache_and_reports_error(tmp_path, monkeypatch):
     found = _env(tmp_path, monkeypatch)
     write(found.key, Phase.LISTING, {"rows": [{"number": 7, "head_sha": "a"}]})
-    monkeypatch.setattr("board.document.github.list_pulls", lambda slug: None)
+    monkeypatch.setattr("board.github.list_pulls", lambda slug: None)
     for phase in (Phase.LISTING, Phase.STATUS):
         doc = build(phase, [found.path])
         assert doc["repos"][0]["phase"] == "failed"

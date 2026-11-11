@@ -11,12 +11,21 @@ and its numbers stay unhydrated.
 from __future__ import annotations
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Sequence
 
 import gh.client
-from board.model import CiStatus, LatestReview, Mergeable, PrState, PullFacts, StatusFacts
+from board.model import (
+    CiStatus,
+    LatestReview,
+    Mergeable,
+    PrState,
+    PullFacts,
+    RepoError,
+    StatusFacts,
+)
 
 
 PULLS_JQ = (
@@ -48,6 +57,18 @@ class StatusFetch:
 
     by_number: dict[int, StatusFacts]
     partial: bool = False
+
+
+@dataclass(frozen=True)
+class PullList:
+    """Open PRs, or a failed fetch (distinct from no open PRs)."""
+
+    pulls: list[PullFacts] | None
+    error: str = ""
+
+
+_AUTH_RE = re.compile(r"gh auth login|authentication|HTTP 401")
+_LISTING_FAILED = "listing open pull requests failed"
 
 
 def batches(numbers: Sequence[int] | None = None, size: int = GRAPHQL_BATCH) -> list[list[int]]:
@@ -131,8 +152,8 @@ def map_graphql(payload: object, numbers: Sequence[int] | None = None) -> dict[i
     return out
 
 
-def list_pulls(slug: str) -> list[PullFacts] | None:
-    """Open PRs, or None when the fetch failed (distinct from no open PRs)."""
+def list_pulls(slug: str) -> PullList:
+    """Open PRs, or a failed fetch (distinct from no open PRs)."""
     # gh.client.api omits --method on GET, and -F/-f would switch gh to POST.
     # Query parameters keep this a GET, matching pr.stack's open-PR listing.
     result = gh.client.api(
@@ -141,12 +162,22 @@ def list_pulls(slug: str) -> list[PullFacts] | None:
         jq=PULLS_JQ,
     )
     if not result.ok:
-        return None
+        return PullList(pulls=None, error=_first_stderr_line(result.stderr))
     try:
         raw = _parse_pulls_stdout(result.stdout)
     except (json.JSONDecodeError, TypeError, ValueError):
-        return None
-    return [map_pull(pr, slug) for pr in raw if isinstance(pr, dict)]
+        return PullList(pulls=None, error=_first_stderr_line(result.stderr))
+    return PullList(
+        pulls=[map_pull(pr, slug) for pr in raw if isinstance(pr, dict)],
+    )
+
+
+def pull_list_error(listed: PullList) -> RepoError:
+    """Classify a failed listing: auth on 401 / login, else gh-failed."""
+    text = listed.error.strip() or _LISTING_FAILED
+    if _AUTH_RE.search(text):
+        return RepoError(kind="auth", message=text)
+    return RepoError(kind="gh-failed", message=text)
 
 
 def fetch_status(
@@ -257,6 +288,14 @@ def _latest_reviews_of(pr: dict) -> tuple[LatestReview, ...]:
         if login:
             out.append(LatestReview(login=login, state=node.get("state") or ""))
     return tuple(out)
+
+
+def _first_stderr_line(stderr: str) -> str:
+    for line in stderr.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def _flatten_pull_pages(payload: object) -> list[Any]:

@@ -124,6 +124,12 @@ class LatestReview:
 
 
 @dataclass(frozen=True)
+class RunPostRef:
+    event: str
+    posted_at: str = ""
+
+
+@dataclass(frozen=True)
 class ReviewRunRef:
     posted_event: str | None = None
     head_sha: str = ""
@@ -132,6 +138,12 @@ class ReviewRunRef:
     review_file: str = ""
     verdict: str = ""
     findings: object | None = None
+    stamp: str = ""
+    structured: bool = True
+    cost_usd: float | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    post: RunPostRef | None = None
 
 
 @dataclass(frozen=True)

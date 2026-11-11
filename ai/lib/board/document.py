@@ -19,37 +19,28 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import batch.plan
-import batch.store
 import board.cache
-import board.columns
 import board.github
 import board.owed
-import board.presentation
 import board.reviews
+import board.rows
 import core.serde
-import gh.client
+import core.workbench_paths
 import git.client
 import pr.target
 import review.listing
 from batch.model import Step
-from batch.store import RepoRef
 from board.github import POOL_WORKERS
 from board.model import (
     SCHEMA_VERSIONS,
-    CiStatus,
-    LatestReview,
-    Mergeable,
     Phase,
     PrState,
     PullFacts,
     RepoError,
     RepoPhase,
     RepoStatus,
-    ReviewHealth,
-    Row,
     StatusFacts,
 )
-from board.reviews import JoinResult
 
 
 @dataclass(frozen=True)
@@ -89,24 +80,30 @@ def build(
     checkouts: Sequence[str],
     prs: Sequence[int] | None = None,
     if_changed: str | None = None,
+    *,
+    offline: bool = False,
 ) -> dict:
     """The board document for *phase* over *checkouts*.
 
     *prs* limits a status fetch to those numbers and marks the document a
     patch (``complete`` false). Owed is always a patch. *if_changed* equal to
-    the current stamp returns the unchanged envelope.
+    the current stamp returns the unchanged envelope. *offline* reads listing
+    rows from cache and skips GitHub.
     """
     wanted = phase if isinstance(phase, Phase) else Phase(phase)
-    viewer = gh.client.login()
+    viewer = board.cache.viewer(refresh=not offline)
     now = _now()
     listing = review.listing.rows()
     numbers = _int_prs(prs)
-    repos, rows, complete = _assemble(wanted, list(checkouts), numbers, listing, viewer, now)
+    repos, rows, complete = _assemble(
+        wanted, list(checkouts), numbers, listing, viewer, now, offline=offline,
+    )
     doc = {
         "schema_version": SCHEMA_VERSIONS[-1],
         "phase": wanted.value,
         "complete": complete,
         "viewer": viewer,
+        "reviews_root": str(core.workbench_paths.reviews_dir()),
         "columns": [core.serde.to_dict(col) for col in board.columns.columns()],
         "repos": [core.serde.to_dict(repo) for repo in repos],
         "rows": rows,
@@ -129,7 +126,7 @@ def _int_prs(prs: Sequence[int] | None) -> list[int] | None:
     return [n for n in prs if type(n) is int]
 
 
-_LIST_FAILED = RepoError(kind="gh-failed", message="listing open pull requests failed")
+_LISTING_REUSE_S = 60
 
 
 def _assemble(
@@ -139,10 +136,14 @@ def _assemble(
     listing,
     viewer: str,
     now: str,
+    *,
+    offline: bool = False,
 ) -> tuple[list[RepoStatus], list[dict], bool]:
     resolved: list[tuple[str, Checkout | RepoError]] = [
         (path, _resolve(path)) for path in checkouts
     ]
+    if offline:
+        return _offline_phase(resolved, listing, viewer, now)
     if phase is Phase.LISTING:
         return _listing_phase(resolved, listing, viewer, now)
     if phase is Phase.STATUS:
@@ -150,9 +151,43 @@ def _assemble(
     return _owed_phase(resolved, listing, viewer, now)
 
 
+def _offline_repo_phase(repo_key: str) -> RepoPhase:
+    cached = board.cache.read_all(repo_key)
+    if Phase.STATUS in cached:
+        return RepoPhase.LOADED
+    if Phase.LISTING in cached:
+        return RepoPhase.HYDRATING
+    return RepoPhase.QUEUED
+
+
+def _offline_phase(
+    resolved: list[tuple[str, Checkout | RepoError]],
+    listing,
+    viewer: str,
+    now: str,
+) -> tuple[list[RepoStatus], list[dict], bool]:
+    repos: list[RepoStatus] = []
+    rows: list[dict] = []
+    for path, found in resolved:
+        if isinstance(found, RepoError):
+            repos.append(_failed(path, found))
+            continue
+        repo_phase = _offline_repo_phase(found.key)
+        repos.append(_repo(found, repo_phase, now))
+        if repo_phase is RepoPhase.QUEUED:
+            continue
+        rows.extend(_cached_rows(found, listing, viewer))
+    return repos, rows, True
+
+
 def _resolve(path: str) -> Checkout | RepoError:
     if not Path(path).is_dir():
         return RepoError(kind="no-checkout", message=f"--checkout {path} does not exist")
+    if not git.client.ok("rev-parse", "--git-dir", cwd=path):
+        return RepoError(
+            kind="not-git",
+            message=f"--checkout {path} is not a git repository",
+        )
     if not git.client.ok("remote", "get-url", "origin", cwd=path):
         return RepoError(kind="no-origin", message=f"--checkout {path} has no origin remote")
     identity = pr.target.repo_identity_from_origin(path)
@@ -173,16 +208,16 @@ def _listing_phase(
         if isinstance(found, RepoError):
             repos.append(_failed(path, found))
             continue
-        pulls = board.github.list_pulls(found.slug)
-        if pulls is None:
-            repos.append(_failed(path, _LIST_FAILED, found=found))
+        listed = board.github.list_pulls(found.slug)
+        if listed.pulls is None:
+            repos.append(_failed(path, board.github.pull_list_error(listed), found=found))
             continue
         board.cache.write(found.key, Phase.LISTING, {
             "fetched_at": now,
-            "rows": [core.serde.to_dict(pull) for pull in pulls],
+            "rows": [core.serde.to_dict(pull) for pull in listed.pulls],
         })
         repos.append(_repo(found, RepoPhase.HYDRATING, now))
-        rows.extend(_rows_from_cache(found, listing, viewer))
+        rows.extend(_cached_rows(found, listing, viewer))
     return repos, rows, True
 
 
@@ -226,16 +261,25 @@ def _status_repo(
     now: str,
     pool: ThreadPoolExecutor,
 ) -> tuple[RepoStatus, list[dict]]:
-    pulls = board.github.list_pulls(found.slug)
-    if pulls is None:
-        return _failed(found.path, _LIST_FAILED, found=found), []
+    pulls = _fresh_listing_pulls(found)
+    fetched_listing = pulls is None
+    if fetched_listing:
+        listed = board.github.list_pulls(found.slug)
+        if listed.pulls is None:
+            return _failed(
+                found.path, board.github.pull_list_error(listed), found=found,
+            ), []
+        pulls = listed.pulls
     if prs is not None:
         want = set(prs)
         pulls = [pull for pull in pulls if pull.number in want]
         landed_nums: list[int] = []
     else:
-        landed_nums = board.reviews.landed_candidates(pulls, listing, found.slug, found.host)
-    _write_listing_cache(found.key, pulls, now, replace=prs is None)
+        landed_nums = board.reviews.landed_candidates(
+            pulls, listing, found.slug, found.host,
+        )
+    if fetched_listing:
+        _write_listing_cache(found.key, pulls, now, replace=prs is None)
     numbers = [pull.number for pull in pulls]
     for num in landed_nums:
         if num not in numbers:
@@ -246,7 +290,43 @@ def _status_repo(
     kept_landed = _kept_landed(landed_nums, fetched.by_number, listing, found)
     _merge_landed_into_listing(found, kept_landed, now)
     repo = _repo(found, RepoPhase.LOADED, now, partial=fetched.partial)
-    return repo, _rows_from_cache(found, listing, viewer, only=prs)
+    return repo, _cached_rows(found, listing, viewer, only=prs)
+
+
+def _fresh_listing_pulls(found: Checkout) -> list[PullFacts] | None:
+    payload = board.cache.read(found.key, Phase.LISTING)
+    if payload is None:
+        return None
+    age = _iso_age_s(payload.get("fetched_at"))
+    if age is None or age >= _LISTING_REUSE_S:
+        return None
+    return _pulls_from_rows(payload.get("rows") or [], found.slug)
+
+
+def _iso_age_s(fetched_at: object) -> float | None:
+    if not isinstance(fetched_at, str) or not fetched_at:
+        return None
+    try:
+        when = datetime.strptime(fetched_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    when = when.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - when).total_seconds()
+
+
+def _pulls_from_rows(rows: object, slug: str) -> list[PullFacts]:
+    if not isinstance(rows, list):
+        return []
+    out: list[PullFacts] = []
+    for row in rows:
+        if not isinstance(row, dict) or "number" not in row:
+            continue
+        data = {**row, "repo": row.get("repo") or slug}
+        try:
+            out.append(core.serde.from_dict(PullFacts, data))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _status_cache_rows(
@@ -447,11 +527,11 @@ def _owed_phase(
             ],
         })
         repos.append(_repo(found, RepoPhase.LOADED, now))
-        rows.extend(_rows_from_cache(found, listing, viewer, mine_only=True))
+        rows.extend(_cached_rows(found, listing, viewer, mine_only=True))
     return repos, rows, False
 
 
-def _rows_from_cache(
+def _cached_rows(
     found: Checkout,
     listing,
     viewer: str,
@@ -459,151 +539,15 @@ def _rows_from_cache(
     only: list[int] | None = None,
     mine_only: bool = False,
 ) -> list[dict]:
-    merged = board.cache.merged(found.key)
-    if only is not None:
-        want = set(only)
-        merged = {number: row for number, row in merged.items() if number in want}
-    prs = [_join_pr(row, found.slug) for row in merged.values()]
-    joined = {
-        item.number: item
-        for item in board.reviews.join(prs, listing, found.slug, found.host, viewer)
-    }
-    busy = batch.store.busy_prs(RepoRef(key=found.key, label=found.slug))
-    out: list[dict] = []
-    for number, raw in merged.items():
-        row = _row_from_merged(
-            raw,
-            joined.get(number) or _empty_join(number, raw),
-            busy=number in busy,
-            viewer=viewer,
-            slug=found.slug,
-        )
-        if mine_only and not row.is_mine:
-            continue
-        out.append(_emit_row(row))
-    return out
-
-
-def _join_pr(raw: dict, slug: str) -> dict:
-    return {
-        "number": raw["number"],
-        "head_sha": raw.get("head_sha") or "",
-        "latest_reviews": raw.get("latest_reviews") or (),
-        "requested_reviewers": tuple(raw.get("requested_reviewers") or ()),
-        "repo": raw.get("repo") or slug,
-    }
-
-
-def _empty_join(number: int, raw: dict) -> JoinResult:
-    return JoinResult(
-        number=number,
-        head_sha=raw.get("head_sha") or "",
-        review_runs=(),
-        my_review_state=None,
-        is_requested_reviewer=False,
-        has_new_changes_since_review=False,
-        review_health=ReviewHealth.OK,
+    return board.rows.from_cache(
+        found.key,
+        found.slug,
+        found.host,
+        listing,
+        viewer,
+        only=only,
+        mine_only=mine_only,
     )
-
-
-def _row_from_merged(
-    raw: dict,
-    join: JoinResult,
-    *,
-    busy: bool,
-    viewer: str,
-    slug: str,
-) -> Row:
-    author = raw.get("author") or ""
-    is_mine = bool(viewer) and author.casefold() == viewer.casefold()
-    owed_reason = raw.get("owed")
-    owed_known = bool(raw.get("owed_known"))
-    owed_sha = raw.get("owed_head_sha") or ""
-    head_sha = raw.get("head_sha") or ""
-    if owed_sha and head_sha and owed_sha != head_sha:
-        owed_reason = None
-        owed_known = False
-    if not is_mine:
-        owed_reason = None
-        owed_known = False
-    hydrated = bool(raw.get("hydrated"))
-    if hydrated:
-        mergeable = _enum(Mergeable, raw.get("mergeable"), Mergeable.UNKNOWN)
-        ci_status = _enum(CiStatus, raw.get("ci_status"), CiStatus.NONE)
-        ci_unknown = bool(raw.get("ci_unknown"))
-    else:
-        mergeable = Mergeable.UNKNOWN
-        ci_status = CiStatus.NONE
-        ci_unknown = True
-    return Row(
-        repo=raw.get("repo") or slug,
-        number=int(raw["number"]),
-        title=raw.get("title") or "",
-        author=author,
-        branch=raw.get("branch") or "",
-        base_branch=raw.get("base_branch") or "",
-        url=raw.get("url") or "",
-        head_sha=head_sha,
-        labels=tuple(raw.get("labels") or ()),
-        created_at=raw.get("created_at") or "",
-        updated_at=raw.get("updated_at") or "",
-        merged_at=raw.get("merged_at"),
-        additions=int(raw.get("additions") or 0),
-        deletions=int(raw.get("deletions") or 0),
-        changed_files=int(raw.get("changed_files") or 0),
-        is_draft=bool(raw.get("is_draft")),
-        state=_enum(PrState, raw.get("state"), PrState.OPEN),
-        in_merge_queue=bool(raw.get("in_merge_queue")),
-        mergeable=mergeable,
-        ci_status=ci_status,
-        ci_unknown=ci_unknown,
-        hydrated=hydrated,
-        review_decision=raw.get("review_decision"),
-        latest_reviews=_latest_reviews(raw.get("latest_reviews")),
-        requested_reviewers=tuple(raw.get("requested_reviewers") or ()),
-        review_runs=join.review_runs,
-        my_review_state=join.my_review_state,
-        is_requested_reviewer=join.is_requested_reviewer,
-        has_new_changes_since_review=join.has_new_changes_since_review,
-        review_health=join.review_health,
-        busy=busy,
-        is_mine=is_mine,
-        owed=owed_reason,
-        owed_known=owed_known,
-    )
-
-
-def _latest_reviews(value: object) -> tuple[LatestReview, ...]:
-    if not value:
-        return ()
-    out: list[LatestReview] = []
-    for item in value:
-        if isinstance(item, LatestReview):
-            out.append(item)
-            continue
-        if not isinstance(item, dict):
-            continue
-        login = item.get("login") or ""
-        if login:
-            out.append(LatestReview(login=login, state=item.get("state") or ""))
-    return tuple(out)
-
-
-def _enum(cls, value, default):
-    if isinstance(value, cls):
-        return value
-    try:
-        return cls(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _emit_row(row: Row) -> dict:
-    payload = core.serde.to_dict(row)
-    payload["lanes"] = core.serde.to_dict(board.columns.lanes(row))
-    payload["issues"] = [core.serde.to_dict(issue) for issue in board.columns.issues(row)]
-    payload["presentation"] = core.serde.to_dict(board.presentation.present(row))
-    return payload
 
 
 def _repo(

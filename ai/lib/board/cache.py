@@ -8,11 +8,15 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import core.serde
 import core.workbench_paths
+import gh.client
 from board.model import Phase
+
+VIEWER_TTL_S = 3600
 
 
 STATUS_KEYS = (
@@ -70,7 +74,8 @@ def merged(repo_key: str) -> dict[int, dict]:
     """Overlay listing, matching-SHA status, then owed, keyed by PR number.
 
     Status facts apply only when `head_sha` matches the listing row. Owed is
-    joined by number. A PR that exists only in status still appears, hydrated.
+    joined by number. A PR that exists only in status still appears, hydrated,
+    unless its state is OPEN — an open PR missing from the listing was closed.
     """
     listing = read(repo_key, Phase.LISTING)
     status = read(repo_key, Phase.STATUS)
@@ -90,6 +95,8 @@ def merged(repo_key: str) -> dict[int, dict]:
         by_number[number] = {**row, **overlay, "hydrated": True}
     for number, extra in status_by_number.items():
         if number in by_number:
+            continue
+        if extra.get("state") == "OPEN":
             continue
         overlay = {key: extra[key] for key in STATUS_KEYS if key in extra}
         by_number[number] = {**extra, **overlay, "hydrated": True}
@@ -113,3 +120,47 @@ def merged(repo_key: str) -> dict[int, dict]:
                 "hydrated": False,
             }
     return by_number
+
+
+def viewer_path() -> Path:
+    return core.workbench_paths.cache_dir("board") / "viewer.json"
+
+
+def read_viewer() -> str | None:
+    path = viewer_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    login = data.get("login")
+    if not isinstance(login, str):
+        return None
+    return login
+
+
+def write_viewer(login: str) -> None:
+    core.serde.write_json(viewer_path(), {"login": login})
+
+
+def _viewer_stale() -> bool:
+    try:
+        age = time.time() - viewer_path().stat().st_mtime
+    except OSError:
+        return True
+    return age >= VIEWER_TTL_S
+
+
+def viewer(*, refresh: bool = True) -> str:
+    """GitHub login from cache, refreshed online when older than 1 h."""
+    cached = read_viewer()
+    if not refresh:
+        return cached or ""
+    if cached is not None and not _viewer_stale():
+        return cached
+    login = gh.client.login()
+    write_viewer(login)
+    return login

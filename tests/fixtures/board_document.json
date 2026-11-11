@@ -1,0 +1,512 @@
+{
+  "schema_version": 1,
+  "phase": "status",
+  "complete": true,
+  "viewer": "me",
+  "reviews_root": "",
+  "columns": [
+    {
+      "board": "team",
+      "key": "open",
+      "label": "Open",
+      "order": 0
+    },
+    {
+      "board": "team",
+      "key": "needs-my-review",
+      "label": "Needs My Review",
+      "order": 1
+    },
+    {
+      "board": "team",
+      "key": "in-queue",
+      "label": "In Queue",
+      "order": 2
+    },
+    {
+      "board": "team",
+      "key": "review-ready",
+      "label": "Review Ready",
+      "order": 3
+    },
+    {
+      "board": "team",
+      "key": "reviewed",
+      "label": "Reviewed",
+      "order": 4
+    },
+    {
+      "board": "team",
+      "key": "landed",
+      "label": "Landed",
+      "order": 5
+    },
+    {
+      "board": "mine",
+      "key": "has-conflicts",
+      "label": "Has Conflicts",
+      "order": 0
+    },
+    {
+      "board": "mine",
+      "key": "ci-failing",
+      "label": "CI Failing",
+      "order": 1
+    },
+    {
+      "board": "mine",
+      "key": "has-comments",
+      "label": "Has Comments",
+      "order": 2
+    },
+    {
+      "board": "mine",
+      "key": "changes-requested",
+      "label": "Changes Requested",
+      "order": 3
+    },
+    {
+      "board": "mine",
+      "key": "in-review",
+      "label": "In Review",
+      "order": 4
+    },
+    {
+      "board": "mine",
+      "key": "awaiting-review",
+      "label": "Awaiting Review",
+      "order": 5
+    },
+    {
+      "board": "mine",
+      "key": "approved",
+      "label": "Approved",
+      "order": 6
+    },
+    {
+      "board": "mine",
+      "key": "in-queue",
+      "label": "In Queue",
+      "order": 7
+    },
+    {
+      "board": "mine",
+      "key": "merged",
+      "label": "Merged",
+      "order": 8
+    }
+  ],
+  "repos": [
+    {
+      "slug": "acme/box",
+      "host": "github.com",
+      "checkout": "",
+      "phase": "loaded",
+      "error": null,
+      "partial": false,
+      "fetched_at": ""
+    }
+  ],
+  "rows": [
+    {
+      "repo": "acme/box",
+      "number": 7,
+      "title": "Fix comments",
+      "author": "me",
+      "branch": "me/fix/comments",
+      "base_branch": "main",
+      "url": "https://github.com/acme/box/pull/7",
+      "head_sha": "aaa",
+      "labels": [
+        "comments"
+      ],
+      "created_at": "",
+      "updated_at": "",
+      "merged_at": null,
+      "additions": 12,
+      "deletions": 3,
+      "changed_files": 2,
+      "is_draft": false,
+      "state": "OPEN",
+      "in_merge_queue": false,
+      "mergeable": "MERGEABLE",
+      "ci_status": "passing",
+      "ci_unknown": false,
+      "hydrated": true,
+      "review_decision": null,
+      "latest_reviews": [],
+      "requested_reviewers": [],
+      "review_runs": [
+        {
+          "posted_event": "comment",
+          "head_sha": "aaa",
+          "status": "completed",
+          "reviewed_at": "2026-01-02T00:00:00Z",
+          "review_file": "/r.md",
+          "verdict": "ok",
+          "findings": {
+            "must_fix": 0
+          },
+          "stamp": "20260102T000000",
+          "structured": true,
+          "cost_usd": 1.25,
+          "input_tokens": 10,
+          "output_tokens": 20,
+          "post": {
+            "event": "comment",
+            "posted_at": "2026-01-02T12:00:00Z"
+          }
+        },
+        {
+          "posted_event": "comment",
+          "head_sha": "bbb",
+          "status": "",
+          "reviewed_at": "",
+          "review_file": "",
+          "verdict": "",
+          "findings": null,
+          "stamp": "20260101T000000",
+          "structured": false,
+          "cost_usd": null,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "post": {
+            "event": "comment",
+            "posted_at": "2026-01-01T08:00:00Z"
+          }
+        }
+      ],
+      "my_review_state": "COMMENTED",
+      "is_requested_reviewer": false,
+      "has_new_changes_since_review": false,
+      "review_health": "ok",
+      "busy": false,
+      "is_mine": true,
+      "owed": "2 unresolved threads",
+      "owed_known": true,
+      "lanes": {
+        "team": "reviewed",
+        "mine": "has-comments",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "issues": [
+        {
+          "kind": "has-comments",
+          "label": "2 unresolved threads",
+          "status": "warn"
+        }
+      ],
+      "presentation": {
+        "ref": "box#7",
+        "title": "Fix comments",
+        "tags": [],
+        "author": "me",
+        "branch": "me/fix/comments",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+12",
+          "deletions": "-3",
+          "files": "2 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "pass",
+          "text": "CI passing"
+        },
+        "decision": null,
+        "detail_issues": [
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          }
+        ],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          },
+          {
+            "kind": "text",
+            "status": null,
+            "text": "2 reviews"
+          },
+          {
+            "kind": "tag",
+            "status": null,
+            "text": "comments"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "warn",
+            "text": "2 unresolved threads"
+          }
+        ]
+      }
+    },
+    {
+      "repo": "acme/box",
+      "number": 8,
+      "title": "Unhydrated work",
+      "author": "you",
+      "branch": "you/feat/wip",
+      "base_branch": "main",
+      "url": "https://github.com/acme/box/pull/8",
+      "head_sha": "bbb",
+      "labels": [],
+      "created_at": "",
+      "updated_at": "",
+      "merged_at": null,
+      "additions": 0,
+      "deletions": 0,
+      "changed_files": 0,
+      "is_draft": false,
+      "state": "OPEN",
+      "in_merge_queue": false,
+      "mergeable": "UNKNOWN",
+      "ci_status": "none",
+      "ci_unknown": true,
+      "hydrated": false,
+      "review_decision": null,
+      "latest_reviews": [],
+      "requested_reviewers": [],
+      "review_runs": [],
+      "my_review_state": null,
+      "is_requested_reviewer": false,
+      "has_new_changes_since_review": false,
+      "review_health": "ok",
+      "busy": false,
+      "is_mine": false,
+      "owed": null,
+      "owed_known": false,
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "issues": [
+        {
+          "kind": "ci-pending",
+          "label": "CI loading",
+          "status": "none"
+        }
+      ],
+      "presentation": {
+        "ref": "box#8",
+        "title": "Unhydrated work",
+        "tags": [],
+        "author": "you",
+        "branch": "you/feat/wip",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+0",
+          "deletions": "-0",
+          "files": "0 files"
+        },
+        "issues": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          }
+        ],
+        "review": null,
+        "busy": null,
+        "ci": {
+          "kind": "status",
+          "status": "none",
+          "text": "CI loading"
+        },
+        "decision": null,
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          }
+        ],
+        "row_badges": [
+          {
+            "kind": "status",
+            "status": "none",
+            "text": "CI loading"
+          }
+        ]
+      }
+    },
+    {
+      "repo": "acme/box",
+      "number": 10,
+      "title": "WIP draft",
+      "author": "pat",
+      "branch": "pat/feat/draft",
+      "base_branch": "main",
+      "url": "https://github.com/acme/box/pull/10",
+      "head_sha": "ddd",
+      "labels": [],
+      "created_at": "",
+      "updated_at": "",
+      "merged_at": null,
+      "additions": 4,
+      "deletions": 1,
+      "changed_files": 1,
+      "is_draft": true,
+      "state": "OPEN",
+      "in_merge_queue": false,
+      "mergeable": "MERGEABLE",
+      "ci_status": "none",
+      "ci_unknown": false,
+      "hydrated": true,
+      "review_decision": null,
+      "latest_reviews": [],
+      "requested_reviewers": [],
+      "review_runs": [],
+      "my_review_state": null,
+      "is_requested_reviewer": false,
+      "has_new_changes_since_review": false,
+      "review_health": "ok",
+      "busy": false,
+      "is_mine": false,
+      "owed": null,
+      "owed_known": false,
+      "lanes": {
+        "team": "open",
+        "mine": "awaiting-review",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "in-review"
+      },
+      "issues": [],
+      "presentation": {
+        "ref": "box#10",
+        "title": "WIP draft",
+        "tags": [
+          "Draft"
+        ],
+        "author": "pat",
+        "branch": "pat/feat/draft",
+        "base_branch": "main",
+        "stats": {
+          "additions": "+4",
+          "deletions": "-1",
+          "files": "1 file"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": null,
+        "decision": null,
+        "detail_issues": [],
+        "badges": [],
+        "row_badges": []
+      }
+    },
+    {
+      "repo": "acme/box",
+      "number": 9,
+      "title": "#9",
+      "author": "",
+      "branch": "you/feat/landed",
+      "base_branch": "",
+      "url": "",
+      "head_sha": "ccc",
+      "labels": [],
+      "created_at": "",
+      "updated_at": "",
+      "merged_at": "2026-01-10T00:00:00Z",
+      "additions": 20,
+      "deletions": 5,
+      "changed_files": 4,
+      "is_draft": false,
+      "state": "MERGED",
+      "in_merge_queue": false,
+      "mergeable": "UNKNOWN",
+      "ci_status": "passing",
+      "ci_unknown": false,
+      "hydrated": true,
+      "review_decision": "APPROVED",
+      "latest_reviews": [],
+      "requested_reviewers": [],
+      "review_runs": [
+        {
+          "posted_event": null,
+          "head_sha": "ccc",
+          "status": "completed",
+          "reviewed_at": "2026-01-10T00:00:00Z",
+          "review_file": "",
+          "verdict": "",
+          "findings": null,
+          "stamp": "",
+          "structured": true,
+          "cost_usd": null,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "post": null
+        }
+      ],
+      "my_review_state": null,
+      "is_requested_reviewer": false,
+      "has_new_changes_since_review": false,
+      "review_health": "ok",
+      "busy": false,
+      "is_mine": false,
+      "owed": null,
+      "owed_known": false,
+      "lanes": {
+        "team": "landed",
+        "mine": "merged",
+        "team_reviewing": "in-queue",
+        "mine_reviewing": "merged"
+      },
+      "issues": [],
+      "presentation": {
+        "ref": "box#9",
+        "title": "#9",
+        "tags": [
+          "Merged"
+        ],
+        "author": "",
+        "branch": "you/feat/landed",
+        "base_branch": "",
+        "stats": {
+          "additions": "+20",
+          "deletions": "-5",
+          "files": "4 files"
+        },
+        "issues": [],
+        "review": null,
+        "busy": null,
+        "ci": null,
+        "decision": {
+          "kind": "status",
+          "status": "pass",
+          "text": "Approved"
+        },
+        "detail_issues": [],
+        "badges": [
+          {
+            "kind": "text",
+            "status": null,
+            "text": "1 review"
+          }
+        ],
+        "row_badges": []
+      }
+    }
+  ],
+  "stamp": ""
+}

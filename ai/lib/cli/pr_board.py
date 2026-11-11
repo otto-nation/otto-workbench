@@ -3,6 +3,7 @@
 Usage:
   pr board --schema-version 1 --checkout DIR --phase listing|status|owed
   pr board --schema-version 1 --checkout DIR --phase status --prs N,N
+  pr board --schema-version 1 --checkout DIR --phase listing --offline
   pr board --schema-version 1 --checkout DIR --phase listing --if-changed STAMP
 """
 
@@ -54,6 +55,10 @@ def build_parser() -> ToolParser:
         "--if-changed", dest="if_changed", default=None, metavar="STAMP",
         help="Return the unchanged envelope when this stamp still matches",
     )
+    parser.add_argument(
+        "--offline", action="store_true",
+        help="Listing from cache only; only with --phase listing",
+    )
     return parser
 
 
@@ -73,10 +78,14 @@ def cmd_board(
     if args.prs is not None and args.phase is not Phase.STATUS:
         core.log.error(f"{SCRIPT}: --prs is only valid with --phase status")
         return EXIT_USAGE
+    if args.offline and args.phase is not Phase.LISTING:
+        core.log.error(f"{SCRIPT}: --offline is only valid with --phase listing")
+        return EXIT_USAGE
     core.report.emit_json(board.document.build(
         args.phase,
         args.checkout,
         prs=args.prs,
         if_changed=args.if_changed,
-    ))
+        offline=args.offline,
+    ), compact=True)
     return 0

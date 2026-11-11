@@ -68,6 +68,43 @@ def test_history_runs_follow_the_row_sparse_history_entries_pass_through():
     ]
 
 
+def test_run_ref_fills_stamp_structured_cost_tokens_and_post_across_history():
+    listing = [_row(
+        stamp="20260102T000000",
+        structured=True,
+        cost_usd=1.25,
+        input_tokens=10,
+        output_tokens=20,
+        review_file="/r.md",
+        post={"event": "approve", "posted_at": "2026-01-02T12:00:00Z"},
+        history=[{
+            "head_sha": "b",
+            "stamp": "20260101T000000",
+            "structured": False,
+            "post": {"event": "comment", "posted_at": "2026-01-01T08:00:00Z"},
+        }],
+    )]
+    runs = join([_pr()], listing, "o/n", "github.com", "me")[0].review_runs
+
+    def snap(run):
+        post = None if run.post is None else (run.post.event, run.post.posted_at)
+        return (
+            run.stamp, run.structured, run.cost_usd, run.input_tokens,
+            run.output_tokens, post, run.posted_event, run.review_file,
+        )
+
+    assert [snap(run) for run in runs] == [
+        (
+            "20260102T000000", True, 1.25, 10, 20,
+            ("approve", "2026-01-02T12:00:00Z"), "approve", "/r.md",
+        ),
+        (
+            "20260101T000000", False, None, 0, 0,
+            ("comment", "2026-01-01T08:00:00Z"), "comment", "",
+        ),
+    ]
+
+
 def test_posted_event_and_posted_for_null_dismissed_and_empty_event():
     null_event = runs_for(_row(post=None))[0].posted_event
     dismissed = runs_for(_row(post={"event": "dismissed"}))[0].posted_event

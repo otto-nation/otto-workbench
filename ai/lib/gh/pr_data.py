@@ -194,9 +194,7 @@ class PRData:
             if author.get("__typename") == "Bot":
                 continue
             state = r.get("state", "")
-            if state == "PENDING":
-                continue
-            if state == "DISMISSED":
+            if state in ("PENDING", "DISMISSED"):
                 continue
             if r.get("minimizedReason"):
                 continue

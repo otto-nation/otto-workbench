@@ -274,8 +274,9 @@ Runs that reach this, and the difference is `tree` plus what the console said:
   resume). The task is not done until the branch is rebased and pushed.
 - **`--stop-on-conflict`.** The tree is **paused** (`aborted: false`,
   `tree: paused`, stash held). Report `files` and `classes`. Resume with
-  `pr rebase --fix --branch <branch>` if the user wants AI, or resolve by hand
-  and follow the `Next:` block on stderr, or resume with `pr rebase --stop-on-conflict --branch <branch>` (a resume never aborts).
+  `pr rebase --fix --branch <branch>` if the user wants AI. Otherwise resolve
+  by hand, following the `Next:` block on stderr, then resume with
+  `pr rebase --stop-on-conflict --branch <branch>` (a resume never aborts).
 - **`--fix` mode, where a file could not be resolved.** The AI's answer for that
   file would not parse twice over (missing resolution markers, surviving git
   conflict markers, or a merged file that no longer parses as its language —

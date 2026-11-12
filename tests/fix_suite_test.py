@@ -503,6 +503,24 @@ def test_a_green_tally_is_unchanged_when_nothing_was_rewritten():
     )
 
 
+def test_qualify_tally_names_a_timeout():
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.TIMED_OUT, duration_s=1800.0,
+    )
+
+    assert fix.suite.qualify_tally("1 fixed, 0 skipped", result) == (
+        "1 fixed, 0 skipped (unverified: the repo's checks timed out after 1800s)"
+    )
+
+
+def test_qualify_tally_names_a_start_failure():
+    result = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.ERROR)
+
+    assert fix.suite.qualify_tally("1 fixed, 0 skipped", result) == (
+        "1 fixed, 0 skipped (unverified: the repo's checks could not run)"
+    )
+
+
 def _kill_runner_group(pid_file: Path) -> None:
     """Best-effort SIGKILL of the group whose leader wrote *pid_file*."""
     try:

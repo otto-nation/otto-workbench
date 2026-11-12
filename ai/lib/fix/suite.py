@@ -250,7 +250,7 @@ class SuiteResult:
         where the verify gate put them: neither is evidence about the code, and
         demoting on them would make a slow machine look like a broken branch.
         They are still reported — `note` says so — so the reader is told the
-        checks did not answer rather than told they passed.
+        checks timed out or could not run rather than told they passed.
         """
         return self.status is SuiteStatus.RED
 
@@ -610,8 +610,13 @@ def qualify_tally(tally: str, result: SuiteResult) -> str:
         return f"{tally} — but the repo's checks are RED with these changes"
     if result.status is SuiteStatus.NOT_DECLARED:
         return f"{tally} (unverified: no fix.verify_command declared)"
-    if result.status in (SuiteStatus.TIMED_OUT, SuiteStatus.ERROR):
-        return f"{tally} (unverified: the repo's checks did not answer)"
+    if result.status is SuiteStatus.TIMED_OUT:
+        return (
+            f"{tally} (unverified: the repo's checks timed out after "
+            f"{result.duration_s:.0f}s)"
+        )
+    if result.status is SuiteStatus.ERROR:
+        return f"{tally} (unverified: the repo's checks could not run)"
     if result.rewrote and result.status is SuiteStatus.PARTIAL:
         return (
             f"{tally} (unverified: the checks rewrote {len(result.rewrote)} "

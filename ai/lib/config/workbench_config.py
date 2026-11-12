@@ -498,8 +498,8 @@ class FixConfig:
     letting an unchecked pass read like a clean one.
 
     ``verify_timeout`` is seconds, and a timeout is not a failure of the code —
-    a pass whose checks time out records that its checks did not answer, and
-    leaves its claims where the verify gate put them.
+    a pass whose checks time out records that they timed out after N seconds,
+    and leaves its claims where the verify gate put them.
 
     Scoped to the repo. The command names paths inside one checkout, so a
     machine-wide value would point every other repo at a script it does not

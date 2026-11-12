@@ -13,9 +13,7 @@ and test specifics live with their owners (pointers below).
   pi's `subagent` tool): a multi-item prompt at `thinking: high` went silent for
   over 300s and was killed (`Subagent produced no output for 300s`), once as
   `Request timed out`; the same work as one item per dispatch at
-  `thinking: medium` finished every time. A prompt listing nine items sat silent
-  past the stall timeout and was killed; the same work split in three finished
-  every time
+  `thinking: medium` finished every time
 - Say what to change, not what to read. Telling a subagent to study a large
   reference file (a `.d.ts`, a generated schema) spends its budget before the
   first edit

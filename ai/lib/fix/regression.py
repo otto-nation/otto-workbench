@@ -90,7 +90,7 @@ def flag_untested(
             continue
         if outcome.id in exempt_ids or not is_behaviour_bearing(anchor):
             continue
-        if _is_test_file(anchor):
+        if fix.scope.is_test_file(anchor):
             continue
         if _has_test(anchor, committed):
             continue
@@ -107,17 +107,6 @@ def flag_untested(
               data={"item": outcome.id, "anchor": anchor,
                     "evidence": evidence.value})
     return flagged
-
-
-def _is_test_file(path: str) -> bool:
-    """Whether *path* is itself a test or support module.
-
-    A fix whose anchor is a test file has no further test to ask for.
-    """
-    p = Path(path)
-    return (fix.scope._in_test_dir(p)
-            or bool(fix.scope._candidate_subject(p))
-            or p.name == "conftest.py")
 
 
 def check(

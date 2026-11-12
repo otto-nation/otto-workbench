@@ -406,3 +406,18 @@ class TestRenamePartners:
             {"renamed.py"}, {"src.py"}, git_wt,
         )
         assert partners == set()
+
+
+@pytest.mark.parametrize("path", [
+    "src/FooTest.java", "tests/helpers.py", "web/__tests__/x.ts", "foo_test.py",
+    "foo.spec.ts", "tests/foo_support.py", "conftest.py", "pkg/conftest.py",
+])
+def test_is_test_file_recognises_a_test_by_directory_or_name(path):
+    assert fix.scope.is_test_file(path)
+
+
+@pytest.mark.parametrize("path", [
+    "src/foo.py", "ai/lib/fix/scope.py", "tests.py", "latest.py", "docs/guide.md",
+])
+def test_is_test_file_refuses_source_and_prose(path):
+    assert not fix.scope.is_test_file(path)

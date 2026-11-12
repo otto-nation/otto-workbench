@@ -3,14 +3,14 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  STEP_ORDER, durationText, laneOf, shortKey, runStatus, stepStatus, words,
+  STEP_ORDER, durationText, laneOf, shortKey, runStatus, stepStatus, words, actionLabel,
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
 import { itemStatus } from "./_lib/pr_status.js";
 import { SP, RADIUS, LAYOUT } from "./_lib/tokens.js";
 import {
   hoverRow, card, inset, scrollBody, type, text, caption, placeholder, errorLine,
-  badge, selectableCode,
+  badge, selectableCode, button, ghostButton,
 } from "./_ui/ui.js";
 
 function prCount(n) {
@@ -81,27 +81,58 @@ export function runSteps(doc) {
   return steps.length ? steps : STEP_ORDER;
 }
 
-function renderNotes(item) {
+function renderFinding(f, i) {
+  const t = theme();
+  const files = (f.files ?? []).join(", ");
+  const jobs = (f.jobs ?? []).join(", ");
+  return v_flex().id(`finding-${i}`).gap(SP.xxs)
+    .child(text("body", words(f.reason)))
+    .when(Boolean(f.detail), (e) => e.child(text("body", f.detail, t.muted)))
+    .when(Boolean(jobs), (e) => e.child(text("body", jobs, t.muted)))
+    .when(Boolean(files), (e) => e.child(type(div(), "code").text_color(t.muted).child(files)));
+}
+
+function renderNeedsYou(item, state) {
+  const t = theme();
+  const wait = item.waitReason;
+  const moved = item.headMoved;
+  const cmds = state.session?.commands ?? [];
+  const runCmds = cmds.filter((c) => !c.filesIssue);
+  const fileCmds = cmds.filter((c) => c.filesIssue);
+  const notes = state.session?.notes ?? [];
+  const ready = !state.sessionLoading && !state.sessionError;
+  return card("batch-notes").gap(SP.xs)
+    .child(text("title", "Needs you"))
+    .children((item.findings ?? []).map(renderFinding))
+    .when(Boolean(wait), (e) => e.child(text("body", wait, t.ansi3)))
+    .when(moved, (e) => e.child(text("body", "Head moved since the run", t.ansi3)))
+    .when(Boolean(state.sessionLoading), (e) => e.child(placeholder("Loading actions…")))
+    .when(Boolean(state.sessionError) && !state.sessionLoading, (e) => e.child(errorLine(state.sessionError)))
+    .when(ready, (e) => e
+      .children(runCmds.map((cmd, i) => h_flex().gap(SP.sm).items_center()
+        .child(button(`run-${i}`, actionLabel(cmd), () => state.onRun?.(cmd)))
+        .when(Boolean(cmd.why), (row) => row.child(caption(cmd.why)))))
+      .children(fileCmds.map((cmd, i) => ghostButton(`file-${i}`, actionLabel(cmd), () => state.onRun?.(cmd))))
+      .children(notes.map((n) => text("body", n, t.muted))))
+    .when(Boolean(state.onTerminal), (e) => e.child(
+      ghostButton("open-terminal", "Open terminal", () => state.onTerminal())));
+}
+
+function renderNotes(item, state) {
+  if (laneOf(item) === "attention") return renderNeedsYou(item, state);
   const t = theme();
   const findings = item.findings ?? [];
   const wait = item.waitReason;
   const moved = item.headMoved;
   if (!findings.length && !wait && !moved) return null;
-  const title = laneOf(item) === "attention" ? "Needs you" : "Notes";
   return card("batch-notes").gap(SP.xs)
-    .child(text("title", title))
-    .children(findings.map((f, i) => {
-      const files = (f.files ?? []).join(", ");
-      return v_flex().id(`finding-${i}`).gap(SP.xxs)
-        .child(text("body", words(f.reason)))
-        .when(Boolean(f.detail), (e) => e.child(text("body", f.detail, t.muted)))
-        .when(Boolean(files), (e) => e.child(type(div(), "code").text_color(t.muted).child(files)));
-    }))
+    .child(text("title", "Notes"))
+    .children(findings.map(renderFinding))
     .when(Boolean(wait), (e) => e.child(text("body", wait, t.ansi3)))
     .when(moved, (e) => e.child(text("body", "Head moved since the run", t.ansi3)));
 }
 
-function renderLog(state, id) {
+function renderLog(state, id, running) {
   const log = state.log;
   if (log == null) {
     return placeholder("Loading log…");
@@ -109,7 +140,11 @@ function renderLog(state, id) {
   if (log.error) {
     return errorLine(log.error);
   }
-  const lines = String(log.text ?? "").split("\n");
+  const raw = String(log.text ?? "");
+  if (!raw.trim()) {
+    return placeholder(running ? "No output yet" : "No output");
+  }
+  const lines = raw.split("\n");
   return type(inset({ scroll: false }).text_color(theme().foreground), "code")
     .child(selectableCode(`step-log-${id}`, lines, LAYOUT.bodyMaxH));
 }
@@ -133,7 +168,8 @@ function renderStepCard(item, name, state) {
   return card(`step-${name}`).gap(SP.xs)
     .on_click(() => state.onStep(name))
     .child(head)
-    .when(state.step === name, (e) => e.child(renderLog(state, `${item.key ?? ""}-${name}`)));
+    .when(state.step === name, (e) => e.child(
+      renderLog(state, `${item.key ?? ""}-${name}`, rec.status === "running")));
 }
 
 export function renderBatchTab(item, state) {
@@ -141,7 +177,7 @@ export function renderBatchTab(item, state) {
   if (item == null) {
     return body.child(placeholder("This PR was not in the selected batch run"));
   }
-  const notes = renderNotes(item);
+  const notes = renderNotes(item, state);
   return body
     .when(Boolean(notes), (e) => e.child(notes))
     .children(runSteps(state.doc).flatMap((name) => {

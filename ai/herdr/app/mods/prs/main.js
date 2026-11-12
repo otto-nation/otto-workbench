@@ -11,6 +11,7 @@ import { readReview, loadFilesIncremental, loadPatch } from "./_lib/board_data.j
 import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
+import { actionLabel, writesGitHub } from "./_lib/batch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 import { statsText } from "./_lib/pr_status.js";
 
@@ -35,6 +36,8 @@ export default class PrsBoard extends Board {
     this.diff = null;
     this.opening = false;
     super.init(p, cx);
+    this.workflows.onRun = (cmd) => this.runBatchCommand(cmd);
+    this.workflows.onTerminal = () => this.openTerminal();
   }
 
   runOf(stamp) {
@@ -95,6 +98,7 @@ export default class PrsBoard extends Board {
 
   // Kill and watch are core commands; the rest start a labelled background terminal through hc
   // (its --bg reply is immediate, so the 30 s exec limit never applies to the pr run itself).
+  // Optional action.cwd / action.on override the open PR's checkout and machine (batch-fix).
   launch(action, cx) {
     if (action.show) {
       // Watch toggles the in-pane output; a second click hides it.
@@ -108,13 +112,15 @@ export default class PrsBoard extends Board {
       return;
     }
     const d = this.detail;
+    const cwd = action.cwd ?? d.cwd;
+    const on = "on" in action ? action.on : d.on;
     this.launching = true;
     this.note = null;
     this.acx.spawn(async (cx) => {
       let res;
       try {
         const argv = hcRunArgv({
-          repo: d.repo, number: d.number, action: action.id, cwd: d.cwd, on: d.on, argv: action.argv,
+          repo: d.repo, number: d.number, action: action.id, cwd, on, argv: action.argv,
         });
         res = parseRunReply(await exec("hc", argv, {}));
       } catch (err) {
@@ -139,6 +145,42 @@ export default class PrsBoard extends Board {
       cx.notify();
     });
     this.acx.notify();
+  }
+
+  batchLaunch(cmd) {
+    const d = this.detail;
+    const hit = this.workflows.ownerOf(this.workflows.openKey);
+    const session = this.workflows.sessionOf(this.workflows.openKey);
+    return {
+      id: "batch-fix",
+      label: actionLabel(cmd),
+      argv: cmd.argv,
+      cwd: session?.worktree || d.cwd,
+      on: hit?.on,
+    };
+  }
+
+  runBatchCommand(cmd) {
+    const action = this.batchLaunch(cmd);
+    if (writesGitHub(cmd)) {
+      const d = this.detail;
+      const session = this.workflows.sessionOf(this.workflows.openKey);
+      action.confirm = { pr: `${d.repo}#${d.number}`, notes: session?.notes ?? [] };
+      this.confirm = action;
+      this.acx.notify();
+      return;
+    }
+    this.launch(action, this.acx);
+  }
+
+  openTerminal() {
+    const d = this.detail;
+    const hit = this.workflows.ownerOf(this.workflows.openKey);
+    if (hit?.on != null) return;
+    const session = this.workflows.sessionOf(this.workflows.openKey);
+    const folder = session?.worktree || hit?.item?.worktree || d?.cwd;
+    if (!folder) return;
+    run("terminal.open", { folder, place: "tab" });
   }
 
   readOutput(id) {

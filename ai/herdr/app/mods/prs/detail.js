@@ -28,8 +28,12 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
   const t = theme();
   if (confirm) {
     const c = confirm.confirm;
+    const notes = Array.isArray(c.notes) ? c.notes.filter(Boolean).join(" ") : "";
+    const msg = c.sha
+      ? `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`
+      : `${confirm.label} on ${c.pr}?${notes ? ` ${notes}` : ""}`;
     return paneBar()
-      .child(text("body", `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`))
+      .child(text("body", msg))
       .child(h_flex().gap(SP.sm).child(button("act-confirm", `Confirm: ${confirm.label}`, onConfirm))
         .child(button("act-cancel", "Cancel", onCancel)));
   }

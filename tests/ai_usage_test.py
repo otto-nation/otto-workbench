@@ -156,17 +156,17 @@ def test_parse_session_log_missing_file_returns_empty(tmp_path):
     assert parse_session_log(str(tmp_path / "nope.jsonl")) == SessionUsage()
 
 
+def _decode_dict(line):
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
 def _fully_decoded(path):
-    records = []
     with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(rec, dict):
-                records.append(rec)
-    return records
+        return [r for r in map(_decode_dict, fh) if r is not None]
 
 
 def _write_claude_session(path):

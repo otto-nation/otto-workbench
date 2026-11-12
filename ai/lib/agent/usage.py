@@ -310,7 +310,9 @@ _READ_MARKERS = (
 )
 
 
-# Must track the keys usage_from_records reads (and served_turns, which it
+# Must track the keys usage_from_records reads (guarded against drift by the
+# parity test in tests/ai_usage_test.py, which compares slimmed and fully
+# decoded parses) (and served_turns, which it
 # calls). Assistant records carry full message content that accounting never
 # looks at; keeping those strings is what made a 100 MB session log a 1 GB RSS.
 _SLIM_TOP = (
@@ -328,6 +330,15 @@ def _slim(record: dict) -> dict:
     return out
 
 
+def _slim_line(line: str) -> dict | None:
+    if not any(marker in line for marker in _READ_MARKERS):
+        return None
+    try:
+        return _slim(json.loads(line))
+    except json.JSONDecodeError:
+        return None
+
+
 def parse_session_log(path: str) -> SessionUsage:
     """Parse a session JSONL log file and return aggregated usage.
 
@@ -340,14 +351,7 @@ def parse_session_log(path: str) -> SessionUsage:
     """
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
-            records = []
-            for line in fh:
-                if not any(marker in line for marker in _READ_MARKERS):
-                    continue
-                try:
-                    records.append(_slim(json.loads(line)))
-                except json.JSONDecodeError:
-                    continue
+            records = [r for r in map(_slim_line, fh) if r is not None]
     except OSError:
         return SessionUsage()
     return usage_from_records(records)

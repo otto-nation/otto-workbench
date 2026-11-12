@@ -47,11 +47,6 @@ AGENTS_FILE = "AGENTS.md"
 # `.claude/CLAUDE.md` is where the scaffold once put it.
 SHADOW_FILES = ("CLAUDE.md", ".claude/CLAUDE.md")
 
-# The workbench's own source for the user-level ~/.claude/CLAUDE.md. It is
-# installed, never read as this repo's project instructions, and its name is
-# defined by Claude Code, so it is not a shadow.
-MANAGED_CLAUDE_MD = ("ai/claude/CLAUDE.md",)
-
 # The first Claude Code release that reads AGENTS.md as project instructions
 # without a CLAUDE.md import. otto-workbench requires it; `ai sync` warns below
 # it. lib/constants.sh carries the same value for bash, and
@@ -105,7 +100,7 @@ def tracked_shadows(root: Path) -> tuple[str, ...]:
         listing = None
     if listing is not None and listing.returncode == 0:
         found.update(name for name in listing.stdout.split("\0") if name)
-    return tuple(sorted(found - set(MANAGED_CLAUDE_MD)))
+    return tuple(sorted(found))
 
 
 def resolve(root: Path) -> ProjectContext:
@@ -133,16 +128,16 @@ def migration_hint(ctx: ProjectContext) -> str:
         return ""
     names = ", ".join(ctx.shadows[:3]) + (" …" if len(ctx.shadows) > 3 else "")
     if ctx.state is ContextState.LEGACY:
-        move = (f"git mv {ctx.shadows[0]} {Path(ctx.shadows[0]).parent.parent / AGENTS_FILE}"
-                if ctx.shadows[0] == ".claude/CLAUDE.md"
-                else f"git mv {ctx.shadows[0]} {Path(ctx.shadows[0]).with_name(AGENTS_FILE)}")
+        source = min(ctx.shadows, key=lambda n: (SHADOW_FILES.index(n) if n in SHADOW_FILES else len(SHADOW_FILES), n))
+        move = f"git mv {source} {AGENTS_FILE}"
         return (f"{names} — {AGENTS_FILE} is the only instructions file name; "
                 f"rename it: {move}"
                 + (" and fold the others into "
                    f"{AGENTS_FILE}, then delete them" if len(ctx.shadows) > 1 else ""))
-    return (f"{names} shadows {AGENTS_FILE} — Claude Code (>= {CLAUDE_CODE_MIN_VERSION}) "
+    return (f"{names} {'shadow' if len(ctx.shadows) > 1 else 'shadows'} {AGENTS_FILE} — Claude Code (>= {CLAUDE_CODE_MIN_VERSION}) "
             f"reads {AGENTS_FILE} only when no CLAUDE.md is in the directory chain; "
-            f"fold it into {AGENTS_FILE} and delete it")
+            f"fold {'them' if len(ctx.shadows) > 1 else 'it'} into {AGENTS_FILE} "
+            f"and delete {'them' if len(ctx.shadows) > 1 else 'it'}")
 
 
 def main(argv: list[str] | None = None) -> int:

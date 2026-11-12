@@ -17,8 +17,8 @@ This location is the same regardless of how you installed the workbench (git clo
 | Skills | `ai/skills/<name>/` | `overrides/ai/skills/<name>/` | Same-name directory replaces base |
 | Pi extensions | `ai/pi/extensions/<name>/` | `overrides/ai/pi/extensions/<name>/` | Same-name directory replaces base |
 | Agents | `ai/claude/agents/*.md` | `overrides/ai/claude/agents/*.md` | Same-name file replaces base |
-| Guidelines | `ai/claude/CLAUDE.md` | `overrides/ai/claude/CLAUDE.md` | Full replacement |
-| Guidelines | `ai/claude/CLAUDE.md` | `overrides/ai/claude/CLAUDE.local.md` | Appended after base |
+| Guidelines | `ai/claude/guidelines.md` | `overrides/ai/claude/CLAUDE.md` | Full replacement |
+| Guidelines | `ai/claude/guidelines.md` | `overrides/ai/claude/CLAUDE.local.md` | Appended after base |
 | Settings | `ai/claude/settings.json` | `overrides/ai/claude/settings.json` | Deep JSON merge (user wins) |
 
 For guidelines, replacement (`CLAUDE.md`) takes precedence over append (`CLAUDE.local.md`). Use append mode to add machine-specific instructions without losing base content.

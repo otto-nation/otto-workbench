@@ -76,12 +76,11 @@ def test_a_tracked_nested_claude_md_shadows_the_root_agents_md(tmp_path):
     assert (ctx.state, ctx.shadows) == (core.project_context.ContextState.SPLIT, ("pkg/sub/CLAUDE.md",))
 
 
-def test_the_workbenchs_own_user_level_source_is_not_a_shadow(tmp_path):
-    _git(tmp_path, "init", "-q")
-    _write(tmp_path, "AGENTS.md")
-    _write(tmp_path, "ai/claude/CLAUDE.md")
-    _git(tmp_path, "add", "-A")
-    assert core.project_context.resolve(tmp_path).shadows == ()
+def test_the_workbenchs_guidelines_source_is_not_named_claude_md():
+    # ai/claude/guidelines.md is installed as the user-level ~/.claude/CLAUDE.md;
+    # its source keeps a different name so the repo tracks no CLAUDE.md at all.
+    assert (REPO_ROOT / "ai" / "claude" / "guidelines.md").is_file()
+    assert not (REPO_ROOT / "ai" / "claude" / "CLAUDE.md").exists()
 
 
 def test_no_instructions_file_at_all(tmp_path):
@@ -140,3 +139,14 @@ def test_bash_and_python_agree_on_the_minimum_claude_code_version():
     m = re.search(r'^CLAUDE_CODE_MIN_VERSION="([^"]+)"$', constants, re.M)
     assert m, "lib/constants.sh defines no CLAUDE_CODE_MIN_VERSION"
     assert m.group(1) == core.project_context.CLAUDE_CODE_MIN_VERSION
+
+
+def test_hint_prefers_root_claude_md_and_pluralises():
+    ctx = core.project_context.ProjectContext(
+        "", core.project_context.ContextState.LEGACY,
+        ("Apps/CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.md"))
+    assert "git mv CLAUDE.md AGENTS.md" in core.project_context.migration_hint(ctx)
+    split = core.project_context.ProjectContext(
+        "AGENTS.md", core.project_context.ContextState.SPLIT, ("CLAUDE.md", "a/CLAUDE.md"))
+    hint = core.project_context.migration_hint(split)
+    assert "fold them" in hint and "delete them" in hint

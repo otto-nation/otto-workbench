@@ -60,6 +60,41 @@ claude_snapshot() {
   "
 }
 
+# pin_mise_to_real_home — pins mise's global config, data dir and auto-install
+# to the real home's, before a test swaps HOME. common_setup calls it; a suite
+# whose setup_file() swaps HOME runs before any per-test setup and calls it
+# itself, ahead of the swap.
+pin_mise_to_real_home() {
+  # Pin mise's global config to the real one, for the same reason git gets a
+  # config of its own: a test that swaps HOME otherwise changes what mise
+  # considers global, and mise ignores `trusted_config_paths` in a config that
+  # is not global "for security reasons". The file then counts as untrusted,
+  # which mise treats as an error rather than a warning — so every jq and yq
+  # call in that test dies, because both resolve to mise shims on a machine
+  # that manages them.
+  #
+  # It fails as a parse error on stderr and a non-zero exit from the shim, not
+  # as anything naming mise, so the symptom is an assertion about YAML content
+  # failing for no visible reason. Exported because the tools under test are
+  # subprocesses.
+  #
+  # bin/local/run-tests exports this too, and is what pre-push, CI, and the
+  # Taskfile all go through — it has to, because setup_file() runs before any
+  # per-test setup and one file swaps HOME there, too early for this function
+  # to correct. The line is kept here as well so a developer running `bats
+  # tests/one.bats` by hand gets the same isolation.
+  #
+  # Only set when the caller has not: a test whose subject is mise's own config
+  # resolution points this elsewhere and keeps control.
+  export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
+  # Its installs and auto-install, for the same reason; see run_bats in
+  # bin/local/run-tests. Like MISE_GLOBAL_CONFIG_FILE above, the default is read
+  # from $HOME at call time, so common_setup must run before a test swaps HOME —
+  # after the swap it would pin the data dir to the fake home.
+  export MISE_DATA_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+  export MISE_AUTO_INSTALL="${MISE_AUTO_INSTALL:-false}"
+}
+
 common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
   # causes git commands in tests to target the real repo instead of temp repos)
@@ -124,34 +159,7 @@ common_setup() {
   # and wins.
   export WORKBENCH_CONFIG_DIR="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/workbench-config"
 
-  # Pin mise's global config to the real one, for the same reason git gets a
-  # config of its own: a test that swaps HOME otherwise changes what mise
-  # considers global, and mise ignores `trusted_config_paths` in a config that
-  # is not global "for security reasons". The file then counts as untrusted,
-  # which mise treats as an error rather than a warning — so every jq and yq
-  # call in that test dies, because both resolve to mise shims on a machine
-  # that manages them.
-  #
-  # It fails as a parse error on stderr and a non-zero exit from the shim, not
-  # as anything naming mise, so the symptom is an assertion about YAML content
-  # failing for no visible reason. Exported because the tools under test are
-  # subprocesses.
-  #
-  # bin/local/run-tests exports this too, and is what pre-push, CI, and the
-  # Taskfile all go through — it has to, because setup_file() runs before any
-  # per-test setup and one file swaps HOME there, too early for this function
-  # to correct. The line is kept here as well so a developer running `bats
-  # tests/one.bats` by hand gets the same isolation.
-  #
-  # Only set when the caller has not: a test whose subject is mise's own config
-  # resolution points this elsewhere and keeps control.
-  export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
-  # Its installs and auto-install, for the same reason; see run_bats in
-  # bin/local/run-tests. Like MISE_GLOBAL_CONFIG_FILE above, the default is read
-  # from $HOME at call time, so common_setup must run before a test swaps HOME —
-  # after the swap it would pin the data dir to the fake home.
-  export MISE_DATA_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
-  export MISE_AUTO_INSTALL="${MISE_AUTO_INSTALL:-false}"
+  pin_mise_to_real_home
 
   # Shadow a live agent CLI so a test that forgot to stub it fails at once
   # instead of hanging on a real prompt. Presence is unchanged when neither

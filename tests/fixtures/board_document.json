@@ -155,7 +155,8 @@
           "post": {
             "event": "comment",
             "posted_at": "2026-01-02T12:00:00Z"
-          }
+          },
+          "models": ""
         },
         {
           "posted_event": "comment",
@@ -173,7 +174,8 @@
           "post": {
             "event": "comment",
             "posted_at": "2026-01-01T08:00:00Z"
-          }
+          },
+          "models": ""
         }
       ],
       "my_review_state": "COMMENTED",
@@ -455,7 +457,8 @@
           "cost_usd": null,
           "input_tokens": 0,
           "output_tokens": 0,
-          "post": null
+          "post": null,
+          "models": ""
         }
       ],
       "my_review_state": null,

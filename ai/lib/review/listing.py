@@ -160,6 +160,9 @@ class ReviewRun:
     cache_write_tokens: int
     duration_ms: int
     post: RunPost | None
+    # The agents the run used, as its `Models:` line states them; "" when the
+    # run recorded none. Optional, so the schema does not bump.
+    models: str = ""
 
 
 @dataclass(frozen=True)
@@ -222,6 +225,9 @@ class ReviewRow:
     # The runs `archives/` keeps for this review, newest first
     # (`review.archive_keep`). Optional, so the schema does not bump.
     history: list[ReviewRun] = field(default_factory=list)
+    # The agents the latest run used (`ReviewMeta.models`); "" when none was
+    # recorded. Optional, so the schema does not bump.
+    models: str = ""
 
 
 def _findings(doc: ReviewDocument | None) -> dict[str, int]:
@@ -261,6 +267,7 @@ def _run_for(review_dir: Path, stamp: str, cache: UsageCache) -> ReviewRun:
         cache_write_tokens=usage.cache_write_tokens,
         duration_ms=usage.duration_ms,
         post=_post_from(archived_file(review_dir, stamp, ARCHIVE_POST_EXT)),
+        models=meta.models,
     )
 
 
@@ -309,6 +316,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
         duration_ms=usage.duration_ms,
         post=_post_from(entry.path / FILENAME_POST_SESSION),
         history=history,
+        models=meta.models,
     )
 
 

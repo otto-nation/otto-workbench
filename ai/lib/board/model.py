@@ -144,6 +144,7 @@ class ReviewRunRef:
     input_tokens: int = 0
     output_tokens: int = 0
     post: RunPostRef | None = None
+    models: str = ""
 
 
 @dataclass(frozen=True)

@@ -373,6 +373,21 @@ def test_history_lists_archived_runs_newest_first(reviews_dir):
     assert row.history[1].post is None
 
 
+def test_a_row_and_its_archived_runs_report_the_models_they_used(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    meta = json.loads((d / "meta.json").read_text())
+    meta["models"] = "single claude-sonnet-5-5 (medium)"
+    (d / "meta.json").write_text(json.dumps(meta))
+    _archive_current(d, "20260101-120000")
+    meta["models"] = "group (×2) claude-sonnet-5-5 (medium)"
+    (d / "meta.json").write_text(json.dumps(meta))
+
+    row, = review.listing.rows()
+
+    assert row.models == "group (×2) claude-sonnet-5-5 (medium)"
+    assert row.history[0].models == "single claude-sonnet-5-5 (medium)"
+
+
 def test_a_run_archived_before_records_is_listed_unstructured(reviews_dir):
     d = _review(reviews_dir, repo="acme/widget", pr_number=42)
     archive = review.paths.archives_dir(d)

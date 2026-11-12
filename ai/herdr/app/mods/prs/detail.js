@@ -113,6 +113,7 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
     .child(h_flex().gap(SP.sm).items_center().child(statusText(r.post.status, r.post.label))
       .when(Boolean(r.healthStatus), (e) => e.child(statusText(r.healthStatus, r.health)))
       .when(Boolean(r.costText), (e) => e.child(caption(r.costText))))
+    .when(Boolean(r.modelsText), (e) => e.child(caption(r.modelsText)))
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }
 

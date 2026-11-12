@@ -71,3 +71,9 @@ _js() {
   [ "$status" -eq 0 ]
   jq -e '.a=="Partial" and .b=="Error" and .c=="ok" and .d=="unposted" and .e=="1h ago"' <<<"$output"
 }
+
+@test "modelsText carries the models a run recorded, blank when none or not structured" {
+  _js '({a:historyRows([run({models:"group claude-sonnet-5-5 (medium)"})],now)[0].modelsText,b:historyRows([run()],now)[0].modelsText,c:historyRows([run({structured:false,models:"x"})],now)[0].modelsText})'
+  [ "$status" -eq 0 ]
+  jq -e '.a=="group claude-sonnet-5-5 (medium)" and .b=="" and .c==""' <<<"$output"
+}

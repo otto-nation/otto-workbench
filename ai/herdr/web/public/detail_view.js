@@ -45,7 +45,8 @@ function history(pr, { openStamp, bodies, onToggleRun, now }) {
         h('div', { class: 'top' }, h('span', {}, r.verdict || 'review'), h('span', { class: 'meta-text' }, r.when), h('span', { class: 'code' }, r.shortSha)),
         h('div', {}, r.findingsText),
         h('div', { class: 'top' }, status(r.post.status, r.post.label), r.healthStatus ? status(r.healthStatus, r.health) : null,
-          r.costText ? h('span', { class: 'meta-text' }, r.costText) : null)),
+          r.costText ? h('span', { class: 'meta-text' }, r.costText) : null),
+        r.modelsText ? h('div', { class: 'meta-text' }, r.modelsText) : null),
       open ? h('div', { onclick: (e) => e.stopPropagation() }, reviewBody(bodies.get(r.stamp))) : null,
     ];
   });

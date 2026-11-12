@@ -87,6 +87,7 @@ export function historyRows(runs, nowMs) {
       verdict: structured ? (run.verdict ?? '') : '',
       findingsText: findingsText(run),
       costText: costText(run),
+      modelsText: structured ? (run.models ?? '') : '',
       shortSha: sha,
       post: postOf(run),
       health,

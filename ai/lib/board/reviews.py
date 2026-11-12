@@ -123,6 +123,7 @@ def _run_ref(run) -> ReviewRunRef:
         input_tokens=_field(run, "input_tokens") or 0,
         output_tokens=_field(run, "output_tokens") or 0,
         post=_post_ref(post),
+        models=_field(run, "models") or "",
     )
 
 

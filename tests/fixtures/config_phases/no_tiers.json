@@ -55,15 +55,15 @@
     },
     "scout": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": null,
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "spec",
         "key": null,
@@ -74,15 +74,15 @@
     },
     "group": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": null,
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "spec",
         "key": null,
@@ -150,11 +150,11 @@
     },
     "fix_verify": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": null,
         "via": null
       },

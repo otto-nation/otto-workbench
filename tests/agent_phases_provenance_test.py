@@ -57,7 +57,7 @@ def test_named_tier_reads_a_tier_name_with_or_without_a_level(value, tier):
 
 
 def test_the_tier_layer_names_the_tier_key(roots):
-    resolved = agent.phases.resolve_phase_model(Phase.SCOUT, None, _cfg(roots, TIERS))
+    resolved = agent.phases.resolve_phase_model(Phase.REBASE, None, _cfg(roots, TIERS))
     assert (resolved.layer, resolved.key, resolved.tier) == (ModelLayer.TIER, "models.light", None)
 
 
@@ -69,11 +69,11 @@ def test_a_phase_env_model_names_its_env_key(roots, monkeypatch):
 
 
 def test_a_phase_config_tier_name_records_the_tier_it_borrowed(roots):
-    cfg = _cfg(roots, TIERS + "agent:\n  phases:\n    synthesis:\n      model: light\n")
+    cfg = _cfg(roots, TIERS + "agent:\n  phases:\n    synthesis:\n      model: standard\n")
     resolved = agent.phases.resolve_phase_model(Phase.SYNTHESIS, None, cfg)
     assert (resolved.layer, resolved.key, resolved.tier) == (
-        ModelLayer.PHASE_CONFIG, "agent.phases.synthesis.model", Tier.LIGHT)
-    assert resolved.ref.id == "gpt-6-mini"
+        ModelLayer.PHASE_CONFIG, "agent.phases.synthesis.model", Tier.STANDARD)
+    assert resolved.ref.id == "claude-sonnet-5"
 
 
 def test_a_global_env_tier_name_records_the_tier_it_borrowed(roots, monkeypatch):
@@ -144,7 +144,7 @@ def test_a_level_on_the_phase_config_model(roots):
 
 
 def test_a_level_on_the_tier_model(roots):
-    got = _thinking(roots, TIERS)
+    got = _thinking(roots, TIERS, Phase.REBASE)
     assert (got.level, got.layer, got.key) == ("low", ThinkingLayer.TIER_MODEL, "models.light")
 
 
@@ -170,7 +170,7 @@ def test_phase_settings_runs_the_level_resolve_phase_thinking_reports(roots, mon
     """The report and the run read one chain, so they cannot disagree."""
     monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "xai/grok-4.6:high")
     monkeypatch.setenv("WORKBENCH_AI_FIX_THINKING", "minimal")
-    cfg = _cfg(roots, TIERS + "agent:\n  thinking: medium\n  phases:\n    synthesis:\n      model: light\n")
+    cfg = _cfg(roots, TIERS + "agent:\n  thinking: medium\n  phases:\n    synthesis:\n      model: standard\n")
     resolved = agent.phases.resolve_phase_model(phase, None, cfg)
     reported = agent.phases.resolve_phase_thinking(phase, resolved, cfg)
     ran = agent.phases.phase_settings(phase, None, cfg).thinking

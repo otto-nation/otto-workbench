@@ -209,6 +209,23 @@ def _holistic_skip_reason(
     return None
 
 
+def scan_raised_concerns(artifact) -> bool:
+    """Whether phase 1's scan reported anything a clean group result must not bury.
+
+    A scout lead, a holistic flag or cross-module note, or either scan's
+    direction concern. Groups that then find nothing still go to synthesis,
+    which weighs the scan's concern against the PR's claims; skipping straight
+    to a clean review would drop it unread.
+    """
+    if artifact is None:
+        return False
+    return bool(
+        getattr(artifact, "leads", ()) or getattr(artifact, "flags", ())
+        or getattr(artifact, "cross_module", ())
+        or getattr(artifact, "direction_concern", "")
+    )
+
+
 def _scan_phase(job: ReviewJob) -> Phase:
     """Which of phase 1's two candidates this job runs."""
     return Phase.HOLISTIC if Phase.SCOUT in job.skipped else Phase.SCOUT
@@ -276,7 +293,7 @@ def _run_synthesis_or_fallback(
     holistic_content: str, group_count: int,
     merged: Merged, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
-    *, settled: bool = False,
+    *, settled: bool = False, scan_flagged: bool = False,
 ) -> PhaseResult:
     """The synthesis session log and what synthesis spent.
 
@@ -285,10 +302,12 @@ def _run_synthesis_or_fallback(
     caller's running total means the same thing at the disprove gate as it did
     here.
     *settled* is `_nothing_new`'s answer, decided once by the caller.
+    *scan_flagged* is `scan_raised_concerns` over phase 1's artifact: a clean
+    group result with a concern from the scan still reaches synthesis.
     """
     all_groups_failed = bool(failed_groups) and len(failed_groups) == group_count
 
-    if (not merged.record.visible and not failed_groups
+    if (not merged.record.visible and not failed_groups and not scan_flagged
             and not review.claims.open_derived_findings(job.prior)
             and not review.claims.writer_must_rejudge(job)):
         core.log.info("No findings from any group — writing clean review")

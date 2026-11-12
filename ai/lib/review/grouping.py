@@ -44,7 +44,10 @@ MAX_GROUP_FILES = 15
 # or 250 — it is a judgment call from that one observation, not a derived
 # value, and a future revisit is free to move it with new evidence.
 MIN_GROUP_LINES = 200
-HOLISTIC_MIN_GROUPS = 8
+# The whole-PR scan runs from two groups up. A single group is handed to the
+# single-agent review instead (`pipeline.run_multi_phase`), so a scan has
+# something to add whenever more than one agent reads the PR.
+HOLISTIC_MIN_GROUPS = 2
 
 # ceiling: grouping only has additions+deletions per file, not the patch
 # text. 80 bytes/line sits above the ~40–60 B of a typical unified-diff line

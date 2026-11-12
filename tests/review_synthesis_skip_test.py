@@ -329,6 +329,80 @@ def test_a_round_with_no_open_derived_finding_still_writes_a_clean_review(
     assert "**Verdict: Approve.**" in Path(job.review_file).read_text()
 
 
+def test_a_clean_group_result_with_a_scan_concern_still_reaches_synthesis(
+    tmp_path, monkeypatch,
+):
+    job = _job(tmp_path, mode=Mode.PR)
+    monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.steps, "_write_clean_review",
+                        lambda *a, **k: pytest.fail("clean review buried the scan's concern"))
+    ran = []
+    monkeypatch.setattr(review.steps, "_phase_synthesis",
+                        lambda *a, **k: ran.append(True) or PhaseResult())
+    review.steps._run_synthesis_or_fallback(
+        job, _state(), "", 2, merged(fresh=0), [], 0,
+        0.0, 20.0, settled=False, scan_flagged=True)
+    assert ran
+
+
+def test_scan_raised_concerns_reads_leads_flags_and_direction():
+    from review.artifacts import HolisticArtifact, Lead, ScoutArtifact, SeverityHint
+    lead = Lead("a.py", 1, None, "c", SeverityHint.MUST_FIX, "why")
+    raised = review.steps.scan_raised_concerns
+    assert not raised(None)
+    assert not raised(ScoutArtifact())
+    assert raised(ScoutArtifact(leads=(lead,)))
+    assert raised(ScoutArtifact(direction_concern="wrong approach"))
+    assert not raised(HolisticArtifact(assessment="fine"))
+    assert raised(HolisticArtifact(assessment="x", flags=("f",)))
+    assert raised(HolisticArtifact(assessment="x", cross_module=("m",)))
+
+
+def test_one_group_goes_to_the_single_agent_review(tmp_path, monkeypatch):
+    job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
+    monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
+        already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
+        resume_at_gate=False))
+    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: True)
+    seen = []
+    monkeypatch.setattr(review.pipeline, "run_single_agent",
+                        lambda j, disprove=None: seen.append(disprove))
+    monkeypatch.setattr(review.pipeline, "_run_group_phase",
+                        lambda *a: pytest.fail("a lone group ran as a group"))
+    review.pipeline.run_multi_phase(job, max_parallel=1, disprove=True)
+    assert seen == [True]
+
+
+@pytest.mark.parametrize(("groups", "incremental", "skipped", "expected"), [
+    (1, False, set(), True),
+    (2, False, set(), False),
+    (1, True, set(), False),
+    (1, False, {Phase.GROUP}, False),
+])
+def test_only_a_fresh_single_group_goes_single(
+    tmp_path, monkeypatch, groups, incremental, skipped, expected,
+):
+    job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
+    job.skip_phases = frozenset(skipped)
+    monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "p")
+    monkeypatch.setattr(review.pipeline, "PhaseRunner",
+                        lambda j, p: SimpleNamespace(max_turns=1))
+    assert review.pipeline._single_group_goes_single(job, groups, incremental) is expected
+
+
+def test_a_single_prompt_that_does_not_fit_keeps_the_multi_path(tmp_path, monkeypatch):
+    from review.prompt import PromptTooLarge
+    job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
+
+    def too_big(*a, **k):
+        raise PromptTooLarge("single-agent.md", 10)
+    monkeypatch.setattr(review.pipeline, "build_prompt", too_big)
+    monkeypatch.setattr(review.pipeline, "PhaseRunner",
+                        lambda j, p: SimpleNamespace(max_turns=1))
+    assert review.pipeline._single_group_goes_single(job, 1, False) is False
+
+
 def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch):
     """PR mode, because a self-review states no verdict."""
     job = _job(tmp_path, mode=Mode.PR)
@@ -389,6 +463,7 @@ def test_run_multi_phase_hands_settled_to_synthesis_and_the_gate(
     job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
     seen = {}
     monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: False)
     monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
         already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
         resume_at_gate=False))
@@ -431,6 +506,7 @@ def test_phase_one_focus_reaches_the_groups(tmp_path, monkeypatch):
 
     monkeypatch.setattr(review.phases, "run_agent", fake_agent)
     monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: False)
     monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
         already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
         resume_at_gate=False))

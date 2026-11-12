@@ -55,46 +55,38 @@
     },
     "scout": {
       "domain": "review",
-      "tier": "light",
-      "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
-      },
+      "tier": "standard",
+      "model": null,
       "model_source": {
-        "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null
     },
     "group": {
       "domain": "review",
-      "tier": "light",
-      "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
-      },
+      "tier": "standard",
+      "model": null,
       "model_source": {
-        "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null
@@ -148,23 +140,19 @@
     },
     "fix_verify": {
       "domain": "review",
-      "tier": "light",
-      "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
-      },
+      "tier": "standard",
+      "model": null,
       "model_source": {
-        "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
         "via": null
       },
       "thinking": "low",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null

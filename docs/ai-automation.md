@@ -495,7 +495,7 @@ The global `commit-msg` hook is advisory (`git commit --no-verify` / `-n` skips 
 
 ### Which model each phase runs on
 
-`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy).
+`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy). Review phases never run on the light tier or a Haiku model; the same page says what stops the run.
 
 ### Usage ledger
 

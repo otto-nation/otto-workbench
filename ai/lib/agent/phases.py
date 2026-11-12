@@ -29,6 +29,16 @@ but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
+**Reviews never run on the light tier.** Every review-domain phase reads the
+standard or deep tier, and a review phase that resolves to the light tier or a
+Haiku model — from any layer, a tier set to Haiku included — raises
+`ReviewModelTooLight`. A review pass that finds nothing on a light model cannot
+be told from a clean PR; ``models.light`` serves only the phases that are not
+reviews. A review phase can be pinned to another provider by config alone on
+the ``pi`` backend (``agent.phases.scout.model:
+google-vertex/gemini-3.1-pro-preview:medium``); the Claude backend serves only
+Anthropic, Vertex-Claude and Bedrock models.
+
 **No built-in model.** A phase names a tier, not a model, so when no layer
 sets one — the tier unset in ``models`` too — the model is ``None`` and the
 backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
@@ -55,7 +65,7 @@ import core.errors
 from agent.models import ModelLayer, ModelRef, ResolvedModel, named_tier, resolve, tier_ref
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
-from core.phases import ENV_PREFIX, Effort, Phase, Tier
+from core.phases import ENV_PREFIX, Effort, Phase, PhaseDomain, Tier
 from config.workbench_config import WorkbenchConfig
 
 # The keys that cover every phase at once, one layer below the per-phase ones.
@@ -69,6 +79,39 @@ REMOVED_PROVIDER_ENV = f"{ENV_PREFIX}PROVIDER"
 # What one file preflight could not fit into the prompt costs a phase that has
 # to open it itself: one turn to read, one to act on what it found.
 OMITTED_FILE_TURNS = 2
+
+
+# ── Review floor ─────────────────────────────────────────────────────────────
+
+
+class ReviewModelTooLight(core.errors.OperatorError):
+    """A review phase was pointed at the light tier or a Haiku model."""
+
+    def __init__(self, phase: Phase, where: str, model: str):
+        self.phase = phase
+        super().__init__(
+            f"{where} puts the review phase '{phase.value}' on {model}. Review "
+            "phases never run on the light tier or a Haiku model: a pass that "
+            "finds nothing there cannot be told from a clean PR. Name a "
+            "standard or deep model (for example claude-sonnet-5-5, or "
+            "google-vertex/gemini-3.1-pro-preview), or a tier other than light.")
+
+
+def _is_light_model(model_id: str) -> bool:
+    return "haiku" in model_id.lower()
+
+
+def _refuse_light_review(phase: Phase, resolved: ResolvedModel) -> None:
+    """Raise `ReviewModelTooLight` when a review-domain phase resolved to a light model.
+
+    Checked on the resolved reference rather than per layer, so ``--model``,
+    both env keys, ``agent.phases`` and ``models.<tier>`` are held to one rule:
+    a tier name that resolves to Haiku is caught the same as Haiku spelled out.
+    """
+    if PHASES[phase].domain is not PhaseDomain.REVIEW:
+        return
+    if resolved.tier is Tier.LIGHT or _is_light_model(resolved.ref.id):
+        raise ReviewModelTooLight(phase, resolved.key, resolved.ref.id)
 
 
 # ── Environment layers ───────────────────────────────────────────────────────
@@ -118,7 +161,8 @@ def resolve_phase_model(
 
     Precedence, highest first: the explicit argument, the phase env key, the
     global env key, ``agent.phases.<phase>.model``, then ``models.<tier>`` for
-    the phase's tier. Any layer but the last may name a tier instead of a model,
+    the phase's tier. A review-domain phase resolving to the light tier or a Haiku
+    model raises `ReviewModelTooLight` from any layer. Any layer but the last may name a tier instead of a model,
     and one naming an unset tier raises `agent.models.UnsetTier` rather than
     letting a lower layer answer. The phase's own tier unset is not an error:
     it runs on the backend's default.
@@ -137,12 +181,16 @@ def resolve_phase_model(
     for layer, value, where in layers:
         ref = resolve(value, cfg.models, where=where)
         if ref is not None:
-            return ResolvedModel(ref, layer, key=where, tier=named_tier(value))
+            resolved = ResolvedModel(ref, layer, key=where, tier=named_tier(value))
+            _refuse_light_review(phase, resolved)
+            return resolved
     tier = PHASES[phase].tier
     ref = tier_ref(tier, cfg.models)
     if ref is None:
         return None
-    return ResolvedModel(ref, ModelLayer.TIER, key=f"models.{tier.value}")
+    resolved = ResolvedModel(ref, ModelLayer.TIER, key=f"models.{tier.value}")
+    _refuse_light_review(phase, resolved)
+    return resolved
 
 
 def phase_model(

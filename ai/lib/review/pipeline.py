@@ -17,6 +17,13 @@ merge is written, synthesis is marked done-and-skipped, and the header must not
 read as a clean review of nothing. ``review.outcome`` and ``review.verdict``
 word that header; this module is the path that takes it.
 
+A first-round PR that groups into one group runs the single-agent review
+instead (`_single_group_goes_single`): a lone group has no scan before it and,
+when clean, no synthesis or disprove after it, so it would be one pass with none
+of the checks the single path always runs. With two or more groups the
+whole-PR scan always runs, and a clean group result still reaches synthesis when
+that scan reported a concern (`steps.scan_raised_concerns`).
+
 Self-review vs PR mode is decided here too, at ``fetch_metadata`` /
 ``_with_local_diff``. A self-review reads the worktree: the head SHA and the
 changed-file list come from git, never from GitHub. Taking them from the PR
@@ -80,6 +87,7 @@ from review.steps import (
     _build_group_skips, _carry_forward_prior_findings, _identify_incremental_skips,
     _merge_round, _nothing_new, _phase_disprove, _run_disprove_gate,
     _run_group_phase, _run_holistic_phase, _run_synthesis_or_fallback,
+    scan_raised_concerns,
 )
 from review.retry import GroupFailure, _has_output, _render_reason, _retry_missing_output
 from review.state import PIPELINE_SCHEMA_VERSION, PipelineState, _resolve_recovery, _write_pipeline_state
@@ -320,6 +328,27 @@ def _group_merge_cap(job: ReviewJob) -> int:
     return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend(), cwd=job.wt_path) - fixed)
 
 
+def _single_group_goes_single(job: ReviewJob, group_count: int, incremental: bool) -> bool:
+    """Whether one group is better reviewed by the single-agent pipeline.
+
+    A lone group has no scan before it and, when clean, no synthesis or disprove
+    after it: one agent's pass would be the whole review with none of the checks
+    `run_single_agent` always runs. Only a first-round review qualifies, since an
+    incremental round carries prior findings the multi-phase state tracks, and
+    only when the single prompt fits — `run_single_agent` exits on an over-budget
+    prompt, where the group path would have degraded instead. `--no-group` keeps
+    the multi path, which is what reports the skipped phase.
+    """
+    if group_count != 1 or incremental or Phase.GROUP in job.skipped:
+        return False
+    try:
+        build_prompt(
+            Phase.SINGLE, job, max_turns=PhaseRunner(job, Phase.SINGLE).max_turns)
+    except PromptTooLarge:
+        return False
+    return True
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int | None = DEFAULT_MAX_PARALLEL,
     max_cost: float = DEFAULT_MAX_COST,
@@ -352,9 +381,10 @@ def run_multi_phase(
 
     group_count = len(groups)
 
+    incremental = _is_incremental(job)
+
     core.log.info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
-    incremental = _is_incremental(job)
     incremental_skips: set[int] = set()
     carried = None
 
@@ -375,6 +405,15 @@ def run_multi_phase(
     recovery = _resolve_recovery(job, groups)
     if recovery.already_complete:
         core.log.info("Review already complete — use --force to re-run from scratch")
+        return
+
+    # A prior multi-phase attempt (recovery.state) finishes as the multi-phase
+    # run it was; only a fresh run is redirected.
+    if recovery.state is None and _single_group_goes_single(job, group_count, incremental):
+        core.log.info(
+            "One group covers the whole PR — running the single-agent review "
+            "(claims check and disprove) instead of a lone group pass")
+        run_single_agent(job, disprove=disprove)
         return
 
     cost_so_far = recovery.cost_so_far
@@ -458,7 +497,7 @@ def run_multi_phase(
         synthesis = _run_synthesis_or_fallback(
             job, state, holistic.content, group_count,
             merged, failed_groups, n_skipped, cost_so_far, max_cost,
-            settled=settled,
+            settled=settled, scan_flagged=scan_raised_concerns(holistic.artifact),
         )
     cost_so_far += synthesis.cost
 

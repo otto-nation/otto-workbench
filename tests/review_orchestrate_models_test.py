@@ -84,13 +84,13 @@ class TestPhaseModel:
 
     def test_env_key_derived_from_phase_name(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
-        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
-        assert ro.phase_model("scout", "") == "claude-haiku-4-5"
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-sonnet-5-5")
+        assert ro.phase_model("scout", "") == "claude-sonnet-5-5"
         assert ro.phase_model("group", "") is None
 
     def test_explicit_overrides_env(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
-        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-sonnet-5-5")
         assert ro.phase_model("scout", "claude-opus-5") == "claude-opus-5"
 
     def test_collect_reads_the_worktree_config_when_given_one(
@@ -107,18 +107,18 @@ class TestPhaseModel:
         """
         self._clean_env(ro, monkeypatch)
         (tmp_path / ".workbench.yml").write_text(
-            "models:\n  deep: claude-haiku-4-5\n  standard: claude-haiku-4-5\n"
-            "  light: claude-haiku-4-5\n",
+            "models:\n  deep: claude-sonnet-5-5\n  standard: claude-sonnet-5-5\n"
+            "  light: claude-sonnet-5-5\n",
         )
         models = ro.collect_phase_models("", tmp_path)
-        assert set(models) == {ModelRef("claude-haiku-4-5")}
+        assert set(models) == {ModelRef("claude-sonnet-5-5")}
 
     def test_collect_groups_phases_by_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("WORKBENCH_AI_MODEL", "claude-sonnet-5")
-        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-sonnet-5-5")
         models = ro.collect_phase_models("")
-        assert models[ModelRef("claude-haiku-4-5")] == ["scout"]
+        assert models[ModelRef("claude-sonnet-5-5")] == ["scout"]
         assert set(models[ModelRef("claude-sonnet-5")]) == set(ro.REVIEW_PHASES) - {"scout"}
 
     def test_collect_keys_on_provider_and_id_together(self, ro, monkeypatch):
@@ -151,12 +151,12 @@ class TestPhaseModel:
     def test_collect_skips_phases_with_no_model(self, ro, monkeypatch):
         """An unset model is not a model to preflight; the budget floor covers it."""
         self._clean_env(ro, monkeypatch)
-        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
-        assert ro.collect_phase_models("") == {ModelRef("claude-haiku-4-5"): [ro.Phase.SCOUT]}
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-sonnet-5-5")
+        assert ro.collect_phase_models("") == {ModelRef("claude-sonnet-5-5"): [ro.Phase.SCOUT]}
 
     def test_unset_review_phases_names_the_rest(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
-        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-sonnet-5-5")
         unset = ro.unset_review_phases("")
         assert ro.Phase.SCOUT not in unset
         assert sorted(unset) == sorted(set(ro.REVIEW_PHASES) - {ro.Phase.SCOUT})

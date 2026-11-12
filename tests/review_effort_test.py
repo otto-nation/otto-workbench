@@ -154,9 +154,9 @@ class TestHolisticSkipReason:
             _make_job(tmp_path, effort=Effort.HIGH), False, 10)
         assert reason is None
 
-    def test_few_groups_skips(self, tmp_path):
+    def test_single_group_skips(self, tmp_path):
         reason = review.steps._holistic_skip_reason(
-            _make_job(tmp_path), False, 2)
+            _make_job(tmp_path), False, 1)
         assert "threshold" in reason
 
     def test_enough_groups_does_not_skip(self, tmp_path):

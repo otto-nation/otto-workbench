@@ -25,10 +25,12 @@ from pathlib import Path
 
 import pytest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+from core.phases import Phase
+
 import review.gc
+import review.paths
 import review.phases
 import review.pipeline
 import review.state
@@ -328,9 +330,11 @@ class TestTheDisproveGateRecordsItsOwnOutcome:
         """
         Path(review.state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
-            "groups_done": [1, 2], "done": ["synthesis"],
+            "groups_done": [1, 2], "done": ["scout", "synthesis"],
             "schema_version": 1,
         }))
+        # The scan ran before the kill, and a killed run leaves its artifact.
+        Path(review.paths.phase_output_path(job.review_file, Phase.SCOUT)).write_text(_SCOUT_DOC)
 
     def test_a_gate_that_declined_to_run_still_records_itself(self, job, run):
         run(job, fails={"group-2"})

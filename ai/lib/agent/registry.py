@@ -61,6 +61,10 @@ import argparse
 from agent.types import ItemScaling, PhaseSpec, RetryBudget
 from core.phases import AgentKind, Mode, Phase, PhaseDomain, PhaseShape, Thinking, Tier
 
+# No review-domain phase reads the light tier: a review's findings are only as
+# good as the model that reads the code, and a light-tier pass returning "no
+# findings" is indistinguishable from a clean PR. `resolve_phase_model` refuses
+# a light-tier or Haiku model for these phases from every layer.
 _SPECS: tuple[PhaseSpec, ...] = (
     # `single` and `synthesis` are the two phases a self-review prompts
     # differently: there is no PR description to read and no author to address,
@@ -83,16 +87,16 @@ _SPECS: tuple[PhaseSpec, ...] = (
     ),
     PhaseSpec(
         Phase.SCOUT, PhaseDomain.REVIEW, "Scout",
-        tier=Tier.LIGHT,
+        tier=Tier.STANDARD,
         template="scout.md", optional=True,
-        thinking=Thinking.LOW, max_turns=10,
+        thinking=Thinking.MEDIUM, max_turns=10,
         agent=AgentKind.REVIEWER_LITE,
     ),
     PhaseSpec(
         Phase.GROUP, PhaseDomain.REVIEW, "Group review",
-        tier=Tier.LIGHT,
+        tier=Tier.STANDARD,
         template="group.md", optional=True,
-        thinking=Thinking.LOW, max_turns=15,
+        thinking=Thinking.MEDIUM, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
     ),
     # Synthesis and disprove are handed the findings they judge, so an omitted
@@ -151,7 +155,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # without the gate spending more than one pass of this budget at a time.
     PhaseSpec(
         Phase.FIX_VERIFY, PhaseDomain.REVIEW, "Verify gate",
-        tier=Tier.LIGHT,
+        tier=Tier.STANDARD,
         template="verify-fixes.md",
         thinking=Thinking.LOW, max_turns=15,
         shape=PhaseShape.FIX,

@@ -7,6 +7,7 @@ from board.document import Checkout, build, stamp
 from board.github import PullList
 from board.model import Phase
 from batch.store import STATE_FILE, batch_root
+import board.precheck
 import core.workbench_paths
 
 
@@ -219,10 +220,8 @@ def test_offline_stamp_still_hashes_the_document(tmp_path, monkeypatch):
 
 
 def test_remember_skips_rewrite_when_memo_current(tmp_path, monkeypatch):
-    import board.precheck as pc
-
     _env(tmp_path, monkeypatch)
-    pre = pc.take(["/x"], [], "me", Phase.LISTING)
+    pre = board.precheck.take(["/x"], [], "me", Phase.LISTING)
     pre.remember("s1")
     writes = []
     monkeypatch.setattr("core.serde.write_json", lambda *a, **k: writes.append(a))
@@ -233,9 +232,7 @@ def test_remember_skips_rewrite_when_memo_current(tmp_path, monkeypatch):
 
 
 def test_memo_key_resolves_checkout_paths(tmp_path, monkeypatch):
-    import board.precheck as pc
-
     _env(tmp_path, monkeypatch)
-    a = pc.take([str(tmp_path)], [], "me", Phase.LISTING)
-    b = pc.take([str(tmp_path) + "/"], [], "me", Phase.LISTING)
+    a = board.precheck.take([str(tmp_path)], [], "me", Phase.LISTING)
+    b = board.precheck.take([str(tmp_path) + "/"], [], "me", Phase.LISTING)
     assert a.path == b.path

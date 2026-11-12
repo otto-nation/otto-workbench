@@ -41,6 +41,7 @@ output. Drive every outcome below to a finished run — `--fix` from the start
 unless the user asked for no AI, resolve what the AI could not, fix a failing
 pre-push check, then step 3 — and report what you did. Do not stop to ask
 whether to continue or whether to use AI.
+What each flag writes, the lease it pushes under, and every exit's next step: `pr rebase --help`.
 
 Stop and hand back only where the next move is a decision the tooling exists to
 leave to a person, and say exactly which one it is:
@@ -273,8 +274,9 @@ Runs that reach this, and the difference is `tree` plus what the console said:
   resume). The task is not done until the branch is rebased and pushed.
 - **`--stop-on-conflict`.** The tree is **paused** (`aborted: false`,
   `tree: paused`, stash held). Report `files` and `classes`. Resume with
-  `pr rebase --fix --branch <branch>` if the user wants AI, or resolve by hand
-  and `pr rebase --branch <branch>` (a resume never aborts).
+  `pr rebase --fix --branch <branch>` if the user wants AI. To resolve by hand,
+  either follow the `Next:` block on stderr through to its push, or resolve and
+  resume with `pr rebase --stop-on-conflict --branch <branch>` (a resume never aborts).
 - **`--fix` mode, where a file could not be resolved.** The AI's answer for that
   file would not parse twice over (missing resolution markers, surviving git
   conflict markers, or a merged file that no longer parses as its language —
@@ -340,20 +342,7 @@ their uncommitted work comes back with `git stash pop` after the abort.
 }
 ```
 
-`signal` names the evidence, and `status` groups the signals by what they found:
-
-| `signal` | `status` | What it found |
-|---|---|---|
-| `pr_merged` | `already_landed` | GitHub reports the PR merged |
-| `empty_diff` | `already_landed` | The branch has commits but no diff against its base — what a squash merge leaves behind |
-| `commits_upstream` | `already_landed` | Every commit already has an equivalent upstream by patch id |
-| `no_merge_base` | `unrelated_history` | The branch and its base share no commit at all |
-| `conflicts_over_budget` | `conflicts_over_budget` | The rebase conflicted across more files than automatic resolution should attempt; it was aborted |
-| `resolutions_over_budget` | `conflicts_over_budget` | The rebase would have spent more AI resolution calls than the budget allows — the same files conflicting in commit after commit; it was aborted |
-
-`commits_ahead` is a count on the two git signals and `null` on `pr_merged`: the
-tracker is asked before the branch is checked out, so there is no honest count
-to report there. `pr_number` is set on `pr_merged` only.
+`signal` and `status` values are described in `pr rebase --help` and `docs/ai-automation.md` § pr command contracts.
 
 Every status is a stop: report `detail` and what to suggest, which depends on
 `status`:
@@ -428,22 +417,24 @@ A run that ends with the rebase complete and `force_pushed` false is finished
 through the owner, once whatever blocked the push is committed:
 
 ```bash
-pr rebase --branch <branch>
+pr rebase --push-only --branch <branch>
 ```
 
-This is the same command as default mode, and it is not report-only here:
-conflict handling is already done. A replay with nothing to resolve force-pushes
-either way. So the run re-fetches, replays nothing unless the base moved again,
-and pushes — which puts the pre-push hooks on the HEAD that is actually going
-out. This is how the skill ends. Never run `git push --force-with-lease` yourself,
-and never hand it to the user as the remaining step: `pr rebase` prints a
+It pushes HEAD (your fix commit included) under the lease the completing run
+recorded, and runs the pre-push hook on what is actually going out. Do not
+re-run a bare `pr rebase` to push: it re-fetches and replays again if the
+base moved. A rebase you finished with `git rebase --continue` has no
+recorded lease; follow the `Next:` block `pr rebase` printed at exit 3
+(`--push-only --expect <full SHA>`). This is how the skill ends. Never run
+`git push --force-with-lease` yourself, and never hand it to the user as the
+remaining step: `pr rebase` prints a
 `Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,
 and that hint is for a human at a terminal, not an instruction to you.
 
 When a hook failure is not the branch's doing, push past it yourself. Re-run
 step 3 once to rule out a flake. If the same check fails again and what it
 names lies outside the branch's diff (`git -C <worktree> diff --stat
-<base>...HEAD`), finish with `pr rebase --no-verify --branch <branch>` and say
+<base>...HEAD`), finish with `pr rebase --push-only --no-verify --branch <branch>` and say
 which check you pushed past and why. A failure the branch did cause is fixed and
 committed, never skipped. The same command honours a user who has said to push
 past it. It is still the owner's push, under the lease the rebase recorded —

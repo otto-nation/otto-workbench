@@ -959,6 +959,8 @@ is spent). The error names the owning command; retry once that run finishes.
 What each `pr` command writes to origin or GitHub and how, what each exit means, and the
 next step after one, rendered from the command's `CONTRACT` (`pr <command> --help` prints
 the same text). Lease semantics for `pr rebase` and `pr push` live here and nowhere else.
+To finish a rebase `pr rebase` completed but did not push, run `pr rebase --push-only`;
+for one finished outside `pr`, add `--expect <full SHA>` as its `Next:` block says.
 
 #### pr rebase contract
 
@@ -995,7 +997,7 @@ Rebase the branch onto its base, handle conflicts, and force-push the result und
 - `pr rebase --onto origin/release/1.2` — rebase onto a ref, used verbatim
 - `pr rebase --force-landed --fix` — rebase even though the work landed
 
-**JSON on stdout:** exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, files_resolved, files_stale, force_pushed, fork_point, squashed_commits); exit 3: ConflictReport (status, files, tree, classes, remaining_commits, pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override).
+**JSON on stdout:** exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, files_resolved, files_stale, force_pushed, fork_point, squashed_commits); exit 3: ConflictReport (status, files, tree, classes, remaining_commits, pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override, commits_ahead — a count on the git signals, null on pr_merged, which is asked before checkout; pr_number — set on pr_merged only).
 
 | `classes` | Meaning |
 |---|---|

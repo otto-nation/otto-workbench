@@ -155,7 +155,9 @@ CONTRACT = core.command_contract.CommandContract(
         "exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, "
         "files_resolved, files_stale, force_pushed, fork_point, squashed_commits); "
         "exit 3: ConflictReport (status, files, tree, classes, remaining_commits, "
-        "pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override).",
+        "pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override, "
+        "commits_ahead — a count on the git signals, null on pr_merged, which is asked "
+        "before checkout; pr_number — set on pr_merged only).",
         (
             core.command_contract.EnumDoc("classes", tuple(
                 core.command_contract.EnumValue(s.value, f"{s.doc.what}. Without --fix: {s.doc.without_fix}. "

@@ -17,7 +17,7 @@ if str(LIB_DIR) not in sys.path:
 import cli.pr  # noqa: E402
 from cli.needs import NO_LOCK  # noqa: E402
 from cli.registry import COMMANDS, contract_for, need_for  # noqa: E402
-import core.command_contract as cc  # noqa: E402
+import core.command_contract  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
 from core.tool_parser import ToolParser  # noqa: E402
 
@@ -44,12 +44,12 @@ def test_a_command_declares_a_contract_unless_listed(name):
     if name in UNMIGRATED:
         assert contract is None, f"{name} has a contract — drop it from UNMIGRATED"
     else:
-        assert isinstance(contract, cc.CommandContract)
+        assert isinstance(contract, core.command_contract.CommandContract)
 
 
 @pytest.mark.parametrize("name", MIGRATED)
 def test_the_contract_covers_the_parser(name):
-    assert cc.coverage_problems(contract_for(COMMANDS[name]),
+    assert core.command_contract.coverage_problems(contract_for(COMMANDS[name]),
                                 cli.pr.documented_flag_keys(name)) == []
 
 
@@ -81,7 +81,7 @@ def test_help_names_the_command_as_typed(name):
 
 @pytest.mark.parametrize("name", MIGRATED)
 def test_help_shows_the_rendered_contract(name):
-    assert cli.pr.help_parser(name).epilog == cc.render_help(contract_for(COMMANDS[name]))
+    assert cli.pr.help_parser(name).epilog == core.command_contract.render_help(contract_for(COMMANDS[name]))
 
 
 @pytest.mark.parametrize("name", ["status", "gc", "fix"])

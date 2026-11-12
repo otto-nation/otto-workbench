@@ -11,29 +11,29 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import core.command_contract as cc  # noqa: E402
+import core.command_contract  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
 
 
-def _contract() -> cc.CommandContract:
-    return cc.CommandContract(
+def _contract() -> core.command_contract.CommandContract:
+    return core.command_contract.CommandContract(
         summary="Do the thing.",
-        groups=(cc.FlagGroup("Push", ("--go",)), cc.FlagGroup("Local", ("--dry",))),
+        groups=(core.command_contract.FlagGroup("Push", ("--go",)), core.command_contract.FlagGroup("Local", ("--dry",))),
         exits=(
-            cc.ExitOutcome(ExitCode.OK, "done"),
-            cc.ExitOutcome(ExitCode.FAILURE, "broke", (
-                cc.NextStep("", ("look at {branch}",)),)),
-            cc.ExitOutcome(ExitCode.USAGE, "bad flags"),
-            cc.ExitOutcome(ExitCode.CONFLICTS, "conflicts", (
-                cc.NextStep("paused", ("resolve in {worktree}", "continue")),
-                cc.NextStep("clean", ("re-run with --fix",)),
+            core.command_contract.ExitOutcome(ExitCode.OK, "done"),
+            core.command_contract.ExitOutcome(ExitCode.FAILURE, "broke", (
+                core.command_contract.NextStep("", ("look at {branch}",)),)),
+            core.command_contract.ExitOutcome(ExitCode.USAGE, "bad flags"),
+            core.command_contract.ExitOutcome(ExitCode.CONFLICTS, "conflicts", (
+                core.command_contract.NextStep("paused", ("resolve in {worktree}", "continue")),
+                core.command_contract.NextStep("clean", ("re-run with --fix",)),
             )),
         ),
-        examples=(cc.Example("pr thing --go", "does it"),),
-        remote_effects=(cc.RemoteEffect("--go", "refs/heads/<branch>", "origin",
+        examples=(core.command_contract.Example("pr thing --go", "does it"),),
+        remote_effects=(core.command_contract.RemoteEffect("--go", "refs/heads/<branch>", "origin",
                                         "git push", "nothing is written"),),
-        json_output=cc.JsonOutput("An object.", (cc.EnumDoc("kind", (
-            cc.EnumValue("a", "first"),)),)),
+        json_output=core.command_contract.JsonOutput("An object.", (core.command_contract.EnumDoc("kind", (
+            core.command_contract.EnumValue("a", "first"),)),)),
         notes=("A note.",),
     )
 
@@ -54,53 +54,53 @@ def test_next_steps_select_by_when_and_fill_fields():
 
 
 def test_print_next_writes_a_numbered_block_to_stderr(capsys):
-    cc.print_next(_contract(), 3, when="paused", worktree="/wt")
+    core.command_contract.print_next(_contract(), 3, when="paused", worktree="/wt")
     out, err = capsys.readouterr()
     assert out == ""
     assert err == "Next:\n  1. resolve in /wt\n  2. continue\n"
 
 
 def test_print_next_is_silent_without_steps(capsys):
-    cc.print_next(_contract(), 0)
+    core.command_contract.print_next(_contract(), 0)
     assert capsys.readouterr().err == ""
 
 
 def test_help_carries_every_section():
-    text = cc.render_help(_contract())
+    text = core.command_contract.render_help(_contract())
     for needle in ("Writes remotely:", "--go", "git push", "Exit codes:",
                    "  3  conflicts", "Examples:", "pr thing --go", "JSON on stdout:",
-                   "kind", "a  first", "A note.", cc.REFERENCE_ANCHOR):
+                   "kind", "a  first", "A note.", core.command_contract.REFERENCE_ANCHOR):
         assert needle in text, needle
 
 
 def test_attach_help_regroups_flags_and_keeps_newlines():
     p = _parser()
-    cc.attach_help(p, _contract())
+    core.command_contract.attach_help(p, _contract())
     text = p.format_help()
     # argparse always repeats option strings in the usage line; regrouping
     # only owns the titled sections below it.
     body = text[text.index("\n"):]
     assert body.index("Push:") < body.index("--go") < body.index("Local:") < body.index("--dry")
     assert "Exit codes:\n" in text
-    assert p.epilog == cc.render_help(_contract())
+    assert p.epilog == core.command_contract.render_help(_contract())
 
 
 def test_markdown_has_an_anchored_heading_and_tables():
-    md = cc.render_markdown("pr thing", _contract())
+    md = core.command_contract.render_markdown("pr thing", _contract())
     assert md.startswith("#### pr thing contract\n")
     assert "| `--go` | refs/heads/<branch> | origin | git push | nothing is written |" in md
     assert "| `3` | conflicts |" in md
-    assert cc.anchor("pr thing") == "pr-thing-contract"
+    assert core.command_contract.anchor("pr thing") == "pr-thing-contract"
 
 
 def test_schema_carries_exit_codes_and_remote_effects():
-    doc = cc.schema(_contract())
+    doc = core.command_contract.schema(_contract())
     assert doc["exit_codes"][3] == {"code": 3, "name": "conflicts", "meaning": "conflicts"}
     assert doc["remote_effects"][0]["trigger"] == "--go"
 
 
 def test_coverage_accepts_an_exact_partition():
-    assert cc.coverage_problems(_contract(), ["--go", "--dry"]) == []
+    assert core.command_contract.coverage_problems(_contract(), ["--go", "--dry"]) == []
 
 
 @pytest.mark.parametrize("documented, needle", [
@@ -108,18 +108,18 @@ def test_coverage_accepts_an_exact_partition():
     (["--go"], "--dry is grouped but not declared"),
 ])
 def test_coverage_names_what_drifted(documented, needle):
-    assert any(needle in p for p in cc.coverage_problems(_contract(), documented))
+    assert any(needle in p for p in core.command_contract.coverage_problems(_contract(), documented))
 
 
 def test_coverage_rejects_a_trigger_naming_an_undeclared_flag():
     c = _contract()
-    bad = cc.CommandContract(c.summary, c.groups, c.exits, c.examples,
-                             (cc.RemoteEffect("--nope", "x", "y", "z", "w"),))
-    assert any("--nope" in p for p in cc.coverage_problems(bad, ["--go", "--dry"]))
+    bad = core.command_contract.CommandContract(c.summary, c.groups, c.exits, c.examples,
+                             (core.command_contract.RemoteEffect("--nope", "x", "y", "z", "w"),))
+    assert any("--nope" in p for p in core.command_contract.coverage_problems(bad, ["--go", "--dry"]))
 
 
 def test_coverage_requires_ok_failure_and_usage():
     c = _contract()
-    bad = cc.CommandContract(c.summary, c.groups, c.exits[:1], c.examples)
-    problems = cc.coverage_problems(bad, ["--go", "--dry"])
+    bad = core.command_contract.CommandContract(c.summary, c.groups, c.exits[:1], c.examples)
+    problems = core.command_contract.coverage_problems(bad, ["--go", "--dry"])
     assert any("exit 1" in p for p in problems) and any("exit 2" in p for p in problems)

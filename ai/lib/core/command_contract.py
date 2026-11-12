@@ -196,6 +196,26 @@ def render_help(contract: CommandContract) -> str:
     return "\n".join(out)
 
 
+def _detach_action(parser: argparse.ArgumentParser, action: argparse.Action) -> None:
+    for container in parser._action_groups:
+        if action not in container._group_actions:
+            continue
+        container._group_actions.remove(action)
+
+
+def _place_flag(
+    parser: argparse.ArgumentParser,
+    section: argparse._ArgumentGroup,
+    by_key: dict[str, argparse.Action],
+    key: str,
+) -> None:
+    action = by_key.get(key)
+    if action is None:
+        return
+    _detach_action(parser, action)
+    section._group_actions.append(action)
+
+
 def _regroup(parser: argparse.ArgumentParser, groups: Sequence[FlagGroup]) -> None:
     # Private argparse API (`_action_groups`, `_group_actions`), the same trade
     # core.cli_reference makes; test_attach_help_regroups_flags_and_keeps_newlines
@@ -204,13 +224,7 @@ def _regroup(parser: argparse.ArgumentParser, groups: Sequence[FlagGroup]) -> No
     for group in groups:
         section = parser.add_argument_group(group.title)
         for key in group.flags:
-            action = by_key.get(key)
-            if action is None:
-                continue
-            for container in parser._action_groups:
-                if action in container._group_actions:
-                    container._group_actions.remove(action)
-            section._group_actions.append(action)
+            _place_flag(parser, section, by_key, key)
 
 
 def attach_help(parser: argparse.ArgumentParser, contract: CommandContract) -> None:
@@ -279,6 +293,23 @@ def print_next(contract: CommandContract, code: int, *, when: str = "", **fields
     sys.stderr.flush()
 
 
+def _undeclared_trigger_keys(trigger: str, declared: set[str]) -> list[str]:
+    problems: list[str] = []
+    for key in trigger.split():
+        if key not in declared:
+            problems.append(f"remote effect trigger {key} is not a declared flag")
+    return problems
+
+
+def _undeclared_triggers(
+    effects: Sequence[RemoteEffect], declared: set[str],
+) -> list[str]:
+    problems: list[str] = []
+    for effect in effects:
+        problems.extend(_undeclared_trigger_keys(effect.trigger, declared))
+    return problems
+
+
 def coverage_problems(contract: CommandContract, documented: Sequence[str]) -> list[str]:
     """Every way *contract* disagrees with the flag keys its parser documents."""
     problems: list[str] = []
@@ -292,10 +323,7 @@ def coverage_problems(contract: CommandContract, documented: Sequence[str]) -> l
     for key in grouped:
         if key not in declared:
             problems.append(f"{key} is grouped but not declared by the parser")
-    for e in contract.remote_effects:
-        for key in e.trigger.split():
-            if key not in declared:
-                problems.append(f"remote effect trigger {key} is not a declared flag")
+    problems.extend(_undeclared_triggers(contract.remote_effects, declared))
     codes = [int(o.code) for o in contract.exits]
     for code in _REQUIRED_EXITS:
         if int(code) not in codes:

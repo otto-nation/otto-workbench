@@ -17,7 +17,7 @@ Exit codes, remote writes and examples are `CONTRACT` below, rendered into
 from __future__ import annotations
 
 import cli.boundary
-import core.command_contract as cc
+import core.command_contract
 import core.publishing
 from core.exit_codes import ExitCode
 from core.tool_parser import ToolParser
@@ -28,12 +28,12 @@ import rebase.lease
 
 SCRIPT = "pr push"
 
-CONTRACT = cc.CommandContract(
+CONTRACT = core.command_contract.CommandContract(
     summary="Push HEAD to origin under a lease on the remote tip you planned from. Never "
             "rebases, never creates a branch, never edits the PR.",
-    groups=(cc.FlagGroup("Push", ("--expect", "--no-verify")),),
+    groups=(core.command_contract.FlagGroup("Push", ("--expect", "--no-verify")),),
     remote_effects=(
-        cc.RemoteEffect(
+        core.command_contract.RemoteEffect(
             "", "refs/heads/<branch> := HEAD", "origin",
             "git push [--no-verify] "
             + rebase.lease.PushLease(branch="<branch>", expect="<lease>").args[0]
@@ -44,30 +44,30 @@ CONTRACT = cc.CommandContract(
             "(stale --expect), exit 1. origin has no such branch: exit 1 — pr push never "
             "creates a branch. origin moves between the read and the push: stale info, "
             "nothing written, exit 1."),
-        cc.RemoteEffect(
+        core.command_contract.RemoteEffect(
             "--no-verify", "nothing extra: changes how the push runs", "origin",
             "adds --no-verify to git push, skipping the git pre-push hook; the workbench "
             "owner check still runs",
             "as for the push"),
     ),
     exits=(
-        cc.ExitOutcome(ExitCode.OK, "pushed, and origin holds HEAD"),
-        cc.ExitOutcome(ExitCode.FAILURE, "refused, lost, unverified, or a rebase is in "
+        core.command_contract.ExitOutcome(ExitCode.OK, "pushed, and origin holds HEAD"),
+        core.command_contract.ExitOutcome(ExitCode.FAILURE, "refused, lost, unverified, or a rebase is in "
                                          "progress", (
-            cc.NextStep("", (
+            core.command_contract.NextStep("", (
                 "git -C {worktree} ls-remote origin refs/heads/{branch}",
                 "if HEAD belongs on top of what origin holds, run pr rebase first; "
                 "otherwise re-run pr push --expect <that SHA>",
             )),
         )),
-        cc.ExitOutcome(ExitCode.USAGE, "--expect missing or empty"),
-        cc.ExitOutcome(ExitCode.TEMPFAIL, "another pr run holds this branch or checkout; "
+        core.command_contract.ExitOutcome(ExitCode.USAGE, "--expect missing or empty"),
+        core.command_contract.ExitOutcome(ExitCode.TEMPFAIL, "another pr run holds this branch or checkout; "
                                           "retry once it finishes"),
     ),
     examples=(
-        cc.Example("pr push --expect 0123456789abcdef0123456789abcdef01234567",
+        core.command_contract.Example("pr push --expect 0123456789abcdef0123456789abcdef01234567",
                    "push HEAD if origin still holds that commit, or an ancestor of it"),
-        cc.Example("pr push --expect <sha> --no-verify", "the same, skipping the pre-push hook"),
+        core.command_contract.Example("pr push --expect <sha> --no-verify", "the same, skipping the pre-push hook"),
     ),
 )
 
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         with core.publishing.run(post=True):
             rc = rebase.commands.cmd_push_head(cwd, ctx, expect=args.expect,
                                                verify=not args.no_verify, trail=trail)
-        cc.print_next(CONTRACT, rc, branch=ctx.branch, worktree=cwd)
+        core.command_contract.print_next(CONTRACT, rc, branch=ctx.branch, worktree=cwd)
         return rc
     except Exception as exc:
         cli.boundary.reraise(trail, exc)

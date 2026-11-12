@@ -29,7 +29,7 @@ import sys
 
 import cli.locks
 import cli.needs
-import core.command_contract as cc
+import core.command_contract
 import core.errors
 import core.trail
 from core.exit_codes import ExitCode
@@ -50,41 +50,41 @@ _HOOK = ("The git pre-push hook runs unless --no-verify; the workbench owner che
 _STALE = ("origin moved since the lease was taken: git reports stale info, nothing is "
           "written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>.")
 
-CONTRACT = cc.CommandContract(
+CONTRACT = core.command_contract.CommandContract(
     summary="Rebase the branch onto its base, handle conflicts, and force-push the result "
             "under an explicit lease. Never edits the PR on GitHub.",
     groups=(
-        cc.FlagGroup("Target", ("--onto", "--fork-point")),
-        cc.FlagGroup("Conflicts", ("--fix", "--stop-on-conflict", "--abort")),
-        cc.FlagGroup("Push", ("--no-push", "--push-only", "--expect", "--no-verify")),
-        cc.FlagGroup("Overrides", ("--force-landed",)),
+        core.command_contract.FlagGroup("Target", ("--onto", "--fork-point")),
+        core.command_contract.FlagGroup("Conflicts", ("--fix", "--stop-on-conflict", "--abort")),
+        core.command_contract.FlagGroup("Push", ("--no-push", "--push-only", "--expect", "--no-verify")),
+        core.command_contract.FlagGroup("Overrides", ("--force-landed",)),
     ),
     remote_effects=(
-        cc.RemoteEffect(
+        core.command_contract.RemoteEffect(
             "", "refs/heads/<branch> := the rebased HEAD", "origin",
             f"git push [--no-verify] {_LEASE}, where <expect> is origin/<branch> as this "
             "checkout saw it before the run's own fetch (empty when origin has no such "
             "branch, which creates it). " + _HOOK,
             _STALE + " A refused pre-push hook leaves the rebase complete and unpushed "
                      "(JSON force_pushed false)."),
-        cc.RemoteEffect(
+        core.command_contract.RemoteEffect(
             "--fix", "the same push, after AI conflict resolution", "origin",
             f"git push [--no-verify] {_LEASE} (same lease as the bare invocation)",
             _STALE),
-        cc.RemoteEffect(
+        core.command_contract.RemoteEffect(
             "--push-only", "refs/heads/<branch> := current HEAD, commits added since the "
                            "rebase included; no rebase runs", "origin",
             f"git push [--no-verify] {_LEASE}, where <expect> is RebaseSummary.lease_expect "
             "that the last completed rebase saved in the target's state.json",
             "No recorded rebase: exit 1. A recorded empty lease while origin has the "
             "branch: exit 1 ('recorded lease is stale'). " + _STALE),
-        cc.RemoteEffect(
+        core.command_contract.RemoteEffect(
             "--push-only --expect", "refs/heads/<branch> := current HEAD; no rebase runs",
             "origin",
             f"git push [--no-verify] {_LEASE}, where <expect> is exactly the SHA given "
             "(use the full SHA); no recorded rebase is needed",
             _STALE),
-        cc.RemoteEffect(
+        core.command_contract.RemoteEffect(
             "--no-verify", "nothing extra: changes how the push above runs", "origin",
             "adds --no-verify to git push, skipping the git pre-push hook; the owner check "
             "still runs. For a hook failure already understood — a flake, or a check the "
@@ -92,23 +92,23 @@ CONTRACT = cc.CommandContract(
             "as for the push it modifies"),
     ),
     exits=(
-        cc.ExitOutcome(ExitCode.OK, "rebased, and pushed unless --no-push (or a one-sided "
+        core.command_contract.ExitOutcome(ExitCode.OK, "rebased, and pushed unless --no-push (or a one-sided "
                                     "resolution held the push)"),
-        cc.ExitOutcome(ExitCode.FAILURE, "pre-flight failure, git error, refused or lost "
+        core.command_contract.ExitOutcome(ExitCode.FAILURE, "pre-flight failure, git error, refused or lost "
                                          "push, missing or stale recorded lease", (
-            cc.NextStep("", (
+            core.command_contract.NextStep("", (
                 "read the ✗ line and the Resume line above",
                 "if the JSON reads \"status\": \"completed\" with \"force_pushed\": false, "
                 "commit the fix for what the hook named, then: pr rebase --push-only "
                 "--branch {branch}",
             )),
         )),
-        cc.ExitOutcome(ExitCode.USAGE, "flags that cannot combine (--push-only with "
+        core.command_contract.ExitOutcome(ExitCode.USAGE, "flags that cannot combine (--push-only with "
                                        "--fix/--abort/--no-push, --expect without "
                                        "--push-only, --fix with --stop-on-conflict)"),
-        cc.ExitOutcome(ExitCode.CONFLICTS, "conflicts need a person; ConflictReport on "
+        core.command_contract.ExitOutcome(ExitCode.CONFLICTS, "conflicts need a person; ConflictReport on "
                                            "stdout, its tree says paused or clean", (
-            cc.NextStep("paused", (
+            core.command_contract.NextStep("paused", (
                 "resolve each file in `files` hunk by hunk (never take a side whole)",
                 "git -C {worktree} add <file> for each resolved file",
                 "git -C {worktree} rebase --continue (repeat until the rebase finishes)",
@@ -118,52 +118,52 @@ CONTRACT = cc.CommandContract(
                 "pr rebase --push-only --expect <that full SHA> --branch {branch}",
                 "(or let pr finish instead: pr rebase --fix --branch {branch} resumes here)",
             )),
-            cc.NextStep("clean", (
+            core.command_contract.NextStep("clean", (
                 "the rebase was aborted; HEAD is back at pre_rebase_head",
                 "pr rebase --fix --branch {branch} to resolve with AI, or "
                 "pr rebase --stop-on-conflict --branch {branch} to pause and resolve by hand",
             )),
         )),
-        cc.ExitOutcome(ExitCode.REFUSED, "refused before changing anything (already landed, "
+        core.command_contract.ExitOutcome(ExitCode.REFUSED, "refused before changing anything (already landed, "
                                          "unrelated history, conflicts over budget); "
                                          "RefusalReport on stdout", (
-            cc.NextStep("", (
+            core.command_contract.NextStep("", (
                 "read `signal` in the JSON — already_landed usually means delete the branch",
                 "to rebase anyway: pr rebase --force-landed --branch {branch}",
             )),
         )),
-        cc.ExitOutcome(ExitCode.TEMPFAIL, "another pr run holds this branch or checkout; "
+        core.command_contract.ExitOutcome(ExitCode.TEMPFAIL, "another pr run holds this branch or checkout; "
                                           "retry once it finishes"),
     ),
     examples=(
-        cc.Example("pr rebase --fix", "rebase onto the PR's base, AI-resolve conflicts, "
+        core.command_contract.Example("pr rebase --fix", "rebase onto the PR's base, AI-resolve conflicts, "
                                       "force-push under the lease"),
-        cc.Example("pr rebase --no-push", "rebase only; the push command is printed"),
-        cc.Example("pr rebase --push-only", "push what a --no-push run, or a run whose push "
+        core.command_contract.Example("pr rebase --no-push", "rebase only; the push command is printed"),
+        core.command_contract.Example("pr rebase --push-only", "push what a --no-push run, or a run whose push "
                                             "failed, left — under its recorded lease"),
-        cc.Example("pr rebase --push-only --expect 0123456789abcdef0123456789abcdef01234567",
+        core.command_contract.Example("pr rebase --push-only --expect 0123456789abcdef0123456789abcdef01234567",
                    "push a branch finished outside pr, leasing on the SHA origin must hold"),
-        cc.Example("pr rebase --stop-on-conflict", "pause on conflicts to resolve by hand"),
-        cc.Example("pr rebase --onto origin/release/1.2", "rebase onto a ref, used verbatim"),
-        cc.Example("pr rebase --force-landed --fix", "rebase even though the work landed"),
+        core.command_contract.Example("pr rebase --stop-on-conflict", "pause on conflicts to resolve by hand"),
+        core.command_contract.Example("pr rebase --onto origin/release/1.2", "rebase onto a ref, used verbatim"),
+        core.command_contract.Example("pr rebase --force-landed --fix", "rebase even though the work landed"),
     ),
-    json_output=cc.JsonOutput(
+    json_output=core.command_contract.JsonOutput(
         "exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, "
         "files_resolved, files_stale, force_pushed, fork_point, squashed_commits); "
         "exit 3: ConflictReport (status, files, tree, classes, remaining_commits, "
         "pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override).",
         (
-            cc.EnumDoc("classes", tuple(
-                cc.EnumValue(s.value, f"{s.doc.what}. Without --fix: {s.doc.without_fix}. "
+            core.command_contract.EnumDoc("classes", tuple(
+                core.command_contract.EnumValue(s.value, f"{s.doc.what}. Without --fix: {s.doc.without_fix}. "
                                       f"With --fix: {s.doc.with_fix}.")
                 for s in rebase.types.ConflictStrategy)),
-            cc.EnumDoc("tree", (
-                cc.EnumValue("paused", "the rebase is still in the worktree; what was "
+            core.command_contract.EnumDoc("tree", (
+                core.command_contract.EnumValue("paused", "the rebase is still in the worktree; what was "
                                        "resolved is staged; an auto-stash is held"),
-                cc.EnumValue("clean", "the rebase was aborted; HEAD is at pre_rebase_head"),
+                core.command_contract.EnumValue("clean", "the rebase was aborted; HEAD is at pre_rebase_head"),
             )),
-            cc.EnumDoc("signal", tuple(
-                cc.EnumValue(s.value, f"status {s.doc.status}: {s.doc.found}")
+            core.command_contract.EnumDoc("signal", tuple(
+                core.command_contract.EnumValue(s.value, f"status {s.doc.status}: {s.doc.found}")
                 for s in rebase.types.RefusalSignal)),
         ),
     ),
@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         # paused vs clean only selects Next: lines on exit 3; asking git on
         # every other exit would fail a run whose worktree was never a repo.
         when = next_state(cwd) if rc == int(ExitCode.CONFLICTS) else ""
-        cc.print_next(CONTRACT, rc, when=when, branch=ctx.branch, worktree=cwd)
+        core.command_contract.print_next(CONTRACT, rc, when=when, branch=ctx.branch, worktree=cwd)
         return rc
     except Exception as exc:
         core.errors.reraise(trail, exc)

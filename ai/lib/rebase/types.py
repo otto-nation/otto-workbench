@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 
+import core.exit_codes
 import core.log
 import core.report
 import gh.landed
@@ -351,8 +352,8 @@ class RefDivergence:
 # ── Constants ───────────────────────────────────────────────────────────────
 
 
-REFUSAL_EXIT = 4
-CONFLICTS_EXIT = 3
+REFUSAL_EXIT = core.exit_codes.ExitCode.REFUSED
+CONFLICTS_EXIT = core.exit_codes.ExitCode.CONFLICTS
 REFUSAL_OVERRIDE_FLAG = "--force"
 CONFLICT_FILE_BUDGET = 20
 

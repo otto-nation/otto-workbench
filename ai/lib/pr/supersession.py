@@ -89,6 +89,7 @@ from pathlib import Path
 import gh.client
 import git.client
 import git.topology
+import core.exit_codes
 import core.log
 import pr.domains
 import pr.state
@@ -121,7 +122,7 @@ _SYMBOL_DEF_RE = re.compile(
 # for its already-landed refusal: the two checks answer different questions, but
 # a caller reading the exit code only needs to know "this branch was refused",
 # and one code for that beats two it has to tell apart.
-EXIT_SUPERSEDED = 4
+EXIT_SUPERSEDED = core.exit_codes.ExitCode.REFUSED
 OVERRIDE_FLAG = "--force"
 
 

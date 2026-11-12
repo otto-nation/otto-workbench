@@ -18,9 +18,10 @@ import sys
 from collections.abc import Callable
 
 import core.errors
+import core.exit_codes
 import gh.owners
 
-OWNER_BOUNDARY_EXIT = 1
+OWNER_BOUNDARY_EXIT = core.exit_codes.ExitCode.FAILURE
 
 
 def reports_owner_boundary(main: Callable[..., int]) -> Callable[..., int]:

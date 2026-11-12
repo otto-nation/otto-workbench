@@ -136,6 +136,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.exit_codes import ExitCode
 import core.log
 import core.timeouts
 
@@ -159,11 +160,8 @@ VACATED_PAUSE_S = 0.01
 VACATED_PAUSE_MAX_S = 0.2
 VACATED_BUDGET_S = 2.0
 
-# 75 is sysexits.h's EX_TEMPFAIL. Same value as
-# cli.pr_commands.EXIT_BUDGET_EXHAUSTED, because both mean retry later — a
-# live holder here, a spent hourly GitHub quota there. Duplicated rather than
-# imported: this module is layer 1 and cannot reach cli.
-EXIT_BUSY = 75
+# sysexits.h EX_TEMPFAIL: retry later — a live lock holder.
+EXIT_BUSY = ExitCode.TEMPFAIL
 
 
 class Scope(enum.Enum):

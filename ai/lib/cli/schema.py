@@ -33,6 +33,7 @@ from __future__ import annotations
 import sys
 
 import board.model
+import core.exit_codes
 import core.log
 import cli.review_modes
 from cli.dispatch import PARSER_FACTORIES, resolve
@@ -46,7 +47,7 @@ SCRIPT = "pr"
 # argparse's own exit code for a usage error: the caller asked for something
 # in terms this build cannot answer in. Distinct from 1, so a consumer can
 # tell "we cannot answer that" from "the command ran and failed".
-EXIT_USAGE = 2
+EXIT_USAGE = core.exit_codes.ExitCode.USAGE
 
 
 def tool_schema() -> dict:

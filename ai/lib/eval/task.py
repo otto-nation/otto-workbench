@@ -348,7 +348,7 @@ def resolved_model(task: EvalTask, explicit: str) -> str:
     the tiers now name with its provider still files under the baseline its
     bare id was recorded as.
     """
-    resolved = agent.phases.resolve_phase_model(task.phase, explicit or None)
+    resolved = agent.phases.resolve_phase_model(task.phase, explicit or None, allow_light=True)
     if resolved is None:
         raise _unset(task)
     ref = resolved.ref
@@ -357,7 +357,7 @@ def resolved_model(task: EvalTask, explicit: str) -> str:
 
 def resolved_settings(task: EvalTask, explicit: str) -> agent.phases.PhaseSettings:
     """Model, provider and thinking level for invoking *task* (see `resolved_model`)."""
-    settings = agent.phases.phase_settings(task.phase, explicit or None)
+    settings = agent.phases.phase_settings(task.phase, explicit or None, allow_light=True)
     if settings.model is None:
         raise _unset(task)
     return settings

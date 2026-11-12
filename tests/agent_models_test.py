@@ -154,7 +154,7 @@ def test_models_light_never_reaches_a_review_phase(roots):
 
 
 @pytest.mark.parametrize("value", ["claude-haiku-4-5@20251001", "google-vertex-claude/claude-haiku-5-5", "light"])
-@pytest.mark.parametrize("phase", [Phase.SCOUT, Phase.GROUP, Phase.SYNTHESIS, Phase.FIX_VERIFY])
+@pytest.mark.parametrize("phase", sorted(__import__("agent.registry", fromlist=["x"]).REVIEW_PHASES, key=lambda p: p.value))
 def test_a_review_phase_refuses_light_from_every_layer(roots, monkeypatch, phase, value):
     cfg = _cfg(roots, "models:\n  light: claude-haiku-4-5\n")
     with pytest.raises(agent.phases.ReviewModelTooLight):
@@ -172,10 +172,20 @@ def test_a_review_phase_refuses_light_from_every_layer(roots, monkeypatch, phase
         agent.phases.phase_model(phase, None, over)
 
 
-def test_a_standard_tier_set_to_haiku_is_refused_for_reviews(roots):
+@pytest.mark.parametrize("phase", [p for p in __import__("agent.registry", fromlist=["x"]).REVIEW_PHASES if PHASES[p].tier is Tier.STANDARD])
+def test_a_standard_tier_set_to_haiku_is_refused_for_reviews(roots, phase):
     cfg = _cfg(roots, "models:\n  standard: claude-haiku-4-5\n")
     with pytest.raises(agent.phases.ReviewModelTooLight):
-        agent.phases.phase_model(Phase.GROUP, None, cfg)
+        agent.phases.phase_model(phase, None, cfg)
+
+
+def test_eval_resolution_may_use_a_light_model_for_a_review_phase(roots):
+    cfg = _cfg(roots, "models:\n  standard: claude-sonnet-5-5\n")
+    got = agent.phases.resolve_phase_model(Phase.SYNTHESIS, "claude-haiku-4-5", cfg, allow_light=True)
+    assert got.ref.id == "claude-haiku-4-5"
+    assert agent.phases.phase_settings(Phase.SYNTHESIS, "claude-haiku-4-5", cfg, allow_light=True).model == "claude-haiku-4-5"
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.resolve_phase_model(Phase.SYNTHESIS, "claude-haiku-4-5", cfg)
 
 
 def test_light_models_still_serve_the_phases_that_are_not_reviews(roots):

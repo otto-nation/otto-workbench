@@ -139,3 +139,14 @@ def test_bash_and_python_agree_on_the_minimum_claude_code_version():
     m = re.search(r'^CLAUDE_CODE_MIN_VERSION="([^"]+)"$', constants, re.M)
     assert m, "lib/constants.sh defines no CLAUDE_CODE_MIN_VERSION"
     assert m.group(1) == core.project_context.CLAUDE_CODE_MIN_VERSION
+
+
+def test_hint_prefers_root_claude_md_and_pluralises():
+    ctx = core.project_context.ProjectContext(
+        "", core.project_context.ContextState.LEGACY,
+        ("Apps/CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.md"))
+    assert "git mv CLAUDE.md AGENTS.md" in core.project_context.migration_hint(ctx)
+    split = core.project_context.ProjectContext(
+        "AGENTS.md", core.project_context.ContextState.SPLIT, ("CLAUDE.md", "a/CLAUDE.md"))
+    hint = core.project_context.migration_hint(split)
+    assert "fold them" in hint and "delete them" in hint

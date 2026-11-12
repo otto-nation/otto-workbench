@@ -416,7 +416,7 @@ done
 # reading ai/claude/guidelines.md's — the two must list the same situations, agent
 # names and constraints or a row added to one silently goes missing from the
 # other. Both files carry exactly one table, so extracting every table row is
-# enough; strip_md=1 drops CLAUDE.md's ".md" suffix so its agent-file names
+# enough; strip_md=1 drops guidelines.md's ".md" suffix so its agent-file names
 # compare equal to AGENTS.head.md's bare skill names.
 _protocol_rows() {
   local file="$1" strip_md="$2"
@@ -436,10 +436,10 @@ _protocol_rows() {
   ' "$file" | sort
 }
 
-CLAUDE_MD="$WORKBENCH_DIR/ai/claude/guidelines.md"
+GUIDELINES_MD="$WORKBENCH_DIR/ai/claude/guidelines.md"
 PI_AGENTS_HEAD="$WORKBENCH_DIR/ai/pi/AGENTS.head.md"
-if [[ -f "$CLAUDE_MD" && -f "$PI_AGENTS_HEAD" ]]; then
-  claude_protocol_rows="$(_protocol_rows "$CLAUDE_MD" 1)"
+if [[ -f "$GUIDELINES_MD" && -f "$PI_AGENTS_HEAD" ]]; then
+  claude_protocol_rows="$(_protocol_rows "$GUIDELINES_MD" 1)"
   pi_protocol_rows="$(_protocol_rows "$PI_AGENTS_HEAD" 0)"
   if [[ "$claude_protocol_rows" == "$pi_protocol_rows" ]]; then
     _pass "ai/pi/AGENTS.head.md: Agent protocols table matches ai/claude/guidelines.md"

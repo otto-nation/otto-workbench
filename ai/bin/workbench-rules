@@ -284,7 +284,7 @@ _find_repo_root() {
 }
 
 # _instructions_file ROOT — the repo's AGENTS.md under ROOT, or nothing when it
-# has none; a CLAUDE.md is never an answer. The name belongs to
+# has none; a CLAUDE.md is never an answer. Which file counts is decided by
 # ai/lib/core/project_context.py; this asks it rather than keeping a copy.
 _instructions_file() {
   local root="$1" record rel

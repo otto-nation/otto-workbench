@@ -42,6 +42,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import core.command_contract
 from core.tool_parser import subparsers
 
 # Private argparse API, used because argparse publishes no way to ask for what
@@ -81,6 +82,7 @@ class Command:
     name: str
     help: str
     parser: argparse.ArgumentParser
+    contract: "core.command_contract.CommandContract | None" = None
 
 
 @dataclass(frozen=True)
@@ -344,13 +346,41 @@ def tables(shape: CLIShape) -> str:
         if table:
             label = "Global flags" if shape.commands else "Flags"
             out.append(f"**{label}**\n\n{table}")
+    by_name = {c.name: c for c in shape.commands}
     for command in _flattened(shape.commands):
         head = f"**`{shape.prog} {command.name}`**"
         if command.help:
             head += f" — {_cell(command.help)}"
         table = _table(command.parser, hidden)
-        out.append(f"{head}\n\n{table}" if table else f"{head}\n\nTakes no flags.")
+        block = f"{head}\n\n{table}" if table else f"{head}\n\nTakes no flags."
+        original = by_name.get(command.name)
+        if original is not None and original.contract is not None:
+            block += "\n\n" + _contract_line(shape.prog, original)
+        out.append(block)
     return "\n\n".join(out)
+
+
+def _contract_line(prog: str, command: Command) -> str:
+    """One line under a contracted command's table: its exits and where its contract is."""
+    c = command.contract
+    assert c is not None
+    exits = " · ".join(f"`{int(o.code)}` {o.code.name.lower()}" for o in c.exits)
+    writes = "writes remotely" if c.remote_effects else "writes nothing remotely"
+    link = core.command_contract.anchor(f"{prog} {command.name}")
+    return f"Exit codes: {exits} — {writes}; [contract](ai-automation.md#{link})"
+
+
+def contracts(shape: CLIShape) -> str:
+    """Every contracted command's docs block, in declaration order.
+
+    Raises rather than printing nothing: an include that rendered empty would
+    read as a CLI that promises nothing.
+    """
+    blocks = [core.command_contract.render_markdown(f"{shape.prog} {c.name}", c.contract)
+              for c in shape.commands if c.contract is not None]
+    if not blocks:
+        raise ValueError(f"{shape.prog}: no command declares a contract")
+    return "\n\n".join(blocks)
 
 
 def load(spec: str, prog: str, root: Path | str) -> CLIShape:

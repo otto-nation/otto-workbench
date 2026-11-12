@@ -3611,7 +3611,7 @@ up to date (no block).
 The already-landed signals answer "is this work already in the base?". Further
 signals answer a different question — "is replaying this branch onto that base a
 safe thing to do at all?" — and refuse on the same exit code, with the same
-``--force`` override:
+``--force-landed`` override:
 
 | Signal | What it reads | When it fires |
 |---|---|---|
@@ -3639,7 +3639,7 @@ first six commits landed and whose seventh has not reads to them like a branch
 that landed nothing. Replaying that prefix onto itself conflicts each commit
 against its landed version. `pr rebase` detects the prefix and replays only
 what is left (``git rebase --onto <base> <fork-point>``). ``--fork-point REF``
-overrides the detection; ``--force`` turns it off and replays the whole branch.
+overrides the detection; ``--force-landed`` turns it off and replays the whole branch.
 
 The budgets are the circuit breaker for what all of this produces. Conflict
 resolution is an AI call per conflicted file, with edit access to the worktree,
@@ -3664,7 +3664,7 @@ at risk; the other measures how much the run is spending to find out.
 A resumed rebase waives the budget. The conflicts are already sitting in the
 worktree by then; refusing would strand it mid-rebase with no path forward
 except the manual resolution the command exists to avoid. The waiver is the
-resume path passing `force=True` into the same parameter `--force` sets, so
+resume path passing `force=True` into the same parameter `--force-landed` sets, so
 there is one waiver mechanism rather than two.
 
 ### pr/fix.py
@@ -5641,6 +5641,32 @@ option whose help is `SUPPRESS` stays out, as do the framework flags every
 `ToolParser` script shares (`--help`, `--tool-schema`, `--debug`). Every
 option string is shown, so an alias is documented the moment it is declared.
 
+### core/command_contract.py
+
+What one `pr` subcommand promises: flags by group, remote writes, exits, next steps.
+
+A command's flags were described by its parser, its remote effects by prose
+in a skill, its exit codes by a module docstring and its next steps by
+nothing, so four readers learned four different commands. A
+`CommandContract` is the one declaration; this module renders it four ways —
+the `--help` epilog (`render_help`/`attach_help`), the docs block
+(`render_markdown`), the machine schema (`schema`) and, at run time, the
+`Next:` block a command prints after a non-zero exit (`print_next`).
+
+`coverage_problems` is what keeps the declaration honest against the parser:
+every documented flag sits in exactly one `FlagGroup`, every `RemoteEffect`
+trigger names declared flags, and every contract says what exits 0, 1 and 2
+mean. Which flags *touch the remote* cannot be read off a parser, so it is
+asserted by the enforcement suite (`tests/cli_contract_test.py`) rather than
+here.
+
+Flag keys are the first option string (`--onto`, not `--base`) or, for a
+positional, its `dest`. A trigger is `""` for the bare invocation or a
+space-separated set of flag keys that together cause the write.
+
+Layer 1: the dataclasses hold strings and `ExitCode`s only, so `cli` declares
+contracts and `core.cli_reference` renders them without importing `cli`.
+
 ### core/conventions.py
 
 Bridge to the repo's conventional-commit rules in lib/conventions.sh.
@@ -5680,6 +5706,23 @@ Two pieces, split by where they act:
   imports this module, so the hook is in place wherever one can be raised.
 
 Not: what the operator should set (each error's own message says that).
+
+### core/exit_codes.py
+
+The exit codes every `pr` command shares, and what each means in general.
+
+One owner for the numbers. Before this module the same seven values were
+spelled in eight places — `EXIT_USAGE` twice, 75 as both `EXIT_BUSY` and
+`EXIT_BUDGET_EXHAUSTED`, 4 as both `REFUSAL_EXIT` and `EXIT_SUPERSEDED` — and
+each copy carried a comment explaining why it matched another. The old names
+survive as aliases of these members, so callers read the meaning they always
+did while the number has one home.
+
+What a code means *for one command* — exit 4 is "already landed" for
+`pr rebase` and "superseded" for `pr review` — belongs to that command's
+`core.command_contract.CommandContract`; `summary` here is only the class.
+
+Layer 1, so `core.run_lock` can use it as well as `cli`.
 
 ### core/flock_wait.py
 
@@ -7435,11 +7478,12 @@ pass to act on.
 
 The `git push` subprocess is relayed to stderr as it runs — a pre-push hook that
 prints for minutes is visible, not captured into silence until git exits — and
-the same bytes are kept for classification and the failure artifact. A trail
-records it as a `push` span (the wait) plus whether `--no-verify` skipped the
-hooks. There is no timeout that would kill a legitimate long hook. Because the
-output has already been on screen once, `report` labels its excerpt of it as a
-replay rather than printing the hook's failure a second time unannounced.
+the same bytes are kept for classification and the failure artifact. Before git
+runs, `plan_line` says what the push will do. A trail records it as a `push`
+span (the wait) plus whether `--no-verify` skipped the hooks. There is no timeout
+that would kill a legitimate long hook. Because the output has already been on
+screen once, `report` labels its excerpt of it as a replay rather than printing
+the hook's failure a second time unannounced.
 
 This module pushes, verifies, retries, and reports. It does not commit, and it
 does not perform the hook-regenerated-files recovery `land` owns — that sits
@@ -7764,7 +7808,7 @@ Where a rebase starts replaying from — a named, detected, or whole-branch star
 
 ``select`` is the one owner of that choice. An explicit ``--fork-point REF``
 wins and replays only the commits after REF, whether or not a prefix was
-detected. ``--force`` turns detection off and replays the whole branch.
+detected. ``--force-landed`` turns detection off and replays the whole branch.
 Otherwise a landed prefix is skipped rather than refused.
 
 When a leading run of commits is already in the base — a squash-landed
@@ -8672,16 +8716,8 @@ not "not a force push". Use `pr rebase --push-only` after a rebase; use
 `pr push` for anything else. It records where the branch stands (`PushDomain`)
 and records no rebase, so `pr status` does not describe a push as a rewrite.
 
-Exit codes:
-  0  Pushed, and the remote holds HEAD
-  1  Refused, lost, unverified, or a rebase is still in progress
-  2  Usage error
-  75 Another pr run holds the lock (EX_TEMPFAIL — retry once it finishes)
-
-Usage:
-  pr push --expect <sha>               # push HEAD if origin still holds <sha>
-  pr push --expect <sha> --no-verify   # skip the pre-push hook
-  pr push --expect <sha> --repo-dir <path>
+Exit codes, remote writes and examples are `CONTRACT` below, rendered into
+`pr push --help` and the docs.
 
 ### cli/pr_rebase.py
 
@@ -8703,25 +8739,8 @@ Outputs structured JSON on stdout and status messages on stderr.
 Updates local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.
 
-Exit codes:
-  0  Success (clean rebase or operation completed)
-  1  Error (pre-flight failure, git error)
-  3  Conflicts detected (JSON report on stdout)
-  4  Branch already landed — refused before touching the remote (JSON on stdout)
-
-Usage:
-  pr-rebase                           # rebase and force-push; abort on unresolved conflicts
-  pr-rebase --no-push                 # rebase only, skip force-push
-  pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
-  pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
-  pr-rebase --stop-on-conflict        # pause on conflicts (tree dirty) instead of aborting
-  pr-rebase --force                   # rebase even when the branch already landed
-  pr-rebase --abort                   # abort in-progress rebase
-  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
-  pr-rebase --fork-point <ref>        # replay only the commits after <ref>
-  pr-rebase --no-verify               # force-push without running the pre-push hook
-  pr-rebase --push-only --expect <sha> # push HEAD leasing on <sha>; no recorded rebase needed
-  pr-rebase --repo-dir <path>         # specify worktree directory
+Exit codes, remote writes and examples are `CONTRACT` below, rendered into
+`pr rebase --help` and the docs.
 
 ### cli/pr_stack.py
 

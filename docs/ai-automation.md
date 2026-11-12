@@ -184,12 +184,12 @@ Analyze and address PR review comments with lifecycle tracking: fetch, classify,
 **Trigger:** Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.
 **Skip:** Do not use for initial code review requests (use code-review or pr review instead); do not use for self-review before PR creation (use self-review-fix instead).
 
-### `/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]`
+### `/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force-landed] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]`
 
 Rebase onto the branch's base with generated-only conflict rebuild or abort; --fix for AI resolution. TRIGGER when: user asks to rebase a branch, update it onto its base, squash-and-rebase, resolve rebase conflicts, or says hand rebase / rebase by hand. SKIP: simple git pull --rebase with no conflicts; commit rewording.
 
 ```
-/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]
+/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force-landed] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]
 ```
 **Output schema:** `pr rebase --tool-schema`
 **Trigger:** Use when the user asks to rebase a branch, update it onto its base, squash-and-rebase, resolve rebase conflicts, or says hand rebase / rebase by hand.
@@ -953,15 +953,96 @@ A second `pr` against the same target or checkout while one still holds the lock
 exits 75 (`EX_TEMPFAIL`, the same value as `pr gc` when the GitHub hourly quota
 is spent). The error names the owning command; retry once that run finishes.
 
-### pr push and its lease
+### pr command contracts
 
-`pr push --expect <sha>` pins the remote tip you planned from, not local HEAD.
-The lease is built from the tip origin actually holds. A fast-forward from any
-ancestor of `--expect` still pushes, under a lease on that current origin tip.
-A moved origin is refused (`stale --expect`) with no force advice. If origin
-moves after planning, git's "stale info" is a stale lease (`ls-remote` on the
-full ref), not a divergence. An un-forced divergence resumes with
-`git pull --rebase`, never `--force-with-lease`.
+What each `pr` command writes to origin or GitHub and how, what each exit means, and the
+next step after one, rendered from the command's `CONTRACT` (`pr <command> --help` prints
+the same text). Lease semantics for `pr rebase` and `pr push` live here and nowhere else.
+
+#### pr rebase contract
+
+Rebase the branch onto its base, handle conflicts, and force-push the result under an explicit lease. Never edits the PR on GitHub.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `(bare invocation)` | refs/heads/<branch> := the rebased HEAD | origin | git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is origin/<branch> as this checkout saw it before the run's own fetch (empty when origin has no such branch, which creates it). The git pre-push hook runs unless --no-verify; the workbench owner check (gh.owner_hooks.refuse_outgoing) runs either way. | origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>. A refused pre-push hook leaves the rebase complete and unpushed (JSON force_pushed false). |
+| `--fix` | the same push, after AI conflict resolution | origin | git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect> (same lease as the bare invocation) | origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>. |
+| `--push-only` | refs/heads/<branch> := current HEAD, commits added since the rebase included; no rebase runs | origin | git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is RebaseSummary.lease_expect that the last completed rebase saved in the target's state.json | No recorded rebase: exit 1. A recorded empty lease while origin has the branch: exit 1 ('recorded lease is stale'). origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>. |
+| `--push-only --expect` | refs/heads/<branch> := current HEAD; no rebase runs | origin | git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is exactly the SHA given (use the full SHA); no recorded rebase is needed | origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>. |
+| `--no-verify` | nothing extra: changes how the push above runs | origin | adds --no-verify to git push, skipping the git pre-push hook; the owner check still runs. For a hook failure already understood — a flake, or a check the branch did not cause | as for the push it modifies |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | rebased, and pushed unless --no-push (or a one-sided resolution held the push) |  |
+| `1` | pre-flight failure, git error, refused or lost push, missing or stale recorded lease | `read the ✗ line and the Resume line above` → `if the JSON reads "status": "completed" with "force_pushed": false, commit the fix for what the hook named, then: pr rebase --push-only --branch {branch}` |
+| `2` | flags that cannot combine (--push-only with --fix/--abort/--no-push, --expect without --push-only, --fix with --stop-on-conflict) |  |
+| `3` | conflicts need a person; ConflictReport on stdout, its tree says paused or clean | *paused:* `resolve each file in `files` hunk by hunk (never take a side whole)` → `git -C {worktree} add <file> for each resolved file` → `git -C {worktree} rebase --continue (repeat until the rebase finishes)` → `git -C {worktree} ls-remote origin refs/heads/{branch} — it must equal git -C {worktree} rev-parse refs/remotes/origin/{branch}; if not, someone pushed since the rebase started: stop` → `pr rebase --push-only --expect <that full SHA> --branch {branch}` → `(or let pr finish instead: pr rebase --fix --branch {branch} resumes here)`<br>*clean:* `the rebase was aborted; HEAD is back at pre_rebase_head` → `pr rebase --fix --branch {branch} to resolve with AI, or pr rebase --stop-on-conflict --branch {branch} to pause and resolve by hand` |
+| `4` | refused before changing anything (already landed, unrelated history, conflicts over budget); RefusalReport on stdout | `read `signal` in the JSON — already_landed usually means delete the branch` → `to rebase anyway: pr rebase --force-landed --branch {branch}` |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr rebase --fix` — rebase onto the PR's base, AI-resolve conflicts, force-push under the lease
+- `pr rebase --no-push` — rebase only; the push command is printed
+- `pr rebase --push-only` — push what a --no-push run, or a run whose push failed, left — under its recorded lease
+- `pr rebase --push-only --expect 0123456789abcdef0123456789abcdef01234567` — push a branch finished outside pr, leasing on the SHA origin must hold
+- `pr rebase --stop-on-conflict` — pause on conflicts to resolve by hand
+- `pr rebase --onto origin/release/1.2` — rebase onto a ref, used verbatim
+- `pr rebase --force-landed --fix` — rebase even though the work landed
+
+**JSON on stdout:** exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, files_resolved, files_stale, force_pushed, fork_point, squashed_commits); exit 3: ConflictReport (status, files, tree, classes, remaining_commits, pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override).
+
+| `classes` | Meaning |
+|---|---|
+| `regenerate` | A lockfile with a known regenerator: Cargo.lock, Gemfile.lock, bun.lock, bun.lockb, composer.lock, go.sum, package-lock.json, pnpm-lock.yaml, poetry.lock, uv.lock, yarn.lock. Without --fix: rebuilt by its regenerator; the rebase continues only when every conflict in the step is regenerate or accept_theirs and every rebuild succeeds; otherwise the run aborts to a clean tree (exit 3, tree clean), or pauses with --stop-on-conflict (exit 3, tree paused). With --fix: rebuilt by its regenerator, deferred to the end of the step. |
+| `accept_theirs` | A generated file (a regenerate=/linguist-generated gitattribute or a generated-file header). Without --fix: the incoming side is staged, then rebuilt by its regenerate= attribute or the declared rebase.regenerate commands (left stale in files_stale when there is neither); the rebase continues only when every conflict in the step is regenerate or accept_theirs and every rebuild succeeds; otherwise the run aborts to a clean tree (exit 3, tree clean), or pauses with --stop-on-conflict (exit 3, tree paused). With --fix: as without --fix, and the repo's conventional generate task (for example mise) is also tried. |
+| `delete` | A modify/delete conflict: one side deleted the file. Without --fix: the run aborts to a clean tree (exit 3, tree clean), or pauses with --stop-on-conflict (exit 3, tree paused). With --fix: the deletion is accepted (git rm --force). |
+| `binary_error` | A binary file. Without --fix: the run aborts to a clean tree (exit 3, tree clean), or pauses with --stop-on-conflict (exit 3, tree paused). With --fix: never resolved automatically: the rebase pauses with the file in files. |
+| `ai_merge` | A hand-written text file. Without --fix: the run aborts to a clean tree (exit 3, tree clean), or pauses with --stop-on-conflict (exit 3, tree paused). With --fix: merged by AI region by region; an answer that loses its markers, keeps a conflict marker, or no longer parses (gofmt -e, ast.parse, bash -n, JSON/YAML/TOML) leaves the file unresolved and the rebase paused. |
+
+| `tree` | Meaning |
+|---|---|
+| `paused` | the rebase is still in the worktree; what was resolved is staged; an auto-stash is held |
+| `clean` | the rebase was aborted; HEAD is at pre_rebase_head |
+
+| `signal` | Meaning |
+|---|---|
+| `pr_merged` | status already_landed: GitHub reports the PR merged |
+| `empty_diff` | status already_landed: the branch has commits but no diff against its base — what a squash merge leaves behind |
+| `commits_upstream` | status already_landed: every commit already has an upstream equivalent by patch id |
+| `no_merge_base` | status unrelated_history: the branch and its base share no commit |
+| `conflicts_over_budget` | status conflicts_over_budget: conflicts span more files than automatic resolution should attempt; the rebase was aborted |
+| `resolutions_over_budget` | status conflicts_over_budget: the same files conflict commit after commit, past the AI call budget; the rebase was aborted |
+| `tracker_refused` | status tracker_unread: GitHub was not asked whether the PR merged (budget latch), so landing could not be ruled out |
+
+#### pr push contract
+
+Push HEAD to origin under a lease on the remote tip you planned from. Never rebases, never creates a branch, never edits the PR.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `(bare invocation)` | refs/heads/<branch> := HEAD | origin | git push [--no-verify] --force-with-lease=refs/heads/<branch>:<lease>, where <lease> is the tip origin holds now (read with ls-remote) when it is --expect or an ancestor of --expect (a fast-forward); when origin cannot be asked, --expect itself. Records PushDomain in state.json, no rebase. | origin at neither --expect nor an ancestor of it: refused before pushing (stale --expect), exit 1. origin has no such branch: exit 1 — pr push never creates a branch. origin moves between the read and the push: stale info, nothing written, exit 1. |
+| `--no-verify` | nothing extra: changes how the push runs | origin | adds --no-verify to git push, skipping the git pre-push hook; the workbench owner check still runs | as for the push |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | pushed, and origin holds HEAD |  |
+| `1` | refused, lost, unverified, or a rebase is in progress | `git -C {worktree} ls-remote origin refs/heads/{branch}` → `if HEAD belongs on top of what origin holds, run pr rebase first; otherwise re-run pr push --expect <that SHA>` |
+| `2` | --expect missing or empty |  |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr push --expect 0123456789abcdef0123456789abcdef01234567` — push HEAD if origin still holds that commit, or an ancestor of it
+- `pr push --expect <sha> --no-verify` — the same, skipping the pre-push hook
 
 ### Running a branch's own libraries
 

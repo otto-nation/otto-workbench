@@ -275,7 +275,10 @@ def reference_shape() -> core.cli_reference.CLIShape:
     """
     subs = core.tool_parser.subparsers(_build_parser())
     commands = tuple(
-        core.cli_reference.Command(name, spec.help, _reference_parser(name, subs))
+        core.cli_reference.Command(
+            name, spec.help, _reference_parser(name, subs),
+            contract=contract_for(spec),
+        )
         for name, spec in COMMANDS.items()
     )
     return core.cli_reference.CLIShape(

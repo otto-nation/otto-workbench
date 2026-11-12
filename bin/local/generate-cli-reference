@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Render a tool's usage line or flag tables from its own argparse parser.
 
-Usage: bin/local/generate-cli-reference --tool <name> --emit usage|tables
+Usage: bin/local/generate-cli-reference --tool <name> --emit usage|tables|contract
 
 A registry entry that declares `parser:` names where its CLI's parser is built,
 and everything that would otherwise restate the CLI's flags is rendered from
 it here instead:
 
-  usage   one line, every invocation joined by `  |  ` — what
-          generate-tool-context puts in tools.generated.md for the entry
-  tables  markdown flag tables — what generate-doc-reference appends under the
-          script's own header in docs/tools.md
+  usage     one line, every invocation joined by `  |  ` — what
+            generate-tool-context puts in tools.generated.md for the entry
+  tables    markdown flag tables — what generate-doc-reference appends under the
+            script's own header in docs/tools.md
+  contract  markdown contract blocks (remote writes, exit codes, next steps) — what docs/ai-automation.src.md includes
 
 The rendering is core.cli_reference's; this script finds the entry and hands
 over its `parser:`. A tool that is not registered, or that declares no
@@ -40,6 +41,7 @@ import core.cli_reference  # noqa: E402
 EMITTERS = {
     "usage": core.cli_reference.usage_line,
     "tables": core.cli_reference.tables,
+    "contract": core.cli_reference.contracts,
 }
 
 

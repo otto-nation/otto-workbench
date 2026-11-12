@@ -47,11 +47,6 @@ AGENTS_FILE = "AGENTS.md"
 # `.claude/CLAUDE.md` is where the scaffold once put it.
 SHADOW_FILES = ("CLAUDE.md", ".claude/CLAUDE.md")
 
-# The workbench's own source for the user-level ~/.claude/CLAUDE.md. It is
-# installed, never read as this repo's project instructions, and its name is
-# defined by Claude Code, so it is not a shadow.
-MANAGED_CLAUDE_MD = ("ai/claude/CLAUDE.md",)
-
 # The first Claude Code release that reads AGENTS.md as project instructions
 # without a CLAUDE.md import. otto-workbench requires it; `ai sync` warns below
 # it. lib/constants.sh carries the same value for bash, and
@@ -105,7 +100,7 @@ def tracked_shadows(root: Path) -> tuple[str, ...]:
         listing = None
     if listing is not None and listing.returncode == 0:
         found.update(name for name in listing.stdout.split("\0") if name)
-    return tuple(sorted(found - set(MANAGED_CLAUDE_MD)))
+    return tuple(sorted(found))
 
 
 def resolve(root: Path) -> ProjectContext:

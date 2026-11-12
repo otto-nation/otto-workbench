@@ -12,6 +12,9 @@ setup_file() {
   FAKE_HOME="$SHARED_TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
+  # Before the HOME swap: mise then still resolves the real global config, which
+  # is the only one it trusts. The yq the registry reader runs is a mise shim.
+  pin_mise_to_real_home
   HOME="$FAKE_HOME"
   export WORKBENCH_DIR="$REPO_ROOT"
   export WORKBENCH_STABLE_DIR="$REPO_ROOT"

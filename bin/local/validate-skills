@@ -16,7 +16,7 @@
 #   - invocation is required unless the skill declares an agent
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
 #   - every non-programmatic agent has a matching agent-backed skill
-#   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/CLAUDE.md's
+#   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/guidelines.md's
 #   - flagged `pr create --…` invocations match git-operations.md's
 #   - every superpowers shim records the version ai/pi/settings.json pins
 #   - every superpowers shim's override marker names its own directory
@@ -413,7 +413,7 @@ for agent_file in "$AGENTS_DIR"/*.md; do
 done
 
 # ai/pi/AGENTS.head.md hand-authors its own "Agent protocols" table rather than
-# reading ai/claude/CLAUDE.md's — the two must list the same situations, agent
+# reading ai/claude/guidelines.md's — the two must list the same situations, agent
 # names and constraints or a row added to one silently goes missing from the
 # other. Both files carry exactly one table, so extracting every table row is
 # enough; strip_md=1 drops CLAUDE.md's ".md" suffix so its agent-file names
@@ -436,15 +436,15 @@ _protocol_rows() {
   ' "$file" | sort
 }
 
-CLAUDE_MD="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
+CLAUDE_MD="$WORKBENCH_DIR/ai/claude/guidelines.md"
 PI_AGENTS_HEAD="$WORKBENCH_DIR/ai/pi/AGENTS.head.md"
 if [[ -f "$CLAUDE_MD" && -f "$PI_AGENTS_HEAD" ]]; then
   claude_protocol_rows="$(_protocol_rows "$CLAUDE_MD" 1)"
   pi_protocol_rows="$(_protocol_rows "$PI_AGENTS_HEAD" 0)"
   if [[ "$claude_protocol_rows" == "$pi_protocol_rows" ]]; then
-    _pass "ai/pi/AGENTS.head.md: Agent protocols table matches ai/claude/CLAUDE.md"
+    _pass "ai/pi/AGENTS.head.md: Agent protocols table matches ai/claude/guidelines.md"
   else
-    _fail "ai/pi/AGENTS.head.md: Agent protocols table diverges from ai/claude/CLAUDE.md — sync the two tables"
+    _fail "ai/pi/AGENTS.head.md: Agent protocols table diverges from ai/claude/guidelines.md — sync the two tables"
   fi
 fi
 

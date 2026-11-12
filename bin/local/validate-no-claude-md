@@ -8,7 +8,7 @@
 # check reads the same candidate set every other caller does
 # (ai/lib/core/project_context.py --shadows), so what counts as a shadow is
 # decided in one place: a root CLAUDE.md, .claude/CLAUDE.md, and any tracked
-# CLAUDE.md at depth, except the workbench's own user-level guidelines source.
+# CLAUDE.md at depth. There are no exemptions.
 #
 # Usage: bin/local/validate-no-claude-md [--quiet] [--registered] [DIR]
 # Exit codes: 0 if no checked repo has a CLAUDE.md, 1 if any does, 2 on a usage

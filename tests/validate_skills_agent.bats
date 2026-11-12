@@ -164,7 +164,7 @@ _make_protocol_tables() {
     echo "| Situation | Agent file | Constraint |"
     echo "|-----------|-----------|------------|"
     echo "$claude_row"
-  } > "$FAKE_WORKBENCH/ai/claude/CLAUDE.md"
+  } > "$FAKE_WORKBENCH/ai/claude/guidelines.md"
   {
     echo "# Workbench guidelines"
     echo ""

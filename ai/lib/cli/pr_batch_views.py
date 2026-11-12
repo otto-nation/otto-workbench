@@ -112,9 +112,9 @@ def write_report(run: Run, *, offline: bool) -> tuple[Path | None, dict]:
     github = _github(run, offline)
     reader = batch.publish.local_tree if offline else batch.publish.peek_tree
     entries = batch.session_report.sessions(run, tree=lambda item: _tree(item, reader))
-    doc = report(run, cli.pr_batch_common.is_active(run.id), github,
-                 sessions=[e.to_dict() for e in entries])
-    if cli.pr_batch_common.is_active(run.id):
+    active = cli.pr_batch_common.is_active(run.id)
+    doc = report(run, active, github, sessions=[e.to_dict() for e in entries])
+    if active:
         return None, doc
     directory = batch.store.run_dir(run.id)
     directory.mkdir(parents=True, exist_ok=True)

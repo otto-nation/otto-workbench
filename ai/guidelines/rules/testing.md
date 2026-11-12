@@ -79,9 +79,11 @@ rarely produces.
 Revert the line that was actually wrong, which is not always the line the test
 names, and never the expectation: a revert check that edits the expected value
 only proves the assertion compares; the revert that counts breaks the subject
-line and restores it by rewriting that line. A helper can be correct and its caller defeat it: a cache read that a caller
-already invalidated, a flag the caller never passes, a guard the caller skips. Reverting the helper fails the helper's test and proves nothing about
-the wiring, so the bug ships under a green suite. When a change adds a function
+line and restores it by rewriting that line. A helper can be correct and its
+caller defeat it: a cache read that a caller already invalidated, a flag the
+caller never passes, a guard the caller skips. Reverting the helper fails the
+helper's test and proves nothing about the wiring, so the bug ships under a
+green suite. When a change adds a function
 *and* a call to it, the revert that settles it is at the call site — delete the
 argument, restore the old call, put the wrong order back — and a test that
 survives that is testing the unit, not the behaviour.

@@ -97,7 +97,7 @@ class ReviewModelTooLight(core.errors.OperatorError):
             "google-vertex/gemini-3.1-pro-preview), or a tier other than light.")
 
 
-def _is_light_model(model_id: str) -> bool:
+def is_light_model(model_id: str) -> bool:
     return "haiku" in model_id.lower()
 
 
@@ -110,7 +110,7 @@ def _refuse_light_review(phase: Phase, resolved: ResolvedModel, allow_light: boo
     """
     if allow_light or PHASES[phase].domain is not PhaseDomain.REVIEW:
         return
-    if resolved.tier is Tier.LIGHT or _is_light_model(resolved.ref.id):
+    if resolved.tier is Tier.LIGHT or is_light_model(resolved.ref.id):
         raise ReviewModelTooLight(phase, resolved.key, resolved.ref.id)
 
 
@@ -122,7 +122,7 @@ class BadPhaseModel(core.errors.OperatorError):
 
 
 def phase_model_overrides(
-    specs: list[str], cfg: WorkbenchConfig | None = None,
+    specs: list[str], cfg: WorkbenchConfig | None = None, *, source: str = "--phase-model",
 ) -> dict[str, str]:
     """The ``WORKBENCH_AI_<PHASE>_MODEL`` entries *specs* (``PHASE=MODEL``) name.
 
@@ -138,13 +138,13 @@ def phase_model_overrides(
         name, sep, value = spec.partition("=")
         name, value = name.strip(), value.strip()
         if not sep or not name or not value:
-            raise BadPhaseModel(f"--phase-model takes PHASE=MODEL, got '{spec}'")
+            raise BadPhaseModel(f"{source} takes PHASE=MODEL, got '{spec}'")
         try:
             phase = Phase(name)
         except ValueError:
             known = ", ".join(p.value for p in Phase)
-            raise BadPhaseModel(f"--phase-model names no phase '{name}'. Phases: {known}") from None
-        where = f"--phase-model {name}"
+            raise BadPhaseModel(f"{source} names no phase '{name}'. Phases: {known}") from None
+        where = f"{source} {name}"
         ref = resolve(value, cfg.models, where=where)
         if ref is None:
             raise BadPhaseModel(f"{where}= names no model")

@@ -2,6 +2,8 @@
 
 Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
        otto-workbench config set KEY VALUE [--project|--container]
+       otto-workbench config model PHASE|TIER MODEL [--project|--container]
+       otto-workbench config model PHASE|TIER --unset [--project|--container]
        otto-workbench config status
        otto-workbench config get KEY [DIR ...]
        otto-workbench config models
@@ -113,12 +115,15 @@ import agent.context_ceiling  # noqa: E402
 import agent.harness_models  # noqa: E402
 import agent.models  # noqa: E402
 import agent.phase_report  # noqa: E402
+import agent.phases  # noqa: E402
 import agent.pi_models  # noqa: E402
 import config.workbench_config  # noqa: E402
 import config.workbench_config_report  # noqa: E402
 import config.workbench_config_write  # noqa: E402
+import core.errors  # noqa: E402
 import core.proc  # noqa: E402
 import core.timeouts  # noqa: E402
+from core.phases import Phase, Tier  # noqa: E402
 from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 import git_layout  # noqa: E402
 
@@ -156,6 +161,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="write the .workbench.yml above a bare repo's worktrees",
     )
     setter.set_defaults(run=_write)
+    modeler = sub.add_parser(
+        "model", help="set or clear the model for one phase or tier, checked",
+    )
+    modeler.add_argument("target", help="a phase (scout) or a tier (standard)")
+    modeler.add_argument(
+        "ref", nargs="?", help="[provider/]id[:level] or a tier name; omit with --unset",
+    )
+    modeler.add_argument("--unset", action="store_true", help="remove the setting")
+    mscope = modeler.add_mutually_exclusive_group()
+    mscope.add_argument("--project", action="store_true",
+                        help="write the current repo's .workbench.yml")
+    mscope.add_argument("--container", action="store_true",
+                        help="write the .workbench.yml above a bare repo's worktrees "
+                             "(the scope for trying models out)")
+    modeler.set_defaults(run=_model)
     reporter = sub.add_parser(
         "status", help="show every scope, every value, and the file it came from",
     )
@@ -516,6 +536,63 @@ def _write(args: argparse.Namespace) -> int:
                   "commit it so the repo keeps the answer")
 
 
+def _model_key(target: str, ref: str | None) -> str:
+    """The config key *target* names, after checking *ref* is fit for it.
+
+    A phase writes ``agent.phases.<phase>.model`` and a tier ``models.<tier>``.
+    A review phase is held to the review floor, and so is the standard or deep
+    tier, since the review phases read their model from them; the light tier
+    may be anything.
+    """
+    try:
+        phase = Phase(target)
+    except ValueError:
+        phase = None
+    if phase is not None:
+        if ref is not None:
+            agent.phases.phase_model_overrides([f"{target}={ref}"], source="config model")
+        return f"agent.phases.{target}.model"
+    try:
+        tier = Tier(target)
+    except ValueError:
+        phases = ", ".join(p.value for p in Phase)
+        tiers = ", ".join(t.value for t in Tier)
+        raise config.workbench_config.ConfigError(
+            f"'{target}' is neither a phase ({phases}) nor a tier ({tiers})") from None
+    if ref is not None:
+        parsed = agent.models.parse_ref(ref)
+        if tier is not Tier.LIGHT and agent.phases.is_light_model(parsed.id):
+            raise agent.phases.ReviewModelTooLight(Phase.SINGLE, f"models.{target}", parsed.id)
+    return f"models.{target}"
+
+
+def _model(args: argparse.Namespace) -> int:
+    if args.unset == (args.ref is not None):
+        print(f"{RED}✗{NC} give a model to set, or --unset to clear, not both or neither",
+              file=sys.stderr)
+        return 2
+    key = _model_key(args.target, args.ref)
+    if args.project or args.container:
+        root = _project_root()
+        if root is None:
+            print(f"{RED}✗{NC} --project and --container need a git repo", file=sys.stderr)
+            return 1
+        target = (config.workbench_config.container_config_path(root) if args.container
+                  else config.workbench_config.project_config_path(root))
+        if target is None:
+            print(f"{RED}✗{NC} --container needs a bare-repo worktree", file=sys.stderr)
+            return 1
+    else:
+        target = config.workbench_config.global_config_path()
+    if args.unset:
+        removed = config.workbench_config_write.unset_value(key, target)
+        print(f"{GREEN}✓{NC} {key} " + ("removed" if removed else "was not set"))
+        print(f"  {DIM}{target}{NC}")
+        return 0
+    args.key, args.value = key, args.ref
+    return _write(args)
+
+
 def _write_container(args: argparse.Namespace, root: Path) -> int:
     """Write the file above a bare repo's worktrees, or say there is none.
 
@@ -550,7 +627,8 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    except (config.workbench_config.ConfigError, agent.models.UnsetTier,
+    except (config.workbench_config.ConfigError, core.errors.OperatorError,
+            agent.models.UnsetTier,
             agent.harness_models.AutoNeedsTiers, agent.harness_models.AutoTakesNoLevel) as exc:
         print(f"{RED}✗{NC} {exc}", file=sys.stderr)
         return 1

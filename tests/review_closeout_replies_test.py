@@ -1,6 +1,7 @@
 """review.closeout: pushing a held commit and posting the replies it owes."""
 
 import sys
+from collections import Counter
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -213,6 +214,45 @@ class TestPendingFixReplies:
         assert mock_reply.call_count == 2
         assert mock_resolve.call_count == 2
         assert fix.fix.commit_status == "pushed"
+
+    def test_a_re_run_does_not_resend_an_already_sent_fixed_reply(self, publishing_on):
+        """`--finish` after a kill mid-drain must not POST the first threads again."""
+        class _Killed(BaseException):
+            pass
+
+        fix, threads_by_id = self._queue(2, commit_status="push_failed",
+                                         summary_deferred=True)
+        for thread in threads_by_id.values():
+            thread.my_login = "me"
+            thread.comments[0]["author"] = {"login": "kgn"}
+        state = _make_state(fix)
+        posted = []
+        seen_second = False
+
+        def post(repo, pr_number, root_id, body):
+            nonlocal seen_second
+            if root_id == 200 and not seen_second:
+                seen_second = True
+                raise _Killed()
+            posted.append(root_id)
+            return True
+
+        with patch.object(git.push, "holds", return_value=True), \
+                patch("pr.comments.post_thread_reply", side_effect=post), \
+                patch("pr.comments.patch_thread_reply") as edit, \
+                patch("pr.comments.resolve_thread", return_value=True):
+            try:
+                review.closeout.post_pending_fix_replies(
+                    state, "owner/repo", 1, threads_by_id)
+            except _Killed:
+                pass
+            else:
+                raise AssertionError("expected the drain to be killed mid-batch")
+            review.closeout.post_pending_fix_replies(
+                state, "owner/repo", 1, threads_by_id)
+
+        assert Counter(posted) == {100: 1, 200: 1}
+        edit.assert_not_called()
 
     def test_skips_when_still_unpushed(self):
         fix, _ = self._queue(commit_status="push_failed", summary_deferred=True)

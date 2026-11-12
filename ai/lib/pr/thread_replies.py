@@ -266,6 +266,41 @@ def upsert_thread_reply(
     return pr.comments.post_thread_reply(repo, pr_number, root_id, body)
 
 
+def _same_standing_reply(thread: ReportThread, body: str) -> bool:
+    """Whether the last comment is already the reply this run would write.
+
+    Authorship is `last_comment_is_mine` — the same identity `our_last_reply_id`
+    uses — so an empty `my_login` never matches, and a reviewer's comment that
+    happens to share the text is not treated as ours. The length guard is the
+    same one: a self-review root is our comment and must not suppress the
+    answer posted under it.
+    """
+    if len(thread.comments) < 2:
+        return False
+    if not pr.comments.last_comment_is_mine(thread.comments, thread.my_login):
+        return False
+    last = str(thread.comments[-1].get("body") or "")
+    return pr.published_record.normalise(last) == pr.published_record.normalise(body)
+
+
+def _remember_standing_reply(thread: ReportThread, body: str) -> None:
+    """Keep `thread.comments` honest after a write this run just made.
+
+    The GraphQL thread is not re-fetched mid-batch, and `post_thread_reply`
+    returns only success, not the new comment id. Without this, a kill after
+    the first of N posts and a resume on the same `ReportThread` objects would
+    POST the first thread again. A later round that re-fetches already sees
+    the comment on GitHub; this is the in-hand copy of that fact.
+    """
+    if pr.comments.last_comment_is_mine(thread.comments, thread.my_login):
+        thread.comments[-1]["body"] = body
+        return
+    thread.comments.append({
+        "author": {"login": thread.my_login},
+        "body": body,
+    })
+
+
 # Replies created before this instant were written by code that did not stamp
 # them, so a reply without a marker is read by the legacy template match only if
 # it predates it. After it, a reply without a marker is a person's — including
@@ -376,13 +411,19 @@ def _post_thread_replies(
             kept += 1
             continue
         existing_id = our_last_reply_id(thread)
-        # ceiling: thread.comments is not refreshed after a post, so two replies
-        # to one thread within a single run would still stack. Unreachable while
-        # the reply categories stay a partition of the triage verdicts; refetch
-        # the thread here if that ever stops holding.
         body = pr.published_record.stamp_reply(body_fn(entry))
+        if _same_standing_reply(thread, body):
+            continue
+        # ceiling: a POST does not return GitHub's new comment id, so
+        # our_last_reply_id cannot edit a reply this run just created. A second
+        # write of a *different* body on the same thread would still POST.
+        # Unreachable while reply categories partition the triage verdicts.
+        # Upgrade trigger: if one thread is ever posted twice in one run with
+        # different bodies, refetch the thread (or capture the new id from the
+        # POST response) here.
         if not upsert_thread_reply(thread, repo, pr_number, body, existing_id):
             continue
+        _remember_standing_reply(thread, body)
         replied += 1
         edited += existing_id is not None
     if edited:

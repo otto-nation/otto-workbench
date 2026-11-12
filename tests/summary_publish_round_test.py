@@ -446,6 +446,28 @@ class TestAnsweredSummariesArePostedAgain:
         call = self._publish(self._marker())
         assert call.kwargs["marker"] == pr.summary_render.SUMMARY_MARKER
 
+    def test_a_re_run_edits_the_marker_comment_rather_than_posting_another(self):
+        """A resumed publish updates the existing summary; it does not stack one."""
+        empty = pr.comments.MarkerHistory(found=True)
+        posted = pr.comments.MarkerHistory(
+            found=True, comments=(self._marker(),))
+        with patch.object(pr.comments, "find_marker_comments",
+                          side_effect=[empty, posted]), \
+                patch("pr.comments.post_issue_comment",
+                      return_value="https://url") as post:
+            pr.summary_publish.publish_summary(
+                "owner/repo", 1,
+                lambda carried_over, scope, chain: "body")
+            pr.summary_publish.publish_summary(
+                "owner/repo", 1,
+                lambda carried_over, scope, chain: "body")
+        assert post.call_count == 2
+        first, second = post.call_args_list
+        first_existing = first.kwargs.get("existing")
+        assert first_existing is None or first_existing.comment_id is None
+        assert second.kwargs["marker"] == pr.summary_render.SUMMARY_MARKER
+        assert second.kwargs["existing"].comment_id == 11
+
     def test_a_later_issue_comment_forces_a_fresh_one(self):
         call = self._publish(self._marker(newest_other_at=_AFTER_THE_SUMMARY))
         assert "marker" not in call.kwargs

@@ -107,6 +107,7 @@ export function runArgv({
   rebaseBehind = false,
   selects = {},
   focus = [],
+  phaseModels = [],
   checkout,
 }) {
   if (!Array.isArray(keys) || keys.length === 0) throw new Error('keys is empty');
@@ -118,7 +119,8 @@ export function runArgv({
   const wantsReview = stepList.includes('review')
     || Object.values(selects).some((list) => Array.isArray(list) && list.includes('review'));
 
-  const argv = ['batch', 'run', '--checkout', checkout, '--prs', keys.join(',')];
+  // phaseModels is flag argv from model_overrides.js; --phase-model is global, so it leads.
+  const argv = [...phaseModels, 'batch', 'run', '--checkout', checkout, '--prs', keys.join(',')];
   if (!reviewOnly && stepList.length > 0) {
     argv.push('--steps', withoutReview.join(','));
   }

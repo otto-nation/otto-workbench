@@ -177,3 +177,12 @@ _throws() {
   [ "$status" -eq 0 ]
   [ "$output" = '[[2],[1],[2],[2,3]]' ]
 }
+
+@test "runArgv leads with the phase-model flags it is given" {
+  run node --input-type=module -e "
+    const { runArgv } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/batch_launch.js');
+    process.stdout.write(JSON.stringify(runArgv({ keys: ['a/b#1'], steps: ['review'], checkout: '/c', phaseModels: ['--phase-model', 'scout=x'] }).slice(0, 4)));
+  "
+  [ "$status" -eq 0 ]
+  jq -e '.==["--phase-model","scout=x","batch","run"]' <<<"$output"
+}

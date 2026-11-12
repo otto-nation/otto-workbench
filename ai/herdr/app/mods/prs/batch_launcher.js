@@ -5,6 +5,8 @@ import { groupByRepo, runArgv, filterForm, launchOutcome, presetForm } from "./_
 import { filterOn } from "./_lib/columns.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
+import { BATCH_PHASES, phaseModelFlags } from "./_lib/model_overrides.js";
+import { ModelPicker } from "./model_picker.js";
 
 // How often a launched terminal is looked at until its run starts or the terminal ends, and how
 // much of its output is read: run_started follows one item_queued line per PR, so it stays well
@@ -37,6 +39,8 @@ export class BatchLauncher {
     this.withAi = new Set();
     this.autoPublish = false;
     this.rebaseBehind = false;
+    // Per-run model overrides for the phases a batch runs; session-only, not saved.
+    this.models = new ModelPicker(acx, BATCH_PHASES, "batch-models");
     this.launching = false;
     this.note = null;
     this.terminals = new Map();
@@ -146,6 +150,7 @@ export class BatchLauncher {
               withAi: [...this.withAi],
               autoPublish: this.autoPublish,
               rebaseBehind: this.rebaseBehind,
+              phaseModels: phaseModelFlags(this.models.values(), BATCH_PHASES),
             })];
             const res = parseRunReply(await exec("hc", hcBatchArgv({
               repo: g.repo, cwd: g.cwd, on: g.on, argv,

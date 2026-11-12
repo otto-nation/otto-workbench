@@ -155,7 +155,8 @@ function renderForm({ launcher: L, prs, load, filterBar }) {
       .when(L.steps.has("rebase"), (e) => e.child(checkLine(
         "rebase-behind", L.rebaseBehind, "Also rebase PRs that are only behind", "",
         () => L.toggleRebaseBehind())))
-      .child(checkLine("auto-publish", L.autoPublish, "Push clean fast-forwards", "", () => L.toggleAutoPublish())))
+      .child(checkLine("auto-publish", L.autoPublish, "Push clean fast-forwards", "", () => L.toggleAutoPublish()))
+      .child(L.models.render()))
     .child(v_flex().gap(SP.sm)
       .when(Boolean(reason), (e) => e.child(text("body", reason, t.muted)))
       .when(hiddenSelected > 0, (e) => e.child(

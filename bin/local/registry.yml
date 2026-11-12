@@ -209,6 +209,11 @@ tools:
     visibility: brief
     description: "Validates that no tracked file lives under a path .gitignore claims to ignore"
 
+  - name: validate-no-claude-md
+    permission: false
+    visibility: brief
+    description: "Validates that a repo tracks no CLAUDE.md — one anywhere in the directory chain makes Claude Code ignore AGENTS.md"
+
   - name: validate-rules
     permission: false
     visibility: brief

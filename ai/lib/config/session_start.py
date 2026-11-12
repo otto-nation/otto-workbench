@@ -72,7 +72,7 @@ def _container_line(cwd: str) -> str | None:
     The `claude` shell wrapper launches a session started at a container in the
     worktree instead, so a session that is still rooted there came in past it —
     `command claude`, a launcher that is not zsh. Such a session never loaded
-    the repo's `AGENTS.md` (or legacy `CLAUDE.md`) or `.claude/` rules, and every command it runs lands
+    the repo's `AGENTS.md` or `.claude/` rules, and every command it runs lands
     where `git status` fails. Nothing else says so: a session missing its
     instructions looks exactly like one that has them. This is the Claude half
     of the backstop; Pi's is `ai/pi/extensions/container-context`.
@@ -191,11 +191,11 @@ def _section_list(template: core.pr_template.PRTemplate) -> str:
 
 
 def _instructions_line(repo: str) -> str | None:
-    """A suggestion to move the repo's CLAUDE.md to AGENTS.md, or None.
+    """A warning that a CLAUDE.md shadows the repo's AGENTS.md, or None.
 
-    Only a suggestion: the file is tracked in the repo and renaming it is the
-    repo's call, so the workbench never does it. Silent for a repo already on
-    AGENTS.md, and for one with no instructions file at all.
+    Only a suggestion: the file is tracked in the repo and removing it is the
+    repo's call, so the workbench never does it. Silent for a repo with no
+    CLAUDE.md, whether or not it has an AGENTS.md.
     """
     hint = core.project_context.migration_hint(core.project_context.resolve(Path(repo)))
     return f"Instructions file: {hint}" if hint else None

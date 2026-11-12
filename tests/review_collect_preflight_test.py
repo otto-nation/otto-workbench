@@ -243,7 +243,7 @@ class TestCollectPreflightData:
         (repo / ".claude" / "review").mkdir(parents=True)
         init_repo(repo)
         (repo / "main.go").write_text("package main\n")
-        (repo / "CLAUDE.md").write_text("# Project\n")
+        (repo / "AGENTS.md").write_text("# Project\n")
         (repo / ".claude" / "architecture.md").write_text("## Known Constraints\n")
         (repo / ".claude" / "review" / "security.md").write_text("# Security\n")
         commit_all(repo, "init")
@@ -269,10 +269,9 @@ class TestCollectPreflightData:
         assert len(data.commit_log) > 0
         assert data.omitted_files == []
 
-    def test_agents_md_is_read_over_a_legacy_claude_md_and_named_in_the_prompt(self, tmp_path):
-        # The order belongs to core.project_context; what this pins is that the
-        # preflight reads through it, and that the prompt names the file the
-        # repo actually uses rather than always saying CLAUDE.md.
+    def test_agents_md_is_read_and_a_shadowing_claude_md_is_not(self, tmp_path):
+        # The name belongs to core.project_context; what this pins is that the
+        # preflight reads through it and never reads a CLAUDE.md as instructions.
         repo = tmp_path / "repo"
         init_repo(repo)
         (repo / "main.go").write_text("package main\n")
@@ -402,12 +401,12 @@ class TestCollectPreflightData:
         self, tmp_path, monkeypatch,
     ):
         repo = init_repo(tmp_path / "repo")
-        (repo / "CLAUDE.md").write_text("# Rules\n" * 10)
+        (repo / "AGENTS.md").write_text("# Rules\n" * 10)
         (repo / "util.go").write_text("package main\n" + "func f() {}\n" * 3000)
         commit_all(repo, "init")
         add_self_origin(repo)
         git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "CLAUDE.md").write_text("# Updated rules\n" * 10)
+        (repo / "AGENTS.md").write_text("# Updated rules\n" * 10)
         (repo / "util.go").write_text("package main\n" + "func g() {}\n" * 3000)
         commit_all(repo, "change")
 
@@ -415,7 +414,7 @@ class TestCollectPreflightData:
             tmp_path,
             [
                 {"path": "util.go", "additions": 3000, "deletions": 3000},
-                {"path": "CLAUDE.md", "additions": 10, "deletions": 10},
+                {"path": "AGENTS.md", "additions": 10, "deletions": 10},
             ],
             wt_path=str(repo),
         )
@@ -434,5 +433,5 @@ class TestCollectPreflightData:
         monkeypatch.setattr(review.collect, "collection_budget_bytes", lambda *_a, **_k: ceiling)
         with contextlib.redirect_stdout(io.StringIO()):
             data = review.collect.collect_preflight_data(job)
-        assert "CLAUDE.md" in data.file_contents
+        assert "AGENTS.md" in data.file_contents
         assert "util.go" in data.omitted_files

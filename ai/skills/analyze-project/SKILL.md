@@ -52,11 +52,17 @@ written there is tracked by nothing and read by no session.
 ### 1b. Read existing scaffold
 
 ```bash
-cat AGENTS.md 2>/dev/null || cat CLAUDE.md   # a repo not yet moved still has CLAUDE.md
+cat AGENTS.md 2>/dev/null
+ls CLAUDE.md .claude/CLAUDE.md 2>/dev/null   # a CLAUDE.md shadows AGENTS.md for Claude Code
 ls .claude/rules/
 ```
 
 For each rule file in `.claude/rules/`, read it and note which sections are empty.
+
+`AGENTS.md` is the only file this skill writes project guidance to. Never create a
+`CLAUDE.md` or a pointer to one: Claude Code reads `AGENTS.md` only when no `CLAUDE.md`
+exists in the directory chain. If one is listed above, say so in the report and
+suggest folding it into `AGENTS.md` and deleting it — do not edit it.
 
 ### 1c. Scan the codebase
 

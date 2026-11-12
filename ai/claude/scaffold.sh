@@ -92,21 +92,25 @@ _scaffold_file() {
 
 # _generate_agents_md [FORCE] — writes a lean project AGENTS.md at the root.
 #
-# AGENTS.md is what both harnesses read (Claude Code natively from
-# CLAUDE_CODE_MIN_VERSION, Pi first in its per-directory order). A repo that
-# already has an instructions file — AGENTS.md or a legacy CLAUDE.md — is left
-# alone without FORCE, and a legacy one gets the rename suggestion: writing a
-# fresh AGENTS.md beside it would split the harnesses, Claude Code reading only
-# CLAUDE.md and Pi only AGENTS.md. With FORCE the scaffold is rewritten; a
-# legacy CLAUDE.md is never deleted, only named.
+# AGENTS.md is the only instructions file the scaffold writes — never a
+# CLAUDE.md and never a pointer to one. Claude Code reads AGENTS.md only when no
+# CLAUDE.md exists in the directory chain, so a CLAUDE.md beside it hides it.
+# A repo that already has an AGENTS.md, or a CLAUDE.md that would shadow a new
+# one, is left alone without FORCE and gets the removal suggestion. With FORCE
+# AGENTS.md is rewritten; a CLAUDE.md is never deleted, only named.
 _generate_agents_md() {
-  local force="${1:-false}" target="AGENTS.md" project_name record existing hint
+  local force="${1:-false}" target="AGENTS.md" project_name record existing state hint
   project_name="$(basename "$(pwd)")"
   record="$(python3 "$PROJECT_CONTEXT_PY" --root .)" || record=""
   existing="${record%%$'\n'*}"
-  if [[ -n "$existing" ]] && [[ "$force" == false ]]; then
-    skip "$existing (exists)"
-    hint="$(python3 "$PROJECT_CONTEXT_PY" --root . --hint 2>/dev/null)" || hint=""
+  state="${record#*$'\n'}"
+  hint="$(python3 "$PROJECT_CONTEXT_PY" --root . --hint 2>/dev/null)" || hint=""
+  if [[ "$force" == false ]] && { [[ -n "$existing" ]] || [[ "$state" == legacy ]]; }; then
+    if [[ -n "$existing" ]]; then
+      skip "$existing (exists)"
+    else
+      skip "AGENTS.md not written (a CLAUDE.md is already here)"
+    fi
     [[ -z "$hint" ]] || info "$hint"
     return
   fi
@@ -136,14 +140,15 @@ Add personal rules as \`.claude/rules/<topic>.local.md\` (gitignored).
 
 This file lives at the repository root as AGENTS.md so every agent harness
 reads it — Claude Code and Pi both resolve it there, and neither looks inside
-\`.claude/\` for it.
+\`.claude/\` for it. Do not add a CLAUDE.md: Claude Code reads AGENTS.md only
+when no CLAUDE.md exists in the directory chain.
 EOF
   # The generated file is the repo's, committed and read by teammates who may
   # not use the workbench, so it names no workbench command or version policy.
   success "AGENTS.md"
-  if [[ -n "$existing" && "$existing" != "$target" ]]; then
-    warn "$existing is still here — fold anything it holds into AGENTS.md and delete it, or Claude Code keeps reading it instead"
-  fi
+  # Re-read: with AGENTS.md now written beside it, the leftover is a shadow.
+  hint="$(python3 "$PROJECT_CONTEXT_PY" --root . --hint 2>/dev/null)" || hint=""
+  [[ -z "$hint" ]] || warn "$hint"
 }
 
 # Everything a project's .claude/ holds that belongs to one machine rather than

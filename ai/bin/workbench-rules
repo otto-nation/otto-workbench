@@ -16,8 +16,8 @@
 # | `list` | List all local rule files with line counts |
 # | `status` | Show local rules not tracked in workbench |
 # | `open [domain]` | Open a local rule file in `$EDITOR` |
-# | `project add "rule"` | Append a convention to the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
-# | `project show` | Display the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
+# | `project add "rule"` | Append a convention to the current repo's `AGENTS.md` |
+# | `project show` | Display the current repo's `AGENTS.md` |
 # | `-V`, `--version` | Show version |
 # | `-h`, `--help` | Show help |
 #
@@ -283,8 +283,8 @@ _find_repo_root() {
   printf '%s\n' "$root"
 }
 
-# _instructions_file ROOT — the repo's instructions file under ROOT (AGENTS.md,
-# else a legacy CLAUDE.md), or nothing when it has none. The order belongs to
+# _instructions_file ROOT — the repo's AGENTS.md under ROOT, or nothing when it
+# has none; a CLAUDE.md is never an answer. The name belongs to
 # ai/lib/core/project_context.py; this asks it rather than keeping a copy.
 _instructions_file() {
   local root="$1" record rel
@@ -311,6 +311,7 @@ cmd_project_add() {
   if [[ -z "$file" ]]; then
     err "No AGENTS.md found at $root"
     echo "  Create one first (otto-workbench ai init), then use this command to append rules." >&2
+    python3 "$PROJECT_CONTEXT_PY" --root "$root" --hint >&2 2>/dev/null || true
     exit 1
   fi
 

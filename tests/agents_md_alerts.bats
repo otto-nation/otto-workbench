@@ -102,7 +102,7 @@ _report() {
   echo "# rules" > "$TMPDIR/moved/AGENTS.md"
   run _report "$TMPDIR/legacy" "$TMPDIR/moved"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"still in CLAUDE.md"* ]]
+  [[ "$output" == *"Repos with a CLAUDE.md"* ]]
   [[ "$output" == *"$TMPDIR/legacy: CLAUDE.md"* ]]
   [[ "$output" != *"$TMPDIR/moved"* ]]
   [ -f "$TMPDIR/legacy/CLAUDE.md" ]

@@ -24,12 +24,13 @@ _run_migration() {
   ' _ "$REPO_ROOT" "$MIGRATION" "$REPO"
 }
 
-@test "moves the context file to the repo root" {
+@test "moves the context file to the repo root as AGENTS.md, never CLAUDE.md" {
   echo "PROJECT CONTEXT" > "$REPO/.claude/CLAUDE.md"
 
   _run_migration
   [ "$status" -eq 0 ]
-  [ "$(cat "$REPO/CLAUDE.md")" = "PROJECT CONTEXT" ]
+  [ "$(cat "$REPO/AGENTS.md")" = "PROJECT CONTEXT" ]
+  [ ! -e "$REPO/CLAUDE.md" ]
   [ ! -e "$REPO/.claude/CLAUDE.md" ]
 }
 
@@ -50,15 +51,16 @@ _run_migration() {
   [[ "$output" == *"CLAUDE.md"* ]]
 }
 
-@test "leaves the pair alone when the root file is an AGENTS.md" {
+@test "leaves the pair alone when the root already has an AGENTS.md" {
   echo "ROOT" > "$REPO/AGENTS.md"
   echo "NESTED" > "$REPO/.claude/CLAUDE.md"
 
   _run_migration
   [ -f "$REPO/.claude/CLAUDE.md" ]
+  [ "$(cat "$REPO/AGENTS.md")" = "ROOT" ]
 }
 
-@test "leaves the pair alone when the root file outranks CLAUDE.md in Pi's resolution order" {
+@test "leaves the pair alone when the root file outranks AGENTS.md in Pi's resolution order" {
   echo "ROOT" > "$REPO/AGENTS.override.md"
   echo "NESTED" > "$REPO/.claude/CLAUDE.md"
 
@@ -67,7 +69,7 @@ _run_migration() {
 }
 
 @test "is a no-op for a repo already scaffolded at the root" {
-  echo "ROOT" > "$REPO/CLAUDE.md"
+  echo "ROOT" > "$REPO/AGENTS.md"
 
   _run_migration
   [ "$status" -eq 3 ]

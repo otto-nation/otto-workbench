@@ -165,10 +165,11 @@ ai_warn_model_exports() {
   return 0
 }
 
-# step_instructions_report — lists the registered repos whose agent
-# instructions are still in CLAUDE.md, with the rename for each. Read-only:
-# the file is tracked in a repo the workbench does not own, so it suggests and
-# never renames. Silent when every repo is on AGENTS.md.
+# step_instructions_report — lists the registered repos that carry a CLAUDE.md,
+# with one combined suggestion per repo. A CLAUDE.md anywhere in the directory chain makes
+# Claude Code ignore AGENTS.md. Read-only: the file is tracked in a repo the
+# workbench does not own, so it suggests and never renames or deletes. Silent
+# when no registered repo has one.
 step_instructions_report() {
   local path hint
   local -a hints=()
@@ -179,7 +180,7 @@ step_instructions_report() {
     [[ -n "$hint" ]] && hints+=("$path: $hint")
   done < <(project_repo_leaders)
   [[ ${#hints[@]} -gt 0 ]] || return 0
-  info "Repos whose agent instructions are still in CLAUDE.md (rename when ready):"
+  info "Repos with a CLAUDE.md, which Claude Code reads instead of AGENTS.md (AGENTS.md is the only name):"
   printf '  %s\n' "${hints[@]}"
 }
 

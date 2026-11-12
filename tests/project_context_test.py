@@ -1,7 +1,7 @@
 """Tests for the one resolver of a repo's agent instructions file.
 
 Review preflight, `workbench-rules project`, the SessionStart hook and the
-`ai sync` migration nudge all ask `core.project_context`; what each does with
+`ai sync` shadow report all ask `core.project_context`; what each does with
 the answer is tested with that caller, what the answer *is* is tested here.
 """
 
@@ -19,6 +19,10 @@ import core.project_context  # noqa: E402
 CLI = LIB_DIR / "core" / "project_context.py"
 
 
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
 def _write(root: Path, rel: str, text: str = "x\n") -> None:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -28,36 +32,56 @@ def _write(root: Path, rel: str, text: str = "x\n") -> None:
 def test_agents_md_is_the_instructions_file(tmp_path):
     _write(tmp_path, "AGENTS.md")
     ctx = core.project_context.resolve(tmp_path)
-    assert (ctx.path, ctx.state) == ("AGENTS.md", core.project_context.ContextState.AGENTS)
-    assert not ctx.needs_migration
+    assert (ctx.path, ctx.state, ctx.shadows) == ("AGENTS.md", core.project_context.ContextState.AGENTS, ())
+    assert core.project_context.migration_hint(ctx) == ""
 
 
-def test_a_repo_still_on_claude_md_resolves_to_it_and_needs_migration(tmp_path):
+def test_a_claude_md_alone_is_never_read_as_instructions(tmp_path):
     _write(tmp_path, "CLAUDE.md")
     ctx = core.project_context.resolve(tmp_path)
-    assert (ctx.path, ctx.state) == ("CLAUDE.md", core.project_context.ContextState.LEGACY)
-    assert ctx.needs_migration
+    assert (ctx.path, ctx.state, ctx.found) == ("", core.project_context.ContextState.LEGACY, False)
+    assert ctx.shadows == ("CLAUDE.md",)
 
 
-def test_the_legacy_nested_claude_md_is_still_found(tmp_path):
-    _write(tmp_path, ".claude/CLAUDE.md")
-    assert core.project_context.resolve(tmp_path).path == ".claude/CLAUDE.md"
-
-
-def test_root_claude_md_wins_over_the_nested_one(tmp_path):
+def test_legacy_hint_with_two_shadows_says_what_to_do_with_the_rest(tmp_path):
     _write(tmp_path, "CLAUDE.md")
     _write(tmp_path, ".claude/CLAUDE.md")
-    assert core.project_context.resolve(tmp_path).path == "CLAUDE.md"
+    hint = core.project_context.migration_hint(core.project_context.resolve(tmp_path))
+    assert "fold the others into AGENTS.md, then delete them" in hint
 
 
-def test_both_files_resolve_to_agents_md_and_report_the_split(tmp_path):
-    # Claude Code reads only CLAUDE.md here and Pi only AGENTS.md: the two
-    # harnesses follow different instructions, which the hint has to say.
+def test_the_nested_claude_md_is_a_shadow_too(tmp_path):
+    _write(tmp_path, ".claude/CLAUDE.md")
+    ctx = core.project_context.resolve(tmp_path)
+    assert ctx.shadows == (".claude/CLAUDE.md",)
+    assert "git mv .claude/CLAUDE.md AGENTS.md" in core.project_context.migration_hint(ctx)
+
+
+def test_both_files_resolve_to_agents_md_and_report_the_shadow(tmp_path):
     _write(tmp_path, "AGENTS.md")
     _write(tmp_path, "CLAUDE.md")
     ctx = core.project_context.resolve(tmp_path)
-    assert (ctx.path, ctx.state, ctx.shadowed) == ("AGENTS.md", core.project_context.ContextState.SPLIT, "CLAUDE.md")
-    assert "Claude Code reads only CLAUDE.md" in core.project_context.migration_hint(ctx)
+    assert (ctx.path, ctx.state, ctx.shadows) == (
+        "AGENTS.md", core.project_context.ContextState.SPLIT, ("CLAUDE.md",))
+    hint = core.project_context.migration_hint(ctx)
+    assert "shadows AGENTS.md" in hint and "delete it" in hint
+
+
+def test_a_tracked_nested_claude_md_shadows_the_root_agents_md(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, "AGENTS.md")
+    _write(tmp_path, "pkg/sub/CLAUDE.md")
+    _git(tmp_path, "add", "-A")
+    ctx = core.project_context.resolve(tmp_path)
+    assert (ctx.state, ctx.shadows) == (core.project_context.ContextState.SPLIT, ("pkg/sub/CLAUDE.md",))
+
+
+def test_the_workbenchs_own_user_level_source_is_not_a_shadow(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path, "AGENTS.md")
+    _write(tmp_path, "ai/claude/CLAUDE.md")
+    _git(tmp_path, "add", "-A")
+    assert core.project_context.resolve(tmp_path).shadows == ()
 
 
 def test_no_instructions_file_at_all(tmp_path):
@@ -68,8 +92,8 @@ def test_no_instructions_file_at_all(tmp_path):
 
 def test_a_directory_named_like_the_file_is_not_the_file(tmp_path):
     (tmp_path / "AGENTS.md").mkdir()
-    _write(tmp_path, "CLAUDE.md")
-    assert core.project_context.resolve(tmp_path).path == "CLAUDE.md"
+    ctx = core.project_context.resolve(tmp_path)
+    assert (ctx.path, ctx.state) == ("", core.project_context.ContextState.NONE)
 
 
 def test_the_legacy_hint_names_the_rename_and_never_performs_it(tmp_path):
@@ -84,7 +108,15 @@ def test_cli_prints_path_then_state(tmp_path):
     _write(tmp_path, "CLAUDE.md")
     out = subprocess.run([sys.executable, str(CLI), "--root", str(tmp_path)],
                          capture_output=True, text=True, check=True).stdout
-    assert out == "CLAUDE.md\nlegacy\n"
+    assert out == "\nlegacy\n"
+
+
+def test_cli_shadows_lists_each_claude_md(tmp_path):
+    _write(tmp_path, "AGENTS.md")
+    _write(tmp_path, "CLAUDE.md")
+    out = subprocess.run([sys.executable, str(CLI), "--root", str(tmp_path), "--shadows"],
+                         capture_output=True, text=True, check=True).stdout
+    assert out == "CLAUDE.md\n"
 
 
 def test_cli_hint_is_empty_for_a_repo_on_agents_md(tmp_path):

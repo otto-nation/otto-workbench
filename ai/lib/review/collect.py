@@ -761,8 +761,8 @@ def _collect_git_data(
 def _collect_project_context(
     wt: Path,
 ) -> tuple[str, str, dict[str, str], list]:
-    # AGENTS.md, else CLAUDE.md, else the legacy .claude/CLAUDE.md — the order
-    # core.project_context owns for every reader of the file.
+    # AGENTS.md is the only instructions file; core.project_context owns that
+    # for every reader of it.
     instructions = core.project_context.resolve(wt)
     instructions_md = _read_file_safe(wt / instructions.path) if instructions.found else ""
 
@@ -1008,7 +1008,7 @@ def build_project_context(
 ) -> str:
     """The repository's own review guidance, scoped to ``file_filter``.
 
-    The repo's instructions file (AGENTS.md or CLAUDE.md), `.claude/architecture.md`,
+    The repo's instructions file (AGENTS.md), `.claude/architecture.md`,
     the review checklists, and the review
     profiles whose globs the filtered files match. An unfiltered call falls back
     to every profile rather than none, since a whole-review prompt has no group

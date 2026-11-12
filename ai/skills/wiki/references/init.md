@@ -131,4 +131,4 @@ Knowledge base created at {path}/
 Nothing further is needed. The workbench rule in `ai/guidelines/rules/artifacts.md` tells
 every session in every harness to check for a knowledge base and read the index when one
 exists — so a wiki created here is visible to Claude Code and Pi alike, without editing
-`CLAUDE.md`, `AGENTS.md`, or any per-project file.
+`AGENTS.md` or any per-project file.

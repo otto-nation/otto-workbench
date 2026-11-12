@@ -15,7 +15,7 @@ lifecycle_scope: global
 Analyzes PR review comments (human and bot) to identify gaps, weaknesses, and
 false negatives in coding rules. Proposes rule changes at the right level: global
 rules in `ai/guidelines/rules/` for cross-project patterns, project rules in each
-repo's `AGENTS.md` (or legacy `CLAUDE.md`) for repo-specific conventions.
+repo's `AGENTS.md` for repo-specific conventions.
 
 Run manually with `/retro`. Auto-triggers via the Stop hook managed
 by `otto-workbench sync`, once 72 hours and 5 sessions have both passed since
@@ -147,7 +147,7 @@ tree for each finding — stop at the first match:
 4. **Machine-specific tooling concern?** → **Machine-local rule** via
    `workbench-rules add`
 
-Project rules go in the target repo's `AGENTS.md` (its `CLAUDE.md` while it has not moved)
+Project rules go in the target repo's `AGENTS.md`
 under `## Conventions`. If the repo has neither, flag it in the report — retro does not create files, but
 should note when one is needed.
 
@@ -157,10 +157,10 @@ should note when one is needed.
 - Specify where in the file it should be added (after which existing bullet)
 
 ### For `rule-gap` (project):
-- Name the target repo and confirm placement is `AGENTS.md` § Conventions (or the legacy `CLAUDE.md`)
+- Name the target repo and confirm placement is `AGENTS.md` § Conventions
 - Draft the rule text, stripping project-internal references that are obvious in
   context (e.g., don't repeat the package path if the repo only has one pagination helper)
-- If the repo has no `AGENTS.md` or `CLAUDE.md`, note that one should be created first
+- If the repo has no `AGENTS.md`, note that one should be created first — never a `CLAUDE.md`
 
 ### For `rule-refinement` / `false-negative`:
 

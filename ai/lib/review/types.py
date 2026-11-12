@@ -599,8 +599,7 @@ class PreflightData:
     instructions_md: str
     architecture_md: str
     review_checklists: dict[str, str] = field(default_factory=dict)
-    # Repo-relative path of the file instructions_md was read from (AGENTS.md
-    # or a legacy CLAUDE.md), so the prompt names the file the repo uses.
+    # Repo-relative path of the file instructions_md was read from (AGENTS.md).
     instructions_path: str = ""
     review_profiles: list = field(default_factory=list)
     omitted_files: list[str] = field(default_factory=list)

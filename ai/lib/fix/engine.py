@@ -71,7 +71,8 @@ from agent.diagnosis import Diagnosis
 from agent.registry import PHASES
 from core.phases import Effort, Phase
 from fix.batches import (
-    TRACKING_FILENAME, Batch, chunks, record_unevidenced, run_batch, settle,
+    TRACKING_FILENAME, Batch, Settled, chunks, record_unevidenced, run_batch,
+    settle,
 )
 from fix.types import FixItem
 from pr.fix import ItemOutcome
@@ -600,6 +601,13 @@ class _PassStart:
     prior: EngineProgress | None = None
 
 
+@dataclass(frozen=True)
+class _AgentRun:
+    start: _PassStart
+    results: tuple[Batch, ...]
+    local_batches: int
+
+
 def _records(adapter: FixAdapter) -> bool:
     """Whether this pass should write checkpoints."""
     return adapter.keeps_checkpoints or adapter.resume is not None
@@ -649,14 +657,17 @@ def _progress(
         max_turns=prior.max_turns if max_turns is None else max_turns,
         max_budget=prior.max_budget if max_budget is None else max_budget,
         exit_code=prior.exit_code if exit_code is None else exit_code,
+        pre_pass_tree=start.pre_pass.tree if start.pre_pass.ok else prior.pre_pass_tree,
     )
 
 
-def _checkpoint(
-    adapter: FixAdapter, phase: CheckpointPhase, progress: EngineProgress,
-) -> None:
+def _note(
+    adapter: FixAdapter, start: _PassStart, phase: CheckpointPhase, **kwargs,
+) -> _PassStart:
+    progress = _progress(adapter, start, **kwargs)
     if _records(adapter):
         adapter.checkpoint(phase, progress)
+    return dataclasses.replace(start, prior=progress)
 
 
 def _refused_by_lock(
@@ -774,9 +785,7 @@ def run(
     )
     if adapter.keeps_checkpoints:
         adapter.tracking_path.unlink(missing_ok=True)
-        adapter.checkpoint(
-            CheckpointPhase.AGENT_RUNNING, _progress(adapter, start),
-        )
+        start = _note(adapter, start, CheckpointPhase.AGENT_RUNNING)
 
     try:
         return _run_pass(adapter, start)
@@ -812,19 +821,26 @@ def _resume(
     head_state = fix.head_guard.HeadState(
         sha=head_before, branch=progress.branch,
     )
+    if progress.pre_pass_tree:
+        pre_pass = fix.containment.read_tree(
+            adapter.workdir, progress.pre_pass_tree,
+        )
+    else:
+        pre_pass = fix.containment.take(adapter.workdir)
     start = _PassStart(
         items=tuple(items), trail=trail, verify=verify,
         head_before=head_before, dirty_before=frozenset(dirty_before),
         baseline_ref=progress.baseline_ref,
-        pre_pass=fix.containment.take(adapter.workdir),
+        pre_pass=pre_pass,
         head_state=head_state, backup_dir=backup_dir,
         backed_up=tuple(progress.backed_up),
         resume_phase=adapter.resume_phase, prior=progress,
     )
-    # ceiling: KeyboardInterrupt and SystemExit still take the _interrupted
-    # wrapper; SIGKILL cannot. Upgrade trigger: once a comments --fix pass is
-    # observed dying to SIGKILL with uncommitted edits and no checkpoint at
-    # AGENT_RUNNING, persist the checkpoint from a SIGTERM handler as well.
+    # ceiling: KeyboardInterrupt and SystemExit take `_interrupted`; a default
+    # SIGTERM does not, so `timeout`/`kill` of the process leaves no domain
+    # record of leftovers. Upgrade trigger: once a comments --fix pass is
+    # observed dying to SIGTERM with uncommitted edits, catch SIGTERM so
+    # `_interrupted` runs.
     try:
         return _run_pass(adapter, start)
     except (KeyboardInterrupt, SystemExit):
@@ -856,19 +872,15 @@ def _prior_batch(
     )
 
 
-def _run_agent(
-    adapter: FixAdapter, start: _PassStart,
-) -> tuple[list[Batch], int, int, float]:
-    """Run the agent for items without a prior answer. Local totals."""
+def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
+    """Run the agent for items without a prior answer."""
     items = list(start.items)
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
-    # Prior answers only fold in while the agent is still running. Once the
-    # pass has reached AGENT_DONE, `_run_contained_pass` skips this function;
-    # if that skip is removed, remaining is the full list and the agent is
-    # invoked again — which is what the skip exists to prevent.
     prior = {}
     if start.resume_phase is CheckpointPhase.AGENT_RUNNING:
-        prior = fix.pass_resume.prior_answers(start.prior, adapter.tracking_path)
+        prior = fix.pass_resume.prior_answers(
+            start.prior, adapter.tracking_path, overlay=True,
+        )
     remaining = [item for item in items if item.id not in prior]
     results: list[Batch] = []
     if prior:
@@ -884,31 +896,32 @@ def _run_agent(
         )
     dirty_before = set(start.dirty_before)
     collected = list(prior.values())
+    origin_batches = start.prior.batches if start.prior else 0
     for n, chunk in enumerate(batched, start=1):
         batch = run_batch(
             adapter, chunk,
             name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})",
-            before=dirty_before if n == 1 and not prior else None,
+            before=(
+                None if start.resume_phase is not None or n > 1 or prior
+                else dirty_before
+            ),
         )
         results.append(batch)
         collected.extend(fix.pass_resume.answered(batch.outcomes))
-        _checkpoint(adapter, CheckpointPhase.AGENT_RUNNING, _progress(
-            adapter, start, answers=collected, blobs=fix.pass_resume.agent_files(
-                adapter.workdir, dirty_before,
-            ),
-            batches=len(batched),
+        blobs = (
+            fix.pass_resume.agent_files(adapter.workdir, dirty_before)
+            if _records(adapter) else None
+        )
+        start = _note(
+            adapter, start, CheckpointPhase.AGENT_RUNNING,
+            answers=collected, blobs=blobs,
+            batches=origin_batches + n,
             max_turns=max((b.max_turns for b in results), default=0),
             max_budget=max((b.max_budget for b in results), default=0.0),
             exit_code=max((b.exit_code for b in results), default=0),
             stop=next((b.stop for b in results if b.stop is not None), None),
-        ))
-    local_batches = len(batched)
-    return (
-        results,
-        local_batches,
-        max((b.max_turns for b in results), default=0),
-        max((b.max_budget for b in results), default=0.0),
-    )
+        )
+    return _AgentRun(start, tuple(results), len(batched))
 
 
 def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
@@ -920,39 +933,36 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
     by_id = {item.id: item for item in items}
 
     if _reached(phase, CheckpointPhase.AGENT_DONE):
-        prior = fix.pass_resume.prior_answers(start.prior, adapter.tracking_path)
-        results = [_prior_batch(list(prior.values()), start.prior)]
-        local_batches = 0
-        max_turns = start.prior.max_turns if start.prior else 0
-        max_budget = start.prior.max_budget if start.prior else 0.0
-    else:
-        results, local_batches, max_turns, max_budget = _run_agent(
-            adapter, start,
+        prior = start.prior or EngineProgress()
+        settled = Settled(
+            outcomes=list(prior.answers),
+            exit_code=prior.exit_code,
+            stop=prior.diagnosis,
         )
-        _checkpoint(adapter, CheckpointPhase.AGENT_DONE, _progress(
-            adapter, start,
-            answers=fix.pass_resume.answered([o for b in results for o in b.outcomes]),
-            blobs=fix.pass_resume.agent_files(adapter.workdir, dirty_before),
-            batches=local_batches, max_turns=max_turns, max_budget=max_budget,
-            exit_code=max((b.exit_code for b in results), default=0),
-            stop=next((b.stop for b in results if b.stop is not None), None),
-        ))
+    else:
+        agent_run = _run_agent(adapter, start)
+        start = agent_run.start
+        settled = settle(adapter, list(agent_run.results), by_id, trail)
+        record_unevidenced(settled.outcomes, trail)
+        blobs = (
+            fix.pass_resume.agent_files(adapter.workdir, dirty_before)
+            if _records(adapter) else None
+        )
+        prior_now = start.prior or EngineProgress()
+        start = _note(
+            adapter, start, CheckpointPhase.AGENT_DONE,
+            answers=list(settled.outcomes), blobs=blobs,
+            batches=prior_now.batches or agent_run.local_batches,
+            max_turns=max(
+                (b.max_turns for b in agent_run.results), default=prior_now.max_turns,
+            ),
+            max_budget=max(
+                (b.max_budget for b in agent_run.results), default=prior_now.max_budget,
+            ),
+            exit_code=max(settled.exit_code, prior_now.exit_code),
+            stop=settled.stop,
+        )
 
-    settled = settle(adapter, results, by_id, trail)
-
-    # Before the gate runs, so the record is of what the pass claimed rather
-    # than of what survived being checked: a fix the gate later falsifies is a
-    # different finding from one that never offered evidence at all.
-    record_unevidenced(settled.outcomes, trail)
-
-    # Before the scope is read and before anything is committed: a fix the gate
-    # falsifies must not reach `landing` as a fix, or the commit and the record
-    # would disagree about what the pass did.
-    #
-    # Content-snapshot containment, not a path-set diff: a verify rewrite of a
-    # file the fix agent (or the operator) already had dirty must still revert
-    # to the pre-verify bytes. Tool denials on the verify agent are bypassed by
-    # process writes, which is why the restore is the real control.
     if not _reached(phase, CheckpointPhase.VERIFIED):
         with fix.containment.around(
             adapter.workdir, adapter.artifacts, "verify", trail,
@@ -961,13 +971,11 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
                 settled.outcomes, verify, adapter, by_id, trail,
                 scope_for=settled.scope_for,
             )
-        _checkpoint(adapter, CheckpointPhase.VERIFIED, _progress(
-            adapter, start, answers=fix.pass_resume.answered(settled.outcomes),
-        ))
+        start = _note(
+            adapter, start, CheckpointPhase.VERIFIED,
+            answers=list(settled.outcomes),
+        )
 
-    # After the agent and before the commit — the one moment the difference is
-    # the agent's work and nothing else's. Verify writes have been restored, so
-    # they are not folded into the scope.
     changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
     committed = adapter.commit_scope(changed)
     left_out = (changed or set()) - (committed or set())
@@ -976,18 +984,6 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
               f"{len(left_out)} file(s) left out of the fix commit",
               data={"paths": sorted(left_out), "workdir": str(adapter.workdir)})
 
-    # Between the agent's edits and everything that reports on them. The two
-    # agents above check the pass's claims; this is the only thing that asks
-    # whether the pass broke something no claim mentions.
-    #
-    # Before `after_verify`, so a domain's last word is spoken over final
-    # outcomes rather than over a set the next line still changes. That
-    # ordering is necessary and is not what stops a red tree being reported
-    # as fixed: no per-item hook can see a suite demotion, because the item
-    # stays FIXED. `_verify_suite` holds publishing itself for that.
-    #
-    # The suite runs in the real tree; containment restores anything it wrote
-    # so `land` below stages pre-suite content for the names in `committed`.
     if not _reached(phase, CheckpointPhase.CHECKED):
         with fix.containment.around(
             adapter.workdir, adapter.artifacts, "suite", trail,
@@ -999,41 +995,44 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
                 dirty_before=frozenset(dirty_before))
         adapter.suite = fix.suite.with_rewrites(
             adapter.suite, writes.paths, adapter.workdir, trail)
-        _checkpoint(adapter, CheckpointPhase.CHECKED, _progress(
-            adapter, start, answers=fix.pass_resume.answered(settled.outcomes),
+        start = _note(
+            adapter, start, CheckpointPhase.CHECKED,
+            answers=list(settled.outcomes),
             suite=fix.pass_resume.suite_dict(adapter.suite),
-        ))
+        )
     else:
         adapter.suite = fix.pass_resume.suite_of(
             start.prior.suite if start.prior else {},
         )
         _hold_for_suite(adapter.suite)
+        fix.pass_resume.apply_suite_if_missing(settled.outcomes, adapter.suite)
 
-    # After both gates so a regression reason leads and the gate's text follows
-    # it, and before `after_verify` so a domain's last word sees the final verdict.
-    fix.regression.check(
-        adapter, settled.outcomes, committed, _anchors(settled.outcomes, by_id), trail)
-
-    # Between the verdicts and the push, which is the only window that works:
-    # both gates have spoken here — the per-item one above and the batch suite
-    # just now — and `land` below reads the publishing gate a domain may want
-    # to close on the strength of either.
-    adapter.after_verify(settled.outcomes)
-
-    if changed is None:
-        # Reported here rather than by each adapter. Every one of them owes the
-        # operator this line — the fixes are loose in the worktree and only
-        # this says so — and four copies of it is four chances for the next
-        # adapter to be the one that stays quiet.
-        fix.scope.report_unattributable(adapter.workdir)
+    already_landed = _reached(phase, CheckpointPhase.LANDED)
+    if not already_landed:
+        fix.regression.check(
+            adapter, settled.outcomes, committed,
+            _anchors(settled.outcomes, by_id), trail)
+        adapter.after_verify(settled.outcomes)
+        if changed is None:
+            fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
-    if not _reached(phase, CheckpointPhase.LANDED):
-        spec = adapter.landing(settled.outcomes, committed)
+    if not already_landed:
+        if (
+            _reached(phase, CheckpointPhase.CHECKED)
+            and fix.pass_resume.head_is_one_past(adapter.workdir, start.head_before)
+        ):
+            spec = dataclasses.replace(
+                adapter.landing(settled.outcomes, set()),
+                recover=True, paths=set(),
+            )
+        else:
+            spec = adapter.landing(settled.outcomes, committed)
         landed = _land(adapter, spec, start.head_state, trail)
-        _checkpoint(adapter, CheckpointPhase.LANDED, _progress(
-            adapter, start, answers=fix.pass_resume.answered(settled.outcomes),
+        start = _note(
+            adapter, start, CheckpointPhase.LANDED,
+            answers=list(settled.outcomes),
             suite=fix.pass_resume.suite_dict(adapter.suite), landed=landed,
-        ))
+        )
     else:
         landed = fix.pass_resume.landed_of(start.prior)
     _stamp(settled.outcomes, start.head_before, landed.sha)
@@ -1046,16 +1045,17 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
     exit_code = settled.exit_code
     if landed.status is git.land.CommitStatus.COMMIT_FAILED:
         exit_code = exit_code or 1
+    prior = start.prior
     finished = FixRun(
         outcomes=settled.outcomes,
         landed=landed,
         exit_code=exit_code,
         stop=settled.stop,
         head_before=start.head_before,
-        batches=local_batches,
+        batches=prior.batches if prior else 0,
         suite=adapter.suite,
-        max_turns=max_turns,
-        max_budget=max_budget,
+        max_turns=prior.max_turns if prior else 0,
+        max_budget=prior.max_budget if prior else 0.0,
     )
     adapter.record(finished)
     return finished

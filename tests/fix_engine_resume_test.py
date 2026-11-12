@@ -15,8 +15,10 @@ if str(LIB_DIR) not in sys.path:
 import agent.invoke  # noqa: E402
 import agent.phases  # noqa: E402
 import core.publishing  # noqa: E402
+import fix.containment  # noqa: E402
 import fix.dirty_backup  # noqa: E402
 import fix.engine  # noqa: E402
+import fix.pass_resume  # noqa: E402
 import fix.suite  # noqa: E402
 import git.land  # noqa: E402
 from config.workbench_config import FixConfig, WorkbenchConfig  # noqa: E402
@@ -66,9 +68,16 @@ def _kill_then_resume(adapter, snapshots, landed, *, verify, suite_result=None):
     else:
         suite_kw["return_value"] = fix.suite.SuiteResult(
             status=fix.suite.SuiteStatus.GREEN, command="true")
+    seen_tracking = []
+
+    def capture_then_answer(*args, **kwargs):
+        if adapter.tracking_path.is_file():
+            seen_tracking.append(adapter.tracking_path.read_text())
+        return _answer(adapter)(*args, **kwargs)
+
     with (
         patch.object(agent.phases, "phase_chunk_size", return_value=1),
-        patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)) as agent_fn,
+        patch.object(agent.invoke, "run_fix", side_effect=capture_then_answer) as agent_fn,
         patch.object(fix.suite, "run", **suite_kw) as suite_fn,
         patch.object(fix.dirty_backup, "save", wraps=fix.dirty_backup.save) as backup,
     ):
@@ -86,8 +95,9 @@ def _kill_then_resume(adapter, snapshots, landed, *, verify, suite_result=None):
         landed.reset_mock()
         verify.reset_mock()
         backup.reset_mock()
+        seen_tracking.clear()
         run = fix.engine.run(adapter, verify=verify)
-        return run, agent_fn, suite_fn, backup
+        return run, agent_fn, suite_fn, backup, seen_tracking
 
 
 _PHASES = (
@@ -104,16 +114,15 @@ def test_resume_skips_finished_phases(kill_at, tmp_path, landed, head, snapshots
     """A resume must not re-call any phase that had already checkpointed."""
     adapter = _configured(_Ckpt(tmp_path, count=2, kill_at=kill_at))
     verify = MagicMock(return_value={})
-    run, agent_fn, suite_fn, backup = _kill_then_resume(
+    run, agent_fn, suite_fn, backup, seen_tracking = _kill_then_resume(
         adapter, snapshots, landed, verify=verify)
 
     assert backup.call_count == 0
     if kill_at is CheckpointPhase.AGENT_RUNNING:
         assert agent_fn.call_count == 1
-        prompt = agent_fn.call_args.args[1] if agent_fn.call_args.args else (
-            agent_fn.call_args.kwargs.get("prompt") or "")
-        tracking = adapter.tracking_path.read_text()
-        assert "<!-- fix:i1 " in tracking or "i1" in str(agent_fn.call_args)
+        assert seen_tracking, "resume did not invoke the agent"
+        assert "<!-- fix:i0 " not in seen_tracking[0]
+        assert "<!-- fix:i1 " in seen_tracking[0]
     else:
         assert agent_fn.call_count == 0
     if kill_at.reached(CheckpointPhase.VERIFIED):
@@ -227,7 +236,7 @@ def test_checked_timed_out_resume_does_not_rerun_suite_or_hold(
     timed = fix.suite.SuiteResult(
         status=fix.suite.SuiteStatus.TIMED_OUT, command="true")
     verify = MagicMock(return_value={})
-    run, agent_fn, suite_fn, _backup = _kill_then_resume(
+    run, agent_fn, suite_fn, _backup, _seen = _kill_then_resume(
         adapter, snapshots, landed, verify=verify, suite_result=timed)
     assert agent_fn.call_count == 0
     assert suite_fn.call_count == 0
@@ -253,15 +262,26 @@ def test_plain_stub_adapter_never_checkpoints_or_unlinks(
             unlinked.append(True)
         return orig(self, *args, **kwargs)
 
+    orig_take = fix.containment.take
+    takes = []
+
+    def count_take(*args, **kwargs):
+        takes.append(1)
+        return orig_take(*args, **kwargs)
+
     with (
         patch.object(StubAdapter, "checkpoint") as ck,
         patch.object(Path, "unlink", spy),
+        patch.object(fix.containment, "take", count_take),
+        patch.object(fix.pass_resume, "agent_files") as af,
+        patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)),
     ):
-        run, inv = None, None
-        with patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)):
-            run = fix.engine.run(adapter)
+        run = fix.engine.run(adapter)
     ck.assert_not_called()
+    af.assert_not_called()
     assert unlinked == []
     assert run.landed is not None
     assert adapter.keeps_checkpoints is False
     assert adapter.resume is None
+    # Zero extra takes: agent_files (the checkpoint-only snapshot) was not called.
+    assert takes

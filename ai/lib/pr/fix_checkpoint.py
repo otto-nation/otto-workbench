@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -42,6 +43,10 @@ CHECKPOINT_VERSION = 1
 
 INTERRUPTED_REASON = "interrupted: the fix pass did not finish this item"
 UNLANDED_REASON = "interrupted: the fix was not committed"
+
+
+class CheckpointAdoptError(Exception):
+    """The partial snapshot could not be marked adopted; callers must stop."""
 
 
 class CheckpointPhase(StrEnum):
@@ -108,6 +113,7 @@ class EngineProgress:
     max_turns: int = 0
     max_budget: float = 0.0
     exit_code: int = 0
+    pre_pass_tree: str = ""
 
 
 @dataclass
@@ -116,29 +122,23 @@ class CommentsFixCheckpoint:
 
     Identity fields (`repo`, `pr`, `branch`) are what `adopt_partial` matches
     against the live context, so a leftover file from another PR is ignored
-    rather than merged. `dirty_before` / `head_before` are the pass's original
-    baselines, reused on resume so the agent's uncommitted edits stay
-    committable.
+    rather than merged. Pass baselines (`head_before`, `dirty_before`,
+    `baseline_ref`, `agent_files`) live on `engine` — one owner.
     """
 
-    version: int = 0
+    version: int = CHECKPOINT_VERSION
     phase: CheckpointPhase = CheckpointPhase.TRIAGED
     repo: str = ""
     pr: int = 0
     branch: str = ""
     updated_at: str = ""
     head_sha: str = ""
-    head_before: str = ""
-    dirty_before: list[str] = field(default_factory=list)
-    baseline_ref: str = ""
     triage: TriageResult = field(default_factory=TriageResult)
     outcomes: list[ItemOutcome] = field(default_factory=list)
     replies: ReplyOutcome = field(default_factory=ReplyOutcome)
     engine: EngineProgress = field(default_factory=EngineProgress)
-    agent_files: list[str] = field(default_factory=list)
     seen_issue_comments: dict[int, str] = field(default_factory=dict)
     seen_review_body_comments: dict[int, str] = field(default_factory=dict)
-    posted_reply_ids: list[str] = field(default_factory=list)
 
 
 def checkpoint_path(target_dir: Path) -> Path:
@@ -164,20 +164,33 @@ def load(target_dir: Path) -> CommentsFixCheckpoint | None:
     if not isinstance(raw, dict) or raw.get("version") != CHECKPOINT_VERSION:
         return None
     try:
-        return core.serde.from_dict(CommentsFixCheckpoint, raw)
+        ckpt = core.serde.from_dict(CommentsFixCheckpoint, raw)
     except (TypeError, ValueError):
         core.log.warn(f"{path} is unreadable — discarding it")
         return None
+    if (
+        ckpt.phase.reached(CheckpointPhase.AGENT_RUNNING)
+        and not ckpt.engine.head_before
+    ):
+        core.log.warn(f"{path} is unreadable — discarding it")
+        return None
+    return ckpt
 
 
 def save(target_dir: Path, ckpt: CommentsFixCheckpoint) -> bool:
-    """Write *ckpt* atomically, stamping `updated_at`. Never raises.
+    """Write *ckpt* atomically, stamping `updated_at` and version. Never raises.
 
     False when the write cannot land; the previous file is left intact because
     `serde.write_json` renames over it only after the temp file is complete.
+
+    A lost checkpoint is a fresh pass, not unrebuildable state — `core.serde`'s
+    ceiling (no fsync) applies: surviving a machine crash mid-write is not
+    required.
     """
     path = checkpoint_path(target_dir)
-    stamped = dataclass_replace(ckpt, updated_at=pr.state.now_iso())
+    stamped = dataclass_replace(
+        ckpt, updated_at=pr.state.now_iso(), version=CHECKPOINT_VERSION,
+    )
     try:
         core.serde.write_json(path, _jsonable(core.serde.to_dict(stamped)))
         return True
@@ -230,7 +243,7 @@ def partial_summary(
     items = pr.triage_round.classify_entries(ckpt.triage.comment_items, trail=None)
     round_ = pr.triage_round.TriagedRound(threads=threads, items=items)
     folded = _rewrite_for_partial(
-        _fold_answers(ckpt.outcomes, ckpt.engine.answers, answers),
+        _fold_answers(ckpt.outcomes, ckpt.engine.answers, answers, ckpt.phase),
         ckpt.phase,
         {e.id for e in round_.fixable + round_.fixable_items if e.id},
     )
@@ -268,16 +281,39 @@ def adopt_partial(
     its (repo, pr, branch) do not match *ctx*. A missing *state* is created.
     Prior `commit_sha` / `commit_status` on `state.fix.fix` are kept when the
     partial snapshot has none — `FixRecord.merge_into` would otherwise replace
-    them with empty. The checkpoint is marked `ADOPTED` only after the state
-    write lands.
+    them with empty. A failed ADOPTED save raises ``CheckpointAdoptError``
+    before the state write, so callers stop without a half-applied adopt.
+    """
+    prepared = prepared_partial(ctx, state, answers)
+    if prepared is None:
+        return state
+    st, ckpt = prepared
+    if not save(ctx.target_dir, advance(ckpt, CheckpointPhase.ADOPTED)):
+        raise CheckpointAdoptError(
+            f"{checkpoint_path(ctx.target_dir)} could not be marked adopted"
+        )
+    pr.state.save_state(ctx.target_dir, st)
+    _warn_adopted(ckpt.phase, ckpt)
+    return st
+
+
+def prepared_partial(
+    ctx: pr.context.ResolvedContext,
+    state: pr.state.PRState | None,
+    answers: Sequence[ItemOutcome] = (),
+) -> tuple[pr.state.PRState, CommentsFixCheckpoint] | None:
+    """In-memory merge of a matching non-terminal checkpoint. Does not persist.
+
+    *state* is deep-copied when present, so a caller can validate against the
+    merged record before ``adopt_partial`` marks the checkpoint adopted.
     """
     ckpt = load(ctx.target_dir)
     if ckpt is None or ckpt.phase.terminal or not _matches(ckpt, ctx):
-        return state
+        return None
     summary = partial_summary(ckpt, answers=answers)
     if state is not None:
         summary = _keep_prior_commit(summary, state.fix.fix)
-        st = state
+        st = deepcopy(state)
     else:
         st = pr.state.load_or_init(
             target_dir=ctx.target_dir,
@@ -288,11 +324,7 @@ def adopt_partial(
             worktree_root=str(ctx.worktree_root or ""),
         )
     pr.state.apply(st, summary)
-    pr.state.save_state(ctx.target_dir, st)
-    phase = ckpt.phase
-    save(ctx.target_dir, advance(ckpt, CheckpointPhase.ADOPTED))
-    _warn_adopted(phase, ckpt)
-    return st
+    return st, ckpt
 
 
 def _matches(ckpt: CommentsFixCheckpoint, ctx: pr.context.ResolvedContext) -> bool:
@@ -326,15 +358,26 @@ def _fold_answers(
     outcomes: Sequence[ItemOutcome],
     engine: Sequence[ItemOutcome],
     answers: Sequence[ItemOutcome],
+    phase: CheckpointPhase,
 ) -> list[ItemOutcome]:
-    """Overlay later non-DEFERRED answers onto earlier ones, keyed by id."""
+    """Overlay later answers onto earlier ones, keyed by id.
+
+    Tracking-file *answers* fold in only at ``AGENT_RUNNING``. From
+    ``AGENT_DONE`` on, engine outcomes are the sole owner.
+    """
     by_id = {o.id: o for o in outcomes if o.id}
     anonymous = [o for o in outcomes if not o.id]
-    for group in (engine, answers):
-        for answer in group:
-            if not answer.id or answer.outcome is FixOutcome.DEFERRED:
-                continue
-            by_id[answer.id] = answer
+    if phase.reached(CheckpointPhase.AGENT_DONE):
+        for answer in engine:
+            if answer.id:
+                by_id[answer.id] = answer
+        return list(by_id.values()) + anonymous
+    if phase is CheckpointPhase.AGENT_RUNNING:
+        for group in (engine, answers):
+            for answer in group:
+                if not answer.id or answer.outcome is FixOutcome.DEFERRED:
+                    continue
+                by_id[answer.id] = answer
     return list(by_id.values()) + anonymous
 
 
@@ -381,10 +424,12 @@ def _add_unanswered(
 
 def _warn_adopted(phase: CheckpointPhase, ckpt: CommentsFixCheckpoint) -> None:
     core.log.warn(
-        f"Adopted a partial comments fix snapshot at phase {phase.value}; "
-        f"it cannot be resumed"
+        f"Adopted a partial comments-fix snapshot stopped at {phase.value}; "
+        f"it cannot be resumed. Use `pr comments --fix --no-resume` to discard "
+        f"an interrupted pass, or `--resume` to continue one instead of "
+        f"`--finish`."
     )
-    files = ckpt.agent_files or ckpt.engine.agent_files
+    files = ckpt.engine.agent_files
     if files:
         core.log.warn(
             "Uncommitted edits from the interrupted pass: " + ", ".join(files)

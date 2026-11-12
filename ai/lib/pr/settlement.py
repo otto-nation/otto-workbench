@@ -54,6 +54,7 @@ every other phase flag alongside it (the argparse layer in `cli.review_threads`)
 
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
@@ -855,16 +856,20 @@ def run_settle(
 
     wt_path = ctx.require_worktree()
     state = pr.state.load_state(ctx.target_dir)
-    state = pr.fix_checkpoint.adopt_partial(ctx, state, answers=answers)
+    prepared = pr.fix_checkpoint.prepared_partial(ctx, state, answers=answers)
+    record = (
+        prepared[0].fix.fix if prepared is not None
+        else (state.fix.fix if state is not None else None)
+    )
     known = {
-        o.id for o in (state.fix.fix.items if state is not None else []) if o.id
+        o.id for o in (record.items if record is not None else []) if o.id
     }
     missing = [tid for tid in targets if tid not in known]
     threads: Mapping[str, ReportThread] | None = None
     if missing and fetch_threads is not None:
         threads = fetch_threads()
 
-    if state is None or not state.fix.fix.items:
+    if record is None or not record.items:
         found = bool(threads) and any(tid in threads for tid in targets)
         if found:
             state = pr.state.load_or_init(
@@ -886,6 +891,37 @@ def run_settle(
             # settle_targets reports the targets it never recorded.
             settle_targets(FixRecord(), targets, threads=threads or {})
             return 1
+    else:
+        # Adopting a partial snapshot is irreversible; validate on a copy.
+        probe = settle_targets(
+            copy.deepcopy(record), targets, threads=threads,
+        )
+        if probe is None:
+            return 1
+        try:
+            state = pr.fix_checkpoint.adopt_partial(
+                ctx, state, answers=answers,
+            )
+        except pr.fix_checkpoint.CheckpointAdoptError as exc:
+            core.log.error(str(exc))
+            return 1
+        if state is None or not state.fix.fix.items:
+            found = bool(threads) and any(tid in threads for tid in targets)
+            if found:
+                state = pr.state.load_or_init(
+                    target_dir=ctx.target_dir,
+                    repo=ctx.repo,
+                    branch=ctx.branch,
+                    pr_number=ctx.pr_number,
+                    head_sha=ctx.head_sha,
+                    worktree_root=str(wt_path),
+                )
+            else:
+                core.log.error(
+                    "No fix snapshot to settle against — run "
+                    "`pr comments --fix` first"
+                )
+                return 1
 
     result = settle_targets(state.fix.fix, targets, threads=threads)
     if result is None:

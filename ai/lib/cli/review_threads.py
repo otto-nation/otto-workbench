@@ -49,6 +49,7 @@ from core.trail import Trail, add_trail_args
 import gh.pr_data
 import pr.comments_fix
 import pr.context
+import pr.fix_checkpoint
 import pr.settlement
 import pr.thread_replies
 from pr.fix import FixOutcome
@@ -146,9 +147,11 @@ def _github_only(
             ctx, args.reply, body or "", pr_data=route.pr_data,
             review_body_ids=route.review_body_ids,
         )
+    ckpt = pr.fix_checkpoint.load(ctx.target_dir)
+    phase = ckpt.phase if ckpt else None
     return pr.settlement.run_settle(
         ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
-        answers=review.closeout.tracking_answers(ctx.target_dir),
+        answers=review.closeout.tracking_answers(ctx.target_dir, phase=phase),
         fetch_threads=lambda: {
             t.id: t
             for t in review.comment_threads.read_report(

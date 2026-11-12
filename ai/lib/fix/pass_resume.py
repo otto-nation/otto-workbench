@@ -18,9 +18,15 @@ import core.serde
 import fix.containment
 import fix.suite
 import fix.tracking
+import git.client
 import git.land
 from pr.fix import FixOutcome, ItemOutcome
 from pr.fix_checkpoint import EngineProgress
+
+
+# Not a blob sha. Distinct from a missing map entry so a restored deletion
+# (path gone from the live map, still recorded as deleted) is visible.
+DELETED = "-"
 
 
 def answered(outcomes: Sequence[ItemOutcome]) -> list[ItemOutcome]:
@@ -33,20 +39,24 @@ def answered(outcomes: Sequence[ItemOutcome]) -> list[ItemOutcome]:
 
 
 def prior_answers(
-    progress: EngineProgress | None, tracking_path: Path,
+    progress: EngineProgress | None, tracking_path: Path, *, overlay: bool = False,
 ) -> dict[str, ItemOutcome]:
-    """Answers already given, keyed by id. The tracking file wins on conflict.
+    """Answers already given, keyed by id.
 
-    Checkpointed ``progress.answers`` are the engine's last record. Ticks the
-    agent wrote to the tracking file after that record — a mid-batch kill —
-    overlay them, so a resume does not re-ask an item the file already ticked.
+    Checkpointed ``progress.answers`` are the engine's last record. When
+    *overlay* is true — only while the agent is still running — ticks the
+    agent wrote to the tracking file after that record overlay them, so a
+    mid-batch kill does not re-ask an item the file already ticked. From
+    ``AGENT_DONE`` on, the engine record is the sole owner: do not overlay.
     """
-    by_id = {
-        o.id: o for o in answered(progress.answers if progress else ())
-    }
-    for outcome in answered(fix.tracking.parse(tracking_path)):
-        by_id[outcome.id] = outcome
-    return by_id
+    if overlay:
+        by_id = {
+            o.id: o for o in answered(progress.answers if progress else ())
+        }
+        for outcome in answered(fix.tracking.parse(tracking_path)):
+            by_id[outcome.id] = outcome
+        return by_id
+    return {o.id: o for o in (progress.answers if progress else ()) if o.id}
 
 
 def agent_files(
@@ -54,9 +64,9 @@ def agent_files(
 ) -> dict[str, str]:
     """Blob sha of each file the agent changed, keyed by path.
 
-    Taken from a content snapshot, not ``changed_files``, so a checkpointing
-    pass does not add dirty-set reads on the non-resume path. A path in the
-    snapshot is mapped to its blob sha; a path that vanished is ``""``. An
+    Called only when the pass records checkpoints, so a default-off pass
+    does not take an extra content snapshot. A path in the snapshot is
+    mapped to its blob sha; a path that vanished is ``DELETED``. An
     unreadable snapshot is ``{}`` — unknown is not "nothing changed".
     Files dirty before the pass are omitted: they are not the agent's.
     """
@@ -74,7 +84,7 @@ def agent_files(
         prior = before.get(path)
         if rec == prior:
             continue
-        out[path] = rec.sha if rec is not None else ""
+        out[path] = rec.sha if rec is not None else DELETED
     return out
 
 
@@ -87,11 +97,20 @@ def edited_since(
 
     Empty when every recorded path still has the same sha and no new agent
     file has appeared. Used by a later resume decision to refuse a tree the
-    operator edited after the kill.
+    operator edited after the kill. Missing vs deleted are distinct, so a
+    file that was deleted and then restored is reported.
     """
     now = agent_files(workdir, dirty_before)
     names = set(recorded) | set(now)
-    return sorted(p for p in names if now.get(p, "") != recorded.get(p, ""))
+    return sorted(p for p in names if _blob(now, p) != _blob(recorded, p))
+
+
+def _blob(mapping: dict[str, str], path: str) -> str | None:
+    """Live or recorded sha, with ``""`` (legacy) and ``DELETED`` equivalent."""
+    if path not in mapping:
+        return None
+    sha = mapping[path]
+    return DELETED if sha in ("", DELETED) else sha
 
 
 def suite_dict(result: fix.suite.SuiteResult) -> dict:
@@ -106,6 +125,17 @@ def suite_of(data: dict) -> fix.suite.SuiteResult:
     return core.serde.from_dict(fix.suite.SuiteResult, data)
 
 
+def apply_suite_if_missing(
+    outcomes: list[ItemOutcome], result: fix.suite.SuiteResult,
+) -> None:
+    """Re-apply a red suite only when the checkpointed answers predate it."""
+    if not result.demotes:
+        return
+    if any(fix.suite.RED_DETAIL in (o.verify_detail or "") for o in outcomes):
+        return
+    fix.suite.apply_to(outcomes, result)
+
+
 def landed_of(progress: EngineProgress | None) -> git.land.LandResult:
     """The landing ``progress`` recorded, or ``NO_CHANGES`` when none."""
     if progress is None or progress.commit_status is None:
@@ -115,3 +145,20 @@ def landed_of(progress: EngineProgress | None) -> git.land.LandResult:
         sha=progress.commit_sha,
         error=progress.land_error,
     )
+
+
+def head_is_one_past(workdir: Path | str, head_before: str) -> bool:
+    """Whether HEAD is the one commit whose parent is *head_before*.
+
+    The CHECKED→LANDED gap: ``_land`` committed, then the process died
+    before the LANDED checkpoint. ``HEAD^ == head_before`` is that shape.
+    """
+    if not head_before:
+        return False
+    head = git.client.head_sha(cwd=workdir)
+    if not head:
+        return False
+    before = git.client.out("rev-parse", head_before, cwd=workdir)
+    parent = git.client.out("rev-parse", f"{head}^", cwd=workdir)
+    now = git.client.out("rev-parse", head, cwd=workdir)
+    return bool(before and parent and now and now != before and parent == before)

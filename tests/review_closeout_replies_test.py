@@ -428,7 +428,11 @@ class TestTriageOnlyPassQueue:
         assert "because the dismissed premise says so" in mock_reply.call_args.args[3]
 
     def test_a_commitless_queue_does_not_wait_on_a_push(self, publishing_on):
-        """These replies cite HEAD, not a fix commit, so there is nothing to wait for."""
+        """Already-addressed replies are not FIXED replies: they drain without a commit.
+
+        `landing_of` now asks whether HEAD is on the remote. This drain still
+        sends the replies; `--finish --post` is what refuses an unpublished HEAD.
+        """
         fix, threads_by_id = self._queue(FixOutcome.ALREADY_ADDRESSED)
         state = _make_state(fix)
         with patch.object(git.push, "holds", return_value=False) as mock_pushed, \
@@ -437,7 +441,7 @@ class TestTriageOnlyPassQueue:
              patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr.comments.resolve_thread", return_value=True):
             review.closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
-        mock_pushed.assert_not_called()
+        mock_pushed.assert_called()
         assert mock_reply.call_count == 1
 
     def test_no_changes_is_not_rewritten_as_pushed(self, publishing_on):

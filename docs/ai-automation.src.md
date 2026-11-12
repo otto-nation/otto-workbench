@@ -480,12 +480,11 @@ from a run where the fix pass had nothing to do.
 
 The `already_addressed` verdict means the code does what the reviewer asked. It
 does not mean their comment was moot, and the two are not the same claim.
-Triage reads code context from current HEAD, which already holds whatever the
-pass fixed earlier in the same cycle, so a re-run re-triages a thread it fixed
-on round one and gets `already_addressed` for it on round two — correctly. What
-was wrong was the reply: a flat `Already addressed` told a reviewer their point
-needed no action while the paragraph below it cited a commit made after they
-made it ([#815](https://github.com/otto-nation/otto-workbench/issues/815)).
+Triage reads the working tree; a dirty or unpushed tree demotes
+`already_addressed` and `invalid` until the tree is pushed. What was wrong was
+the reply: a flat `Already addressed` told a reviewer their point needed no
+action while the paragraph below it cited a commit made after they made it
+([#815](https://github.com/otto-nation/otto-workbench/issues/815)).
 
 So the reply and the summary row ask when the code became true, relative to
 when the thread was opened. Already-addressed rows never cite that date's

@@ -112,10 +112,12 @@ class FixLanding(StrEnum):
 def landing_of(record: FixRecord, wt_path: Path | None) -> FixLanding:
     """How closeout should treat the pass's recorded commit.
 
-    `LANDED` is a SHA the remote holds, or HEAD moved past the snapshot and
-    the remote holds HEAD — the operator landed the same work by hand. An
-    empty SHA is not a hand-landing by itself: that is `NEVER_COMMITTED`
-    until HEAD actually moves.
+    `LANDED` is a SHA the remote holds, or HEAD (moved or not) that the
+    remote holds — the operator landed the same work by hand, or nothing
+    needed committing and HEAD is already published. An empty SHA with HEAD
+    unmoved is not a hand-landing: that is `NEVER_COMMITTED` when the commit
+    failed, and `UNPUSHED` when the remote does not hold HEAD, so a closeout
+    cannot cite a local-only commit.
     """
     sha = record.commit_sha or ""
     if wt_path is None:
@@ -140,7 +142,9 @@ def landing_of(record: FixRecord, wt_path: Path | None) -> FixLanding:
         return FixLanding.UNPUSHED
     if record.commit_status == CommitStatus.COMMIT_FAILED:
         return FixLanding.NEVER_COMMITTED
-    return FixLanding.LANDED
+    if git.push.holds(wt_path, current):
+        return FixLanding.LANDED
+    return FixLanding.UNPUSHED
 
 
 def pass_commit(wt_path: Path, result: LandResult | None) -> CommitPushResult:

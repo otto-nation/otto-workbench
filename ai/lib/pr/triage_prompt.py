@@ -8,12 +8,14 @@ a string.
 
 Two things in it are load-bearing and easy to lose in an edit. The verdict
 definitions draw the line between `already_addressed` and `invalid` — the code
-context is current HEAD, so a suggestion that looks satisfied is usually one an
+context is the working tree, so a suggestion that looks satisfied is usually one an
 earlier round of this same review already acted on, and calling that `invalid`
-tells the reviewer they were wrong when they were agreed with. And every verdict
-posted back to a reviewer must cite a line: a claim about their code with
-nothing to point at is not a claim, which is why `evidence_file` is required for
-exactly the two verdicts that are posted outward.
+tells the reviewer they were wrong when they were agreed with. Uncommitted or
+unpushed edits are not what the reviewer can see, so they are not grounds for
+`already_addressed`. And every verdict posted back to a reviewer must cite a
+line: a claim about their code with nothing to point at is not a claim, which is
+why `evidence_file` is required for exactly the two verdicts that are posted
+outward.
 """
 
 # doc-group: publishing
@@ -45,10 +47,11 @@ VERIFICATION_GUIDANCE = {
     ),
     Verification.ALREADY_ADDRESSED: (
         "the code already does what the reviewer asks. The code context\n"
-        "     below is current HEAD, which includes commits made earlier in this same review\n"
+        "     below is the working tree, which includes commits made earlier in this same review\n"
         "     cycle — so a suggestion that looks satisfied is usually one that was ALREADY ACTED\n"
         "     ON in response to this very thread. This is agreement with the reviewer, not\n"
-        "     rejection of them."
+        "     rejection of them. Do not pick already_addressed from uncommitted or unpushed\n"
+        "     edits — the reviewer cannot see those."
     ),
     Verification.INVALID: (
         "the reviewer's premise is factually wrong — they misread the code, or the\n"

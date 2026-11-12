@@ -17,7 +17,7 @@ import cli.review_threads
 import git.client
 import pr.comments
 import pr.state
-from pr.fix import ItemOutcome
+from pr.fix import FixOutcome, ItemOutcome, SettledBy
 from pr.state import PRIdentity, PRState
 import review.closeout
 import review.comment_threads
@@ -27,13 +27,15 @@ def _item():
     return ItemOutcome(id="t1")
 
 
-def _save(work, target, *, head_sha, commit_sha="", commit_status=None):
+def _save(work, target, *, head_sha, commit_sha="", commit_status=None,
+          items=None):
     pr.state.save_state(target, PRState(
         identity=PRIdentity(
             repo="owner/repo", branch="feat", pr_number=1,
             head_sha=head_sha, worktree_root=str(work),
         ),
-        fix=_fix(items=[_item()], head_sha=head_sha, commit_sha=commit_sha,
+        fix=_fix(items=list(items) if items is not None else [_item()],
+                 head_sha=head_sha, commit_sha=commit_sha,
                  commit_status=commit_status),
     ))
 
@@ -114,6 +116,62 @@ def test_a_pushed_commit_is_not_a_block(tmp_path, publishing_on):
                    worktree_root=pair.work, head_sha=tip, target_dir=target)
     _save(pair.work, target, head_sha=tip, commit_sha=tip, commit_status="pushed")
     assert review.closeout.unpublished_commit(ctx) is None
+
+
+def _unpushed_ctx(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    (pair.work / "op.txt").write_text("op\n")
+    commit_all(pair.work, "op")
+    head = git_out(pair.work, "rev-parse", "HEAD").strip()
+    target = pair.work / "target"
+    ctx = make_ctx(repo="owner/repo", branch="feat", pr_number=1,
+                   worktree_root=pair.work, head_sha=head, target_dir=target)
+    return pair, ctx, target, head
+
+
+def test_already_addressed_only_at_unpushed_head_is_a_push_block(
+    tmp_path, publishing_on, capsys,
+):
+    pair, ctx, target, head = _unpushed_ctx(tmp_path)
+    _save(pair.work, target, head_sha=head, items=[
+        ItemOutcome(id="t1", outcome=FixOutcome.ALREADY_ADDRESSED),
+    ])
+    args = cli.review_threads.build_parser().parse_args(["--finish", "--post"])
+    with patch.object(review.comment_threads, "fetch_pr_data",
+                      return_value=_pr_data([])), \
+            patch.object(pr.comments, "resolve_thread") as resolve, \
+            patch.object(pr.comments, "post_thread_reply") as reply, \
+            patch.object(review.closeout, "finish_deferred_work") as fin:
+        code = review.comment_threads.run_threads(MagicMock(), args, ctx)
+    last = capsys.readouterr().err.strip().splitlines()[-1]
+    assert code == 1
+    assert "nothing was published: push" in last
+    resolve.assert_not_called()
+    reply.assert_not_called()
+    fin.assert_not_called()
+
+
+def test_a_settle_row_at_unpushed_head_is_a_push_block(
+    tmp_path, publishing_on, capsys,
+):
+    pair, ctx, target, head = _unpushed_ctx(tmp_path)
+    _save(pair.work, target, head_sha=head, items=[
+        ItemOutcome(id="t1", outcome=FixOutcome.ALREADY_ADDRESSED,
+                    settled_by=SettledBy.OPERATOR),
+    ])
+    args = cli.review_threads.build_parser().parse_args(["--finish", "--post"])
+    with patch.object(review.comment_threads, "fetch_pr_data",
+                      return_value=_pr_data([])), \
+            patch.object(pr.comments, "resolve_thread") as resolve, \
+            patch.object(pr.comments, "post_thread_reply") as reply, \
+            patch.object(review.closeout, "finish_deferred_work") as fin:
+        code = review.comment_threads.run_threads(MagicMock(), args, ctx)
+    last = capsys.readouterr().err.strip().splitlines()[-1]
+    assert code == 1
+    assert "nothing was published: push" in last
+    resolve.assert_not_called()
+    reply.assert_not_called()
+    fin.assert_not_called()
 
 
 def test_bare_finish_prints_no_json(tmp_path, capsys):

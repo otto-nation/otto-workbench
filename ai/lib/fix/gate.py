@@ -4,7 +4,8 @@
 everything around it — what the gate is shown for a fix, a decline, a
 contradicted deferral and an already-addressed verdict, and how an answer it
 gives (or withholds) changes an item's outcome. Split from ``fix.engine``, which
-owns the batch/invoke/retry pipeline and nothing about judgement.
+owns the pass as a whole and nothing about judgement; batch, invoke and retry
+live in ``fix.batches``.
 
 A ticked `fixed` box says an edit was made, not that it works. The review
 (`pr review --self --fix`), comments (`pr comments --fix`) and CI
@@ -315,7 +316,7 @@ def _gated_decline(outcome: ItemOutcome) -> bool:
     declines too is accepted.
 
     A decline with no reason is skipped because there is no claim to check.
-    `_record_unevidenced` reports that one instead.
+    `record_unevidenced` reports that one instead.
     """
     return outcome.outcome is FixOutcome.DECLINED and bool(outcome.reason)
 

@@ -27,6 +27,7 @@ if LIB_DIR not in sys.path:
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
+import fix.batches
 import fix.engine
 import fix.gate
 import review.document
@@ -535,7 +536,7 @@ class TestBranchScope:
         )
         adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
         adapter.tracking_path.write_text("- [ ] fixed\n")
-        prompt = fix.engine._prompt(adapter, 15)
+        prompt = fix.batches.render_prompt(adapter, 15)
 
         assert "src/auth.go" in prompt
         assert "pkg/util.go" in prompt

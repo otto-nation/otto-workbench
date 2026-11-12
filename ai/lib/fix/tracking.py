@@ -452,7 +452,7 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
     read as FIXED regardless: the ask is a prompt contract, not a parse-time
     gate (see `test_a_fix_ticked_without_evidence_still_reads_as_fixed`). The
     warning here is for the operator watching the run; the durable record is
-    `fix.engine._record_unevidenced`, which emits one trail event per pass so
+    `fix.batches.record_unevidenced`, which emits one trail event per pass so
     the claim is still answerable once the terminal has scrolled away.
     """
     ticked = _ticked_reasons(body, _BOX_RE)

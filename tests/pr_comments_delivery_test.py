@@ -14,8 +14,8 @@ if str(LIB_DIR) not in sys.path:
 # never referenced by name.
 from review_threads_support import _fix_adapter, _no_published_summary  # noqa: E402
 from conftest import make_ctx
+import fix.batches
 import fix.comment_checklist
-import fix.engine
 from core.proc import CmdResult
 import pr.comments
 
@@ -140,7 +140,7 @@ class TestDeliverPrBody:
         adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
         adapter.tracking_path.write_text("")
         with patch.object(fix.comment_checklist, "find_and_update_main_worktree", return_value=None):
-            prompt = fix.engine._prompt(adapter, 10)
+            prompt = fix.batches.render_prompt(adapter, 10)
 
         assert str(pr.comments.pr_body_draft(adapter.artifacts)) in prompt
         assert "${pr_body_file}" not in prompt

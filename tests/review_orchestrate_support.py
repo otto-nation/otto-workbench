@@ -43,7 +43,7 @@ def run_orchestrated(ro, monkeypatch, tmp_path, pipeline=None, out=None, prior_h
     it away, since what most of these tests read is the directory.
     *prior_head_sha* makes the faked preflight an incremental one.
     """
-    import fix.engine
+    import fix.batches
     from review.reply_threads import ReplyThreads
 
     review_dir = tmp_path / "review-dir"
@@ -66,7 +66,7 @@ def run_orchestrated(ro, monkeypatch, tmp_path, pipeline=None, out=None, prior_h
     def _fix(job, _trail=None, **_kwargs):
         artifacts = Path(job.artifact_dir)
         (artifacts / "fix.jsonl").write_text("{}\n")
-        (artifacts / fix.engine.TRACKING_FILENAME).write_text("## <!-- fix:M1 -->\n")
+        (artifacts / fix.batches.TRACKING_FILENAME).write_text("## <!-- fix:M1 -->\n")
 
     monkeypatch.setattr(agent.backend, "preflight", lambda *a, **k: True)
     monkeypatch.setattr(pr.state, "load_state", lambda *a, **k: None)

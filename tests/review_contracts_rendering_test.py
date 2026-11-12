@@ -26,7 +26,7 @@ import agent.templates  # noqa: E402
 import agent.invoke  # noqa: E402
 import fix.ci  # noqa: E402
 import fix.comments  # noqa: E402
-import fix.engine  # noqa: E402
+import fix.batches  # noqa: E402
 import fix.tracking  # noqa: E402
 import fix.types  # noqa: E402
 import fix.verify  # noqa: E402
@@ -147,16 +147,16 @@ def _render_via_build_prompt(
 
 
 def _render_adapter(adapter) -> str:
-    """Render a fix template the way `fix.engine` renders it for a real pass.
+    """Render a fix template the way `fix.batches` renders it for a real pass.
 
-    Going through the engine rather than restating the substitution keeps this
-    honest about what an agent is actually handed: a placeholder the engine
+    Going through the renderer rather than restating the substitution keeps this
+    honest about what an agent is actually handed: a placeholder the renderer
     stopped supplying would show up here as unsubstituted, not as a passing
     test against a call nobody makes.
     """
     adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
     adapter.tracking_path.write_text("- [ ] fixed\n")
-    return fix.engine._prompt(adapter, 15)
+    return fix.batches.render_prompt(adapter, 15)
 
 
 def _render_fix_ci(wt_path) -> str:
@@ -242,8 +242,8 @@ def _render_fix_prepush(wt_path) -> str:
     """Render the pre-push repair pass's prompt through the real engine.
 
     The one fix template with no substitution test of its own until now. It
-    renders through `fix.engine._prompt` like the other three, so the engine's
-    own placeholders were covered by them — but anything this template names
+    renders through `fix.batches.render_prompt` like the other three, so the
+    renderer's own placeholders were covered by them — but anything this template names
     that the others do not was held by nothing.
     """
     return _render_adapter(rebase.prepush.PrePushFixAdapter(
@@ -306,7 +306,7 @@ class TestPromptBuilderRegistry:
         assert set(review.registry.registered()) == expected
 
     def test_a_phase_with_no_builder_is_refused(self):
-        """The fix pass is a review phase, but `fix.engine` builds its prompt."""
+        """The fix pass is a review phase, but `fix.batches` builds its prompt."""
         with pytest.raises(ValueError, match="renders no review prompt"):
             review.registry.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
 

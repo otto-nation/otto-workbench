@@ -548,6 +548,34 @@ Every function has a no-answer value — ``False`` and ``""`` — so a caller
 in a hook, a CI job, or a subprocess gets a usable result instead of an
 exception. No answer is never consent.
 
+### fix/batches.py
+
+Batch, invoke, retry, and settle for a fix pass.
+
+`fix.engine` owns the pass as a whole — lock, containment, gate, suite, land.
+This module owns one agent's share of the work: how items are chunked, how one
+invocation is prompted and observed, how a stalled batch is partitioned from
+the remainder that still owes a retry, and how those answers become a settled
+list.
+
+Two rules the engine still states, implemented here:
+
+**A batch that stalled has already had its retry.** ``agent.invoke.run_fix``
+gives an unproductive pass a second attempt of its own, so handing that batch's
+deferrals to the partial-progress retry buys a third identical run. One stalled
+batch must not spend the whole pass's retry either, which is why the two are
+partitioned rather than pooled.
+
+**A retry re-decides the items it is handed.** Only ``DEFERRED`` items go into
+it — an agent that declined an item or said it needs a person answered the
+question it was asked — and its answers supersede the first pass's rather than
+being reported alongside them.
+
+**A decline owes a reason.** A DECLINED recorded with none is demoted to
+NEEDS_HUMAN when the pass is recorded (`record_unevidenced`), so no reviewer's
+finding is closed on a rejection nobody can weigh. Records stored earlier are
+left alone.
+
 ### fix/blame.py
 
 Which item a red suite is probably complaining about.
@@ -734,9 +762,10 @@ ones, and one of them had no partial-progress retry at all.
 
 A domain supplies a :class:`FixAdapter` and nothing else: which phase sizes the
 pass, the items, the prompt substitutions its template needs, the commit it
-wants and what to do with the outcomes. Everything between those is here.
+wants and what to do with the outcomes. Batching, invoke, retry and settle live
+in :mod:`fix.batches`; everything else between those is here.
 
-Two rules the passes disagreed on, settled here:
+Two rules the passes disagreed on, settled in :mod:`fix.batches`:
 
 **A batch that stalled has already had its retry.** ``agent.invoke.run_fix``
 gives an unproductive pass a second attempt of its own, so handing that batch's
@@ -750,7 +779,7 @@ question it was asked — and its answers supersede the first pass's rather than
 being reported alongside them.
 
 **A decline owes a reason.** A DECLINED recorded with none is demoted to
-NEEDS_HUMAN when the pass is recorded (`_record_unevidenced`), so no reviewer's
+NEEDS_HUMAN when the pass is recorded (`record_unevidenced`), so no reviewer's
 finding is closed on a rejection nobody can weigh. Records stored earlier are
 left alone.
 
@@ -767,7 +796,8 @@ The verify gate: when it runs, and what its verdicts mean.
 everything around it — what the gate is shown for a fix, a decline, a
 contradicted deferral and an already-addressed verdict, and how an answer it
 gives (or withholds) changes an item's outcome. Split from ``fix.engine``, which
-owns the batch/invoke/retry pipeline and nothing about judgement.
+owns the pass as a whole and nothing about judgement; batch, invoke and retry
+live in ``fix.batches``.
 
 A ticked `fixed` box says an edit was made, not that it works. The review
 (`pr review --self --fix`), comments (`pr comments --fix`) and CI

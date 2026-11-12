@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # The mod reads `pr board`: the document's records, the pull sequence, the outdated-pr error.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_lib/*.js tests/fixtures/board_document.json
+# select-on: ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/prs/board_view.js tests/fixtures/board_document.json
 
 setup() {
   load 'test_helper'
@@ -205,6 +205,132 @@ _pull() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = '[false,"outdated",0]' ]
+}
+
+@test "eachByMachine: one at a time per machine, groups in parallel, order kept" {
+  _js '
+    const items = [{ on: null, id: 1 }, { on: "", id: 2 }, { on: "m1", id: 3 }, { on: "m1", id: 4 }];
+    let live = 0, maxAll = 0;
+    const liveBy = new Map();
+    const maxBy = new Map();
+    const orderBy = new Map();
+    const wave = (n) => {
+      let c = 0, go;
+      const started = new Promise((r) => { go = r; });
+      const gates = [];
+      return {
+        started,
+        arrive() {
+          let release;
+          const wait = new Promise((r) => { release = r; });
+          gates.push(release);
+          if (++c === n) go();
+          return wait;
+        },
+        release() { for (const r of gates) r(); },
+      };
+    };
+    const first = wave(2);
+    const second = wave(2);
+    let n = 0;
+    const done = p.eachByMachine(items, (i) => i.on, async (item) => {
+      const m = p.machineOf(item.on);
+      live += 1;
+      maxAll = Math.max(maxAll, live);
+      liveBy.set(m, (liveBy.get(m) ?? 0) + 1);
+      maxBy.set(m, Math.max(maxBy.get(m) ?? 0, liveBy.get(m)));
+      const gate = n++ < 2 ? first : second;
+      await gate.arrive();
+      live -= 1;
+      liveBy.set(m, liveBy.get(m) - 1);
+      const seq = orderBy.get(m) ?? [];
+      seq.push(item.id);
+      orderBy.set(m, seq);
+    });
+    await first.started;
+    first.release();
+    await second.started;
+    second.release();
+    await done;
+    process.stdout.write(JSON.stringify({
+      maxAll, maxBy: [...maxBy.entries()].sort(), order: [...orderBy.entries()].sort(),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"maxAll":2,"maxBy":[["",1],["m1",1]],"order":[["",[1,2]],["m1",[3,4]]]}' ]
+}
+
+@test "eachByMachine: a rejection does not stop the rest of its machine and is rethrown after" {
+  _js '
+    const seen = [];
+    let err = null;
+    try {
+      await p.eachByMachine(
+        [{ on: "m", id: 1 }, { on: "m", id: 2 }, { on: "m", id: 3 }],
+        (i) => i.on,
+        async (item) => {
+          seen.push(item.id);
+          if (item.id === 1) throw new Error("boom");
+        },
+      );
+    } catch (e) { err = e.message; }
+    process.stdout.write(JSON.stringify([seen, err]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2,3],"boom"]' ]
+}
+
+@test "machineOf: null, undefined and empty string are the empty key" {
+  _js 'process.stdout.write(JSON.stringify([p.machineOf(null), p.machineOf(undefined), p.machineOf(""), p.machineOf("m1")]));'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["","","","m1"]' ]
+}
+
+@test "board_view pull groups targets by machine instead of Promise.all" {
+  grep -q 'eachByMachine(targets' "$REPO_ROOT/ai/herdr/app/mods/prs/board_view.js"
+  run grep -q 'Promise.all(targets' "$REPO_ROOT/ai/herdr/app/mods/prs/board_view.js"
+  [ "$status" -eq 1 ]
+}
+
+@test "pullTarget: a queued offline answer falls through at most once per 180s" {
+  _pull '
+    globalThis.answer = (phase, args) => args.includes("--offline")
+      ? { ...doc, phase, stamp: "o", rows: [], repos: [{ ...doc.repos[0], phase: "queued" }] } : null;
+    const prev = { repo: { slug: "acme/box", host: "github.com" }, rows: [], stamps: {} };
+    const falls = [];
+    await p.pullTarget(exec, { cwd: "/w", on: null }, prev, { listingOnly: true, now: 1000, onFall: (t) => falls.push(t) }, publish);
+    const first = [...calls]; calls.length = 0; seen.length = 0;
+    await p.pullTarget(exec, { cwd: "/w", on: null }, prev, { listingOnly: true, now: 180999, fellAt: 1000, onFall: (t) => falls.push(t) }, publish);
+    const mid = [...calls]; const pub = seen.length; calls.length = 0; seen.length = 0;
+    await p.pullTarget(exec, { cwd: "/w", on: null }, prev, { listingOnly: true, now: 181000, fellAt: 1000, onFall: (t) => falls.push(t) }, publish);
+    process.stdout.write(JSON.stringify([first, mid, calls, pub, falls]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["listing:offline","listing","status"],["listing:offline"],["listing:offline","listing","status"],0,[1000,181000]]' ]
+}
+
+@test "pullTarget: a never-loaded listing-only pull publishes a loaded offline answer" {
+  _pull '
+    const r = await p.pullTarget(exec, { cwd: "/w", on: null }, null, { listingOnly: true, now: 1000 }, publish);
+    process.stdout.write(JSON.stringify([r.ok, calls, seen.length]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,["listing:offline"],1]' ]
+}
+
+@test "pullTarget: a never-loaded queued target falls through once, then publishes while throttled" {
+  _pull '
+    globalThis.answer = (phase, args) => args.includes("--offline")
+      ? { ...doc, phase, stamp: "o", rows: [], repos: [{ ...doc.repos[0], phase: "queued" }] } : null;
+    const falls = [];
+    await p.pullTarget(exec, { cwd: "/w", on: null }, null, { listingOnly: true, now: 1000, onFall: (t) => falls.push(t) }, publish);
+    const first = [...calls]; calls.length = 0;
+    const n1 = seen.length;
+    await p.pullTarget(exec, { cwd: "/w", on: null }, null, { listingOnly: true, now: 2000, fellAt: 1000, onFall: (t) => falls.push(t) }, publish);
+    process.stdout.write(JSON.stringify([first, calls, seen.slice(n1), falls]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["listing:offline","listing","status"],["listing:offline"],[["queued",0,null]],[1000]]' ]
 }
 
 @test "scope: document error kinds are skippable in All spaces and read as words" {

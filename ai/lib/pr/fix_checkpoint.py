@@ -210,6 +210,7 @@ def discard(target_dir: Path) -> None:
 def start(
     ctx: pr.context.ResolvedContext,
     *,
+    head_sha: str = "",
     read_sha: str = "",
     triage: TriageResult | None = None,
     seen_issue_comments: dict[int, str] | None = None,
@@ -217,8 +218,9 @@ def start(
 ) -> CommentsFixCheckpoint:
     """A fresh TRIAGED checkpoint for *ctx*, written to disk.
 
-    `head_sha` is the full commit from *ctx*. `read_sha` is the abbreviated
-    form entries are stamped with. Triage and the seen records are the round
+    `head_sha` is local HEAD at the start of the pass, not `ctx.head_sha`
+    (GitHub's head under ``--pr``). `read_sha` is the abbreviated form
+    entries are stamped with. Triage and the seen records are the round
     this pass started from, so a later resume can skip re-triage and leave
     comments that arrived afterwards unseen.
     """
@@ -228,7 +230,7 @@ def start(
         repo=ctx.repo,
         pr=ctx.pr_number or 0,
         branch=ctx.branch,
-        head_sha=ctx.head_sha,
+        head_sha=head_sha,
         read_sha=read_sha,
         triage=triage if triage is not None else TriageResult(),
         seen_issue_comments=dict(seen_issue_comments or {}),
@@ -446,8 +448,7 @@ def _warn_adopted(phase: CheckpointPhase, ckpt: CommentsFixCheckpoint) -> None:
     core.log.warn(
         f"Adopted a partial comments-fix snapshot stopped at {phase.value}; "
         f"it cannot be resumed. Use `pr comments --fix --no-resume` to discard "
-        f"an interrupted pass, or `--resume` to continue one instead of "
-        f"`--finish`."
+        f"an interrupted pass rather than `--finish`/`--settle` after adopting."
     )
     files = ckpt.engine.agent_files
     if files:

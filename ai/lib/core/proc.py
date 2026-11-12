@@ -185,8 +185,15 @@ STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 # rather than spelled as a second literal.
 _SIGNAL_EXIT_BASE = INTERRUPT_RETURNCODE - signal.SIGINT
 
+# GNU `timeout` without `--foreground` delivers the same SIGTERM twice,
+# typically well under a second apart. A later operator repeat is outside it.
+_REPEAT_WINDOW_S = 1.0
 
-def install_stop_handler(announce: Callable[[], None]) -> None:
+
+def install_stop_handler(
+    announce: Callable[[], None], *,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
     """Stop this process's children and exit quietly on any of `STOP_SIGNALS`.
 
     Installing a handler is process-level state, so it belongs to whoever owns
@@ -205,23 +212,48 @@ def install_stop_handler(announce: Callable[[], None]) -> None:
 
     A repeated stop is someone who will not wait for the first: the children
     are killed outright and the process leaves with `os._exit`, skipping the
-    unwinding the first stop started.
+    unwinding the first stop started. A repeat of the *same* signal number
+    within `_REPEAT_WINDOW_S` of the first — or while the first handler is
+    still running — is ignored instead: GNU `timeout` without `--foreground`
+    delivers SIGTERM to the child *and* the process group, and that second
+    TERM used to take the `os._exit` path and skip containment restore.
 
     `announce` says the run was interrupted. It is a callback rather than a
     `log` call because this module is stdlib-only by declaration — see the
     module docstring — and every caller already depends on `log` anyway.
     """
+    first_signum: int | None = None
+    first_at = 0.0
+    handling = False
+
     def stop(signum: int, _frame: object) -> None:
+        nonlocal first_signum, first_at, handling
+        now = clock()
+        if handling:
+            return
+        if (
+            first_signum is not None
+            and signum == first_signum
+            and (now - first_at) < _REPEAT_WINDOW_S
+        ):
+            return
         repeated = core.children.stopping()
-        core.children.stop_all()
-        code = _SIGNAL_EXIT_BASE + signum
-        if repeated:
-            os._exit(code)
-        # A closed terminal (SIGHUP) is a stderr that may no longer be there;
-        # the exit code is the contract, so the announcement cannot cost it.
-        with contextlib.suppress(OSError):
-            announce()
-        sys.exit(code)
+        if first_signum is None:
+            first_signum = signum
+            first_at = now
+        handling = True
+        try:
+            core.children.stop_all()
+            code = _SIGNAL_EXIT_BASE + signum
+            if repeated:
+                os._exit(code)
+            # A closed terminal (SIGHUP) is a stderr that may no longer be there;
+            # the exit code is the contract, so the announcement cannot cost it.
+            with contextlib.suppress(OSError):
+                announce()
+            sys.exit(code)
+        finally:
+            handling = False
 
     for signum in STOP_SIGNALS:
         signal.signal(signum, stop)

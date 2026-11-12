@@ -286,11 +286,13 @@ def _same_standing_reply(thread: ReportThread, body: str) -> bool:
 def _remember_standing_reply(thread: ReportThread, body: str) -> None:
     """Keep `thread.comments` honest after a write this run just made.
 
-    The GraphQL thread is not re-fetched mid-batch, and `post_thread_reply`
-    returns only success, not the new comment id. Without this, a kill after
-    the first of N posts and a resume on the same `ReportThread` objects would
-    POST the first thread again. A later round that re-fetches already sees
-    the comment on GitHub; this is the in-hand copy of that fact.
+    Resume re-fetches threads from GitHub, so this in-memory append only
+    defends against double-posting within one run: a kill after the first
+    of N posts, then the rest of the same `ReportThread` objects continuing.
+    A later process that re-fetches already sees the comment on GitHub.
+    `createdAt` is set so same-run readers (`has_hand_written_reply`) can
+    date it; `databaseId` is omitted so `our_last_reply_id` cannot PATCH a
+    fake id.
     """
     if pr.comments.last_comment_is_mine(thread.comments, thread.my_login):
         thread.comments[-1]["body"] = body
@@ -298,6 +300,7 @@ def _remember_standing_reply(thread: ReportThread, body: str) -> None:
     thread.comments.append({
         "author": {"login": thread.my_login},
         "body": body,
+        "createdAt": "1970-01-01T00:00:00Z",
     })
 
 
@@ -413,6 +416,7 @@ def _post_thread_replies(
         existing_id = our_last_reply_id(thread)
         body = pr.published_record.stamp_reply(body_fn(entry))
         if _same_standing_reply(thread, body):
+            replied += 1
             continue
         # ceiling: a POST does not return GitHub's new comment id, so
         # our_last_reply_id cannot edit a reply this run just created. A second

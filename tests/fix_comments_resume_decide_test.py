@@ -90,7 +90,7 @@ def test_fresh_deletes(tmp_path):
     assert not ckpt_mod.checkpoint_path(ctx.target_dir).is_file()
 
 
-def test_head_moved_auto_none_require_refusal(tmp_path):
+def test_head_moved_auto_none_require_refusal(tmp_path, capsys):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
     _write(ctx, engine=EngineProgress(head_before=ctx.head_sha, agent_files=["a.py"]))
@@ -100,18 +100,25 @@ def test_head_moved_auto_none_require_refusal(tmp_path):
     auto = _decide(moved, repo, resume.ResumeMode.AUTO)
     assert not auto.resumes
     assert not auto.refused
+    err = capsys.readouterr().err
+    assert "PR #7" in err
+    assert "starting a fresh pass" in err
     req = _decide(moved, repo, resume.ResumeMode.REQUIRE)
     assert req.refused
     assert "HEAD has moved" in req.refusal
+    assert "PR #7" in req.refusal
 
 
 def test_checked_with_one_commit_on_top_resumes(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     first = head(repo)
     ctx = _ctx(repo, tmp_path / "target", head_sha=first)
-    _write(ctx, phase=CheckpointPhase.CHECKED, head_sha=first)
-    (repo / "a.py").write_text("y\n")
+    blob = _agent_blob(repo, "y\n")
     commit_all(repo, "landed")
+    _write(
+        ctx, phase=CheckpointPhase.CHECKED, head_sha=first,
+        engine=EngineProgress(head_before=first, file_shas={"a.py": blob}),
+    )
     live = _ctx(repo, ctx.target_dir)
     decision = _decide(live, repo, resume.ResumeMode.AUTO)
     assert decision.resumes
@@ -122,12 +129,14 @@ def test_landed_at_landed_sha_resumes(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     first = head(repo)
     ctx = _ctx(repo, tmp_path / "target", head_sha=first)
-    (repo / "a.py").write_text("y\n")
+    blob = _agent_blob(repo, "y\n")
     commit_all(repo, "landed")
     landed = head(repo)
     _write(
         ctx, phase=CheckpointPhase.LANDED, head_sha=first,
-        engine=EngineProgress(head_before=first, commit_sha=landed),
+        engine=EngineProgress(
+            head_before=first, file_shas={"a.py": blob}, commit_sha=landed,
+        ),
     )
     live = _ctx(repo, ctx.target_dir, head_sha=landed)
     decision = _decide(live, repo, resume.ResumeMode.AUTO)
@@ -147,6 +156,10 @@ def test_agent_file_edited_refuses_naming_it(tmp_path):
     assert decision.refused
     assert "a.py" in decision.refusal
     assert "--no-resume" in decision.refusal
+    assert "restore them from" not in decision.refusal
+    assert "from the pass backup" not in decision.refusal
+    assert "--finish" in decision.refusal
+    assert "verify/suite" in decision.refusal
 
 
 def test_terminal_phases_ignored(tmp_path):
@@ -230,3 +243,118 @@ def test_unreadable_worktree_refuses(tmp_path):
         decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
     assert decision.refused
     assert "cannot read the worktree" in decision.refusal
+
+
+def _agent_blob(repo, text):
+    (repo / "a.py").write_text(text)
+    return git_out(repo, "hash-object", str(repo / "a.py")).strip()
+
+
+def test_landed_with_committed_agent_blob_resumes(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    first = head(repo)
+    blob = _agent_blob(repo, "agent\n")
+    commit_all(repo, "landed")
+    landed = head(repo)
+    ctx = _ctx(repo, tmp_path / "target", head_sha=landed)
+    _write(
+        ctx, phase=CheckpointPhase.LANDED, head_sha=first,
+        engine=EngineProgress(
+            head_before=first, file_shas={"a.py": blob}, commit_sha=landed,
+        ),
+    )
+    decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    assert decision.resumes
+    assert not decision.refused
+
+
+def test_checked_one_past_with_committed_agent_blob_resumes(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    first = head(repo)
+    blob = _agent_blob(repo, "agent\n")
+    commit_all(repo, "landed")
+    ctx = _ctx(repo, tmp_path / "target", head_sha=first)
+    _write(
+        ctx, phase=CheckpointPhase.CHECKED, head_sha=first,
+        engine=EngineProgress(head_before=first, file_shas={"a.py": blob}),
+    )
+    live = _ctx(repo, ctx.target_dir)
+    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    assert decision.resumes
+    assert not decision.refused
+
+
+def test_replied_with_operator_dirty_file_resumes(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    ctx = _ctx(repo, tmp_path / "target")
+    _write(ctx, phase=CheckpointPhase.REPLIED)
+    (repo / "a.py").write_text("operator\n")
+    decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    assert decision.resumes
+    assert not decision.refused
+
+
+def test_github_head_match_does_not_resume_when_local_head_moved(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    first = head(repo)
+    ctx = _ctx(repo, tmp_path / "target", head_sha=first)
+    _write(ctx, phase=CheckpointPhase.AGENT_DONE, head_sha=first)
+    (repo / "a.py").write_text("y\n")
+    commit_all(repo, "moved")
+    stale = _ctx(repo, ctx.target_dir, head_sha=first)
+    auto = _decide(stale, repo, resume.ResumeMode.AUTO)
+    assert not auto.resumes
+    assert not auto.refused
+
+
+def test_local_head_matches_engine_head_before_despite_github_head(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    first = head(repo)
+    ctx = _ctx(repo, tmp_path / "target", head_sha="deadbeefgithub")
+    _write(
+        ctx, phase=CheckpointPhase.AGENT_DONE, head_sha=first,
+        engine=EngineProgress(head_before=first),
+    )
+    live = _ctx(repo, ctx.target_dir, head_sha="deadbeefgithub")
+    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    assert decision.resumes
+
+
+def test_before_agent_running_keys_on_checkpoint_head_sha(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    first = head(repo)
+    ctx = _ctx(repo, tmp_path / "target", head_sha="deadbeefgithub")
+    _write(ctx, phase=CheckpointPhase.TRIAGED, head_sha=first)
+    live = _ctx(repo, ctx.target_dir, head_sha="deadbeefgithub")
+    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    assert decision.resumes
+
+
+def test_checked_one_past_uses_engine_head_before_not_checkpoint_head(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    first = head(repo)
+    blob = _agent_blob(repo, "agent\n")
+    commit_all(repo, "landed")
+    ctx = _ctx(repo, tmp_path / "target", head_sha="deadbeefgithub")
+    _write(
+        ctx, phase=CheckpointPhase.CHECKED, head_sha="not-this-sha",
+        engine=EngineProgress(head_before=first, file_shas={"a.py": blob}),
+    )
+    live = _ctx(repo, ctx.target_dir, head_sha="deadbeefgithub")
+    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    assert decision.resumes
+
+
+def test_addressed_thread_is_not_new_feedback(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    ctx = _ctx(repo, tmp_path / "target")
+    _write(
+        ctx, phase=CheckpointPhase.TRIAGED,
+        triage=TriageResult(threads=[CommentItem(id="t1")]),
+    )
+    report = PRReport(threads=[
+        ReportThread(id="t1", state=ThreadState.NEW),
+        ReportThread(id="t2", state=ThreadState.ADDRESSED),
+    ])
+    decision = _decide(ctx, repo, resume.ResumeMode.AUTO, report)
+    assert decision.resumes

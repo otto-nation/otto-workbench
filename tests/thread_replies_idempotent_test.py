@@ -1,9 +1,10 @@
-"""A resumed or re-run reply batch must not POST the same thread twice.
+"""A reply batch must not POST the same thread twice in one run.
 
 `_post_thread_replies` is the one writer behind triage replies, the fixed
 replies `record` sends, and the `--finish` drain. Skip when the last comment
-is already ours with the same body; remember a just-posted reply on the
-in-memory thread so a kill mid-batch cannot POST the first threads again.
+is already ours with the same body. The in-memory append on a just-posted
+reply only defends double-posting within one run (same `ReportThread`
+objects); a resume re-fetches threads from GitHub.
 """
 
 import sys
@@ -55,7 +56,8 @@ class TestAReplyBatchIsIdempotent:
         return pr.thread_replies._post_thread_replies(
             entries, threads, _REPO, _PR, body_fn or (lambda e: f"body-{e.id}"))
 
-    def test_a_kill_mid_batch_then_resume_posts_each_thread_once(self):
+    def test_a_kill_mid_batch_then_continue_posts_each_thread_once(self):
+        """In-memory remember, same ReportThread objects, one run."""
         threads = {"t1": _thread("t1", 111), "t2": _thread("t2", 222)}
         entries = [_entry("t1"), _entry("t2")]
         posted = []
@@ -79,7 +81,7 @@ class TestAReplyBatchIsIdempotent:
         edit.assert_not_called()
 
     def test_a_re_run_does_not_resend_an_already_sent_reply(self):
-        """record/closeout calling the driver again on the same threads."""
+        """Same in-memory threads in one run: second call POSTs nothing."""
         threads = {"t1": _thread("t1", 111)}
         posted = []
 
@@ -90,13 +92,17 @@ class TestAReplyBatchIsIdempotent:
         with patch.object(pr.comments, "post_thread_reply", side_effect=post), \
                 patch.object(pr.comments, "patch_thread_reply") as edit:
             assert self._run([_entry("t1")], threads) == 1
-            assert self._run([_entry("t1")], threads) == 0
+            assert self._run([_entry("t1")], threads) == 1
 
         assert posted == [111]
         edit.assert_not_called()
 
     def test_a_refetched_thread_whose_last_comment_is_ours_is_not_reposted(self):
-        """Resume after GitHub already has the reply — no extra API round trip."""
+        """Resume after GitHub already has the reply — no extra API round trip.
+
+        The skip still counts as posted so `replies_posted` does not undercount
+        after a kill between the POST and the REPLIED checkpoint.
+        """
         body = pr.published_record.stamp_reply("body-t1")
         thread = ReportThread(
             id="t1", my_login="me", comments=[
@@ -106,7 +112,7 @@ class TestAReplyBatchIsIdempotent:
         )
         with patch.object(pr.comments, "post_thread_reply") as post, \
                 patch.object(pr.comments, "patch_thread_reply") as edit:
-            assert self._run([_entry("t1")], {"t1": thread}) == 0
+            assert self._run([_entry("t1")], {"t1": thread}) == 1
         post.assert_not_called()
         edit.assert_not_called()
 
@@ -154,6 +160,6 @@ class TestSettleFixedDoesNotResend:
             )
 
         assert first.posted == 1
-        assert second.posted == 0
+        assert second.posted == 1
         assert posted == [111]
         edit.assert_not_called()

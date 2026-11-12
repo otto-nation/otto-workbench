@@ -613,6 +613,16 @@ def _records(adapter: FixAdapter) -> bool:
     return adapter.keeps_checkpoints or adapter.resume is not None
 
 
+def _agent_blobs(
+    adapter: FixAdapter, start: _PassStart, dirty_before: set[str],
+) -> dict[str, str] | None:
+    if not _records(adapter):
+        return None
+    return fix.pass_resume.agent_files(
+        adapter.workdir, dirty_before, base=start.head_before,
+    )
+
+
 def _reached(phase: CheckpointPhase | None, target: CheckpointPhase) -> bool:
     """Whether a resume has already finished *target*. Fresh passes never have."""
     return phase is not None and phase.reached(target)
@@ -836,11 +846,11 @@ def _resume(
         backed_up=tuple(progress.backed_up),
         resume_phase=adapter.resume_phase, prior=progress,
     )
-    # ceiling: KeyboardInterrupt and SystemExit take `_interrupted`; a default
-    # SIGTERM does not, so `timeout`/`kill` of the process leaves no domain
-    # record of leftovers. Upgrade trigger: once a comments --fix pass is
-    # observed dying to SIGTERM with uncommitted edits, catch SIGTERM so
-    # `_interrupted` runs.
+    # ceiling: KeyboardInterrupt/SystemExit take `_interrupted`. SIGKILL,
+    # double-signal (GNU timeout without --foreground), and standalone
+    # `ai/bin/review-threads` (no handler) skip it. Upgrade trigger: once a
+    # comments --fix pass dies to SIGKILL or a double TERM with uncommitted
+    # edits, persist the checkpoint from a signal-safe atexit write.
     try:
         return _run_pass(adapter, start)
     except (KeyboardInterrupt, SystemExit):
@@ -908,10 +918,7 @@ def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
         )
         results.append(batch)
         collected.extend(fix.pass_resume.answered(batch.outcomes))
-        blobs = (
-            fix.pass_resume.agent_files(adapter.workdir, dirty_before)
-            if _records(adapter) else None
-        )
+        blobs = _agent_blobs(adapter, start, dirty_before)
         start = _note(
             adapter, start, CheckpointPhase.AGENT_RUNNING,
             answers=collected, blobs=blobs,
@@ -944,10 +951,7 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
         start = agent_run.start
         settled = settle(adapter, list(agent_run.results), by_id, trail)
         record_unevidenced(settled.outcomes, trail)
-        blobs = (
-            fix.pass_resume.agent_files(adapter.workdir, dirty_before)
-            if _records(adapter) else None
-        )
+        blobs = _agent_blobs(adapter, start, dirty_before)
         prior_now = start.prior or EngineProgress()
         start = _note(
             adapter, start, CheckpointPhase.AGENT_DONE,
@@ -1012,9 +1016,9 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
         fix.regression.check(
             adapter, settled.outcomes, committed,
             _anchors(settled.outcomes, by_id), trail)
-        adapter.after_verify(settled.outcomes)
         if changed is None:
             fix.scope.report_unattributable(adapter.workdir)
+    adapter.after_verify(settled.outcomes)
     adapter.stop = settled.stop
     if not already_landed:
         if (

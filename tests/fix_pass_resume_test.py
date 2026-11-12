@@ -4,6 +4,9 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from conftest import commit_all, git_out  # noqa: E402
+from review_convergence_support import committed_repo, head  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -42,6 +45,36 @@ def test_prior_answers_overlay_only_when_asked(tmp_path):
         owned = fix.pass_resume.prior_answers(progress, tracking, overlay=False)
         assert owned["i0"].verified is False
         assert owned["i0"].reason == ""
+
+
+def test_apply_suite_if_missing_does_not_double_detail():
+    outcomes = [
+        ItemOutcome(
+            id="i0", outcome=FixOutcome.FIXED, verified=False,
+            verify_detail=fix.suite.RED_DETAIL,
+        ),
+    ]
+    result = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.RED, command="true")
+    fix.pass_resume.apply_suite_if_missing(outcomes, result)
+    assert outcomes[0].verify_detail == fix.suite.RED_DETAIL
+
+
+def test_agent_files_compares_against_base_not_live_head(tmp_path):
+    repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
+    first = head(repo)
+    (repo / "a.py").write_text("agent\n")
+    blob = git_out(repo, "hash-object", str(repo / "a.py")).strip()
+    commit_all(repo, "landed")
+    vs_head = fix.pass_resume.agent_files(repo, set())
+    vs_before = fix.pass_resume.agent_files(repo, set(), base=first)
+    assert vs_head == {}
+    assert vs_before == {"a.py": blob}
+    assert fix.pass_resume.edited_since(
+        repo, {"a.py": blob}, base=first,
+    ) == []
+    assert fix.pass_resume.edited_since(
+        repo, {"a.py": blob},
+    ) == ["a.py"]
 
 
 def test_apply_suite_if_missing_does_not_double_detail():

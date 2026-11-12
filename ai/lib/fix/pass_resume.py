@@ -61,6 +61,7 @@ def prior_answers(
 
 def agent_files(
     workdir: Path | str, dirty_before: set[str] | frozenset[str],
+    *, base: str = "HEAD",
 ) -> dict[str, str] | None:
     """Blob sha of each file the agent changed, keyed by path.
 
@@ -69,12 +70,16 @@ def agent_files(
     mapped to its blob sha; a path that vanished is ``DELETED``. An
     unreadable snapshot is ``None`` — unknown is not "nothing changed".
     Files dirty before the pass are omitted: they are not the agent's.
+
+    *base* is the tree the pass started from (``engine.head_before``),
+    never live HEAD: after landing, HEAD already contains the agent's
+    blobs, so comparing to HEAD would report no agent files.
     """
     snap = fix.containment.take(workdir)
     if not snap.ok:
         return None
     after = snap.by_path()
-    head = fix.containment.read_tree(workdir, "HEAD")
+    head = fix.containment.read_tree(workdir, base)
     before = head.by_path() if head.ok else {}
     out: dict[str, str] = {}
     for path in set(before) | set(after):
@@ -92,6 +97,7 @@ def edited_since(
     workdir: Path | str,
     recorded: dict[str, str],
     dirty_before: set[str] | frozenset[str] = frozenset(),
+    *, base: str = "HEAD",
 ) -> list[str] | None:
     """Agent-file paths whose blob sha is not what *recorded* stored.
 
@@ -99,9 +105,10 @@ def edited_since(
     file has appeared. ``None`` when the worktree cannot be read, which a
     later resume decision treats as a hard refuse rather than as "nothing
     changed". Missing vs deleted are distinct, so a file that was deleted
-    and then restored is reported.
+    and then restored is reported. *base* is the same tree ``agent_files``
+    records against — ``engine.head_before``.
     """
-    now = agent_files(workdir, dirty_before)
+    now = agent_files(workdir, dirty_before, base=base)
     if now is None:
         return None
     names = set(recorded) | set(now)

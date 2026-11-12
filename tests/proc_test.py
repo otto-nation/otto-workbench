@@ -832,3 +832,35 @@ def test_proc_imports_nothing_from_ai_lib_but_stdlib_only_core(module, allowed):
         for alias in node.names if alias.name.startswith("core.")
     }
     assert workbench == allowed, workbench
+
+
+class TestStopHandler:
+    def test_two_sigterms_back_to_back_unwind_once(self, monkeypatch):
+        exits = []
+        monkeypatch.setattr(core.proc.os, "_exit", lambda code: exits.append(code))
+        core.proc.install_stop_handler(lambda: None, clock=lambda: 0.0)
+        handler = signal.getsignal(signal.SIGTERM)
+        with pytest.raises(SystemExit) as first:
+            handler(signal.SIGTERM, None)
+        assert first.value.code == 128 + signal.SIGTERM
+        handler(signal.SIGTERM, None)
+        assert exits == []
+
+    def test_a_later_repeat_force_exits(self, monkeypatch):
+        now = [0.0]
+        exits = []
+
+        def boom(code):
+            exits.append(code)
+            raise SystemExit(code)
+
+        monkeypatch.setattr(core.proc.os, "_exit", boom)
+        core.proc.install_stop_handler(lambda: None, clock=lambda: now[0])
+        handler = signal.getsignal(signal.SIGTERM)
+        with pytest.raises(SystemExit):
+            handler(signal.SIGTERM, None)
+        now[0] = 1.5
+        with pytest.raises(SystemExit) as second:
+            handler(signal.SIGTERM, None)
+        assert exits == [128 + signal.SIGTERM]
+        assert second.value.code == 128 + signal.SIGTERM

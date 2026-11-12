@@ -22,8 +22,9 @@ import git.land  # noqa: E402
 from agent.diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
 from fix.containment import FileRecord, Snapshot  # noqa: E402
 from fix.gate import Verdict  # noqa: E402
-from pr.fix import FixOutcome  # noqa: E402
+from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.fix_checkpoint import CheckpointPhase  # noqa: E402
+import pr.triage_round  # noqa: E402
 
 from fix_engine_resume_test import (  # noqa: E402
     _Ckpt, _Killed, _configured, _kill_then_resume,
@@ -282,3 +283,35 @@ def test_resume_reads_persisted_pre_pass_tree(
     assert any(
         call.args[1] == "prepass1" for call in read_tree.call_args_list
     )
+
+
+def test_landed_resume_replaces_publishing_holds_before_record(
+    tmp_path, landed, head, snapshots, publishing_on, monkeypatch,
+):
+    adapter = _configured(_Ckpt(
+        tmp_path, count=1, kill_at=CheckpointPhase.LANDED))
+    verify = MagicMock(return_value={})
+    _resume_after_kill(adapter, snapshots, landed, verify=verify)
+    adapter.resume.answers = [
+        ItemOutcome(id="i0", outcome=FixOutcome.NEEDS_HUMAN),
+    ]
+    adapter.after_verify = (
+        lambda outcomes: pr.triage_round.hold_after_verify(outcomes)
+    )
+    monkeypatch.setattr(core.publishing, "_held", "")
+    enabled_at_record = []
+    original = adapter.record
+
+    def capture(run):
+        enabled_at_record.append(core.publishing.enabled())
+        original(run)
+
+    adapter.record = capture
+    with (
+        patch.object(agent.phases, "phase_chunk_size", return_value=1),
+        patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)),
+        patch.object(fix.suite, "run", return_value=fix.suite.SuiteResult(
+            status=fix.suite.SuiteStatus.GREEN, command="true")),
+    ):
+        fix.engine.run(adapter, verify=verify)
+    assert enabled_at_record == [False]

@@ -99,6 +99,14 @@ def _by_id(summary) -> dict[str, ItemOutcome]:
 
 
 class TestSchema:
+    def test_start_records_supplied_head_sha_not_ctx(self, tmp_path):
+        ctx = make_ctx(target_dir=tmp_path, head_sha="githubsha")
+        ckpt = ckpt_mod.start(ctx, head_sha="localsha")
+        assert ckpt.head_sha == "localsha"
+        loaded = ckpt_mod.load(tmp_path)
+        assert loaded is not None
+        assert loaded.head_sha == "localsha"
+
     def test_round_trip(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
         original = _filled(
@@ -343,7 +351,8 @@ class TestSettleAndFinishFromPartial:
         err = capsys.readouterr().err
         assert "agent_running" in err
         assert "--no-resume" in err
-        assert "--resume" in err
+        assert "to continue one" not in err
+        assert "instead of" not in err
 
     def test_ticked_answer_with_no_checkpointed_outcome_from_tracking(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)

@@ -158,7 +158,7 @@ class CommentFixAdapter(fix.engine.FixAdapter):
                 by_id[tick.id] = tick
             answers = list(by_id.values()) + [o for o in answers if not o.id]
         blobs = fix.pass_resume.agent_files(
-            self.workdir, set(engine.dirty_before),
+            self.workdir, set(engine.dirty_before), base=head_before,
         )
         if blobs is not None:
             files, shas = sorted(blobs), dict(blobs)
@@ -594,9 +594,11 @@ def run_pass(
     )
 
     if resume is None:
+        local_head = git.client.head_sha(cwd=wt_path)
         read_sha = git.client.head_sha(short=True, cwd=wt_path)
         ckpt = pr.fix_checkpoint.start(
             ctx,
+            head_sha=local_head,
             read_sha=read_sha,
             triage=triage_result,
             seen_issue_comments=pr.owed_feedback.seen_record(report.issue_comments),

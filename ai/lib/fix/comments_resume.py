@@ -70,10 +70,11 @@ def decide(
 
     Order is the rule. ``FRESH`` discards and never resumes. A missing,
     terminal, or (repo, PR, branch) mismatch is a REQUIRE refusal and an
-    AUTO no-op. HEAD must still be the recorded key, with the CHECKED and
-    LANDED exceptions below. New feedback before ``AGENT_RUNNING`` starts
-    AUTO fresh and leaves REQUIRE on the recorded pass. Operator edits to
-    the agent's files always refuse.
+    AUTO no-op. Local HEAD must still be the recorded key, with the CHECKED
+    and LANDED exceptions below — never ``ctx.head_sha``. New feedback
+    before ``AGENT_RUNNING`` starts AUTO fresh and leaves REQUIRE on the
+    recorded pass. Operator edits to the agent's files refuse once the
+    agent has run; before that, ``edited_since`` is skipped.
     """
     if mode is ResumeMode.FRESH:
         pr.fix_checkpoint.discard(ctx.target_dir)
@@ -86,7 +87,7 @@ def decide(
         return ResumeDecision()
     assert ckpt is not None
 
-    if not _head_matches(ckpt, ctx, wt_path):
+    if not _head_matches(ckpt, wt_path):
         if mode is ResumeMode.REQUIRE:
             return ResumeDecision(
                 refusal=(
@@ -94,7 +95,10 @@ def decide(
                     f"pass for PR #{ctx.pr_number}"
                 ),
             )
-        core.log.warn("HEAD moved")
+        core.log.warn(
+            f"HEAD has moved since the interrupted `pr comments --fix` pass "
+            f"for PR #{ctx.pr_number}; starting a fresh pass"
+        )
         files = ckpt.engine.agent_files
         if files:
             core.log.warn(
@@ -115,30 +119,30 @@ def decide(
             return ResumeDecision()
         # REQUIRE continues on the recorded pass; new feedback is the next round.
 
-    edited = fix.pass_resume.edited_since(
-        wt_path, ckpt.engine.file_shas, set(ckpt.engine.dirty_before),
-    )
-    if edited is None:
-        return ResumeDecision(
-            refusal=(
-                "cannot read the worktree to resume the interrupted "
-                f"`pr comments --fix` pass for PR #{ctx.pr_number}"
-            ),
+    if ckpt.phase.reached(CheckpointPhase.AGENT_RUNNING):
+        edited = fix.pass_resume.edited_since(
+            wt_path, ckpt.engine.file_shas, set(ckpt.engine.dirty_before),
+            base=ckpt.engine.head_before,
         )
-    if edited:
-        backup = ckpt.engine.backup_dir
-        restore = (
-            f"restore them from {backup}" if backup
-            else "restore them from the pass backup"
-        )
-        return ResumeDecision(
-            refusal=(
-                "Agent files edited since the interrupted pass: "
-                + ", ".join(edited)
-                + f". {restore.capitalize()} or re-run with "
-                "`pr comments --fix --no-resume`."
-            ),
-        )
+        if edited is None:
+            return ResumeDecision(
+                refusal=(
+                    "cannot read the worktree to resume the interrupted "
+                    f"`pr comments --fix` pass for PR #{ctx.pr_number}"
+                ),
+            )
+        if edited:
+            return ResumeDecision(
+                refusal=(
+                    "Agent files edited since the interrupted pass: "
+                    + ", ".join(edited)
+                    + ". Revert your edits to those paths (`git diff <path>`), "
+                    "re-run with `pr comments --fix --no-resume` to start over, "
+                    "or `pr comments --finish`/`--settle` to adopt the partial "
+                    "snapshot. A hard kill can also leave verify/suite writes "
+                    "that containment did not restore."
+                ),
+            )
 
     core.log.info(
         f"Resuming the interrupted fix pass after {ckpt.phase.value}"
@@ -167,32 +171,36 @@ def _no_pass(ctx: pr.context.ResolvedContext) -> str:
 
 def _head_matches(
     ckpt: CommentsFixCheckpoint,
-    ctx: pr.context.ResolvedContext,
     wt_path: Path,
 ) -> bool:
-    """Whether live HEAD is still the resume key.
+    """Whether live local HEAD is still the resume key.
 
-    Matches when the context's HEAD equals the recorded `head_sha`, or the
-    resolved live SHA does. ``LANDED`` also matches when live is the landed
-    commit. ``CHECKED`` matches when live is the one commit on top of
-    `head_sha` — landing committed, then the process died before LANDED.
+    Never `ctx.head_sha`: that is GitHub's head under ``--pr``. Before
+    ``AGENT_RUNNING``, the key is ``checkpoint.head_sha`` (local HEAD at
+    start). From ``AGENT_RUNNING`` on it is ``engine.head_before``.
+    ``LANDED`` also matches when live is the landed commit. ``CHECKED``
+    matches when live is the one commit on top of ``engine.head_before``.
     """
-    if ctx.head_sha and ctx.head_sha == ckpt.head_sha:
-        return True
     live = git.client.head_sha(cwd=wt_path)
     live_full = _rev(wt_path, live)
-    if live_full and live_full == _rev(wt_path, ckpt.head_sha):
-        return True
-    if ckpt.phase is CheckpointPhase.LANDED:
-        landed = ckpt.engine.commit_sha
-        if landed and live_full and live_full == _rev(wt_path, landed):
+    if not live_full:
+        return False
+    if ckpt.phase.reached(CheckpointPhase.AGENT_RUNNING):
+        before = ckpt.engine.head_before
+        if live_full == _rev(wt_path, before):
             return True
-    if (
-        ckpt.phase is CheckpointPhase.CHECKED
-        and fix.pass_resume.head_is_one_past(wt_path, ckpt.head_sha)
-    ):
-        return True
-    return False
+        if ckpt.phase is CheckpointPhase.LANDED:
+            landed = ckpt.engine.commit_sha
+            if landed and live_full == _rev(wt_path, landed):
+                return True
+        if (
+            ckpt.phase is CheckpointPhase.CHECKED
+            and fix.pass_resume.head_is_one_past(wt_path, before)
+        ):
+            return True
+        return False
+    recorded = _rev(wt_path, ckpt.head_sha)
+    return bool(recorded) and live_full == recorded
 
 
 def _rev(wt_path: Path, sha: str) -> str:
@@ -206,7 +214,9 @@ def _new_feedback(ckpt: CommentsFixCheckpoint, report: PRReport) -> bool:
     triaged_ids = {t.id for t in ckpt.triage.threads if t.id}
     triaged_ids.update(ckpt.triage.settled)
     for thread in report.threads:
-        if thread.is_resolved or thread.state is ThreadState.RESOLVED:
+        if thread.is_resolved or thread.state in (
+            ThreadState.RESOLVED, ThreadState.ADDRESSED,
+        ):
             continue
         if thread.id and thread.id not in triaged_ids:
             return True

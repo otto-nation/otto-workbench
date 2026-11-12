@@ -834,8 +834,11 @@ Both flags need `--fix`.
 New review feedback before `agent_running` starts a fresh AUTO pass; from
 `agent_running` on, the recorded pass resumes and the new feedback is the next
 round. Agent files edited since the kill refuse the resume and name the paths
-plus `--no-resume` / restore-from-backup. Adopting a partial snapshot ends
-resumability.
+plus `--no-resume` to start over, `pr comments --finish`/`--settle` to adopt
+the partial snapshot, or revert your edits (`git diff <path>`). A hard kill
+can also leave verify/suite writes that containment did not restore. Adopting
+a partial snapshot ends resumability. `engine.backup_dir` holds the operator's
+pre-pass dirty files, never the agent's.
 
 When no checkpoint exists (or `--no-resume` discarded it), the older leftover
 adoption still applies: a comments `--fix` stopped mid-agent records leftovers

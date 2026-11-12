@@ -190,6 +190,7 @@ def _job_files_relative_to_regen(job: RegenJob, *, cwd: str) -> set[str]:
         try:
             relative.add(absolute.resolve().relative_to(regen).as_posix())
         except ValueError:
+            core.log.warn(f"{f} is outside {job.regen_dir}; cannot match it to unmerged paths")
             relative.add(Path(f).as_posix())
     return relative
 

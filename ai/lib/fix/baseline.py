@@ -61,9 +61,20 @@ def label_preexisting(
     Unchanged unless *result* is red, named its failures and there is a *ref*
     to compare against: an unparsed failure cannot be matched, and staying red
     is the safe answer. A baseline that could not run or did not reach a
-    verdict leaves it unchanged for the same reason.
+    verdict leaves it unchanged for the same reason. A non-positive
+    *timeout_s* skips the re-run the same way — the checks already used the
+    shared ``fix.verify_timeout`` budget.
     """
     if not result.demotes or not result.failures or not ref:
+        return result
+    if timeout_s <= 0:
+        core.log.warn(
+            "Checks used all of fix.verify_timeout — base re-run skipped; "
+            "verdict stays red")
+        tinfo(trail, "fix_baseline_skipped",
+              "checks used all of fix.verify_timeout; base re-run skipped; "
+              "verdict stays red",
+              data={"timeout_s": timeout_s, "status": str(result.status)})
         return result
     baseline = _run_at(workdir, ref, command, timeout_s, paths_file, progress_s)
     if baseline is None or not baseline.ran:

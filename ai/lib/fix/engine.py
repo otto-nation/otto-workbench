@@ -41,6 +41,7 @@ be a fix pass asserting something outward nobody approved.
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 import tempfile
 from abc import ABC, abstractmethod
@@ -504,8 +505,9 @@ def _run_checks(
         result = fix.suite.run(adapter.workdir, command, timeout_s, trail,
                                base=base, paths_file=str(listed),
                                progress_s=interval)
+        remaining = timeout_s - math.ceil(result.duration_s)
         return fix.baseline.label_preexisting(
-            adapter.workdir, result, command, timeout_s, trail,
+            adapter.workdir, result, command, remaining, trail,
             ref=baseline_ref, paths_file=str(listed), progress_s=interval)
 
 

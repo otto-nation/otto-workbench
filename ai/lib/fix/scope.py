@@ -250,6 +250,17 @@ def commit_allowed(
     return sources | _colocated_tests(sources)
 
 
+def is_test_file(path: str) -> bool:
+    """Whether *path* is itself a test or support module, by directory or name.
+
+    The question about a file on its own, where `anchor_or_test` asks it
+    relative to a source. `conftest.py` counts: it is test scaffolding with no
+    subject in its name.
+    """
+    p = Path(path)
+    return _in_test_dir(p) or bool(_candidate_subject(p)) or p.name == "conftest.py"
+
+
 def anchor_or_test(path: str, anchors: set[str] | frozenset[str]) -> bool:
     """Whether *path* is one of *anchors*, or a test or support module for one.
 

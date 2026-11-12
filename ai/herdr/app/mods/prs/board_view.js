@@ -399,8 +399,16 @@ export default class PrsBoard extends View {
       .child(text("meta", friendlyError(first.error, first.on, scopeOf()), theme().muted).min_w(0).truncate());
   }
 
+  statusRow(load, err) {
+    if (!load.shown && !err) return null;
+    return v_flex().gap(SP.sm)
+      .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)))
+      .when(Boolean(err), (e) => e.child(err));
+  }
+
   compactHeader(state, tab, load) {
     const err = this.errorStatus(state);
+    const status = this.statusRow(load, err);
     return pinned(v_flex().px(SP.md).py(SP.sm).gap(SP.sm)
       .child(h_flex().items_center()
         .child(this.scopeToggle())
@@ -414,8 +422,7 @@ export default class PrsBoard extends View {
         .child(h_flex().gap(SP.md).items_center()
           .when(tab === "mine", (e) => e.child(this.batchControl()))
           .when(this.inPanel, (e) => e.child(this.fullscreenButton()))))
-      .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)))
-      .when(Boolean(err), (e) => e.child(err)));
+      .when(Boolean(status), (e) => e.child(status)));
   }
 
   fullscreenButton() {
@@ -479,24 +486,26 @@ export default class PrsBoard extends View {
   header(ctx, state, tab, t, load) {
     const loading = state.loading && !state.repos;
     const err = this.errorStatus(state);
+    const status = this.statusRow(load, err);
     const all = scopeOf() === "all";
     const title = all ? "All spaces" : (loading ? "Loading…" : (state.slug ?? "No repo"));
     const note = all && !load.shown ? (loading ? "Loading…" : `${state.repos} repos`) : null;
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
-    return pinned(h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).px(SP.lg).gap(SP.md).items_center()
-      .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
-        .child(type(div().min_w(0).truncate(), "title").child(title))
-        .when(Boolean(note), (e) => e.child(text("meta", note, t.muted).flex_none()))
-        .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)))
-        .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on))))
-        .when(Boolean(err), (e) => e.child(err)))
-      .when(tab === "mine", (e) => e.child(this.batchControl()))
-      .child(this.scopeToggle())
-      .child(segmented([
-        segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
-        segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
-      ]))
-      .when(this.inPanel, (e) => e.child(this.fullscreenButton()))
-      .child(this.refreshButton()));
+    // Load line and error sit on their own row so they cannot shrink the title into the controls.
+    return pinned(v_flex().id("prs-header").px(SP.lg).py(SP.sm).gap(SP.sm)
+      .child(h_flex().min_h(LAYOUT.headerH).flex_wrap().gap(SP.md).items_center()
+        .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
+          .child(type(div().min_w(0).truncate(), "title").child(title))
+          .when(Boolean(note), (e) => e.child(text("meta", note, t.muted).flex_none()))
+          .when(!all && ctx?.on != null, (e) => e.child(tag(String(ctx.on)))))
+        .when(tab === "mine", (e) => e.child(this.batchControl()))
+        .child(this.scopeToggle())
+        .child(segmented([
+          segment("tab-team", "Team", tab === "team", () => setShared("prs.tab", "team")),
+          segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
+        ]))
+        .when(this.inPanel, (e) => e.child(this.fullscreenButton()))
+        .child(this.refreshButton()))
+      .when(Boolean(status), (e) => e.child(status)));
   }
 }

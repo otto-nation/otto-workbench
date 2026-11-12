@@ -48,6 +48,13 @@ def test_the_flag_is_global_and_repeatable():
     assert args.phase_model == ["scout=a", "group=b"]
 
 
+def test_a_subcommand_phase_flag_is_not_consumed_as_phase_model():
+    args, rest = cli.pr.build_global_parser().parse_known_args(
+        ["board", "--phase", "listing"])
+    assert args.phase_model == []
+    assert rest == ["board", "--phase", "listing"]
+
+
 def test_a_refused_override_exits_2_before_any_command_runs(capsys):
     rc = cli.pr.main(["--phase-model", "group=claude-haiku-4-5", "status"], bin_dir=Path("."))
     assert rc == 2

@@ -243,7 +243,8 @@ def build_global_parser() -> argparse.ArgumentParser:
     from it, so the flags documented as global are the flags the first pass
     consumes — `--worktree` included, which no hand-written usage ever named.
     """
-    parser = argparse.ArgumentParser(prog=SCRIPT, add_help=False)
+    # The global parser scans the whole argv, so an abbreviation would swallow a subcommand's own flag, e.g. `board --phase`.
+    parser = argparse.ArgumentParser(prog=SCRIPT, add_help=False, allow_abbrev=False)
     parser.add_argument("--repo-dir", "--worktree", dest="repo_dir", metavar="path",
                         help="Git worktree to act on; detected from the current "
                              "directory when omitted")

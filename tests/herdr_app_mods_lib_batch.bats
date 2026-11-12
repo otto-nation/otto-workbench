@@ -130,6 +130,8 @@ _parse() {
   [ "$output" = '["tail","-n","200","/tmp/x.log"]' ]
   _js 'm.logTailArgv("/tmp/x.log", 50)'
   [ "$output" = '["tail","-n","50","/tmp/x.log"]' ]
+  _js 'm.reportArgv("run-1")'
+  [ "$output" = '["--schema-version","2","batch","report","--format","json","--offline","run-1"]' ]
 }
 
 @test "parseRunList ok plus error entry plus bad doc" {
@@ -154,6 +156,12 @@ _parse() {
   _parse parseRunDoc '{"run":{"id":"r","items":[{"key":"o/r#1","status":"mystery"}]}}'
   [ "$status" -eq 0 ]
   jq -e '.ok == true and .items[0].status == "mystery"' <<<"$output"
+}
+
+@test "findingRec copies jobs from data and defaults to empty" {
+  _parse parseRunDoc '{"run":{"id":"r","items":[{"key":"o/r#1","status":"needs_session","findings":[{"reason":"ci_failing","data":{"jobs":["a","b"]}},{"reason":"x"},{"reason":"y","data":{"jobs":"no"}}]}]}}'
+  [ "$status" -eq 0 ]
+  jq -e '.ok == true and .items[0].findings[0].jobs == ["a","b"] and .items[0].findings[1].jobs == [] and .items[0].findings[2].jobs == []' <<<"$output"
 }
 
 @test "parseRunDoc missing steps and findings become empty" {
@@ -238,6 +246,44 @@ _parse() {
   [ "$output" = '"o/r#1905"' ]
   _js 'm.shortKey(null, ["o/r"])'
   [ "$output" = '""' ]
+}
+
+_sessions() {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/batch.js');
+    const r = m.parseSessions(JSON.parse(process.argv[1]));
+    const out = r.ok ? {ok:true, sessions: Object.fromEntries(r.sessions)} : r;
+    process.stdout.write(JSON.stringify(out));
+  " -- "$1"
+}
+
+@test "parseSessions maps lowercased pr keys and command fields" {
+  _sessions '{"sessions":[{"pr":"Owner/Name#1","worktree":"/wt","notes":["push first"],"commands":[{"argv":["pr","ci","--fix"],"why":"fix CI","action":"ci"},{"argv":["git","push"],"why":"publish","action":"push","push":true},{"argv":["pr","comments","--finish","--post"],"why":"close","action":"closeout","files_issue":true}]},{"pr":"owner/name#1","worktree":"/later","notes":[],"commands":[]},null,{"worktree":"/x"}]}'
+  [ "$status" -eq 0 ]
+  jq -e '.ok == true and (.sessions | keys) == ["owner/name#1"] and .sessions["owner/name#1"].worktree == "/later" and .sessions["owner/name#1"].notes == [] and .sessions["owner/name#1"].commands == []' <<<"$output"
+  _sessions '{"sessions":[{"pr":"o/r#2","worktree":"/wt","notes":["n"],"commands":[{"argv":["pr","ci","--fix"],"why":"fix CI","action":"ci"},{"argv":["git","push"],"why":"publish","action":"push","push":true},{"argv":["pr","comments","--finish","--post"],"why":"close","action":"closeout","files_issue":true}]}]}'
+  jq -e '.ok == true and .sessions["o/r#2"].worktree == "/wt" and .sessions["o/r#2"].notes == ["n"] and .sessions["o/r#2"].commands[0] == {"argv":["pr","ci","--fix"],"why":"fix CI","action":"ci","push":false,"filesIssue":false} and .sessions["o/r#2"].commands[1].push == true and .sessions["o/r#2"].commands[1].filesIssue == false and .sessions["o/r#2"].commands[2].push == false and .sessions["o/r#2"].commands[2].filesIssue == true' <<<"$output"
+}
+
+@test "parseSessions bad doc is bad-json" {
+  _sessions 'null'
+  jq -e '.ok == false and .error.kind == "bad-json"' <<<"$output"
+  _sessions '[]'
+  jq -e '.ok == false and .error.kind == "bad-json"' <<<"$output"
+  _sessions '{"sessions":null}'
+  jq -e '.ok == false and .error.kind == "bad-json"' <<<"$output"
+}
+
+@test "actionLabel maps ids, reuses STEP_LABEL, falls back to Run" {
+  _js '[m.actionLabel({action:"ci"}),m.actionLabel({action:"comments"}),m.actionLabel({action:"rebase"}),m.actionLabel({action:"rebase_generated"}),m.actionLabel({action:"review"}),m.actionLabel({action:"closeout"}),m.actionLabel({action:"push"}),m.actionLabel({action:"switch_branch"}),m.actionLabel({action:"undo_rebase"}),m.actionLabel({action:"file_threads_issue"}),m.actionLabel({action:"file_review_issue"}),m.actionLabel({action:"mystery"}),m.actionLabel({}),m.ACTION_LABEL.ci===m.STEP_LABEL.ci,m.ACTION_LABEL.comments===m.STEP_LABEL.comments,Object.isFrozen(m.ACTION_LABEL)]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["Fix CI","Answer comments","Resolve conflicts","Rebuild generated files","Fix review findings","Close out comments","Push","Switch branch","Undo rebase","File issue for threads","File issues for findings","Run","Run",true,true,true]' ]
+}
+
+@test "writesGitHub is true for push or --post" {
+  _js '[m.writesGitHub({push:true,argv:["git","push"]}),m.writesGitHub({push:false,argv:["pr","comments","--finish","--post"]}),m.writesGitHub({argv:["pr","ci","--fix"]}),m.writesGitHub({push:false,argv:["pr","review"]})]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,true,false,false]' ]
 }
 
 @test "durationText formats elapsed and empty cases" {

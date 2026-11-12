@@ -78,6 +78,10 @@ function matchRepo(labels, repo) {
   return parsed;
 }
 
+// withRunning treats every busyMap entry as a live review. Session commands
+// share otto.pr but must not flip the PR into "Review running".
+const NOT_REVIEWING = new Set(['batch-fix']);
+
 export function busyMap(entries, repo) {
   const out = new Map();
   for (const e of entries) {
@@ -85,7 +89,9 @@ export function busyMap(entries, repo) {
     // ceiling: slug-only match, add host to the key if one machine reviews the same slug on two GitHub hosts
     const parsed = matchRepo(e.labels, repo);
     if (!parsed) continue;
-    out.set(parsed.number, { terminal: e.id, action: actionOf(e.labels) });
+    const action = actionOf(e.labels);
+    if (NOT_REVIEWING.has(action)) continue;
+    out.set(parsed.number, { terminal: e.id, action });
   }
   return out;
 }

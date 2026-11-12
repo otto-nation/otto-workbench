@@ -20,16 +20,18 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402,F401
-from conftest import make_ctx
+from conftest import commit_all, git_out, init_repo, make_ctx
 from gh.pr_data import PRData
 import agent.backend
 import agent.invoke
 import fix.comments
 import cli.review_threads
 import pr.comments
+import pr.fix_checkpoint as ckpt_mod
 import pr.state
 import pr.thread_context
-from pr.thread_models import CommentFixResult
+from pr.fix_checkpoint import CheckpointPhase, EngineProgress
+from pr.thread_models import CommentFixResult, TriageResult
 import review.comment_threads
 
 REVIEW_ID = 5506752759
@@ -181,3 +183,74 @@ class TestStatusNamesOwedReviewBodies:
         _run(tmp_path, ["--triage"], _decomposed(), reviews=[REVIEW_NODE])
         _run(tmp_path, [], _decomposed(), reviews=[REVIEW_NODE])
         assert pr.state.load_state(_ctx(tmp_path).target_dir).comments.owed_review_bodies == 0
+
+
+def _git_ctx(tmp_path):
+    work = init_repo(tmp_path / "wt")
+    (work / "f.txt").write_text("x\n")
+    commit_all(work, "base")
+    sha = git_out(work, "rev-parse", "HEAD").strip()
+    return make_ctx(
+        repo="owner/repo", pr_number=34, branch="isaac/deps/pi_1_1_0",
+        worktree_root=work, head_sha=sha, target_dir=tmp_path / "target",
+    )
+
+
+def _resume_fix(tmp_path, ctx, ckpt, *, answer=None):
+    ckpt_mod.save(ctx.target_dir, ckpt)
+    pr_data = PRData(
+        viewer_login="isaacg", head_sha=ctx.head_sha,
+        head_ref=ctx.branch, base_ref="main",
+        review_threads=[], reviews=[], threads_complete=True,
+    )
+    prompt = MagicMock(return_value=answer or _decomposed())
+    captured = {}
+
+    def fake_run_pass(*args, **kwargs):
+        captured["resume"] = kwargs.get("resume")
+        captured["args"] = args
+        return CommentFixResult()
+
+    args = cli.review_threads.build_parser().parse_args(["--fix"])
+    args.triage = True
+    with patch.object(review.comment_threads, "fetch_pr_data", return_value=pr_data), \
+         patch.object(pr.comments, "fetch_review_body_comments",
+                      side_effect=lambda *a, **k: [dict(REVIEW_BODY)]), \
+         patch.object(pr.comments, "fetch_issue_comments", return_value=[]), \
+         patch.object(pr.comments, "fetch_reviewer_verdicts", return_value=[]), \
+         patch.object(pr.thread_context, "branch_commit_log", return_value=""), \
+         patch.object(agent.invoke, "run_prompt", prompt), \
+         patch.object(fix.comments, "run_pass", side_effect=fake_run_pass):
+        code = review.comment_threads.run_threads(MagicMock(), args, ctx)
+    st = pr.state.load_state(ctx.target_dir)
+    seen = st.comments.seen_review_body_comments if st else {}
+    return code, prompt, seen, captured
+
+
+class TestResumedFixKeepsTheCheckpointSeenRecord:
+    def test_resumed_fix_does_not_call_the_triage_prompt(self, tmp_path):
+        ctx = _git_ctx(tmp_path)
+        ckpt = ckpt_mod.CommentsFixCheckpoint(
+            repo=ctx.repo, pr=ctx.pr_number or 0, branch=ctx.branch,
+            head_sha=ctx.head_sha, phase=CheckpointPhase.AGENT_DONE,
+            engine=EngineProgress(head_before=ctx.head_sha),
+            triage=TriageResult(),
+        )
+        code, prompt, _seen, captured = _resume_fix(tmp_path, ctx, ckpt)
+        assert code == 0
+        assert not prompt.called
+        assert captured["resume"] is not None
+        assert captured["resume"].phase is CheckpointPhase.AGENT_DONE
+
+    def test_a_comment_posted_after_the_checkpoint_stays_unseen(self, tmp_path):
+        ctx = _git_ctx(tmp_path)
+        ckpt = ckpt_mod.CommentsFixCheckpoint(
+            repo=ctx.repo, pr=ctx.pr_number or 0, branch=ctx.branch,
+            head_sha=ctx.head_sha, phase=CheckpointPhase.AGENT_DONE,
+            engine=EngineProgress(head_before=ctx.head_sha),
+            triage=TriageResult(),
+            seen_review_body_comments={},
+        )
+        code, _prompt, seen, _captured = _resume_fix(tmp_path, ctx, ckpt)
+        assert code == 0
+        assert REVIEW_ID not in seen

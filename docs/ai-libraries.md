@@ -703,6 +703,15 @@ outcomes. `run_pass` calls `record` itself in that case rather than keeping a
 second copy of the tail, which is what the two copies that used to exist here
 kept drifting apart over.
 
+### fix/comments_resume.py
+
+Whether an interrupted ``pr comments --fix`` pass should be resumed.
+
+The checkpoint is the in-flight record ``pr.fix_checkpoint`` writes. This
+module is the decision: auto-detect, require, or discard, keyed on the PR,
+the branch, HEAD, and the agent's file blobs. Nothing here writes a
+checkpoint; ``fix.comments.run_pass`` and the adapter's ``advance`` do that.
+
 ### fix/containment.py
 
 Content snapshots that restore a phase's writes in a named worktree.
@@ -9253,7 +9262,7 @@ than exiting from under this module. A contended run lock exits 75
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
-  review-threads --fix
+  review-threads --fix [--resume | --no-resume]
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish [--no-push-verify]
   review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]

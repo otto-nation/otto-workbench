@@ -27,7 +27,7 @@ than exiting from under this module. A contended run lock exits 75
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
-  review-threads --fix
+  review-threads --fix [--resume | --no-resume]
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish [--no-push-verify]
   review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
@@ -80,6 +80,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fix", action="store_true",
                         help="Phase: triage threads and apply mechanical fixes via "
                              "Claude agent")
+    resume = parser.add_mutually_exclusive_group()
+    resume.add_argument("--resume", action="store_true",
+                        help="Require an interrupted --fix pass to resume "
+                             "(exit 1 if none). Needs --fix")
+    resume.add_argument("--no-resume", action="store_true",
+                        help="Discard an interrupted --fix pass and start over. "
+                             "Needs --fix")
     parser.add_argument("--no-verify", action="store_true",
                         help="Skip the verify gate after --fix. The gate runs the "
                              "project's own checks against each claimed fix and "
@@ -174,6 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+
+    if (args.resume or args.no_resume) and not args.fix:
+        core.log.error("--resume and --no-resume require --fix")
+        return 1
 
     # Before --fix widens itself into --triage, so the conflict named is the one
     # that was typed.

@@ -116,6 +116,12 @@ Or when only a PR number is known (CWD must be inside the repo):
 pr comments --fix --pr <NUMBER>
 ```
 
+An interrupted `--fix` is resumed by re-running `pr comments --fix` on the same
+HEAD. Checkpoint resume skips finished phases. `--no-resume` discards the
+checkpoint and starts over. `--resume` requires a resumable pass and exits 1
+when there is none. When no checkpoint exists, leftover-adoption (below) still
+applies.
+
 Run synchronously — do **not** background this command.
 
 ### The verify gate
@@ -225,11 +231,12 @@ uncommitted, or `git commit` exiting with no output). Do not run
 until a commit the remote holds exists. Inspect `git status`, repair whatever
 the hook refused, restage, and commit. An empty SHA is not a hand-landing.
 
-A comments pass stopped mid-agent records leftovers. The next comments `--fix`
-at the same HEAD resumes matching blobs so they can be committed. Files that
-were already dirty when the pass started are never committed; commit or stash
-those, or re-run so the interrupted edits resume. An empty round will not
-commit leftovers.
+When no checkpoint exists, a comments pass stopped mid-agent records leftovers.
+The next comments `--fix` at the same HEAD resumes matching blobs so they can
+be committed. A checkpoint resume skips this adoption and clears the leftover
+record. Files that were already dirty when the pass started are never committed;
+commit or stash those, or re-run so the interrupted edits resume. An empty round
+will not commit leftovers.
 
 A dirty or unpushed worktree demotes `already_addressed` and `invalid` triage
 verdicts to `needs_human` until the tree is on the remote. Push first, then
@@ -507,9 +514,11 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
   The fix pass does not draft the tracking issue or the deferral replies — only
   the finish phase renders those, so `--finish --post --track` publishes text
   nobody read unless the drafted `--finish --track` ran first
-- Never re-run `--fix` to resume a pass whose drafts were already produced.
-  The queue is intact, and regenerating it means `--post` publishes text they
-  never saw — the same violation as posting before approval
+- Never re-run `--fix` after a **completed** pass whose drafts were already
+  produced. The queue is intact, and regenerating it means `--post` publishes
+  text they never saw — the same violation as posting before approval. An
+  interrupted `--fix` is different: re-run `pr comments --fix` on the same HEAD
+  to resume it; `--no-resume` starts over
 - Never apply fixes without user confirmation for `needs_human` items
 - Never hand-edit the thread ledger (`pr-comments/state.json`, under the run's
   target directory in the workbench state root) to mark a thread settled.

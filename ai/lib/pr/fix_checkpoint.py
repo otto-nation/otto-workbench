@@ -133,6 +133,9 @@ class CommentsFixCheckpoint:
     branch: str = ""
     updated_at: str = ""
     head_sha: str = ""
+    # The abbreviated tree entries were stamped against. `head_sha` is the
+    # full commit; permalinks and `read_sha` on entries use this short form.
+    read_sha: str = ""
     triage: TriageResult = field(default_factory=TriageResult)
     outcomes: list[ItemOutcome] = field(default_factory=list)
     replies: ReplyOutcome = field(default_factory=ReplyOutcome)
@@ -204,8 +207,21 @@ def discard(target_dir: Path) -> None:
     checkpoint_path(target_dir).unlink(missing_ok=True)
 
 
-def start(ctx: pr.context.ResolvedContext) -> CommentsFixCheckpoint:
-    """A fresh TRIAGED checkpoint for *ctx*, written to disk."""
+def start(
+    ctx: pr.context.ResolvedContext,
+    *,
+    read_sha: str = "",
+    triage: TriageResult | None = None,
+    seen_issue_comments: dict[int, str] | None = None,
+    seen_review_body_comments: dict[int, str] | None = None,
+) -> CommentsFixCheckpoint:
+    """A fresh TRIAGED checkpoint for *ctx*, written to disk.
+
+    `head_sha` is the full commit from *ctx*. `read_sha` is the abbreviated
+    form entries are stamped with. Triage and the seen records are the round
+    this pass started from, so a later resume can skip re-triage and leave
+    comments that arrived afterwards unseen.
+    """
     ckpt = CommentsFixCheckpoint(
         version=CHECKPOINT_VERSION,
         phase=CheckpointPhase.TRIAGED,
@@ -213,6 +229,10 @@ def start(ctx: pr.context.ResolvedContext) -> CommentsFixCheckpoint:
         pr=ctx.pr_number or 0,
         branch=ctx.branch,
         head_sha=ctx.head_sha,
+        read_sha=read_sha,
+        triage=triage if triage is not None else TriageResult(),
+        seen_issue_comments=dict(seen_issue_comments or {}),
+        seen_review_body_comments=dict(seen_review_body_comments or {}),
     )
     save(ctx.target_dir, ckpt)
     return ckpt

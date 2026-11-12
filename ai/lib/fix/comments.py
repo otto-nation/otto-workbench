@@ -37,8 +37,10 @@ import fix.comment_checklist
 import fix.comment_replies
 import fix.engine
 import fix.gate
+import fix.pass_resume
 import fix.resume
 import fix.suite
+import fix.tracking
 import fix.types
 import fix.verify
 import git.client
@@ -48,12 +50,15 @@ import pr.attribution
 import pr.comments
 import pr.comments_fix
 import pr.context
+import pr.fix_checkpoint
 import pr.fix_state
+import pr.owed_feedback
 import pr.state
 import pr.summary_model
 import pr.summary_publish
 import pr.triage_round
 from pr.fix import FixOutcome, ItemOutcome
+from pr.fix_checkpoint import CheckpointPhase, CommentsFixCheckpoint, EngineProgress
 from pr.thread_models import (
     CommentFixResult, CommentItem, PRReport, ReplyOutcome, TrackingResult,
     TriageResult,
@@ -100,6 +105,7 @@ class CommentFixAdapter(fix.engine.FixAdapter):
         round_: pr.triage_round.TriagedRound,
         *,
         trail: Trail | None = None,
+        checkpoint: CommentsFixCheckpoint | None = None,
     ) -> None:
         self.workdir = wt_path
         # The run's target directory, not the worktree. What this pass writes —
@@ -116,8 +122,58 @@ class CommentFixAdapter(fix.engine.FixAdapter):
         self.trail = trail
         self.threads_by_id = {t.id: t for t in report.threads}
         self.round = round_
+        self._checkpoint = checkpoint
         # `record` builds this and `_run_comment_fix` returns it.
         self.result = CommentFixResult()
+
+    @property
+    def keeps_checkpoints(self) -> bool:
+        """On when this pass was given a checkpoint to write."""
+        return self._checkpoint is not None
+
+    def advance(self, phase: CheckpointPhase, **changes) -> None:
+        """Record *phase* and any field updates. No-op without a checkpoint."""
+        if self._checkpoint is None:
+            return
+        ckpt = pr.fix_checkpoint.advance(self._checkpoint, phase)
+        if changes:
+            ckpt = dataclasses.replace(ckpt, **changes)
+        pr.fix_checkpoint.save(self.ctx.target_dir, ckpt)
+        self._checkpoint = ckpt
+
+    def checkpoint(self, phase: CheckpointPhase, progress: EngineProgress) -> None:
+        self.advance(phase, engine=progress)
+
+    def interrupted(self, leftovers: frozenset[str], head_before: str) -> None:
+        """Fold ticked answers at AGENT_RUNNING, record agent files, warn."""
+        ckpt = self._checkpoint
+        if ckpt is None:
+            return
+        engine = ckpt.engine
+        answers = list(engine.answers)
+        if ckpt.phase is CheckpointPhase.AGENT_RUNNING:
+            ticks = fix.pass_resume.answered(fix.tracking.parse(self.tracking_path))
+            by_id = {o.id: o for o in answers if o.id}
+            for tick in ticks:
+                by_id[tick.id] = tick
+            answers = list(by_id.values()) + [o for o in answers if not o.id]
+        blobs = fix.pass_resume.agent_files(
+            self.workdir, set(engine.dirty_before),
+        )
+        if blobs is not None:
+            files, shas = sorted(blobs), dict(blobs)
+        else:
+            files, shas = list(engine.agent_files), dict(engine.file_shas)
+        self.advance(
+            ckpt.phase,
+            engine=dataclasses.replace(
+                engine, answers=answers, agent_files=files, file_shas=shas,
+            ),
+        )
+        core.log.warn(
+            f"Fix pass interrupted after {ckpt.phase.value} — re-run "
+            "`pr comments --fix` on this HEAD to resume"
+        )
 
     @property
     def ran(self) -> bool:
@@ -274,6 +330,7 @@ class CommentFixAdapter(fix.engine.FixAdapter):
             replies_delivered=self._replies_delivered(fixed_bucket, cp),
         )
         self.result = _result_for(content, cp, replies, summary, run)
+        self.advance(CheckpointPhase.COMPLETE)
 
     def _state_for(
         self,
@@ -435,6 +492,43 @@ def _addressed_outcome(entry: CommentItem) -> ItemOutcome:
     )
 
 
+def addressed_verdicts(
+    round_: pr.triage_round.TriagedRound,
+    adapter: CommentFixAdapter,
+    verify: fix.gate.VerifyFn | None,
+    trail: Trail | None = None,
+) -> list[ItemOutcome]:
+    """The already-addressed verdicts after the verify gate has spoken.
+
+    Empty when `verify` is None or the round has nothing already addressed,
+    matching `check_addressed`'s early return.
+    """
+    if verify is None or not round_.already_addressed:
+        return []
+    outcomes = [_addressed_outcome(e) for e in round_.already_addressed]
+    items = fix.comment_checklist.fix_items(
+        _at_evidence(round_.threads.already_addressed), adapter.threads_by_id,
+        adapter.workdir,
+        fixable_items=_at_evidence(round_.items.already_addressed),
+        default_branch=git.topology.default_branch_cached(adapter.workdir),
+    )
+    fix.gate.verify_claims(
+        outcomes, verify, adapter, {i.id: i for i in items}, trail,
+    )
+    return outcomes
+
+
+def apply_addressed(
+    round_: pr.triage_round.TriagedRound,
+    outcomes: list[ItemOutcome],
+    adapter: CommentFixAdapter,
+) -> pr.triage_round.TriagedRound:
+    """Move falsified already-addressed verdicts and place their holds."""
+    settled = pr.triage_round.settle_addressed(round_, outcomes)
+    adapter.after_verify(outcomes)
+    return settled
+
+
 def check_addressed(
     round_: pr.triage_round.TriagedRound,
     adapter: CommentFixAdapter,
@@ -459,21 +553,10 @@ def check_addressed(
     `verify` None (`--no-verify`) and a round with nothing already addressed
     return the round unchanged.
     """
-    if verify is None or not round_.already_addressed:
+    outcomes = addressed_verdicts(round_, adapter, verify, trail)
+    if not outcomes:
         return round_
-    outcomes = [_addressed_outcome(e) for e in round_.already_addressed]
-    items = fix.comment_checklist.fix_items(
-        _at_evidence(round_.threads.already_addressed), adapter.threads_by_id,
-        adapter.workdir,
-        fixable_items=_at_evidence(round_.items.already_addressed),
-        default_branch=git.topology.default_branch_cached(adapter.workdir),
-    )
-    fix.gate.verify_claims(
-        outcomes, verify, adapter, {i.id: i for i in items}, trail,
-    )
-    settled = pr.triage_round.settle_addressed(round_, outcomes)
-    adapter.after_verify(outcomes)
-    return settled
+    return apply_addressed(round_, outcomes, adapter)
 
 
 def run_pass(
@@ -483,6 +566,7 @@ def run_pass(
     ctx: pr.context.ResolvedContext,
     trail: Trail | None = None,
     verify: bool = True,
+    resume: CommentsFixCheckpoint | None = None,
 ) -> CommentFixResult:
     """Apply mechanical fixes for the threads and items triage found actionable.
 
@@ -496,12 +580,32 @@ def run_pass(
     what makes that claim worth something. The same gate checks triage's
     already-addressed verdicts first, before their replies are sent — see
     `check_addressed` — including on a round with nothing for the agent to fix.
+
+    `resume` continues an interrupted pass from the recorded checkpoint.
+    `triage_the_round` always runs (it re-places holds). Addressed verdicts and
+    triage replies are reused once their phases have been reached; posting is
+    idempotent either way. The engine is handed the recorded progress only
+    once the pass had reached `AGENT_RUNNING`.
     """
     threads_by_id = {t.id: t for t in report.threads}
 
     round_ = pr.triage_round.triage_the_round(
         triage_result, report, wt_path, ctx, trail=trail,
     )
+
+    if resume is None:
+        read_sha = git.client.head_sha(short=True, cwd=wt_path)
+        ckpt = pr.fix_checkpoint.start(
+            ctx,
+            read_sha=read_sha,
+            triage=triage_result,
+            seen_issue_comments=pr.owed_feedback.seen_record(report.issue_comments),
+            seen_review_body_comments=pr.owed_feedback.seen_record(
+                report.review_body_comments),
+        )
+    else:
+        ckpt = resume
+        read_sha = ckpt.read_sha
 
     # Before the fix pass touches the tree: every line these entries carry —
     # the review comment's own and triage's citation alike — was read against
@@ -510,23 +614,40 @@ def run_pass(
     pr.attribution.stamp_read_sha(
         round_.fixable + round_.fixable_items + round_.needs_human
         + round_.dismissed + round_.already_addressed,
-        git.client.head_sha(short=True, cwd=wt_path),
+        read_sha,
     )
 
-    adapter = CommentFixAdapter(report, ctx, wt_path, round_, trail=trail)
+    adapter = CommentFixAdapter(
+        report, ctx, wt_path, round_, trail=trail, checkpoint=ckpt,
+    )
     gate = fix.verify.run if verify else None
 
     # Before any reply goes out: an already-addressed reply resolves the thread
     # the moment it is posted, so a verdict the gate falsifies has to have left
     # that bucket — and the hold it places has to be shut — by the time
     # `post_triage_replies` reads either.
-    round_ = check_addressed(round_, adapter, gate, trail)
-    round_ = dataclasses.replace(
-        round_, replies=fix.comment_replies.post_triage_replies(round_, threads_by_id, report, ctx, wt_path),
-    )
+    if not ckpt.phase.reached(CheckpointPhase.ADDRESSED):
+        outcomes = addressed_verdicts(round_, adapter, gate, trail)
+        if outcomes:
+            round_ = apply_addressed(round_, outcomes, adapter)
+        adapter.advance(CheckpointPhase.ADDRESSED, outcomes=list(outcomes))
+    elif ckpt.outcomes:
+        round_ = apply_addressed(round_, ckpt.outcomes, adapter)
+
+    if not ckpt.phase.reached(CheckpointPhase.REPLIED):
+        replies = fix.comment_replies.post_triage_replies(
+            round_, threads_by_id, report, ctx, wt_path,
+        )
+        round_ = dataclasses.replace(round_, replies=replies)
+        adapter.advance(CheckpointPhase.REPLIED, replies=replies)
+    else:
+        round_ = dataclasses.replace(round_, replies=ckpt.replies)
     adapter.round = round_
 
     if round_.has_fixables:
+        if ckpt.phase.reached(CheckpointPhase.AGENT_RUNNING):
+            adapter.resume = ckpt.engine
+            adapter.resume_phase = ckpt.phase
         # The engine batches the entries, runs the agent, lands the commit and
         # calls `record` itself.
         fix.engine.run(adapter, trail=trail, verify=gate)

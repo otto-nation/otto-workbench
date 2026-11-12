@@ -25,6 +25,7 @@ import core.log
 import core.publishing
 import core.run_lock
 import fix.comments
+import fix.comments_resume
 from git.land import CommitStatus
 from gh.pr_data import PRData, fetch_pr_data
 import gh.owners
@@ -61,7 +62,8 @@ def resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord]
     return resolved
 
 
-def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
+def record_triaged_seen(ctx_args: dict, report: PRReport, trail, *,
+                       triaged=None) -> None:
     """Record the report's top-level comments as read, after triage succeeded.
 
     Only a triage that returned a usable answer reaches this, and under `--fix`
@@ -75,16 +77,36 @@ def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
     decomposed, and the next run dropped it from triage for good. Best-effort
     in the safe direction: a save that fails leaves the comments unseen, which
     re-reports them once.
+
+    A resumed `--fix` pass passes the checkpoint as *triaged* so comments that
+    arrived after it stay unseen rather than being stamped read from this
+    report.
     """
     try:
+        if triaged is None:
+            seen_issue = pr.owed_feedback.seen_record(report.issue_comments)
+            seen_review = pr.owed_feedback.seen_record(
+                report.review_body_comments)
+            owed_review_bodies = 0
+            owed_issue_comments = 0
+        else:
+            seen_issue = dict(triaged.seen_issue_comments)
+            seen_review = dict(triaged.seen_review_body_comments)
+            owed_review_bodies = sum(
+                1 for c in report.review_body_comments
+                if not pr.owed_feedback.is_seen(c, seen_review)
+            )
+            owed_issue_comments = sum(
+                1 for c in report.issue_comments
+                if not pr.owed_feedback.is_seen(c, seen_issue)
+            )
         st = pr.state.load_or_init(**ctx_args)
         st.comments = dataclasses.replace(
             st.comments,
-            seen_issue_comments=pr.owed_feedback.seen_record(report.issue_comments),
-            seen_review_body_comments=pr.owed_feedback.seen_record(report.review_body_comments),
-            # Everything the report held is now read, so nothing top-level is owed.
-            owed_review_bodies=0,
-            owed_issue_comments=0,
+            seen_issue_comments=seen_issue,
+            seen_review_body_comments=seen_review,
+            owed_review_bodies=owed_review_bodies,
+            owed_issue_comments=owed_issue_comments,
             updated_at=pr.state.now_iso(),
         )
         pr.state.save_state(ctx_args["target_dir"], st)
@@ -271,11 +293,36 @@ def run_threads(trail, args, ctx) -> int:
     # Triage and/or fix mode
     rc = 0
     if args.triage:
+        resume_ckpt = None
+        if args.fix:
+            decision = fix.comments_resume.decide(
+                ctx, toplevel,
+                fix.comments_resume.mode_for(
+                    bool(getattr(args, "resume", False)),
+                    bool(getattr(args, "no_resume", False)),
+                ),
+                report,
+            )
+            if decision.refused:
+                core.log.error(decision.refusal)
+                return 1
+            if decision.resumes:
+                resume_ckpt = decision.checkpoint
+                trail.decision(
+                    "fix_resume",
+                    f"resuming interrupted fix pass after {resume_ckpt.phase.value}",
+                    reason="a checkpoint for this PR, branch and HEAD is resumable",
+                    data={"phase": resume_ckpt.phase.value},
+                )
         triage_mode = "fix" if args.fix else "triage"
         trail.decision("triage_mode", f"running {triage_mode}",
                        reason="--fix flag" if args.fix else "--triage flag",
                        data={"fix": args.fix, "triage": args.triage})
-        triage_result, rc = pr.triage.run_triage(report, toplevel, ctx_args, trail=trail)
+        if resume_ckpt is not None:
+            triage_result, rc = resume_ckpt.triage, 0
+        else:
+            triage_result, rc = pr.triage.run_triage(
+                report, toplevel, ctx_args, trail=trail)
         if rc != 0:
             return rc
 
@@ -295,6 +342,7 @@ def run_threads(trail, args, ctx) -> int:
             fix_pass = fix.comments.run_pass(
                 triage_result, report, toplevel, ctx, trail=trail,
                 verify=not args.no_verify,
+                resume=resume_ckpt,
             )
             trail.info("fix_result", "fix pass complete",
                        data={"fixable": fixable_count,
@@ -318,7 +366,9 @@ def run_threads(trail, args, ctx) -> int:
         # After the fix pass as well as triage: a fix pass that raises has
         # recorded none of the items triage decomposed, and they exist nowhere
         # else, so the comments they came from must be read again next run.
-        record_triaged_seen(ctx_args, report, trail)
+        record_triaged_seen(
+            ctx_args, report, trail, triaged=resume_ckpt if args.fix else None,
+        )
     else:
         output = dataclasses.asdict(report)
 

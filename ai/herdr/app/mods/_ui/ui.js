@@ -2,7 +2,7 @@
 // icon), checkbox, popover surface, tag, status glyph, section label, segmented control, card,
 // list row. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, settings } from "herdr";
 import { SP, TYPE, RADIUS, CONTROL, LAYOUT } from "../_lib/tokens.js";
 import { STATUS, DIFF, statusOf } from "../_lib/status.js";
@@ -162,9 +162,25 @@ export function emptyPane() {
     .bg(theme().background), "body");
 }
 
+// A header that stays put while the content under it scrolls: a hairline below, always on, never a
+// shadow (DESIGN.md). Every pinned header goes through here so the rule cannot be forgotten.
+export function pinned(el) {
+  return el.flex_none().border_b_1().border_color(theme().border);
+}
+
 // The top strip of a pane: hairline below, content stacked.
 export function paneBar() {
-  return v_flex().flex_none().gap(SP.sm).px(SP.lg).py(SP.md).border_b_1().border_color(theme().border);
+  return pinned(v_flex().gap(SP.sm).px(SP.lg).py(SP.md));
+}
+
+// Selectable, scrollable code: a fenced block in a TextView, so it can be highlighted and copied.
+// The fence is longer than any backtick run in the lines so the text cannot close it early. `id` is
+// stable per place, so the scroll position survives a refresh.
+export function selectableCode(id, lines, maxH) {
+  const body = lines.join("\n");
+  const longest = Math.max(0, ...(body.match(/`+/g) ?? []).map((r) => r.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return TextView.markdown(id, `${fence}\n${body}\n${fence}`).selectable().scrollable().max_h(maxH);
 }
 
 // The scrolling body of a pane or column.

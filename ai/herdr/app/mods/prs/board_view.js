@@ -31,7 +31,7 @@ import { renderBatchPage } from "./batch_page.js";
 import { FilterBar } from "./filter_bar.js";
 import { prKey } from "./_lib/launch.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, emptyPane, pane, button, iconButton, tag, text, type, statusText, badge, placeholder, errorLine } from "./_ui/ui.js";
+import { segment, segmented, emptyPane, pinned, pane, button, iconButton, tag, text, type, statusText, badge, placeholder, errorLine } from "./_ui/ui.js";
 
 function ctxOf() {
   return locate(spaces(), panes(), focused());
@@ -535,7 +535,7 @@ export default class PrsBoard extends View {
 
   compactHeader(state, tab, load) {
     const err = this.errorStatus(state);
-    return v_flex().flex_none().px(SP.md).py(SP.sm).gap(SP.sm)
+    return pinned(v_flex().px(SP.md).py(SP.sm).gap(SP.sm)
       .child(h_flex().items_center()
         .child(this.scopeToggle())
         .child(div().flex_1())
@@ -549,7 +549,7 @@ export default class PrsBoard extends View {
           .when(tab === "mine", (e) => e.child(this.batchControl()))
           .when(this.inPanel, (e) => e.child(this.fullscreenButton()))))
       .when(Boolean(load.shown), (e) => e.child(renderLoadLine(load)))
-      .when(Boolean(err), (e) => e.child(err));
+      .when(Boolean(err), (e) => e.child(err)));
   }
 
   fullscreenButton() {
@@ -616,7 +616,7 @@ export default class PrsBoard extends View {
     const title = all ? "All spaces" : (loading ? "Loading…" : (state.slug ?? "No repo"));
     const note = all && !load.shown ? (loading ? "Loading…" : `${state.repos} repos`) : null;
     // Title on the left names the subject (the repo); the controls that filter it sit on the right.
-    return h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).flex_none().px(SP.lg).gap(SP.md).items_center()
+    return pinned(h_flex().id("prs-header").min_h(LAYOUT.headerH).flex_wrap().py(SP.sm).px(SP.lg).gap(SP.md).items_center()
       .child(h_flex().flex_1().min_w(0).gap(SP.sm).items_center()
         .child(type(div().min_w(0).truncate(), "title").child(title))
         .when(Boolean(note), (e) => e.child(text("meta", note, t.muted).flex_none()))
@@ -630,6 +630,6 @@ export default class PrsBoard extends View {
         segment("tab-mine", "Mine", tab === "mine", () => this.showMine()),
       ]))
       .when(this.inPanel, (e) => e.child(this.fullscreenButton()))
-      .child(this.refreshButton());
+      .child(this.refreshButton()));
   }
 }

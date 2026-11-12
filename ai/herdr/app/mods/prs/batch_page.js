@@ -8,7 +8,7 @@ import { barModel } from "./_lib/filters.js";
 import { prKey } from "./_lib/launch.js";
 import { SP } from "./_lib/tokens.js";
 import {
-  scrollBody, button, solidButton, pane, checkbox,
+  scrollBody, button, solidButton, pane, pinned, checkbox,
   sectionHeading, text, type, statusText, badge, dangerColor,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
@@ -173,11 +173,10 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
   const expanded = (r) => renderRunItems(workflows.docOf(r.on, r.id), { repos: r.repos ?? [], prOf, onOpen: onOpenPr });
   const running = renderRunning({ launcher, workflows, run });
   return pane("prs-batch")
-    // One row and no rule: the page's title is the only header, and the form is its content.
-    .child(h_flex().flex_none().gap(SP.md).items_center().px(SP.lg).pt(SP.lg)
+    .child(pinned(h_flex().gap(SP.md).items_center().px(SP.lg).py(SP.md)
       .child(button("batch-back", "← Back", onBack))
       .child(text("heading", "Batch"))
-      .when(Boolean(load?.shown), (e) => e.child(renderLoadLine(load))))
+      .when(Boolean(load?.shown), (e) => e.child(renderLoadLine(load)))))
     .child(scrollBody().id("batch-body").px(SP.lg).py(SP.lg).gap(SP.xl)
       .when(Boolean(running), (e) => e.child(running))
       .child(renderForm({ launcher, prs, load, filterBar }))

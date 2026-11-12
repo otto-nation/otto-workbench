@@ -7,7 +7,7 @@ import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import {
   segment, segmented, button, inset, card, placeholder, caption,
-  paneBar, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
+  paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
   badgeRow, statsRow, tag,
 } from "./_ui/ui.js";
 
@@ -57,16 +57,6 @@ export function detailOf(pr, { item = null } = {}) {
 
 // The run's text, read-only, inside the pane. The terminal itself can open as a tab for anything
 // interactive.
-// Selectable text: a fenced block in a TextView, so it can be highlighted and copied. The fence is
-// longer than any backtick run in the output so the output cannot close it early.
-function selectableOutput(lines, maxH) {
-  const longest = Math.max(0, ...(lines.join("\n").match(/`+/g) ?? []).map((r) => r.length));
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  const body = lines.join("\n");
-  return TextView.markdown(`output-${body.length}`, `${fence}\n${body}\n${fence}`)
-    .selectable().scrollable().max_h(maxH);
-}
-
 export function renderOutput(output, { onHide, onTab, maxH }) {
   const lines = tailLines(output.text ?? "", 80);
   return paneBar()
@@ -78,7 +68,7 @@ export function renderOutput(output, { onHide, onTab, maxH }) {
     .child(type(inset({ maxH, scroll: false }).flex().flex_col(), "code")
       .when(output.text == null, (e) => e.child(placeholder("Loading…")))
       .when(output.text != null && !lines.length, (e) => e.child(placeholder("No output yet")))
-      .when(lines.length > 0, (e) => e.child(selectableOutput(lines, maxH))));
+      .when(lines.length > 0, (e) => e.child(selectableCode("output", lines, maxH))));
 }
 
 export function prUrl(d) {
@@ -138,7 +128,7 @@ export function renderDetail(d, {
     .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }))
     .child(actionBar)
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))
-    .child(h_flex().flex_none().px(SP.lg).pt(SP.md).child(segmented(segs)))
+    .child(pinned(h_flex().px(SP.lg).py(SP.md).child(segmented(segs))))
     .when(tab === "files", (e) => e.child(filesBody))
     .when(tab === "batch", (e) => e.child(batchBody))
     .when(tab !== "files" && tab !== "batch", (e) => e.child(scrollBody().px(SP.lg).pb(SP.lg)

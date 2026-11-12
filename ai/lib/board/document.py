@@ -23,6 +23,7 @@ import board.cache
 import board.columns
 import board.github
 import board.owed
+import board.precheck
 import board.reviews
 import board.rows
 import core.serde
@@ -64,6 +65,15 @@ def stamp(doc: dict) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def _unchanged(phase: str, current: str) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSIONS[-1],
+        "phase": phase,
+        "stamp": current,
+        "unchanged": True,
+    }
+
+
 def _scrub(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -96,6 +106,9 @@ def build(
     now = _now()
     numbers = _int_prs(prs)
     resolved = [(path, _resolve(path)) for path in checkouts]
+    pre = board.precheck.take(checkouts, resolved, viewer, wanted) if offline else None
+    if pre is not None and if_changed and pre.answers(if_changed):
+        return _unchanged(wanted.value, if_changed)
     listing = _listing_rows(resolved)
     repos, rows, complete = _assemble(
         wanted, resolved, numbers, listing, viewer, now, offline=offline,
@@ -111,13 +124,10 @@ def build(
         "rows": rows,
     }
     current = stamp(doc)
+    if pre is not None:
+        pre.remember(current)
     if if_changed == current:
-        return {
-            "schema_version": doc["schema_version"],
-            "phase": doc["phase"],
-            "stamp": current,
-            "unchanged": True,
-        }
+        return _unchanged(wanted.value, current)
     doc["stamp"] = current
     return doc
 

@@ -4499,6 +4499,15 @@ Assemble the PR board document from listing, status and owed phases.
 unchanged envelope. The stamp hashes canonical JSON of the document without
 ``stamp`` and every ``fetched_at``.
 
+### board/flight.py
+
+Single-flight for concurrent `pr board` of the same checkouts.
+
+Herdr windows and copies poll the same board; without a lock each process
+recomputes listing, status, or owed on its own. Waiters take one flock per
+`(checkouts, phase, offline)` and serve the leader's memo when the request
+matches, so a second poll is a wait rather than a second GitHub round-trip.
+
 ### board/github.py
 
 GitHub REST listing and GraphQL status fetches for the PR board.
@@ -4523,6 +4532,15 @@ Comments-owed map from a comments-only `batch.plan`.
 
 Ports `_lib/board_data.js` `owedFrom` / `loadOwed`. Each owed PR carries the
 plan row's head SHA so a later document can drop a stale reason.
+
+### board/precheck.py
+
+Stat-only pre-check for an offline board document.
+
+Mirrors ``review.listing.document``: a fingerprint of every input is taken
+before the reviews walk, so a change during the walk shows on the next poll
+instead of being masked. The document stamp still hashes the document; this
+module only decides whether that walk can be skipped.
 
 ### board/presentation.py
 
@@ -5626,6 +5644,15 @@ Two pieces, split by where they act:
   imports this module, so the hook is in place wherever one can be raised.
 
 Not: what the operator should set (each error's own message says that).
+
+### core/flock_wait.py
+
+Timed exclusive `flock`, shared by fetch and board single-flight.
+
+A blocking `fcntl.flock` has no timeout, and `signal.alarm` would break a
+caller running off the main thread. Every waiter here polls `LOCK_EX|LOCK_NB`
+until the deadline, then proceeds unlocked so the work still happens — a
+timeout is not a refusal to fetch or to build the board.
 
 ### core/job_slots.py
 

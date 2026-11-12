@@ -1,4 +1,4 @@
-"""Layer 9 — command entry points. May import: core, config, git, gh, agent, pr, fix, rebase, review, batch, board, eval, retro, wiki, memory.
+"""Layer 9 — command entry points. May import: core, config, git, gh, agent, pr, fix, rebase, review, batch, board, eval, retro, wiki, memory, otto_queue.
 
 The top of the stack, and the only layer allowed to see all of it. A binary
 under `ai/bin/` is a shim over one module here: the argument parser, the

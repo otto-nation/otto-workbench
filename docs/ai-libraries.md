@@ -4075,12 +4075,28 @@ memory, minus a reserve kept for every other service on the host, covers what
 that step has been seen to need, and neither CPU nor memory is under pressure.
 Running steps are never paused or killed; admission only gates the next start.
 
+Free memory is the smaller of `MemAvailable` and the tightest headroom on the
+chain from this process's own cgroup (`/proc/self/cgroup`) up to the hierarchy
+root. Reading only `/sys/fs/cgroup/memory.max` saw nothing on a host whose cap
+sits on a nested user slice: the root cgroup has no limit file there, so a
+6.5 GiB `MemoryMax` was invisible to admission.
+
+On macOS free memory comes from `vm_stat` (free, inactive and speculative
+pages); there is no pressure reading, so batch's `decide` still takes its
+`pool_default` path there.
+
 The host is shared by every batch driver on it, so the caller passes in what
 the others are running (`batch.machine`): their pending memory comes off the
 sample, and their live steps count against `batch.pool_default` where there
 are no host metrics. Whether a driver may start a step regardless — the floor
 slot — is the caller's to establish and pass as `floor`; `decide` no longer
 infers it from this run having nothing running.
+
+It is also the queue's admission policy. `QueuePolicy` is what
+`otto_queue.slots` asks, so "is there room" has one owner — the `room`
+function — whether the asker is a batch step or a queue entry. The queue's class limits are
+`class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
+core but one.
 
 ### batch/autopublish.py
 
@@ -4509,6 +4525,172 @@ The target is computed the way `pr.context` keys a run — the repo key read off
 the checkout's `origin`, and the item's branch — so the lock the batch holds is
 the one its child resolves. An item whose checkout has no `origin` has no
 target: nothing can hold one for it, and its steps fail to resolve on their own.
+
+## Work queue
+
+The machine-wide queue for background work: the ledger that records every entry, the leases that say an entry's process is alive, the slots admission hands out, tickets, and the keys that stop paid work running twice.
+
+### otto_queue/keys.py
+
+Idempotency keys: the identity that makes two requests for paid work the same request.
+
+A review or a comment pass costs about $1–13, so the same one for the same
+inputs runs once. A request whose key matches a running entry joins it, and
+one matching a `done` entry gets its result (`otto_queue.ledger`). There is no
+time window: the inputs are the whole identity.
+
+| Field | Normalised as |
+|---|---|
+| action | inner whitespace collapsed (`review`, `review --self --fix`, `comments`) |
+| repo | `owner/name`, lowercased — GitHub compares it case-insensitively |
+| PR | a positive integer |
+| head and base SHA | full 40- or 64-hex, lowercased; an abbreviation is refused, since two abbreviations of one commit would be two keys |
+| focus | whitespace collapsed |
+| effort, model | stripped; effort lowercased |
+| tool version | `core.version.tool_version()` unless given |
+
+An absent flag and an empty one are the same. Callers pass *resolved*
+values — the effort and model the run will actually use, not the flags as
+typed — or a default spelled out and a default left implicit become two keys
+for one run.
+
+The key is `review:` plus the SHA-256 of the fields' canonical JSON: fixed
+length, and it does not put focus text into `otto-queue status`.
+
+### otto_queue/lease.py
+
+An entry's liveness: an `flock` on `queue/leases/<id>.lock`, held by the entry's process.
+
+The kernel drops a flock when its holder exits for any reason, SIGKILL
+included, so a live entry whose lease can be taken is orphaned. There are no
+heartbeats or wall clocks to go stale. A ticket holds its lease from the
+moment it is accepted, waiting included; a job holds one only while it runs.
+
+A lease is taken inside the transaction that inserts its row, so no reader
+ever sees a live ticket whose lease is not yet held. A missing lease file
+therefore reads as orphaned. Anything else that stops the probe (permissions,
+a filesystem without flock) reads as held, because reaping on uncertainty
+would fail work that is still running.
+
+### otto_queue/ledger.py
+
+The per-machine ledger: one SQLite file holding every entry the queue has accepted.
+
+`state_dir()/queue/queue.db`, stdlib `sqlite3`, in WAL mode, so a reader
+(`otto-queue status`) never blocks a writer. A connection is opened per
+operation and closed after it, so no process holds the file between calls,
+and a read-modify-write runs under `BEGIN IMMEDIATE`: two processes deciding
+about the same key are serialized by SQLite's own write lock.
+
+Schema changes are additive only. `MIGRATIONS[n]` takes a ledger from version
+n to n+1. Each statement creates something that did not exist or adds a
+column — never renames, drops or repurposes one — and a test holds every
+statement to that. The stored version is checked on every open:
+
+| Stored version | What open does |
+|---|---|
+| older than this code | applies the missing migrations and records the new version |
+| this code's | nothing |
+| newer (newer code on this machine, mid-sync) | uses it as it is; never writes the version backwards |
+| not a number | refuses with `LedgerError` |
+
+A newer ledger is safe to use because every reader names its columns and
+every new column is nullable or defaulted. A row whose kind, class or state
+this code does not know was written by newer code, and readers skip it rather
+than crash.
+
+`resolve` is where idempotency lives. A keyed request matching a `done` entry
+is REUSED (its recorded status is the answer, and nothing runs). One matching
+a live entry is JOINED. Anything else, or any request with `force`, is a new
+`queued` row: a ticket's row holds its lease from the same transaction. Only
+`done` counts as already done; a failed, cancelled or tempfail entry is run
+again. Orphans are reaped first, so a dead holder's row is not joined for
+long: the joiner reaps it and resolves again. An orphaned ticket becomes
+`failed` with no exit status, and an orphaned running job goes back to
+`queued` for the worker.
+
+### otto_queue/model.py
+
+The queue's vocabulary: what an entry is, which class it runs in, and the states it moves through.
+
+Every value here is persisted in the ledger, so the enums' string values are
+stable. A machine mid-sync runs old and new code against one file, so a value
+is added, never renamed or removed — the rule the schema follows too.
+
+| State | Meaning |
+|---|---|
+| `queued` | accepted; waiting for a slot (ticket) or a worker (job) |
+| `running` | admitted and started; its lease is held |
+| `done` | exited 0 |
+| `failed` | exited non-zero, could not start, or its holder died (no exit status) |
+| `cancelled` | stopped by `otto-queue cancel`, or Ctrl-C while waiting |
+| `tempfail` | exited 75 (EX_TEMPFAIL), or never got a slot: its resource was busy, which is not a failure |
+
+### otto_queue/paths.py
+
+Where the queue keeps its files: `state_dir()/queue/` holds the ledger, `leases/` and `slots/`.
+
+Resolved per call, never at import, so a re-pointed `WORKBENCH_STATE_DIR` is
+seen by every reader.
+
+### otto_queue/slots.py
+
+Slots: how many entries of each class run at once on this machine, held as flocks.
+
+Each class has `policy.limit(class)` slot files under `queue/slots/`. An
+admitted entry holds one with a non-blocking `flock` for as long as it runs,
+and the kernel drops it when the holder exits, SIGKILL included, so a crashed
+ticket cannot strand capacity.
+
+Whether there is room is not decided here. The caller passes a `Policy`
+(`batch.admission.QueuePolicy`), which owns the limits and the host check;
+this module only counts and holds. `try_admit` runs under `admit.lock`, taken
+through `core.flock_wait`, so sampling the host and claiming a slot are one
+step machine-wide. The lock serialises samples but does not account for
+memory a just-admitted entry has not allocated yet: the next waiter can
+still see the same free gigabyte. If that lock cannot be had within
+`ADMIT_LOCK_WAIT_S`, the claim goes ahead without it: the slot flocks still
+bound the count, and only the host check can race.
+
+### otto_queue/ticket.py
+
+Tickets: run a command in this process once the queue admits it.
+
+`run_ticket` is what `otto-queue run --ticket` does. Interactive callers (a
+Herdr pane, a CLI call) use it because the work stays in the caller's
+terminal: visible, interruptible, and dying with the pane, exactly as it does
+unqueued. What the queue adds is that the work waits its turn, counts against
+the machine's budget, and runs once per idempotency key.
+
+1. **Resolve.** `Ledger.resolve` either answers a keyed request from an entry
+   with the same key or records a new `queued` row holding its lease. A
+   matching `done` entry returns its recorded status without running. A
+   matching live entry is joined: the ticket waits for it and returns its
+   status. `force` skips the match. A joined entry whose holder died is not a
+   result: the ticket resolves again and, finding nothing live, runs the work
+   itself.
+2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
+   ticket of the class asks `otto_queue.slots.try_admit`. Each new reason for
+   waiting is printed once. `cancel` or Ctrl-C while waiting ends the ticket
+   with 130. Reaching `wait_s` with no slot records `tempfail` and returns 75
+   (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
+3. **Run.** The row moves to `running`, and the command runs through
+   `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
+   terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
+   cancel`) forwarded. Its exit status is recorded (75 as `tempfail`, never a
+   failure) and returned.
+
+The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
+variable runs its command directly: a nested heavy ticket would otherwise wait
+for a slot its own parent holds. When the ledger stays busy past the open
+deadline, the ticket returns 75 without running. When the ledger cannot be
+opened at all, the command runs unqueued with a warning. The queue's absence
+degrades to today's behaviour, never to work not done.
+
+ceiling: the ticket process, not its command, holds the lease and the slot, so
+a ticket killed with SIGKILL while its command runs leaves the command running
+untracked and its row `failed`. Upgrade trigger: if a command is seen outliving
+its killed ticket, have the child inherit the lease and slot descriptors.
 
 ## Board
 
@@ -6288,6 +6470,10 @@ wrapper was holding is released and the work runs on untracked.
 One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
+
+A third caller, `otto_queue.ticket`, runs its command in the *foreground*
+instead: same process group as the terminal, Ctrl-C and hangup left to the
+terminal, SIGTERM forwarded to the child's pid.
 
 ### core/strict.py
 
@@ -8440,6 +8626,17 @@ the same reason, so `pr review` is one row rather than three.
 A window selects *commands*, not events: a command whose first event predates the
 window is listed whole when any part of it falls inside, because half a timeline
 answers no question anyone asks of it.
+
+### cli/otto_queue.py
+
+`otto-queue`: run a command through this machine's queue, see what it holds, cancel an entry.
+
+The library is `otto_queue`; this module is the parser, the output and the exit
+codes. `run` exits with the command's own status: 75 when the command, or the
+wait for a slot, found its resource busy, and 130 when the entry was cancelled
+before it ran. `status` exits 0. `cancel` exits 0, or 1 when it names no live
+entry. Admission is `batch.admission.QueuePolicy` under the machine-wide config
+(`batch.*`), never a repo's, because the budget belongs to the machine.
 
 ### cli/owners_check.py
 

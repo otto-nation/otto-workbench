@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
 import signal
+import subprocess
 import sys
+import time
+from pathlib import Path
 
 import core.signal_relay
 from signal_relay_support import (
     BLOCKING_CHILD,
     assert_pending_signal_reaches_child,
 )
+
+LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 
 
 def test_a_signal_racing_the_spawn_still_reaches_the_child(monkeypatch):
@@ -62,3 +69,68 @@ def test_a_command_that_cannot_run_exits_127(capsys):
     err = capsys.readouterr().err
     assert "job_slots_cli: cannot run no-such-command-xyz" in err
     assert "Traceback" not in err
+
+
+def test_a_foreground_child_shares_the_wrappers_process_group(tmp_path):
+    out = tmp_path / "pgid"
+    code = core.signal_relay.run_child(
+        [sys.executable, "-c", f"import os; open({str(out)!r}, 'w').write(str(os.getpgid(0)))"],
+        foreground=True)
+    assert code == 0
+    assert int(out.read_text()) == os.getpgid(0)
+
+
+def test_a_foreground_child_runs_in_the_given_directory(tmp_path):
+    out = tmp_path / "cwd"
+    code = core.signal_relay.run_child(
+        [sys.executable, "-c", f"import os; open({str(out)!r}, 'w').write(os.getcwd())"],
+        cwd=str(tmp_path), foreground=True)
+    assert code == 0
+    assert Path(out.read_text()).resolve() == tmp_path.resolve()
+
+
+def test_a_foreground_wrapper_swallows_sigint_and_forwards_sigterm(tmp_path):
+    """SIGINT at the wrapper must not abort it; SIGTERM still stops the child.
+
+    Signalling this pytest process would abort the session at base and under
+    revert, so the wrapper runs in a driver subprocess.
+    """
+    marker = tmp_path / "started"
+    driver = "\n".join([
+        "import sys",
+        f"sys.path.insert(0, {LIB_DIR!r})",
+        "import core.signal_relay",
+        "raise SystemExit(core.signal_relay.run_child(",
+        "    [sys.executable, '-c',",
+        "     'import os,pathlib,sys,time;"
+        " pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));"
+        " time.sleep(30)',",
+        "     sys.argv[1]],",
+        "    foreground=True))",
+    ])
+    proc = subprocess.Popen([sys.executable, "-c", driver, str(marker)], start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert marker.exists(), f"driver exited {proc.poll()} before the child started"
+        proc.send_signal(signal.SIGINT)
+        time.sleep(0.3)
+        assert proc.poll() is None, "the wrapper did not survive SIGINT"
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=30) == 128 + signal.SIGTERM
+    finally:
+        _reap_foreground_driver(proc)
+
+
+def test_a_foreground_run_restores_every_handler_it_touched():
+    watched = (*core.signal_relay.FORWARDED, *core.signal_relay.TERMINAL_SIGNALS)
+    before = {signum: signal.getsignal(signum) for signum in watched}
+    core.signal_relay.run_child([sys.executable, "-c", "pass"], foreground=True)
+    assert {signum: signal.getsignal(signum) for signum in watched} == before
+
+
+def _reap_foreground_driver(proc: subprocess.Popen) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait(timeout=5)

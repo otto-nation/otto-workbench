@@ -16,6 +16,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `pr` | Unified PR lifecycle CLI — creation, CI failures, code review, and review comments |
 | `review` | Run the configured review agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
+| `otto-queue` | Machine-wide queue for background work — admits a command against the heavy/light budget, de-duplicates it by key, and records it in a per-machine ledger |
 | `workbench-rules` | Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed |
 | `ceiling-scan` | Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger |
 | `dream-scan` | Scan session transcripts and memory state for dream consolidation |
@@ -803,6 +804,57 @@ does not build. The server needs `mcp` and nothing from wherever it was
 launched.
 
 Requires: `uv`, the `mcp` Python package.
+
+### `otto-queue`
+
+Run background work through this machine's queue, so it waits for room instead of overloading the host.
+
+```
+otto-queue run --ticket [--class heavy|light] [--key KEY] [--force] [--wait SECONDS] -- COMMAND [ARGS...]
+otto-queue status [--json]
+otto-queue cancel ID
+```
+
+`run --ticket` waits for a slot in its class, then runs COMMAND here, in this
+terminal, and exits with its status. Heavy entries are limited per platform
+(`batch.admission.HEAVY_LIMITS`) and admitted while the host has memory to
+spare; one heavy entry is always admitted when none is running. Light entries
+are limited to every core but one. `--key` makes the run idempotent: a live
+entry with the same key is joined, a done one returns its status without
+running, and `--force` runs regardless. Exit 75 means the command, or the wait
+for a slot, found its resource busy. 130 means the entry was cancelled before
+it ran.
+
+`status` lists live entries and the most recent finished ones; `--json` prints
+one object per entry. `cancel` stops a waiting entry, or sends SIGTERM to a
+running one.
+
+The ledger is `queue/queue.db` under the workbench state root
+(`WORKBENCH_STATE_DIR`, default `~/.local/state/workbench`). How admission,
+leases and keys work is on the `otto_queue` modules in docs/ai-libraries.md.
+
+**`otto-queue run`** — Run a command once the queue admits it
+
+| Flag | Description |
+|------|-------------|
+| `--ticket` | Run the command in this process and terminal once admitted. Required. |
+| `--class` `<heavy\|light>` | heavy: counted and memory-checked (default); light: counted only. |
+| `--key` `<key>` | Join a live entry with this key, or return a done one's status. |
+| `--force` | Run even when --key matches an entry. |
+| `--wait` `<wait>` | Seconds to wait for a slot before exiting 75 (default: 3600). |
+| `...` | -- and the command to run. |
+
+**`otto-queue status`** — List live entries and the most recent finished ones
+
+| Flag | Description |
+|------|-------------|
+| `--json` | One JSON object per entry. |
+
+**`otto-queue cancel`** — Cancel a waiting or running entry
+
+| Flag | Description |
+|------|-------------|
+| `<id>` | The entry's id, from status. |
 
 ### `pr`
 

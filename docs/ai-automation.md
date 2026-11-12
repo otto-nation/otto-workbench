@@ -959,6 +959,8 @@ is spent). The error names the owning command; retry once that run finishes.
 What each `pr` command writes to origin or GitHub and how, what each exit means, and the
 next step after one, rendered from the command's `CONTRACT` (`pr <command> --help` prints
 the same text). Lease semantics for `pr rebase` and `pr push` live here and nowhere else.
+To finish a rebase `pr rebase` completed but did not push, run `pr rebase --push-only`;
+for one finished outside `pr`, add `--expect <full SHA>` as its `Next:` block says.
 
 #### pr rebase contract
 

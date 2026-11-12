@@ -11,6 +11,7 @@ if str(LIB_DIR) not in sys.path:
 import batch.admission  # noqa: E402
 from batch.model import Step  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
+from otto_queue.model import EntryClass  # noqa: E402
 
 GiB = 1024 ** 3
 
@@ -166,3 +167,128 @@ def test_tree_rss_sums_a_process_and_its_descendants(tmp_path):
         (d / "stat").write_text(f"{pid} (x (y) z) S {ppid} 0 0\n")
         (d / "status").write_text(f"Name: x\nVmRSS:\t{kb} kB\n")
     assert batch.admission.tree_rss(10, tmp_path) == 600 * 1024
+
+
+USER_SCOPE = "/user.slice/user-1000.slice/user@1000.service/app.slice/otto.scope"
+
+
+def _self_cgroup(root, path):
+    (root / "proc" / "self").mkdir(parents=True, exist_ok=True)
+    (root / "proc" / "self" / "cgroup").write_text(f"0::{path}\n")
+
+
+def _cgroup(root, rel, *, limit=None, current=None):
+    node = root / "sys" / "fs" / "cgroup" / rel
+    node.mkdir(parents=True, exist_ok=True)
+    (node / "memory.max").write_text(f"{limit}\n" if limit is not None else "max\n")
+    if current is not None:
+        (node / "memory.current").write_text(f"{current}\n")
+
+
+def test_read_host_reads_the_cap_on_its_own_nested_user_slice(tmp_path):
+    root = _proc(tmp_path, mem_kb=15_000_000)
+    _self_cgroup(root, USER_SCOPE)
+    _cgroup(root, "user.slice/user-1000.slice", limit=int(6.5 * GiB), current=int(5.4 * GiB))
+    _cgroup(root, USER_SCOPE.lstrip("/"), current=GiB)
+    assert batch.admission.read_host(root).mem_available == int(6.5 * GiB) - int(5.4 * GiB)
+
+
+def test_read_host_takes_the_tightest_ancestor_not_only_the_nearest(tmp_path):
+    root = _proc(tmp_path)
+    _self_cgroup(root, "/workbench.slice/otto-queue-7.service")
+    _cgroup(root, "workbench.slice/otto-queue-7.service", limit=4 * GiB, current=GiB)
+    _cgroup(root, "workbench.slice", limit=2 * GiB, current=int(1.5 * GiB))
+    assert batch.admission.read_host(root).mem_available == 2 * GiB - int(1.5 * GiB)
+
+
+# passes-at-base: a process in the root cgroup must keep reading the root files
+def test_read_host_in_the_root_cgroup_reads_the_root_files(tmp_path):
+    root = _proc(tmp_path, cg_max=3 * GiB, cg_cur=2 * GiB)
+    _self_cgroup(root, "/")
+    assert batch.admission.read_host(root).mem_available == GiB
+
+
+# passes-at-base: a cgroup with no limit anywhere leaves MemAvailable in charge
+def test_read_host_with_no_limit_on_the_chain_uses_meminfo(tmp_path):
+    root = _proc(tmp_path, mem_kb=1_000_000)
+    _self_cgroup(root, USER_SCOPE)
+    _cgroup(root, USER_SCOPE.lstrip("/"), current=GiB)
+    assert batch.admission.read_host(root).mem_available == 1_000_000 * 1024
+
+
+VM_STAT = """Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                   129580.
+Pages active:                                 953633.
+Pages inactive:                               950313.
+Pages speculative:                              1962.
+Pages throttled:                                   0.
+"""
+VM_STAT_AVAILABLE = 16384 * (129580 + 950313 + 1962)
+
+
+def test_vm_stat_available_counts_free_inactive_and_speculative_pages():
+    assert batch.admission._vm_stat_available(VM_STAT) == VM_STAT_AVAILABLE
+
+
+def test_vm_stat_available_is_none_for_output_it_cannot_read():
+    assert batch.admission._vm_stat_available("") is None
+    assert batch.admission._vm_stat_available("Pages free: 1.\n") is None
+
+
+def test_read_host_on_macos_reads_vm_stat_and_reports_no_pressure(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(batch.admission, "_vm_stat", lambda: VM_STAT)
+    s = batch.admission.read_host()
+    assert s.mem_available == VM_STAT_AVAILABLE
+    assert (s.cpu_some_avg10, s.mem_some_avg10) == (None, None)
+    assert s.supports_admission is False
+
+
+# passes-at-base: batch on macOS keeps its pool_default path now that memory is known
+def test_decide_with_memory_but_no_pressure_keeps_the_pool_default_path():
+    s = batch.admission.HostSample(64 * GiB, None, None)
+    v = batch.admission.decide(s, running=1, limit=3, estimate=1, cfg=BatchConfig(pool_default=1))
+    assert not v.admit and "pool_default" in v.reason
+
+
+MAC = batch.admission.HostSample(16 * GiB, None, None)
+
+
+def test_room_checks_only_the_metrics_a_sample_has():
+    assert batch.admission.room(MAC, estimate=GiB, cfg=CFG).admit
+    short = batch.admission.HostSample(2 * GiB, None, None)
+    assert not batch.admission.room(short, estimate=GiB, cfg=CFG).admit
+    assert batch.admission.room(batch.admission.HostSample(None, None, None), estimate=GiB, cfg=CFG).admit
+
+
+@pytest.mark.parametrize("platform,limit", [("linux", 2), ("darwin", 4), ("freebsd14", 2)])
+def test_the_heavy_limit_is_per_platform(platform, limit):
+    assert batch.admission.class_limit(EntryClass.HEAVY, platform=platform, cores=18) == limit
+
+
+def test_the_light_limit_is_every_core_but_one():
+    assert batch.admission.class_limit(EntryClass.LIGHT, platform="linux", cores=4) == 3
+
+
+def _admit(sample, entry_class, running):
+    return batch.admission.admit_entry(sample, entry_class=entry_class, running=running, cfg=CFG)
+
+
+def test_light_work_is_admitted_on_a_starved_host():
+    assert _admit(BUSY, EntryClass.LIGHT, running=1).admit
+
+
+def test_one_heavy_entry_is_always_admitted_when_none_is_running():
+    assert _admit(BUSY, EntryClass.HEAVY, running=0).admit
+
+
+def test_a_second_heavy_entry_needs_room():
+    assert not _admit(BUSY, EntryClass.HEAVY, running=1).admit
+    assert _admit(HEALTHY, EntryClass.HEAVY, running=1).admit
+    assert _admit(MAC, EntryClass.HEAVY, running=1).admit
+
+
+def test_queue_policy_reads_the_host_and_its_platform_limit():
+    policy = batch.admission.QueuePolicy(CFG, host=lambda: BUSY, platform="linux", cores=4)
+    assert (policy.limit(EntryClass.HEAVY), policy.limit(EntryClass.LIGHT)) == (2, 3)
+    assert not policy.verdict(EntryClass.HEAVY, 1).admit

@@ -16,6 +16,10 @@ wrapper was holding is released and the work runs on untracked.
 One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
+
+A third caller, `otto_queue.ticket`, runs its command in the *foreground*
+instead: same process group as the terminal, Ctrl-C and hangup left to the
+terminal, SIGTERM forwarded to the child's pid.
 """
 
 # doc-group: platform
@@ -35,28 +39,37 @@ import core.timeouts
 # kill the wrapper and orphan the child.
 FORWARDED = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
+# What a terminal delivers to its whole foreground process group: Ctrl-C and a
+# closed terminal. A foreground child already receives them, so a wrapper
+# sharing its group swallows them rather than delivering each a second time.
+TERMINAL_SIGNALS = (signal.SIGINT, signal.SIGHUP)
+
 
 class SignalRelay:
     """Forwards signals to a child that may not exist yet.
 
     The two states are the whole of it. Before :meth:`forward_to`, a signal is
-    recorded; after it, a signal is delivered to the child's process group. The
-    recorded ones are replayed the moment the child is known, so a signal taken
-    in between is deferred rather than dropped — it was sent to stop this work,
-    and the work is about to start.
+    recorded; after it, a signal is delivered to the child's process group, or
+    its pid with `group=False`. The recorded ones are replayed the moment the
+    child is known, so a signal taken in between is deferred rather than
+    dropped — it was sent to stop this work, and the work is about to start.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, group: bool = True) -> None:
         self._proc: subprocess.Popen | None = None
         self._pending: list[int] = []
+        self._group = group
 
     def handle(self, signum: int, _frame: object = None) -> None:
-        """Deliver *signum* to the child, or hold it until there is one."""
+        """Deliver *signum* to the child (its group, unless built with ``group=False``), or hold it."""
         if self._proc is None:
             self._pending.append(signum)
             return
         try:
-            os.killpg(os.getpgid(self._proc.pid), signum)
+            if self._group:
+                os.killpg(os.getpgid(self._proc.pid), signum)
+            else:
+                os.kill(self._proc.pid, signum)
         except ProcessLookupError:
             # The child is already gone. On macOS this also covers a zombie
             # (exited but not yet wait()ed): getpgid raises ESRCH there, and a
@@ -81,8 +94,10 @@ class SignalRelay:
 
 
 @contextlib.contextmanager
-def forwarding_signals():
-    """Relay :data:`FORWARDED` to the child for the duration of the block.
+def forwarding_signals(signals: tuple[int, ...] = FORWARDED, *, group: bool = True):
+    """Relay *signals* to the child for the duration of the block.
+
+    Delivery is to the child's process group, or its pid with ``group=False``.
 
     Enter this *before* spawning, which is the whole point of the ordering:
     installing the handlers afterwards leaves a window in which the child
@@ -99,10 +114,30 @@ def forwarding_signals():
     several children in one process is not left with a relay pointing at a
     process that has already exited.
     """
-    relay = SignalRelay()
-    previous = {signum: signal.signal(signum, relay.handle) for signum in FORWARDED}
+    relay = SignalRelay(group=group)
+    previous = {signum: signal.signal(signum, relay.handle) for signum in signals}
     try:
         yield relay
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def _ignore(_signum: int, _frame: object = None) -> None:
+    return None
+
+
+@contextlib.contextmanager
+def _swallowing(signals: tuple[int, ...]):
+    """Ignore *signals* in this process for the block, without passing the ignore to a child.
+
+    A Python handler rather than `SIG_IGN`: an ignored disposition survives
+    `exec`, so the child would never see a Ctrl-C, while a handler is reset to
+    the default there.
+    """
+    previous = {signum: signal.signal(signum, _ignore) for signum in signals}
+    try:
+        yield
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
@@ -113,21 +148,25 @@ def run_child(
     *,
     env: dict[str, str] | None = None,
     origin: str = "run_child",
+    cwd: str | None = None,
+    foreground: bool = False,
 ) -> int:
-    """Run *argv* in its own session and wait until that group is gone.
+    """Run *argv* and wait for it; 127 with a one-line message when it cannot start.
 
-    SIGINT, SIGTERM, and SIGHUP are forwarded to the group rather than killing
-    this process. :func:`forwarding_signals` wraps the spawn, so there is no
-    window in which a child exists and no handler does.
-
-    Both lock wrappers call this rather than each copying the wait. A missing
-    command is 127 with a one-line message, matching the shell, rather than an
-    uncaught OSError that would be the one path without a ``cli:`` prefix.
-    *origin* is that prefix (``job_slots_cli``, ``tree_lock_cli``).
+    By default the child runs in its own session, and SIGINT, SIGTERM and SIGHUP
+    are forwarded to its group: the lock wrappers. With *foreground*, the child
+    stays in this process's group with the terminal (stdio inherited, `/dev/tty`
+    still its own), so it stays interactive. The terminal's own Ctrl-C and
+    hangup reach it directly and are swallowed here, and SIGTERM is forwarded to
+    its pid. `otto_queue.ticket` runs commands this way. In both modes
+    :func:`forwarding_signals` wraps the spawn, so no window exists in which a
+    child runs and no handler does. *origin* prefixes the error message.
     """
-    with forwarding_signals() as relay:
+    forwarded = (signal.SIGTERM,) if foreground else FORWARDED
+    swallowed = TERMINAL_SIGNALS if foreground else ()
+    with forwarding_signals(forwarded, group=not foreground) as relay, _swallowing(swallowed):
         try:
-            proc = subprocess.Popen(argv, start_new_session=True, env=env)
+            proc = subprocess.Popen(argv, start_new_session=not foreground, env=env, cwd=cwd)
         except OSError as exc:
             print(f"{origin}: cannot run {argv[0]}: {exc}", file=sys.stderr)
             return 127

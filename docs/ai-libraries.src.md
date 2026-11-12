@@ -51,6 +51,12 @@ Running rebase, CI fixes, comments and self-review across many open PRs at once:
 
 <!-- include: bin/local/generate-doc-reference --set ai-lib --group batch -->
 
+## Work queue
+
+The machine-wide queue for background work: the ledger that records every entry, the leases that say an entry's process is alive, the slots admission hands out, tickets, and the keys that stop paid work running twice.
+
+<!-- include: bin/local/generate-doc-reference --set ai-lib --group queue -->
+
 ## Board
 
 The PR board's document: facts, lanes, badges and columns, assembled from listing, status and owed phases.

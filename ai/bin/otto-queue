@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Run background work through this machine's queue, so it waits for room instead of overloading the host.
+
+```
+otto-queue run --ticket [--class heavy|light] [--key KEY] [--force] [--wait SECONDS] -- COMMAND [ARGS...]
+otto-queue status [--json]
+otto-queue cancel ID
+```
+
+`run --ticket` waits for a slot in its class, then runs COMMAND here, in this
+terminal, and exits with its status. Heavy entries are limited per platform
+(`batch.admission.HEAVY_LIMITS`) and admitted while the host has memory to
+spare; one heavy entry is always admitted when none is running. Light entries
+are limited to every core but one. `--key` makes the run idempotent: a live
+entry with the same key is joined, a done one returns its status without
+running, and `--force` runs regardless. Exit 75 means the command, or the wait
+for a slot, found its resource busy. 130 means the entry was cancelled before
+it ran.
+
+`status` lists live entries and the most recent finished ones; `--json` prints
+one object per entry. `cancel` stops a waiting entry, or sends SIGTERM to a
+running one.
+
+The ledger is `queue/queue.db` under the workbench state root
+(`WORKBENCH_STATE_DIR`, default `~/.local/state/workbench`). How admission,
+leases and keys work is on the `otto_queue` modules in docs/ai-libraries.md.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+# ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
+_AI_LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
+
+from cli.otto_queue import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

@@ -393,7 +393,7 @@ class TestTheCommitScope:
 
         spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
 
-        assert "unverified: the repo's checks did not answer" in spec.message
+        assert "unverified: the repo's checks timed out after 900s" in spec.message
 
     def test_the_tally_says_so_when_the_checks_rewrote_tracked_files(
         self, git_wt, tmp_path,

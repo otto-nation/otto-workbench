@@ -19,7 +19,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from conftest import REPO_ROOT, git_out, run_checked
+from batch_git_support import remote_and_clone
+from conftest import REPO_ROOT, commit_all, git_out, run_checked
 
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -32,7 +33,7 @@ import pr.attribution  # noqa: E402
 import pr.summary_model  # noqa: E402
 import pr.summary_render  # noqa: E402
 import pr.thread_replies  # noqa: E402
-from pr.fix import FixOutcome, SettledBy  # noqa: E402
+from pr.fix import FixOutcome, FixRecord, SettledBy  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
 THE_REVIEW_COMMENT = "2025-01-01T00:00:00Z"
@@ -401,3 +402,26 @@ class TestAnAlreadyAddressedRowCitesNoCommit:
         body = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
         assert body.startswith("Already addressed:")
         assert "Addressed in" not in body
+
+
+class TestLandingOfUnmovedHead:
+    """An empty commit SHA is not LANDED just because HEAD did not move."""
+
+    def test_unmoved_head_is_unpushed_when_the_remote_lacks_it(self, tmp_path):
+        pair = remote_and_clone(tmp_path)
+        (pair.work / "op.txt").write_text("op\n")
+        commit_all(pair.work, "op")
+        head = git_out(pair.work, "rev-parse", "HEAD").strip()
+        record = FixRecord(head_sha=head, commit_sha="")
+        assert pr.attribution.landing_of(
+            record, pair.work,
+        ) is pr.attribution.FixLanding.UNPUSHED
+
+    # passes-at-base: a published HEAD was already LANDED without a commit SHA
+    def test_unmoved_head_is_landed_when_the_remote_holds_it(self, tmp_path):
+        pair = remote_and_clone(tmp_path)
+        head = git_out(pair.work, "rev-parse", "HEAD").strip()
+        record = FixRecord(head_sha=head, commit_sha="")
+        assert pr.attribution.landing_of(
+            record, pair.work,
+        ) is pr.attribution.FixLanding.LANDED

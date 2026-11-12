@@ -6,10 +6,11 @@ For each thread, provide:
    'invalid', 'needs_discussion'
    - valid: the suggestion is correct and the code does NOT yet do what it asks
    - already_addressed: the code already does what the reviewer asks. The code context
-     below is current HEAD, which includes commits made earlier in this same review
+     below is the working tree, which includes commits made earlier in this same review
      cycle — so a suggestion that looks satisfied is usually one that was ALREADY ACTED
      ON in response to this very thread. This is agreement with the reviewer, not
-     rejection of them.
+     rejection of them. Do not pick already_addressed from uncommitted or unpushed
+     edits — the reviewer cannot see those.
    - invalid: the reviewer's premise is factually wrong — they misread the code, or the
      change they describe would break something. Use this ONLY when you can state the
      specific mistake in `reasoning`. "The code already does this" is NEVER invalid; it

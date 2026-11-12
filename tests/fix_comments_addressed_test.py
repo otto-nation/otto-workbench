@@ -20,9 +20,11 @@ if str(LIB_DIR) not in sys.path:
 
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
+from batch_git_support import remote_and_clone  # noqa: E402
 from review_threads_support import (  # noqa: E402
     _answering_the_owner, _fake_ctx, _git_ran, _make_state, _no_published_summary,
 )
+import agent.backend  # noqa: E402
 import core.publishing  # noqa: E402
 import fix.comment_checklist  # noqa: E402
 import fix.comments  # noqa: E402
@@ -33,11 +35,14 @@ import git.push  # noqa: E402
 import git.topology  # noqa: E402
 import pr.fix_state  # noqa: E402
 import pr.thread_context  # noqa: E402
+import pr.triage  # noqa: E402
 import review.closeout  # noqa: E402
 from core.phases import Phase  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
-from pr.thread_models import CommentItem, PRReport, ReportThread, TriageResult  # noqa: E402
+from pr.thread_models import (  # noqa: E402
+    CommentItem, PRReport, ReportThread, TriageResult, Verification,
+)
 
 
 _GATE_ADAPTER = SimpleNamespace(
@@ -281,3 +286,56 @@ def test_finish_does_not_republish_a_demoted_verdict(tmp_path, monkeypatch):
         )
     assert posted == [200]
     assert resolved == ["t2"]
+
+
+def test_run_pass_with_a_dirty_leftover_posts_no_already_addressed_reply(
+    tmp_path, publishing_on,
+):
+    """Unpublished code cannot earn an already-addressed reply, even mid-pass."""
+    pair = remote_and_clone(tmp_path)
+    (pair.work / "leftover.py").write_text("x = 1\n")
+    report = PRReport(
+        repo="owner/repo", pr_number=1,
+        threads=[ReportThread(
+            id="t1", file="feat.txt", line=1, reviewer="kgn",
+            comments=[{"databaseId": 100, "user": "kgn", "body": "do it"}],
+        )],
+    )
+    reply = (
+        '{"threads": [{"id": "t1", "classification": "actionable_suggestion",'
+        ' "verification": "already_addressed", "complexity": "low",'
+        ' "summary": "s", "file": "feat.txt", "line": 1,'
+        ' "evidence_file": "feat.txt", "evidence_line": 1,'
+        ' "reasoning": "looks done"}]}'
+    )
+    with patch.object(agent.backend, "prompt", return_value=(reply, 0)):
+        triage, rc = pr.triage.run_triage(report, pair.work, {})
+    assert rc == 0
+    assert triage is not None
+    assert triage.threads[0].verification is Verification.NEEDS_DISCUSSION
+
+    posted, resolved = [], []
+    with patch.object(fix.verify, "run", return_value={
+             "t1": fix.gate.Verdict(ok=True, detail="ok")}), \
+         patch.object(pr.thread_context, "diff_context_for_file",
+                      return_value=""), \
+         patch.object(fix.comment_checklist, "find_and_update_main_worktree",
+                      return_value=None), \
+         patch.object(git.topology, "default_branch_cached",
+                      return_value="main"), \
+         patch.object(pr.fix_state, "persist"), \
+         patch.object(git.client, "run",
+                      side_effect=_answering_the_owner(
+                          lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+         patch("pr.comments.post_thread_reply",
+               side_effect=lambda *a, **k: posted.append(a[2]) or True), \
+         patch("pr.comments.post_issue_comment", side_effect=_gated), \
+         patch("pr.comments.resolve_thread",
+               side_effect=lambda tid, *a, **k: resolved.append(tid) or True):
+        result = fix.comments.run_pass(
+            triage, report, pair.work, _fake_ctx(tmp_path),
+        )
+    assert posted == []
+    assert resolved == []
+    assert [e.id for e in result.already_addressed] == []
+    assert [e.id for e in result.needs_human] == ["t1"]

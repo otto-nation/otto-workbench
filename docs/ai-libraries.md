@@ -2688,6 +2688,21 @@ What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`
 and the reading of a comment written before markers existed
 (`summary_scope.published_rows`, `thread_replies.is_generated_reply`).
 
+### pr/published_tree.py
+
+What of this worktree the remote does not yet hold.
+
+Triage and the comments pass read the filesystem, so a verdict formed here can
+cite code a reviewer cannot open. The remote tip and the unpublished path set
+are the one answer those callers share: committed-but-unpushed paths, plus
+whatever porcelain still shows dirty or untracked. A remote that cannot be
+asked is not an empty set — it is everything unpublished, so a claim is
+withheld rather than posted with a 404.
+
+Layer 4: `git.client` and `git.push` only. The dirty-set reader in `fix.scope`
+stays there; lifting it would pull a layer-5 helper under a layer that cannot
+import `fix`.
+
 ### pr/self_review_gate.py
 
 The verdict type and callable contract for whether a self-review covers HEAD.
@@ -2974,7 +2989,10 @@ Two of those verdicts are posted back to the reviewer as a claim about their
 code, so this module's second half exists to stop an unsupported one going out:
 :func:`downgrade_unsupported_verdicts` demotes any `already_addressed` or
 `invalid` whose cited line is not in the tree, because a claim with a link to
-nothing is worse than no claim.
+nothing is worse than no claim. :func:`downgrade_unpublished_verdicts` demotes
+the same two when any path in the worktree is not on the remote, because a
+claim the reviewer cannot open is the same failure with a 404 instead of a
+missing line.
 
 The prompt is `pr.triage_prompt`; the code and history it reads are
 `pr.thread_context`. What is here is the round — invoke, parse, assign ids,
@@ -2992,12 +3010,14 @@ a string.
 
 Two things in it are load-bearing and easy to lose in an edit. The verdict
 definitions draw the line between `already_addressed` and `invalid` — the code
-context is current HEAD, so a suggestion that looks satisfied is usually one an
+context is the working tree, so a suggestion that looks satisfied is usually one an
 earlier round of this same review already acted on, and calling that `invalid`
-tells the reviewer they were wrong when they were agreed with. And every verdict
-posted back to a reviewer must cite a line: a claim about their code with
-nothing to point at is not a claim, which is why `evidence_file` is required for
-exactly the two verdicts that are posted outward.
+tells the reviewer they were wrong when they were agreed with. Uncommitted or
+unpushed edits are not what the reviewer can see, so they are not grounds for
+`already_addressed`. And every verdict posted back to a reviewer must cite a
+line: a claim about their code with nothing to point at is not a claim, which is
+why `evidence_file` is required for exactly the two verdicts that are posted
+outward.
 
 ### pr/triage_round.py
 

@@ -6,7 +6,10 @@ Two of those verdicts are posted back to the reviewer as a claim about their
 code, so this module's second half exists to stop an unsupported one going out:
 :func:`downgrade_unsupported_verdicts` demotes any `already_addressed` or
 `invalid` whose cited line is not in the tree, because a claim with a link to
-nothing is worse than no claim.
+nothing is worse than no claim. :func:`downgrade_unpublished_verdicts` demotes
+the same two when any path in the worktree is not on the remote, because a
+claim the reviewer cannot open is the same failure with a 404 instead of a
+missing line.
 
 The prompt is `pr.triage_prompt`; the code and history it reads are
 `pr.thread_context`. What is here is the round — invoke, parse, assign ids,
@@ -29,6 +32,7 @@ from core.phases import Phase
 from core.trail import Trail
 import pr.domains
 import pr.permalinks
+import pr.published_tree
 import pr.settlement
 import pr.state
 import pr.thread_context
@@ -42,6 +46,9 @@ from pr.thread_models import (
 
 _DOWNGRADE_REASON = (
     "downgraded from {verdict}: triage cited no line in this repo to back the claim"
+)
+UNPUBLISHED_DOWNGRADE_REASON = (
+    "read against code that is not on the remote — push first, then re-run"
 )
 
 
@@ -192,6 +199,39 @@ def downgrade_unsupported_verdicts(
     return downgraded
 
 
+def downgrade_unpublished_verdicts(
+    entries: list[CommentItem],
+    tree: pr.published_tree.PublishedTree,
+    trail: Trail | None = None,
+) -> int:
+    """Demote claims read against unpublished code to needs_discussion.
+
+    Strict: any unpublished path, or a remote that could not be asked, demotes
+    every `already_addressed` and `invalid` on *entries*. Those verdicts are
+    posted as facts about the reviewer's code; a fact formed against a dirty
+    tree, an untracked file, or an unpushed commit is one they cannot open.
+    Fixable verdicts stay so the author can still act. Persisted as
+    `needs_discussion` so `--finish` cannot republish, and so a re-triage
+    after push sees the thread again.
+    """
+    if not tree.unpublished:
+        return 0
+    downgraded = 0
+    for entry in entries:
+        if not entry.verification.needs_evidence:
+            continue
+        reason = UNPUBLISHED_DOWNGRADE_REASON
+        if trail:
+            trail.info("triage_downgrade_unpublished", reason,
+                       data={"thread": entry.id})
+        core.log.warn(f"{entry.id}: {reason} — routing to needs_discussion")
+        entry.verification = Verification.NEEDS_DISCUSSION
+        entry.complexity = Complexity.UNSET
+        entry.reasoning = f"{entry.reasoning} ({reason})".strip()
+        downgraded += 1
+    return downgraded
+
+
 def recorded_settlements(report: PRReport, ctx_args: dict) -> set[str]:
     """The threads on *report* that the saved fix record already settles.
 
@@ -319,6 +359,9 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
 
     downgrade_unsupported_verdicts(triage_result.threads, repo_dir, trail)
     downgrade_unsupported_verdicts(triage_result.comment_items, repo_dir, trail)
+    published = pr.published_tree.of(repo_dir)
+    downgrade_unpublished_verdicts(triage_result.threads, published, trail)
+    downgrade_unpublished_verdicts(triage_result.comment_items, published, trail)
     # Counted here, after the last reclassification, so the tally describes the
     # verdicts actually shipped beside it rather than the ones the model first
     # proposed.
